@@ -40,7 +40,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 # Nix filters this check to declared gallery dependencies.
 # An independent total detects scenes that disappear from that source closure.
-EXPECTED_SCENE_COUNT = 38
+EXPECTED_SCENE_COUNT = 39
 
 # Lints the gallery departs from the root on, each with its reason recorded
 # beside the entry in `bmc-gallery/Cargo.toml`. Anything else that differs is drift.

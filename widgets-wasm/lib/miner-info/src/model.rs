@@ -23,7 +23,9 @@ use core::time::Duration;
 use bmc_wasm_sdk::{
     BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
 };
-use mining::gauge::TargetRange;
+// Re-exported so a caller building a `Constraints` does not need a `mining`
+// dependency of its own just to name the type inside it.
+pub use mining::gauge::TargetRange;
 
 pub use crate::money::{Currency, Hashprice, Money};
 
