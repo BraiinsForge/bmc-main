@@ -173,7 +173,10 @@ pub fn wanted(data: &crate::model::Data) -> Vec<Wanted<'_>> {
         want(ImageKind::Flag, &race.country_flag_url);
         want(ImageKind::Circuit, &race.circuit_image_url);
     }
-    for driver in data.driver.iter().chain(&data.driver_stats) {
+    // Only the selected row: the statistics screen is the one view drawing
+    // a headshot or a nationality flag, and it draws a single driver.
+    // Sweeping the table would decode ~22 unseen pairs, evicting what is drawn.
+    for driver in data.driver.iter().chain(data.selected_driver_stats()) {
         want(ImageKind::Headshot, &driver.headshot_url);
         want(ImageKind::Flag, &driver.nationality_flag_url);
     }
@@ -239,10 +242,10 @@ mod tests {
         assert!(resolve(ImageKind::Headshot, &wanted).is_none());
     }
 
-    /// A payload field left out of the sweep is artwork that never
-    /// arrives on the one screen showing it.
+    /// Both directions: a field left out never arrives on the screen showing it,
+    /// and one swept needlessly evicts artwork that is drawn.
     #[test]
-    fn every_payload_that_carries_images_is_swept() {
+    fn the_sweep_covers_every_drawn_image_and_nothing_else() {
         use crate::model::{
             Data, DriverStats, LiveBoard, NextRace, StandingsRow, TimingBoard, TimingRow,
         };
@@ -254,12 +257,22 @@ mod tests {
                 headshot_url: url("https://x.test/standings-face.png"),
                 ..StandingsRow::default()
             }],
-            driver_stats: vec![DriverStats {
-                headshot_url: url("https://x.test/stats-face.png"),
-                nationality_flag_url: url("https://x.test/stats-flag.png"),
-                ..DriverStats::default()
-            }],
+            driver_stats: vec![
+                DriverStats {
+                    jolpica_id: "selected".to_owned(),
+                    headshot_url: url("https://x.test/stats-face.png"),
+                    nationality_flag_url: url("https://x.test/stats-flag.png"),
+                    ..DriverStats::default()
+                },
+                DriverStats {
+                    jolpica_id: "bystander".to_owned(),
+                    headshot_url: url("https://x.test/bystander-face.png"),
+                    nationality_flag_url: url("https://x.test/bystander-flag.png"),
+                    ..DriverStats::default()
+                },
+            ],
             driver: Some(DriverStats {
+                jolpica_id: "selected".to_owned(),
                 headshot_url: url("https://x.test/driver-face.png"),
                 nationality_flag_url: url("https://x.test/driver-flag.png"),
                 ..DriverStats::default()
@@ -281,10 +294,18 @@ mod tests {
         };
 
         let swept: Vec<&str> = wanted(&data).iter().map(|want| want.url.as_str()).collect();
-        assert!(
-            !swept.contains(&"https://x.test/standings-face.png"),
-            "no standings screen draws a headshot, so none is fetched"
-        );
+        for unwanted in [
+            // No standings screen draws a headshot.
+            "https://x.test/standings-face.png",
+            // Only the selected driver's row reaches a screen.
+            "https://x.test/bystander-face.png",
+            "https://x.test/bystander-flag.png",
+        ] {
+            assert!(
+                !swept.contains(&unwanted),
+                "{unwanted} is fetched but never drawn"
+            );
+        }
         for expected in [
             "https://x.test/standings-logo.png",
             "https://x.test/standings-flag.png",
