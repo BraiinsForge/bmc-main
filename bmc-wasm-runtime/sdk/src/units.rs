@@ -44,6 +44,10 @@ const POUNDS_PER_KILOGRAM: f64 = 2.204_622_6;
 const CELSIUS_TO_FAHRENHEIT_SCALE: f64 = 9.0 / 5.0;
 /// °F at 0 °C.
 const FREEZING_POINT_FAHRENHEIT: f64 = 32.0;
+/// Percent per unit fraction.
+const PERCENT_PER_UNIT: f64 = 100.0;
+/// Satoshis per bitcoin.
+const SATOSHIS_PER_BITCOIN: f64 = 100_000_000.0;
 
 /// A length, stored canonically in metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -382,6 +386,142 @@ impl MiningEfficiency {
     }
 }
 
+/// A dimensionless proportion, stored canonically
+/// as a fraction: `Ratio(0.05)` is five percent.
+///
+/// Percent is the rendered unit, not the stored one,
+/// so a caller can never lose track of which scale
+/// a bare `f64` was in.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Ratio(f64);
+
+impl Ratio {
+    /// Unit appended by [`Self::format`].
+    pub const UNIT: &'static str = "%";
+
+    #[must_use]
+    pub const fn from_fraction(fraction: f64) -> Self {
+        Self(fraction)
+    }
+
+    #[must_use]
+    pub fn from_percent(percent: f64) -> Self {
+        Self(percent / PERCENT_PER_UNIT)
+    }
+
+    #[must_use]
+    pub const fn as_fraction(self) -> f64 {
+        self.0
+    }
+
+    #[must_use]
+    pub fn as_percent(self) -> f64 {
+        self.0 * PERCENT_PER_UNIT
+    }
+
+    /// The number alone (no unit), for split value/unit rendering.
+    #[must_use]
+    pub fn format_value(self, decimals: u32) -> String {
+        crate::format::_host_format_number(self.as_percent(), decimals)
+    }
+
+    /// Render with the operator's number format, e.g. `4.50 %`.
+    #[must_use]
+    pub fn format(self, decimals: u32) -> String {
+        let mut s = self.format_value(decimals);
+        s.push(' ');
+        s.push_str(Self::UNIT);
+        s
+    }
+}
+
+/// An amount of bitcoin, stored canonically in BTC.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BitcoinAmount(f64);
+
+impl BitcoinAmount {
+    /// Unit appended by [`Self::format`].
+    pub const UNIT: &'static str = "BTC";
+
+    #[must_use]
+    pub const fn from_bitcoin(btc: f64) -> Self {
+        Self(btc)
+    }
+
+    #[must_use]
+    pub fn from_satoshis(sats: f64) -> Self {
+        Self(sats / SATOSHIS_PER_BITCOIN)
+    }
+
+    #[must_use]
+    pub const fn as_bitcoin(self) -> f64 {
+        self.0
+    }
+
+    #[must_use]
+    pub fn as_satoshis(self) -> f64 {
+        self.0 * SATOSHIS_PER_BITCOIN
+    }
+
+    /// The number alone (no unit), for split value/unit rendering.
+    #[must_use]
+    pub fn format_value(self, decimals: u32) -> String {
+        crate::format::_host_format_number(self.as_bitcoin(), decimals)
+    }
+
+    /// Render with the operator's number format, e.g. `0.055 BTC`.
+    #[must_use]
+    pub fn format(self, decimals: u32) -> String {
+        let mut s = self.format_value(decimals);
+        s.push(' ');
+        s.push_str(Self::UNIT);
+        s
+    }
+}
+
+/// Mining revenue density denominated in bitcoin
+/// — what one terahash per second earns in a day.
+///
+/// Quoted in satoshis, since a terahash-day is
+/// a very small fraction of a bitcoin.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Hashvalue(f64);
+
+impl Hashvalue {
+    /// Unit appended by [`Self::format`].
+    pub const UNIT: &'static str = "SAT/TH/Day";
+
+    #[must_use]
+    pub const fn from_satoshis_per_terahash_day(sats: f64) -> Self {
+        Self(sats)
+    }
+
+    #[must_use]
+    pub fn from_bitcoin_per_terahash_day(btc: f64) -> Self {
+        Self(btc * SATOSHIS_PER_BITCOIN)
+    }
+
+    #[must_use]
+    pub const fn as_satoshis_per_terahash_day(self) -> f64 {
+        self.0
+    }
+
+    /// The number alone (no unit), for split value/unit rendering.
+    #[must_use]
+    pub fn format_value(self, decimals: u32) -> String {
+        crate::format::_host_format_number(self.as_satoshis_per_terahash_day(), decimals)
+    }
+
+    /// Render with the operator's number format, e.g. `70 SAT/TH/Day`.
+    #[must_use]
+    pub fn format(self, decimals: u32) -> String {
+        let mut s = self.format_value(decimals);
+        s.push(' ');
+        s.push_str(Self::UNIT);
+        s
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +543,31 @@ mod tests {
         let l = Length::from_centimeters(180.0);
         assert!(approx(l.as_centimeters(), 180.0));
         assert!(approx(l.as_meters(), 1.8));
+    }
+
+    #[test]
+    fn bitcoin_round_trips_through_satoshis() {
+        let amount = BitcoinAmount::from_bitcoin(0.055);
+        assert!(approx(amount.as_satoshis(), 5_500_000.0));
+        assert!(approx(
+            BitcoinAmount::from_satoshis(5_500_000.0).as_bitcoin(),
+            0.055
+        ));
+    }
+
+    /// The public API quotes hashvalue in BTC; the faces render satoshis.
+    #[test]
+    fn hashvalue_converts_a_bitcoin_quote_into_satoshis() {
+        let value = Hashvalue::from_bitcoin_per_terahash_day(0.000_000_5);
+        assert!(approx(value.as_satoshis_per_terahash_day(), 50.0));
+    }
+
+    #[test]
+    fn ratio_round_trips_through_canonical_fraction() {
+        let r = Ratio::from_percent(4.5);
+        assert!(approx(r.as_fraction(), 0.045));
+        assert!(approx(r.as_percent(), 4.5));
+        assert!(approx(Ratio::from_fraction(0.045).as_percent(), 4.5));
     }
 
     #[test]
