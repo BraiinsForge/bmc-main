@@ -16,7 +16,6 @@ crate-type = ["cdylib"]
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 miner-info = { path = "../lib/miner-info" }
 mining = { path = "../lib/mining" }
-prices = { path = "../lib/prices" }
 
 [lints]
 workspace = true

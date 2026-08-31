@@ -169,7 +169,6 @@ pub fn fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn fixed_strip_zero_fraction<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
     let mut out = fixed(value, decimals);
@@ -188,7 +187,6 @@ pub fn fixed_strip_zero_fraction<Q: Measured>(value: Availability<Q>, decimals: 
 /// is appended once rather than read off either half.
 const UNIT_CELSIUS: &str = "°C";
 
-/// Terahashes per second in one exahash per second.
 const TERAHASHES_PER_EXAHASH: f64 = 1_000_000.0;
 
 /// Network hashrate reads in EH/s, the scale the whole network is quoted at,

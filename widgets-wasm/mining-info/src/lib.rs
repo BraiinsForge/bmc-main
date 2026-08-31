@@ -20,11 +20,15 @@
 
 mod manifest_params;
 
-// Re-exported rather than plainly imported: the render and poll paths that read
-// them are `wasm32`-gated, so a native test build would see the import as unused.
-pub(crate) use miner_info::{api as miner_api, format, layout, model, public as public_api};
+// Re-exported rather than plainly imported: everything reading these is
+// `wasm32`-gated, so a native test build sees a plain import as unused.
+pub(crate) use miner_info::{api as miner_api, model, public as public_api};
+
+// `include_svg!` resolves against the crate hosting the file, so the asset
+// lives with the widget and is handed to the faces that draw it.
 #[cfg(target_arch = "wasm32")]
-mod render;
+const CHIP_ICON: bmc_wasm_sdk::Svg = bmc_wasm_sdk::include_svg!("assets/chip.svg");
+
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
@@ -41,9 +45,11 @@ use manifest_params::{Params, View};
 #[cfg(target_arch = "wasm32")]
 use miner_api::{AuthState, endpoint};
 #[cfg(target_arch = "wasm32")]
-use model::{Currency, MinerData, PublicData};
+use miner_info::face;
 #[cfg(target_arch = "wasm32")]
-use render::RenderSize;
+use miner_info::face::RenderSize;
+#[cfg(target_arch = "wasm32")]
+use model::{Currency, MinerData, PublicData};
 
 #[cfg(target_arch = "wasm32")]
 const MINER_REFRESH_MS: u32 = 5_000;
@@ -645,14 +651,14 @@ pub extern "C" fn render(_delta_ms: u32) {
     let first_frame = FIRST_FRAME.replace(false);
     let mut root = match viewport.shape {
         ViewportShape::Round => match params.view {
-            View::Mining => render::round::mining(size, &miner, first_frame),
-            View::Geek => render::round::geek(size, &miner, &public, first_frame),
-            View::InfoOverload => render::round::info_overload(&miner, &public),
+            View::Mining => face::round::mining(size, &miner, first_frame, &CHIP_ICON),
+            View::Geek => face::round::geek(size, &miner, &public, first_frame, &CHIP_ICON),
+            View::InfoOverload => face::round::info_overload(&miner, &public),
         },
         ViewportShape::Rectangular => match params.view {
-            View::Mining => render::mining(size, &miner),
-            View::Geek => render::geek(size, &miner, &public),
-            View::InfoOverload => render::info_overload(size, &miner, &public),
+            View::Mining => face::mining(size, &miner),
+            View::Geek => face::geek(size, &miner, &public),
+            View::InfoOverload => face::info_overload(size, &miner, &public),
         },
     };
     // Auth error outranks stale (both share the corner). Both scans consider only

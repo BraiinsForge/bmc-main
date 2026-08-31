@@ -29,7 +29,7 @@ use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
 use prices::chart;
 
-pub(crate) mod round;
+pub mod round;
 
 const TITLE: Color = GRAY_50;
 const UNIT: Color = GRAY_50;
@@ -47,9 +47,9 @@ const CHART_STROKE: f32 = 2.0;
 const CHART_INSET: f32 = 2.0;
 
 #[derive(Clone, Copy)]
-pub(crate) struct RenderSize {
-    pub(crate) width: u32,
-    pub(crate) height: u32,
+pub struct RenderSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 fn viewport(size: RenderSize) -> Viewport {
@@ -143,7 +143,8 @@ fn vertical_lines(size: RenderSize, lines: Vec<Node>) -> Node {
     )
 }
 
-pub(crate) fn mining(size: RenderSize, miner: &MinerData) -> Node {
+#[must_use]
+pub fn mining(size: RenderSize, miner: &MinerData) -> Node {
     let sizes = layout::mining_layout(layout::classify(viewport(size))).text;
     vertical_lines(
         size,
@@ -167,7 +168,8 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData) -> Node {
     )
 }
 
-pub(crate) fn geek(size: RenderSize, miner: &MinerData, public: &PublicData) -> Node {
+#[must_use]
+pub fn geek(size: RenderSize, miner: &MinerData, public: &PublicData) -> Node {
     let sizes = layout::mining_layout(layout::classify(viewport(size))).text;
     vertical_lines(
         size,
@@ -390,7 +392,8 @@ fn info_overload_bottom_row(
     )
 }
 
-pub(crate) fn info_overload(size: RenderSize, miner: &MinerData, public: &PublicData) -> Node {
+#[must_use]
+pub fn info_overload(size: RenderSize, miner: &MinerData, public: &PublicData) -> Node {
     let fields = layout::info_overload_fields(layout::classify(viewport(size)));
     let metrics = layout::info_overload_layout();
     let mut rows = vec![info_overload_primary_row(miner, public, metrics)];

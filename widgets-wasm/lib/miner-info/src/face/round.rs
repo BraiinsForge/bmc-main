@@ -66,8 +66,6 @@ const CLUSTER_VALUE_SIZE: u32 = 32;
 const CLUSTER_LABEL_SIZE: u32 = 16;
 const CLUSTER_UNIT_SIZE: u32 = 16;
 
-const CHIP_ICON: Svg = include_svg!("assets/chip.svg");
-
 // Top-center "<icon> <chip model> x<count>" header. Native y sits below the rim
 // and clear of the top quadrant clusters at native y=122. Icon and text are
 // fixed-size (typography is not scaled); the gap and placement scale.
@@ -367,7 +365,7 @@ fn center_caption(cx: f32, cy: f32, scale: f32) -> Node {
 // horizontal center and inset below the rim. The icon is drawn into a small
 // fixed-size canvas so it flows in the flex row and the whole group centers
 // together. The model reads in the value tone, the count in the label gray.
-fn chip_header(cx: f32, cy: f32, scale: f32, model: &str, count: usize) -> Node {
+fn chip_header(cx: f32, cy: f32, scale: f32, chip_icon: &Svg, model: &str, count: usize) -> Node {
     let icon = canvas(
         props!(width: CHIP_ICON_SIZE, height: CHIP_ICON_SIZE),
         vec![
@@ -376,7 +374,7 @@ fn chip_header(cx: f32, cy: f32, scale: f32, model: &str, count: usize) -> Node 
                 0.0,
                 CHIP_ICON_SIZE,
                 CHIP_ICON_SIZE,
-                &CHIP_ICON,
+                chip_icon,
                 LABEL_GRAY,
             )
             .with_anti_alias(),
@@ -484,6 +482,7 @@ fn gauge_screen(
     g: &Gauge,
     hashrate: Availability<Hashrate>,
     chip: Option<(&str, usize)>,
+    chip_icon: &Svg,
     clusters: &[ClusterSpec; 4],
 ) -> Node {
     let w = px(size.width);
@@ -504,7 +503,7 @@ fn gauge_screen(
         center_caption(cx, cy, scale),
     ];
     if let Some((model, count)) = chip {
-        children.push(chip_header(cx, cy, scale, model, count));
+        children.push(chip_header(cx, cy, scale, chip_icon, model, count));
     }
     let centers = [TL_CENTER, TR_CENTER, BL_CENTER, BR_CENTER];
     for (center, spec) in centers.into_iter().zip(clusters.iter()) {
@@ -542,13 +541,15 @@ fn chip_header_data(miner: &MinerData) -> Option<(&str, usize)> {
     Some((model.as_str(), count))
 }
 
-pub(crate) fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> Node {
+#[must_use]
+pub fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool, chip_icon: &Svg) -> Node {
     let g = seeded_gauge(miner, seed_gauge);
     gauge_screen(
         size,
         &g,
         miner.hashrate,
         chip_header_data(miner),
+        chip_icon,
         &[
             ClusterSpec {
                 label: "Power Cons.",
@@ -574,11 +575,13 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> N
     )
 }
 
-pub(crate) fn geek(
+#[must_use]
+pub fn geek(
     size: RenderSize,
     miner: &MinerData,
     public: &PublicData,
     seed_gauge: bool,
+    chip_icon: &Svg,
 ) -> Node {
     let g = seeded_gauge(miner, seed_gauge);
     gauge_screen(
@@ -586,6 +589,7 @@ pub(crate) fn geek(
         &g,
         miner.hashrate,
         chip_header_data(miner),
+        chip_icon,
         &[
             ClusterSpec {
                 label: "Power Cons.",
@@ -650,7 +654,8 @@ fn left_shifted_block_row(
     )
 }
 
-pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
+#[must_use]
+pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     let metrics = layout::info_overload_layout();
 
     let top_edge = centered_block_row(

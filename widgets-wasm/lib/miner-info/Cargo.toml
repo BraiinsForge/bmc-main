@@ -8,7 +8,7 @@ publish = false
 [dependencies]
 bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
 mining = { path = "../mining" }
-units = { path = "../units" }
+prices = { path = "../prices" }
 
 [lints]
 workspace = true
