@@ -15,7 +15,7 @@ bmc-virt-ipc.workspace = true
 bmc-virt-leds.workspace = true
 libc.workspace = true
 prost.workspace = true
-ureq = { workspace = true, features = ["cookies"] }
+ureq.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true
 
