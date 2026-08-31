@@ -22,6 +22,7 @@ members = [
     "halving-countdown",
     "image",
     "iss-position",
+    "lib/miner-info",
     "lib/mining",
     "lib/prices",
     "lib/remote-image",

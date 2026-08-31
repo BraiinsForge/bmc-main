@@ -9,58 +9,21 @@
 use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Currency {
-    Usd,
-    Eur,
-}
-impl Currency {
-    /// Every variant, in manifest-declaration order. Useful when a widget
-    /// wants to render a "pick one" UI or audit the enum exhaustively.
-    pub const ALL: &'static [Self] = &[Self::Usd, Self::Eur];
-    /// Manifest wire value for this variant.
-    #[must_use]
-    pub fn as_manifest_value(self) -> &'static str {
-        match self {
-            Self::Usd => "usd",
-            Self::Eur => "eur",
-        }
-    }
-    /// Human-readable label declared in the manifest's `enum_values`.
-    #[must_use]
-    pub fn as_manifest_label(self) -> &'static str {
-        match self {
-            Self::Usd => "USD",
-            Self::Eur => "EUR",
-        }
-    }
-    #[must_use]
-    pub fn from_manifest_value(s: &str) -> Option<Self> {
-        match s {
-            "usd" => Some(Self::Usd),
-            "eur" => Some(Self::Eur),
-            _ => None,
-        }
-    }
-}
-bmc_wasm_sdk::impl_manifest_str_enum!(Currency);
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
     Mining,
     Geek,
-    Network,
     InfoOverload,
 }
 impl View {
     /// Every variant, in manifest-declaration order. Useful when a widget
     /// wants to render a "pick one" UI or audit the enum exhaustively.
-    pub const ALL: &'static [Self] = &[Self::Mining, Self::Geek, Self::Network, Self::InfoOverload];
+    pub const ALL: &'static [Self] = &[Self::Mining, Self::Geek, Self::InfoOverload];
     /// Manifest wire value for this variant.
     #[must_use]
     pub fn as_manifest_value(self) -> &'static str {
         match self {
             Self::Mining => "mining",
             Self::Geek => "geek",
-            Self::Network => "network",
             Self::InfoOverload => "info_overload",
         }
     }
@@ -70,7 +33,6 @@ impl View {
         match self {
             Self::Mining => "Mining",
             Self::Geek => "Geek",
-            Self::Network => "Network",
             Self::InfoOverload => "Info Overload",
         }
     }
@@ -79,7 +41,6 @@ impl View {
         match s {
             "mining" => Some(Self::Mining),
             "geek" => Some(Self::Geek),
-            "network" => Some(Self::Network),
             "info_overload" => Some(Self::InfoOverload),
             _ => None,
         }
@@ -88,7 +49,6 @@ impl View {
 bmc_wasm_sdk::impl_manifest_str_enum!(View);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
-    pub currency: Currency,
     pub miner_password: String,
     pub miner_url: String,
     pub view: View,
@@ -98,7 +58,6 @@ impl Params {
     #[must_use]
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
-            currency: <Currency as ParamRead>::read_required(snap, "currency"),
             miner_password: <String as ParamRead>::read_required(snap, "miner_password"),
             miner_url: <String as ParamRead>::read_required(snap, "miner_url"),
             view: <View as ParamRead>::read_required(snap, "view"),
@@ -147,9 +106,6 @@ impl Params {
     #[must_use]
     pub fn changed_keys(&self, other: &Self) -> Vec<&'static str> {
         let mut out = Vec::new();
-        if self.currency != other.currency {
-            out.push("currency");
-        }
         if self.miner_password != other.miner_password {
             out.push("miner_password");
         }

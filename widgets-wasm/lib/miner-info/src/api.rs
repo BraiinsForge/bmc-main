@@ -18,58 +18,61 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::ufmt;
+use core::time::Duration;
+
+use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Ratio, Temperature, ufmt};
 
 use crate::model::{Availability, MinerData, TemperatureRange};
 use mining::gauge::TargetRange;
-use units::units::{DegreeCelsius, JoulePerTeraHash, Percent, Seconds, TeraHashPerSecond, Watt};
 
-pub(crate) use mining::hashboards::JsonLookup;
+pub use mining::hashboards::JsonLookup;
 
-pub(crate) fn ths_from_ghs(value: f64) -> f64 {
+#[must_use]
+pub fn ths_from_ghs(value: f64) -> f64 {
     value / 1_000.0
 }
 
 // Each `parse_*` returns whether it stored any of its fields.
-// A 2xx that yields no field is an unusable reply (unparsable body,
-// or valid JSON of the wrong shape) the caller treats
-// as a failed refresh rather than banking it fresh.
-pub(crate) fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+// A 2xx that yields no field is an unusable reply (unparsable body, or valid JSON of the wrong shape)
+// the caller treats as a failed refresh rather than banking it fresh.
+pub fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let Some(uptime) = json
         .i64("/bosminer_uptime_s")
         .and_then(|v| u64::try_from(v).ok())
     else {
         return false;
     };
-    data.uptime_s = Availability::Available(Seconds(uptime));
+    data.uptime = Availability::Available(Duration::from_secs(uptime));
     true
 }
 
-pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let mut stored = false;
     if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
-        data.hashrate_ths = Availability::Available(TeraHashPerSecond(ths_from_ghs(ghs)));
+        data.hashrate =
+            Availability::Available(Hashrate::from_terahashes_per_second(ths_from_ghs(ghs)));
         stored = true;
     }
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
-        data.power_w = Availability::Available(Watt(power));
+        data.power = Availability::Available(ElectricPower::from_watts(power));
         stored = true;
     }
     if let Some(efficiency) = json.f64("/power_stats/efficiency/joule_per_terahash") {
-        data.efficiency_j_th = Availability::Available(JoulePerTeraHash(efficiency));
+        data.efficiency =
+            Availability::Available(MiningEfficiency::from_joules_per_terahash(efficiency));
         stored = true;
     }
     stored
 }
 
-pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let mut stored = false;
     let board = json.f64("/hashboards/0/board_temp/degree_c");
     let chip = json.f64("/hashboards/0/highest_chip_temp/temperature/degree_c");
     if let (Some(board_c), Some(chip_c)) = (board, chip) {
         data.temperature = Availability::Available(TemperatureRange {
-            board: DegreeCelsius(board_c),
-            chip: DegreeCelsius(chip_c),
+            board: Temperature::from_celsius(board_c),
+            chip: Temperature::from_celsius(chip_c),
         });
         stored = true;
     }
@@ -78,7 +81,7 @@ pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> 
     if let (Some(real), Some(nominal)) = (real, nominal)
         && nominal > 0.0
     {
-        data.mcr_percent = Availability::Available(Percent(real / nominal * 100.0));
+        data.mcr = Availability::Available(Ratio::from_fraction(real / nominal));
         stored = true;
     }
     let summary = mining::hashboards::sum_chips(json);
@@ -93,15 +96,15 @@ pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> 
     stored
 }
 
-pub(crate) fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let Some(ratio) = json.f64("/fans/0/target_speed_ratio") else {
         return false;
     };
-    data.fan_percent = Availability::Available(Percent(ratio * 100.0));
+    data.fan_speed = Availability::Available(Ratio::from_fraction(ratio));
     true
 }
 
-pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let Some(ip) = json.str("/networks/0/address") else {
         return false;
     };
@@ -109,7 +112,7 @@ pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> boo
     true
 }
 
-pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     data.constraints.hashrate = target_range(
         json,
         "/tuner_constraints/hashrate_target",
@@ -130,40 +133,39 @@ fn target_range(json: &impl JsonLookup, base: &str, leaf: &str) -> Option<Target
     })
 }
 
-// A failed poll (network error or non-2xx) means the endpoint's fields are no
-// longer trustworthy. Each `reset_*` clears exactly the fields its matching
-// `parse_*` produces, so an unreachable miner shows unavailable instead of the
-// last good reading, while a single flaky endpoint never wipes another's data.
-pub(crate) fn reset_details(data: &mut MinerData) {
-    data.uptime_s = Availability::Unavailable;
+// A failed poll (network error or non-2xx) means the endpoint's fields are no longer trustworthy.
+// Each `reset_*` clears exactly the fields its matching `parse_*` produces, so an unreachable miner
+// shows unavailable instead of the last good reading, while a single flaky endpoint never wipes another's data.
+pub fn reset_details(data: &mut MinerData) {
+    data.uptime = Availability::Unavailable;
 }
 
-pub(crate) fn reset_stats(data: &mut MinerData) {
-    data.hashrate_ths = Availability::Unavailable;
-    data.power_w = Availability::Unavailable;
-    data.efficiency_j_th = Availability::Unavailable;
+pub fn reset_stats(data: &mut MinerData) {
+    data.hashrate = Availability::Unavailable;
+    data.power = Availability::Unavailable;
+    data.efficiency = Availability::Unavailable;
 }
 
-pub(crate) fn reset_hashboards(data: &mut MinerData) {
+pub fn reset_hashboards(data: &mut MinerData) {
     data.temperature = Availability::Unavailable;
-    data.mcr_percent = Availability::Unavailable;
+    data.mcr = Availability::Unavailable;
     data.chip_type = Availability::Unavailable;
     data.chip_count = Availability::Unavailable;
 }
 
-pub(crate) fn reset_cooling(data: &mut MinerData) {
-    data.fan_percent = Availability::Unavailable;
+pub fn reset_cooling(data: &mut MinerData) {
+    data.fan_speed = Availability::Unavailable;
 }
 
-pub(crate) fn reset_network(data: &mut MinerData) {
+pub fn reset_network(data: &mut MinerData) {
     data.ip_address = Availability::Unavailable;
 }
 
-pub(crate) fn reset_constraints(data: &mut MinerData) {
+pub fn reset_constraints(data: &mut MinerData) {
     data.constraints = crate::model::Constraints::default();
 }
 
-pub(crate) fn reset_all(data: &mut MinerData) {
+pub fn reset_all(data: &mut MinerData) {
     reset_details(data);
     reset_stats(data);
     reset_hashboards(data);
@@ -173,15 +175,15 @@ pub(crate) fn reset_all(data: &mut MinerData) {
 }
 
 #[cfg(test)]
-pub(crate) mod tests_support {
+pub mod tests_support {
     use super::JsonLookup;
     use std::collections::BTreeMap;
 
     #[derive(Default)]
-    pub(crate) struct MapJson {
-        pub(crate) strings: BTreeMap<&'static str, &'static str>,
-        pub(crate) ints: BTreeMap<&'static str, i64>,
-        pub(crate) floats: BTreeMap<&'static str, f64>,
+    pub struct MapJson {
+        pub strings: BTreeMap<&'static str, &'static str>,
+        pub ints: BTreeMap<&'static str, i64>,
+        pub floats: BTreeMap<&'static str, f64>,
     }
 
     impl JsonLookup for MapJson {
@@ -203,7 +205,6 @@ pub(crate) mod tests_support {
 mod tests {
     use super::tests_support::MapJson;
     use super::*;
-    use units::units::Quantity;
 
     #[test]
     fn converts_hashrate_from_ghs_to_ths() {
@@ -216,7 +217,10 @@ mod tests {
         json.ints.insert("/bosminer_uptime_s", 187_020);
         let mut data = MinerData::default();
         parse_details(&json, &mut data);
-        assert_eq!(data.uptime_s, Availability::Available(Seconds(187_020)));
+        assert_eq!(
+            data.uptime,
+            Availability::Available(Duration::from_secs(187_020))
+        );
     }
 
     #[test]
@@ -227,8 +231,8 @@ mod tests {
         let mut data = MinerData::default();
         parse_stats(&json, &mut data);
         assert_eq!(
-            data.efficiency_j_th,
-            Availability::Available(JoulePerTeraHash(21.5))
+            data.efficiency,
+            Availability::Available(MiningEfficiency::from_joules_per_terahash(21.5))
         );
     }
 
@@ -237,13 +241,13 @@ mod tests {
         let json = MapJson::default();
         let mut data = MinerData::default();
         parse_stats(&json, &mut data);
-        assert_eq!(data.efficiency_j_th, Availability::Unavailable);
+        assert_eq!(data.efficiency, Availability::Unavailable);
     }
 
     #[test]
     fn parse_reports_whether_it_stored_any_field() {
-        // A shapeless 2xx (empty / wrong-shape JSON) stores nothing → false, so
-        // the caller retries instead of banking it as a fresh success.
+        // A shapeless 2xx (empty / wrong-shape JSON) stores nothing → false,
+        // so the caller retries instead of banking it as a fresh success.
         let empty = MapJson::default();
         let mut data = MinerData::default();
         assert!(!parse_details(&empty, &mut data));
@@ -297,35 +301,38 @@ mod tests {
     #[test]
     fn reset_clears_only_its_own_fields() {
         let mut data = MinerData {
-            hashrate_ths: Availability::Available(TeraHashPerSecond(4.0)),
-            power_w: Availability::Available(Watt(120.0)),
-            efficiency_j_th: Availability::Available(JoulePerTeraHash(21.5)),
-            mcr_percent: Availability::Available(Percent(90.0)),
-            fan_percent: Availability::Available(Percent(72.0)),
+            hashrate: Availability::Available(Hashrate::from_terahashes_per_second(4.0)),
+            power: Availability::Available(ElectricPower::from_watts(120.0)),
+            efficiency: Availability::Available(MiningEfficiency::from_joules_per_terahash(21.5)),
+            mcr: Availability::Available(Ratio::from_percent(90.0)),
+            fan_speed: Availability::Available(Ratio::from_percent(72.0)),
             ..MinerData::default()
         };
         reset_stats(&mut data);
-        assert_eq!(data.hashrate_ths, Availability::Unavailable);
-        assert_eq!(data.power_w, Availability::Unavailable);
-        assert_eq!(data.efficiency_j_th, Availability::Unavailable);
+        assert_eq!(data.hashrate, Availability::Unavailable);
+        assert_eq!(data.power, Availability::Unavailable);
+        assert_eq!(data.efficiency, Availability::Unavailable);
         // Fields owned by other endpoints are untouched.
-        assert_eq!(data.mcr_percent, Availability::Available(Percent(90.0)));
-        assert_eq!(data.fan_percent, Availability::Available(Percent(72.0)));
+        assert_eq!(data.mcr, Availability::Available(Ratio::from_percent(90.0)));
+        assert_eq!(
+            data.fan_speed,
+            Availability::Available(Ratio::from_percent(72.0))
+        );
     }
 
     #[test]
     fn reset_all_clears_stale_miner_values_after_auth_changes() {
         let mut data = MinerData {
-            hashrate_ths: Availability::Available(TeraHashPerSecond(4.0)),
+            hashrate: Availability::Available(Hashrate::from_terahashes_per_second(4.0)),
             temperature: Availability::Available(TemperatureRange {
-                board: DegreeCelsius(61.0),
-                chip: DegreeCelsius(74.0),
+                board: Temperature::from_celsius(61.0),
+                chip: Temperature::from_celsius(74.0),
             }),
-            power_w: Availability::Available(Watt(120.0)),
-            efficiency_j_th: Availability::Available(JoulePerTeraHash(21.5)),
-            mcr_percent: Availability::Available(Percent(90.0)),
-            fan_percent: Availability::Available(Percent(72.0)),
-            uptime_s: Availability::Available(Seconds(187_020)),
+            power: Availability::Available(ElectricPower::from_watts(120.0)),
+            efficiency: Availability::Available(MiningEfficiency::from_joules_per_terahash(21.5)),
+            mcr: Availability::Available(Ratio::from_percent(90.0)),
+            fan_speed: Availability::Available(Ratio::from_percent(72.0)),
+            uptime: Availability::Available(Duration::from_secs(187_020)),
             ip_address: Availability::Available("192.168.1.42".to_owned()),
             chip_type: Availability::Available("BM1370".into()),
             chip_count: Availability::Available(146),
@@ -405,39 +412,45 @@ mod tests {
         json.floats.insert("/fans/0/target_speed_ratio", 0.72);
         let mut data = MinerData::default();
         parse_cooling(&json, &mut data);
-        let Availability::Available(percent) = data.fan_percent else {
-            panic!("BUG: fan percent should be available");
+        let Availability::Available(fan_speed) = data.fan_speed else {
+            panic!("BUG: fan speed should be available");
         };
-        assert!((percent.raw() - 72.0).abs() < 1e-9);
+        // The endpoint quotes a ratio; `Ratio` stores one, so nothing is scaled
+        // on the way in and the reading still reads as a percent.
+        assert!((fan_speed.as_percent() - 72.0).abs() < 1e-9);
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum AuthState {
+pub enum AuthState {
     #[default]
     NoToken,
     LoggingIn,
     Authenticated(String),
-    // A login attempt completed and was rejected. Distinct from `LoggingIn` so the
-    // render path can surface the failure; the login poll keeps retrying underneath.
+    // A login attempt completed and was rejected.
+    // Distinct from `LoggingIn` so the render path can surface the failure;
+    // the login poll keeps retrying underneath.
     Failed,
 }
 
 impl AuthState {
-    pub(crate) fn token(&self) -> Option<&str> {
+    #[must_use]
+    pub fn token(&self) -> Option<&str> {
         match self {
             Self::Authenticated(token) => Some(token),
             Self::NoToken | Self::LoggingIn | Self::Failed => None,
         }
     }
 
-    pub(crate) fn auth_header(&self) -> Option<String> {
+    #[must_use]
+    pub fn auth_header(&self) -> Option<String> {
         self.token()
             .map(|token| bmc_wasm_sdk::fmt!("Authorization: {token}"))
     }
 }
 
-pub(crate) fn endpoint(base: &str, path: &str) -> String {
+#[must_use]
+pub fn endpoint(base: &str, path: &str) -> String {
     bmc_wasm_sdk::fmt!(
         "{}/{}",
         base.trim_end_matches('/'),

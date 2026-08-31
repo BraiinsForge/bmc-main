@@ -28,7 +28,6 @@ use crate::format;
 use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
 use prices::chart;
-use units::units::Quantity;
 
 pub(crate) mod round;
 
@@ -149,15 +148,11 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData) -> Node {
     vertical_lines(
         size,
         vec![
-            text_line(
-                "Current Hashrate",
-                format::fixed(miner.hashrate_ths, 2),
-                sizes,
-            ),
+            text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
             text_line("Temperature", format::temperature(miner.temperature), sizes),
-            text_line("Power Consumption", format::fixed(miner.power_w, 0), sizes),
-            text_line("MCR", format::fixed(miner.mcr_percent, 1), sizes),
-            text_line("Fan Speed", format::fixed(miner.fan_percent, 0), sizes),
+            text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
+            text_line("MCR", format::fixed(miner.mcr, 1), sizes),
+            text_line("Fan Speed", format::fixed(miner.fan_speed, 0), sizes),
             text_line(
                 "IP Address",
                 miner
@@ -177,14 +172,10 @@ pub(crate) fn geek(size: RenderSize, miner: &MinerData, public: &PublicData) -> 
     vertical_lines(
         size,
         vec![
-            text_line(
-                "Current Hashrate",
-                format::fixed(miner.hashrate_ths, 2),
-                sizes,
-            ),
+            text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
             text_line("Temperature", format::temperature(miner.temperature), sizes),
-            text_line("Power Consumption", format::fixed(miner.power_w, 0), sizes),
-            text_line("Miner Uptime", format::uptime(miner.uptime_s), sizes),
+            text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
+            text_line("Miner Uptime", format::uptime(miner.uptime), sizes),
             text_line(
                 "IP Address",
                 miner
@@ -231,75 +222,6 @@ fn text_block(name: &'static str, value: format::Rendered, metrics: layout::Bloc
     block(name, value, metrics, VALUE, FontWeight::REGULAR)
 }
 
-// A block with no fixed cell: the col shrinks to its content so the value stays
-// on one line (an unconstrained paragraph measures single-line). The title is
-// left-aligned with the value; the block as a whole is centered between row
-// spacers by the round faces, which group blocks rather than aligning a grid.
-fn centered_block(name: &'static str, value: format::Rendered, sizes: layout::TextSizes) -> Node {
-    col(
-        props!(),
-        [
-            text(
-                name,
-                style!(size: sizes.title, weight: FontWeight::SEMIBOLD, color: TITLE),
-            ),
-            value_with_unit(
-                value,
-                sizes.value,
-                TextAlign::Left,
-                VALUE,
-                FontWeight::REGULAR,
-            ),
-        ],
-    )
-}
-
-// Mirrors BOSer's `extra_info`: the primary value and its extra value share one
-// row separated by " | " (see boser-assets text_block.slint).
-fn text_block_with_extra(
-    name: &'static str,
-    value: format::Rendered,
-    extra_value: format::Rendered,
-    metrics: layout::BlockLayout,
-) -> Node {
-    let show_unit = unit_visible(&value.value);
-    let show_extra_unit = unit_visible(&extra_value.value);
-    let mut spans = vec![span(value.value, style!(color: VALUE))];
-    if let Some(unit) = value.unit
-        && show_unit
-    {
-        spans.push(span(bmc_wasm_sdk::fmt!("  {unit}"), style!(color: UNIT)));
-    }
-    spans.push(span(" | ", style!(color: UNIT)));
-    spans.push(span(" ", style!(color: VALUE)));
-    spans.push(span(extra_value.value, style!(color: VALUE)));
-    if let Some(extra_unit) = extra_value.unit
-        && show_extra_unit
-    {
-        spans.push(span(
-            bmc_wasm_sdk::fmt!("  {extra_unit}"),
-            style!(color: UNIT),
-        ));
-    }
-    col(
-        props!(width: metrics.block_width, height: metrics.block_height),
-        [
-            text(
-                name,
-                style!(size: metrics.text.title, weight: FontWeight::SEMIBOLD, color: TITLE),
-            ),
-            paragraph(
-                style!(
-                    size: metrics.text.value,
-                    weight: FontWeight::REGULAR,
-                    color: VALUE
-                ),
-                spans,
-            ),
-        ],
-    )
-}
-
 fn block_row(blocks: Vec<Node>, metrics: layout::BlockLayout) -> Node {
     with_horizontal_padding(
         row(props!(gap: metrics.horizontal_gap), blocks),
@@ -322,83 +244,6 @@ fn space_between_rows(rows: Vec<Node>, metrics: layout::BlockLayout) -> Node {
     }
     children.push(fixed_height(metrics.padding_bottom));
     col(props!(background: BACKGROUND), children)
-}
-
-pub(crate) fn network(size: RenderSize, public: &PublicData) -> Node {
-    let class = layout::classify(viewport(size));
-    let fields = layout::network_fields(class);
-    let metrics = layout::network_layout(class);
-
-    let mut rows = vec![block_row(
-        vec![
-            text_block(
-                "Network HR",
-                format::fixed(public.network_hashrate_ehs, 2),
-                metrics,
-            ),
-            text_block(
-                "Diff. Adjustment",
-                format::signed_percent(public.prev_diff_adjust_percent, 2),
-                metrics,
-            ),
-        ],
-        metrics,
-    )];
-    if fields.show_extra_difficulty {
-        rows.push(block_row(
-            vec![
-                text_block(
-                    "Est. Diff. Adjustment",
-                    format::signed_percent(public.est_diff_adjust_percent, 2),
-                    metrics,
-                ),
-                text_block(
-                    "Epoch Progress",
-                    format::fixed(public.epoch_progress_percent, 0),
-                    metrics,
-                ),
-            ],
-            metrics,
-        ));
-    }
-    let fee_block = if fields.show_fee_percent {
-        text_block_with_extra(
-            "Fees (144 Blocks)",
-            format::approx_fixed(public.avg_fee_btc, 3),
-            format::fixed(public.avg_fee_percent, 1),
-            metrics,
-        )
-    } else {
-        text_block(
-            "Fees (144 Blocks)",
-            format::approx_fixed(public.avg_fee_btc, 3),
-            metrics,
-        )
-    };
-    rows.push(block_row(
-        vec![
-            fee_block,
-            text_block(
-                "Block Height",
-                format::public_integer(public.block_height),
-                metrics,
-            ),
-        ],
-        metrics,
-    ));
-    rows.push(block_row(
-        vec![
-            text_block(
-                "Hashprice",
-                format::money(public.hashprice, 3).with_unit("TH/Day"),
-                metrics,
-            ),
-            text_block("BTC Price", format::money(public.btc_price, 0), metrics),
-        ],
-        metrics,
-    ));
-
-    space_between_rows(rows, metrics)
 }
 
 // The header sparkline. Returns an empty fixed-width column when the series has
@@ -433,15 +278,15 @@ fn info_overload_header(
     show_price_graph: bool,
     metrics: layout::BlockLayout,
 ) -> Node {
-    let change_color = match public.btc_change_24h_percent {
-        Availability::Available(value) if value.raw() >= 0.0 => GREEN_50,
+    let change_color = match public.btc_change_24h {
+        Availability::Available(value) if value.as_percent() >= 0.0 => GREEN_50,
         Availability::Available(_) => RED_60,
         Availability::Unavailable | Availability::Failed => TITLE,
     };
 
     let mut blocks = vec![block(
         "Bitcoin (24h)",
-        format::signed_percent_unit(public.btc_change_24h_percent, 2).into(),
+        format::signed_percent_unit(public.btc_change_24h, 2).into(),
         metrics,
         change_color,
         FontWeight::BOLD,
@@ -476,8 +321,8 @@ fn info_overload_primary_row(
 ) -> Node {
     block_row(
         vec![
-            text_block("Hashrate", format::fixed(miner.hashrate_ths, 2), metrics),
-            text_block("Power Consump.", format::fixed(miner.power_w, 0), metrics),
+            text_block("Hashrate", format::fixed(miner.hashrate, 2), metrics),
+            text_block("Power Consump.", format::fixed(miner.power, 0), metrics),
             text_block(
                 "Block Height",
                 format::public_integer(public.block_height),
@@ -493,17 +338,17 @@ fn info_overload_difficulty_row(public: &PublicData, metrics: layout::BlockLayou
         vec![
             text_block(
                 "Est. Diff. Adjust.",
-                format::signed_percent(public.est_diff_adjust_percent, 2),
+                format::signed_percent(public.est_diff_adjust, 2),
                 metrics,
             ),
             text_block(
                 "Prev. Diff. Adjust.",
-                format::signed_percent(public.prev_diff_adjust_percent, 2),
+                format::signed_percent(public.prev_diff_adjust, 2),
                 metrics,
             ),
             text_block(
                 "Epoch Progress",
-                format::fixed(public.epoch_progress_percent, 0),
+                format::fixed(public.epoch_progress, 0),
                 metrics,
             ),
         ],
@@ -520,15 +365,15 @@ fn info_overload_bottom_row(
     if fields.show_fee_percent && fields.show_hashvalue {
         return block_row(
             vec![
-                text_block("Miner Uptime", format::uptime(miner.uptime_s), metrics),
+                text_block("Miner Uptime", format::uptime(miner.uptime), metrics),
                 text_block(
                     "Fees (144 Blocks)",
-                    format::approx_fixed(public.avg_fee_percent, 1),
+                    format::approx_fixed(public.avg_fee_share, 1),
                     metrics,
                 ),
                 text_block(
                     "Hashvalue",
-                    format::fixed_strip_zero_fraction(public.hashvalue_sat_th_day, 2),
+                    format::fixed_strip_zero_fraction(public.hashvalue, 2),
                     metrics,
                 ),
             ],
@@ -537,7 +382,7 @@ fn info_overload_bottom_row(
     }
     block_row(
         vec![
-            text_block("Miner Uptime", format::uptime(miner.uptime_s), metrics),
+            text_block("Miner Uptime", format::uptime(miner.uptime), metrics),
             fixed_width(metrics.block_width),
             fixed_width(metrics.block_width),
         ],

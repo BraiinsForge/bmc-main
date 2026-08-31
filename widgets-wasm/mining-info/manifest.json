@@ -46,10 +46,6 @@
           "label": "Geek"
         },
         {
-          "value": "network",
-          "label": "Network"
-        },
-        {
           "value": "info_overload",
           "label": "Info Overload"
         }
@@ -67,22 +63,6 @@
       "description": "Password for root login. This is stored as normal widget text until secret params exist.",
       "type": "string",
       "default_value": "root"
-    },
-    "currency": {
-      "name": "Currency",
-      "description": "Currency used for Bitcoin price and hashprice values",
-      "type": "string",
-      "default_value": "usd",
-      "enum_values": [
-        {
-          "value": "usd",
-          "label": "USD"
-        },
-        {
-          "value": "eur",
-          "label": "EUR"
-        }
-      ]
     }
   }
 }

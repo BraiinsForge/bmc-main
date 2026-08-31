@@ -18,12 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-mod format;
-mod layout;
 mod manifest_params;
-mod miner_api;
-mod model;
-mod public_api;
+
+// Re-exported rather than plainly imported: the render and poll paths that read
+// them are `wasm32`-gated, so a native test build would see the import as unused.
+pub(crate) use miner_info::{api as miner_api, format, layout, model, public as public_api};
 #[cfg(target_arch = "wasm32")]
 mod render;
 #[cfg(target_arch = "wasm32")]
@@ -38,7 +37,7 @@ use std::time::Duration;
 )]
 use bmc_wasm_sdk::*;
 #[cfg(target_arch = "wasm32")]
-use manifest_params::{Currency as ParamCurrency, Params, View};
+use manifest_params::{Params, View};
 #[cfg(target_arch = "wasm32")]
 use miner_api::{AuthState, endpoint};
 #[cfg(target_arch = "wasm32")]
@@ -158,28 +157,28 @@ const PUBLIC_ENDPOINTS: [PublicEndpoint; 5] = [
         url: public_api::price_stats_url,
         parse: public_price,
         reset: public_api::reset_price_stats,
-        views: &[View::Geek, View::Network, View::InfoOverload],
+        views: &[View::Geek, View::InfoOverload],
         currency_dependent: true,
     },
     PublicEndpoint {
         url: public_api::block_url,
         parse: public_block,
         reset: public_api::reset_block,
-        views: &[View::Network, View::InfoOverload],
+        views: &[View::InfoOverload],
         currency_dependent: false,
     },
     PublicEndpoint {
         url: public_api::difficulty_url,
         parse: public_difficulty,
         reset: public_api::reset_difficulty_stats,
-        views: &[View::Network, View::InfoOverload],
+        views: &[View::InfoOverload],
         currency_dependent: false,
     },
     PublicEndpoint {
         url: public_api::hashrate_url,
         parse: public_hashrate,
         reset: public_api::reset_hashrate_stats,
-        views: &[View::Network, View::InfoOverload],
+        views: &[View::InfoOverload],
         currency_dependent: true,
     },
     PublicEndpoint {
@@ -338,11 +337,8 @@ fn view_needs_miner(view: View) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn selected_currency() -> Currency {
-    match Params::current().currency {
-        ParamCurrency::Usd => Currency::Usd,
-        ParamCurrency::Eur => Currency::Eur,
-    }
+const fn selected_currency() -> Currency {
+    model::CURRENCY
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -652,12 +648,10 @@ pub extern "C" fn render(_delta_ms: u32) {
             View::Mining => render::round::mining(size, &miner, first_frame),
             View::Geek => render::round::geek(size, &miner, &public, first_frame),
             View::InfoOverload => render::round::info_overload(&miner, &public),
-            View::Network => render::round::network(&public),
         },
         ViewportShape::Rectangular => match params.view {
             View::Mining => render::mining(size, &miner),
             View::Geek => render::geek(size, &miner, &public),
-            View::Network => render::network(size, &public),
             View::InfoOverload => render::info_overload(size, &miner, &public),
         },
     };
@@ -747,12 +741,6 @@ mod tests {
         assert!(!endpoint_enabled(
             views,
             true,
-            View::Network,
-            ViewportShape::Round
-        ));
-        assert!(!endpoint_enabled(
-            views,
-            true,
             View::InfoOverload,
             ViewportShape::Round
         ));
@@ -783,7 +771,7 @@ mod tests {
         assert!(!endpoint_enabled(
             views,
             false,
-            View::Network,
+            View::InfoOverload,
             ViewportShape::Rectangular
         ));
     }

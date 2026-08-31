@@ -41,7 +41,7 @@ names types after **units**, not **dimensions**:
 
 ## Status / migration
 
-`Length` + `Speed` are the slice the ISS widget needed. `lib/units` still backs `weather` and `mining-info`; those
-migrate onto the SDK types as a separate step, after which the `units` crate and its unit-named types retire. Until then
-the SDK module is kept private (types re-exported) so the `units` *name* doesn't collide with the `lib/units` crate in
-widgets that use both.
+`Length` + `Speed` are the slice the ISS widget needed. `lib/units` still backs `weather`, `braiins-pool`,
+`bitcoin-mining-data` and `fleet-management`; those migrate onto the SDK types as a separate step, after which the
+`units` crate and its unit-named types retire. Until then the SDK module is kept private (types re-exported) so the
+`units` *name* doesn't collide with the `lib/units` crate in widgets that use both.

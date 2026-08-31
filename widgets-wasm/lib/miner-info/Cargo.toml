@@ -1,0 +1,14 @@
+[package]
+name = "miner-info"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
+mining = { path = "../mining" }
+units = { path = "../units" }
+
+[lints]
+workspace = true

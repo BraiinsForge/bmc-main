@@ -44,6 +44,7 @@ fn every_default_widget_matches_its_manifest() {
         "clock",
         "ticker-single",
         "blockheight",
+        "bitcoin-mining-data",
         "mining-info",
         "mining-clock",
     ]

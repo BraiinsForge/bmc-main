@@ -27,7 +27,8 @@ use uuid::Uuid;
 
 use super::params_map;
 use super::widget_uuids::{
-    BLOCK_HEIGHT_UID, CLOCK_UID, MINING_CLOCK_UID, MINING_INFO_UID, TICKER_SINGLE_UID,
+    BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, CLOCK_UID, MINING_CLOCK_UID, MINING_INFO_UID,
+    TICKER_SINGLE_UID,
 };
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
@@ -78,7 +79,6 @@ fn mining_info_params(view: &str) -> BTreeMap<ParamKey, ParamValue> {
             ParamValue::String("http://localhost/api/v1".into()),
         ),
         ("miner_password", ParamValue::String("root".into())),
-        ("currency", ParamValue::String("usd".into())),
     ])
 }
 
@@ -203,16 +203,19 @@ fn bmm_scenes() -> IndexMap<SceneId, Scene> {
     let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
     let mining = fullscreen(MINING_INFO_UID, rect, mining_info_params("mining"));
     let geek = fullscreen(MINING_INFO_UID, rect, mining_info_params("geek"));
-    let network = fullscreen(MINING_INFO_UID, rect, mining_info_params("network"));
     let overload = fullscreen(MINING_INFO_UID, rect, mining_info_params("info_overload"));
+    // Takes the slot the Miner Info network view vacated: Bitcoin-network data
+    // still ships out of the box, from the widget that owns it. It declares no
+    // params.
+    let bitcoin = fullscreen(BITCOIN_MINING_DATA_UID, rect, BTreeMap::new());
 
     indexmap! {
         clock.id => clock,
         ticker.id => ticker,
         mining.id => mining,
         geek.id => geek,
-        network.id => network,
         overload.id => overload,
+        bitcoin.id => bitcoin,
     }
 }
 

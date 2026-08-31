@@ -30,15 +30,14 @@
 use bmc_wasm_sdk::*;
 
 use super::{
-    BACKGROUND, RenderSize, VALUE, centered_block, fixed_height, fixed_width, info_overload_header,
-    text_block, unit_visible,
+    BACKGROUND, RenderSize, VALUE, fixed_height, fixed_width, info_overload_header, text_block,
+    unit_visible,
 };
 use crate::format;
 use crate::layout;
 use crate::model::{Availability, MinerData, PublicData};
 use mining::gauge::{self, Gauge, GaugeState};
 use mining::style::{AMBER_LABEL, GREEN_LABEL, INACTIVE_TICK, OFF_LABEL, PURPLE, ring_fill};
-use units::units::{Quantity, TeraHashPerSecond};
 
 const NATIVE: f32 = 480.0;
 
@@ -237,16 +236,15 @@ fn draw_gauge(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32, g: &Gauge) {
         ArcCap::Butt,
     ));
     let lit_count = g.lit_count.min(spans.len());
-    // The lit overlay carries the full tick ring; its sweep (0..lit boundary)
-    // clips it down to the lit prefix in the renderer. Emitting every tick lets
-    // the host's sweep transition reveal or hide ticks in place, and keeps the
-    // draw anchored across the load: hashrate and MCR arrive on separate
-    // endpoints, so the gauge passes through a no-fill window (hashing, scale
-    // unknown) where the sweep is 0 — the overlay clips to nothing there rather
-    // than vanishing, so the real fill animates in instead of popping.
+    // The lit overlay carries the full tick ring; its sweep (0..lit boundary) clips it down
+    // to the lit prefix in the renderer. Emitting every tick lets the host's sweep transition
+    // reveal or hide ticks in place, and keeps the draw anchored across the load: hashrate
+    // and MCR arrive on separate endpoints, so the gauge passes through a no-fill window
+    // (hashing, scale unknown) where the sweep is 0 — the overlay clips to nothing there
+    // rather than vanishing, so the real fill animates in instead of popping.
     //
-    // The no-scale state has no lit ticks, so its fill is never visible; the
-    // neutral ring color is a placeholder to keep the draw.
+    // The no-scale state has no lit ticks, so its fill is never visible;
+    // the neutral ring color is a placeholder to keep the draw.
     let fill = ring_fill(g.state).unwrap_or(ArcFill::Solid(INACTIVE_TICK));
     draws.push(
         Draw::arc(
@@ -279,18 +277,19 @@ fn draw_dividers(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32) {
     }
 }
 
-// The center hashrate: the value (e.g. "1.00") sits on the frame center (cx, cy)
-// with "TH/s" trailing to its right, and the status label below. The value alone
-// is horizontally centered — not the value+unit group — by reserving a fixed unit
-// slot on the right and mirroring it with an empty slot of equal width on the
-// left, the symmetric-row trick the digital clock uses for the time + AM/PM
-// (clock digital.rs `time_row`). Vertically the value+label group is centered as
-// a unit, leaving the value a little above dead-center, matching the design.
+// The center hashrate: the value (e.g. "1.00") sits on the frame center
+// (cx, cy) with "TH/s" trailing to its right, and the status label below.
+// The value alone is horizontally centered — not the value+unit group
+// — by reserving a fixed unit slot on the right and mirroring it with
+// an empty slot of equal width on the left, the symmetric-row trick
+// the digital clock uses for the time + AM/PM (clock digital.rs `time_row`).
+// Vertically the value+label group is centered as a unit,
+// leaving the value a little above dead-center, matching the design.
 fn center_node(
     cx: f32,
     cy: f32,
     scale: f32,
-    hashrate: Availability<TeraHashPerSecond>,
+    hashrate: Availability<Hashrate>,
     state: GaugeState,
 ) -> Node {
     let cell_w = CENTER_CELL_W * scale;
@@ -305,7 +304,7 @@ fn center_node(
     let unit_slot = col(
         props!(width: CENTER_UNIT_SLOT_W, cross_align: CrossAlign::Start),
         [text(
-            TeraHashPerSecond::UNIT,
+            Hashrate::UNIT,
             style!(size: HASHRATE_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE, line_height: 1.0),
         )],
     );
@@ -336,14 +335,15 @@ fn center_node(
     )
 }
 
-// The "1 min" caption under the center "Hashrate" label, marking the readout as
-// the 1-minute hashrate average. Placed as an absolute sibling rather than a
-// third row in `center_node` so the value and
-// "Hashrate" group keeps its exact centered position. The value+label group is
-// centered on `cy`, so its bottom edge sits half the group height below center;
-// the caption sits at that edge, snug under the label (the label and caption
-// line-height padding supply the visible gap), derived from the same constants
-// the group uses so the two stay aligned across scales.
+// The "1 min" caption under the center "Hashrate" label, marking the readout
+// as the 1-minute hashrate average. Placed as an absolute sibling rather than
+// a third row in `center_node` so the value and "Hashrate" group keeps
+// its exact centered position.
+//
+// The value+label group is centered on `cy`, so its bottom edge sits half
+// the group height below center; the caption sits at that edge, snug under
+// the label (the label and caption line-height padding supply the visible gap),
+// derived from the same constants the group uses so the two stay aligned across scales.
 fn center_caption(cx: f32, cy: f32, scale: f32) -> Node {
     let cell_w = CENTER_CELL_W * scale;
     let group_half =
@@ -398,10 +398,9 @@ fn chip_header(cx: f32, cy: f32, scale: f32, model: &str, count: usize) -> Node 
     );
     let cell_w = CHIP_CELL_W * scale;
     let (center_x, center_y) = native_to_px(cx, cy, scale, (NATIVE / 2.0, CHIP_HEADER_NATIVE_Y));
-    // The flex row is as tall as its tallest child. The text line box
-    // (CHIP_TEXT_SIZE * CHIP_LINE_HEIGHT) is taller than the icon, so it sets the
-    // row height; centering the cell on that — not on the icon — lands the header
-    // on CHIP_HEADER_NATIVE_Y without disturbing the icon/text alignment.
+    // The flex row is as tall as its tallest child. The text line box (CHIP_TEXT_SIZE * CHIP_LINE_HEIGHT)
+    // is taller than the icon, so it sets the row height; centering the cell on that — not on the icon
+    // — lands the header on CHIP_HEADER_NATIVE_Y without disturbing the icon/text alignment.
     let row_height = (px(CHIP_TEXT_SIZE) * CHIP_LINE_HEIGHT).max(CHIP_ICON_SIZE);
     col(
         props!(
@@ -414,19 +413,21 @@ fn chip_header(cx: f32, cy: f32, scale: f32, model: &str, count: usize) -> Node 
     )
 }
 
-// One quadrant cluster, laid out as a Node so the value+unit row and label
-// center as a group (cross_align) inside a fixed cell. The cell is positioned
-// absolutely with its top-left corner derived from the quadrant center and the
-// known cell size, so the group lands centered on the point without measuring
-// any text. Overlaid on the gauge canvas as an absolute child of the root.
+// One quadrant cluster, laid out as a Node so the value+unit
+// row and label center as a group (cross_align) inside a fixed cell.
+//
+// The cell is positioned absolutely with its top-left corner derived from
+// the quadrant center and the known cell size, so the group lands centered
+// on the point without measuring any text. Overlaid on the gauge canvas
+// as an absolute child of the root.
 fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
     let cell_w = CLUSTER_CELL_W * scale;
     let cell_h = CLUSTER_CELL_H * scale;
     let inset_left = center_px.0 - cell_w / 2.0;
     let inset_top = center_px.1 - cell_h / 2.0;
 
-    // Prefix (currency symbol) and unit render at the smaller unit size and only
-    // when the value is real, so a "N/A"/"--" placeholder stays unadorned.
+    // Prefix (currency symbol) and unit render at the smaller unit size
+    // and only when the value is real, so a "N/A"/"--" placeholder stays unadorned.
     let show_affixes = unit_visible(&spec.value.value);
     let mut parts: Vec<Node> = Vec::with_capacity(3);
     if let Some(prefix) = spec.prefix.filter(|_| show_affixes) {
@@ -481,7 +482,7 @@ fn native_to_px(cx: f32, cy: f32, scale: f32, native: (f32, f32)) -> (f32, f32) 
 fn gauge_screen(
     size: RenderSize,
     g: &Gauge,
-    hashrate: Availability<TeraHashPerSecond>,
+    hashrate: Availability<Hashrate>,
     chip: Option<(&str, usize)>,
     clusters: &[ClusterSpec; 4],
 ) -> Node {
@@ -517,12 +518,15 @@ fn gauge_screen(
     col(props!(background: BACKGROUND), children)
 }
 
-// The gauge for the round Mining/Geek faces. On the seed frame the lit count is
-// pinned to a single tick so the host transition has an empty-ish baseline to
-// animate the real fill in from, regardless of whether data is already loaded.
+// The gauge for the round Mining/Geek faces. On the seed frame the lit count
+// is pinned to a single tick so the host transition has an empty-ish baseline
+// to animate the real fill in from, regardless of whether data is already loaded.
 fn seeded_gauge(miner: &MinerData, seed_gauge: bool) -> Gauge {
     let mut g = gauge::gauge(
-        miner.hashrate_ths.as_option().map(|h| h.raw()),
+        miner
+            .hashrate
+            .as_option()
+            .map(|h| h.as_terahashes_per_second()),
         miner.constraints.hashrate.as_ref(),
     );
     if seed_gauge {
@@ -543,18 +547,18 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> N
     gauge_screen(
         size,
         &g,
-        miner.hashrate_ths,
+        miner.hashrate,
         chip_header_data(miner),
         &[
             ClusterSpec {
                 label: "Power Cons.",
                 prefix: None,
-                value: format::fixed(miner.power_w, 0),
+                value: format::fixed(miner.power, 0),
             },
             ClusterSpec {
                 label: "MCR",
                 prefix: None,
-                value: format::fixed(miner.mcr_percent, 1),
+                value: format::fixed(miner.mcr, 1),
             },
             ClusterSpec {
                 label: "Temperature",
@@ -564,7 +568,7 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> N
             ClusterSpec {
                 label: "Fan Speed",
                 prefix: None,
-                value: format::fixed(miner.fan_percent, 0),
+                value: format::fixed(miner.fan_speed, 0),
             },
         ],
     )
@@ -580,18 +584,18 @@ pub(crate) fn geek(
     gauge_screen(
         size,
         &g,
-        miner.hashrate_ths,
+        miner.hashrate,
         chip_header_data(miner),
         &[
             ClusterSpec {
                 label: "Power Cons.",
                 prefix: None,
-                value: format::fixed(miner.power_w, 0),
+                value: format::fixed(miner.power, 0),
             },
             ClusterSpec {
                 label: "Efficiency",
                 prefix: None,
-                value: format::fixed(miner.efficiency_j_th, 1),
+                value: format::fixed(miner.efficiency, 1),
             },
             ClusterSpec {
                 label: "Temperature",
@@ -607,10 +611,10 @@ pub(crate) fn geek(
     )
 }
 
-// A horizontally centered row of blocks for the narrow top/bottom edge bands,
-// where the circle's chord only fits one or two blocks. The block group is
-// centered between spacers rather than left-aligned-with-padding like the wide
-// middle bands.
+// A horizontally centered row of blocks for the narrow top/bottom
+// edge bands, where the circle's chord only fits one or two blocks.
+// The block group is centered between spacers rather than
+// left-aligned-with-padding like the wide middle bands.
 fn centered_block_row(blocks: Vec<Node>, metrics: layout::BlockLayout) -> Node {
     row(
         props!(cross_align: CrossAlign::Center),
@@ -622,29 +626,9 @@ fn centered_block_row(blocks: Vec<Node>, metrics: layout::BlockLayout) -> Node {
     )
 }
 
-// A two-stat band: each block left-aligns inside its column, and the pair of
-// columns is centered as a single group. The per-column widths line the two
-// columns up from row to row, while the block inside stays content-sized, so
-// its value never wraps.
-fn two_column_row(left: Node, right: Node, metrics: layout::BlockLayout) -> Node {
-    centered_block_row(
-        vec![
-            col(
-                props!(width: NETWORK_COL_LEFT_WIDTH, cross_align: CrossAlign::Start),
-                [left],
-            ),
-            col(
-                props!(width: NETWORK_COL_RIGHT_WIDTH, cross_align: CrossAlign::Start),
-                [right],
-            ),
-        ],
-        metrics,
-    )
-}
-
-// A three-column band that keeps the middle column centered on the frame and the
-// right column at its centered position, while nudging only the left column right
-// by `shift` (which narrows the left-to-middle gap by the same amount).
+// A three-column band that keeps the middle column centered on the frame
+// and the right column at its centered position, while nudging only the left column
+// right by `shift`(which narrows the left-to-middle gap by the same amount).
 fn left_shifted_block_row(
     left: Node,
     middle: Node,
@@ -673,12 +657,12 @@ pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
         vec![
             text_block(
                 "Est. Diff. Adjust.",
-                format::signed_percent(public.est_diff_adjust_percent, 2),
+                format::signed_percent(public.est_diff_adjust, 2),
                 metrics,
             ),
             text_block(
                 "Prev. Diff. Adjust.",
-                format::signed_percent(public.prev_diff_adjust_percent, 2),
+                format::signed_percent(public.prev_diff_adjust, 2),
                 metrics,
             ),
         ],
@@ -688,15 +672,15 @@ pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     let bottom_edge = centered_block_row(
         vec![text_block(
             "Hashvalue",
-            format::fixed_strip_zero_fraction(public.hashvalue_sat_th_day, 2),
+            format::fixed_strip_zero_fraction(public.hashvalue, 2),
             metrics,
         )],
         metrics,
     );
 
     let upper = left_shifted_block_row(
-        text_block("Hashrate", format::fixed(miner.hashrate_ths, 2), metrics),
-        text_block("Power Consump.", format::fixed(miner.power_w, 0), metrics),
+        text_block("Hashrate", format::fixed(miner.hashrate, 2), metrics),
+        text_block("Power Consump.", format::fixed(miner.power, 0), metrics),
         text_block(
             "Block Height",
             format::public_integer(public.block_height),
@@ -707,15 +691,15 @@ pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     );
 
     let lower = left_shifted_block_row(
-        text_block("Miner Uptime", format::uptime(miner.uptime_s), metrics),
+        text_block("Miner Uptime", format::uptime(miner.uptime), metrics),
         text_block(
             "Fees (144 Blocks)",
-            format::approx_fixed(public.avg_fee_percent, 1),
+            format::approx_fixed(public.avg_fee_share, 1),
             metrics,
         ),
         text_block(
             "Epoch Prog.",
-            format::fixed(public.epoch_progress_percent, 0),
+            format::fixed(public.epoch_progress, 0),
             metrics,
         ),
         metrics,
@@ -736,109 +720,6 @@ pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
             fixed_height(BAND_GAP),
             bottom_edge,
             spacer(1.0),
-        ],
-    )
-}
-
-// Fixed spacing between the Network rows. Kept moderate so the rows cluster
-// around the center rather than spreading across the full height.
-const NETWORK_ROW_GAP: f32 = 32.0;
-
-// The single top/bottom rows sit closer to the central cluster than the
-// pair-to-pair spacing, so they don't read as isolated stragglers at the
-// narrow ends of the circular face.
-const NETWORK_EDGE_GAP: f32 = 18.0;
-
-// Per-column widths for the two-stat rows, sized to each column's own widest
-// content rather than a shared width: the right column's widest item is the
-// "Est. Diff. Adjust." label. Tuning them separately lets the centered pair hug
-// its text instead of carrying dead space that drags the group off-center. The
-// wide "$ 0.000  TH/Day" hashprice sits in the single bottom row, which is
-// content-sized and never wraps, so it does not drive these column widths.
-const NETWORK_COL_LEFT_WIDTH: f32 = 176.0;
-const NETWORK_COL_RIGHT_WIDTH: f32 = 140.0;
-
-// The round Network face stacks the eight public stats in centered rows that
-// track the circle's chord: one block at the narrow top, then pairs, then a
-// single block at the narrow bottom (1-2-2-2-1). The middle pair is pinned to
-// the exact vertical center by flanking it with two equal-flex regions — the
-// upper region bottom-aligns its rows toward the middle, the lower region
-// top-aligns its rows — so its center lands at the viewport center regardless of
-// the surrounding row counts.
-pub(crate) fn network(public: &PublicData) -> Node {
-    let metrics = layout::network_round_layout();
-    let fee_value = format::approx_fixed(public.avg_fee_percent, 1);
-
-    let top = centered_block_row(
-        vec![centered_block(
-            "Network HR",
-            format::fixed(public.network_hashrate_ehs, 2),
-            metrics.text,
-        )],
-        metrics,
-    );
-
-    let upper = two_column_row(
-        centered_block(
-            "Diff. Adjust.",
-            format::signed_percent(public.prev_diff_adjust_percent, 2),
-            metrics.text,
-        ),
-        centered_block(
-            "Est. Diff. Adjust.",
-            format::signed_percent(public.est_diff_adjust_percent, 2),
-            metrics.text,
-        ),
-        metrics,
-    );
-
-    let middle = two_column_row(
-        centered_block(
-            "Block Height",
-            format::public_integer(public.block_height),
-            metrics.text,
-        ),
-        centered_block(
-            "Epoch Prog.",
-            format::fixed(public.epoch_progress_percent, 0),
-            metrics.text,
-        ),
-        metrics,
-    );
-
-    let lower = two_column_row(
-        centered_block("Fees (144 Blocks)", fee_value, metrics.text),
-        centered_block(
-            "BTC Price",
-            format::money(public.btc_price, 0),
-            metrics.text,
-        ),
-        metrics,
-    );
-
-    let bottom = centered_block_row(
-        vec![centered_block(
-            "Hashprice",
-            format::money(public.hashprice, 3).with_unit("TH/Day"),
-            metrics.text,
-        )],
-        metrics,
-    );
-
-    col(
-        props!(background: BACKGROUND),
-        [
-            col(
-                props!(flex: 1.0),
-                [spacer(1.0), top, fixed_height(NETWORK_EDGE_GAP), upper],
-            ),
-            fixed_height(NETWORK_ROW_GAP),
-            middle,
-            fixed_height(NETWORK_ROW_GAP),
-            col(
-                props!(flex: 1.0),
-                [lower, fixed_height(NETWORK_EDGE_GAP), bottom, spacer(1.0)],
-            ),
         ],
     )
 }
