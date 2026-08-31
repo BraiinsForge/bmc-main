@@ -312,12 +312,18 @@ Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
   - Include tests for new functionality
   - Follow project formatting/linting
 
-- **Before committing**:
+- **Before committing**, run these in order — each step rewrites what the next one judges, so the order is not
+  negotiable:
 
-  - Run `just validate` (formats, runs clippy and tests)
-  - Self-review changes
-  - Invoke the `comment-discipline` skill and run its comment pass over the diff
-  - Ensure commit message explains "why"
+  1. Adversarially self-review the diff
+  2. Invoke the `comment-discipline` skill and run its comment pass over the result
+  3. Run `just validate` (formats, runs clippy and tests) bare
+  4. Ensure the commit message explains "why"
+
+  The review comes first because it changes code, and whatever it changes has never been through a comment pass.
+  Validation comes last because it can only judge the final bytes. Announcing the review and then jumping to validation
+  does not count as having run it. Later edits — a lint fix, a reviewer's note — restart the sequence rather than
+  resuming it.
 
 ### Error Handling
 
