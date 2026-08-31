@@ -34,14 +34,21 @@ const MAX_FETCH_BODY_BYTES: u64 = 10 * 1024 * 1024;
 /// A few hundred bytes is normal; the cap bounds a hostile origin.
 const MAX_FETCH_HEADER_BYTES: usize = 8 * 1_024;
 
-pub(crate) fn build_fetch_agent() -> Agent {
-    // A 4xx or 5xx is an answer, not a transport failure.
-    // ureq would hand it back as an error carrying only the status,
-    // dropping the headers and body the origin sent with it.
-    Agent::config_builder()
-        .http_status_as_error(false)
-        .build()
-        .into()
+/// Cloneable HTTP agent whose clones share one connection pool.
+///
+/// [`Default`] creates an isolated pool.
+#[derive(Clone, Debug)]
+pub struct FetchAgent(Agent);
+
+impl Default for FetchAgent {
+    fn default() -> Self {
+        Self(
+            Agent::config_builder()
+                .http_status_as_error(false)
+                .build()
+                .into(),
+        )
+    }
 }
 
 /// Whether a request may follow redirects.
@@ -108,7 +115,7 @@ fn kept_headers(headers: &ureq::http::HeaderMap) -> Vec<(String, String)> {
 /// send, recv). ureq 3.x defaults to no timeout, so without this a stalled peer
 /// would hang the background fetch thread for OS-level TCP timeouts (minutes).
 pub(in crate::runtime) fn do_fetch(
-    agent: &Agent,
+    agent: &FetchAgent,
     method: &str,
     url: &str,
     headers: &[(String, String)],
@@ -116,6 +123,7 @@ pub(in crate::runtime) fn do_fetch(
     timeout: Duration,
     redirects: Redirects,
 ) -> FetchedReply {
+    let agent = &agent.0;
     // Zero returns the 3xx unfollowed rather than erroring,
     // so refusing costs a redirect the guest cannot use, not the request.
     let max_redirects = match redirects {
@@ -194,15 +202,79 @@ pub(in crate::runtime) fn do_fetch(
 mod tests {
     use std::fmt::Write as _;
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     use bmc_wasm_protocol::FetchOutcome;
 
     use super::{
-        FetchedReply, MAX_FETCH_BODY_BYTES, MAX_FETCH_HEADER_BYTES, Redirects, build_fetch_agent,
-        do_fetch,
+        FetchAgent, FetchedReply, MAX_FETCH_BODY_BYTES, MAX_FETCH_HEADER_BYTES, Redirects, do_fetch,
     };
+    use crate::host_api::HostState;
+    use crate::runtime_limits::RuntimeResourceLimits;
+
+    fn serve_empty_response(socket: &mut TcpStream) {
+        let mut request = Vec::new();
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let mut chunk = [0_u8; 1_024];
+            let read = socket.read(&mut chunk).expect("BUG: read test request");
+            assert_ne!(read, 0, "client closed before finishing request headers");
+            request.extend_from_slice(&chunk[..read]);
+        }
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .expect("BUG: write test response");
+    }
+
+    #[test]
+    fn host_state_reuses_injected_connection_pool() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        let (served_tx, served_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("BUG: accept test client");
+            for _ in 0..2 {
+                serve_empty_response(&mut socket);
+            }
+            served_tx.send(()).expect("BUG: report served requests");
+        });
+
+        let agent = FetchAgent::default();
+        let state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+            agent.clone(),
+        );
+        let url = format!("http://{addr}/");
+        for (agent, failure) in [
+            (&agent, "the initial request must succeed"),
+            (
+                &state.fetch_agent,
+                "the host state must reuse the injected connection pool",
+            ),
+        ] {
+            let reply = do_fetch(
+                agent,
+                "GET",
+                &url,
+                &[],
+                None,
+                Duration::from_secs(5),
+                Redirects::Follow,
+            );
+            assert_eq!(
+                FetchOutcome::from_wire(reply.status),
+                Some(FetchOutcome::Http(200)),
+                "{failure}"
+            );
+            assert!(reply.body.is_empty());
+        }
+        served_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("both requests must use the first connection");
+        server.join().expect("server thread must finish cleanly");
+    }
 
     #[test]
     fn per_call_timeout_trips_on_a_stalled_server() {
@@ -216,7 +288,7 @@ mod tests {
             }
         });
 
-        let agent = build_fetch_agent();
+        let agent = FetchAgent::default();
         let url = format!("http://{addr}/");
         let start = Instant::now();
         let reply = do_fetch(
@@ -264,7 +336,7 @@ mod tests {
             }
         });
 
-        let agent = build_fetch_agent();
+        let agent = FetchAgent::default();
         let url = format!("http://{addr}/");
         let reply = do_fetch(
             &agent,
@@ -302,7 +374,7 @@ mod tests {
             }
         });
 
-        let agent = build_fetch_agent();
+        let agent = FetchAgent::default();
         let url = format!("http://{addr}/");
         let reply = do_fetch(
             &agent,
@@ -352,7 +424,7 @@ mod tests {
             }
         });
 
-        let agent = build_fetch_agent();
+        let agent = FetchAgent::default();
         let url = format!("http://{addr}/");
         let reply = do_fetch(
             &agent,
@@ -397,7 +469,7 @@ mod tests {
             }
         });
 
-        let agent = build_fetch_agent();
+        let agent = FetchAgent::default();
         let url = format!("http://{addr}/");
         let reply = do_fetch(
             &agent,

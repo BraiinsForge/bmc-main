@@ -590,6 +590,7 @@ mod tests {
             crate::runtime_limits::RuntimeResourceLimits::default(),
             chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
                 .expect("BUG: fixed test timestamp must parse"),
+            crate::runtime::FetchAgent::default(),
         );
         state.credentials.replace(CredentialView::new(view));
         state.credential_secrets = pool_secrets();
@@ -848,6 +849,7 @@ mod tests {
             crate::runtime_limits::RuntimeResourceLimits::default(),
             chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
                 .expect("BUG: fixed test timestamp must parse"),
+            crate::runtime::FetchAgent::default(),
         );
         state.credentials.replace(CredentialView::new(view));
         state.credential_secrets = bmc_widget_protocol::CredentialSecrets::new(slots);

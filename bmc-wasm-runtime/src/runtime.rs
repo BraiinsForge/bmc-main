@@ -28,7 +28,7 @@ mod imports;
 mod memory;
 mod time;
 
-pub(crate) use background::build_fetch_agent;
+pub use background::FetchAgent;
 pub(crate) use fetch_logging::{FetchLogDecision, FetchLogLimiter};
 
 // Re-export the `ParamsSnapshot` newtype so `HostState` (in `host_api`)

@@ -1039,6 +1039,7 @@ mod tests {
 
     use super::{delivering_header, media_type_piece};
     use crate::host_api::HostState;
+    use crate::runtime::FetchAgent;
     use crate::runtime_limits::RuntimeResourceLimits;
 
     fn part(raw: &str, part: MediaTypePart) -> Option<String> {
@@ -1142,6 +1143,7 @@ mod tests {
         let mut state = HostState::new(
             RuntimeResourceLimits::default(),
             chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
         );
         let id = bmc_wasm_protocol::FetchRequestId::from_wire(1).expect("BUG: 1 is a valid id");
         state.delivering_fetch_headers = Some((
@@ -1164,6 +1166,7 @@ mod tests {
         let mut state = HostState::new(
             RuntimeResourceLimits::default(),
             chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
         );
         let delivering =
             bmc_wasm_protocol::FetchRequestId::from_wire(1).expect("BUG: 1 is a valid id");

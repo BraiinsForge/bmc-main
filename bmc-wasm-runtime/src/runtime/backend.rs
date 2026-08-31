@@ -47,7 +47,7 @@ use crate::renderer_assets::{
 };
 use crate::system::SystemSnapshot;
 
-use super::{CredentialView, ParamsSnapshot};
+use super::{CredentialView, FetchAgent, ParamsSnapshot};
 
 /// Logical display geometry handed to [`WasmWidgetRuntime::new`].
 ///
@@ -248,6 +248,10 @@ pub struct RuntimeConfig {
     pub hermetic: bool,
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<FetchObserver>,
+    /// HTTP agent cloned into this runtime's fetch threads.
+    ///
+    /// The default creates an isolated pool.
+    pub fetch_agent: FetchAgent,
     /// Enable recording of network events (SSDP, mDNS, WebSocket, etc.).
     /// Recorded events are drained via [`WasmWidgetRuntime::take_recorded_events`].
     pub record_events: bool,
@@ -320,6 +324,7 @@ impl Default for RuntimeConfig {
             url_rewrites: Vec::new(),
             hermetic: false,
             fetch_observer: None,
+            fetch_agent: FetchAgent::default(),
             record_events: false,
             event_fixtures: Vec::new(),
             resource_limits: RuntimeResourceLimits::default(),
@@ -958,6 +963,7 @@ impl WasmWidgetRuntime {
             url_rewrites,
             hermetic,
             fetch_observer,
+            fetch_agent,
             record_events,
             event_fixtures,
             resource_limits,
@@ -976,7 +982,7 @@ impl WasmWidgetRuntime {
 
         let engine = module.module.engine();
 
-        let host_state = HostState::new(resource_limits, initial_system_time);
+        let host_state = HostState::new(resource_limits, initial_system_time, fetch_agent);
 
         let mut store = wasmi::Store::new(engine, host_state);
         store.set_fuel(fuel_per_frame)?;

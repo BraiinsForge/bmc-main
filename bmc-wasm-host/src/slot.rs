@@ -396,6 +396,7 @@ impl WidgetSlot {
                     },
                 ),
                 system: pending_system.clone(),
+                fetch_agent: shared.fetch_agent.clone(),
                 credentials: credentials.clone(),
                 credential_secrets: credential_secrets.clone(),
                 led_request_sender: Some(led_tx),

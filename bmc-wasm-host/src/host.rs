@@ -23,6 +23,7 @@ use bmc_gpu_render_lock::{
     detect_gpu_completion_wait_strategy,
 };
 use bmc_render::gpu::FemtoVgRenderer;
+use bmc_wasm_runtime::FetchAgent;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 use glow::HasContext;
 
@@ -44,6 +45,8 @@ pub struct SharedHost {
     pub scratch: SharedRenderScratch,
     pub font_cache: FontCache,
     pub(crate) module_cache: ModuleCache,
+    /// Process-wide HTTP connection pool for widget fetches.
+    pub(crate) fetch_agent: FetchAgent,
     /// Path to the device-wide image decode lock.
     pub image_decode_lock_path: std::path::PathBuf,
     gpu_render_lock: GpuRenderLock,
@@ -90,6 +93,7 @@ impl SharedHost {
                 scratch,
                 font_cache: FontCache,
                 module_cache: ModuleCache::new(),
+                fetch_agent: FetchAgent::default(),
                 image_decode_lock_path,
                 gpu_render_lock,
                 gl_sync_support,

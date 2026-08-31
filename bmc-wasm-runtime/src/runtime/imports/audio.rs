@@ -210,6 +210,7 @@ mod tests {
 
     use super::*;
     use crate::audio_registry::AudioRegistry;
+    use crate::runtime::FetchAgent;
     use crate::runtime_limits::RuntimeResourceLimits;
 
     #[test]
@@ -217,6 +218,7 @@ mod tests {
         let mut state = HostState::new(
             RuntimeResourceLimits::default(),
             Local::now().fixed_offset(),
+            FetchAgent::default(),
         );
         state.audio = AudioRegistry::with_id_cap(2);
 

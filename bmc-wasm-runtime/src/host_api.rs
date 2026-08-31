@@ -52,7 +52,9 @@ use bmc_wasm_protocol::{
 use crate::audio_registry::AudioRegistry;
 use crate::image_decode_lock::ImageDecodePermit;
 use crate::network::NetworkInfo;
-use crate::runtime::{CredentialRefusal, CredentialView, FetchLogLimiter, ParamsSnapshot};
+use crate::runtime::{
+    CredentialRefusal, CredentialView, FetchAgent, FetchLogLimiter, ParamsSnapshot,
+};
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::system::SystemSnapshot;
 use crate::xml::XmlDocumentIndex;
@@ -1098,9 +1100,9 @@ pub(crate) struct HostState {
     #[cfg(feature = "testing")]
     pub(crate) fetch_log_probe: FetchLogProbe,
 
-    /// Shared `ureq::Agent` cloned into every background fetch thread for
-    /// connection-pool reuse. The timeout is set per request by `do_fetch`.
-    pub fetch_agent: ureq::Agent,
+    /// Agent supplied by `RuntimeConfig`, then cloned into background fetch
+    /// threads. Its pool scope is chosen by the runtime's owner.
+    pub fetch_agent: FetchAgent,
 
     /// Whether to record network events for fixture generation.
     pub record_events: bool,
@@ -1349,7 +1351,11 @@ impl HostState {
         clippy::too_many_lines,
         reason = "constructor initializes every independent host service and runtime registry"
     )]
-    pub fn new(resource_limits: RuntimeResourceLimits, system_time: DateTime<FixedOffset>) -> Self {
+    pub fn new(
+        resource_limits: RuntimeResourceLimits,
+        system_time: DateTime<FixedOffset>,
+        fetch_agent: FetchAgent,
+    ) -> Self {
         let (image_decode_tx, image_decode_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
@@ -1414,7 +1420,7 @@ impl HostState {
             delivering_fetch_headers: None,
             #[cfg(feature = "testing")]
             fetch_log_probe: FetchLogProbe::default(),
-            fetch_agent: crate::runtime::build_fetch_agent(),
+            fetch_agent,
             record_events: false,
             event_fixtures: None,
             recorded_events: Vec::new(),
@@ -1557,6 +1563,7 @@ mod tests {
     use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
     use crate::image_decode_lock::ImageDecodePermit;
+    use crate::runtime::FetchAgent;
     use crate::runtime_limits::RuntimeResourceLimits;
 
     #[test]
@@ -1821,6 +1828,7 @@ mod tests {
         let mut state = HostState::new(
             RuntimeResourceLimits::default(),
             chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
         );
 
         state.mark_renderer_assets_dormant();
@@ -1863,6 +1871,7 @@ mod tests {
         let mut state = HostState::new(
             RuntimeResourceLimits::default(),
             chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
         );
         // Not hermetic: the call is a no-op and reports "proceed".
         assert!(!state.refuse_live_io("fetch", "GET https://x/y"));
