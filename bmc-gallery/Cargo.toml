@@ -102,6 +102,7 @@ braiins-pool = { path = "../widgets-wasm/braiins-pool" }
 fleet-management = { path = "../widgets-wasm/fleet-management" }
 formula-1 = { path = "../widgets-wasm/formula-1" }
 prices = { path = "../widgets-wasm/lib/prices" }
+ticker-list = { path = "../widgets-wasm/ticker-list", features = ["scene"] }
 ticker-single = { path = "../widgets-wasm/ticker-single", features = ["scene"] }
 
 # Keep in step with the root manifest; see it for why the fork exists.
@@ -138,6 +139,7 @@ ignored = [
     "formula-1",
     "prices",
     "ticker-single",
+    "ticker-list",
 ]
 
 # rustc 1.97.1 aborts (SIGABRT, no diagnostic) generating code for this dylib

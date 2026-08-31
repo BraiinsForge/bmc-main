@@ -26,7 +26,7 @@
 
 use bmc_wasm_sdk::{SizeVariant, scale_font};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Band {
     pub symbol_font: u32,
     pub company_font: u32,

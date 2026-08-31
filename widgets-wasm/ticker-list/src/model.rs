@@ -27,6 +27,7 @@ use prices::fetch::PriceMiss;
 /// One row's lifecycle. The company name is **not** held here — it lives in a
 /// parallel names cache so a period change (which resets price state) cannot
 /// drop already-fetched names.
+#[derive(Debug)]
 pub enum RowState {
     /// No price reply yet.
     Loading,
@@ -46,6 +47,7 @@ pub enum RowState {
     Failed,
 }
 
+#[derive(Debug)]
 pub struct TickerRow {
     pub symbol: String,
     pub price: f64,

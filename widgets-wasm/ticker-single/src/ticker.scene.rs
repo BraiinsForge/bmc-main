@@ -26,7 +26,7 @@ use prices::period::Period;
 use ticker_single::model::Series;
 use ticker_single::render::{candlestick, sparkline};
 
-scene_meta! { title: "Widgets / Ticker Single" }
+scene_meta! { title: "Widgets / Tickers / Ticker Single" }
 
 #[derive(Clone, Copy)]
 enum Viewport {
@@ -103,9 +103,9 @@ fn render_viewport(
     ctx.node_stage(ui, (width, height), || {
         let series = sample_series(market_open, falling);
         if candlestick {
-            candlestick::series_view(&series, "AAPL", Period::D7, "7d", size)
+            candlestick::series_view(&series, "AAPL", Period::D7, Period::D7.window(), size)
         } else {
-            sparkline::series_view(&series, "AAPL", "1D", size)
+            sparkline::series_view(&series, "AAPL", Period::D1.window(), size)
         }
     });
 }
