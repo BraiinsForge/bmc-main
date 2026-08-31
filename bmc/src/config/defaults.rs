@@ -199,7 +199,7 @@ fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
 fn bmm_scenes() -> IndexMap<SceneId, Scene> {
     let rect = ViewportShape::Rectangular;
 
-    let clock = fullscreen(CLOCK_UID, rect, clock_params("analog_rect"));
+    let clock = fullscreen(CLOCK_UID, rect, clock_params("digital"));
     let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
     let mining = fullscreen(MINING_INFO_UID, rect, mining_info_params("mining"));
     let geek = fullscreen(MINING_INFO_UID, rect, mining_info_params("geek"));
