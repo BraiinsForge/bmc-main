@@ -1559,6 +1559,91 @@ fn demand_restored_package_assets_report_suspension_once() {
     }
 }
 
+/// Waking must not bring anything back on its own: a widget commonly reserves
+/// more than it draws, and the first frame after the wake is the only evidence
+/// of what it actually needs.
+#[test]
+fn wake_leaves_package_restoration_to_the_first_frame_that_draws() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+
+    for kind in [
+        AssetKind::Svg,
+        AssetKind::Bitmap,
+        AssetKind::BitmapNearest,
+        AssetKind::Mesh,
+    ] {
+        let payload = kind.fixture();
+        let id = write_package_asset(package_dir.path(), kind.package_kind(), &payload);
+        let wasm = wat::parse_str(package_demand_wat(kind, &id))
+            .expect("BUG: package demand WAT must parse");
+        let mut runtime = WasmWidgetRuntime::new(
+            &wasm,
+            64,
+            64,
+            bmc_wasm_protocol::ViewportShape::Rectangular,
+            common::test_display(64, 64),
+            chrono::Local::now().fixed_offset(),
+            RuntimeConfig {
+                package_assets: Some(PackageAssetStore::new(package_dir.path())),
+                ..RuntimeConfig::default()
+            },
+        )
+        .expect("BUG: runtime must construct");
+        let renderer_tag = format!("{}:{REGISTERED_TAG}", runtime.asset_namespace());
+        let reserved_id = call_export(&mut runtime, &mut renderer, "register_valid");
+        assert_eq!(
+            runtime
+                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                    .render(16, TargetContents::Cleared))
+                .expect("BUG: package-demand render must complete"),
+            RenderStatus::Ok
+        );
+        kind.assert_resident(&renderer, &renderer_tag, reserved_id);
+
+        runtime.notify_dormant();
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect("BUG: package suspension must not trap");
+        kind.assert_suspended(&renderer, &renderer_tag, reserved_id);
+
+        runtime.notify_wake();
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect("BUG: wake delivery must not trap");
+        kind.assert_suspended(&renderer, &renderer_tag, reserved_id);
+
+        // Each render clears the accounting first, so what this one reports is
+        // its own work rather than the pre-sleep frame's.
+        assert_eq!(
+            runtime
+                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                    .render(16, TargetContents::Cleared))
+                .expect("BUG: the frame after a wake must complete"),
+            RenderStatus::Ok
+        );
+        let restoration = runtime
+            .last_asset_restoration_for_test()
+            .expect("BUG: the drawing frame must record restoration accounting");
+        let restored = match kind {
+            AssetKind::Svg => restoration.svg_restored,
+            AssetKind::Bitmap | AssetKind::BitmapNearest => restoration.bitmap_restored,
+            AssetKind::Mesh => restoration.mesh_restored,
+        };
+        assert_eq!(
+            restored, 1,
+            "{kind:?}: the first frame that draws the asset must restore it"
+        );
+        kind.assert_resident(&renderer, &renderer_tag, reserved_id);
+    }
+}
+
 #[test]
 fn active_package_registration_reserves_without_reading_the_store() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
