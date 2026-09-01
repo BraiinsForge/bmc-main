@@ -19,10 +19,10 @@
   "supported_viewports": [
     {
       "type": "rectangular",
-      "min_width": 320,
-      "max_width": 1280,
-      "min_height": 240,
-      "max_height": 480
+      "min_width": 317,
+      "max_width": 480,
+      "min_height": 238,
+      "max_height": 320
     },
     {
       "type": "round",
