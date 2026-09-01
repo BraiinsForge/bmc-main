@@ -1,0 +1,38 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  // Two halves on one port block, split by the gap at 20331:
+  // the miner below it, the cloud API above.
+  //
+  // The miner is chosen by editing `miner_url`, even mid-recording,
+  // which mints a frame for the state it lands in.
+  // The public base URL is compiled in, so its scenario is picked
+  // at launch by the `record` recipe's `--rewrite-url`.
+  //
+  // The unreachable miner needs no entry:
+  // point `miner_url` at any port nothing is serving.
+  instances: [
+    {
+      device: "bos",
+      label: "Healthy miner, hashing at its tuner target",
+      port: 20330,
+    },
+    {
+      device: "braiins-public-api",
+      label: "Price climbing — the header band reads green",
+      port: 20332,
+    },
+    {
+      device: "braiins-public-api",
+      label: "Price falling — the same band reads red, and the chart slopes down",
+      port: 20333,
+      params: { percent_change_24h: -4.8, history_open: 103500 },
+    },
+    {
+      device: "braiins-public-api",
+      label: "A one-point series — too short to have a shape, and the chart still has to draw it",
+      port: 20334,
+      params: { history_points: 1 },
+    },
+  ],
+}

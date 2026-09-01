@@ -29,6 +29,7 @@ members = [
     "lib/units",
     "miner-info-geek",
     "miner-info-mining",
+    "miner-info-overload",
     "mining-clock",
     "mining-info",
     "nameday",

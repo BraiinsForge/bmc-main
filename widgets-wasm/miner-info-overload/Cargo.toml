@@ -1,0 +1,16 @@
+[package]
+name = "miner-info-overload"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+miner-info = { path = "../lib/miner-info" }
+mining = { path = "../lib/mining" }
+
+[lints]
+workspace = true

@@ -8,3 +8,4 @@ mod formula-1 'formula-1'
 # Miner Info - Mining: sim-backed dev and fixture recording.
 mod miner-info-geek 'miner-info-geek'
 mod miner-info-mining 'miner-info-mining'
+mod miner-info-overload 'miner-info-overload'

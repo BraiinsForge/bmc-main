@@ -1,0 +1,59 @@
+# Miner Info - Info Overload dev tasks: `just widgets::miner-info-overload::dev`,
+# or bare `just dev` from this directory. Generic mechanics delegate to the wasm
+# module; this file owns only the public-API scenarios and their wiring.
+
+import '../../common.justfile'
+
+dir := source_directory()
+repo := parent_directory(parent_directory(dir))
+root_justfile := repo / "justfile"
+
+# Widget + sim + watch in mprocs. SCENARIO picks the public API: price-up, price-down, no-history.
+dev SCENARIO="price-up":
+    @just --justfile {{ root_justfile }} wasm::prebuild miner-info-overload
+    mprocs \
+        --names "netsim,watch,testbed:{{ SCENARIO }}" \
+        "just --justfile {{ source_file() }} run-netsim" \
+        "just --justfile {{ root_justfile }} wasm::watch miner-info-overload" \
+        "just --justfile {{ source_file() }} run-testbed {{ SCENARIO }}"
+
+# Serve the simulated miner and every public-API scenario at once, one port each.
+run-netsim:
+    @just --justfile {{ root_justfile }} netsim::run {{ dir }}/sim-blueprint.json5
+
+# The testbed flag aiming a run at SCENARIO's simulated public API.
+[private]
+sim-args SCENARIO:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "{{ SCENARIO }}" in
+        price-up)   port=20332 ;;
+        price-down) port=20333 ;;
+        no-history) port=20334 ;;
+        *)
+            echo "unknown scenario '{{ SCENARIO }}' (price-up | price-down | no-history)" >&2
+            exit 1
+            ;;
+    esac
+
+    echo "--rewrite-url https://public-api.braiins.com=http://127.0.0.1:$port"
+
+# Testbed against SCENARIO's simulated public API; needs `run-netsim` serving.
+[private]
+run-testbed SCENARIO:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
+    # Its own cache bucket, so scenarios running side by side never collide.
+    exec just --justfile {{ root_justfile }} wasm::testbed miner-info-overload "$args" {{ SCENARIO }}
+
+# Testbed on SCENARIO's public API, ready to record; needs `run-netsim` serving.
+record SCENARIO="price-up":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Bind first so a failed substitution cannot record against the live API.
+    args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
+    exec just --justfile {{ root_justfile }} wasm::record miner-info-overload $args

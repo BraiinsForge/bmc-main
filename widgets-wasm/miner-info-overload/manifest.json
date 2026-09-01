@@ -1,0 +1,50 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "1b80f419-9075-492f-b913-31e70b0e1cfb",
+  "version": "0.1.0",
+  "name": "Miner Info",
+  "subname": "Info Overload",
+  "description": "One miner's readings beside Bitcoin network stats and a 1d price chart",
+  "config_help": "Point this at one miner's BOS REST API.\n\nBraiins OS miners only — other firmware does not serve this API.\n\nThe network figures come from Braiins' public API, so they need internet access. The miner readings do not.\n\nAdd the widget once per miner to watch several at a time.",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/miner-info-overload",
+  "icon": "assets/icon.svg",
+  "category": "mining",
+  "settings": [
+    "localization"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 480,
+      "min_height": 238,
+      "max_height": 320
+    },
+    {
+      "type": "round",
+      "min_width": 480,
+      "max_width": 480,
+      "min_height": 480,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "miner_url": {
+      "name": "Miner URL",
+      "description": "Base BOS REST API URL for the miner",
+      "type": "string",
+      "format": "uri",
+      "default_value": "http://localhost/api/v1"
+    },
+    "miner_password": {
+      "name": "Miner password",
+      "description": "Password for root login. This is stored as normal widget text until secret params exist.",
+      "type": "string",
+      "default_value": "root"
+    }
+  }
+}
