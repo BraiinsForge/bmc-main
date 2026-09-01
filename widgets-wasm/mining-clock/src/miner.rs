@@ -26,7 +26,7 @@
     )
 )]
 
-use bmc_wasm_sdk::ufmt;
+use bmc_wasm_sdk::{Hashrate, ufmt};
 use mining::gauge::TargetRange;
 
 pub(crate) trait JsonLookup {
@@ -49,9 +49,8 @@ pub(crate) trait JsonLookup {
     fn f64(&self, path: &str) -> Option<f64>;
 }
 
-pub(crate) fn ths_from_ghs(value: f64) -> f64 {
-    value / 1_000.0
-}
+#[cfg(target_arch = "wasm32")]
+pub(crate) use mining::bos::endpoint;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MinerData {
@@ -74,8 +73,9 @@ pub(crate) struct Constraints {
 // as a failed refresh instead of banking fresh.
 pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let mut stored = false;
-    if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
-        data.hashrate_ths = Some(ths_from_ghs(ghs));
+    if let Some(ghps) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
+        data.hashrate_ths =
+            Some(Hashrate::from_gigahashes_per_second(ghps).as_terahashes_per_second());
         stored = true;
     }
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
@@ -258,25 +258,9 @@ impl AuthState {
     }
 }
 
-pub(crate) fn endpoint(base: &str, path: &str) -> String {
-    bmc_wasm_sdk::fmt!(
-        "{}/{}",
-        base.trim_end_matches('/'),
-        path.trim_start_matches('/')
-    )
-}
-
 #[cfg(test)]
 mod auth_tests {
     use super::*;
-
-    #[test]
-    fn joins_base_url_and_path_once() {
-        assert_eq!(
-            endpoint("http://miner/api/v1/", "/miner/stats"),
-            "http://miner/api/v1/miner/stats"
-        );
-    }
 
     #[test]
     fn builds_bos_auth_header() {

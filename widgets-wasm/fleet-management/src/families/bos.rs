@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{Temperature, ufmt};
+use bmc_wasm_sdk::{Hashrate, Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
@@ -55,8 +55,8 @@ fn platform_slug(platform: i64) -> Option<&'static str> {
     }
 }
 
-fn ths_from_ghs(ghs: f64) -> Option<f32> {
-    measurement(ghs / 1_000.0)
+fn hashrate_thps(ghps: f64) -> Option<f32> {
+    measurement(Hashrate::from_gigahashes_per_second(ghps).as_terahashes_per_second())
 }
 
 /// BOS advertises `_http._tcp` with the `_bos` subtype.
@@ -102,20 +102,20 @@ impl FamilyAdapter for BosAdapter {
     }
 
     fn auth_endpoint(&self) -> Option<&'static str> {
-        Some("/auth/login")
+        Some(mining::bos::LOGIN_PATH)
     }
 
     fn login_body(&self, password: &str) -> String {
-        bmc_wasm_sdk::fmt!(
-            r#"{{"username":"root","password":"{}"}}"#,
-            bmc_wasm_sdk::JsonStr(password)
-        )
+        mining::bos::login_body(password)
     }
 
     fn parse_login(&self, json: &dyn JsonLookup) -> Option<String> {
-        json.str("/token")
+        mining::bos::token(json)
     }
 
+    // Kept per-family rather than taken from `mining::bos`:
+    // each family answers this differently, and the single-miner
+    // widgets treat only 401 as an auth failure.
     fn is_auth_error(&self, status: u32) -> bool {
         status == 401 || status == 403
     }
@@ -133,10 +133,10 @@ impl FamilyAdapter for BosAdapter {
         self.reset_telemetry(endpoint, reading);
         match endpoint {
             EP_STATS => {
-                if let Some(ghs) =
+                if let Some(ghps) =
                     json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second")
                 {
-                    reading.current_hashrate_ths = ths_from_ghs(ghs);
+                    reading.current_hashrate_ths = hashrate_thps(ghps);
                 }
                 if let Some(watt) = json.f64("/power_stats/approximated_consumption/watt") {
                     reading.power_w = measurement(watt);
@@ -177,8 +177,8 @@ impl FamilyAdapter for BosAdapter {
                 {
                     reading.uptime_s = Some(uptime);
                 }
-                if let Some(ghs) = json.f64("/sticker_hashrate/gigahash_per_second") {
-                    reading.nominal_hashrate_ths = ths_from_ghs(ghs);
+                if let Some(ghps) = json.f64("/sticker_hashrate/gigahash_per_second") {
+                    reading.nominal_hashrate_ths = hashrate_thps(ghps);
                 }
                 reading.mac = json.str("/mac_address").filter(|s| !s.is_empty());
             }

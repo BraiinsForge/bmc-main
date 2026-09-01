@@ -142,11 +142,8 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     if params.miner_password.is_empty() {
         return None;
     }
-    let url = miner::endpoint(&params.miner_url, "/auth/login");
-    let body = fmt!(
-        r#"{{"username":"root","password":"{}"}}"#,
-        JsonStr(&params.miner_password)
-    );
+    let url = miner::endpoint(&params.miner_url, mining::bos::LOGIN_PATH);
+    let body = mining::bos::login_body(&params.miner_password);
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
@@ -176,7 +173,7 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
 #[cfg(target_arch = "wasm32")]
 fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
     if response.ok()
-        && let Some(token) = response.json().str("/token")
+        && let Some(token) = mining::bos::token(&response.json())
     {
         STATE.with(|state| state.borrow_mut().auth = AuthState::Authenticated(token));
         HANDLES.with(|handles| {

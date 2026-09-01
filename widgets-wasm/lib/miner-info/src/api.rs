@@ -25,12 +25,8 @@ use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Ratio, Temperature
 use crate::model::{Availability, MinerData, TemperatureRange};
 use mining::gauge::TargetRange;
 
+pub use mining::bos::endpoint;
 pub use mining::hashboards::JsonLookup;
-
-#[must_use]
-pub fn ths_from_ghs(value: f64) -> f64 {
-    value / 1_000.0
-}
 
 // Each `parse_*` returns whether it stored any of its fields.
 // A 2xx that yields no field is an unusable reply (unparsable body, or valid JSON of the wrong shape)
@@ -49,8 +45,7 @@ pub fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
 pub fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let mut stored = false;
     if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
-        data.hashrate =
-            Availability::Available(Hashrate::from_terahashes_per_second(ths_from_ghs(ghs)));
+        data.hashrate = Availability::Available(Hashrate::from_gigahashes_per_second(ghs));
         stored = true;
     }
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
@@ -205,11 +200,6 @@ pub mod tests_support {
 mod tests {
     use super::tests_support::MapJson;
     use super::*;
-
-    #[test]
-    fn converts_hashrate_from_ghs_to_ths() {
-        assert!((ths_from_ghs(122_480.0) - 122.48).abs() < 1e-9);
-    }
 
     #[test]
     fn parses_miner_details_uptime() {
@@ -449,26 +439,9 @@ impl AuthState {
     }
 }
 
-#[must_use]
-pub fn endpoint(base: &str, path: &str) -> String {
-    bmc_wasm_sdk::fmt!(
-        "{}/{}",
-        base.trim_end_matches('/'),
-        path.trim_start_matches('/')
-    )
-}
-
 #[cfg(test)]
 mod auth_tests {
     use super::*;
-
-    #[test]
-    fn joins_base_url_and_path_once() {
-        assert_eq!(
-            endpoint("http://miner/api/v1/", "/miner/stats"),
-            "http://miner/api/v1/miner/stats"
-        );
-    }
 
     #[test]
     fn builds_bos_auth_header() {
