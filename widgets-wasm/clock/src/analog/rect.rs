@@ -154,12 +154,8 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRectSizeParams {
 // canonical dimensions — e.g. BMM101's 480×320 under Large params.
 const TIMEZONE_Y_FRACTION: f32 = 0.55;
 
-// Date row and alarm row sit to either side of the central dial, anchored at
-// fractions of viewport width. Only ever read for Full (the sole variant with
-// show_date_row / show_alarm), but expressed as fractions for the same reason
-// as the numeral insets.
-const DATE_ROW_X_FRACTION: f32 = 0.68;
-const ALARM_ROW_X_FRACTION: f32 = 0.195;
+// Mirror the date and alarm anchors across the central dial.
+const SIDE_ROW_X_INSET_FRACTION: f32 = 0.195;
 
 // Hands scale with viewport height — the limiting axis on a landscape dial —
 // so the hand tips keep the same margin inside the rim on every resolution.
@@ -265,21 +261,19 @@ pub(crate) fn render(
     ));
 
     // Date row (Full only when show_date) — weekday + day-of-month + month name.
-    // Vertically centred at the viewport mid-line, left-anchored at a fixed inset
-    // that puts the row to the right of the dial graphic.
     if size.show_date_row && params.show_date {
         let shifted = now.unix_secs + i64::from(offset_secs);
         let fmt = system::current().date_format().unwrap_or_default();
         let date_str = strftime(shifted, date_pattern(fmt, true, false));
         draws.push(Draw::text(
-            viewport_w * DATE_ROW_X_FRACTION,
+            viewport_w * (1.0 - SIDE_ROW_X_INSET_FRACTION),
             centre_y,
             date_str,
             style!(
                 size: scale_font(40, fit),
                 weight: FontWeight::REGULAR,
                 color: palette.text,
-                align: TextAlign::Left,
+                align: TextAlign::Right,
                 valign: VerticalAlign::Center,
             ),
         ));
@@ -322,7 +316,7 @@ pub(crate) fn render(
     // Alarm row (Full only when an alarm is scheduled).
     if size.show_alarm {
         let _ = alarm_row_draws(
-            AlarmAnchor::LeftX(viewport_w * ALARM_ROW_X_FRACTION),
+            AlarmAnchor::LeftX(viewport_w * SIDE_ROW_X_INSET_FRACTION),
             centre_y,
             (40.0 * fit).round(),
             numerals_weight,
