@@ -67,27 +67,36 @@ widget either has a shipped manifest to map to, or it drops.)
 
 Native v0 kinds:
 
-| v0 `kind`           | Target manifest                  | Param translation                                                                    |
-| ------------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
-| `clock`             | `widgets-wasm/clock`             | style/booleans pass through, font vocabulary remap, `timezone` → `timezone_override` |
-| `block_height`      | `widgets-wasm/blockheight`       | `show_timestamp` pass-through, font vocabulary remap                                 |
-| `halving_countdown` | `widgets-wasm/halving-countdown` | required font weight takes the manifest default                                      |
-| `braiins_pool`      | `widgets-wasm/braiins-pool`      | style pass-through, chart window respell, `account_id` → `pool` credential binding   |
-| `remote_image`      | `widgets-wasm/image`             | `refresh_duration` (humantime) → `refresh_seconds`, `image_scale_mode` → `sizing`    |
+| v0 `kind`           | Target manifest                    | Param translation                                                                    |
+| ------------------- | ---------------------------------- | ------------------------------------------------------------------------------------ |
+| `clock`             | `widgets-wasm/clock`               | style/booleans pass through, font vocabulary remap, `timezone` → `timezone_override` |
+| `block_height`      | `widgets-wasm/blockheight`         | `show_timestamp` pass-through, font vocabulary remap                                 |
+| `halving_countdown` | `widgets-wasm/halving-countdown`   | required font weight takes the manifest default                                      |
+| `braiins_pool`      | `widgets-wasm/braiins-pool`        | style pass-through, chart window respell, `account_id` → `pool` credential binding   |
+| `remote_image`      | `widgets-wasm/image`               | `refresh_duration` (humantime) → `refresh_seconds`, `image_scale_mode` → `sizing`    |
+| `ticker_btc`        | `widgets-wasm/ticker-single`       | `time_frame` → closest `period`; `pair` and the `sparkline` view are fixed           |
+| `blockchain_data`   | `widgets-wasm/bitcoin-mining-data` | none (manifest has no params)                                                        |
 
 Legacy `remote_widget` entries, dispatched by URL slug under `https://widgets.braiinsforge.com/<slug>`:
 
-| Slug                      | Target manifest                   | Param translation                                          |
-| ------------------------- | --------------------------------- | ---------------------------------------------------------- |
-| `weather`                 | `widgets-wasm/weather`            | `location` pass-through, `time_zone` pinned to default     |
-| `nameday`                 | `widgets-wasm/nameday`            | `country` enum-guarded, camelCase `showDate` → `show_date` |
-| `iss-position`            | `widgets-wasm/iss-position`       | none (manifest has no params)                              |
-| `random-facts`            | `widgets-wasm/random-facts`       | none (manifest has no params)                              |
-| `spacex-launch`           | `widgets-wasm/spacex-launch`      | none (legacy `showSeconds` drops with the mapping)         |
-| `nasa-picture-of-the-day` | `widgets-wasm/picture-of-the-day` | both required params take the manifest default             |
+| Slug                        | Target manifest                   | Param translation                                                                      |
+| --------------------------- | --------------------------------- | -------------------------------------------------------------------------------------- |
+| `weather`                   | `widgets-wasm/weather`            | `location` pass-through, `time_zone` pinned to default                                 |
+| `nameday`                   | `widgets-wasm/nameday`            | `country` enum-guarded, camelCase `showDate` → `show_date`                             |
+| `iss-position`              | `widgets-wasm/iss-position`       | none (manifest has no params)                                                          |
+| `random-facts`              | `widgets-wasm/random-facts`       | none (manifest has no params)                                                          |
+| `spacex-launch`             | `widgets-wasm/spacex-launch`      | none (legacy `showSeconds` drops with the mapping)                                     |
+| `nasa-picture-of-the-day`   | `widgets-wasm/picture-of-the-day` | both required params take the manifest default                                         |
+| `formula-1`                 | `widgets-wasm/formula-1`          | `driver` vendor id → manifest slug, `localTime` → `local_time`, `view` `live` → `auto` |
+| `exchange-rate`             | `widgets-wasm/ticker-single`      | `base`/`quote` collapse into `pair`, period respell, `sparkline` view                  |
+| `ticker-single-sparkline`   | `widgets-wasm/ticker-single`      | `pair` pass-through, period respell, `view` pinned to `sparkline`                      |
+| `ticker-single-candlestick` | `widgets-wasm/ticker-single`      | `pair` pass-through, period respell, `view` pinned to `candlestick`                    |
+| `ticker-list`               | `widgets-wasm/ticker-list`        | JSON `symbols` array → eight `symbol_N` params, usable rows first and `null` past them |
 
-Widgets with **no native counterpart drop**: native kinds `ticker_btc`, `blockchain_data`; remote slugs `exchange-rate`,
-`formula-1`, `ticker-list`, `ticker-single-candlestick`, and `ticker-single-sparkline`.
+Nothing in the two tables drops: every v0 `kind` and every Braiins Forge slug this step recognises has a shipped
+manifest to land on. A widget drops when the step recognises neither — an unmapped `kind`, a `remote_widget` with no
+`widget_url`, a `widget_url` off the Braiins Forge host, or a Braiins Forge slug absent from the table above. Each case
+logs a `warn!` naming what it dropped.
 
 ### Required params are always filled
 
