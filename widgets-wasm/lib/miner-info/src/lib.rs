@@ -37,6 +37,7 @@
 
 pub mod api;
 pub mod availability;
+pub mod engine;
 pub mod face;
 pub mod format;
 pub mod layout;
