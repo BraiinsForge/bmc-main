@@ -28,10 +28,15 @@ testpaths = [
 [tool.coverage.run]
 source = ["bmc_tui"]
 branch = true
+data_file = ".tmp/coverage/python/.coverage"
 
 [tool.coverage.report]
 show_missing = true
 
-# coverage.py's XML report is Cobertura, which is what GitLab ingests to annotate a diff.
+# coverage.py's XML report is Cobertura, which is what GitLab ingests to annotate a diff;
+# `python-check` in `.gitlab-ci.yml` names this path and has to move with it.
 [tool.coverage.xml]
-output = "coverage.xml"
+output = ".tmp/coverage/python/coverage.xml"
+
+[tool.coverage.html]
+directory = ".tmp/coverage/python/html"

@@ -31,9 +31,3 @@ secrets.local.json
 # Python tooling (uv venvs / bytecode caches under widget tools/)
 .venv/
 __pycache__/
-
-# Python coverage artefacts
-coverage.xml
-.coverage
-.coverage.*
-htmlcov/

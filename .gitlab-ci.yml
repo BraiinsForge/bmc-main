@@ -216,7 +216,7 @@ python-check:
     reports:
       coverage_report:
         coverage_format: cobertura
-        path: coverage.xml
+        path: .tmp/coverage/python/coverage.xml
 
 build:
   stage: check

@@ -98,6 +98,10 @@ python:
     {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness
     # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
     {{ NIX_DEV }} ty check --error deprecated bmc-tui bmc-virt/harness
+    # coverage.py opens its data file without creating the directory above it,
+    # and this one lives under the scratch tree, which gets cleaned out —
+    # so make it on every run rather than once.
+    mkdir -p .tmp/coverage/python
     {{ NIX_DEV }} uv run pytest
 
 # Run nextest for a single crate (auto-enters nix shell).
