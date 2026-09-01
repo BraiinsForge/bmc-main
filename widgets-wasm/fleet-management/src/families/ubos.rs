@@ -19,13 +19,13 @@
 // the grant above.
 
 use base64::prelude::{BASE64_STANDARD, Engine as _};
-use bmc_wasm_sdk::{Temperature, ufmt};
+use bmc_wasm_sdk::{ElectricPower, Hashrate, Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
-use crate::telemetry::{DeviceTemp, TelemetryReading, measurement};
+use crate::telemetry::{DeviceTemp, TelemetryReading, hashrate, measurement};
 
 // Legacy endpoint. Stale against the firmware's move to `/api/system/info`;
 // retarget once that endpoint settles. See BDK-625.
@@ -86,11 +86,11 @@ impl FamilyAdapter for UbosAdapter {
     ) {
         self.reset_telemetry(endpoint, reading);
         if endpoint == EP_INFO {
-            if let Some(hs) = json.f64("/hashrate") {
-                reading.current_hashrate_ths = measurement(hs / 1e12);
+            if let Some(hps) = json.f64("/hashrate") {
+                reading.current_hashrate_ths = hashrate(Hashrate::from_hashes_per_second(hps));
             }
             if let Some(mw) = json.f64("/power_out_mw") {
-                reading.power_w = measurement(mw / 1_000.0);
+                reading.power_w = measurement(ElectricPower::from_milliwatts(mw).as_watts());
             }
             // uBOS has one board sensor.
             if let Some(c) = json.f64("/temperature") {

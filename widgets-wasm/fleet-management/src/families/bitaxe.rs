@@ -18,13 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{Temperature, ufmt};
+use bmc_wasm_sdk::{Hashrate, Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::{MinerModel, ModelAccumulator};
-use crate::telemetry::{DeviceTemp, TelemetryReading, measurement};
+use crate::telemetry::{DeviceTemp, TelemetryReading, hashrate, measurement};
 
 const EP_INFO: &str = "/info";
 
@@ -107,11 +107,11 @@ impl FamilyAdapter for BitaxeAdapter {
             // AxeOS reports -1 for a sensor it has not yet read, notably right
             // after boot ("not yet known"); `measurement` drops that sentinel
             // with the rest of the unusable figures, so it never reaches a total.
-            if let Some(ghs) = json.f64("/hashRate") {
-                reading.current_hashrate_ths = measurement(ghs / 1_000.0);
+            if let Some(ghps) = json.f64("/hashRate") {
+                reading.current_hashrate_ths = hashrate(Hashrate::from_gigahashes_per_second(ghps));
             }
-            if let Some(ghs) = json.f64("/expectedHashrate") {
-                reading.nominal_hashrate_ths = measurement(ghs / 1_000.0);
+            if let Some(ghps) = json.f64("/expectedHashrate") {
+                reading.nominal_hashrate_ths = hashrate(Hashrate::from_gigahashes_per_second(ghps));
             }
             if let Some(watts) = json.f64("/power") {
                 reading.power_w = measurement(watts);

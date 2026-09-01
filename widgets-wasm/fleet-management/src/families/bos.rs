@@ -24,7 +24,7 @@ use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
-use crate::telemetry::{DeviceTemp, TelemetryReading, measurement};
+use crate::telemetry::{DeviceTemp, TelemetryReading, hashrate, measurement};
 
 const EP_STATS: &str = mining::bos::STATS_PATH;
 const EP_HASHBOARDS: &str = mining::bos::HASHBOARDS_PATH;
@@ -53,10 +53,6 @@ fn platform_slug(platform: i64) -> Option<&'static str> {
         8 => Some("stm32mp157c-ii2-bmm1"),
         _ => None,
     }
-}
-
-fn hashrate_thps(ghps: f64) -> Option<f32> {
-    measurement(Hashrate::from_gigahashes_per_second(ghps).as_terahashes_per_second())
 }
 
 /// BOS advertises `_http._tcp` with the `_bos` subtype.
@@ -136,7 +132,8 @@ impl FamilyAdapter for BosAdapter {
                 if let Some(ghps) =
                     json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second")
                 {
-                    reading.current_hashrate_ths = hashrate_thps(ghps);
+                    reading.current_hashrate_ths =
+                        hashrate(Hashrate::from_gigahashes_per_second(ghps));
                 }
                 if let Some(watt) = json.f64("/power_stats/approximated_consumption/watt") {
                     reading.power_w = measurement(watt);
@@ -178,7 +175,8 @@ impl FamilyAdapter for BosAdapter {
                     reading.uptime_s = Some(uptime);
                 }
                 if let Some(ghps) = json.f64("/sticker_hashrate/gigahash_per_second") {
-                    reading.nominal_hashrate_ths = hashrate_thps(ghps);
+                    reading.nominal_hashrate_ths =
+                        hashrate(Hashrate::from_gigahashes_per_second(ghps));
                 }
                 reading.mac = json.str("/mac_address").filter(|s| !s.is_empty());
             }

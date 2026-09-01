@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::Temperature;
+use bmc_wasm_sdk::{Hashrate, Temperature};
 
 /// A device's temperature at the fidelity its sensors provide.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,6 +72,13 @@ pub struct TelemetrySnapshot {
 pub fn measurement(value: f64) -> Option<f32> {
     let narrowed = value as f32;
     (narrowed.is_finite() && narrowed >= 0.0).then_some(narrowed)
+}
+
+/// A hashrate as the TH/s a reading stores. Each family builds the `Hashrate`
+/// with whichever unit its firmware reports, so the scaling stays in one place.
+#[must_use]
+pub fn hashrate(rate: Hashrate) -> Option<f32> {
+    measurement(rate.as_terahashes_per_second())
 }
 
 #[cfg(test)]
