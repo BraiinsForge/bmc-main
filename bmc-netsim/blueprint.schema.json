@@ -180,7 +180,7 @@
           "$ref": "#/$defs/HttpStatus"
         },
         "chip_type": {
-          "description": "Chip model each hashboard reports.",
+          "description": "Chip model each hashboard reports.\nEmpty reports no chip identity at all,\nwhich drops the chip header rather than drawing placeholders.",
           "type": "string",
           "default": "BM1370"
         },

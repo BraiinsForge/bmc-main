@@ -46,16 +46,30 @@ use crate::render;
 /// of the miner's baseline.
 const BOARD_TEMP_SPREAD_C: f64 = 12.0;
 
-/// A stable per-board temperature offset (°C), keyed on device identity and
-/// board index, so the fleet shows a real min/avg/max spread.
+/// Hashboards the simulated miner reports.
+const BOARDS: usize = 2;
+
+/// How far the board sensor sits below the hottest chip on the same board.
+const BOARD_BELOW_CHIP_C: f64 = 13.0;
+
+/// One board's share of the miner's hashrate, since the miner
+/// reports totals and each board reports its own part of them.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a board count this small is exact in f64"
+)]
+const BOARD_SHARE: f64 = 1.0 / BOARDS as f64;
+
+/// A stable per-board temperature offset (°C), keyed on device identity
+/// and board index, so the fleet shows a real min/avg/max spread.
 fn board_offset(base: u64, index: usize) -> f64 {
     (stable01(mix_index(base, index)) - 0.5) * BOARD_TEMP_SPREAD_C
 }
 
 /// Tunables for a simulated BOS+ miner.
-// Strict, unlike persisted state: a blueprint is hand-authored, so a mistyped
-// key is a fault that would silently never fire rather than a forward-compatible
-// field to skip over.
+// Strict, unlike persisted state: a blueprint is hand-authored,
+// so a mistyped key is a fault that would silently never fire
+// rather than a forward-compatible field to skip over.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 #[schemars(rename = "BosParams")]
@@ -86,6 +100,8 @@ pub struct Params {
     /// Address reported on `/network/`.
     pub ip_address: String,
     /// Chip model each hashboard reports.
+    /// Empty reports no chip identity at all,
+    /// which drops the chip header rather than drawing placeholders.
     pub chip_type: String,
     /// Chips per hashboard.
     pub chips_count: usize,
@@ -171,7 +187,7 @@ impl Params {
             self.telemetry(
                 "/api/v1/miner/hw/hashboards",
                 json!({
-                    "hashboards": [self.board(board_offset(base, 0)), self.board(board_offset(base, 1))],
+                    "hashboards": (0..BOARDS).map(|index| self.board(board_offset(base, index))).collect::<Vec<_>>(),
                 }),
             ),
             self.telemetry(
@@ -250,13 +266,31 @@ impl Params {
         }
     }
 
-    /// A hashboard whose chip temperature drifts around the baseline plus `offset_c`.
+    /// A hashboard whose temperatures drift around the baseline plus `offset_c`.
+    ///
+    /// The board runs cooler than its hottest chip, and carries its own share of
+    /// the miner's hashrate: the single-miner widgets read both pairs, pairing
+    /// board with chip for one temperature reading and real against nominal for
+    /// the mining-mode ratio.
     fn board(&self, offset_c: f64) -> Json {
-        json!({
+        let mut board = json!({
+            "board_temp": { "degree_c": leaf(celsius(self.temp_c.get() + offset_c - BOARD_BELOW_CHIP_C)) },
             "highest_chip_temp": { "temperature": { "degree_c": leaf(celsius(self.temp_c.get() + offset_c)) } },
-            "chip_type": self.chip_type.as_str(),
-            "chips_count": self.chips_count,
-        })
+            "stats": {
+                "real_hashrate": { "last_1m": { "gigahash_per_second": leaf(drift(self.hashrate_ths.get() * BOARD_SHARE * 1_000.0)) } },
+                "nominal_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths.get() * BOARD_SHARE * 1_000.0)) },
+            },
+        });
+        // An empty chip type stands for firmware that reports no chip identity,
+        // which drops the whole chip header rather than showing placeholders.
+        if !self.chip_type.is_empty() {
+            let map = board
+                .as_object_mut()
+                .expect("BUG: the board body is a JSON object");
+            map.insert("chip_type".to_owned(), json!(self.chip_type.as_str()));
+            map.insert("chips_count".to_owned(), json!(self.chips_count));
+        }
+        board
     }
 }
 
@@ -328,6 +362,50 @@ mod tests {
                 "/api/v1/network/",
                 "/api/v1/configuration/constraints",
             ]
+        );
+    }
+
+    #[test]
+    fn a_hashboard_carries_both_temperatures_and_both_hashrates() {
+        let boards = body(&Params::default(), "/api/v1/miner/hw/hashboards", 0.0);
+        let board = &boards["hashboards"][0];
+        // Temperature needs the pair, and the mining-mode ratio needs both rates;
+        // either half missing leaves the reading unavailable widget-side.
+        assert!(board["board_temp"]["degree_c"].is_number());
+        assert!(board["highest_chip_temp"]["temperature"]["degree_c"].is_number());
+        assert!(board["stats"]["real_hashrate"]["last_1m"]["gigahash_per_second"].is_number());
+        assert!(board["stats"]["nominal_hashrate"]["gigahash_per_second"].is_number());
+    }
+
+    #[test]
+    fn the_board_sensor_reads_below_its_hottest_chip() {
+        let boards = body(&Params::default(), "/api/v1/miner/hw/hashboards", 0.0);
+        let board = &boards["hashboards"][0];
+        let board_c = board["board_temp"]["degree_c"]
+            .as_f64()
+            .expect("BUG: board temperature must be a number");
+        let chip_c = board["highest_chip_temp"]["temperature"]["degree_c"]
+            .as_f64()
+            .expect("BUG: chip temperature must be a number");
+        assert!(
+            board_c < chip_c,
+            "board {board_c} should sit under chip {chip_c}"
+        );
+    }
+
+    #[test]
+    fn an_empty_chip_type_reports_no_chip_identity() {
+        let params = Params {
+            chip_type: String::new(),
+            ..Params::default()
+        };
+        let boards = body(&params, "/api/v1/miner/hw/hashboards", 0.0);
+        let board = &boards["hashboards"][0];
+        assert_eq!(board["chip_type"], Json::Null);
+        assert_eq!(board["chips_count"], Json::Null);
+        assert!(
+            board["board_temp"]["degree_c"].is_number(),
+            "only the chip identity drops, not the board's readings"
         );
     }
 

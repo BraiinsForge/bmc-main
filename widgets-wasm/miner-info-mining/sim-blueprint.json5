@@ -40,6 +40,12 @@
     },
     {
       device: "bos",
+      label: "No chip identity — the header drops rather than showing gaps",
+      port: 20308,
+      params: { chip_type: "" },
+    },
+    {
+      device: "bos",
       label: "Present but unreadable — telemetry 503s",
       port: 20305,
       params: { status: 503 },
