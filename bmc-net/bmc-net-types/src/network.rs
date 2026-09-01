@@ -58,6 +58,10 @@ pub enum BmcState {
     Operational,
     #[strum(serialize = "wifi reconfiguration")]
     WifiReconfiguration,
+    /// The device has no provisioning state machine at all (no setup flow,
+    /// no setup AP), as opposed to one that has finished it (`Operational`).
+    #[strum(serialize = "unsupported")]
+    Unsupported,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Default)]

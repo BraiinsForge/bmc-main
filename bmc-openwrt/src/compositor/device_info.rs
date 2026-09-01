@@ -40,7 +40,9 @@ fn device_state_wire(state: BmcState) -> DeviceState {
     match state {
         BmcState::FactoryDefault => DeviceState::FactoryDefault,
         BmcState::SetupPending => DeviceState::SetupPending,
-        BmcState::Operational => DeviceState::Operational,
+        // The wire has no "no setup flow" state: a device without one behaves
+        // like a provisioned one for every screen.
+        BmcState::Operational | BmcState::Unsupported => DeviceState::Operational,
         BmcState::WifiReconfiguration => DeviceState::WifiReconfiguration,
     }
 }
@@ -98,7 +100,7 @@ fn replayable(progress: &SetupProgress) -> bool {
 /// screens that reflect a standing condition, re-derived on every bind.
 fn delivers_boot_flow(state: BmcState) -> bool {
     match state {
-        BmcState::Operational => true,
+        BmcState::Operational | BmcState::Unsupported => true,
         BmcState::FactoryDefault | BmcState::SetupPending | BmcState::WifiReconfiguration => false,
     }
 }

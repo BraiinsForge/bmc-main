@@ -64,7 +64,10 @@ where
             .provisioning()
             .device_state()
             .await;
-        if current_state != state {
+        // A device with no setup flow at all is as settled as a provisioned one
+        // for the network calls, so `Unsupported` satisfies `Operational`.
+        let settled = state == BmcState::Operational && current_state == BmcState::Unsupported;
+        if current_state != state && !settled {
             return Err(Status::failed_precondition(format!(
                 "Function is only available when the device is in '{state}' state. Current state is '{current_state}'.",
             )));

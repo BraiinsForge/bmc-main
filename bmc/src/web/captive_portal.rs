@@ -97,14 +97,14 @@ where
 fn runs_captive_portal(state: BmcState) -> bool {
     match state {
         BmcState::FactoryDefault | BmcState::WifiReconfiguration => true,
-        BmcState::SetupPending | BmcState::Operational => false,
+        BmcState::SetupPending | BmcState::Operational | BmcState::Unsupported => false,
     }
 }
 
 // NOTE: Original list of urls to return redirect is here: https://captivebehavior.wballiance.com/
 // It is not needed to check individual url, it can be decided based on the top level domain
 fn should_redirect(req: &Request<Body>, state: BmcState) -> bool {
-    if state == BmcState::Operational {
+    if matches!(state, BmcState::Operational | BmcState::Unsupported) {
         return false;
     }
 
@@ -158,7 +158,7 @@ fn redirect_path(state: BmcState) -> &'static str {
     match state {
         BmcState::FactoryDefault | BmcState::WifiReconfiguration => WIFI_SETUP_URL_ENDPOINT,
         BmcState::SetupPending => DEVICE_SETUP_URL_ENDPOINT,
-        BmcState::Operational => ROOT_URL_ENDPOINT,
+        BmcState::Operational | BmcState::Unsupported => ROOT_URL_ENDPOINT,
     }
 }
 
