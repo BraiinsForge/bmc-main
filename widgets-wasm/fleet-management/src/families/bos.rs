@@ -26,9 +26,9 @@ use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading, measurement};
 
-const EP_STATS: &str = "/miner/stats";
-const EP_HASHBOARDS: &str = "/miner/hw/hashboards";
-const EP_DETAILS: &str = "/miner/details";
+const EP_STATS: &str = mining::bos::STATS_PATH;
+const EP_HASHBOARDS: &str = mining::bos::HASHBOARDS_PATH;
+const EP_DETAILS: &str = mining::bos::DETAILS_PATH;
 
 /// Upper bound on hashboard indices to scan. The JSON lookup exposes no array
 /// length, so the loops probe a fixed range and skip gaps rather than stopping
@@ -110,7 +110,7 @@ impl FamilyAdapter for BosAdapter {
     }
 
     fn parse_login(&self, json: &dyn JsonLookup) -> Option<String> {
-        mining::bos::token(json)
+        mining::bos::parse_token(json)
     }
 
     // Kept per-family rather than taken from `mining::bos`:

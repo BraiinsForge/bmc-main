@@ -46,10 +46,12 @@ use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
 use manifest_params::Params;
-#[cfg(target_arch = "wasm32")]
-use miner::AuthState;
 #[cfg(any(target_arch = "wasm32", test))]
 use miner::MinerData;
+#[cfg(target_arch = "wasm32")]
+use mining::bos;
+#[cfg(target_arch = "wasm32")]
+use mining::bos::AuthState;
 #[cfg(target_arch = "wasm32")]
 use shared::clock_palette;
 
@@ -142,8 +144,8 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     if params.miner_password.is_empty() {
         return None;
     }
-    let url = miner::endpoint(&params.miner_url, mining::bos::LOGIN_PATH);
-    let body = mining::bos::login_body(&params.miner_password);
+    let url = bos::endpoint(&params.miner_url, bos::LOGIN_PATH);
+    let body = bos::login_body(&params.miner_password);
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
@@ -156,11 +158,11 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
 fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
     let header = STATE.with(|state| state.borrow().auth.auth_header())?;
     let path = match miner_source(handle) {
-        MinerSource::Stats => "/miner/stats",
-        MinerSource::Constraints => "/configuration/constraints",
+        MinerSource::Stats => bos::STATS_PATH,
+        MinerSource::Constraints => bos::CONSTRAINTS_PATH,
     };
     Some(
-        FetchSpec::get(miner::endpoint(&Params::current().miner_url, path))
+        FetchSpec::get(bos::endpoint(&Params::current().miner_url, path))
             .headers(header)
             .timeout(MINER_FETCH_TIMEOUT),
     )
@@ -173,7 +175,7 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
 #[cfg(target_arch = "wasm32")]
 fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
     if response.ok()
-        && let Some(token) = mining::bos::token(&response.json())
+        && let Some(token) = bos::parse_token(&response.json())
     {
         STATE.with(|state| state.borrow_mut().auth = AuthState::Authenticated(token));
         HANDLES.with(|handles| {

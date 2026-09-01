@@ -18,39 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the JsonLookup str/i64 methods are unused on the wasm build but kept for parity with the shared lookup trait"
-    )
-)]
-
 use bmc_wasm_sdk::{Hashrate, ufmt};
 use mining::gauge::TargetRange;
-
-pub(crate) trait JsonLookup {
-    #[cfg_attr(
-        test,
-        expect(
-            dead_code,
-            reason = "kept for parity with the shared lookup trait; the auth path consumes it later"
-        )
-    )]
-    fn str(&self, path: &str) -> Option<String>;
-    #[cfg_attr(
-        test,
-        expect(
-            dead_code,
-            reason = "kept for parity with the shared lookup trait; integer fields are consumed later"
-        )
-    )]
-    fn i64(&self, path: &str) -> Option<i64>;
-    fn f64(&self, path: &str) -> Option<f64>;
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) use mining::bos::endpoint;
+use mining::hashboards::JsonLookup;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MinerData {
@@ -104,21 +74,6 @@ fn target_range(json: &impl JsonLookup, base: &str, leaf: &str) -> Option<Target
         default: edge("default")?,
         max: edge("max")?,
     })
-}
-
-#[cfg(target_arch = "wasm32")]
-impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
-    fn str(&self, path: &str) -> Option<String> {
-        self.str(path)
-    }
-
-    fn i64(&self, path: &str) -> Option<i64> {
-        self.i64(path)
-    }
-
-    fn f64(&self, path: &str) -> Option<f64> {
-        self.f64(path)
-    }
 }
 
 #[cfg(test)]
@@ -230,48 +185,5 @@ mod tests {
         parse_constraints(&json, &mut data);
         assert!(data.constraints.hashrate.is_some());
         assert_eq!(data.constraints.power, None);
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum AuthState {
-    #[default]
-    NoToken,
-    LoggingIn,
-    Authenticated(String),
-    // A login attempt completed and was rejected. Distinct from `LoggingIn`; the
-    // login poll keeps retrying underneath.
-    Failed,
-}
-
-impl AuthState {
-    pub(crate) fn token(&self) -> Option<&str> {
-        match self {
-            Self::Authenticated(token) => Some(token),
-            Self::NoToken | Self::LoggingIn | Self::Failed => None,
-        }
-    }
-
-    pub(crate) fn auth_header(&self) -> Option<String> {
-        self.token()
-            .map(|token| bmc_wasm_sdk::fmt!("Authorization: {token}"))
-    }
-}
-
-#[cfg(test)]
-mod auth_tests {
-    use super::*;
-
-    #[test]
-    fn builds_bos_auth_header() {
-        let mut auth = AuthState::default();
-        assert_eq!(auth, AuthState::NoToken);
-        assert_eq!(auth.auth_header(), None);
-        assert_eq!(AuthState::LoggingIn.auth_header(), None);
-        assert_eq!(AuthState::Failed.auth_header(), None);
-        auth = AuthState::Authenticated("abc".to_owned());
-        assert_eq!(auth.auth_header(), Some("Authorization: abc".to_owned()));
-        auth = AuthState::NoToken;
-        assert_eq!(auth.token(), None);
     }
 }

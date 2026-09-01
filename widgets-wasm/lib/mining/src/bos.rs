@@ -19,7 +19,7 @@
 // the grant above.
 
 //! The slice of the BOS REST API every miner widget speaks:
-//! where to log in, how to read the token back, and how to address an endpoint.
+//! the endpoint paths, the login exchange, and the auth state it leaves behind.
 //!
 //! Which statuses count as an auth failure is deliberately not here.
 //! The fleet adapters treat 403 as one and the single-miner widgets do not,
@@ -32,6 +32,16 @@ use crate::hashboards::JsonLookup;
 
 /// Login endpoint, relative to a miner's API base.
 pub const LOGIN_PATH: &str = "/auth/login";
+
+// Endpoints the widgets read, relative to a miner's API base.
+// `COOLING_PATH` and `NETWORK_PATH` have a single reader today,
+// and sit here so this module states the whole surface.
+pub const STATS_PATH: &str = "/miner/stats";
+pub const HASHBOARDS_PATH: &str = "/miner/hw/hashboards";
+pub const DETAILS_PATH: &str = "/miner/details";
+pub const CONSTRAINTS_PATH: &str = "/configuration/constraints";
+pub const COOLING_PATH: &str = "/cooling/state";
+pub const NETWORK_PATH: &str = "/network/";
 
 /// Join a miner's base URL to an endpoint path,
 /// tolerating a slash on either side of the seam.
@@ -55,19 +65,59 @@ pub fn login_body(password: &str) -> String {
 
 /// The bearer token a login reply carried, if it carried one.
 #[must_use]
-pub fn token(json: &(impl JsonLookup + ?Sized)) -> Option<String> {
+pub fn parse_token(json: &(impl JsonLookup + ?Sized)) -> Option<String> {
     json.str("/token")
+}
+
+/// Where a caller stands with the miner it polls.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum AuthState {
+    #[default]
+    NoToken,
+    LoggingIn,
+    Authenticated(String),
+    // A login attempt completed and was rejected — distinct from `LoggingIn`
+    // so a rejection is visible, while the login poll keeps retrying underneath.
+    Failed,
+}
+
+impl AuthState {
+    #[must_use]
+    pub fn token(&self) -> Option<&str> {
+        match self {
+            Self::Authenticated(token) => Some(token),
+            Self::NoToken | Self::LoggingIn | Self::Failed => None,
+        }
+    }
+
+    #[must_use]
+    pub fn auth_header(&self) -> Option<String> {
+        self.token()
+            .map(|token| bmc_wasm_sdk::fmt!("Authorization: {token}"))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{endpoint, login_body};
+    use super::{AuthState, endpoint, login_body};
 
     #[test]
     fn joins_base_url_and_path_once() {
         assert_eq!(endpoint("http://miner", "/api"), "http://miner/api");
         assert_eq!(endpoint("http://miner/", "/api"), "http://miner/api");
         assert_eq!(endpoint("http://miner/", "api"), "http://miner/api");
+    }
+
+    #[test]
+    fn only_an_authenticated_state_carries_a_header() {
+        let mut auth = AuthState::default();
+        assert_eq!(auth, AuthState::NoToken);
+        assert_eq!(auth.auth_header(), None);
+        assert_eq!(AuthState::LoggingIn.auth_header(), None);
+        assert_eq!(AuthState::Failed.auth_header(), None);
+        auth = AuthState::Authenticated("abc".to_owned());
+        assert_eq!(auth.auth_header(), Some("Authorization: abc".to_owned()));
+        assert_eq!(AuthState::NoToken.token(), None);
     }
 
     #[test]

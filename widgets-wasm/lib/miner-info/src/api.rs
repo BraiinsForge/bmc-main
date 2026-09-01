@@ -25,7 +25,6 @@ use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Ratio, Temperature
 use crate::model::{Availability, MinerData, TemperatureRange};
 use mining::gauge::TargetRange;
 
-pub use mining::bos::endpoint;
 pub use mining::hashboards::JsonLookup;
 
 // Each `parse_*` returns whether it stored any of its fields.
@@ -408,51 +407,5 @@ mod tests {
         // The endpoint quotes a ratio; `Ratio` stores one, so nothing is scaled
         // on the way in and the reading still reads as a percent.
         assert!((fan_speed.as_percent() - 72.0).abs() < 1e-9);
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum AuthState {
-    #[default]
-    NoToken,
-    LoggingIn,
-    Authenticated(String),
-    // A login attempt completed and was rejected.
-    // Distinct from `LoggingIn` so the render path can surface the failure;
-    // the login poll keeps retrying underneath.
-    Failed,
-}
-
-impl AuthState {
-    #[must_use]
-    pub fn token(&self) -> Option<&str> {
-        match self {
-            Self::Authenticated(token) => Some(token),
-            Self::NoToken | Self::LoggingIn | Self::Failed => None,
-        }
-    }
-
-    #[must_use]
-    pub fn auth_header(&self) -> Option<String> {
-        self.token()
-            .map(|token| bmc_wasm_sdk::fmt!("Authorization: {token}"))
-    }
-}
-
-#[cfg(test)]
-mod auth_tests {
-    use super::*;
-
-    #[test]
-    fn builds_bos_auth_header() {
-        let mut auth = AuthState::default();
-        assert_eq!(auth, AuthState::NoToken);
-        assert_eq!(auth.auth_header(), None);
-        assert_eq!(AuthState::LoggingIn.auth_header(), None);
-        assert_eq!(AuthState::Failed.auth_header(), None);
-        auth = AuthState::Authenticated("abc".to_owned());
-        assert_eq!(auth.auth_header(), Some("Authorization: abc".to_owned()));
-        auth = AuthState::NoToken;
-        assert_eq!(auth.token(), None);
     }
 }

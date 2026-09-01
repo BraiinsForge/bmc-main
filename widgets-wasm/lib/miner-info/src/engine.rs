@@ -38,11 +38,13 @@ use std::time::Duration;
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
-use crate::api::{AuthState, endpoint};
-#[cfg(target_arch = "wasm32")]
 use crate::model::{Currency, MinerData, PublicData};
 #[cfg(target_arch = "wasm32")]
 use crate::{api as miner_api, model, public as public_api};
+#[cfg(target_arch = "wasm32")]
+use mining::bos;
+#[cfg(target_arch = "wasm32")]
+use mining::bos::{AuthState, endpoint};
 
 /// Which face a widget draws, and with it which endpoints are worth fetching.
 ///
@@ -119,35 +121,35 @@ struct MinerEndpoint {
 #[cfg(target_arch = "wasm32")]
 const MINER_ENDPOINTS: [MinerEndpoint; 6] = [
     MinerEndpoint {
-        path: "/miner/details",
+        path: bos::DETAILS_PATH,
         parse: miner_details,
         views: &[View::Geek, View::InfoOverload],
         interval_ms: Some(MINER_REFRESH_MS),
         round_only: false,
     },
     MinerEndpoint {
-        path: "/miner/stats",
+        path: bos::STATS_PATH,
         parse: miner_stats,
         views: &[View::Mining, View::Geek, View::InfoOverload],
         interval_ms: Some(MINER_REFRESH_MS),
         round_only: false,
     },
     MinerEndpoint {
-        path: "/miner/hw/hashboards",
+        path: bos::HASHBOARDS_PATH,
         parse: miner_hashboards,
         views: &[View::Mining, View::Geek],
         interval_ms: Some(MINER_REFRESH_MS),
         round_only: false,
     },
     MinerEndpoint {
-        path: "/cooling/state",
+        path: bos::COOLING_PATH,
         parse: miner_cooling,
         views: &[View::Mining],
         interval_ms: Some(MINER_REFRESH_MS),
         round_only: false,
     },
     MinerEndpoint {
-        path: "/network/",
+        path: bos::NETWORK_PATH,
         parse: miner_network,
         views: &[View::Mining, View::Geek],
         interval_ms: Some(MINER_REFRESH_MS),
@@ -156,7 +158,7 @@ const MINER_ENDPOINTS: [MinerEndpoint; 6] = [
     // Anchors the round gauge sweep, so only the round Mining/Geek faces read it.
     // One-shot because constraints change only on a re-tune.
     MinerEndpoint {
-        path: "/configuration/constraints",
+        path: bos::CONSTRAINTS_PATH,
         parse: miner_constraints,
         views: &[View::Mining, View::Geek],
         interval_ms: None,
@@ -504,8 +506,8 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     if !view_needs_miner(params.view) || params.miner_password.is_empty() {
         return None;
     }
-    let url = endpoint(&params.miner_url, mining::bos::LOGIN_PATH);
-    let body = mining::bos::login_body(&params.miner_password);
+    let url = endpoint(&params.miner_url, bos::LOGIN_PATH);
+    let body = bos::login_body(&params.miner_password);
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
@@ -547,7 +549,7 @@ fn build_public(handle: PollHandle) -> Option<FetchSpec> {
 #[cfg(target_arch = "wasm32")]
 fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
     if response.ok()
-        && let Some(token) = mining::bos::token(&response.json())
+        && let Some(token) = bos::parse_token(&response.json())
     {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
