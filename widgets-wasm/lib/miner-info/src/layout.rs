@@ -40,6 +40,9 @@ pub struct InfoOverloadFields {
     pub show_hashvalue: bool,
     pub show_fee_percent: bool,
     pub show_difficulty_row: bool,
+    /// Blocks across the grid. At two, `Block Height` moves out of the primary
+    /// row into the bottom one, which has the slot to spare.
+    pub grid_columns: usize,
 }
 
 #[must_use]
@@ -101,15 +104,22 @@ pub fn mining_layout(class: ViewportClass) -> MiningLayout {
     }
 }
 
+/// Blocks are laid at a fixed width, so a row wider than its screen clips
+/// rather than reflowing. Three blocks need 479 px of a 480 px screen,
+/// and the 317 px BMC100 slot has room for two —
+/// the narrower block is what keeps that pair inside it.
 #[must_use]
-pub fn info_overload_layout() -> BlockLayout {
+pub fn info_overload_layout(class: ViewportClass) -> BlockLayout {
     BlockLayout {
         padding_horizontal: 16.0,
         padding_top: 24.0,
         padding_bottom: 24.0,
         horizontal_gap: 24.0,
         vertical_gap: 15.0,
-        block_width: 133.0,
+        block_width: match class {
+            ViewportClass::Small => 130.0,
+            ViewportClass::Large => 133.0,
+        },
         block_height: 41.0,
         text: TextSizes {
             title: 16,
@@ -126,12 +136,14 @@ pub fn info_overload_fields(class: ViewportClass) -> InfoOverloadFields {
             show_hashvalue: false,
             show_fee_percent: false,
             show_difficulty_row: false,
+            grid_columns: 2,
         },
         ViewportClass::Large => InfoOverloadFields {
             show_price_graph: true,
             show_hashvalue: true,
             show_fee_percent: true,
             show_difficulty_row: true,
+            grid_columns: 3,
         },
     }
 }
@@ -190,7 +202,7 @@ mod tests {
     #[test]
     fn info_overload_layout_keeps_boser_grid_without_graph() {
         assert_eq!(
-            info_overload_layout(),
+            info_overload_layout(ViewportClass::Large),
             BlockLayout {
                 padding_horizontal: 16.0,
                 padding_top: 24.0,
@@ -205,5 +217,27 @@ mod tests {
                 }
             }
         );
+    }
+
+    #[test]
+    fn each_grid_fits_the_narrowest_screen_it_serves() {
+        for (class, width, screen) in [
+            (ViewportClass::Large, 480.0, "BMM101"),
+            (ViewportClass::Small, 317.0, "BMC100 small"),
+        ] {
+            let metrics = info_overload_layout(class);
+            let columns = info_overload_fields(class).grid_columns;
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a column count of two or three is exact in f32"
+            )]
+            let blocks = columns as f32;
+            let used = 2.0f32.mul_add(metrics.padding_horizontal, blocks * metrics.block_width)
+                + (blocks - 1.0) * metrics.horizontal_gap;
+            assert!(
+                used <= width,
+                "{screen}: {columns} blocks need {used} px of {width}"
+            );
+        }
     }
 }

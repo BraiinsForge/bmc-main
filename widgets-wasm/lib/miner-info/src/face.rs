@@ -319,20 +319,21 @@ fn info_overload_header(
 fn info_overload_primary_row(
     miner: &MinerData,
     public: &PublicData,
+    fields: layout::InfoOverloadFields,
     metrics: layout::BlockLayout,
 ) -> Node {
-    block_row(
-        vec![
-            text_block("Hashrate", format::fixed(miner.hashrate, 2), metrics),
-            text_block("Power Consump.", format::fixed(miner.power, 0), metrics),
-            text_block(
-                "Block Height",
-                format::public_integer(public.block_height),
-                metrics,
-            ),
-        ],
-        metrics,
-    )
+    let mut blocks = vec![
+        text_block("Hashrate", format::fixed(miner.hashrate, 2), metrics),
+        text_block("Power Consump.", format::fixed(miner.power, 0), metrics),
+    ];
+    if fields.grid_columns > 2 {
+        blocks.push(text_block(
+            "Block Height",
+            format::public_integer(public.block_height),
+            metrics,
+        ));
+    }
+    block_row(blocks, metrics)
 }
 
 fn info_overload_difficulty_row(public: &PublicData, metrics: layout::BlockLayout) -> Node {
@@ -364,39 +365,45 @@ fn info_overload_bottom_row(
     fields: layout::InfoOverloadFields,
     metrics: layout::BlockLayout,
 ) -> Node {
-    if fields.show_fee_percent && fields.show_hashvalue {
-        return block_row(
-            vec![
-                text_block("Miner Uptime", format::uptime(miner.uptime), metrics),
-                text_block(
-                    "Fees (144 Blocks)",
-                    format::approx_fixed(public.avg_fee_share, 1),
-                    metrics,
-                ),
-                text_block(
-                    "Hashvalue",
-                    format::fixed_strip_zero_fraction(public.hashvalue, 2),
-                    metrics,
-                ),
-            ],
-            metrics,
-        );
-    }
-    block_row(
-        vec![
-            text_block("Miner Uptime", format::uptime(miner.uptime), metrics),
-            fixed_width(metrics.block_width),
-            fixed_width(metrics.block_width),
-        ],
+    let mut blocks = vec![text_block(
+        "Miner Uptime",
+        format::uptime(miner.uptime),
         metrics,
-    )
+    )];
+    if fields.show_fee_percent {
+        blocks.push(text_block(
+            "Fees (144 Blocks)",
+            format::approx_fixed(public.avg_fee_share, 1),
+            metrics,
+        ));
+    }
+    if fields.show_hashvalue {
+        blocks.push(text_block(
+            "Hashvalue",
+            format::fixed_strip_zero_fraction(public.hashvalue, 2),
+            metrics,
+        ));
+    }
+    // Whatever the primary row had no column for lands here,
+    // so the narrow grid drops no reading.
+    // Keyed on the same count that dropped it,
+    // or the two rows could disagree and draw it twice.
+    if fields.grid_columns <= 2 {
+        blocks.push(text_block(
+            "Block Height",
+            format::public_integer(public.block_height),
+            metrics,
+        ));
+    }
+    block_row(blocks, metrics)
 }
 
 #[must_use]
 pub fn info_overload(size: RenderSize, miner: &MinerData, public: &PublicData) -> Node {
-    let fields = layout::info_overload_fields(layout::classify(viewport(size)));
-    let metrics = layout::info_overload_layout();
-    let mut rows = vec![info_overload_primary_row(miner, public, metrics)];
+    let class = layout::classify(viewport(size));
+    let fields = layout::info_overload_fields(class);
+    let metrics = layout::info_overload_layout(class);
+    let mut rows = vec![info_overload_primary_row(miner, public, fields, metrics)];
     if fields.show_difficulty_row {
         rows.push(info_overload_difficulty_row(public, metrics));
     }

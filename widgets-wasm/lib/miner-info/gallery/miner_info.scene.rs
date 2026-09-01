@@ -38,7 +38,11 @@ scene_meta! { title: "Widgets / Miner Info" }
 // keeps a copy of its own to hand to the faces that draw it.
 const CHIP_ICON: Svg = include_svg!("assets/chip.svg");
 
-const RECT_VIEWPORTS: [(u32, u32, &str); 2] = [(320, 240, "BMM100"), (480, 320, "BMM101")];
+const RECT_VIEWPORTS: [(u32, u32, &str); 3] = [
+    (317, 238, "BMC100 slot"),
+    (320, 240, "BMM100"),
+    (480, 320, "BMM101"),
+];
 
 /// Diameter of the BFM100 face. Staged as [`Round`] rather than a square
 /// so the mask shows what the bezel cuts — the faces lay out in bands,
@@ -182,7 +186,7 @@ fn reported(ctx: &mut SceneCtx) -> Reported {
 
 #[scene]
 fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let selected = ctx.select("Viewport", &["All", "BMM100", "BMM101"], 0);
+    let selected = ctx.select("Viewport", &["All", "BMC100 slot", "BMM100", "BMM101"], 0);
     let face_pick = ctx.select("Face", &["Mining", "Geek", "Info Overload"], 0);
     let shown = reported(ctx);
     system_settings(ctx);

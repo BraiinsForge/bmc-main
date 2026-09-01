@@ -656,7 +656,8 @@ fn left_shifted_block_row(
 
 #[must_use]
 pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
-    let metrics = layout::info_overload_layout();
+    // The round face exists only at 480x480, which is never the narrow grid.
+    let metrics = layout::info_overload_layout(layout::ViewportClass::Large);
 
     let top_edge = centered_block_row(
         vec![
