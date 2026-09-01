@@ -1,0 +1,60 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  // One miner per scenario, each on its own port.
+  // The miner URL is a widget param, so a scenario is chosen
+  // by editing `miner_url` — including mid-recording,
+  // which mints a frame for the state it lands in.
+  //
+  // The unreachable case needs no entry:
+  // point `miner_url` at any port nothing is serving.
+  instances: [
+    {
+      device: "bos",
+      label: "Healthy miner, hashing at its tuner target",
+      port: 20300,
+    },
+    {
+      device: "bos",
+      label: "Overclocked — above the tuned target",
+      port: 20301,
+      params: { hashrate_ths: 1.2 },
+    },
+    {
+      device: "bos",
+      label: "Underclocked — below the tuned target",
+      port: 20302,
+      params: { hashrate_ths: 0.8 },
+    },
+    {
+      device: "bos",
+      label: "Not hashing — the gauge reads off",
+      port: 20303,
+      params: { hashrate_ths: 0.0 },
+    },
+    {
+      device: "bos",
+      label: "Un-tuned — no constraints, so the gauge has no sweep to anchor",
+      port: 20304,
+      params: { hashrate_target: null, power_target: null },
+    },
+    {
+      device: "bos",
+      label: "Present but unreadable — telemetry 503s",
+      port: 20305,
+      params: { status: 503 },
+    },
+    {
+      device: "bos",
+      label: "Auth refused — the password is wrong",
+      port: 20306,
+      params: { auth_status: 401 },
+    },
+    {
+      device: "bos",
+      label: "Loads, then stops refreshing 20s in",
+      port: 20307,
+      params: { status: 503, fail_after_secs: 20 },
+    },
+  ],
+}

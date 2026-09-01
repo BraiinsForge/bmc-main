@@ -1,0 +1,26 @@
+# Miner Info - Mining dev tasks: `just widgets::miner-info-mining::dev`, or
+# bare `just dev` from this directory. Generic mechanics delegate to the wasm
+# module; this file owns only the miner scenarios and their wiring.
+
+import '../../common.justfile'
+
+dir := source_directory()
+repo := parent_directory(parent_directory(dir))
+root_justfile := repo / "justfile"
+
+# Widget + sim + watch in mprocs; pick a scenario by editing `miner_url` in the testbed.
+dev:
+    @just --justfile {{ root_justfile }} wasm::prebuild miner-info-mining
+    mprocs \
+        --names "netsim,watch,testbed" \
+        "just --justfile {{ source_file() }} run-netsim" \
+        "just --justfile {{ root_justfile }} wasm::watch miner-info-mining" \
+        "just --justfile {{ root_justfile }} wasm::testbed miner-info-mining"
+
+# Serve every simulated miner at once, one port each.
+run-netsim:
+    @just --justfile {{ root_justfile }} netsim::run {{ dir }}/sim-blueprint.json5
+
+# Testbed ready to record; needs `run-netsim` serving. Scenarios are `miner_url` edits.
+record:
+    @just --justfile {{ root_justfile }} wasm::record miner-info-mining

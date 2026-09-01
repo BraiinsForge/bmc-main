@@ -168,6 +168,7 @@ fn round_viewport_support_is_limited_to_the_expected_widgets() {
             "widgets-wasm/blockheight/manifest.json",
             "widgets-wasm/clock/manifest.json",
             "widgets-wasm/halving-countdown/manifest.json",
+            "widgets-wasm/miner-info-mining/manifest.json",
             "widgets-wasm/mining-clock/manifest.json",
             "widgets-wasm/mining-info/manifest.json",
             // Last because a `PathBuf` sort compares components,

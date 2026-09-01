@@ -27,6 +27,7 @@ members = [
     "lib/prices",
     "lib/remote-image",
     "lib/units",
+    "miner-info-mining",
     "mining-clock",
     "mining-info",
     "nameday",
