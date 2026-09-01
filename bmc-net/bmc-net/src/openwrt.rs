@@ -485,16 +485,24 @@ impl WifiControl for UciNetworkManager {
         // returns the first running non-loopback interface with an IPv4, which
         // on a miner with ethernet up is eth0 — the WiFi tile would then show
         // ethernet data. The walk stays off-executor either way.
-        let device = wifi.wifi_device_name().await?;
-        let lookup = device.clone();
-        let iface = tokio::task::spawn_blocking(move || NetworkInterface::get_by_substr(&lookup))
-            .await
-            .expect("BUG: WiFi interface lookup task panicked")
-            .ok_or_else(|| anyhow!("Wi-Fi interface {device} not found"))?;
-        Ok(WifiData {
-            iface: iface.iface_data(),
-            status,
-        })
+        //
+        // With the radio off netifd has deleted the netdev (nl80211), so there
+        // is nothing to look up: the saved configuration with `enabled: false`
+        // is still the status, only without an address.
+        let iface = match wifi.wifi_device_name().await {
+            Ok(device) => {
+                tokio::task::spawn_blocking(move || NetworkInterface::get_by_substr(&device))
+                    .await
+                    .expect("BUG: WiFi interface lookup task panicked")
+                    .map(|iface| iface.iface_data())
+                    .unwrap_or_default()
+            }
+            Err(e) => {
+                tracing::debug!("No WiFi netdev, reporting the saved config only: {e}");
+                IfaceData::default()
+            }
+        };
+        Ok(WifiData { iface, status })
     }
 
     async fn saved_networks(&self) -> Result<Vec<WifiStatus>> {

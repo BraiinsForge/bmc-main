@@ -34,7 +34,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{self, Duration, MissedTickBehavior};
 use wl_nl80211::Nl80211Handle;
 
-use super::uci::{HtMode, UciHelper, map_uci_iface_to_wifi_status};
+use super::uci::{HtMode, UciHelper, map_uci_iface_to_wifi_status, pick_reported_status};
 use super::utils::{
     ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
     filter_empty_ssid, filter_unsupported_enc, mark_connected, wait_for_interface_up,
@@ -137,16 +137,24 @@ impl OpenwrtWifiManager {
         nl80211_handle: Nl80211Handle,
         wlan_dev_syspath: String,
     ) -> Result<Vec<WifiStatus>> {
-        let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
+        // Saved config first: with the radio disabled netifd deletes the VIF, so
+        // there is no netdev to ask and the status is the config with
+        // `enabled: false` rather than an error.
         let uci = UciHelper::new(&wlan_dev_syspath);
-        let sta_link_state = WifiSta::link_details(nl80211_handle, &device)
-            .await
-            .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
-            .ok();
-        let wifi_ifaces = uci.get_all_wifi_ifaces().await?;
+        let (radio_enabled, wifi_ifaces) = uci.radio_state_with_ifaces().await?;
+        let sta_link_state = match WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await {
+            Ok(device) => WifiSta::link_details(nl80211_handle, &device)
+                .await
+                .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
+                .ok(),
+            Err(e) => {
+                debug!("No WiFi netdev, reporting the saved config only: {e}");
+                None
+            }
+        };
         let wifi_statuses = wifi_ifaces
             .into_iter()
-            .map(|iface| map_uci_iface_to_wifi_status(iface, sta_link_state.clone()))
+            .map(|iface| map_uci_iface_to_wifi_status(iface, sta_link_state.clone(), radio_enabled))
             .collect();
 
         Ok(wifi_statuses)
@@ -252,13 +260,9 @@ impl WifiDriver for OpenwrtWifiManager {
     }
 
     async fn status(&self) -> Result<WifiStatus> {
-        self.status_all()
-            .await?
-            .into_iter()
-            .find(|s| s.enabled)
-            .ok_or_else(|| {
-                anyhow!("No enabled WiFi interface found. Please check your configuration.")
-            })
+        pick_reported_status(&self.status_all().await?).ok_or_else(|| {
+            anyhow!("No WiFi interface configured. Please check your configuration.")
+        })
     }
 
     async fn status_all(&self) -> Result<Vec<WifiStatus>> {
