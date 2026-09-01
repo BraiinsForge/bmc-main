@@ -1,3 +1,7 @@
 [fixtures.bmc100-full]
 path = "fixtures/bmc100-full.jsonl.gz"
 targets = ["bmc100:full"]
+
+[fixtures.long-month]
+path = "fixtures/long-month.jsonl.gz"
+targets = ["bmc100:full"]

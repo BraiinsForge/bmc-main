@@ -38,11 +38,10 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::digital::date_pattern;
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
-    push_utc_offset, resolve_tz_for_label,
+    AlarmAnchor, ClockPalette, DateOrder, TzLabel, alarm_row_draws, date_order, f32_from_u32,
+    font_weight, push_utc_offset, resolve_tz_for_label,
 };
 
 use super::{hour_angle, local_clock_components, minute_angle, second_angle};
@@ -145,6 +144,15 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRectSizeParams {
         SizeVariant::Large => &ANALOG_RECT_LARGE,
         SizeVariant::Medium => &ANALOG_RECT_MEDIUM,
         SizeVariant::Small => &ANALOG_RECT_SMALL,
+    }
+}
+
+/// Abbreviates the month, unlike the digital date row,
+/// to match the stable rectangular clock's date format.
+fn analog_date_pattern(format: system::DateFormat) -> &'static str {
+    match date_order(format) {
+        DateOrder::MonthFirst => "%a, %b %-d",
+        DateOrder::DayFirst => "%a %-d %b",
     }
 }
 
@@ -264,7 +272,7 @@ pub(crate) fn render(
     if size.show_date_row && params.show_date {
         let shifted = now.unix_secs + i64::from(offset_secs);
         let fmt = system::current().date_format().unwrap_or_default();
-        let date_str = strftime(shifted, date_pattern(fmt, true, false));
+        let date_str = strftime(shifted, analog_date_pattern(fmt));
         draws.push(Draw::text(
             viewport_w * (1.0 - SIDE_ROW_X_INSET_FRACTION),
             centre_y,

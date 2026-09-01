@@ -24,7 +24,7 @@
 //! and the typography-knob mapping.
 
 pub(crate) use bmc_wasm_sdk::format::{TzLabel, push_utc_offset, resolve_tz_for_label};
-use bmc_wasm_sdk::system::TimeFormat;
+use bmc_wasm_sdk::system::{DateFormat, TimeFormat};
 #[expect(
     clippy::wildcard_imports,
     reason = "widget render code uses many SDK exports and macros in one file"
@@ -127,6 +127,29 @@ pub(crate) fn local_or_system(now: &SystemTime, offset_secs: i32) -> LocalDateTi
         unix_secs: now.unix_secs + i64::from(offset_secs),
     }
     .utc()
+}
+
+/// Day/month order of a reading date row: "Mon 3 March" vs "Mon, March 3".
+/// The system `DateFormat` is purely numeric, so only its ordering matters here;
+/// year-first variants collapse to day-first
+/// because "2026 Mon 3 March" reads as a log line, not a clock face.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DateOrder {
+    DayFirst,
+    MonthFirst,
+}
+
+pub(crate) fn date_order(format: DateFormat) -> DateOrder {
+    match format {
+        DateFormat::MDYyyySlash => DateOrder::MonthFirst,
+        DateFormat::DdMmYyyyDot
+        | DateFormat::DdMmYyyySlash
+        | DateFormat::DMYyyySlash
+        | DateFormat::DdMmYyyyDash
+        | DateFormat::YyyyMDSlash
+        | DateFormat::YyyyMmDdDot
+        | DateFormat::YyyyMmDdDash => DateOrder::DayFirst,
+    }
 }
 
 // ── Numeric helpers ────────────────────────────────────────────────────

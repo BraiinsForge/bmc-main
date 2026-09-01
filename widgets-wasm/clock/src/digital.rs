@@ -30,8 +30,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, font_weight, local_or_system,
-    push_utc_offset, resolve_tz_for_label, time_font_family,
+    AlarmAnchor, ClockPalette, DateOrder, TzLabel, alarm_row_draws, date_order, font_weight,
+    local_or_system, push_utc_offset, resolve_tz_for_label, time_font_family,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -293,30 +293,17 @@ fn compose_date(now: SystemTime, size: &DigitalSizeParams, offset_secs: i32) -> 
 }
 
 /// Pick a strftime pattern for the long-form date row.
-///
-/// The system `DateFormat` enum is purely numeric
-/// (separators + day/month/year ordering); the date row
-/// is a *reading* row that uses spaces and month names,
-/// so the separator choice is irrelevant here.
-///
-/// Only month-first ordering (US `MDYyyySlash`) is honoured
-/// — year-first variants collapse to day-first because
-/// "2026 Mon 3 March" reads as a log line, not a clock face.
-pub(crate) fn date_pattern(
-    format: system::DateFormat,
-    show_weekday: bool,
-    show_year: bool,
-) -> &'static str {
-    use system::DateFormat::MDYyyySlash;
-    match (format, show_weekday, show_year) {
-        (MDYyyySlash, true, false) => "%a, %B %-d",
-        (MDYyyySlash, true, true) => "%a, %B %-d, %Y",
-        (MDYyyySlash, false, false) => "%b %-d",
-        (MDYyyySlash, false, true) => "%B %-d, %Y",
-        (_, true, false) => "%a %-d %B",
-        (_, true, true) => "%a %-d %B %Y",
-        (_, false, false) => "%-d %b",
-        (_, false, true) => "%-d %B %Y",
+fn date_pattern(format: system::DateFormat, show_weekday: bool, show_year: bool) -> &'static str {
+    use DateOrder::{DayFirst, MonthFirst};
+    match (date_order(format), show_weekday, show_year) {
+        (MonthFirst, true, false) => "%a, %B %-d",
+        (MonthFirst, true, true) => "%a, %B %-d, %Y",
+        (MonthFirst, false, false) => "%b %-d",
+        (MonthFirst, false, true) => "%B %-d, %Y",
+        (DayFirst, true, false) => "%a %-d %B",
+        (DayFirst, true, true) => "%a %-d %B %Y",
+        (DayFirst, false, false) => "%-d %b",
+        (DayFirst, false, true) => "%-d %B %Y",
     }
 }
 
