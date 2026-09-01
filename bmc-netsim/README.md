@@ -10,17 +10,18 @@ serves, and the shape of their responses. The miner profiles (BOS+, uBOS, AxeOS)
 
 ## Scope: a subset modelled from upstream
 
-Each device profile reproduces **only** the fields the widget's family adapters
-(`widgets-wasm/fleet-management/src/families/`) actually read, shaped to the upstream device APIs (BOS+ boser REST, uBOS
-`/api/info`, ESP-Miner `/api/system/info`). It is a deliberate subset, not a mirror of those APIs.
+Each device profile reproduces **only** the fields its consuming widget actually reads — fleet-management's family
+adapters (`widgets-wasm/fleet-management/src/families/`) for the miner APIs (BOS+ boser REST, uBOS `/api/info`,
+ESP-Miner `/api/system/info`), the braiins-pool and miner-info widgets for the two cloud ones. It is a deliberate
+subset, not a mirror of those APIs.
 
 So a field being absent from a profile — or from an adapter — is **not** evidence that the upstream API lacks it; it
 only means the widget has not needed it yet. Before concluding a field is unavailable, check the upstream source of
 truth (the API's openapi/spec or the firmware), never netsim. When the widget starts reading a new field, model it here
 too.
 
-Vendored snapshots of those upstream contracts live under [`reference/`](reference/) for in-repo lookup — currently the
-BOS+ boser openapi; AxeOS and uBOS are noted there.
+Those upstream contracts are recorded under [`reference/`](reference/) for in-repo lookup. Only the BOS+ boser openapi
+is snapshotted; the rest are described there, each with the provenance that says how far to trust it.
 
 ## Quick start
 
@@ -73,23 +74,29 @@ drifts around `hashrate_ths`.
 
 ## Devices
 
-| `device`       | mDNS service                   | endpoints                                                                                                   |
-| -------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `bos`          | `_bos._sub._http._tcp`         | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details}`                               |
-| `bos-libre`    | `_ubos._tcp`                   | `/api/info`                                                                                                 |
-| `axeos`        | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                                                          |
-| `braiins-pool` | — (cloud, not announced)       | FPPS `/pool/v2/user/{hashrate,workers}/{current,history}`, `rewards/latest`, `financials`, `payouts/recent` |
+| `device`             | mDNS service                   | endpoints                                                                                                                         |
+| -------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `bos`                | `_bos._sub._http._tcp`         | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details, configuration/constraints, cooling/state, network/}` |
+| `bos-libre`          | `_ubos._tcp`                   | `/api/info`                                                                                                                       |
+| `axeos`              | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                                                                                |
+| `braiins-pool`       | — (cloud, not announced)       | FPPS `/pool/v2/user/{hashrate,workers}/{current,history}`, `rewards/latest`, `financials`, `payouts/recent`                       |
+| `braiins-public-api` | — (cloud, not announced)       | `/v1/{price-stats, difficulty-stats, price-history}`, `/v2/{blocks, hashrate-stats}`                                              |
 
 Each device's params — `model_name`, `hashrate_ths`, `power_w`, `temp_c`, `uptime_s`, `status` — live in its module and
-appear in the schema under `BosParams` / `UbosParams` / `AxeosParams` / `BraiinsPoolParams`.
+appear in the schema under `BosParams` / `UbosParams` / `AxeosParams` / `BraiinsPoolParams` / `BraiinsPublicApiParams`.
 
 ## Cloud profiles
 
 A profile may also simulate a cloud API rather than a LAN device: it announces nothing (`announce: None`) and is reached
-by its port alone — how a consumer routes traffic to that port is the consumer's business. `braiins-pool` is the first
-such profile: its windowed endpoints read their query string (`ResponseSpec::Computed`), history is generated as a pure
-function of each five-minute slot's absolute time — so any window depth paginates deterministically — and payouts land
-on the `payout_period_s` grid.
+by its port alone — how a consumer routes traffic to that port is the consumer's business. Two exist:
+
+- `braiins-pool` reads the query string of its windowed endpoints (`ResponseSpec::Computed`) and generates history as a
+  pure function of each five-minute slot's absolute time, so any window depth paginates deterministically; payouts land
+  on the `payout_period_s` grid.
+- `braiins-public-api` serves the Bitcoin network stats behind `public-api.braiins.com`. Every figure comes straight
+  from its param — `Computed` buys only the per-request clock `fail_after_secs` needs — and the price history is a
+  straight line from `history_open` to `price`, which `history_points` can shorten to the single point a sparkline still
+  has to draw.
 
 ## Adding a device
 

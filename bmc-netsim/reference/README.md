@@ -1,9 +1,9 @@
 # Vendored upstream API references
 
 The widget's family adapters (`widgets-wasm/fleet-management/src/families/`) and the netsim device profiles
-(`bmc-netsim/src/devices/`) are both modelled against the upstream miner APIs. This directory vendors those upstream
-contracts so the shapes can be checked in-repo, without spelunking other repositories — see the "Scope" note in
-[`../README.md`](../README.md).
+(`bmc-netsim/src/devices/`) are both modelled against upstream APIs — the miner firmware ones, plus the two Braiins
+cloud services. This directory vendors those upstream contracts so the shapes can be checked in-repo, without spelunking
+other repositories — see the "Scope" note in [`../README.md`](../README.md).
 
 These are **snapshots, not living copies**: each carries its provenance below. Refresh when the widget needs a field the
 current snapshot predates.
@@ -59,6 +59,25 @@ No public spec to snapshot; the subset below was probed live against `https://ap
 
 Windowed queries: `from_timestamp`/`to_timestamp` (RFC 3339), `page_limit` (capped at 1000), cursor via
 `pagination.{has_next, next_cursor}` echoed back as `page_cursor`. Timestamps are UTC whole seconds.
+
+## Braiins public API — mirrored from the adapter, not vendored
+
+No spec was located and the endpoints were not probed: the subset below is simply what
+`widgets-wasm/lib/miner-info/src/public.rs` parses out of `https://public-api.braiins.com`, and
+`src/devices/braiins_public_api.rs` serves exactly that shape back. Every endpoint takes a `currency` query parameter
+except `/v1/price-history`, whose series renders normalized.
+
+| endpoint               | fields read                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `/v1/price-stats`      | `price`, `percent_change_24h` (percent)                                                                                 |
+| `/v2/blocks`           | `[0].height` — fetched with `limit=1`                                                                                   |
+| `/v1/difficulty-stats` | `previous_adjustment`, `estimated_adjustment` (both fractions), `block_epoch` (blocks into the epoch)                   |
+| `/v2/hashrate-stats`   | `current_hashrate` (EH/s), `avg_fees_per_block` (BTC), `fees_percent`, `hash_price_currency`, `hash_value` (BTC/TH/day) |
+| `/v1/price-history`    | `price[].y`, with `timeframe=1d`                                                                                        |
+
+The same caveat as uBOS applies in reverse: because the simulator mirrors the parser rather than the service, it cannot
+catch a field the real API renamed or dropped. Probe live and record the result here before trusting it about anything
+beyond layout.
 
 ## AxeOS (ESP-Miner) — not vendored
 

@@ -390,8 +390,9 @@ When multiple valid approaches exist, choose based on:
   comments never restate the code, state the trivial, sprawl, or carry plan/staging or call-graph ("who calls this")
   notes, and read as a human wrote them.
 - treat `bmc-netsim` profiles and the widget's family adapters (`widgets-wasm/fleet-management/src/families/`) as
-  deliberate **subsets** of the upstream device APIs (BOS+ boser REST, uBOS, ESP-Miner) — a field missing from them does
-  not mean upstream lacks it; verify against the upstream openapi/firmware before concluding a field is unavailable
+  deliberate **subsets** of the upstream APIs (BOS+ boser REST, uBOS, ESP-Miner, and the Braiins pool and public cloud
+  APIs) — a field missing from them does not mean upstream lacks it; verify against the upstream openapi/firmware before
+  concluding a field is unavailable
 - ask the developer which parser a standardised format should use — see below
 
 ## Standardised formats — ask before parsing one by hand
