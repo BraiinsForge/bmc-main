@@ -50,6 +50,10 @@ const PERCENT_PER_UNIT: f64 = 100.0;
 const SATOSHIS_PER_BITCOIN: f64 = 100_000_000.0;
 /// Gigahashes per terahash.
 const GIGAHASHES_PER_TERAHASH: f64 = 1_000.0;
+/// Hashes per terahash.
+const HASHES_PER_TERAHASH: f64 = 1_000_000_000_000.0;
+/// Milliwatts per watt.
+const MILLIWATTS_PER_WATT: f64 = 1_000.0;
 
 /// A length, stored canonically in metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -269,6 +273,17 @@ impl ElectricPower {
         Self(watts)
     }
 
+    /// Some firmware reports draw in milliwatts.
+    #[must_use]
+    pub const fn from_milliwatts(mw: f64) -> Self {
+        Self(mw / MILLIWATTS_PER_WATT)
+    }
+
+    #[must_use]
+    pub const fn as_milliwatts(self) -> f64 {
+        self.0 * MILLIWATTS_PER_WATT
+    }
+
     #[must_use]
     pub const fn as_watts(self) -> f64 {
         self.0
@@ -330,6 +345,17 @@ impl Hashrate {
     #[must_use]
     pub const fn as_gigahashes_per_second(self) -> f64 {
         self.0 * GIGAHASHES_PER_TERAHASH
+    }
+
+    /// Some firmware reports the raw hash count rather than a scaled unit.
+    #[must_use]
+    pub const fn from_hashes_per_second(hps: f64) -> Self {
+        Self(hps / HASHES_PER_TERAHASH)
+    }
+
+    #[must_use]
+    pub const fn as_hashes_per_second(self) -> f64 {
+        self.0 * HASHES_PER_TERAHASH
     }
 
     /// The number alone (no unit), for split value/unit rendering.
@@ -664,9 +690,17 @@ mod tests {
     }
 
     #[test]
-    fn hashrate_reads_the_gigahashes_miner_firmware_reports() {
-        let rate = Hashrate::from_gigahashes_per_second(122_480.0);
-        assert!(approx(rate.as_terahashes_per_second(), 122.48));
-        assert!(approx(rate.as_gigahashes_per_second(), 122_480.0));
+    fn quantities_read_the_units_miner_firmware_reports() {
+        let gigahashes = Hashrate::from_gigahashes_per_second(122_480.0);
+        assert!(approx(gigahashes.as_terahashes_per_second(), 122.48));
+        assert!(approx(gigahashes.as_gigahashes_per_second(), 122_480.0));
+
+        let raw = Hashrate::from_hashes_per_second(1_071_197_300_000.0);
+        assert!(approx(raw.as_terahashes_per_second(), 1.071_197_3));
+        assert!(approx(raw.as_hashes_per_second(), 1_071_197_300_000.0));
+
+        let draw = ElectricPower::from_milliwatts(35_000.0);
+        assert!(approx(draw.as_watts(), 35.0));
+        assert!(approx(draw.as_milliwatts(), 35_000.0));
     }
 }
