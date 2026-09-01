@@ -48,7 +48,7 @@ mod wasm_glue {
         reason = "widget render uses many SDK exports"
     )]
     use bmc_wasm_sdk::*;
-    use remote_image::machine::{self, Action, Badge, Event, View};
+    use remote_image::machine::{self, Action, Badge, Event, Fate, View};
     use remote_image::{Fit, picture, render};
 
     /// How often the feed is asked whether a new picture has been published.
@@ -211,6 +211,11 @@ mod wasm_glue {
         SHOWN.with(|s| s.borrow().as_ref().map(|(id, _)| id.clone()))
     }
 
+    /// What the outstanding decode will install, if the host owes one.
+    fn decoding_identity() -> Option<String> {
+        DECODING.with(|d| d.borrow().as_ref().map(|(_, id, _)| id.clone()))
+    }
+
     // ── Feed poll ────────────────────────────────────────────────────
 
     #[expect(
@@ -246,7 +251,8 @@ mod wasm_glue {
         };
         PENDING.with(|p| *p.borrow_mut() = meta.clone());
 
-        if target_identity() == shown_identity() {
+        let target = target_identity();
+        if target == shown_identity() {
             // Same picture. Take any corrected wording, and leave the poll alone.
             let rewritten = SHOWN.with(|s| match &mut *s.borrow_mut() {
                 Some((_, shown)) if *shown != meta => {
@@ -259,6 +265,18 @@ mod wasm_glue {
                 write_caption(&meta);
                 request_frame();
             }
+        } else if target.is_some() && target == decoding_identity() {
+            // Already on its way, and `SHOWN` stays empty for the whole first
+            // load, so this is the only thing that says so. Superseding would
+            // re-ask for the very body whose decode holds the slot, and the
+            // duplicate reply is what the refused-slot path exists to absorb.
+            // Correct the wording the completion will install; nothing on
+            // screen changes, so no frame is owed.
+            DECODING.with(|d| {
+                if let Some((_, _, pending)) = &mut *d.borrow_mut() {
+                    *pending = meta;
+                }
+            });
         } else {
             // Superseded, not wrong: a picture already on screen keeps its place
             // until the new one decodes, so a publication we cannot fetch
@@ -285,11 +303,29 @@ mod wasm_glue {
         let Some((identity, meta)) = REQUESTED.with(|r| r.borrow().clone()) else {
             return;
         };
-        let event = picture::classify_body(response, widget_size(), FIT, &identity, on_decoded);
+        let event = picture::classify_body(
+            response,
+            widget_size(),
+            FIT,
+            &identity,
+            VIEW.with(|v| v.borrow().decode()),
+            on_decoded,
+        );
         if let Event::DecodeStarted { job, .. } = event {
             DECODING.with(|d| *d.borrow_mut() = Some((job, identity, meta)));
         }
         dispatch(event);
+    }
+
+    /// Whether the target moved on while `job` was decoding. The machine is the
+    /// only thing that knows which events do that, so ask it rather than
+    /// mirroring the list here.
+    fn is_discarded(job: ImageJobId) -> bool {
+        VIEW.with(|v| {
+            v.borrow()
+                .decode()
+                .is_some_and(|d| d.job == job && d.fate == Fate::Discard)
+        })
     }
 
     fn on_decoded(job: ImageJobId, bitmap: Option<BitmapId>) {
@@ -299,6 +335,7 @@ mod wasm_glue {
             if owns_job { slot.take() } else { None }
         });
         if bitmap.is_some()
+            && !is_discarded(job)
             && let Some((_, identity, meta)) = decoded
         {
             debug_assert!(
@@ -323,6 +360,27 @@ mod wasm_glue {
     fn read_caption() -> Option<Meta> {
         let entry = cache::read_bytes(CAPTION_TAG)?;
         Meta::decode(core::str::from_utf8(&entry.bytes).ok()?)
+    }
+
+    /// Write the caption of a decode that finished while the widget was dormant.
+    ///
+    /// It never reached `on_decoded`, so the picture entry on flash moved on
+    /// and the caption did not. Whether to write at all is flash's call too:
+    /// a decode that failed while dormant is reclaimed the same way and leaves
+    /// the previous picture up, which this title would not describe. A decode
+    /// the target moved away from describes a picture nobody asked for.
+    fn adopt_abandoned_caption(job: ImageJobId) {
+        let discarded = is_discarded(job);
+        let Some((_, identity, meta)) = DECODING.with(|d| {
+            let mut slot = d.borrow_mut();
+            let owns_job = matches!(&*slot, Some((pending, ..)) if *pending == job);
+            if owns_job { slot.take() } else { None }
+        }) else {
+            return;
+        };
+        if !discarded && picture::stored_identity().as_deref() == Some(identity.as_str()) {
+            write_caption(&meta);
+        }
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────
@@ -426,6 +484,10 @@ mod wasm_glue {
             h.set_enabled(true);
             h.invalidate();
         });
+        if let Some(job) = VIEW.with(|v| picture::abandoned_decode(&v.borrow())) {
+            adopt_abandoned_caption(job);
+            dispatch(Event::DecodeAbandoned { job });
+        }
         dispatch(restore_from_cache());
     }
 

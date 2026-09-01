@@ -146,6 +146,7 @@ mod wasm_glue {
             widget_size(),
             fit(),
             &cache_identity().unwrap_or_default(),
+            VIEW.with(|v| v.borrow().decode()),
             on_decoded,
         ));
     }
@@ -200,6 +201,9 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
         INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes the cold-start restore
+        if let Some(job) = VIEW.with(|v| picture::abandoned_decode(&v.borrow())) {
+            dispatch(Event::DecodeAbandoned { job });
+        }
         dispatch(restore_from_cache());
     }
 

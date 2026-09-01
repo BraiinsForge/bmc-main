@@ -40,6 +40,8 @@ names a date it is not already showing.
 
 - The picture is cached on flash and shown immediately on restart or when the widget returns from being off-screen — no
   re-fetch and no waiting on the network on that path.
+- A download that finished while the widget was off-screen counts. That picture is on screen with its caption when the
+  widget comes back, rather than being fetched a second time.
 - A check that names the date already on screen changes nothing. Only a corrected title or credit is taken from it.
 - While the feed cannot be reached the picture stays up untouched, with nothing drawn over it, and the checks resume on
   their own every thirty seconds. So a Deck that started before its network reaches the first picture shortly after the

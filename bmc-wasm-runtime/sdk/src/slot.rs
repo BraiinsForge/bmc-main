@@ -189,6 +189,16 @@ fn register_image_callback(cb: ImageReadyCallback) -> usize {
     })
 }
 
+/// Whether the host has still to report this decode.
+///
+/// Both `__on_image_ready` and `__on_image_dropped` clear the entry, so `false`
+/// says no callback is coming: either it already ran, or the decode finished
+/// while the widget was dormant and only the asset cache holds its result.
+#[must_use]
+pub fn image_decode_is_pending(job_id: ImageJobId) -> bool {
+    IMAGE_PENDING.with(|p| p.borrow().contains_key(&job_id))
+}
+
 /// Host entry point: dispatch a finished decode to its `set_fit` callback.
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_image_ready(job_id: u32, bitmap_id: u32) {

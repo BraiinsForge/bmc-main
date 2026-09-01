@@ -42,7 +42,7 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::machine::{ErrorKind, Event};
+use crate::machine::{Decode, ErrorKind, Event, View};
 use crate::render::{Fit, aspect_of};
 
 /// Displayed picture; `set_fit_ref` evicts the previous.
@@ -60,18 +60,36 @@ static IMAGE: BitmapSlot = BitmapSlot::new("image");
 /// the same thing however often it is re-asked, so the widget names the reason
 /// in a badge and backs the poll off rather than wearing a stale tag on the
 /// fast `retry_ms` loop. Reaching nothing at all is transient.
+///
+/// `owed` is [`View::decode`], and a body arriving over an outstanding decode
+/// is refused before the slot sees it. The host frees the slot when a result is
+/// *staged*, and a delivery pass hands the guest fetch replies ahead of staged
+/// decode results, so `set_fit_ref` would otherwise accept a second body while
+/// the first job is still tracked — and those pixels would land in the slot the
+/// shown bitmap id names, drawing the new picture at the old aspect.
 #[must_use]
 pub fn classify_body(
     response: &FetchResponse,
     size: WidgetSize,
     fit: Fit,
     identity: &str,
+    owed: Option<Decode>,
     on_ready: ImageReadyCallback,
 ) -> Event {
     let unusable = |kind: ErrorKind| Event::FetchError {
         kind,
         transient: false,
     };
+    let retry = |kind: ErrorKind| Event::FetchError {
+        kind,
+        transient: true,
+    };
+
+    // Same answer as the full slot below — which is what this body would meet
+    // if the host had not already staged the decode holding it.
+    if owed.is_some() {
+        return retry(ErrorKind::LoadFailed);
+    }
 
     // Ahead of the ok() check below, which would read a refusal as transient.
     if response.outcome() == Some(FetchOutcome::BodyTooLarge) {
@@ -81,10 +99,7 @@ pub fn classify_body(
         .body_ref()
         .expect("BUG: picture fetch did not retain its response body");
     if !response.ok() || body.is_empty() {
-        return Event::FetchError {
-            kind: ErrorKind::LoadFailed,
-            transient: true,
-        };
+        return retry(ErrorKind::LoadFailed);
     }
     let Some(dimensions) = host::image_dimensions_ref(&body) else {
         return unusable(ErrorKind::BadImage);
@@ -106,10 +121,7 @@ pub fn classify_body(
             aspect: aspect_of(w, h),
         },
         // Decode slots full — retry later.
-        Err(_body) => Event::FetchError {
-            kind: ErrorKind::LoadFailed,
-            transient: true,
-        },
+        Err(_body) => retry(ErrorKind::LoadFailed),
     }
 }
 
@@ -141,6 +153,22 @@ pub fn restore(identity: &str, interval_ms: u32) -> Event {
             saved_at_secs: state.saved_at_secs,
         }
     }
+}
+
+/// The tracked decode the host will never report, if there is one.
+///
+/// A decode that finishes while the widget is dormant is reclaimed through
+/// `__on_image_dropped`: its pixels and dimensions reach the flash cache,
+/// the ready callback never fires. The SDK's pending set separates that from
+/// a decode still running, which the widget has to keep waiting for —
+/// dropping one costs a re-download the host would refuse to decode anyway.
+///
+/// Ask on wake, before restoring, and feed the answer to
+/// [`Event::DecodeAbandoned`].
+#[must_use]
+pub fn abandoned_decode(view: &View) -> Option<ImageJobId> {
+    let job = view.decode()?.job;
+    (!image_decode_is_pending(job)).then_some(job)
 }
 
 /// The identity the cached picture was fetched for, without reading the payload.

@@ -28,21 +28,49 @@ use bmc_wasm_sdk::{BitmapId, ImageJobId};
 
 /// An in-flight host decode; its completion is matched by `job`.
 ///
-/// `superseded` marks one the widget has already asked to replace.
-/// It stays tracked all the same: the bitmap id names a slot, not a snapshot,
-/// so these pixels reach the shown picture whether the view wants them or not,
-/// and its aspect has to arrive with them.
+/// The bitmap id names a slot, not a snapshot, so these pixels reach the shown
+/// picture whether the view wants them or not, and its aspect has to arrive
+/// with them. Only the host ends a decode — [`Event::Decoded`],
+/// [`Event::DecodeFailed`] or [`Event::DecodeAbandoned`] — so every other
+/// transition carries it through, [`Fate`] recording what became of it.
 #[derive(Clone, Copy)]
 pub struct Decode {
     pub job: ImageJobId,
     pub aspect: f32,
-    pub superseded: bool,
+    pub fate: Fate,
+}
+
+/// What the widget will do with an in-flight decode's pixels.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fate {
+    /// Show them: they are the picture that was asked for.
+    Show,
+    /// Show them under the pill: still the picture that was asked for, only no
+    /// longer the newest. The newer one has been asked for — in flight, or
+    /// waiting on a retry if the slot this decode holds refused its body.
+    ShowSuperseded,
+    /// Drop them: the target changed while they were decoding, so they answer
+    /// a question nobody is asking. The host's one decode slot is theirs until
+    /// they land, and the new target's fetch is waiting on it.
+    Discard,
 }
 
 impl Decode {
     fn supersede(self) -> Self {
+        match self.fate {
+            // Fetching a different picture cannot make the widget want
+            // one it has already stopped asking for.
+            Fate::Discard => self,
+            Fate::Show | Fate::ShowSuperseded => Self {
+                fate: Fate::ShowSuperseded,
+                ..self
+            },
+        }
+    }
+
+    fn discard(self) -> Self {
         Self {
-            superseded: true,
+            fate: Fate::Discard,
             ..self
         }
     }
@@ -81,6 +109,18 @@ pub enum View {
     },
 }
 
+impl View {
+    /// The decode the host has still to report, if any.
+    #[must_use]
+    pub const fn decode(&self) -> Option<Decode> {
+        match *self {
+            Self::Loading { decode } | Self::Shown { decode, .. } => decode,
+            // Only entered with nothing outstanding.
+            Self::Failed(_) => None,
+        }
+    }
+}
+
 /// Something the host reported.
 #[derive(Clone, Copy)]
 pub enum Event {
@@ -105,6 +145,12 @@ pub enum Event {
         bitmap: BitmapId,
     },
     DecodeFailed {
+        job: ImageJobId,
+    },
+    /// A decode the host finished while the widget was dormant, and reclaimed
+    /// without reporting. Its result is on flash and nowhere else, so there is
+    /// nothing left to wait for and nothing to install here.
+    DecodeAbandoned {
         job: ImageJobId,
     },
     FetchError {
@@ -147,6 +193,8 @@ pub enum Action {
 pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
     use Action as A;
     use Event as E;
+    // Survives every transition below that does not resolve it.
+    let owed = view.decode();
     match event {
         E::Restored {
             bitmap,
@@ -157,8 +205,13 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             View::Shown {
                 bitmap,
                 aspect,
-                badge: Badge::Fresh,
-                decode: None,
+                // A decode still outstanding is a newer picture on its way.
+                badge: if owed.is_some() {
+                    Badge::Updating
+                } else {
+                    Badge::Fresh
+                },
+                decode: owed,
             },
             vec![
                 A::SeedAnchor(saved_at_secs),
@@ -175,23 +228,45 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 bitmap,
                 aspect,
                 badge: Badge::Updating,
-                decode: None,
+                decode: owed,
             },
             vec![A::SeedAnchor(saved_at_secs), A::ResumePoll, A::RequestFrame],
         ),
-        // A new target drops the shown picture (Loading, not stale-over-wrong).
-        // `TargetSuperseded` is the case that keeps it.
-        // Evict stays out of here — it needs render scope (host import traps otherwise).
-        E::RestoreMiss | E::TargetChanged => (
-            View::Loading { decode: None },
+        E::RestoreMiss => (
+            View::Loading { decode: owed },
             vec![A::ResumePoll, A::RequestFrame],
+        ),
+        // A new target drops the shown picture (Loading, not stale-over-wrong);
+        // `TargetSuperseded` is the case that keeps it.
+        // A decode stays tracked, marked `Discard`: it holds the host's one
+        // decode slot until it lands, so fetching now risks handing the new
+        // target's body to a `set_fit_ref` that has to refuse it. Its
+        // completion frees the slot and starts the fetch.
+        // Evict stays out of here — it needs render scope (host import traps otherwise).
+        E::TargetChanged => (
+            View::Loading {
+                decode: owed.map(Decode::discard),
+            },
+            if owed.is_some() {
+                vec![A::RequestFrame]
+            } else {
+                vec![A::ResumePoll, A::RequestFrame]
+            },
         ),
         // A refresh of a shown picture keeps it and its badge; only the decode is tracked.
         E::DecodeStarted { job, aspect } => {
+            // Replacing an owed decode would forget a job whose pixels still
+            // reach the slot, so the picture would be drawn from them at the
+            // new job's aspect. `classify_body` refuses a body while one is
+            // owed precisely so this cannot happen.
+            debug_assert!(
+                owed.is_none(),
+                "BUG: a decode started while the host still owed one"
+            );
             let decode = Some(Decode {
                 job,
                 aspect,
-                superseded: false,
+                fate: Fate::Show,
             });
             match view {
                 View::Shown {
@@ -212,6 +287,16 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             }
         }
         E::Decoded { job, bitmap } => match view {
+            // These pixels went into the slot whatever the widget wanted, so a
+            // picture restored over that slot would be drawn from them. Nothing
+            // is shown until the fetch the freed slot now allows lands.
+            View::Loading { decode: Some(d) }
+            | View::Shown {
+                decode: Some(d), ..
+            } if d.job == job && d.fate == Fate::Discard => (
+                View::Loading { decode: None },
+                vec![A::ResumePoll, A::RequestFrame],
+            ),
             View::Loading { decode: Some(d) }
             | View::Shown {
                 decode: Some(d), ..
@@ -220,7 +305,7 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                     bitmap,
                     aspect: d.aspect,
                     // The refresh that superseded this decode is still coming.
-                    badge: if d.superseded {
+                    badge: if d.fate == Fate::ShowSuperseded {
                         Badge::Updating
                     } else {
                         Badge::Fresh
@@ -229,10 +314,29 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 },
                 vec![A::RequestFrame],
             ),
-            // A completion from before a target change — ignore.
+            // A completion the view never tracked — ignore.
             other => (other, vec![]),
         },
         E::DecodeFailed { job } => match view {
+            // Nothing reached the slot, so whatever is shown stays; the point
+            // of a discarded decode is the slot its failure frees.
+            View::Loading { decode: Some(d) } if d.job == job && d.fate == Fate::Discard => {
+                (View::Loading { decode: None }, vec![A::ResumePoll])
+            }
+            View::Shown {
+                bitmap,
+                aspect,
+                badge,
+                decode: Some(d),
+            } if d.job == job && d.fate == Fate::Discard => (
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge,
+                    decode: None,
+                },
+                vec![A::ResumePoll],
+            ),
             // A failed decode registers nothing, so the picture is untouched
             // and the refresh that superseded it decides the badge.
             View::Shown {
@@ -240,7 +344,7 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 aspect,
                 badge,
                 decode: Some(d),
-            } if d.job == job && d.superseded => (
+            } if d.job == job && d.fate == Fate::ShowSuperseded => (
                 View::Shown {
                     bitmap,
                     aspect,
@@ -292,6 +396,21 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                     actions,
                 )
             }
+            // A decode is still owed, so a picture is on its way: keep waiting
+            // rather than posting an error the completion is about to disprove.
+            // The failure still paces the poll — and it has to name a delay
+            // itself: this is the arm a body refused for the busy decode slot
+            // lands in, the reply was HTTP-ok, and a poll with no interval
+            // schedules nothing off an ok reply. Without it the refused fetch
+            // is never re-asked and the completion leaves the pill up.
+            _ if owed.is_some() => (
+                View::Loading { decode: owed },
+                if transient {
+                    vec![A::RequestFrame, A::Retry]
+                } else {
+                    vec![A::RequestFrame, A::DeferPoll]
+                },
+            ),
             // No picture to keep. A non-transient failure (bad body, oversized)
             // still must slow the poll: without DeferPoll the widget falls back
             // to the fast retry_ms cadence and hammers an unfixable URL forever.
@@ -316,26 +435,48 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 vec![A::ResumePoll, A::RequestFrame],
             ),
             _ => (
-                View::Loading { decode: None },
+                View::Loading {
+                    decode: owed.map(Decode::supersede),
+                },
                 vec![A::ResumePoll, A::RequestFrame],
             ),
         },
+        // Only the poll stops. A decode carries on in the host and lands on
+        // flash whether the widget is watching, so it stays tracked and the
+        // wake asks the SDK whether it is still coming.
         E::Sleep => match view {
+            // Nothing to hold on to, and the wake restores before it draws.
+            View::Failed(_) => (View::Loading { decode: None }, vec![A::DisablePoll]),
+            kept => (kept, vec![A::DisablePoll]),
+        },
+        E::DecodeAbandoned { job } => match view {
+            // The slot is free and the fetch it was blocking is still owed.
+            View::Loading { decode: Some(d) }
+            | View::Shown {
+                decode: Some(d), ..
+            } if d.job == job && d.fate == Fate::Discard => {
+                (View::Loading { decode: None }, vec![A::ResumePoll])
+            }
+            View::Loading { decode: Some(d) } if d.job == job => {
+                (View::Loading { decode: None }, vec![])
+            }
+            // The cached picture moved under the widget; the restore that
+            // follows brings its pixels and aspect.
             View::Shown {
                 bitmap,
                 aspect,
                 badge,
-                ..
-            } => (
+                decode: Some(d),
+            } if d.job == job => (
                 View::Shown {
                     bitmap,
                     aspect,
                     badge,
                     decode: None,
                 },
-                vec![A::DisablePoll],
+                vec![],
             ),
-            _ => (View::Loading { decode: None }, vec![A::DisablePoll]),
+            other => (other, vec![]),
         },
     }
 }
@@ -375,7 +516,7 @@ mod tests {
         Decode {
             job: job(n),
             aspect,
-            superseded: false,
+            fate: Fate::Show,
         }
     }
     fn shown(badge: Badge, decode: Option<Decode>) -> View {
@@ -422,11 +563,20 @@ mod tests {
     }
 
     #[test]
-    fn target_change_drops_in_flight_decode() {
+    fn a_target_change_waits_for_the_slot_its_decode_holds() {
         let v = shown(Badge::Fresh, Some(decode(5, 1.0)));
-        let (next, _) = step(v, Event::TargetChanged);
-        assert!(matches!(next, View::Loading { decode: None }));
-        // A late completion of the dropped job can no longer install.
+        let (next, actions) = step(v, Event::TargetChanged);
+        assert!(
+            matches!(next, View::Loading { decode: Some(d) }
+                if d.job == job(5) && d.fate == Fate::Discard),
+            "the host owes this decode whatever the widget now wants"
+        );
+        assert_eq!(
+            actions,
+            vec![Action::RequestFrame],
+            "fetching now would hand the new target's body to a full decode slot"
+        );
+
         let (after, actions) = step(
             next,
             Event::Decoded {
@@ -434,8 +584,82 @@ mod tests {
                 bitmap: bmp(9),
             },
         );
+        assert!(
+            matches!(after, View::Loading { decode: None }),
+            "the pixels landed in the slot but answer a target nobody asked for"
+        );
+        assert!(
+            actions.contains(&Action::ResumePoll),
+            "the freed slot is what the new target's fetch was waiting for"
+        );
+    }
+
+    #[test]
+    fn a_discarded_decode_failing_frees_the_slot_too() {
+        let (next, _) = step(
+            shown(Badge::Fresh, Some(decode(5, 1.0))),
+            Event::TargetChanged,
+        );
+        let (after, actions) = step(next, Event::DecodeFailed { job: job(5) });
         assert!(matches!(after, View::Loading { decode: None }));
-        assert!(actions.is_empty());
+        assert!(actions.contains(&Action::ResumePoll));
+    }
+
+    #[test]
+    fn a_discarded_decode_reclaimed_while_dormant_frees_the_slot_too() {
+        let (next, _) = step(
+            shown(Badge::Fresh, Some(decode(5, 1.0))),
+            Event::TargetChanged,
+        );
+        let (dormant, _) = step(next, Event::Sleep);
+        let (after, actions) = step(dormant, Event::DecodeAbandoned { job: job(5) });
+        assert!(matches!(after, View::Loading { decode: None }));
+        assert!(
+            actions.contains(&Action::ResumePoll),
+            "the wake still owes a fetch for the target that was changed to"
+        );
+    }
+
+    #[test]
+    fn a_restored_picture_goes_when_the_decode_it_waits_on_is_discarded() {
+        let (changed, _) = step(
+            shown(Badge::Fresh, Some(decode(5, 1.0))),
+            Event::TargetChanged,
+        );
+        let (restored, _) = step(
+            changed,
+            Event::Restored {
+                bitmap: bmp(1),
+                aspect: 1.0,
+                remaining_ms: 4_000,
+                saved_at_secs: 900,
+            },
+        );
+        let (after, _) = step(
+            restored,
+            Event::Decoded {
+                job: job(5),
+                bitmap: bmp(9),
+            },
+        );
+        assert!(
+            matches!(after, View::Loading { decode: None }),
+            "the host put the discarded pixels in the slot the restored picture \
+             was drawn from, so that picture cannot stay on screen"
+        );
+    }
+
+    #[test]
+    fn a_reload_cannot_re_want_a_discarded_decode() {
+        let (changed, _) = step(
+            shown(Badge::Fresh, Some(decode(5, 1.0))),
+            Event::TargetChanged,
+        );
+        let (reloaded, _) = step(changed, Event::Reload);
+        assert!(
+            matches!(reloaded, View::Loading { decode: Some(d) } if d.fate == Fate::Discard),
+            "a reload asks for the current target, which these pixels are not"
+        );
     }
 
     #[test]
@@ -609,7 +833,8 @@ mod tests {
         let v = shown(Badge::Fresh, Some(decode(5, 2.0)));
         let (next, _) = step(v, Event::Reload);
         assert!(
-            matches!(next, View::Shown { decode: Some(d), .. } if d.job == job(5) && d.superseded),
+            matches!(next, View::Shown { decode: Some(d), .. }
+                if d.job == job(5) && d.fate == Fate::ShowSuperseded),
             "the decode the reload replaced is still running and still owns the slot"
         );
         let (after, _) = step(
@@ -748,6 +973,130 @@ mod tests {
             "a decode that finished while dormant swapped the cached picture, \
              so the restored dimensions have to beat the ones the view held"
         );
+    }
+
+    #[test]
+    fn sleep_keeps_a_decode_the_host_still_owes() {
+        let (dormant, actions) = step(shown(Badge::Fresh, Some(decode(3, 2.0))), Event::Sleep);
+        assert!(
+            matches!(dormant, View::Shown { decode: Some(d), .. } if d.job == job(3)),
+            "the decode runs on in the host, so a completion arriving after \
+             the wake needs a view that still accepts it"
+        );
+        assert_eq!(actions, vec![Action::DisablePoll]);
+    }
+
+    #[test]
+    fn a_wake_restore_keeps_a_decode_the_host_still_owes() {
+        let (dormant, _) = step(shown(Badge::Fresh, Some(decode(3, 2.0))), Event::Sleep);
+        let (woken, _) = step(
+            dormant,
+            Event::Restored {
+                bitmap: bmp(2),
+                aspect: 1.0,
+                remaining_ms: 4_000,
+                saved_at_secs: 900,
+            },
+        );
+        assert!(
+            matches!(
+                woken,
+                View::Shown {
+                    badge: Badge::Updating,
+                    decode: Some(_),
+                    ..
+                }
+            ),
+            "flash held the older picture and the decode names a newer one"
+        );
+        let (after, _) = step(
+            woken,
+            Event::Decoded {
+                job: job(3),
+                bitmap: bmp(2),
+            },
+        );
+        assert!(
+            matches!(after, View::Shown { aspect, badge: Badge::Fresh, decode: None, .. }
+                if aspect == 2.0),
+            "the decode's own aspect describes the pixels it put in the slot"
+        );
+    }
+
+    #[test]
+    fn a_restore_miss_keeps_a_decode_the_host_still_owes() {
+        let (next, actions) = step(
+            View::Loading {
+                decode: Some(decode(3, 2.0)),
+            },
+            Event::RestoreMiss,
+        );
+        assert!(matches!(next, View::Loading { decode: Some(_) }));
+        assert!(actions.contains(&Action::ResumePoll));
+    }
+
+    #[test]
+    fn a_fetch_failure_waits_for_a_decode_it_is_owed() {
+        let (next, actions) = step(
+            View::Loading {
+                decode: Some(decode(3, 2.0)),
+            },
+            Event::FetchError {
+                kind: ErrorKind::LoadFailed,
+                transient: true,
+            },
+        );
+        assert!(
+            matches!(next, View::Loading { decode: Some(_) }),
+            "a fetch the decode slot had no room for says nothing about \
+             the decode occupying it"
+        );
+        assert!(actions.contains(&Action::RequestFrame));
+        assert!(
+            actions.contains(&Action::Retry),
+            "the reply was HTTP-ok, so only this re-asks the refused fetch"
+        );
+    }
+
+    #[test]
+    fn a_broken_body_arriving_over_an_owed_decode_defers_rather_than_retries() {
+        let (next, actions) = step(
+            View::Loading {
+                decode: Some(decode(3, 2.0)),
+            },
+            Event::FetchError {
+                kind: ErrorKind::BadImage,
+                transient: false,
+            },
+        );
+        assert!(matches!(next, View::Loading { decode: Some(_) }));
+        assert!(actions.contains(&Action::DeferPoll));
+        assert!(!actions.contains(&Action::Retry));
+    }
+
+    #[test]
+    fn an_abandoned_decode_stops_being_waited_for() {
+        let (next, actions) = step(
+            shown(Badge::Fresh, Some(decode(3, 2.0))),
+            Event::DecodeAbandoned { job: job(3) },
+        );
+        assert!(matches!(next, View::Shown { decode: None, .. }));
+        assert!(
+            actions.is_empty(),
+            "the restore that follows the wake is what redraws"
+        );
+
+        let (foreign, _) = step(
+            shown(Badge::Fresh, Some(decode(3, 2.0))),
+            Event::DecodeAbandoned { job: job(4) },
+        );
+        assert!(matches!(
+            foreign,
+            View::Shown {
+                decode: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]
