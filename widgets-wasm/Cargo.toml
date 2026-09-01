@@ -27,6 +27,7 @@ members = [
     "lib/prices",
     "lib/remote-image",
     "lib/units",
+    "miner-info-geek",
     "miner-info-mining",
     "mining-clock",
     "mining-info",

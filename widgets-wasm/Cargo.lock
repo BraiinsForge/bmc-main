@@ -829,6 +829,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "miner-info-geek"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "miner-info",
+ "mining",
+]
+
+[[package]]
 name = "miner-info-mining"
 version = "0.1.0"
 dependencies = [
