@@ -48,6 +48,8 @@ const FREEZING_POINT_FAHRENHEIT: f64 = 32.0;
 const PERCENT_PER_UNIT: f64 = 100.0;
 /// Satoshis per bitcoin.
 const SATOSHIS_PER_BITCOIN: f64 = 100_000_000.0;
+/// Gigahashes per terahash.
+const GIGAHASHES_PER_TERAHASH: f64 = 1_000.0;
 
 /// A length, stored canonically in metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -310,13 +312,24 @@ impl Hashrate {
     pub const UNIT: &'static str = "TH/s";
 
     #[must_use]
-    pub const fn from_terahashes_per_second(ths: f64) -> Self {
-        Self(ths)
+    pub const fn from_terahashes_per_second(thps: f64) -> Self {
+        Self(thps)
     }
 
     #[must_use]
     pub const fn as_terahashes_per_second(self) -> f64 {
         self.0
+    }
+
+    /// Miner firmware reports hashrate in GH/s, whatever the family.
+    #[must_use]
+    pub const fn from_gigahashes_per_second(ghps: f64) -> Self {
+        Self(ghps / GIGAHASHES_PER_TERAHASH)
+    }
+
+    #[must_use]
+    pub const fn as_gigahashes_per_second(self) -> f64 {
+        self.0 * GIGAHASHES_PER_TERAHASH
     }
 
     /// The number alone (no unit), for split value/unit rendering.
@@ -648,5 +661,12 @@ mod tests {
             MiningEfficiency::from_joules_per_terahash(10.01).as_joules_per_terahash(),
             10.01
         ));
+    }
+
+    #[test]
+    fn hashrate_reads_the_gigahashes_miner_firmware_reports() {
+        let rate = Hashrate::from_gigahashes_per_second(122_480.0);
+        assert!(approx(rate.as_terahashes_per_second(), 122.48));
+        assert!(approx(rate.as_gigahashes_per_second(), 122_480.0));
     }
 }
