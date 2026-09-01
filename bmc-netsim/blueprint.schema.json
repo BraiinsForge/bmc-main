@@ -353,6 +353,106 @@
       },
       "additionalProperties": false
     },
+    "BraiinsPublicApiParams": {
+      "type": "object",
+      "properties": {
+        "avg_fees_per_block": {
+          "description": "Average transaction fees per block, in BTC.",
+          "type": "number",
+          "format": "double",
+          "default": 0.055
+        },
+        "block_epoch": {
+          "description": "Blocks mined in the current 2016-block epoch.",
+          "type": "number",
+          "format": "double",
+          "default": 1754.0
+        },
+        "block_height": {
+          "description": "Latest block height.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 880123,
+          "minimum": 0
+        },
+        "current_hashrate": {
+          "description": "Network hashrate, in EH/s.",
+          "type": "number",
+          "format": "double",
+          "default": 650.0
+        },
+        "estimated_adjustment": {
+          "description": "Projected difficulty adjustment, as a fraction.",
+          "type": "number",
+          "format": "double",
+          "default": -0.045
+        },
+        "fail_after_secs": {
+          "description": "Answer 200 before this many seconds of scenario time,\nthen switch to `status`.\nDrives the stale case: data lands, then stops refreshing.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "fees_percent": {
+          "description": "Fees as a percent of the block reward.",
+          "type": "number",
+          "format": "double",
+          "default": 12.1
+        },
+        "hash_price_currency": {
+          "description": "Hashprice, in the queried currency per TH/day.",
+          "type": "number",
+          "format": "double",
+          "default": 0.052
+        },
+        "hash_value": {
+          "description": "Hashvalue, in BTC per TH/day.",
+          "type": "number",
+          "format": "double",
+          "default": 7e-7
+        },
+        "history_open": {
+          "description": "Price at the start of the 1d history series, which ends at `price`.\nAbove `price` the sparkline falls, below it climbs.",
+          "type": "number",
+          "format": "double",
+          "default": 99800.0
+        },
+        "history_points": {
+          "description": "Points in the history series. One point draws a widget with a series\ntoo short to have a shape, which the chart still has to survive.",
+          "type": "integer",
+          "format": "uint",
+          "default": 64,
+          "minimum": 0
+        },
+        "percent_change_24h": {
+          "description": "Price move over 24h, as a percent; negative reads red.",
+          "type": "number",
+          "format": "double",
+          "default": 6.25
+        },
+        "previous_adjustment": {
+          "description": "Realised difficulty adjustment, as a fraction; `0.01` means 1%.",
+          "type": "number",
+          "format": "double",
+          "default": -0.021
+        },
+        "price": {
+          "description": "Bitcoin price. The `currency` query is not inspected,\nso this one value answers whichever currency is asked for.",
+          "type": "number",
+          "format": "double",
+          "default": 101754.0
+        },
+        "status": {
+          "description": "HTTP status returned after startup, or after `fail_after_secs`.",
+          "$ref": "#/$defs/HttpStatus"
+        }
+      },
+      "additionalProperties": false
+    },
     "CalendarDay": {
       "description": "The day the profile treats as today, e.g. 2026-08-21",
       "type": "string",
@@ -705,6 +805,47 @@
             },
             "params": {
               "$ref": "#/$defs/BitcoinMiningDataParams"
+            },
+            "port": {
+              "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "device"
+          ]
+        },
+        {
+          "description": "The Braiins public API — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "braiins-public-api"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/BraiinsPublicApiParams"
             },
             "port": {
               "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",

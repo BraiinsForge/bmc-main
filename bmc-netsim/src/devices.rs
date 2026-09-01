@@ -26,5 +26,6 @@ pub mod axeos;
 pub mod bitcoin_mining_data;
 pub mod bos;
 pub mod braiins_pool;
+pub mod braiins_public_api;
 pub mod formula_1;
 pub mod ubos;
