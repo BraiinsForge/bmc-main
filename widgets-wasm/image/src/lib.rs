@@ -135,6 +135,11 @@ mod wasm_glue {
         expanded_url().map(|url| FetchSpec::get(url).host_body())
     }
 
+    /// Bring back whichever picture is on flash. Render scope only.
+    fn restore_from_cache() -> Event {
+        picture::restore(&cache_identity().unwrap_or_default(), refresh_interval_ms())
+    }
+
     fn on_image(_handle: PollHandle, response: &FetchResponse) {
         dispatch(picture::classify_body(
             response,
@@ -195,14 +200,7 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
         INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes the cold-start restore
-        let has_bitmap = VIEW.with(|view| matches!(&*view.borrow(), View::Shown { .. }));
-        let identity = cache_identity().unwrap_or_default();
-        let interval = refresh_interval_ms();
-        dispatch(if has_bitmap {
-            picture::wake(&identity, interval)
-        } else {
-            picture::restore(&identity, interval)
-        });
+        dispatch(restore_from_cache());
     }
 
     fn menu_open() -> bool {
@@ -214,10 +212,7 @@ mod wasm_glue {
         // First render restores from cache (init() has no renderer scope).
         if INITIAL_RESTORE.with(Cell::get) {
             INITIAL_RESTORE.with(|f| f.set(false));
-            dispatch(picture::restore(
-                &cache_identity().unwrap_or_default(),
-                refresh_interval_ms(),
-            ));
+            dispatch(restore_from_cache());
         }
 
         if menu_open() {

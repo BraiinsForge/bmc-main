@@ -95,13 +95,6 @@ pub enum Event {
         aspect: f32,
         saved_at_secs: i64,
     },
-    Woke {
-        remaining_ms: u32,
-        saved_at_secs: i64,
-    },
-    WokeStale {
-        saved_at_secs: i64,
-    },
     RestoreMiss,
     DecodeStarted {
         job: ImageJobId,
@@ -186,37 +179,6 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             },
             vec![A::SeedAnchor(saved_at_secs), A::ResumePoll, A::RequestFrame],
         ),
-        E::Woke {
-            remaining_ms,
-            saved_at_secs,
-        } => match view {
-            View::Shown { bitmap, aspect, .. } => (
-                View::Shown {
-                    bitmap,
-                    aspect,
-                    badge: Badge::Fresh,
-                    decode: None,
-                },
-                vec![
-                    A::SeedAnchor(saved_at_secs),
-                    A::EnablePollAfter(remaining_ms),
-                    A::RequestFrame,
-                ],
-            ),
-            other => (other, vec![]),
-        },
-        E::WokeStale { saved_at_secs } => match view {
-            View::Shown { bitmap, aspect, .. } => (
-                View::Shown {
-                    bitmap,
-                    aspect,
-                    badge: Badge::Updating,
-                    decode: None,
-                },
-                vec![A::SeedAnchor(saved_at_secs), A::ResumePoll, A::RequestFrame],
-            ),
-            other => (other, vec![]),
-        },
         // A new target drops the shown picture (Loading, not stale-over-wrong).
         // `TargetSuperseded` is the case that keeps it.
         // Evict stays out of here — it needs render scope (host import traps otherwise).
@@ -768,24 +730,24 @@ mod tests {
     }
 
     #[test]
-    fn dormant_then_wake_reuses_bitmap_id() {
+    fn a_wake_restore_replaces_what_the_dormant_view_held() {
         let (dormant, _) = step(shown(Badge::Fresh, None), Event::Sleep);
         assert!(matches!(dormant, View::Shown { .. }));
         let (woken, _) = step(
             dormant,
-            Event::Woke {
+            Event::Restored {
+                bitmap: bmp(2),
+                aspect: 2.0,
                 remaining_ms: 4_000,
                 saved_at_secs: 900,
             },
         );
-        assert!(matches!(
-            woken,
-            View::Shown {
-                bitmap,
-                aspect: 1.0,
-                ..
-            } if bitmap == bmp(1)
-        ));
+        assert!(
+            matches!(woken, View::Shown { bitmap, aspect, .. }
+                if bitmap == bmp(2) && aspect == 2.0),
+            "a decode that finished while dormant swapped the cached picture, \
+             so the restored dimensions have to beat the ones the view held"
+        );
     }
 
     #[test]

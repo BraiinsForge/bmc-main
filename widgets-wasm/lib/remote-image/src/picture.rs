@@ -30,7 +30,7 @@
 //!
 //! # Render scope
 //!
-//! [`restore`] and [`wake`] register a bitmap from the flash cache,
+//! [`restore`] registers a bitmap from the flash cache,
 //! which the host serves through `with_renderer_and_state`.
 //! That **traps outside a render scope**, killing the widget.
 //! Lifecycle hooks are only delivered with the renderer parked,
@@ -114,6 +114,10 @@ pub fn classify_body(
 }
 
 /// Restore the cached picture when its identity matches. Render scope only.
+///
+/// The cache can move under a dormant widget: a decode that finishes mid-sleep
+/// writes new pixels and new dimensions, and the ready callback never fires.
+/// A bitmap id the guest still holds therefore says nothing about what is on flash.
 #[must_use]
 pub fn restore(identity: &str, interval_ms: u32) -> Event {
     let Some(state) = cached_state(identity, interval_ms) else {
@@ -134,24 +138,6 @@ pub fn restore(identity: &str, interval_ms: u32) -> Event {
         Event::RestoredStale {
             bitmap,
             aspect,
-            saved_at_secs: state.saved_at_secs,
-        }
-    }
-}
-
-/// Re-arm a picture the widget still holds after dormancy. Render scope only.
-#[must_use]
-pub fn wake(identity: &str, interval_ms: u32) -> Event {
-    let Some(state) = cached_state(identity, interval_ms) else {
-        return Event::RestoreMiss;
-    };
-    if state.remaining_ms > 0 {
-        Event::Woke {
-            remaining_ms: state.remaining_ms,
-            saved_at_secs: state.saved_at_secs,
-        }
-    } else {
-        Event::WokeStale {
             saved_at_secs: state.saved_at_secs,
         }
     }

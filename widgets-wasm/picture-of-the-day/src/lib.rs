@@ -327,7 +327,7 @@ mod wasm_glue {
 
     // ── Lifecycle ────────────────────────────────────────────────────
 
-    /// Bring back the picture already on flash, before the feed has answered.
+    /// Bring back whichever picture is on flash, without waiting for the feed.
     ///
     /// The caption is adopted only when it describes the very blob being
     /// restored — the two cache entries are written separately and a crash
@@ -349,9 +349,20 @@ mod wasm_glue {
         if matches!(event, Event::RestoreMiss) {
             return event;
         }
-        if let Some(meta) =
-            read_caption().filter(|m| m.describes(source(), &stored, size.width, size.height))
-        {
+        let fits = |meta: Meta| {
+            meta.describes(source(), &stored, size.width, size.height)
+                .then_some(meta)
+        };
+        let meta = match read_caption().and_then(&fits) {
+            Some(meta) => Some(meta),
+            // A decode that lands while dormant updates the picture entry, not
+            // the caption. The feed's last answer still names that picture,
+            // so the credit skips a round trip and flash catches up here.
+            None => PENDING
+                .with(|p| fits(p.borrow().clone()))
+                .inspect(write_caption),
+        };
+        if let Some(meta) = meta {
             // Only while the feed has said nothing: its answer outranks flash,
             // and a cold-boot reply can beat the first render,
             // so overwriting it would caption the in-flight picture with this older one.
@@ -415,11 +426,7 @@ mod wasm_glue {
             h.set_enabled(true);
             h.invalidate();
         });
-        let has_bitmap = VIEW.with(|view| matches!(&*view.borrow(), View::Shown { .. }));
-        dispatch(match shown_identity().filter(|_| has_bitmap) {
-            Some(identity) => picture::wake(&identity, PICTURE_TTL_MS),
-            None => restore_from_cache(),
-        });
+        dispatch(restore_from_cache());
     }
 
     fn menu_open() -> bool {
