@@ -30,7 +30,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
-use super::uci::{UciHelper, map_uci_iface_to_wifi_status};
+use super::uci::{UciHelper, map_uci_iface_to_wifi_status, pick_reported_status};
 use super::utils::{
     ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
     filter_empty_ssid, filter_sort_by_strongest_signal, filter_unsupported_enc, mark_connected,
@@ -267,11 +267,8 @@ impl WifiDriver for Esp32WifiManager {
     }
 
     async fn status(&self) -> Result<WifiStatus> {
-        self.status_all()
-            .await?
-            .into_iter()
-            .find(|status| status.enabled)
-            .ok_or_else(|| anyhow!("No enabled WiFi interface found"))
+        pick_reported_status(&self.status_all().await?)
+            .ok_or_else(|| anyhow!("No WiFi interface configured"))
     }
 
     async fn status_all(&self) -> Result<Vec<WifiStatus>> {
@@ -280,21 +277,33 @@ impl WifiDriver for Esp32WifiManager {
             .lock()
             .await
             .cached_or_else::<anyhow::Error>(Box::pin(async move {
+                // Saved config first, live link second: the ESP32 netdev does
+                // survive the radio being disabled (verified on a BMM), but a
+                // reflash renames it under the cached syspath, and the status
+                // is then still the saved config rather than an error.
                 let uci = UciHelper::new(&syspath);
-                let device = WifiUtils::get_device_by_syspath(&syspath).await?;
+                let (radio_enabled, ifaces) = uci.radio_state_with_ifaces().await?;
                 let sta_ssid = match uci.wifi_iface_find_enabled().await {
                     Some(config) if config.mode == WifiMode::Station => Some(config.ssid),
                     _ => None,
                 };
-                let link_state = match (sta_ssid, get_link_signal(&device).await) {
+                let device = WifiUtils::get_device_by_syspath(&syspath)
+                    .await
+                    .inspect_err(|e| debug!("No WiFi netdev, reporting the saved config only: {e}"))
+                    .ok();
+                let signal = match device {
+                    Some(device) => get_link_signal(&device).await,
+                    None => None,
+                };
+                let link_state = match (sta_ssid, signal) {
                     (Some(ssid), Some(level)) => Some(WifiLinkState::new(&ssid, level)),
                     _ => None,
                 };
-                Ok(uci
-                    .get_all_wifi_ifaces()
-                    .await?
+                Ok(ifaces
                     .into_iter()
-                    .map(|iface| map_uci_iface_to_wifi_status(iface, link_state.clone()))
+                    .map(|iface| {
+                        map_uci_iface_to_wifi_status(iface, link_state.clone(), radio_enabled)
+                    })
                     .collect())
             }))
             .await

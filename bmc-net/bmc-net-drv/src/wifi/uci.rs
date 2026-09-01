@@ -36,6 +36,12 @@ struct UciWirelessRadio {
     #[serde(alias = ".name")]
     name: String,
     path: String,
+    disabled: Option<String>,
+}
+
+/// UCI `disabled` semantics: an absent flag, or `"0"`, means enabled.
+fn uci_enabled(disabled: Option<&str>) -> bool {
+    disabled.is_none_or(|value| value == "0")
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -77,23 +83,25 @@ impl From<UciWirelessIface> for WifiConfiguration {
     }
 }
 
-impl From<UciWirelessIface> for WifiStatus {
-    fn from(iface: UciWirelessIface) -> Self {
-        let configuration = Some(WifiConfiguration::from(iface.clone()));
-
-        Self {
-            enabled: iface.disabled.is_none_or(|val| val == "0"),
-            configuration,
-            sta_link_state: None,
-        }
-    }
-}
-
+/// Build the reported [`WifiStatus`] for one `wifi-iface` section.
+///
+/// `enabled` folds in `radio_enabled` because the two `disabled` flags live in
+/// different UCI sections: `wifi_radio_enable` writes the one on the
+/// `wifi-device`, and never touches the `wifi-iface` sections. Reading only the
+/// iface flag therefore reports `enabled: true` for a configuration whose radio
+/// has been switched off, which is what the API used to answer right after a
+/// `set_wifi_enabled(false)`.
 pub(crate) fn map_uci_iface_to_wifi_status(
     iface: UciWirelessIface,
     link_state: Option<WifiLinkState>,
+    radio_enabled: bool,
 ) -> WifiStatus {
-    let mut status = WifiStatus::from(iface);
+    let iface_enabled = uci_enabled(iface.disabled.as_deref());
+    let mut status = WifiStatus {
+        enabled: radio_enabled && iface_enabled,
+        configuration: Some(WifiConfiguration::from(iface)),
+        sta_link_state: None,
+    };
 
     let Some(link_state) = link_state else {
         return status;
@@ -108,6 +116,25 @@ pub(crate) fn map_uci_iface_to_wifi_status(
     }
 
     status
+}
+
+/// The interface `status()` reports out of `status_all()`: the live one, else a
+/// deterministic pick among the disabled ones (station first, then by SSID)
+/// rather than `HashMap` iteration order. A radio-off device must answer
+/// `enabled: false` with its saved SSID, not an error indistinguishable from a
+/// broken config, so this only fails when nothing is configured at all.
+pub(crate) fn pick_reported_status(statuses: &[WifiStatus]) -> Option<WifiStatus> {
+    statuses
+        .iter()
+        .find(|status| status.enabled)
+        .or_else(|| {
+            statuses.iter().min_by_key(|status| {
+                let cfg = status.configuration.as_ref();
+                let is_station = cfg.is_some_and(|c| c.mode == WifiMode::Station);
+                (!is_station, cfg.map(|c| c.ssid.clone()).unwrap_or_default())
+            })
+        })
+        .cloned()
 }
 
 #[derive(Display, EnumString)]
@@ -202,24 +229,36 @@ impl UciHelper {
             .ok_or_else(|| anyhow!("Specified radio not found"))
     }
 
-    pub(crate) async fn get_all_wifi_ifaces(&self) -> Result<Vec<UciWirelessIface>> {
+    /// The radio's own enabled state together with the `wifi-iface` sections
+    /// bound to it, from a single radio lookup.
+    ///
+    /// Callers that report whether WiFi is on need both halves: `enable_radio`
+    /// only writes the `wifi-device` flag, so the iface sections say nothing
+    /// about it. See [`map_uci_iface_to_wifi_status`].
+    pub(crate) async fn radio_state_with_ifaces(&self) -> Result<(bool, Vec<UciWirelessIface>)> {
         let radio = self.get_radio().await?;
+        let ifaces = UciCommand::get::<HashMap<String, UciWirelessIface>>(UciType::WifiIface)
+            .await?
+            .into_values()
+            .filter(|iface| iface.device == radio.name)
+            .collect();
 
-        Ok(
-            UciCommand::get::<HashMap<String, UciWirelessIface>>(UciType::WifiIface)
-                .await?
-                .into_values()
-                .filter(|iface| iface.device == radio.name)
-                .collect(),
-        )
+        Ok((uci_enabled(radio.disabled.as_deref()), ifaces))
     }
 
-    /// Returns only first wifi iface
+    pub(crate) async fn get_all_wifi_ifaces(&self) -> Result<Vec<UciWirelessIface>> {
+        Ok(self.radio_state_with_ifaces().await?.1)
+    }
+
+    /// The first enabled `wifi-iface` section, or `None` when the radio itself
+    /// is disabled: the same rule [`map_uci_iface_to_wifi_status`] applies, so
+    /// the SSID helpers and `status()` never disagree on what is active.
     pub async fn wifi_iface_find_enabled(&self) -> Option<WifiConfiguration> {
-        match self.get_all_wifi_ifaces().await {
-            Ok(ifaces) => ifaces
+        match self.radio_state_with_ifaces().await {
+            Ok((false, _)) => None,
+            Ok((true, ifaces)) => ifaces
                 .into_iter()
-                .find(|iface| iface.disabled.as_ref().is_none_or(|tmp| tmp == "0"))
+                .find(|iface| uci_enabled(iface.disabled.as_deref()))
                 .map(Into::into),
             Err(e) => {
                 log::warn!("Cannot get iface from uci: {e}");
@@ -351,6 +390,42 @@ mod tests {
         }
     }
 
+    fn status(enabled: bool, mode: WifiMode, ssid: &str) -> WifiStatus {
+        WifiStatus {
+            enabled,
+            configuration: Some(WifiConfiguration {
+                mode,
+                ssid: ssid.to_owned(),
+                encryption_type: EncryptionType::None,
+            }),
+            sta_link_state: None,
+        }
+    }
+
+    #[test]
+    fn reported_status_prefers_the_live_interface() {
+        let statuses = [
+            status(false, WifiMode::Station, "aaa"),
+            status(true, WifiMode::Ap, "zzz"),
+        ];
+        let picked = pick_reported_status(&statuses).expect("BUG: a status is configured");
+        assert!(picked.enabled);
+        assert_eq!(picked.configuration.map(|c| c.ssid), Some("zzz".to_owned()));
+    }
+
+    #[test]
+    fn reported_status_falls_back_to_the_station_then_the_ssid() {
+        let statuses = [
+            status(false, WifiMode::Ap, "aaa"),
+            status(false, WifiMode::Station, "zzz"),
+            status(false, WifiMode::Station, "mmm"),
+        ];
+        let picked = pick_reported_status(&statuses).expect("BUG: a status is configured");
+        assert!(!picked.enabled);
+        assert_eq!(picked.configuration.map(|c| c.ssid), Some("mmm".to_owned()));
+        assert!(pick_reported_status(&[]).is_none());
+    }
+
     #[test]
     fn disabling_ap_sections_leaves_station_sections_alone() {
         let ifaces = vec![iface("cfg_ap", "ap"), iface("cfg_sta", "sta")];
@@ -371,6 +446,44 @@ mod tests {
                 encryption_type
             );
         }
+    }
+
+    #[test]
+    fn radio_disabled_reports_the_iface_as_not_enabled() {
+        // `enable_radio(false)` writes `disabled` on the `wifi-device` section
+        // and leaves every `wifi-iface` untouched, so an iface-only reading
+        // reports a switched-off radio as enabled. Pin the fold-in.
+        let section = iface("cfg_sta", "sta");
+        assert!(section.disabled.is_none(), "BUG: fixture must be enabled");
+
+        let status = map_uci_iface_to_wifi_status(section.clone(), None, false);
+
+        assert!(!status.enabled);
+        // The saved configuration still comes back, so callers can report which
+        // network is configured while the radio is off.
+        assert_eq!(
+            status.configuration.map(|config| config.ssid),
+            Some(section.ssid)
+        );
+    }
+
+    #[test]
+    fn enabled_needs_both_the_radio_and_the_iface() {
+        let enabled_iface = iface("cfg_sta", "sta");
+        let mut disabled_iface = iface("cfg_ap", "ap");
+        disabled_iface.disabled = Some("1".to_owned());
+
+        assert!(map_uci_iface_to_wifi_status(enabled_iface.clone(), None, true).enabled);
+        assert!(!map_uci_iface_to_wifi_status(enabled_iface, None, false).enabled);
+        assert!(!map_uci_iface_to_wifi_status(disabled_iface.clone(), None, true).enabled);
+        assert!(!map_uci_iface_to_wifi_status(disabled_iface, None, false).enabled);
+    }
+
+    #[test]
+    fn uci_disabled_flag_semantics() {
+        assert!(uci_enabled(None));
+        assert!(uci_enabled(Some("0")));
+        assert!(!uci_enabled(Some("1")));
     }
 
     #[test]
