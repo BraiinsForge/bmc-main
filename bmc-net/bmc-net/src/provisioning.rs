@@ -46,7 +46,9 @@ pub trait ProvisioningState: Send + Sync + std::fmt::Debug {
     /// Whether the device is temporarily re-running WiFi setup.
     async fn is_wifi_reconfig(&self) -> bool;
 
-    /// Resolves the current [`BmcState`].
+    /// Resolves the current [`BmcState`]. A device without a provisioning state
+    /// machine answers [`BmcState::Unsupported`], never `Operational`, so callers
+    /// can tell "no setup flow" from "setup done".
     ///
     /// NOTE: factory-default deliberately outranks a lingering wifi-reconfig
     /// flag, so an unconfigured device is never merely "reconfiguring". The two
@@ -91,6 +93,9 @@ pub trait ProvisioningState: Send + Sync + std::fmt::Debug {
 #[derive(Debug)]
 pub struct UciProvisioningState {
     setup_ap_active_sender: watch::Sender<bool>,
+    /// Whether the flag helpers exist on this image. Fixed at boot, so it is
+    /// probed once here rather than by spawning a shell per `device_state`.
+    supported: bool,
 }
 
 impl UciProvisioningState {
@@ -101,6 +106,7 @@ impl UciProvisioningState {
         let (setup_ap_active_sender, _) = watch::channel(false);
         let state = Self {
             setup_ap_active_sender,
+            supported: flag_helpers_present().await,
         };
         let setup_ap_active = matches!(
             state.device_state().await,
@@ -113,8 +119,31 @@ impl UciProvisioningState {
     }
 }
 
+/// Probe for a flag helper, not the library file: the file can exist without
+/// the BMC overlay's predicates, which would silently read false.
+async fn flag_helpers_present() -> bool {
+    run_sourced_succeeds(BOS_DEFAULTS_LIB, "command -v is_factory_default >/dev/null")
+        .await
+        .unwrap_or(false)
+}
+
 #[async_trait]
 impl ProvisioningState for UciProvisioningState {
+    async fn device_state(&self) -> BmcState {
+        if !self.supported {
+            return BmcState::Unsupported;
+        }
+        if self.is_factory_default().await {
+            BmcState::FactoryDefault
+        } else if self.is_wifi_reconfig().await {
+            BmcState::WifiReconfiguration
+        } else if self.is_setup_pending().await {
+            BmcState::SetupPending
+        } else {
+            BmcState::Operational
+        }
+    }
+
     async fn is_factory_default(&self) -> bool {
         defaults_predicate("is_factory_default").await
     }
@@ -144,7 +173,7 @@ impl ProvisioningState for UciProvisioningState {
                 self.setup_ap_active_sender.send_replace(false);
                 run_defaults_script("unset_wifi_reconfig").await?;
             }
-            BmcState::Operational => {}
+            BmcState::Operational | BmcState::Unsupported => {}
         }
         Ok(())
     }
@@ -174,7 +203,7 @@ impl ProvisioningState for UciProvisioningState {
 }
 
 /// Inert [`ProvisioningState`] for boards without a provisioning flow (e.g.
-/// buildroot miners): always `Operational`, every transition a no-op.
+/// buildroot miners): always [`BmcState::Unsupported`], every transition a no-op.
 #[derive(Debug)]
 pub struct NoProvisioning {
     setup_ap_active_sender: watch::Sender<bool>,
@@ -190,6 +219,10 @@ impl Default for NoProvisioning {
 
 #[async_trait]
 impl ProvisioningState for NoProvisioning {
+    async fn device_state(&self) -> BmcState {
+        BmcState::Unsupported
+    }
+
     async fn is_factory_default(&self) -> bool {
         false
     }
@@ -263,6 +296,8 @@ impl MockProvisioningState {
     }
 }
 
+/// The mock stands in for a device that does have a setup flow (the default
+/// `device_state` chain), so tests and the mock backend exercise that path.
 #[async_trait]
 impl ProvisioningState for MockProvisioningState {
     async fn is_factory_default(&self) -> bool {
@@ -297,7 +332,7 @@ impl ProvisioningState for MockProvisioningState {
             BmcState::WifiReconfiguration => {
                 self.wifi_reconfig.send_replace(false);
             }
-            BmcState::Operational => {}
+            BmcState::Operational | BmcState::Unsupported => {}
         }
         self.refresh_setup_ap_active();
         Ok(())

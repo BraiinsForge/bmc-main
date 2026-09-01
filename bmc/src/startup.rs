@@ -274,7 +274,7 @@ async fn run_setup_pending_watchdog<T: BmcManager>(
 async fn fail_setup<T: BmcManager>(compositor: &dyn Compositor, manager: &T, state: BmcState) {
     let restarting = match state {
         BmcState::FactoryDefault | BmcState::SetupPending => true,
-        BmcState::WifiReconfiguration | BmcState::Operational => false,
+        BmcState::WifiReconfiguration | BmcState::Operational | BmcState::Unsupported => false,
     };
     if let Err(err) =
         compositor.broadcast_setup_progress(SetupProgress::UnexpectedError { restarting })
@@ -317,7 +317,7 @@ async fn publish_access_point<T: BmcManager>(
 fn runs_setup_ap(state: BmcState) -> bool {
     match state {
         BmcState::FactoryDefault | BmcState::WifiReconfiguration => true,
-        BmcState::SetupPending | BmcState::Operational => false,
+        BmcState::SetupPending | BmcState::Operational | BmcState::Unsupported => false,
     }
 }
 
@@ -1114,7 +1114,11 @@ mod tests {
 
     #[test]
     fn the_states_without_a_setup_screen_run_no_access_point() {
-        for state in [BmcState::SetupPending, BmcState::Operational] {
+        for state in [
+            BmcState::SetupPending,
+            BmcState::Operational,
+            BmcState::Unsupported,
+        ] {
             assert!(
                 !runs_setup_ap(state),
                 "{state:?} joins a network as a station, so no AP is up to publish"
