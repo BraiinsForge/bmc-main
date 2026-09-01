@@ -115,6 +115,22 @@ gen WIDGET:
             --manifest "$root/$name/manifest.json" \
             --out "$root/$name/src/manifest_params.rs"
 
+# Regenerate every widget's `manifest_params.rs`, for a codegen change that drifts them all.
+gen-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The same roots the drift guard walks, so this fixes exactly what it reports.
+    for root in $({{ dir }}/tools/widget_root.py); do
+        for manifest in "$root"/*/manifest.json; do
+            [[ -e "$manifest" ]] || continue
+            widget=$(dirname "$manifest")
+            cargo run --quiet -p bmc-widget-codegen \
+                --manifest-path {{ dir }}/../Cargo.toml -- \
+                    --manifest "$manifest" \
+                    --out "$widget/src/manifest_params.rs"
+        done
+    done
+
 # === Docs ===
 
 # SDK API docs (opens in browser).
