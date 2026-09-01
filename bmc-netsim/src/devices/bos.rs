@@ -33,11 +33,14 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::blueprint::{AnnounceSpec, EndpointSpec, ResourceSpec, ResponseSpec};
+use crate::blueprint::{
+    AnnounceSpec, EndpointSpec, RequestCtx, ResourceSpec, Response, ResponseSpec,
+};
 use crate::build::{celsius, drift, leaf, mac, steady};
 use crate::http_status::HttpStatus;
 use crate::noise::{mix, mix_index, stable01};
 use crate::quantity::{Celsius, NonNegative};
+use crate::render;
 
 /// Peak per-board temperature spread (°C): each board sits within half this
 /// of the miner's baseline.
@@ -74,6 +77,36 @@ pub struct Params {
     /// HTTP status the login endpoint returns; 401 = the miner needs credentials
     /// the widget doesn't have, so it never authenticates (the no-creds case).
     pub auth_status: HttpStatus,
+    /// Answer 200 before this many seconds of scenario time,
+    /// then switch to `status`.
+    /// Drives the stale case: data lands, then stops refreshing.
+    pub fail_after_secs: Option<u32>,
+    /// Fan duty reported on `/cooling/state`, in percent.
+    pub fan_percent: NonNegative,
+    /// Address reported on `/network/`.
+    pub ip_address: String,
+    /// Chip model each hashboard reports.
+    pub chip_type: String,
+    /// Chips per hashboard.
+    pub chips_count: usize,
+    /// Tuner hashrate target, in TH/s.
+    /// Absent leaves the round gauge with no sweep
+    /// to anchor, which is the un-tuned miner.
+    pub hashrate_target: Option<TargetRange>,
+    /// Tuner power target, in W.
+    pub power_target: Option<TargetRange>,
+}
+
+/// The `{min, default, max}` triple a tuner target reports.
+/// All three edges are required — the widget drops
+/// the whole target when any one is missing.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "BosTargetRange")]
+pub struct TargetRange {
+    pub min: f64,
+    pub default: f64,
+    pub max: f64,
 }
 
 impl Default for Params {
@@ -87,6 +120,21 @@ impl Default for Params {
             uptime_s: 187_020,
             status: HttpStatus::OK,
             auth_status: HttpStatus::OK,
+            fail_after_secs: None,
+            fan_percent: NonNegative::from(72.0),
+            ip_address: "192.168.23.1".to_owned(),
+            chip_type: "BM1370".to_owned(),
+            chips_count: 76,
+            hashrate_target: Some(TargetRange {
+                min: 0.5,
+                default: 1.0,
+                max: 1.4,
+            }),
+            power_target: Some(TargetRange {
+                min: 20.0,
+                default: 32.0,
+                max: 45.0,
+            }),
         }
     }
 }
@@ -113,41 +161,49 @@ impl Params {
                     template: json!({ "token": "sim-token" }),
                 },
             },
-            EndpointSpec {
-                method: "GET".to_owned(),
-                path: "/api/v1/miner/stats".to_owned(),
-                response: ResponseSpec::Render {
-                    status: self.status,
-                    template: json!({
-                        "miner_stats": { "real_hashrate": { "last_1m": { "gigahash_per_second": ghs } } },
-                        "power_stats": { "approximated_consumption": { "watt": watt } },
-                    }),
-                },
-            },
-            EndpointSpec {
-                method: "GET".to_owned(),
-                path: "/api/v1/miner/hw/hashboards".to_owned(),
-                response: ResponseSpec::Render {
-                    status: self.status,
-                    template: json!({
-                        "hashboards": [self.board(board_offset(base, 0)), self.board(board_offset(base, 1))],
-                    }),
-                },
-            },
-            EndpointSpec {
-                method: "GET".to_owned(),
-                path: "/api/v1/miner/details".to_owned(),
-                response: ResponseSpec::Render {
-                    status: self.status,
-                    template: json!({
-                        "bosminer_uptime_s": self.uptime_s,
-                        "platform": 8,
-                        "mac_address": mac(name),
-                        "miner_identity": { "miner_model": self.model_name.as_str() },
-                        "sticker_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths.get() * 1_000.0)) },
-                    }),
-                },
-            },
+            self.telemetry(
+                "/api/v1/miner/stats",
+                json!({
+                    "miner_stats": { "real_hashrate": { "last_1m": { "gigahash_per_second": ghs } } },
+                    "power_stats": { "approximated_consumption": { "watt": watt } },
+                }),
+            ),
+            self.telemetry(
+                "/api/v1/miner/hw/hashboards",
+                json!({
+                    "hashboards": [self.board(board_offset(base, 0)), self.board(board_offset(base, 1))],
+                }),
+            ),
+            self.telemetry(
+                "/api/v1/miner/details",
+                json!({
+                    "bosminer_uptime_s": self.uptime_s,
+                    "platform": 8,
+                    "mac_address": mac(name),
+                    "miner_identity": { "miner_model": self.model_name.as_str() },
+                    "sticker_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths.get() * 1_000.0)) },
+                }),
+            ),
+            // The widget reads a fraction here and renders it as a percent.
+            self.telemetry(
+                "/api/v1/cooling/state",
+                json!({
+                    "fans": [{ "target_speed_ratio": self.fan_percent.get() / 100.0 }],
+                }),
+            ),
+            self.telemetry(
+                "/api/v1/network/",
+                json!({ "networks": [{ "address": self.ip_address.as_str() }] }),
+            ),
+            self.telemetry(
+                "/api/v1/configuration/constraints",
+                json!({
+                    "tuner_constraints": {
+                        "hashrate_target": target(self.hashrate_target.as_ref(), "terahash_per_second"),
+                        "power_target": target(self.power_target.as_ref(), "watt"),
+                    },
+                }),
+            ),
         ];
         ResourceSpec {
             name: name.to_owned(),
@@ -162,12 +218,175 @@ impl Params {
         }
     }
 
+    /// An endpoint carrying miner telemetry, so it answers on `status_at`
+    /// rather than a status fixed when the scenario was built.
+    ///
+    /// The template still renders per request, keeping the drift
+    /// a `Render` endpoint would give.
+    fn telemetry(&self, path: &str, template: Json) -> EndpointSpec {
+        let params = self.clone();
+        EndpointSpec {
+            method: "GET".to_owned(),
+            path: path.to_owned(),
+            response: ResponseSpec::computed(move |ctx: &RequestCtx| {
+                Response::new(
+                    params.status_at(ctx),
+                    render::render(&template, ctx.t_s, ctx.seed),
+                )
+            }),
+        }
+    }
+
+    /// `status` throughout, unless `fail_after_secs` holds
+    /// the endpoint healthy for an opening stretch first.
+    fn status_at(&self, ctx: &RequestCtx) -> HttpStatus {
+        if self
+            .fail_after_secs
+            .is_some_and(|after| ctx.t_s < f64::from(after))
+        {
+            HttpStatus::OK
+        } else {
+            self.status
+        }
+    }
+
     /// A hashboard whose chip temperature drifts around the baseline plus `offset_c`.
     fn board(&self, offset_c: f64) -> Json {
         json!({
             "highest_chip_temp": { "temperature": { "degree_c": leaf(celsius(self.temp_c.get() + offset_c)) } },
-            "chip_type": "BM1370",
-            "chips_count": 76,
+            "chip_type": self.chip_type.as_str(),
+            "chips_count": self.chips_count,
         })
+    }
+}
+
+/// A tuner target as the API reports it, keyed on the unit leaf the widget reads.
+/// An absent target renders as `{}`, which drops the whole range widget-side.
+fn target(range: Option<&TargetRange>, leaf_name: &str) -> Json {
+    let Some(range) = range else {
+        return json!({});
+    };
+    json!({
+        "min": { leaf_name: range.min },
+        "default": { leaf_name: range.default },
+        "max": { leaf_name: range.max },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::blueprint::ResponseData;
+
+    fn ctx(t_s: f64) -> RequestCtx {
+        RequestCtx {
+            query: BTreeMap::new(),
+            t_s,
+            seed: 1,
+            host: None,
+            cache: Arc::new(crate::cache::Cache::new::<Vec<_>>(Vec::new())),
+        }
+    }
+
+    /// The JSON a telemetry route answers with, rendered as of `t_s`.
+    fn body(params: &Params, path: &str, t_s: f64) -> Json {
+        let resource = params.resource("miner", 20_300);
+        let endpoint = resource
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.path == path)
+            .expect("BUG: the profile must serve the path under test");
+        let ResponseSpec::Computed(responder) = &endpoint.response else {
+            panic!("BUG: {path} must be a telemetry endpoint to answer on the clock");
+        };
+        match responder(&ctx(t_s)).data {
+            ResponseData::Json(json) => json,
+            ResponseData::Bytes { .. } => panic!("BUG: {path} answered with bytes, not JSON"),
+        }
+    }
+
+    #[test]
+    fn serves_every_path_the_miner_widgets_read() {
+        let resource = Params::default().resource("miner", 20_300);
+        let paths: Vec<_> = resource
+            .endpoints
+            .iter()
+            .map(|endpoint| endpoint.path.as_str())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "/api/v1/version",
+                "/api/v1/auth/login",
+                "/api/v1/miner/stats",
+                "/api/v1/miner/hw/hashboards",
+                "/api/v1/miner/details",
+                "/api/v1/cooling/state",
+                "/api/v1/network/",
+                "/api/v1/configuration/constraints",
+            ]
+        );
+    }
+
+    #[test]
+    fn cooling_reports_the_fan_duty_as_the_ratio_the_widget_reads() {
+        let params = Params {
+            fan_percent: NonNegative::from(72.0),
+            ..Params::default()
+        };
+        let cooling = body(&params, "/api/v1/cooling/state", 0.0);
+        assert_eq!(cooling["fans"][0]["target_speed_ratio"], json!(0.72));
+    }
+
+    #[test]
+    fn a_tuner_target_carries_all_three_edges_under_its_unit_leaf() {
+        let params = Params {
+            hashrate_target: Some(TargetRange {
+                min: 0.5,
+                default: 1.0,
+                max: 1.4,
+            }),
+            ..Params::default()
+        };
+        let constraints = body(&params, "/api/v1/configuration/constraints", 0.0);
+        let target = &constraints["tuner_constraints"]["hashrate_target"];
+        assert_eq!(target["min"]["terahash_per_second"], json!(0.5));
+        assert_eq!(target["default"]["terahash_per_second"], json!(1.0));
+        assert_eq!(target["max"]["terahash_per_second"], json!(1.4));
+    }
+
+    #[test]
+    fn an_absent_tuner_target_reports_no_edges_at_all() {
+        let params = Params {
+            hashrate_target: None,
+            ..Params::default()
+        };
+        let constraints = body(&params, "/api/v1/configuration/constraints", 0.0);
+        assert_eq!(
+            constraints["tuner_constraints"]["hashrate_target"],
+            json!({}),
+            "a partial range would strand the gauge with no sweep to anchor"
+        );
+    }
+
+    #[test]
+    fn telemetry_holds_up_until_fail_after_secs_then_takes_the_fault_status() {
+        let failing = Params {
+            status: HttpStatus::SERVICE_UNAVAILABLE,
+            fail_after_secs: Some(20),
+            ..Params::default()
+        };
+        assert_eq!(failing.status_at(&ctx(19.0)), HttpStatus::OK);
+        assert_eq!(
+            failing.status_at(&ctx(20.0)),
+            HttpStatus::SERVICE_UNAVAILABLE
+        );
+
+        let steady = Params::default();
+        assert_eq!(steady.status_at(&ctx(0.0)), HttpStatus::OK);
+        assert_eq!(steady.status_at(&ctx(9_999.0)), HttpStatus::OK);
     }
 }

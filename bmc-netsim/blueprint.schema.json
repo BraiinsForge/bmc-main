@@ -179,9 +179,51 @@
           "description": "HTTP status the login endpoint returns; 401 = the miner needs credentials\nthe widget doesn't have, so it never authenticates (the no-creds case).",
           "$ref": "#/$defs/HttpStatus"
         },
+        "chip_type": {
+          "description": "Chip model each hashboard reports.",
+          "type": "string",
+          "default": "BM1370"
+        },
+        "chips_count": {
+          "description": "Chips per hashboard.",
+          "type": "integer",
+          "format": "uint",
+          "default": 76,
+          "minimum": 0
+        },
+        "fail_after_secs": {
+          "description": "Answer 200 before this many seconds of scenario time,\nthen switch to `status`.\nDrives the stale case: data lands, then stops refreshing.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "fan_percent": {
+          "description": "Fan duty reported on `/cooling/state`, in percent.",
+          "$ref": "#/$defs/NonNegative"
+        },
+        "hashrate_target": {
+          "description": "Tuner hashrate target, in TH/s.\nAbsent leaves the round gauge with no sweep\nto anchor, which is the un-tuned miner.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BosTargetRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "hashrate_ths": {
           "description": "Current hashrate to hover around, in TH/s (low value = not-okay).",
           "$ref": "#/$defs/NonNegative"
+        },
+        "ip_address": {
+          "description": "Address reported on `/network/`.",
+          "type": "string",
+          "default": "192.168.23.1"
         },
         "model_name": {
           "description": "Model name reported on `/miner/details`.",
@@ -191,6 +233,17 @@
         "nominal_ths": {
           "description": "Nameplate (`sticker_hashrate`) hashrate, in TH/s.",
           "$ref": "#/$defs/NonNegative"
+        },
+        "power_target": {
+          "description": "Tuner power target, in W.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BosTargetRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "power_w": {
           "description": "Power draw to hover around, in W.",
@@ -213,6 +266,30 @@
         }
       },
       "additionalProperties": false
+    },
+    "BosTargetRange": {
+      "description": "The `{min, default, max}` triple a tuner target reports.\nAll three edges are required — the widget drops\nthe whole target when any one is missing.",
+      "type": "object",
+      "properties": {
+        "default": {
+          "type": "number",
+          "format": "double"
+        },
+        "max": {
+          "type": "number",
+          "format": "double"
+        },
+        "min": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "min",
+        "default",
+        "max"
+      ]
     },
     "BraiinsPoolParams": {
       "description": "Tunables for a simulated Braiins Pool account.",
