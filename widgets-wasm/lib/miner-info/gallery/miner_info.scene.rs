@@ -59,23 +59,38 @@ const GAUGE_STATES: [(&str, Option<f64>); 5] = [
     ("Unavailable", None),
 ];
 
-/// The miner fixture, or a fully-unavailable one for the placeholder
-/// pass every face has to survive without collapsing its layout.
-fn miner(full: bool, hashrate_ths: Option<f64>) -> MinerData {
-    if !full {
+/// How much of itself a miner reports.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Reported {
+    /// Everything the faces can draw.
+    All,
+    /// No board sensor and no per-board rates, which is all it takes to lose
+    /// the temperature row and the mining-mode ratio: each needs a pair of
+    /// readings, and half a pair reads as nothing.
+    WithoutBoards,
+    /// Nothing at all — the placeholder pass every face has to survive
+    /// without collapsing its layout.
+    Nothing,
+}
+
+fn miner(reported: Reported, hashrate_ths: Option<f64>) -> MinerData {
+    if reported == Reported::Nothing {
         return MinerData::default();
     }
+    let boards = reported == Reported::All;
     MinerData {
         hashrate: hashrate_ths
             .map(Hashrate::from_terahashes_per_second)
             .into(),
-        temperature: Availability::Available(TemperatureRange {
-            board: Temperature::from_celsius(61.0),
-            chip: Temperature::from_celsius(74.0),
-        }),
+        temperature: boards
+            .then(|| TemperatureRange {
+                board: Temperature::from_celsius(61.0),
+                chip: Temperature::from_celsius(74.0),
+            })
+            .into(),
         power: Availability::Available(ElectricPower::from_watts(41.0)),
         efficiency: Availability::Available(MiningEfficiency::from_joules_per_terahash(21.5)),
-        mcr: Availability::Available(Ratio::from_percent(98.0)),
+        mcr: boards.then(|| Ratio::from_percent(98.0)).into(),
         fan_speed: Availability::Available(Ratio::from_percent(72.0)),
         uptime: Availability::Available(Duration::from_hours(2 * 24 + 3) + Duration::from_mins(57)),
         ip_address: Availability::Available("192.168.23.1".to_owned()),
@@ -94,8 +109,8 @@ fn miner(full: bool, hashrate_ths: Option<f64>) -> MinerData {
 
 /// The market fixture, or a fully-unavailable one. Drops alongside the miner
 /// half: a face reading only one of the two would otherwise still look full.
-fn public(full: bool) -> PublicData {
-    if !full {
+fn public(reported: Reported) -> PublicData {
+    if reported == Reported::Nothing {
         return PublicData::default();
     }
     PublicData {
@@ -153,15 +168,23 @@ fn columns_across(ui: &Ui, stage_width: usize) -> usize {
     ((visible / (stage_width as f32 + gap)).floor() as usize).max(1)
 }
 
-fn populated(ctx: &mut SceneCtx) -> bool {
-    ctx.select("Data", &["Populated", "Unavailable"], 0) == 0
+fn reported(ctx: &mut SceneCtx) -> Reported {
+    match ctx.select(
+        "Data",
+        &["Populated", "Without board readings", "Unavailable"],
+        0,
+    ) {
+        1 => Reported::WithoutBoards,
+        2 => Reported::Nothing,
+        _ => Reported::All,
+    }
 }
 
 #[scene]
 fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
     let selected = ctx.select("Viewport", &["All", "BMM100", "BMM101"], 0);
     let face_pick = ctx.select("Face", &["Mining", "Geek", "Info Overload"], 0);
-    let full = populated(ctx);
+    let shown = reported(ctx);
     system_settings(ctx);
 
     // Laid out across rather than stacked: the frames are small enough that
@@ -181,8 +204,8 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
                 ui.vertical(|ui| {
                     ui.heading(label);
                     ctx.node_stage(ui, (width, height), move || {
-                        let data = miner(full, Some(1.02));
-                        let market = public(full);
+                        let data = miner(shown, Some(1.02));
+                        let market = public(shown);
                         let at = size((width, height));
                         match face_pick {
                             1 => face::geek(at, &data, &market),
@@ -203,7 +226,7 @@ fn round_gauge(ctx: &mut SceneCtx, ui: &mut Ui) {
     let geek = ctx.select("Face", &["Mining", "Geek"], 0) == 1;
     // The gauge states vary only the hashrate, so the quadrants stay populated
     // even where the ring reads nothing; this drops them too.
-    let full = populated(ctx);
+    let shown = reported(ctx);
     system_settings(ctx);
 
     let per_row = columns_across(ui, ROUND_DIAMETER);
@@ -213,8 +236,8 @@ fn round_gauge(ctx: &mut SceneCtx, ui: &mut Ui) {
                 ui.vertical(|ui| {
                     ui.heading(label);
                     ctx.node_stage(ui, Round(ROUND_DIAMETER), move || {
-                        let data = miner(full, hashrate);
-                        let market = public(full);
+                        let data = miner(shown, hashrate);
+                        let market = public(shown);
                         let at = round_size();
                         if geek {
                             face::round::geek(at, &data, &market, false, &CHIP_ICON)
@@ -230,9 +253,9 @@ fn round_gauge(ctx: &mut SceneCtx, ui: &mut Ui) {
 
 #[scene]
 fn round_info_overload(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let full = populated(ctx);
+    let shown = reported(ctx);
     system_settings(ctx);
     ctx.node_stage(ui, Round(ROUND_DIAMETER), move || {
-        face::round::info_overload(&miner(full, Some(1.02)), &public(full))
+        face::round::info_overload(&miner(shown, Some(1.02)), &public(shown))
     });
 }

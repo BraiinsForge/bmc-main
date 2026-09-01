@@ -1,0 +1,30 @@
+# Shots a change to the miner faces has to survive, with `capture.json` beside
+# them for a loop to read. Where they land is the recipe's to say — `just
+# gallery::capture` passes an `--out` under the repo's scratch dir.
+size = "1280x720"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+# Temperature pairs a board reading with a chip one, and the mining-mode ratio
+# pairs a real rate with a nominal one. A miner reporting neither half loses
+# both rows outright, which is what the two shots straddle.
+[[shot]]
+name = "mining-all-readings"
+scene = "bmc_gallery::miner_info::Rectangular"
+frames = 4
+
+[shot.knobs]
+Data = "Populated"
+Face = "Mining"
+Viewport = "BMM101"
+
+[[shot]]
+name = "mining-without-board-readings"
+scene = "bmc_gallery::miner_info::Rectangular"
+frames = 4
+
+[shot.knobs]
+Data = "Without board readings"
+Face = "Mining"
+Viewport = "BMM101"
