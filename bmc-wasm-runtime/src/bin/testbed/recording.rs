@@ -760,7 +760,7 @@ impl RecordingMode {
         target: bmc_wasm_runtime::platform_catalog::Target,
         dataset: String,
         widget_root: Option<PathBuf>,
-        sandbox: super::SandboxedState,
+        mut sandbox: super::SandboxedState,
         kv_stash: (PathBuf, Option<PathBuf>),
         current_canvas: &[&'static bmc_wasm_runtime::platform_catalog::Platform],
         monotonic_ms: u64,
@@ -768,6 +768,10 @@ impl RecordingMode {
         if self.active().is_some() {
             return false;
         }
+        // A take cannot carry dormancy, so it starts awake
+        // however the operator left the toolbar.
+        // This is the take's own copy; the playground keeps theirs.
+        sandbox.dormant = false;
         self.fetch_events
             .lock()
             .expect("BUG: fetch-event buffer poisoned")
@@ -1577,6 +1581,43 @@ mod naming_tests {
             "BUG: an idle mode must open the choosing phase",
         );
         mode
+    }
+
+    /// Dormancy reaches the guest through the sleep and wake hooks, but no event carries it.
+    /// A take that began asleep would keep capturing while the device drew nothing,
+    /// blessing frames an off-scene slot never made.
+    #[test]
+    fn a_take_starts_awake_however_the_playground_was_left() {
+        let mut mode = choosing(Vec::new());
+        let target = target("bmc100:full");
+        mode.choose(target);
+
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let asleep = crate::SandboxedState {
+            params: std::collections::BTreeMap::new(),
+            system: bmc_wasm_runtime::SystemSnapshot::default(),
+            credentials: serde_json::Map::new(),
+            offline: false,
+            dormant: true,
+            clock_offset_ms: 0,
+        };
+        assert!(mode.begin_take(
+            target,
+            "bmc100-full".to_owned(),
+            None,
+            asleep,
+            (dir.path().to_path_buf(), None),
+            &[],
+            0,
+        ));
+
+        assert!(
+            !mode
+                .sandbox()
+                .expect("BUG: a running take must expose its sandbox")
+                .dormant,
+            "a take must start awake, whatever the toolbar was left at",
+        );
     }
 
     /// The dialog opens on any target, not only one that would be overwritten.

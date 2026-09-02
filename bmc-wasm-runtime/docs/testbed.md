@@ -51,6 +51,19 @@ Record opens the choosing phase; every recordable target lands on the canvas wea
 one with an existing fixture asks again. Choosing pins the canvas to that platform, wipes and reseeds its KV store, and
 rebuilds its views inline — the recorder's hit-test and event drain are synchronous.
 
+Engaged, the bar withholds the host controls. Platform toggles and Reload would invalidate the take — the platform is
+pinned to its target, and Reload swaps the wasm mid-recording; Tile/Fit, Debug, Timings and the theme switch change only
+what the operator sees, and give the room to the recorder. Offline and the clock fast-forward stay, because a scenario
+is made of them and the timeline carries both: a sealed fetch settles as a network error the fixture records, and a
+fast-forward advances the monotonic clock too, so replay walks the gap it opened.
+
+Asleep greys out instead, alone among the conditions: no event carries dormancy, so a take would keep capturing while
+the device drew nothing, blessing frames an off-scene slot never produced.
+
+Walking that gap is not free. Replay steps 16 ms a frame but renders only on the widget's own cadence, so the cost
+follows that cadence rather than the span: the clock, which redraws every second, replays 30 simulated minutes in about
+3½ minutes, while ticker-single replays 17 in under three seconds. Fast-forward what a scenario needs, not more.
+
 Save writes `fixtures/<dataset>.jsonl.gz`, updates `[fixtures.<dataset>]` in the widget's `capture/config.toml`, then
 unwinds, leaving the outcome on screen as a notice. A failed write keeps the take for a retry. Cancel discards
 everything, fetch buffer included. `--record=<target>` is sugar for entering the mode at startup.

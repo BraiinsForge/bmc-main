@@ -60,55 +60,58 @@ impl TestbedApp {
                     egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(BAR_INLINE_PAD, 0.0))),
                 );
                 bar.horizontal_centered(|row| {
-                    // While the record mode is engaged it owns the whole bar:
-                    // nothing else the toolbar offers belongs to a take.
-                    if self.paint_record_controls(row, palette) {
-                        return;
-                    }
+                    let engaged = self.paint_record_controls(row, palette);
                     super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
-                    chosen = self.paint_platform_toggles(row, palette);
-                    super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
+                    // Withheld from a take: the platform is pinned to its target,
+                    // and Reload would swap the wasm mid-recording.
+                    // The view and debug toggles change nothing a take records;
+                    // they give up the room to the recorder instead.
+                    if !engaged {
+                        chosen = self.paint_platform_toggles(row, palette);
+                        super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
-                    self.paint_view_controls(row);
-                    super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
+                        self.paint_view_controls(row);
+                        super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
-                    // The widget's own build and its rendering.
-                    if Button::bar("Reload")
-                        .icon(&mut self.icons.reload)
-                        .show(row, palette)
-                        .on_hover_text("re-read the widget's wasm from disk")
-                        .clicked()
-                    {
-                        self.hot_reload.manual_reload = true;
+                        // The widget's own build and its rendering.
+                        if Button::bar("Reload")
+                            .icon(&mut self.icons.reload)
+                            .show(row, palette)
+                            .on_hover_text("re-read the widget's wasm from disk")
+                            .clicked()
+                        {
+                            self.hot_reload.manual_reload = true;
+                        }
+                        let debug_on = bmc_render::tree::debug_layout_enabled();
+                        if Button::bar("Debug")
+                            .icon(&mut self.icons.debug)
+                            .tone(Tone::switch(palette, debug_on))
+                            .show(row, palette)
+                            .on_hover_text(
+                                "outline every layout node in the widget render, \
+                                 and egui's own inspector over the chrome",
+                            )
+                            .clicked()
+                        {
+                            bmc_render::tree::toggle_debug_layout();
+                        }
+                        let timings_on = self.show_view_timings;
+                        if Button::bar("Timings")
+                            .icon(&mut self.icons.timer)
+                            .tone(Tone::switch(palette, timings_on))
+                            .show(row, palette)
+                            .on_hover_text("show each view's own frame cost over it")
+                            .clicked()
+                        {
+                            self.show_view_timings = !self.show_view_timings;
+                        }
+                        super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
                     }
-                    let debug_on = bmc_render::tree::debug_layout_enabled();
-                    if Button::bar("Debug")
-                        .icon(&mut self.icons.debug)
-                        .tone(Tone::switch(palette, debug_on))
-                        .show(row, palette)
-                        .on_hover_text(
-                            "outline every layout node in the widget render, \
-                             and egui's own inspector over the chrome",
-                        )
-                        .clicked()
-                    {
-                        bmc_render::tree::toggle_debug_layout();
-                    }
-                    let timings_on = self.show_view_timings;
-                    if Button::bar("Timings")
-                        .icon(&mut self.icons.timer)
-                        .tone(Tone::switch(palette, timings_on))
-                        .show(row, palette)
-                        .on_hover_text("show each view's own frame cost over it")
-                        .clicked()
-                    {
-                        self.show_view_timings = !self.show_view_timings;
-                    }
-                    super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
-                    // Simulated conditions: what the device can and cannot
-                    // reach, and when it thinks it is.
+                    // Simulated conditions: what the device can and cannot reach,
+                    // and when it thinks it is. Both stay through a take:
+                    // a scenario is made of them, and the timeline carries what they do.
                     let offline = self.state().offline;
                     if Button::bar("Offline")
                         .icon(&mut self.icons.offline)
@@ -119,24 +122,30 @@ impl TestbedApp {
                     {
                         self.state_mut().offline = !offline;
                     }
+                    // Asleep is the exception: no event carries it, so a take
+                    // would bless captures of frames an off-scene slot never drew.
                     let dormant = self.state().dormant;
-                    if Button::bar("Asleep")
+                    let asleep = Button::bar("Asleep")
                         .icon(&mut self.icons.sleep)
                         .tone(Tone::switch(palette, dormant))
+                        .enabled(!engaged)
                         .show(row, palette)
                         .on_hover_text(
                             "take every tile off-scene: the sleep and wake hooks \
                              fire, deliveries carry on, nothing renders",
                         )
-                        .clicked()
-                    {
+                        .on_disabled_hover_text("no event carries it, so a take cannot replay it");
+                    if asleep.clicked() {
                         self.state_mut().dormant = !dormant;
                     }
                     self.paint_clock_controls(row);
 
-                    row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
-                        self.paint_theme_switch(end);
-                    });
+                    // Chrome only, so it gives up the room like the toggles above.
+                    if !engaged {
+                        row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
+                            self.paint_theme_switch(end);
+                        });
+                    }
                 });
             });
 
@@ -181,10 +190,10 @@ impl TestbedApp {
 
     /// The record mode's toolbar controls, leading the bar.
     ///
-    /// Off, this is one red button that opens the choosing phase. Engaged —
-    /// choosing or mid-take — the mode owns the bar: a status chip says which
-    /// phase is on, Save lands the take, Cancel backs out.
-    /// Returns whether the mode is engaged, hiding the rest of the bar.
+    /// Off, this is one red button that opens the choosing phase.
+    /// Engaged — choosing or mid-take — a status chip says
+    /// which phase is on, Save lands the take, Cancel backs out.
+    /// Returns whether the mode is engaged.
     fn paint_record_controls(
         &mut self,
         row: &mut egui::Ui,
