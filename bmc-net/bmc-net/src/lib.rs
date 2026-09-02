@@ -81,9 +81,15 @@ pub trait NetworkConfig: Send + Sync + std::fmt::Debug {
             .as_ref()
             .map(NetworkProtocol::from)
     }
-    /// Applies a new network protocol configuration.
+    /// Applies a new network protocol configuration; see
+    /// [`apply_network_settings`] for what `Ok` guarantees.
+    ///
+    /// [`apply_network_settings`]: NetworkConfig::apply_network_settings
     async fn set_network_config(&self, config: NetworkProtocolConfig) -> anyhow::Result<()>;
-    /// Sets the system hostname and restarts networking to apply it.
+    /// Sets the system hostname; see [`apply_network_settings`] for what `Ok`
+    /// guarantees.
+    ///
+    /// [`apply_network_settings`]: NetworkConfig::apply_network_settings
     async fn set_hostname(&self, hostname: String) -> anyhow::Result<()>;
     /// Applies a protocol configuration and/or a hostname in a single pass.
     ///
@@ -92,6 +98,12 @@ pub trait NetworkConfig: Send + Sync + std::fmt::Debug {
     /// networking on its own, so back-to-back calls disrupt the link twice and
     /// leave the device half-configured if interrupted in between. Backends
     /// override this to write both in one transaction and restart once.
+    ///
+    /// `Ok` means the configuration is stored. Whether the network restart
+    /// that puts it into effect has already run is backend-specific: the UCI
+    /// backend restarts inline and reports its failure, the buildroot backend
+    /// answers first and restarts detached, logging a failure. Callers can
+    /// therefore promise "stored, taking effect", not "in effect".
     ///
     /// [`set_network_config`]: NetworkConfig::set_network_config
     /// [`set_hostname`]: NetworkConfig::set_hostname
@@ -228,6 +240,33 @@ pub async fn station_ip_address(manager: &dyn NetworkManager) -> anyhow::Result<
     Ok(data.iface.ip)
 }
 
+/// One-line summary of a network reconfiguration for the "applying config" log,
+/// shared by the platform managers so both log the same wording.
+pub(crate) fn network_config_summary(
+    config: Option<&NetworkProtocolConfig>,
+    hostname: Option<&str>,
+) -> String {
+    let cfg = config.map(|c| match c {
+        NetworkProtocolConfig::Dhcp => "DHCP".to_owned(),
+        NetworkProtocolConfig::Static(s) => {
+            // `UNSPECIFIED` is the in-memory "no gateway" marker, not a value
+            // the user configured, so it is left out rather than printed.
+            let gateway = if s.gateway == std::net::Ipv4Addr::UNSPECIFIED {
+                String::new()
+            } else {
+                format!(" gw {}", s.gateway)
+            };
+            format!("static IP {} mask {}{gateway}", s.address, s.netmask)
+        }
+    });
+    match (cfg.as_deref(), hostname) {
+        (Some(c), Some(h)) => format!("{c}; hostname {h}"),
+        (Some(c), None) => c.to_owned(),
+        (None, Some(h)) => format!("hostname {h}"),
+        (None, None) => "no changes".to_owned(),
+    }
+}
+
 /// Validates a hostname against RFC 1123: at most 253 characters total,
 /// dot-separated labels of 1-63 ASCII alphanumeric/hyphen characters, with
 /// no label starting or ending with a hyphen.
@@ -274,7 +313,37 @@ pub fn validate_hostname(hostname: &str) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_hostname;
+    use std::net::Ipv4Addr;
+
+    use bmc_net_types::network::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
+
+    use super::{network_config_summary, validate_hostname};
+
+    #[test]
+    fn config_summary_reads_as_the_user_configured_it() {
+        let mut config = NetworkProtocolConfigStatic {
+            address: Ipv4Addr::new(10, 0, 0, 5),
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+            gateway: Ipv4Addr::UNSPECIFIED,
+            dns_servers: Vec::new(),
+        };
+        assert_eq!(
+            network_config_summary(Some(&NetworkProtocolConfig::Static(config.clone())), None),
+            "static IP 10.0.0.5 mask 255.255.255.0"
+        );
+        config.gateway = Ipv4Addr::new(10, 0, 0, 1);
+        assert_eq!(
+            network_config_summary(
+                Some(&NetworkProtocolConfig::Static(config)),
+                Some("miner-01")
+            ),
+            "static IP 10.0.0.5 mask 255.255.255.0 gw 10.0.0.1; hostname miner-01"
+        );
+        assert_eq!(
+            network_config_summary(Some(&NetworkProtocolConfig::Dhcp), None),
+            "DHCP"
+        );
+    }
 
     #[test]
     fn valid_hostnames_accepted() {

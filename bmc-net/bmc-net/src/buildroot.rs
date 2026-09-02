@@ -25,6 +25,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -38,7 +39,7 @@ use bmc_net_types::network::{
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 
-use crate::command::call_command;
+use crate::command::call_command_unbounded;
 use crate::provisioning::{NoProvisioning, ProvisioningState};
 use crate::{NetworkConfig, NetworkManager, WifiControl};
 
@@ -63,10 +64,16 @@ pub struct BuildrootNetworkManager {
     /// Primary network interface (e.g. "eth0") for IP/MAC/info lookups.
     interface_name: String,
     provisioning: NoProvisioning,
-    /// Serializes the read-modify-write of `/etc/network.conf` across the
-    /// concurrent `&self` setters reached from the gRPC server, so two edits
-    /// cannot interleave or lose an update.
-    config_lock: tokio::sync::Mutex<()>,
+    /// Serializes the read-modify-write of `/etc/network.conf` across concurrent
+    /// setters. Held only for the write: a setter must not wait behind a
+    /// restart in progress (up to the whole `S38network` cycle) to store a
+    /// config that the next restart applies anyway.
+    config_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes the detached `S38network` restarts so two never run at once.
+    restart_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Set while a detached `S38network` restart is queued, so bursts of setters
+    /// coalesce into one restart instead of stacking N teardowns.
+    restart_pending: Arc<AtomicBool>,
     /// Signalled after every successful hostname write; see
     /// [`NetworkConfig::hostname_change_notifier`].
     hostname_changed: Arc<Notify>,
@@ -78,16 +85,16 @@ impl BuildrootNetworkManager {
         Self {
             interface_name,
             provisioning: NoProvisioning::default(),
-            config_lock: tokio::sync::Mutex::new(()),
+            config_lock: Arc::new(tokio::sync::Mutex::new(())),
+            restart_lock: Arc::new(tokio::sync::Mutex::new(())),
+            restart_pending: Arc::new(AtomicBool::new(false)),
             hostname_changed: Arc::new(Notify::new()),
         }
     }
 
-    /// Load `/etc/network.conf`. A missing file yields the default config, but a
-    /// file that is present yet unparseable is an error rather than a silent
-    /// default: the read-modify-write setters must not clobber a config we could
-    /// not read (e.g. a single malformed line would otherwise flip a static
-    /// setup to DHCP and drop the address on the next hostname change).
+    /// Load `/etc/network.conf`: a missing file is the default, but a present
+    /// yet unparseable one errors so the setters never clobber a config we
+    /// couldn't read.
     async fn load_config(&self) -> Result<NetworkConf> {
         match tokio::fs::read_to_string(NETWORK_CONF_PATH).await {
             Ok(contents) => NetworkConf::parse(&contents)
@@ -97,27 +104,10 @@ impl BuildrootNetworkManager {
         }
     }
 
-    /// Write `/etc/network.conf` and restart the `S38network` service so the new
-    /// configuration is applied.
-    ///
-    /// On Amlogic/BeagleBone/CVITEK `/etc/network.conf` is a symlink into the
-    /// persistent stock partition (`/mnt/$BOS_ENV_STOCK_CONFIG/network.conf`),
-    /// which `S38network` recreates from that copy on boot. We therefore write
-    /// through the link to its target rather than renaming a fresh file over
-    /// the link itself: `rename(2)` does not follow symlinks, so renaming over
-    /// `/etc/network.conf` would replace the link with a regular file in the
-    /// volatile `/etc` overlay and the change would be lost on the next reboot.
-    /// [`Self::load_config`] reads via `read_to_string`, which follows the link,
-    /// so reads were already correct — only this write path needed to.
-    ///
-    /// The write goes to a per-process temp file in the target's own directory
-    /// which is then renamed over the target: rename is atomic on the same
-    /// filesystem, so a power loss mid-write cannot leave a truncated config
-    /// (which `load_config` would treat as a hard error, bricking all setters
-    /// until manual intervention). The target's directory is fsynced after the
-    /// rename so the new directory entry is itself durable across a power cut.
-    /// The temp name includes the pid so a racing process cannot share it;
-    /// same-process concurrency is serialized by `config_lock` in the callers.
+    /// Write `/etc/network.conf`; the restart that applies it is left to
+    /// [`Self::spawn_service_restart`]. `/etc/network.conf` is a symlink into the
+    /// persistent stock partition, so write through the link (rename does not
+    /// follow symlinks) via a pid-named temp file + atomic rename + dir fsync.
     async fn store_config(&self, config: &NetworkConf) -> Result<()> {
         let target = resolve_link_target(NETWORK_CONF_PATH).await;
         let temp_name = format!(".network.conf.{}.tmp", std::process::id());
@@ -133,7 +123,33 @@ impl BuildrootNetworkManager {
         if let Some(parent) = target.parent() {
             tokio::fs::File::open(parent).await?.sync_all().await?;
         }
-        call_command(NETWORK_SERVICE_PATH, &["restart"]).await
+        Ok(())
+    }
+
+    /// Restart `S38network` on a detached task so the write is answered before
+    /// the link is reconfigured. It can't be awaited in the request path:
+    /// the restart takes `eth0` down and re-runs DHCP, severing the request's
+    /// own connection. Failure is logged, not reported — nobody's left to tell,
+    /// and the config is already durable on disk.
+    fn spawn_service_restart(&self) {
+        // A restart is already queued: skip. The newer config is already on
+        // disk, so the pending restart will apply it.
+        if self.restart_pending.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let restart_lock = self.restart_lock.clone();
+        let restart_pending = self.restart_pending.clone();
+        tokio::spawn(async move {
+            let _guard = restart_lock.lock().await;
+            // Clear before restarting so a setter arriving from here on queues a
+            // fresh restart — the latest on-disk config always gets one. The
+            // config file is written atomically (rename), so the restart reads
+            // either the previous config or the new one, never a torn file.
+            restart_pending.store(false, Ordering::SeqCst);
+            if let Err(e) = call_command_unbounded(NETWORK_SERVICE_PATH, &["restart"]).await {
+                tracing::error!("failed to restart {NETWORK_SERVICE_PATH}: {e:#}");
+            }
+        });
     }
 
     fn mac_address_lookup(&self) -> Option<String> {
@@ -143,12 +159,8 @@ impl BuildrootNetworkManager {
     }
 }
 
-/// Resolve the file to actually write for `path`. When `path` is a symlink (as
-/// `/etc/network.conf` is on the buildroot boards, pointing into the persistent
-/// stock partition), follow it one level so the write lands on the persistent
-/// target and the link is preserved; a relative link target is resolved against
-/// the link's own directory. Otherwise `path` is written directly. If `path`
-/// does not exist yet, it is written directly (the first write creates it).
+/// Resolve where to actually write `path`: follow one symlink level (so the
+/// write lands on the persistent target and preserves the link), else `path`.
 async fn resolve_link_target(path: &str) -> PathBuf {
     let path = Path::new(path);
     let Ok(meta) = tokio::fs::symlink_metadata(path).await else {
@@ -208,6 +220,13 @@ impl NetworkConfig for BuildrootNetworkManager {
     /// Both settings live in the same `/etc/network.conf`, so applying them
     /// together is one read-modify-write and one `S38network` restart instead
     /// of two.
+    ///
+    /// Returns once the new configuration is durable on disk, i.e. "queued":
+    /// the restart that puts it into effect is deliberately left to run
+    /// afterwards and its failure is only logged — see
+    /// [`Self::spawn_service_restart`]. This is best-effort: detaching the
+    /// restart lets the response flush before the link drops, but the ordering
+    /// is not guaranteed.
     async fn apply_network_settings(
         &self,
         config: Option<NetworkProtocolConfig>,
@@ -221,10 +240,11 @@ impl NetworkConfig for BuildrootNetworkManager {
         }
         let _guard = self.config_lock.lock().await;
         let mut current = self.load_config().await?;
+        let previous = current.clone();
+        let summary = crate::network_config_summary(config.as_ref(), new_hostname.as_deref());
         if let Some(config) = config {
             current.protocol = config;
         }
-        let hostname_changing = new_hostname.is_some();
         if let Some(new_hostname) = new_hostname {
             current.hostname = Some(new_hostname);
         }
@@ -233,7 +253,22 @@ impl NetworkConfig for BuildrootNetworkManager {
         if current.hostname.is_none() {
             current.hostname = Some(hostname().unwrap_or_else(|| DEFAULT_HOSTNAME.into()));
         }
+        // A write that changes nothing must not restart the network: the
+        // restart drops the link and, on some boards, the address for tens of
+        // seconds, which is a steep price for a no-op such as "set DHCP" on a
+        // miner already on DHCP.
+        if current == previous {
+            drop(_guard);
+            tracing::info!("Network configuration unchanged ({summary}); nothing to restart");
+            return Ok(());
+        }
+        let hostname_changing = current.hostname != previous.hostname;
         self.store_config(&current).await?;
+        drop(_guard);
+        tracing::info!(
+            "Applied network configuration ({summary}); restarting networking to take effect"
+        );
+        self.spawn_service_restart();
         if hostname_changing {
             self.hostname_changed.notify_one();
         }
@@ -303,7 +338,7 @@ impl NetworkManager for BuildrootNetworkManager {
 }
 
 /// Parsed contents of `/etc/network.conf`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct NetworkConf {
     protocol: NetworkProtocolConfig,
     hostname: Option<String>,
