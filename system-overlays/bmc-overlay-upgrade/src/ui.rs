@@ -187,12 +187,16 @@ pub struct Surface {
 #[derive(Debug, Clone, Copy)]
 struct Tier {
     icon: f32,
-    icon_top_pad: f32,
+    /// Top edge of the icon, from the top of the surface. Fixed per tier rather
+    /// than derived from what sits below it: the content under the icon changes
+    /// with the phase, and centring the whole block against it made the icon
+    /// jump between phases of one run.
+    icon_top: f32,
     icon_bottom_pad: f32,
     title: u32,
     body: u32,
     gap: f32,
-    /// Floor for the content block's top edge, and the card's side padding.
+    /// Side padding, which the wrapped safety box is laid out inside.
     inset: f32,
     bar_height: f32,
     /// Progress-bar inset from both surface edges.
@@ -216,7 +220,7 @@ struct Tier {
 /// The Deck's fullscreen firmware surface (1280x480).
 const FULL_LARGE: Tier = Tier {
     icon: 80.0,
-    icon_top_pad: 40.0,
+    icon_top: 176.5,
     icon_bottom_pad: 15.0,
     title: 24,
     body: 18,
@@ -233,6 +237,7 @@ const FULL_LARGE: Tier = Tier {
 /// The BMM101's fullscreen surface (480x320). The Deck's type and icon carry
 /// over; only the bar, sized as a fraction of the display, comes in.
 const FULL_MEDIUM: Tier = Tier {
+    icon_top: 96.5,
     bar_inset: 48.0,
     caption_nudge: 0.0,
     ..FULL_LARGE
@@ -241,7 +246,7 @@ const FULL_MEDIUM: Tier = Tier {
 /// The Deck's package card (384x192).
 const CARD_LARGE: Tier = Tier {
     icon: 40.0,
-    icon_top_pad: 0.0,
+    icon_top: 53.5,
     icon_bottom_pad: 0.0,
     title: 20,
     body: 16,
@@ -260,6 +265,7 @@ const CARD_LARGE: Tier = Tier {
 /// way: the byte counts go, and the determinate caption loses its noun.
 const CARD_SMALL: Tier = Tier {
     icon: 36.0,
+    icon_top: 22.5,
     title: 18,
     body: 14,
     gap: 8.0,
@@ -276,7 +282,7 @@ const CARD_SMALL: Tier = Tier {
 /// even after stepping down.
 const FULL_SMALL: Tier = Tier {
     icon: 64.0,
-    icon_top_pad: 8.0,
+    icon_top: 60.0,
     icon_bottom_pad: 8.0,
     title: 18,
     body: 14,
@@ -405,12 +411,11 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
     let tier = tier_for(surface);
     let Tier {
         icon: icon_size,
-        icon_top_pad,
+        icon_top,
         icon_bottom_pad,
         title: title_size,
         body: body_size,
         gap,
-        inset,
         ..
     } = tier;
     let mut draws = vec![DrawCommand::Rect {
@@ -438,54 +443,8 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
     }
     let bar_height = tier.bar_height;
     let (bar_x, bar_w) = (tier.bar_inset, width - tier.bar_inset * 2.0);
-    let content_height = match view {
-        UpgradeView::Running {
-            phase, progress, ..
-        } => match progress_mode(*phase, *progress) {
-            ProgressMode::Determinate(_) => {
-                let transfer = if tier.transfer_line {
-                    gap + body_size as f32
-                } else {
-                    0.0
-                };
-                icon_top_pad
-                    + icon_size
-                    + icon_bottom_pad
-                    + gap
-                    + title_size as f32
-                    + gap
-                    + bar_height
-                    + transfer
-            }
-            ProgressMode::Indeterminate => {
-                icon_top_pad
-                    + icon_size
-                    + icon_bottom_pad
-                    + gap
-                    + title_size as f32
-                    + gap
-                    + bar_height
-            }
-            ProgressMode::None if packages && phase.is_some() => {
-                icon_size + gap + title_size as f32 + gap + bar_height
-            }
-            ProgressMode::None if packages => icon_size + gap + title_size as f32,
-            ProgressMode::None => {
-                icon_top_pad
-                    + icon_size
-                    + icon_bottom_pad
-                    + gap
-                    + title_size as f32
-                    + gap
-                    + body_size as f32
-            }
-        },
-        UpgradeView::Succeeded { .. } | UpgradeView::Failed { .. } => {
-            icon_top_pad + icon_size + icon_bottom_pad + gap + title_size as f32
-        }
-    };
-    let top = ((height - content_height) / 2.0).max(inset);
-    let icon_top = top + icon_top_pad;
+    let title_center_y = icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 / 2.0;
+    let below_title_y = title_center_y + title_size as f32 / 2.0 + gap;
     draws.push(icon_draw(
         icon_for_view(view, icons),
         width / 2.0,
@@ -512,24 +471,22 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                     };
                     draws.push(text_draw(
                         width / 2.0 + tier.caption_nudge,
-                        icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 / 2.0,
+                        title_center_y,
                         format!("{label} {percent:.0}%..."),
                         title_size,
                         WHITE,
                         FontWeight::BOLD,
                     ));
-                    let bar_y =
-                        icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 + gap;
                     draws.push(DrawCommand::Rect {
                         x: bar_x,
-                        y: bar_y,
+                        y: below_title_y,
                         w: bar_w,
                         h: bar_height,
                         fill: Fill::Solid(GRAY_50),
                     });
                     draws.push(DrawCommand::Rect {
                         x: bar_x,
-                        y: bar_y,
+                        y: below_title_y,
                         w: bar_w * fraction,
                         h: bar_height,
                         fill: Fill::Solid(VIOLET_60),
@@ -540,7 +497,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                     {
                         draws.push(text_draw(
                             width / 2.0,
-                            bar_y + bar_height + gap + body_size as f32 / 2.0,
+                            below_title_y + bar_height + gap + body_size as f32 / 2.0,
                             progress,
                             body_size,
                             GRAY_50,
@@ -549,42 +506,32 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                     }
                 }
                 ProgressMode::Indeterminate => {
-                    let label_size = title_size;
                     draws.push(text_draw(
                         width / 2.0,
-                        icon_top + icon_size + icon_bottom_pad + gap + label_size as f32 / 2.0,
+                        title_center_y,
                         label,
-                        label_size,
+                        title_size,
                         WHITE,
                         FontWeight::BOLD,
                     ));
-                    let bar_y =
-                        icon_top + icon_size + icon_bottom_pad + gap + label_size as f32 + gap;
-                    active_bar(&mut draws, bar_x, bar_y, bar_w, bar_height);
+                    active_bar(&mut draws, bar_x, below_title_y, bar_w, bar_height);
                 }
                 ProgressMode::None => {
                     draws.push(text_draw(
                         width / 2.0,
-                        icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 / 2.0,
+                        title_center_y,
                         label,
                         title_size,
                         WHITE,
                         FontWeight::BOLD,
                     ));
                     if packages && phase.is_some() {
-                        let bar_y = icon_top + icon_size + gap + title_size as f32 + gap;
-                        active_bar(&mut draws, bar_x, bar_y, bar_w, bar_height);
+                        active_bar(&mut draws, bar_x, below_title_y, bar_w, bar_height);
                     } else if !packages {
                         draws.push(safety_draw(
                             tier,
                             width,
-                            icon_top
-                                + icon_size
-                                + icon_bottom_pad
-                                + gap
-                                + title_size as f32
-                                + gap
-                                + body_size as f32 / 2.0,
+                            below_title_y + body_size as f32 / 2.0,
                             body_size,
                         ));
                     }
@@ -593,7 +540,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
         }
         UpgradeView::Succeeded { .. } => draws.push(text_draw(
             width / 2.0,
-            icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 / 2.0,
+            title_center_y,
             "Update Finished",
             title_size,
             WHITE,
@@ -601,7 +548,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
         )),
         UpgradeView::Failed { .. } => draws.push(text_draw(
             width / 2.0,
-            icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 / 2.0,
+            title_center_y,
             "Update Failed",
             title_size,
             WHITE,
@@ -971,6 +918,65 @@ mod tests {
                 DrawCommand::Text { text, style, .. }
                     if text == expected_title && style.color == WHITE
             ));
+        }
+    }
+
+    /// The icon holds its place for a whole run. What sits under it changes from
+    /// phase to phase — a bar arrives, byte counts come and go, the terminal
+    /// screen has neither — and an icon positioned against that content walks up
+    /// and down the surface as the run proceeds.
+    #[test]
+    fn the_icon_does_not_move_between_the_phases_of_one_run() {
+        let icon_y = |draws: &[DrawCommand]| {
+            draws
+                .iter()
+                .find_map(|draw| {
+                    if let DrawCommand::Svg { y, .. } = draw {
+                        Some(*y)
+                    } else {
+                        None
+                    }
+                })
+                .expect("BUG: every upgrade screen draws an icon")
+        };
+
+        for (kind, placement, size) in [
+            (UpgradeKind::Firmware, Placement::Fullscreen, (1_280, 480)),
+            (UpgradeKind::Firmware, Placement::Fullscreen, (480, 320)),
+            (UpgradeKind::Firmware, Placement::Fullscreen, (320, 240)),
+            (UpgradeKind::Packages, Placement::Card, (384, 192)),
+            (UpgradeKind::Packages, Placement::Card, (240, 120)),
+            (UpgradeKind::Packages, Placement::Fullscreen, (320, 240)),
+        ] {
+            let download = if kind == UpgradeKind::Firmware {
+                UpgradePhase::FirmwareDownloading
+            } else {
+                UpgradePhase::PackageRealizing
+            };
+            let views = [
+                running_view(kind, None, None),
+                running_view(
+                    kind,
+                    Some(download),
+                    Some(DownloadProgress {
+                        downloaded_bytes: 82_000_000,
+                        total_bytes: Some(151_000_000),
+                    }),
+                ),
+                running_view(kind, Some(download), None),
+                running_view(kind, Some(UpgradePhase::PackageBuilding), None),
+                UpgradeView::Failed { kind },
+            ];
+            let tops: Vec<f32> = views
+                .iter()
+                .map(|view| icon_y(&surface_draws(view, size, placement)))
+                .collect();
+
+            assert!(
+                tops.windows(2)
+                    .all(|pair| (pair[0] - pair[1]).abs() < f32::EPSILON),
+                "{kind:?} on {placement:?} {size:?} moves its icon across phases: {tops:?}"
+            );
         }
     }
 
