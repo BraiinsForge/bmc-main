@@ -29,7 +29,7 @@ use miner_info::availability::Availability;
 use miner_info::face;
 use miner_info::face::RenderSize;
 use miner_info::model::{
-    Constraints, Currency, Hashprice, MinerData, Money, PublicData, TargetRange, TemperatureRange,
+    Constraints, Currency, MinerData, Money, PublicData, TargetRange, TemperatureRange,
 };
 
 scene_meta! { title: "Widgets / Miner Info" }

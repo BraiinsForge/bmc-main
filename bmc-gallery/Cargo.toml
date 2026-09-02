@@ -4,8 +4,10 @@
 
 # `build.rs` reads the scene glob from `gallery.toml`, which Cargo metadata
 # does not discover as a source input for the Nix filter.
+# `assets/` holds the copies a scene hands to a face it draws,
+# which `include_svg!` resolves against this crate rather than the widget's.
 [workspace.metadata.nix]
-include = ["gallery.toml"]
+include = ["assets/**", "gallery.toml"]
 
 # Mirrors the root manifest's set, verbatim. Being its own workspace root,
 # this crate has nothing to inherit — but the scenes are the same code held to

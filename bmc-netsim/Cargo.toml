@@ -6,11 +6,11 @@ authors = ["Braiins <braiins@braiins.com>"]
 description = "Generic mDNS + REST network-resource simulator for driving widgets against fake devices"
 readme = "README.md"
 
-# Package the committed schema into the crane source;
-# without it the `blueprint_schema_is_current` test
-# can't read it in the nix sandbox.
+# Package the committed schema and blueprints into the crane source,
+# so `blueprint_schema_is_current` and `every_committed_blueprint_parses`
+# can read them in the nix sandbox.
 [package.metadata.nix]
-include = ["blueprint.schema.json"]
+include = ["blueprint.schema.json", "blueprints/**"]
 
 [dependencies]
 anyhow.workspace = true
