@@ -467,9 +467,12 @@ pub fn on_params_update(changed: Changed) {
                         AuthState::LoggingIn
                     };
                 });
-                // Blanked data drops its staleness — no pill over the new miner's N/A.
+                // Blanked data drops its staleness — no pill over the new miner's
+                // N/A — and its in-flight requests, whose replies would otherwise
+                // land after the reset and refill the fields just cleared.
                 for miner in &handles.miner {
                     miner.reset_staleness();
+                    miner.invalidate();
                 }
                 handles.login.invalidate();
             }
