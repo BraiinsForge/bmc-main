@@ -6,7 +6,7 @@ import type { GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
 import type { EmptySchema } from '@bufbuild/protobuf/wkt';
 import { file_google_protobuf_empty, file_google_protobuf_wrappers } from '@bufbuild/protobuf/wkt';
-import type { ScanWifiResponseSchema, SetWifiRequestSchema } from './network_pb';
+import type { NetworkConfig, ScanWifiResponseSchema, SetWifiRequestSchema } from './network_pb';
 import { file_web_network } from './network_pb';
 import type { DateFormat, NumberFormat, TemperatureUnit, TimeFormat, Timezone, UnitSystem } from './shared_pb';
 import { file_web_shared } from './shared_pb';
@@ -18,9 +18,35 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_initial_setup: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chd3ZWIvaW5pdGlhbF9zZXR1cC5wcm90bxIPYnJhaWlucy5ibWMud2ViIusCCg9TZXR0aW5nc1JlcXVlc3QSMAoLdGltZV9mb3JtYXQYASABKA4yGy5icmFpaW5zLmJtYy53ZWIuVGltZUZvcm1hdBITCgt0aW1lem9uZV9pZBgCIAEoCRIwCgtkYXRlX2Zvcm1hdBgDIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5EYXRlRm9ybWF0EjQKDW51bWJlcl9mb3JtYXQYBCABKA4yHS5icmFpaW5zLmJtYy53ZWIuTnVtYmVyRm9ybWF0EhUKCHBhc3N3b3JkGAUgASgJSACIAQESFwoPZGF0YV9jb2xsZWN0aW9uGAYgASgIEjoKEHRlbXBlcmF0dXJlX3VuaXQYByABKA4yIC5icmFpaW5zLmJtYy53ZWIuVGVtcGVyYXR1cmVVbml0EjAKC3VuaXRfc3lzdGVtGAggASgOMhsuYnJhaWlucy5ibWMud2ViLlVuaXRTeXN0ZW1CCwoJX3Bhc3N3b3JkIpYDChRTZXR0aW5nc0RhdGFSZXNwb25zZRIwCgt0aW1lX2Zvcm1hdBgBIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5UaW1lRm9ybWF0EiwKCXRpbWV6b25lcxgCIAMoCzIZLmJyYWlpbnMuYm1jLndlYi5UaW1lem9uZRITCgt0aW1lem9uZV9pZBgDIAEoCRIwCgtkYXRlX2Zvcm1hdBgEIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5EYXRlRm9ybWF0EjQKDW51bWJlcl9mb3JtYXQYBSABKA4yHS5icmFpaW5zLmJtYy53ZWIuTnVtYmVyRm9ybWF0EjMKD2RhdGFfY29sbGVjdGlvbhgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5Cb29sVmFsdWUSOgoQdGVtcGVyYXR1cmVfdW5pdBgHIAEoDjIgLmJyYWlpbnMuYm1jLndlYi5UZW1wZXJhdHVyZVVuaXQSMAoLdW5pdF9zeXN0ZW0YCCABKA4yGy5icmFpaW5zLmJtYy53ZWIuVW5pdFN5c3RlbTK7AgoTSW5pdGlhbFNldHVwU2VydmljZRJCCgdTZXRXaWZpEh8uYnJhaWlucy5ibWMud2ViLlNldFdpZmlSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkUKCFNjYW5XaWZpEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiEuYnJhaWlucy5ibWMud2ViLlNjYW5XaWZpUmVzcG9uc2USUAoPR2V0U2V0dGluZ3NEYXRhEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiUuYnJhaWlucy5ibWMud2ViLlNldHRpbmdzRGF0YVJlc3BvbnNlEkcKC1NldHVwRGV2aWNlEiAuYnJhaWlucy5ibWMud2ViLlNldHRpbmdzUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eWIGcHJvdG8z',
+        'Chd3ZWIvaW5pdGlhbF9zZXR1cC5wcm90bxIPYnJhaWlucy5ibWMud2ViIksKClBvb2xDb25maWcSCwoDdXJsGAEgASgJEgwKBHVzZXIYAiABKAkSFQoIcGFzc3dvcmQYAyABKAlIAIgBAUILCglfcGFzc3dvcmQi6wMKD1NldHRpbmdzUmVxdWVzdBIwCgt0aW1lX2Zvcm1hdBgBIAEoDjIbLmJyYWlpbnMuYm1jLndlYi5UaW1lRm9ybWF0EhMKC3RpbWV6b25lX2lkGAIgASgJEjAKC2RhdGVfZm9ybWF0GAMgASgOMhsuYnJhaWlucy5ibWMud2ViLkRhdGVGb3JtYXQSNAoNbnVtYmVyX2Zvcm1hdBgEIAEoDjIdLmJyYWlpbnMuYm1jLndlYi5OdW1iZXJGb3JtYXQSFQoIcGFzc3dvcmQYBSABKAlIAIgBARIXCg9kYXRhX2NvbGxlY3Rpb24YBiABKAgSOgoQdGVtcGVyYXR1cmVfdW5pdBgHIAEoDjIgLmJyYWlpbnMuYm1jLndlYi5UZW1wZXJhdHVyZVVuaXQSMAoLdW5pdF9zeXN0ZW0YCCABKA4yGy5icmFpaW5zLmJtYy53ZWIuVW5pdFN5c3RlbRIvCgduZXR3b3JrGAkgASgLMh4uYnJhaWlucy5ibWMud2ViLk5ldHdvcmtDb25maWcSKQoEcG9vbBgKIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5Qb29sQ29uZmlnEhUKCGhvc3RuYW1lGAsgASgJSAGIAQFCCwoJX3Bhc3N3b3JkQgsKCV9ob3N0bmFtZSKWBAoUU2V0dGluZ3NEYXRhUmVzcG9uc2USMAoLdGltZV9mb3JtYXQYASABKA4yGy5icmFpaW5zLmJtYy53ZWIuVGltZUZvcm1hdBIsCgl0aW1lem9uZXMYAiADKAsyGS5icmFpaW5zLmJtYy53ZWIuVGltZXpvbmUSEwoLdGltZXpvbmVfaWQYAyABKAkSMAoLZGF0ZV9mb3JtYXQYBCABKA4yGy5icmFpaW5zLmJtYy53ZWIuRGF0ZUZvcm1hdBI0Cg1udW1iZXJfZm9ybWF0GAUgASgOMh0uYnJhaWlucy5ibWMud2ViLk51bWJlckZvcm1hdBIzCg9kYXRhX2NvbGxlY3Rpb24YBiABKAsyGi5nb29nbGUucHJvdG9idWYuQm9vbFZhbHVlEjoKEHRlbXBlcmF0dXJlX3VuaXQYByABKA4yIC5icmFpaW5zLmJtYy53ZWIuVGVtcGVyYXR1cmVVbml0EjAKC3VuaXRfc3lzdGVtGAggASgOMhsuYnJhaWlucy5ibWMud2ViLlVuaXRTeXN0ZW0SKQoEcG9vbBgJIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5Qb29sQ29uZmlnEhUKCGhvc3RuYW1lGAogASgJSACIAQESLwoHbmV0d29yaxgLIAEoCzIeLmJyYWlpbnMuYm1jLndlYi5OZXR3b3JrQ29uZmlnQgsKCV9ob3N0bmFtZTK7AgoTSW5pdGlhbFNldHVwU2VydmljZRJCCgdTZXRXaWZpEh8uYnJhaWlucy5ibWMud2ViLlNldFdpZmlSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkUKCFNjYW5XaWZpEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiEuYnJhaWlucy5ibWMud2ViLlNjYW5XaWZpUmVzcG9uc2USUAoPR2V0U2V0dGluZ3NEYXRhEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiUuYnJhaWlucy5ibWMud2ViLlNldHRpbmdzRGF0YVJlc3BvbnNlEkcKC1NldHVwRGV2aWNlEiAuYnJhaWlucy5ibWMud2ViLlNldHRpbmdzUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eWIGcHJvdG8z',
         [file_google_protobuf_empty, file_google_protobuf_wrappers, file_web_network, file_web_shared],
     );
+
+/**
+ * @generated from message braiins.bmc.web.PoolConfig
+ */
+export type PoolConfig = Message<'braiins.bmc.web.PoolConfig'> & {
+    /**
+     * @generated from field: string url = 1;
+     */
+    url: string;
+
+    /**
+     * @generated from field: string user = 2;
+     */
+    user: string;
+
+    /**
+     * @generated from field: optional string password = 3;
+     */
+    password?: string | undefined;
+};
+
+/**
+ * Describes the message braiins.bmc.web.PoolConfig.
+ * Use `create(PoolConfigSchema)` to create a new message.
+ */
+export const PoolConfigSchema: GenMessage<PoolConfig> = /*@__PURE__*/ messageDesc(file_web_initial_setup, 0);
 
 /**
  * @generated from message braiins.bmc.web.SettingsRequest
@@ -65,13 +91,28 @@ export type SettingsRequest = Message<'braiins.bmc.web.SettingsRequest'> & {
      * @generated from field: braiins.bmc.web.UnitSystem unit_system = 8;
      */
     unitSystem: UnitSystem;
+
+    /**
+     * @generated from field: braiins.bmc.web.NetworkConfig network = 9;
+     */
+    network?: NetworkConfig | undefined;
+
+    /**
+     * @generated from field: braiins.bmc.web.PoolConfig pool = 10;
+     */
+    pool?: PoolConfig | undefined;
+
+    /**
+     * @generated from field: optional string hostname = 11;
+     */
+    hostname?: string | undefined;
 };
 
 /**
  * Describes the message braiins.bmc.web.SettingsRequest.
  * Use `create(SettingsRequestSchema)` to create a new message.
  */
-export const SettingsRequestSchema: GenMessage<SettingsRequest> = /*@__PURE__*/ messageDesc(file_web_initial_setup, 0);
+export const SettingsRequestSchema: GenMessage<SettingsRequest> = /*@__PURE__*/ messageDesc(file_web_initial_setup, 1);
 
 /**
  * @generated from message braiins.bmc.web.SettingsDataResponse
@@ -116,6 +157,21 @@ export type SettingsDataResponse = Message<'braiins.bmc.web.SettingsDataResponse
      * @generated from field: braiins.bmc.web.UnitSystem unit_system = 8;
      */
     unitSystem: UnitSystem;
+
+    /**
+     * @generated from field: braiins.bmc.web.PoolConfig pool = 9;
+     */
+    pool?: PoolConfig | undefined;
+
+    /**
+     * @generated from field: optional string hostname = 10;
+     */
+    hostname?: string | undefined;
+
+    /**
+     * @generated from field: braiins.bmc.web.NetworkConfig network = 11;
+     */
+    network?: NetworkConfig | undefined;
 };
 
 /**
@@ -124,7 +180,7 @@ export type SettingsDataResponse = Message<'braiins.bmc.web.SettingsDataResponse
  */
 export const SettingsDataResponseSchema: GenMessage<SettingsDataResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_initial_setup, 1);
+    messageDesc(file_web_initial_setup, 2);
 
 /**
  * @generated from service braiins.bmc.web.InitialSetupService

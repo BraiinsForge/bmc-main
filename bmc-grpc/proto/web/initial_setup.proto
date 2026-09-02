@@ -28,6 +28,12 @@ import "google/protobuf/wrappers.proto";
 import "web/network.proto";
 import "web/shared.proto";
 
+message PoolConfig {
+  string url = 1;
+  string user = 2;
+  optional string password = 3;
+}
+
 message SettingsRequest {
   braiins.bmc.web.TimeFormat time_format = 1;
   string timezone_id = 2;
@@ -37,6 +43,9 @@ message SettingsRequest {
   bool data_collection = 6;
   braiins.bmc.web.TemperatureUnit temperature_unit = 7;
   braiins.bmc.web.UnitSystem unit_system = 8;
+  braiins.bmc.web.NetworkConfig network = 9;
+  PoolConfig pool = 10;
+  optional string hostname = 11;
 }
 
 message SettingsDataResponse {
@@ -48,6 +57,9 @@ message SettingsDataResponse {
   google.protobuf.BoolValue data_collection = 6;
   braiins.bmc.web.TemperatureUnit temperature_unit = 7;
   braiins.bmc.web.UnitSystem unit_system = 8;
+  PoolConfig pool = 9;
+  optional string hostname = 10;
+  braiins.bmc.web.NetworkConfig network = 11;
 }
 
 service InitialSetupService {
