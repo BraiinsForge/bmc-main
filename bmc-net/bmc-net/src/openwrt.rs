@@ -38,7 +38,7 @@ use tracing::info;
 
 use crate::command::{
     BOS_DEFAULTS_LIB, BOS_FACTORY_DEFAULT_LIB, call_command, call_command_stdin,
-    call_command_to_string, run_sourced, run_sourced_to_string,
+    call_command_to_string, call_command_unbounded, run_sourced, run_sourced_to_string,
 };
 use crate::provisioning::{ProvisioningState, UciProvisioningState};
 use crate::{NetworkConfig, NetworkManager, WifiControl};
@@ -366,6 +366,7 @@ impl NetworkConfig for UciNetworkManager {
         if let Some(hostname) = hostname.as_deref() {
             crate::validate_hostname(hostname)?;
         }
+        let summary = crate::network_config_summary(config.as_ref(), hostname.as_deref());
         let mut stdin = Vec::new();
         if let Some(config) = config {
             stdin.extend(self.uci_net_lines(config));
@@ -407,7 +408,10 @@ impl NetworkConfig for UciNetworkManager {
         // a `system reload` alone updates the kernel hostname but leaves the
         // active DHCP lease on the old name, so the restart is required for the
         // rename to actually take effect.
-        call_command(INIT_SCRIPT_NETWORK, &["restart"]).await?;
+        tracing::info!(
+            "Applied network configuration ({summary}); restarting networking to take effect"
+        );
+        call_command_unbounded(INIT_SCRIPT_NETWORK, &["restart"]).await?;
         if hostname.is_some() {
             self.hostname_changed.notify_one();
         }
