@@ -31,7 +31,7 @@ use bmc_wasm_protocol::{
 use crate::UpgradeView;
 use crate::icons::UpgradeIcons;
 
-const SAFETY_COPY: &str = "Keep the device plugged in and online during the update";
+const SAFETY_TEXT: &str = "Keep the device plugged in and online during the update";
 const ACTIVE_BAR_TRAVEL_MS: u32 = 800;
 /// Divider along the compact card's top and left edges. Both the card and the
 /// widgets behind it are black, so without it the card has no visible extent.
@@ -212,9 +212,9 @@ struct Tier {
     /// string either surface draws — a phase label, a percentage and an ellipsis
     /// — so the narrow card asks for [`UpgradePhase::short_label`] instead.
     short_percent_caption: bool,
-    /// Lines the safety copy is allowed to take. Above one it is drawn as a
+    /// Lines the safety text is allowed to take. Above one it is drawn as a
     /// wrapped box instead of a single line — see [`safety_draw`].
-    safety_lines: f32,
+    safety_text_lines: f32,
 }
 
 /// The Deck's fullscreen firmware surface (1280x480).
@@ -231,7 +231,7 @@ const FULL_LARGE: Tier = Tier {
     caption_nudge: 10.0,
     transfer_line: true,
     short_percent_caption: false,
-    safety_lines: 1.0,
+    safety_text_lines: 1.0,
 };
 
 /// The BMM101's fullscreen surface (480x320). The Deck's type and icon carry
@@ -257,7 +257,7 @@ const CARD_LARGE: Tier = Tier {
     caption_nudge: 0.0,
     transfer_line: true,
     short_percent_caption: false,
-    safety_lines: 1.0,
+    safety_text_lines: 1.0,
 };
 
 /// The BMM101's package card (240x120). The Deck card's phase labels reach the
@@ -278,7 +278,7 @@ const CARD_SMALL: Tier = Tier {
 
 /// The BMM100's fullscreen surface (320x240), which both kinds use: a card small
 /// enough to leave its widget visible would not hold the content. The Deck's
-/// icon and type do not fit across 320 px, and the safety copy needs two lines
+/// icon and type do not fit across 320 px, and the safety text needs two lines
 /// even after stepping down.
 const FULL_SMALL: Tier = Tier {
     icon: 64.0,
@@ -290,7 +290,7 @@ const FULL_SMALL: Tier = Tier {
     inset: 12.0,
     bar_height: 5.0,
     bar_inset: 24.0,
-    safety_lines: 2.0,
+    safety_text_lines: 2.0,
     ..FULL_MEDIUM
 };
 
@@ -307,7 +307,7 @@ fn tier_for(surface: Surface) -> Tier {
     }
 }
 
-/// The safety copy, on one line or wrapped into a box.
+/// The safety text, on one line or wrapped into a box.
 ///
 /// It is the longest string the overlay draws, and a canvas text draw is always
 /// a single unwrapped line, so a narrow display needs the paragraph path that
@@ -323,11 +323,11 @@ fn tier_for(surface: Surface) -> Tier {
     reason = "type sizes are a couple of dozen pixels"
 )]
 fn safety_draw(tier: Tier, width: f32, center_y: f32, size: u32) -> DrawCommand {
-    if tier.safety_lines <= 1.0 {
+    if tier.safety_text_lines <= 1.0 {
         return text_draw(
             width / 2.0,
             center_y,
-            SAFETY_COPY,
+            SAFETY_TEXT,
             size,
             GRAY_50,
             FontWeight::REGULAR,
@@ -335,7 +335,7 @@ fn safety_draw(tier: Tier, width: f32, center_y: f32, size: u32) -> DrawCommand 
     }
     // TextStyle's own default, spelled out so the box and the layout agree.
     let line_height = 1.4;
-    let box_height = size as f32 * line_height * tier.safety_lines;
+    let box_height = size as f32 * line_height * tier.safety_text_lines;
     #[expect(
         clippy::cast_possible_truncation,
         reason = "body type sizes are a couple of dozen pixels"
@@ -349,7 +349,7 @@ fn safety_draw(tier: Tier, width: f32, center_y: f32, size: u32) -> DrawCommand 
         mode: AutoFit::Shrink,
         min_size: floor,
         max_size: floor,
-        text: SAFETY_COPY.to_owned(),
+        text: SAFETY_TEXT.to_owned(),
         style: TextStyle {
             size,
             color: GRAY_50,
@@ -708,7 +708,7 @@ mod tests {
         assert!(matches!(
             &draws[3],
             DrawCommand::Text { text, style, .. }
-                if text == SAFETY_COPY
+                if text == SAFETY_TEXT
                     && style.size == 18
                     && style.weight == FontWeight::REGULAR
                     && style.color == GRAY_50
@@ -1034,10 +1034,10 @@ mod tests {
         )));
     }
 
-    /// 320 px cannot hold the safety copy on one line at any readable size, and
+    /// 320 px cannot hold the safety text on one line at any readable size, and
     /// a canvas text draw never wraps — so that tier alone takes the box.
     #[test]
-    fn the_small_fullscreen_surface_wraps_the_safety_copy_into_a_box() {
+    fn the_small_fullscreen_surface_wraps_the_safety_text_into_a_box() {
         let draws = tree_draws(
             &running_view(
                 UpgradeKind::Firmware,
@@ -1059,7 +1059,7 @@ mod tests {
                 text,
                 style,
                 ..
-            } if text == SAFETY_COPY
+            } if text == SAFETY_TEXT
                 && style.size == 14
                 && (*box_height - 39.2).abs() < 0.01
         ));
@@ -1080,7 +1080,7 @@ mod tests {
             );
             assert!(matches!(
                 &draws[3],
-                DrawCommand::Text { text, .. } if text == SAFETY_COPY
+                DrawCommand::Text { text, .. } if text == SAFETY_TEXT
             ));
         }
     }
