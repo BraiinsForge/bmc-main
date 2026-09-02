@@ -40,6 +40,15 @@ pub(crate) const HALVING_COUNTDOWN_UID: Uuid =
     Uuid::from_u128(0x8a87_742d_192d_4c80_bda2_d446_e9b9_aeae);
 /// `widgets-wasm/mining-info`
 pub(crate) const MINING_INFO_UID: Uuid = Uuid::from_u128(0x6d0c_6a2d_24d0_4384_8f8b_6f4a_c2c9_675a);
+/// `widgets-wasm/miner-info-mining`
+pub(crate) const MINER_INFO_MINING_UID: Uuid =
+    Uuid::from_u128(0x378c_4d10_4561_4c3e_a453_c11b_eb8e_97b2);
+/// `widgets-wasm/miner-info-geek`
+pub(crate) const MINER_INFO_GEEK_UID: Uuid =
+    Uuid::from_u128(0xa4b6_518a_53d6_4351_9b2e_e51c_1454_39b7);
+/// `widgets-wasm/miner-info-overload`
+pub(crate) const MINER_INFO_OVERLOAD_UID: Uuid =
+    Uuid::from_u128(0x1b80_f419_9075_492f_b913_31e7_0b0e_1cfb);
 /// `widgets-wasm/mining-clock`
 pub(crate) const MINING_CLOCK_UID: Uuid =
     Uuid::from_u128(0x0f0b_7df0_f6d5_4d21_9ddc_7755_e503_0503);

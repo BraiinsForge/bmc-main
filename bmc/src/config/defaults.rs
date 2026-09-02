@@ -27,8 +27,8 @@ use uuid::Uuid;
 
 use super::params_map;
 use super::widget_uuids::{
-    BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, CLOCK_UID, MINING_CLOCK_UID, MINING_INFO_UID,
-    TICKER_SINGLE_UID,
+    BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, CLOCK_UID, MINER_INFO_GEEK_UID,
+    MINER_INFO_MINING_UID, MINER_INFO_OVERLOAD_UID, MINING_CLOCK_UID, TICKER_SINGLE_UID,
 };
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
@@ -71,9 +71,10 @@ fn ticker_params(pair: &str, period: &str) -> BTreeMap<ParamKey, ParamValue> {
     ])
 }
 
-fn mining_info_params(view: &str) -> BTreeMap<ParamKey, ParamValue> {
+// Each Miner Info widget pins its own face, so the credentials
+// are all that separates one default from another.
+fn miner_info_params() -> BTreeMap<ParamKey, ParamValue> {
     params(&[
-        ("view", ParamValue::String(view.into())),
         (
             "miner_url",
             ParamValue::String("http://localhost/api/v1".into()),
@@ -187,7 +188,7 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
 fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
     let round = ViewportShape::Round;
 
-    let geek = fullscreen(MINING_INFO_UID, round, mining_info_params("geek"));
+    let geek = fullscreen(MINER_INFO_GEEK_UID, round, miner_info_params());
     let clock = fullscreen(MINING_CLOCK_UID, round, mining_clock_params());
 
     indexmap! {
@@ -201,9 +202,9 @@ fn bmm_scenes() -> IndexMap<SceneId, Scene> {
 
     let clock = fullscreen(CLOCK_UID, rect, clock_params("digital"));
     let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
-    let mining = fullscreen(MINING_INFO_UID, rect, mining_info_params("mining"));
-    let geek = fullscreen(MINING_INFO_UID, rect, mining_info_params("geek"));
-    let overload = fullscreen(MINING_INFO_UID, rect, mining_info_params("info_overload"));
+    let mining = fullscreen(MINER_INFO_MINING_UID, rect, miner_info_params());
+    let geek = fullscreen(MINER_INFO_GEEK_UID, rect, miner_info_params());
+    let overload = fullscreen(MINER_INFO_OVERLOAD_UID, rect, miner_info_params());
     // Takes the slot the Miner Info network view vacated: Bitcoin-network data
     // still ships out of the box, from the widget that owns it. It declares no
     // params.
@@ -247,11 +248,30 @@ mod tests {
         }
     }
 
+    /// Pinned rather than counted: a count of six would pass for any six,
+    /// when what matters is which six.
     #[test]
-    fn bmm_platforms_have_six_fullscreen_scenes() {
+    fn bmm_platforms_default_to_the_split_miner_info_widgets() {
         for product in [Product::Bmm100, Product::Bmm101] {
             let scenes = scenes_for(product);
             assert_eq!(scenes.len(), 6);
+            let widgets: Vec<Uuid> = scenes
+                .values()
+                .flat_map(|scene| scene.widgets.values())
+                .map(|widget| widget.widget_type_id)
+                .collect();
+            assert_eq!(
+                widgets,
+                vec![
+                    CLOCK_UID,
+                    TICKER_SINGLE_UID,
+                    MINER_INFO_MINING_UID,
+                    MINER_INFO_GEEK_UID,
+                    MINER_INFO_OVERLOAD_UID,
+                    BITCOIN_MINING_DATA_UID,
+                ],
+                "{product:?} defaults"
+            );
             assert!(
                 scenes
                     .values()

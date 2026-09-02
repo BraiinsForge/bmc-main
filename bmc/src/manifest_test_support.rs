@@ -26,7 +26,8 @@ use uuid::Uuid;
 
 use crate::config::widget_uuids::{
     BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID,
-    HALVING_COUNTDOWN_UID, ISS_POSITION_UID, MINING_CLOCK_UID, MINING_INFO_UID, NAMEDAY_UID,
+    HALVING_COUNTDOWN_UID, ISS_POSITION_UID, MINER_INFO_GEEK_UID, MINER_INFO_MINING_UID,
+    MINER_INFO_OVERLOAD_UID, MINING_CLOCK_UID, MINING_INFO_UID, NAMEDAY_UID,
     PICTURE_OF_THE_DAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID,
     TICKER_SINGLE_UID, WEATHER_UID,
 };
@@ -64,13 +65,16 @@ pub fn default_widgets() -> Vec<DefaultWidget> {
 }
 
 #[must_use]
-pub fn widget_uids() -> [(&'static str, Uuid); 17] {
+pub fn widget_uids() -> [(&'static str, Uuid); 20] {
     [
         ("clock", CLOCK_UID),
         ("weather", WEATHER_UID),
         ("blockheight", BLOCK_HEIGHT_UID),
         ("halving-countdown", HALVING_COUNTDOWN_UID),
         ("mining-info", MINING_INFO_UID),
+        ("miner-info-mining", MINER_INFO_MINING_UID),
+        ("miner-info-geek", MINER_INFO_GEEK_UID),
+        ("miner-info-overload", MINER_INFO_OVERLOAD_UID),
         ("mining-clock", MINING_CLOCK_UID),
         ("image", REMOTE_IMAGE_UID),
         ("iss-position", ISS_POSITION_UID),

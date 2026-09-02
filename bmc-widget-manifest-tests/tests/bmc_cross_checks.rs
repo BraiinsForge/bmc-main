@@ -45,7 +45,9 @@ fn every_default_widget_matches_its_manifest() {
         "ticker-single",
         "blockheight",
         "bitcoin-mining-data",
-        "mining-info",
+        "miner-info-mining",
+        "miner-info-geek",
+        "miner-info-overload",
         "mining-clock",
     ]
     .into_iter()
