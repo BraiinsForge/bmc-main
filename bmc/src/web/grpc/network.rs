@@ -220,7 +220,7 @@ fn require_wifi(net_man: &dyn NetworkManager) -> Result<&dyn WifiControl, Status
         .map_err(|e| Status::unimplemented(e.to_string()))
 }
 
-fn into_network_config(config: &NetworkProtocolConfig) -> NetworkConfig {
+pub(crate) fn into_network_config(config: &NetworkProtocolConfig) -> NetworkConfig {
     match config {
         NetworkProtocolConfig::Dhcp => NetworkConfig {
             protocol: Some(bmc_grpc::web::network_config::Protocol::Dhcp(())),
@@ -243,7 +243,30 @@ fn into_network_config(config: &NetworkProtocolConfig) -> NetworkConfig {
     }
 }
 
-fn try_from_network_config(config: &NetworkConfig) -> Result<NetworkProtocolConfig, Status> {
+pub(crate) fn try_from_network_config(
+    config: &NetworkConfig,
+) -> Result<NetworkProtocolConfig, Status> {
+    parse_network_config(config, "protocol", "").map_err(bad_request)
+}
+
+/// One `InvalidArgument` carrying every field violation collected so far.
+pub(crate) fn bad_request(field_violations: Vec<FieldViolation>) -> Status {
+    Status::with_error_details(
+        Code::InvalidArgument,
+        GrpcError::BadRequest.to_string(),
+        ErrorDetails::with_bad_request(field_violations),
+    )
+}
+
+/// Parses a network config, naming a missing protocol `protocol_field` and
+/// each violated static field `{static_prefix}<name>`, so a caller embedding
+/// the config in a larger request reports paths the client can map back onto
+/// its form.
+pub(crate) fn parse_network_config(
+    config: &NetworkConfig,
+    protocol_field: &str,
+    static_prefix: &str,
+) -> Result<NetworkProtocolConfig, Vec<FieldViolation>> {
     fn parse_ipv4(field: &str, value: &str) -> Result<Ipv4Addr, FieldViolation> {
         if value.is_empty() {
             return Err(FieldViolation::new(field, "Missing value!"));
@@ -254,19 +277,21 @@ fn try_from_network_config(config: &NetworkConfig) -> Result<NetworkProtocolConf
             .map_err(|_| FieldViolation::new(field, format!("'{value}' is not a valid IPv4!")))
     }
 
-    let protocol = config
-        .protocol
-        .as_ref()
-        .ok_or_else(|| Status::invalid_argument("Protocol must be specified!"))?;
+    let Some(protocol) = config.protocol.as_ref() else {
+        return Err(vec![FieldViolation::new(
+            protocol_field,
+            "Protocol must be specified!",
+        )]);
+    };
 
-    let protocol = match protocol {
-        bmc_grpc::web::network_config::Protocol::Dhcp(()) => NetworkProtocolConfig::Dhcp,
+    match protocol {
+        bmc_grpc::web::network_config::Protocol::Dhcp(()) => Ok(NetworkProtocolConfig::Dhcp),
         bmc_grpc::web::network_config::Protocol::Static(static_config) => {
             let mut field_violations = vec![];
 
             macro_rules! parse_field {
                 ($field:expr, $value:expr) => {
-                    match parse_ipv4($field, $value) {
+                    match parse_ipv4(&format!("{static_prefix}{}", $field), $value) {
                         Ok(val) => Some(val),
                         Err(err) => {
                             field_violations.push(err);
@@ -284,30 +309,24 @@ fn try_from_network_config(config: &NetworkConfig) -> Result<NetworkProtocolConf
                 .dns_servers
                 .iter()
                 .enumerate()
-                .map(|(i, dns)| parse_field!(&format!("dns_servers[{i}]"), dns))
+                .map(|(i, dns)| parse_field!(format!("dns_servers[{i}]"), dns))
                 .collect();
 
             if !field_violations.is_empty() {
-                return Err(Status::with_error_details(
-                    Code::InvalidArgument,
-                    GrpcError::BadRequest.to_string(),
-                    ErrorDetails::with_bad_request(field_violations),
-                ));
+                return Err(field_violations);
             }
 
-            NetworkProtocolConfig::Static(NetworkProtocolConfigStatic {
-                address: address.ok_or_else(|| Status::invalid_argument("Invalid address!"))?,
-                netmask: netmask.ok_or_else(|| Status::invalid_argument("Invalid netmask!"))?,
-                gateway: gateway.ok_or_else(|| Status::invalid_argument("Invalid gateway!"))?,
+            Ok(NetworkProtocolConfig::Static(NetworkProtocolConfigStatic {
+                address: address.expect("BUG: address parsed without a recorded violation"),
+                netmask: netmask.expect("BUG: netmask parsed without a recorded violation"),
+                gateway: gateway.expect("BUG: gateway parsed without a recorded violation"),
                 dns_servers: dns_servers
-                    .iter()
-                    .map(|dns| dns.ok_or_else(|| Status::invalid_argument("Invalid DNS!")))
-                    .collect::<Result<Vec<_>, _>>()?,
-            })
+                    .into_iter()
+                    .map(|dns| dns.expect("BUG: DNS server parsed without a recorded violation"))
+                    .collect(),
+            }))
         }
-    };
-
-    Ok(protocol)
+    }
 }
 
 pub(crate) async fn scan_wifi_response(

@@ -331,6 +331,7 @@ pub enum SetupProgress {
     ConnectingToWifi {
         wifi_ssid: String,
     },
+    SwitchingUplink,
     WifiConnectionSuccess,
     WifiConnectionFailed,
     WifiReconfigSuccess,

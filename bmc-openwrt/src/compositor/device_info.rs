@@ -54,6 +54,7 @@ fn setup_progress_wire(progress: &SetupProgress) -> (SetupState, String) {
         SetupProgress::ConnectingToWifi { wifi_ssid } => {
             (SetupState::ConnectingToWifi, wifi_ssid.clone())
         }
+        SetupProgress::SwitchingUplink => (SetupState::SwitchingUplink, String::new()),
         SetupProgress::WifiConnectionSuccess => (SetupState::WifiConnectionSuccess, String::new()),
         SetupProgress::WifiConnectionFailed => (SetupState::WifiConnectionFailed, String::new()),
         SetupProgress::WifiReconfigSuccess => (SetupState::WifiReconfigSuccess, String::new()),
@@ -84,9 +85,10 @@ fn replayable(progress: &SetupProgress) -> bool {
     match progress {
         // Nothing else on the wire says the device is stuck.
         SetupProgress::UnexpectedError { .. }
-        // Mid-join the lifecycle still reads FactoryDefault, whose screen
-        // advertises an access point the join has already taken down.
-        | SetupProgress::ConnectingToWifi { .. } => true,
+        // Mid-switchover the lifecycle still reads FactoryDefault, whose
+        // screen advertises an access point already being torn down.
+        | SetupProgress::ConnectingToWifi { .. }
+        | SetupProgress::SwitchingUplink => true,
         SetupProgress::Idle
         | SetupProgress::WifiConnectionSuccess
         | SetupProgress::WifiConnectionFailed
@@ -294,6 +296,7 @@ mod tests {
         assert!(replayable(&SetupProgress::ConnectingToWifi {
             wifi_ssid: "HomeNet".to_owned()
         }));
+        assert!(replayable(&SetupProgress::SwitchingUplink));
         assert!(!replayable(&SetupProgress::DeviceSetupSuccess));
         assert!(!replayable(&SetupProgress::WifiReconfigSuccess));
         assert!(!replayable(&SetupProgress::WifiConnectionSuccess));

@@ -34,7 +34,7 @@ use crate::compositor::{
     UpgradeDisplaySnapshot, UpgradeKind, run_night_mode_cycling_task, run_screen_blank_reset_task,
 };
 use crate::config::ConfigHandle;
-use crate::initial_setup::{InitSetupState, InitialSetup};
+use crate::initial_setup::{InitSetupState, InitialSetup, Uplink};
 use crate::led::{LedController, run_led_state_task};
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::{BmcManager, BmcState, UpgradeMarker};
@@ -157,6 +157,9 @@ const SETUP_IP_POLL_DELAY: Duration = Duration::from_secs(2);
 /// The same, for a setup AP coming up before bmc reboots: 30 s.
 const SETUP_AP_POLL_ATTEMPTS: usize = 15;
 const SETUP_AP_POLL_DELAY: Duration = Duration::from_secs(2);
+/// How often the published setup URL is rechecked against the live uplink
+/// while a setup screen is on display.
+const SETUP_URL_REFRESH_PERIOD: Duration = Duration::from_secs(2);
 /// Total polls the watchdog spends before standing down without a verdict:
 /// the deadline's own, plus a setup-AP window's worth
 /// for the interface to finish switching out of AP mode.
@@ -168,9 +171,10 @@ const SETUP_ERROR_REBOOT_DELAY: Duration = Duration::from_secs(10);
 fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
     match state {
         None => SetupProgress::Idle,
-        Some(InitSetupState::ConnectingToWifi { wifi_ssid }) => {
-            SetupProgress::ConnectingToWifi { wifi_ssid }
-        }
+        Some(InitSetupState::SwitchingUplink { uplink }) => match uplink {
+            Uplink::Ethernet => SetupProgress::SwitchingUplink,
+            Uplink::Wifi { ssid } => SetupProgress::ConnectingToWifi { wifi_ssid: ssid },
+        },
         Some(InitSetupState::WifiConnectionSuccess) => SetupProgress::WifiConnectionSuccess,
         Some(InitSetupState::WifiConnectionFailed) => SetupProgress::WifiConnectionFailed,
         Some(InitSetupState::WifiReconfigSuccess) => SetupProgress::WifiReconfigSuccess,
@@ -181,34 +185,44 @@ fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
     }
 }
 
-/// Resolve the setup AP's SSID and wizard URL once the AP is up.
+/// Resolve the setup AP's SSID and wizard URL once the AP is up, or the
+/// wizard URL alone (empty SSID) where a wired uplink replaces the AP.
 ///
-/// Only the SSID is waited for. The AP's address is configuration,
-/// so it is already correct when the SSID appears
-/// and cannot change under a QR code that has been shown.
+/// The AP is polled first: only while it is actually broadcasting does the
+/// screen advertise joining it. With the AP down and an ethernet uplink up
+/// (the miner's cable flow, where hotplug parks the AP), the empty-SSID
+/// value tells the overlay to show only the wizard address.
 async fn resolve_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointInfo> {
-    let wifi = manager.network_manager().wifi().or_else(|| {
-        warn!("no WiFi on this board, so there is no setup AP to resolve");
-        None
-    })?;
-    // `ap_ssid` never falls back to the joined station network, so the screen
-    // cannot advertise the station SSID while the AP is still coming up.
-    let mut waited = None;
     for _ in 0..SETUP_AP_POLL_ATTEMPTS {
-        if let Some(ssid) = wifi.ap_ssid().await {
-            waited = Some(ssid);
-            break;
+        if let Some(ap) = current_access_point(manager).await {
+            return Some(ap);
         }
         tokio::time::sleep(SETUP_AP_POLL_DELAY).await;
     }
-    let Some(ssid) = waited else {
-        warn!("setup AP did not come up");
-        return None;
-    };
-    let Some(host) = wifi.captive_portal_redirect_host().await else {
-        warn!("setup AP is up but its address is unknown");
-        return None;
-    };
+    warn!("setup AP did not come up and no wired uplink is present");
+    None
+}
+
+/// The access point the setup screen should advertise right now:
+/// SSID + URL while the AP broadcasts, URL alone over a wired uplink,
+/// `None` while neither is reachable (the AP may still be coming up).
+async fn current_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointInfo> {
+    let network = manager.network_manager();
+    // The wired uplink wins while the cable is in - the boot-time AP is about
+    // to be parked by the platform's hotplug anyway, and the screen must not
+    // flash an SSID that is going away.
+    if let Some(ip) = network.ethernet_ipv4().await {
+        return Some(AccessPointInfo {
+            ssid: String::new(),
+            setup_url: format!("http://{ip}/"),
+        });
+    }
+
+    let wifi = network.wifi()?;
+    let host = wifi.captive_portal_redirect_host().await?;
+    // `ap_ssid` never falls back to the joined station network, so the screen
+    // cannot advertise the station SSID while the AP is still coming up.
+    let ssid = wifi.ap_ssid().await?;
     Some(AccessPointInfo {
         ssid,
         setup_url: format!("http://{host}/"),
@@ -224,6 +238,11 @@ async fn run_setup_pending_watchdog<T: BmcManager>(
 ) {
     let mut run = 0;
     for _ in 0..SETUP_IP_POLL_CAP {
+        // NOTE: a wired uplink is the reachability this watchdog exists to
+        // confirm, and a device set up over it has no station to read.
+        if manager.network_manager().ethernet_ipv4().await.is_some() {
+            return;
+        }
         match bmc_net::station_ip_address(manager.network_manager()).await {
             Ok(Some(_)) => return,
             Ok(None) => run += 1,
@@ -300,13 +319,36 @@ async fn publish_access_point<T: BmcManager>(
     manager: Arc<T>,
     state: BmcState,
 ) {
-    if let Some(ap) = resolve_access_point(manager.as_ref()).await {
-        if let Err(err) = compositor.broadcast_access_point(Some(ap)) {
-            warn!(%err, "failed to signal access point to overlay");
-        }
+    let Some(ap) = resolve_access_point(manager.as_ref()).await else {
+        fail_setup(compositor.as_ref(), manager.as_ref(), state).await;
         return;
+    };
+    let mut published = ap.clone();
+    if let Err(err) = compositor.broadcast_access_point(Some(ap)) {
+        warn!(%err, "failed to signal access point to overlay");
     }
-    fail_setup(compositor.as_ref(), manager.as_ref(), state).await;
+    // What the screen advertises can change while it is up - an ethernet
+    // cable plugged or pulled swaps between the AP and the wired address -
+    // so keep the published value in step. The caller aborts this task when
+    // the setup state moves on.
+    let mut refresh = tokio::time::interval(SETUP_URL_REFRESH_PERIOD);
+    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // The first tick fires immediately; the value was just published.
+    refresh.tick().await;
+    loop {
+        refresh.tick().await;
+        // `None` is a transition (AP restarting after a cable pull): keep the
+        // last value on display rather than flashing the pending screen.
+        let Some(ap) = current_access_point(manager.as_ref()).await else {
+            continue;
+        };
+        if ap != published {
+            published = ap.clone();
+            if let Err(err) = compositor.broadcast_access_point(Some(ap)) {
+                warn!(%err, "failed to signal access point to overlay");
+            }
+        }
+    }
 }
 
 /// Whether `state` runs the setup AP.

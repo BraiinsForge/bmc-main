@@ -23,7 +23,7 @@ use crate::system_upgrade::SystemUpgradeService;
 use crate::{
     BmcManager,
     config::ConfigHandle,
-    manager::{InitialSetupError, WifiNetworkConfig},
+    manager::{InitialSetupError, NetworkProtocolConfig, WifiNetworkConfig},
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
 use bmc_shared_utils::{
@@ -42,7 +42,7 @@ use tokio::sync::{
     RwLock,
     watch::{self, Receiver},
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 const REBOOT_SLEEP_DURATION: Duration = Duration::from_secs(10);
 
@@ -115,8 +115,10 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         let manager = self.manager.clone();
 
         tokio::task::spawn(async move {
-            state_service.notify(InitSetupState::ConnectingToWifi {
-                wifi_ssid: config.ssid.clone(),
+            state_service.notify(InitSetupState::SwitchingUplink {
+                uplink: Uplink::Wifi {
+                    ssid: config.ssid.clone(),
+                },
             });
 
             if is_reconfig {
@@ -221,16 +223,15 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         self.state_service.subscribe()
     }
 
-    pub(crate) async fn setup_device(
+    async fn apply_device_settings(
         &self,
         config: DeviceSetupConfig,
     ) -> Result<(), DeviceSetupError> {
         let timezone = config.timezone;
 
-        let mut config_guard = self
-            .config_handle
-            .try_write()
-            .map_err(|_| DeviceSetupError::InProgress)?;
+        // NOTE: wait for the lock, never try_write: some task may be holding
+        // the read lock at this moment and try_write would fail against it.
+        let mut config_guard = self.config_handle.write().await;
 
         self.manager
             .set_timezone(timezone.clone())
@@ -247,51 +248,54 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
 
             info!("Device system password configured");
         }
-        let previous_autoupgrade_config = config_guard.autoupgrade();
+
+        config_guard.set_date_format(config.date_format);
+        config_guard.set_number_format(config.number_format);
+        config_guard.set_time_system(config.time_system);
+        config_guard.set_data_collection(config.data_collection);
+        config_guard.set_temperature_unit(config.temperature_unit);
+        config_guard.set_unit_system(config.unit_system);
+        config_guard
+            .save()
+            .await
+            .map_err(DeviceSetupError::SyncConfigData)?;
+
+        info!(
+            date_format = ?config.date_format,
+            number_format = ?config.number_format,
+            time_system = ?config.time_system,
+            data_collection = config.data_collection,
+            temperature_unit = ?config.temperature_unit,
+            unit_system = ?config.unit_system,
+            "Device configuration saved"
+        );
+
+        Ok(())
+    }
+
+    async fn enable_autoupgrade(&self) -> Result<(), DeviceSetupError> {
+        // NOTE: wait for the lock, never try_write: some task may be holding
+        // the read lock at this moment and try_write would fail against it.
+        let mut config_guard = self.config_handle.write().await;
+        let previous = config_guard.autoupgrade();
         let autoupgrade_config = self
             .system_upgrade_service
             .create_autoupgrade_config(true)
             .map_err(DeviceSetupError::EnableAutoUpgrade)?;
-
-        let date_format = config.date_format;
-        let number_format = config.number_format;
-        let time_system = config.time_system;
-        let data_collection = config.data_collection;
-        let temperature_unit = config.temperature_unit;
-        let unit_system = config.unit_system;
-
-        config_guard.set_date_format(date_format);
-        config_guard.set_number_format(number_format);
-        config_guard.set_time_system(time_system);
-        config_guard.set_data_collection(data_collection);
-        config_guard.set_temperature_unit(temperature_unit);
-        config_guard.set_unit_system(unit_system);
         config_guard.set_autoupgrade(autoupgrade_config);
         if let Err(err) = config_guard.save().await {
-            config_guard.set_autoupgrade(previous_autoupgrade_config);
+            config_guard.set_autoupgrade(previous);
             return Err(DeviceSetupError::SyncConfigData(err));
         }
+        Ok(())
+    }
 
-        info!(
-            date_format = ?date_format,
-            number_format = ?number_format,
-            time_system = ?time_system,
-            data_collection = data_collection,
-            temperature_unit = ?temperature_unit,
-            unit_system = ?unit_system,
-            "Device configuration saved"
-        );
-
-        self.manager
-            .network_manager()
-            .provisioning()
-            .advance()
-            .await
-            .map_err(DeviceSetupError::UpdateDeviceState)?;
-
-        // The device already left SetupPending above, so erroring out here
-        // would fail a setup no client can retry; the saved config lets the
-        // next boot's autoupgrade_init recover the schedule.
+    /// Finish setup once the device has advanced to Operational: schedule
+    /// auto-upgrade, notify listeners, and kick off the first upgrade check.
+    async fn finalize_setup(&self) {
+        // The device already left SetupPending, so erroring out here would fail
+        // a setup no client can retry; the saved config lets the next boot's
+        // autoupgrade_init recover the schedule.
         if let Err(err) = self.system_upgrade_service.apply_autoupgrade(true).await {
             warn!(
                 ?err,
@@ -305,8 +309,115 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         // A fresh device should not wait up to two hours for its first check;
         // the setup flow ending implies the device is up and attended.
         self.system_upgrade_service.autoupgrade_check_now();
+    }
 
+    pub(crate) async fn setup_device(
+        &self,
+        config: DeviceSetupConfig,
+    ) -> Result<(), DeviceSetupError> {
+        self.apply_device_settings(config).await?;
+        self.enable_autoupgrade().await?;
+
+        self.manager
+            .network_manager()
+            .provisioning()
+            .advance()
+            .await
+            .map_err(DeviceSetupError::UpdateDeviceState)?;
+
+        self.finalize_setup().await;
         info!("Device setup completed successfully");
+
+        Ok(())
+    }
+
+    /// Advance past WiFi setup without connecting, for a miner reachable over
+    /// ethernet. Errors when ethernet is not connected.
+    pub(crate) async fn skip_wifi(&self) -> Result<(), SkipWifiError> {
+        if self
+            .manager
+            .network_manager()
+            .ethernet_ipv4()
+            .await
+            .is_none()
+        {
+            return Err(SkipWifiError::NoEthernet);
+        }
+        self.in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .map_err(|_| SkipWifiError::InProgress)?;
+
+        self.state_service.notify(InitSetupState::SwitchingUplink {
+            uplink: Uplink::Ethernet,
+        });
+
+        let in_progress = self.in_progress.clone();
+        let state_service = self.state_service.clone();
+        let manager = self.manager.clone();
+        tokio::spawn(async move {
+            let network = manager.network_manager();
+            let stopped = match network.wifi() {
+                Some(wifi) => wifi.stop_wifi_ap().await,
+                None => Ok(()),
+            };
+            let advanced = match stopped {
+                Ok(()) => network.provisioning().advance().await,
+                Err(err) => Err(err),
+            };
+            match advanced {
+                Ok(()) => info!("Skipped WiFi setup; device reachable over ethernet"),
+                Err(err) => {
+                    error!(?err, "Failed to skip WiFi setup, rebooting device");
+                    Self::notify_failure_and_reboot(manager, &state_service).await;
+                }
+            }
+            in_progress.store(false, Ordering::Release);
+        });
+        Ok(())
+    }
+
+    pub(crate) async fn setup_miner(
+        &self,
+        params: MinerSetupParams,
+    ) -> Result<(), DeviceSetupError> {
+        self.apply_device_settings(params.device).await?;
+
+        write_custom_installation_config(&params.pool)
+            .map_err(DeviceSetupError::WritePoolConfig)?;
+        info!("Pool configuration written for first boot");
+
+        self.manager
+            .network_manager()
+            .apply_network_settings(params.network, params.hostname)
+            .await
+            .map_err(DeviceSetupError::ApplyNetwork)?;
+
+        self.manager
+            .network_manager()
+            .provisioning()
+            .advance()
+            .await
+            .map_err(DeviceSetupError::UpdateDeviceState)?;
+
+        for service in ["boser", "bosminer"] {
+            if let Err(err) = self.manager.control_service(service, &["start"]).await {
+                error!(
+                    ?err,
+                    service, "Failed to start mining service, rebooting device"
+                );
+                let manager = self.manager.clone();
+                let state_service = self.state_service.clone();
+                tokio::spawn(async move {
+                    Self::notify_failure_and_reboot(manager, &state_service).await;
+                });
+                return Err(DeviceSetupError::StartServices(err));
+            }
+        }
+
+        self.state_service
+            .notify(InitSetupState::DeviceSetupSuccess);
+
+        info!("Miner setup completed successfully");
 
         Ok(())
     }
@@ -319,9 +430,15 @@ pub(crate) enum WifiSetupError {
 }
 
 #[derive(Error, Debug)]
-pub(crate) enum DeviceSetupError {
-    #[error("Device setup is in progress")]
+pub(crate) enum SkipWifiError {
+    #[error("Ethernet is not connected; WiFi setup is required")]
+    NoEthernet,
+    #[error("WiFi setup is in progress")]
     InProgress,
+}
+
+#[derive(Error, Debug)]
+pub(crate) enum DeviceSetupError {
     #[error("Failed to set timezone, error: {0}")]
     SetTimezone(#[source] anyhow::Error),
     #[error("Failed to set password")]
@@ -332,12 +449,18 @@ pub(crate) enum DeviceSetupError {
     UpdateDeviceState(#[source] anyhow::Error),
     #[error("Failed to enable AutoUpgrade, error: {0}")]
     EnableAutoUpgrade(#[source] anyhow::Error),
+    #[error("Failed to apply network configuration, error: {0}")]
+    ApplyNetwork(#[source] anyhow::Error),
+    #[error("Failed to write pool configuration, error: {0}")]
+    WritePoolConfig(#[source] anyhow::Error),
+    #[error("Failed to start mining services, error: {0}")]
+    StartServices(#[source] anyhow::Error),
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum InitSetupState {
-    ConnectingToWifi {
-        wifi_ssid: String,
+    SwitchingUplink {
+        uplink: Uplink,
     },
     WifiConnectionSuccess,
     WifiConnectionFailed,
@@ -351,6 +474,13 @@ pub enum InitSetupState {
     DeviceSetupSuccess,
 }
 
+/// The uplink the device keeps once the setup AP is gone.
+#[derive(PartialEq, Debug, Clone)]
+pub enum Uplink {
+    Ethernet,
+    Wifi { ssid: String },
+}
+
 #[derive(Debug)]
 pub(crate) struct DeviceSetupConfig {
     pub(crate) timezone: Timezone,
@@ -361,4 +491,56 @@ pub(crate) struct DeviceSetupConfig {
     pub(crate) data_collection: bool,
     pub(crate) temperature_unit: TemperatureUnit,
     pub(crate) unit_system: UnitSystem,
+}
+
+/// A single mining pool collected during miner setup.
+#[derive(Debug)]
+pub(crate) struct PoolEntry {
+    pub(crate) url: String,
+    pub(crate) user: String,
+    pub(crate) password: Option<String>,
+}
+
+/// Step-2 configuration for a miner (BMM101): the shared device settings
+/// (localization + password) plus network and the mining pool.
+#[derive(Debug)]
+pub(crate) struct MinerSetupParams {
+    pub(crate) device: DeviceSetupConfig,
+    pub(crate) network: Option<NetworkProtocolConfig>,
+    pub(crate) hostname: Option<String>,
+    pub(crate) pool: PoolEntry,
+}
+
+/// Path boser reads on first boot to seed pools into `/etc/bosminer.toml`.
+const CUSTOM_INSTALLATION_CONFIG_PATH: &str = "/tmp/post_install/custom_config.json";
+
+#[derive(serde::Serialize)]
+struct CustomInstallationConfig {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pools: Vec<CustomInstallationPool>,
+}
+
+#[derive(serde::Serialize)]
+struct CustomInstallationPool {
+    url: String,
+    user: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    password: Option<String>,
+}
+
+/// Write the pool into the custom-installation config file boser consumes.
+fn write_custom_installation_config(pool: &PoolEntry) -> anyhow::Result<()> {
+    let config = CustomInstallationConfig {
+        pools: vec![CustomInstallationPool {
+            url: pool.url.clone(),
+            user: pool.user.clone(),
+            password: pool.password.clone(),
+        }],
+    };
+    let path = std::path::Path::new(CUSTOM_INSTALLATION_CONFIG_PATH);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&config)?)?;
+    Ok(())
 }

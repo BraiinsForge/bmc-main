@@ -57,6 +57,7 @@
       <entry name="device_setup_success" value="5" summary="setup wizard completed"/>
       <entry name="unexpected_error" value="6" summary="setup cannot continue and bmc takes no action; the user has to restart the device"/>
       <entry name="unexpected_error_restarting" value="7" summary="setup cannot continue; bmc is restarting or resetting the device"/>
+      <entry name="switching_uplink" value="8" summary="setup AP being torn down; the device continues over its wired uplink"/>
     </enum>
 
     <event name="device_state">
@@ -89,8 +90,8 @@
         This is the one event whose on-bind replay is filtered: it describes a
         transition rather than a current condition, so it carries only the
         steps a client cannot derive from the other two events —
-        unexpected_error and connecting_to_wifi. The rest replay as idle, so a
-        completed setup does not announce itself twice.
+        unexpected_error, connecting_to_wifi and switching_uplink. The rest
+        replay as idle, so a completed setup does not announce itself twice.
       </description>
       <arg name="state" type="uint" enum="setup_state" summary="current setup step"/>
       <arg name="wifi_ssid" type="string" summary="target SSID, empty unless connecting_to_wifi"/>
@@ -100,8 +101,10 @@
       <description summary="the setup access point changed">
         Sent on bind and on change. A non-empty ssid means the setup AP is up;
         setup_url is the address the overlay shows and encodes as the QR code
-        on the setup-start screen (bmc owns the AP addressing). Both arguments
-        are empty while the AP is down.
+        on the setup-start screen (bmc owns the AP addressing). An empty ssid
+        with a non-empty setup_url means setup runs over a wired uplink: there
+        is no AP to join, only the address to open. Both arguments are empty
+        while neither is reachable.
       </description>
       <arg name="ssid" type="string" summary="setup-AP SSID, empty when inactive"/>
       <arg name="setup_url" type="string" summary="setup URL, e.g. http://10.0.0.21/, empty when inactive"/>

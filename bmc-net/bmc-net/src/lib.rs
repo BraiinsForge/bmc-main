@@ -34,7 +34,7 @@
 //! [`InitialSetupError`](bmc_net_types::network::InitialSetupError) so callers
 //! can distinguish "unsupported" from a connection failure.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use anyhow::bail;
@@ -130,6 +130,20 @@ pub trait NetworkConfig: Send + Sync + std::fmt::Debug {
     /// advertise the hostname (the mDNS responder) follow renames without
     /// polling and without every caller having to remember to signal.
     fn hostname_change_notifier(&self) -> Arc<Notify>;
+
+    /// IPv4 address of the ethernet interface, `None` while it holds none.
+    async fn ethernet_ipv4(&self) -> Option<Ipv4Addr> {
+        tokio::task::spawn_blocking(|| {
+            bmc_net_drv::NetworkInterface::get_by_name(bmc_net_drv::DEFAULT_ETH_INTERFACE)
+                .and_then(|iface| iface.ipv4_address())
+        })
+        .await
+        .expect("BUG: ethernet interface lookup task panicked")
+        .and_then(|ip| match ip {
+            IpAddr::V4(ip) => Some(ip),
+            IpAddr::V6(_) => None,
+        })
+    }
 }
 
 /// Optional WiFi capability: station scan/connect, the setup access point, and

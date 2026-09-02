@@ -596,6 +596,7 @@ pub fn start_wifi_reconfig_listener<M: BmcManager>(
                 // join the network the device was already on.
                 let ssid = resolve_setup_ap_ssid(manager.network_manager()).await;
                 if let Some(ssid) = ssid {
+                    info!(%ssid, "showing WiFi setup screen on the display");
                     if let Err(e) = compositor.broadcast_wifi_ap(Some(ssid)) {
                         warn!("broadcast_wifi_ap failed: {e}");
                     }

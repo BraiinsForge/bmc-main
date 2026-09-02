@@ -64,6 +64,7 @@ message SettingsDataResponse {
 
 service InitialSetupService {
   rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
+  rpc SkipWifi(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
   rpc GetSettingsData(google.protobuf.Empty) returns (SettingsDataResponse);
   rpc SetupDevice(SettingsRequest) returns (google.protobuf.Empty);
