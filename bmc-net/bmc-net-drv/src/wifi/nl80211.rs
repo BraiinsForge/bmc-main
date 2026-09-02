@@ -229,8 +229,7 @@ impl WifiDriver for OpenwrtWifiManager {
     }
 
     async fn wait_for_ap_active(&self) -> Result<()> {
-        let device = self.wifi_device_name().await?;
-        wait_for_ap_active(&device, ATTEMPTS_TO_ACTIVATE_AP).await?;
+        wait_for_ap_active(&self.wlan_dev_syspath, ATTEMPTS_TO_ACTIVATE_AP).await?;
         // hostapd reports the AP enabled about a second before netifd brings
         // the `wifi_ap` interface up with its address. dnsmasq's DHCP range
         // for the AP depends on that address (`dhcp_add` returns early
@@ -348,7 +347,13 @@ struct IwinfoInfo {
     mode: String,
 }
 
-/// Polls `iwinfo` until `device` reports it is beaconing as an access point.
+/// Polls `iwinfo` until the device under `syspath` reports it is beaconing as
+/// an access point.
+///
+/// The device name is resolved on every attempt: right after a reload the
+/// netdev is legitimately absent (a USB radio re-binds for seconds) and it may
+/// come back under a different name, so a one-shot resolve fails a revert that
+/// would have succeeded moments later.
 ///
 /// Individual query failures are retried rather than propagated: right after a
 /// reload the interface is legitimately absent or mid-reconfiguration, so one
@@ -358,15 +363,23 @@ struct IwinfoInfo {
 /// answered `iwinfo` for the whole window is not one a client can join, and
 /// reporting it as up would only move the failure to the phone trying to
 /// associate.
-async fn wait_for_ap_active(device: &str, attempts: u8) -> Result<()> {
+async fn wait_for_ap_active(syspath: &str, attempts: u8) -> Result<()> {
     let mut interval = time::interval(AP_ACTIVE_WAIT_INTERVAL);
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    let ubus_param = json!({ "device": device }).to_string();
     let mut mode_observed = false;
 
     for i in 0..attempts {
         interval.tick().await;
-        debug!("Waiting for AP on {device} to broadcast. Attempt {i}/{attempts}");
+        debug!("Waiting for the AP under {syspath} to broadcast. Attempt {i}/{attempts}");
+
+        let device = match WifiUtils::get_device_by_syspath(syspath).await {
+            Ok(device) => device,
+            Err(e) => {
+                debug!("WiFi device not present yet: {e}");
+                continue;
+            }
+        };
+        let ubus_param = json!({ "device": device }).to_string();
 
         match CommandUtils::call_ubus_cmd(&["call", "iwinfo", "info", &ubus_param]).await {
             Ok(output) => match serde_json::from_str::<IwinfoInfo>(&output) {
@@ -382,9 +395,9 @@ async fn wait_for_ap_active(device: &str, attempts: u8) -> Result<()> {
     }
 
     if mode_observed {
-        bail!("Access point on {device} did not start broadcasting")
+        bail!("Access point under {syspath} did not start broadcasting")
     }
-    bail!("Access point on {device} never answered iwinfo, it is not up")
+    bail!("Access point under {syspath} never answered iwinfo, it is not up")
 }
 
 impl Drop for OpenwrtWifiManager {
