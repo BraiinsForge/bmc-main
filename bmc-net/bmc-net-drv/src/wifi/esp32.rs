@@ -482,7 +482,16 @@ impl WifiDriver for Esp32WifiManager {
         // Symmetric with `configure_ap_mode`: stop the softAP and take the
         // `wifi_ap` network down again, leaving the station config untouched.
         info!("Stopping ESP32 setup AP");
-        run_sourced("stop_wifi_ap").await
+        run_sourced("stop_wifi_ap").await?;
+        // Leaving AP mode is leaving the FG firmware: swap in the station
+        // ("NG") firmware, which also removes the FG-only `ethap0`/`ethsta0`
+        // interfaces. Nothing to do when the station firmware already runs
+        // (no AP interface).
+        if esp32_on_setup_firmware("stop_ap").await {
+            info!("Flashing ESP32 NG firmware after leaving setup AP mode");
+            run_service_cmd(ESP32_SERVICE, &["reload_await", "--force-ng"]).await?;
+        }
+        Ok(())
     }
 
     async fn enable_radio(&self, enable: bool) -> Result<()> {
