@@ -18,32 +18,43 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Button, LogoHeader } from '@/components';
+import { Button, LogoHeaderMiner, LogoHeader } from '@/components';
 import { getID } from '@/lib/form';
 import { Layout } from '../Layout';
 import image from './hero-image.png';
+import minerImage from './hero-image-miner.png';
 
 // Styles
 import css from './Welcome.scss';
 
 export interface WelcomeProps {
+    /// Product display name from HardwareCapabilities ("Braiins Deck", "Mini Miner").
+    productName?: string;
+    /// Miner devices get their own hero image and the plain Braiins logo.
+    miner?: boolean;
     onNext(): void;
 }
 
 const $ = getID('initial-setup-welcome').get;
 export function Welcome(props: WelcomeProps) {
-    const { onNext } = props;
+    const { onNext, productName, miner } = props;
 
     return (
         <Layout
-            header={<LogoHeader style={{ width: 'auto', height: 18 }} />}
+            header={
+                miner ? (
+                    <LogoHeaderMiner style={{ width: 'auto', height: 18 }} />
+                ) : (
+                    <LogoHeader style={{ width: 'auto', height: 18 }} />
+                )
+            }
             footer={<Button id={$('continue')} kind="primary" onClick={onNext} children="Continue" />}
         >
-            <img src={image} alt="hero" />
-            <h1 className={css.title} children="Welcome to Your New Braiins DECK!" />
+            <img src={miner ? minerImage : image} alt="hero" />
+            <h1 className={css.title} children={`Welcome to Your New ${productName || 'Braiins Device'}!`} />
             <p className={css.text}>
-                Let’s get your clocks up and running. You’ll walk through a few quick setup steps to configure time,
-                network, and access settings.
+                Let’s get your device up and running. You’ll walk through a few quick setup steps to configure network
+                and access settings.
             </p>
         </Layout>
     );

@@ -29,7 +29,7 @@ import * as pb from '@/proto';
 import { Layout } from '../Layout';
 import { DoneScene } from './DoneScene';
 import { Renew as IconReload } from '@carbon/react/icons';
-import { Button, LogoHeader, WifiNetworkLine } from '@/components';
+import { Button, LogoHeaderMiner, LogoHeader, WifiNetworkLine } from '@/components';
 import { Dropdown, Link, ProgressIndicator, ProgressStep, TextInput } from '@carbon/react';
 
 // Styles
@@ -43,6 +43,10 @@ export interface WifiConnectProps {
 
     onBack(): void;
     onSubmit(net: pb.SetWifiRequest): Promise<boolean>;
+    // Present only on devices that can skip WiFi (i.e. have a wired uplink).
+    onSkip?(): Promise<boolean>;
+    // Miner devices show the plain Braiins logo instead of the Deck lockup.
+    miner?: boolean;
 }
 interface Props extends WifiConnectProps {
     intl: IntlShape;
@@ -52,12 +56,16 @@ type Security = Exclude<pb.EncryptionType, pb.EncryptionType.UNSPECIFIED>;
 
 interface State {
     isDone: boolean;
+    isSkipped: boolean;
+    isSkipping: boolean;
     isManualEntryActive: boolean;
     selectedNetwork: null | (pb.WifiNetwork & { password?: string });
     manualEntryData: pb.SetWifiRequest;
 }
 const getInitialState = (): State => ({
     isDone: false,
+    isSkipped: false,
+    isSkipping: false,
     isManualEntryActive: false,
     selectedNetwork: null,
     manualEntryData: pb.create(pb.SetWifiRequestSchema, { encryptionType: pb.EncryptionType.NONE }),
@@ -143,9 +151,16 @@ class View extends Component<Props, State> {
         const res = await this.props.onSubmit(data);
         if (res) this.setState({ isDone: true });
     };
+    #skip = async (): Promise<void> => {
+        if (this.state.isSkipping) return;
+        this.setState({ isSkipping: true });
+        const res = await this.props.onSkip?.();
+        if (res) this.setState({ isDone: true, isSkipped: true, isSkipping: false });
+        else this.setState({ isSkipping: false });
+    };
 
     render() {
-        if (this.state.isDone) return <DoneScene />;
+        if (this.state.isDone) return <DoneScene miner={this.props.miner} wired={this.state.isSkipped} />;
 
         const { networks, onReload, isLoading } = this.props;
         const { isManualEntryActive, selectedNetwork, manualEntryData } = this.state;
@@ -164,7 +179,11 @@ class View extends Component<Props, State> {
         // Enter network details manually
         if (isManualEntryActive) {
             goBackBtn = { label: txt.back, onClick: this.#manualEntryDeactivate };
-            goNextBtn = { label: txt.confirm, onClick: () => this.#submit(this.state.manualEntryData) };
+            goNextBtn = {
+                label: txt.confirm,
+                onClick: () => this.#submit({ ...manualEntryData, ssid: manualEntryData.ssid.trim() }),
+                disabled: !manualEntryData.ssid.trim(),
+            };
 
             content = (
                 <Fragment>
@@ -274,6 +293,14 @@ class View extends Component<Props, State> {
                     <div className={css.links}>
                         <Link className={css.link} children="Other Networks" onClick={this.#manualEntryActivate} />
                         <Link className={css.link} children="Refresh" onClick={onReload} renderIcon={IconReload} />
+                        {this.props.onSkip ? (
+                            <Link
+                                className={css.link}
+                                children="Skip (use Ethernet)"
+                                onClick={this.#skip}
+                                disabled={this.state.isSkipping}
+                            />
+                        ) : null}
                     </div>
                 </Fragment>
             );
@@ -306,7 +333,16 @@ class View extends Component<Props, State> {
         } else if (goBackBtn) footer.push(<span key="b" />);
 
         return (
-            <Layout header={<LogoHeader style={{ width: 'auto', height: 18 }} />} footer={footer}>
+            <Layout
+                header={
+                    this.props.miner ? (
+                        <LogoHeaderMiner style={{ width: 'auto', height: 18 }} />
+                    ) : (
+                        <LogoHeader style={{ width: 'auto', height: 18 }} />
+                    )
+                }
+                footer={footer}
+            >
                 <ProgressIndicator currentIndex={0} className={css.progress}>
                     <ProgressStep label="Wi-Fi Settings" />
                     <ProgressStep label="Initial Setup" className={css.disabledTab} />

@@ -19,3 +19,4 @@
 // the grant above.
 
 export * from './bytes';
+export * from './dns';

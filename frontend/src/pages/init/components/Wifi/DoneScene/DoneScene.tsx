@@ -22,23 +22,38 @@ import { useIntl } from 'react-intl';
 
 import { Layout } from '../../Layout';
 import Image from './done-image.svg';
-import { LogoHeader } from '@/components';
+import MinerImage from './done-image-miner.svg';
+import { LogoHeaderMiner, LogoHeader } from '@/components';
 
 import css from './DoneScene.scss';
 
-export function DoneScene() {
+export interface DoneSceneProps {
+    // Miner devices show the plain Braiins logo instead of the Deck lockup.
+    miner?: boolean;
+    // WiFi was skipped over a wired uplink: this page stays reachable and
+    // moves on to the device setup by itself.
+    wired?: boolean;
+}
+
+export function DoneScene({ miner, wired }: DoneSceneProps) {
     const { formatMessage } = useIntl();
+    const title = wired
+        ? formatMessage({ defaultMessage: 'Your device is being set up, the setup continues here shortly.' })
+        : formatMessage({ defaultMessage: 'Please follow up instructions on the device screen to continue.' });
 
     return (
-        <Layout header={<LogoHeader style={{ width: 'auto', height: 18 }} />}>
+        <Layout
+            header={
+                miner ? (
+                    <LogoHeaderMiner style={{ width: 'auto', height: 18 }} />
+                ) : (
+                    <LogoHeader style={{ width: 'auto', height: 18 }} />
+                )
+            }
+        >
             <div className={css.root}>
-                <Image width={100} />
-                <h1
-                    className={css.title}
-                    children={formatMessage({
-                        defaultMessage: 'Please follow up instructions on the device screen to continue.',
-                    })}
-                />
+                {miner ? <MinerImage width={100} /> : <Image width={100} />}
+                <h1 className={css.title} children={title} />
             </div>
         </Layout>
     );

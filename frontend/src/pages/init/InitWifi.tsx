@@ -22,23 +22,29 @@ import { Component } from 'react';
 
 // App, lib
 import * as pb from '@/proto';
+import { URLS } from '@/constants';
+import { delay } from '@/lib/async';
 import { setState } from '@/lib/react';
 
 // Components
 import { InlineNotificationsGroup } from '@/components';
-import { Welcome, WifiConnect } from './components';
+import { DoneScene, Welcome, WifiConnect } from './components';
 
 // Styles
 import '@/styles/carbon/carbon.global.scss';
 import css from './Init.scss';
 
+const DEVICE_SETUP_POLL_MS = 2_000;
+
 enum Stage {
     welcome = 'welcome',
     wifi = 'wifi',
+    done = 'done',
 }
 
 interface State {
     stage: Stage;
+    capabilities: null | pb.HardwareCapabilities;
     wifi: {
         isLoading: boolean;
         networks: pb.WifiNetwork[];
@@ -47,6 +53,7 @@ interface State {
 }
 const getInitialState = (): State => ({
     stage: Stage.welcome,
+    capabilities: null,
     wifi: {
         isLoading: false,
         networks: [],
@@ -57,8 +64,22 @@ const getInitialState = (): State => ({
 export default class InitWifi extends Component<any, State> {
     readonly state = getInitialState();
 
-    componentDidMount = () => this.#scanWifi();
+    componentDidMount = () => {
+        this.#loadCapabilities();
+    };
     componentWillUnmount = () => pb.abort.all(this);
+
+    private abortCapabilities = pb.abort.get();
+    #loadCapabilities = async (): Promise<void> => {
+        const { signal } = this.abortCapabilities.replace();
+        try {
+            const capabilities = await pb.rpc.hardware.getHardwareCapabilities({}, { signal });
+            this.setState({ capabilities, errors: null });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to load hardware capabilities!'] });
+        }
+    };
 
     private abortScanWifi = pb.abort.get();
     #scanWifi = async (): Promise<void> => {
@@ -79,7 +100,19 @@ export default class InitWifi extends Component<any, State> {
     };
 
     #gotoWelcome = (): void => this.setState({ stage: Stage.welcome });
-    #gotoWifi = (): void => this.setState({ stage: Stage.wifi });
+
+    // WiFi-less devices (e.g. an ethernet-only miner) go straight to the
+    // done screen — the rest of the setup happens over the wired link.
+    // The scan starts only here: on an ethernet-connected device the welcome
+    // screen must not trigger (and surface errors from) a WiFi scan.
+    #gotoWifiOrDone = (): void => {
+        if (this.state.capabilities?.wifiSupported === false) {
+            this.setState({ stage: Stage.done });
+            return;
+        }
+        this.setState({ stage: Stage.wifi });
+        this.#scanWifi();
+    };
 
     #wifiSelect = (x: pb.WifiNetwork): void => console.log(x);
     #wifiSubmit = async (data: pb.SetWifiRequest): Promise<boolean> => {
@@ -93,13 +126,53 @@ export default class InitWifi extends Component<any, State> {
         }
     };
 
+    #wifiSkip = async (): Promise<boolean> => {
+        try {
+            await pb.rpc.init.skipWifi({});
+        } catch ($) {
+            if (pb.abort.is($)) return false;
+            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to skip Wi-Fi setup!'] });
+            return false;
+        }
+        this.#awaitDeviceSetup();
+        return true;
+    };
+
+    // NOTE: the skip returns before the device has torn down the AP and
+    // advanced, and the server only serves the device-setup page once it has;
+    // the settings RPC shares that precondition, so its first success is the
+    // signal to move on.
+    private abortDeviceSetupPoll = pb.abort.get();
+    #awaitDeviceSetup = async (): Promise<void> => {
+        const { signal } = this.abortDeviceSetupPoll.replace();
+        while (!signal.aborted) {
+            try {
+                await pb.rpc.init.getSettingsData({}, { signal });
+                window.location.replace(URLS.pages.initSetup);
+                return;
+            } catch ($) {
+                if (pb.abort.is($)) return;
+            }
+            await delay(DEVICE_SETUP_POLL_MS);
+        }
+    };
+
     render() {
-        const { stage, wifi, errors } = this.state;
+        const { stage, capabilities, wifi, errors } = this.state;
 
         let content: ReactNode = null;
         switch (stage) {
             case Stage.welcome:
-                content = <Welcome onNext={this.#gotoWifi} />;
+                // Hold rendering until capabilities decide the branding;
+                // rendering the default first flashes the wrong device.
+                if (!capabilities) break;
+                content = (
+                    <Welcome
+                        productName={capabilities?.productName}
+                        miner={capabilities?.miningSupported}
+                        onNext={this.#gotoWifiOrDone}
+                    />
+                );
                 break;
 
             case Stage.wifi:
@@ -111,15 +184,34 @@ export default class InitWifi extends Component<any, State> {
                         isLoading={wifi.isLoading}
                         onBack={this.#gotoWelcome}
                         onSubmit={this.#wifiSubmit}
+                        // Skipping WiFi is only offered when the device has a
+                        // wired uplink to fall back on.
+                        onSkip={capabilities?.ethernetSupported ? this.#wifiSkip : undefined}
+                        miner={capabilities?.miningSupported}
                     />
                 );
+                break;
+
+            case Stage.done:
+                content = <DoneScene miner={capabilities?.miningSupported} />;
                 break;
         }
 
         return (
             <div className={css.root}>
                 <div className={css.inner}>
-                    <InlineNotificationsGroup kind="error" theme="inverse" items={errors} stretch />
+                    <InlineNotificationsGroup
+                        kind="error"
+                        theme="inverse"
+                        // NOTE: without capabilities nothing else renders, so the
+                        // banner carries the only way forward.
+                        items={errors?.map(text =>
+                            capabilities
+                                ? text
+                                : { children: text, action: { label: 'Retry', onClick: this.#loadCapabilities } },
+                        )}
+                        stretch
+                    />
                     {content}
                 </div>
             </div>

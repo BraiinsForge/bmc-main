@@ -22,16 +22,18 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { useNavigate, type NavigateFunction } from 'react-router';
+import { Code, ConnectError } from '@connectrpc/connect';
 
 // App, lib
 import * as pb from '@/proto';
-import { URLS } from '@/constants';
+import { dnsJoin, dnsSplit } from '@/lib/format';
 import { setState } from '@/lib/react';
-import type { FormPropsToLocalState } from '@/lib/form';
+import { assertUnreachable } from '@/lib/ts';
 
 // Components
 import { InlineNotificationsGroup } from '@/components';
-import { Setup, type SetupProps } from './components';
+import { MiningSetup, Setup } from './components/Setup';
+import { awaitSetupOutcome, type FormState, isMiningSetup, postSetupDestination, toFormErrors } from './fn';
 
 // Styles
 import '@/styles/carbon/carbon.global.scss';
@@ -42,11 +44,17 @@ interface Props {
     navigate: NavigateFunction;
 }
 
-type FormState = FormPropsToLocalState<SetupProps>;
+// NOTE: a failure to reach the server at all, as opposed to a status it sent.
+function isConnectionLost(error: unknown): boolean {
+    const { code } = ConnectError.from(error);
+    return code === Code.Unavailable || code === Code.Unknown;
+}
+
 interface State {
     isLoading: boolean;
     isSaving: boolean;
 
+    capabilities: null | pb.HardwareCapabilities;
     data: FormState;
     timezones: Array<pb.Timezone>;
 }
@@ -54,8 +62,9 @@ const getInitialState = (): State => ({
     isLoading: false,
     isSaving: false,
 
+    capabilities: null,
     data: {
-        values: {},
+        values: { protocol: 'dhcp' },
         errors: null,
     },
     timezones: [],
@@ -74,19 +83,26 @@ class View extends Component<Props, State> {
 
         await setState(this, { isLoading: true });
         let timezones: Array<pb.Timezone> = [];
+        let capabilities: null | pb.HardwareCapabilities = null;
         const res: FormState = {
-            values: {},
+            values: { protocol: 'dhcp' },
             errors: null,
         };
 
         try {
-            const v = await pb.rpc.init.getSettingsData({}, { signal });
+            const [v, caps] = await Promise.all([
+                pb.rpc.init.getSettingsData({}, { signal }),
+                pb.rpc.hardware.getHardwareCapabilities({}, { signal }),
+            ]);
             timezones = v.timezones;
+            capabilities = caps;
 
             // Try to detect browser timezone from react-intl first, fallback to Intl API, then server default
             const browserTimezone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
             const selectedTimezone =
                 timezones.find(x => x.id === browserTimezone) ?? timezones.find(x => x.id === v.timezoneId);
+
+            const staticNet = v.network?.protocol?.case === 'static' ? v.network.protocol.value : undefined;
 
             res.values = {
                 timezone: selectedTimezone,
@@ -96,21 +112,30 @@ class View extends Component<Props, State> {
                 temperatureUnits: v.temperatureUnit || undefined,
                 unitSystem: v.unitSystem || undefined,
                 // dataCollection: v.dataCollection,
+
+                // Mining variant prefill; the backend supplies the current
+                // network config, hostname, and the solo pool default for
+                // miners (all null on display devices).
+                // NOTE: an unset oneof (`case: undefined`) is the one value the
+                // form cannot show; it is read as DHCP here, and only here.
+                protocol: v.network?.protocol?.case ?? 'dhcp',
+                staticAddress: staticNet?.address || undefined,
+                staticNetmask: staticNet?.netmask || undefined,
+                staticGateway: staticNet?.gateway || undefined,
+                staticDns: staticNet ? dnsJoin(staticNet.dnsServers) || undefined : undefined,
+                hostname: v.hostname || undefined,
+                poolUrl: v.pool?.url || undefined,
+                poolUser: v.pool?.user || undefined,
+                poolPassword: v.pool?.password || undefined,
             };
         } catch ($) {
             if (pb.abort.is($)) return;
-            const errors: string[] = pb.collectAllErrors($) ?? [
-                formatMessage({ defaultMessage: 'Failed to load initial values!' }),
-            ];
-            this.setState(s => ({
-                data: {
-                    ...s.data,
-                    errors: { global: errors },
-                },
-            }));
+            res.errors = {
+                global: pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to load initial values!' })],
+            };
         }
 
-        this.setState({ isLoading: false, timezones, data: res });
+        this.setState({ isLoading: false, timezones, capabilities, data: res });
     };
 
     #handleChange = <Key extends keyof FormState['values']>(key: Key) => {
@@ -131,6 +156,42 @@ class View extends Component<Props, State> {
         return pb.renderFieldErrorsAsList(errors?.fields?.[key]);
     };
 
+    // A miner requires the pool + network form; every other device uses the
+    // localization form.
+    get #isMiningSetup(): boolean {
+        return isMiningSetup(this.state.capabilities);
+    }
+
+    #leaveSetup = (): void => {
+        const { protocol, staticAddress } = this.state.data.values;
+        const destination = postSetupDestination(this.state.capabilities, { protocol, staticAddress }, window.location);
+        if ('url' in destination) window.location.replace(destination.url);
+        else this.props.navigate(destination.route, { replace: true });
+    };
+
+    #buildNetworkConfig = (): pb.NetworkConfig => {
+        const { protocol, staticAddress, staticNetmask, staticGateway, staticDns } = this.state.data.values;
+        switch (protocol) {
+            case 'static':
+                return pb.create(pb.NetworkConfigSchema, {
+                    protocol: {
+                        case: 'static',
+                        value: pb.create(pb.NetworkConfigStaticSchema, {
+                            address: staticAddress ?? '',
+                            netmask: staticNetmask ?? '',
+                            gateway: staticGateway ?? '',
+                            dnsServers: dnsSplit(staticDns ?? ''),
+                        }),
+                    },
+                });
+            case 'dhcp':
+            case undefined:
+                return pb.create(pb.NetworkConfigSchema, { protocol: { case: 'dhcp', value: {} } });
+            default:
+                return assertUnreachable(protocol, 'init-setup: network protocol');
+        }
+    };
+
     private abortSubmit = pb.abort.get();
     #submit = async (): Promise<void> => {
         const {
@@ -148,10 +209,15 @@ class View extends Component<Props, State> {
             timeFormat,
             temperatureUnits,
             unitSystem,
+
+            // Mining
+            poolUrl,
+            poolUser,
+            poolPassword,
+            hostname,
         } = this.state.data.values;
         const {
             intl: { formatMessage },
-            navigate,
         } = this.props;
 
         if (password1 != null && password1 !== password2) {
@@ -168,36 +234,61 @@ class View extends Component<Props, State> {
             return;
         }
 
+        const request = this.#isMiningSetup
+            ? pb.create(pb.SettingsRequestSchema, {
+                  dateFormat,
+                  numberFormat,
+                  password: password1,
+                  timezoneId: timezone?.id,
+                  timeFormat,
+                  temperatureUnit: temperatureUnits,
+                  unitSystem,
+                  hostname: hostname || undefined,
+                  network: this.#buildNetworkConfig(),
+                  pool: pb.create(pb.PoolConfigSchema, {
+                      url: poolUrl ?? '',
+                      user: poolUser ?? '',
+                      password: poolPassword,
+                  }),
+              })
+            : pb.create(pb.SettingsRequestSchema, {
+                  // dataCollection,
+                  dateFormat,
+                  numberFormat,
+                  password: password1,
+                  timezoneId: timezone?.id,
+                  timeFormat,
+                  temperatureUnit: temperatureUnits,
+                  unitSystem,
+              });
+
         const { signal } = this.abortSubmit.replace();
+        this.setState({ isSaving: true });
         try {
-            await pb.rpc.init.setupDevice(
-                pb.create(pb.SettingsRequestSchema, {
-                    // dataCollection,
-                    dateFormat,
-                    numberFormat,
-                    password: password1,
-                    timezoneId: timezone?.id,
-                    timeFormat,
-                    temperatureUnit: temperatureUnits,
-                    unitSystem,
-                }),
-                { signal },
-            );
-            navigate(URLS.auth.login, { replace: true });
+            await pb.rpc.init.setupDevice(request, { signal });
+            this.#leaveSetup();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const errors = pb.parseFormErrors($, [
-                'password1',
-                'password2',
-                'timezone',
-                'dateFormat',
-                'numberFormat',
-                'timeFormat',
-                'temperatureUnits',
-                'unitSystem',
-                // 'dataCollection',
-            ]);
-            this.setState(s => ({ data: { ...s.data, errors } }));
+            // NOTE: applying the network settings restarts networking on the
+            // device, which can drop this very connection after the request
+            // was accepted; only a device still answering as setup-pending
+            // proves the request was lost. One that moved to another address
+            // never answers here, so silence is taken as success.
+            if (this.#isMiningSetup && isConnectionLost($)) {
+                try {
+                    const outcome = await awaitSetupOutcome(() => pb.rpc.init.getSettingsData({}, { signal }), {
+                        signal,
+                    });
+                    if (outcome !== 'pending') {
+                        this.#leaveSetup();
+                        return;
+                    }
+                } catch (probeError) {
+                    if (pb.abort.is(probeError)) return;
+                }
+            }
+            const errors = toFormErrors($);
+            this.setState(s => ({ isSaving: false, data: { ...s.data, errors } }));
         }
     };
 
@@ -206,6 +297,7 @@ class View extends Component<Props, State> {
             isLoading,
             isSaving,
             timezones,
+            capabilities,
             data: { values, errors },
         } = this.state;
 
@@ -214,69 +306,194 @@ class View extends Component<Props, State> {
         return (
             <div className={css.root}>
                 <div className={css.innerSetup}>
-                    <InlineNotificationsGroup kind="error" theme="inverse" items={errors?.global} stretch />
-                    <Setup
-                        timeFormat={{
-                            disabled,
-                            value: values.timeFormat || null,
-                            error: this.#getFieldError('timeFormat'),
-                            onChange: this.#handleChange('timeFormat'),
-                        }}
-                        timezone={{
-                            value: values.timezone || null,
-                            disabled,
-                            items: timezones,
-                            error: this.#getFieldError('timezone'),
-                            onChange: this.#handleChange('timezone'),
-                        }}
-                        dateFormat={{
-                            disabled,
-                            value: values.dateFormat || null,
-                            error: this.#getFieldError('dateFormat'),
-                            onChange: this.#handleChange('dateFormat'),
-                        }}
-                        numberFormat={{
-                            disabled,
-                            value: values.numberFormat || null,
-                            error: this.#getFieldError('numberFormat'),
-                            onChange: this.#handleChange('numberFormat'),
-                        }}
-                        temperatureUnits={{
-                            disabled,
-                            value: values.temperatureUnits || null,
-                            error: this.#getFieldError('temperatureUnits'),
-                            onChange: this.#handleChange('temperatureUnits'),
-                        }}
-                        unitSystem={{
-                            disabled,
-                            value: values.unitSystem || null,
-                            error: this.#getFieldError('unitSystem'),
-                            onChange: this.#handleChange('unitSystem'),
-                        }}
-                        // Password
-                        password1={{
-                            disabled,
-                            value: values.password1 || null,
-                            error: this.#getFieldError('password1'),
-                            onChange: this.#handleChange('password1'),
-                        }}
-                        password2={{
-                            disabled,
-                            value: values.password2 || null,
-                            error: this.#getFieldError('password2'),
-                            onChange: this.#handleChange('password2'),
-                        }}
-                        // // Privacy
-                        // dataCollection={{
-                        //     disabled,
-                        //     value: values.dataCollection || null,
-                        //     error: this.#getFieldError('dataCollection'),
-                        //     onChange: this.#handleChange('dataCollection'),
-                        // }}
-                        // Form
-                        onSubmit={this.#submit}
-                        submitDisabled={pb.hasFormErrors(errors)}
+                    <InlineNotificationsGroup
+                        kind="error"
+                        theme="inverse"
+                        // NOTE: without capabilities nothing else renders, so the
+                        // banner carries the only way forward.
+                        items={errors?.global?.map(text =>
+                            capabilities
+                                ? text
+                                : { children: text, action: { label: 'Retry', onClick: this.#loadConfig } },
+                        )}
+                        stretch
                     />
+                    {/* Hold the form until capabilities decide the variant;
+                        rendering the default first flashes the wrong device. */}
+                    {!capabilities ? null : this.#isMiningSetup ? (
+                        <MiningSetup
+                            timeFormat={{
+                                disabled,
+                                value: values.timeFormat || null,
+                                error: this.#getFieldError('timeFormat'),
+                                onChange: this.#handleChange('timeFormat'),
+                            }}
+                            timezone={{
+                                value: values.timezone || null,
+                                disabled,
+                                items: timezones,
+                                error: this.#getFieldError('timezone'),
+                                onChange: this.#handleChange('timezone'),
+                            }}
+                            dateFormat={{
+                                disabled,
+                                value: values.dateFormat || null,
+                                error: this.#getFieldError('dateFormat'),
+                                onChange: this.#handleChange('dateFormat'),
+                            }}
+                            numberFormat={{
+                                disabled,
+                                value: values.numberFormat || null,
+                                error: this.#getFieldError('numberFormat'),
+                                onChange: this.#handleChange('numberFormat'),
+                            }}
+                            temperatureUnits={{
+                                disabled,
+                                value: values.temperatureUnits || null,
+                                error: this.#getFieldError('temperatureUnits'),
+                                onChange: this.#handleChange('temperatureUnits'),
+                            }}
+                            unitSystem={{
+                                disabled,
+                                value: values.unitSystem || null,
+                                error: this.#getFieldError('unitSystem'),
+                                onChange: this.#handleChange('unitSystem'),
+                            }}
+                            poolUrl={{
+                                disabled,
+                                value: values.poolUrl || null,
+                                error: this.#getFieldError('poolUrl'),
+                                onChange: this.#handleChange('poolUrl'),
+                            }}
+                            poolUser={{
+                                disabled,
+                                value: values.poolUser || null,
+                                error: this.#getFieldError('poolUser'),
+                                onChange: this.#handleChange('poolUser'),
+                            }}
+                            poolPassword={{
+                                disabled,
+                                value: values.poolPassword || null,
+                                error: this.#getFieldError('poolPassword'),
+                                onChange: this.#handleChange('poolPassword'),
+                            }}
+                            hostname={{
+                                disabled,
+                                value: values.hostname || null,
+                                error: this.#getFieldError('hostname'),
+                                onChange: this.#handleChange('hostname'),
+                            }}
+                            protocol={{
+                                disabled,
+                                value: values.protocol || 'dhcp',
+                                error: this.#getFieldError('protocol'),
+                                onChange: this.#handleChange('protocol'),
+                            }}
+                            staticAddress={{
+                                disabled,
+                                value: values.staticAddress || null,
+                                error: this.#getFieldError('staticAddress'),
+                                onChange: this.#handleChange('staticAddress'),
+                            }}
+                            staticNetmask={{
+                                disabled,
+                                value: values.staticNetmask || null,
+                                error: this.#getFieldError('staticNetmask'),
+                                onChange: this.#handleChange('staticNetmask'),
+                            }}
+                            staticGateway={{
+                                disabled,
+                                value: values.staticGateway || null,
+                                error: this.#getFieldError('staticGateway'),
+                                onChange: this.#handleChange('staticGateway'),
+                            }}
+                            staticDns={{
+                                disabled,
+                                value: values.staticDns || null,
+                                error: this.#getFieldError('staticDns'),
+                                onChange: this.#handleChange('staticDns'),
+                            }}
+                            password1={{
+                                disabled,
+                                value: values.password1 || null,
+                                error: this.#getFieldError('password1'),
+                                onChange: this.#handleChange('password1'),
+                            }}
+                            password2={{
+                                disabled,
+                                value: values.password2 || null,
+                                error: this.#getFieldError('password2'),
+                                onChange: this.#handleChange('password2'),
+                            }}
+                            onSubmit={this.#submit}
+                            submitDisabled={pb.hasFormErrors(errors)}
+                            submitting={isSaving}
+                        />
+                    ) : (
+                        <Setup
+                            timeFormat={{
+                                disabled,
+                                value: values.timeFormat || null,
+                                error: this.#getFieldError('timeFormat'),
+                                onChange: this.#handleChange('timeFormat'),
+                            }}
+                            timezone={{
+                                value: values.timezone || null,
+                                disabled,
+                                items: timezones,
+                                error: this.#getFieldError('timezone'),
+                                onChange: this.#handleChange('timezone'),
+                            }}
+                            dateFormat={{
+                                disabled,
+                                value: values.dateFormat || null,
+                                error: this.#getFieldError('dateFormat'),
+                                onChange: this.#handleChange('dateFormat'),
+                            }}
+                            numberFormat={{
+                                disabled,
+                                value: values.numberFormat || null,
+                                error: this.#getFieldError('numberFormat'),
+                                onChange: this.#handleChange('numberFormat'),
+                            }}
+                            temperatureUnits={{
+                                disabled,
+                                value: values.temperatureUnits || null,
+                                error: this.#getFieldError('temperatureUnits'),
+                                onChange: this.#handleChange('temperatureUnits'),
+                            }}
+                            unitSystem={{
+                                disabled,
+                                value: values.unitSystem || null,
+                                error: this.#getFieldError('unitSystem'),
+                                onChange: this.#handleChange('unitSystem'),
+                            }}
+                            // Password
+                            password1={{
+                                disabled,
+                                value: values.password1 || null,
+                                error: this.#getFieldError('password1'),
+                                onChange: this.#handleChange('password1'),
+                            }}
+                            password2={{
+                                disabled,
+                                value: values.password2 || null,
+                                error: this.#getFieldError('password2'),
+                                onChange: this.#handleChange('password2'),
+                            }}
+                            // // Privacy
+                            // dataCollection={{
+                            //     disabled,
+                            //     value: values.dataCollection || null,
+                            //     error: this.#getFieldError('dataCollection'),
+                            //     onChange: this.#handleChange('dataCollection'),
+                            // }}
+                            // Form
+                            onSubmit={this.#submit}
+                            submitDisabled={pb.hasFormErrors(errors)}
+                            submitting={isSaving}
+                        />
+                    )}
                 </div>
             </div>
         );

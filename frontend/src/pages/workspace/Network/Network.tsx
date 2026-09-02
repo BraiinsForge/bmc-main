@@ -26,6 +26,7 @@ import { type IntlShape, useIntl } from 'react-intl';
 import { type Location, useLocation } from 'react-router';
 
 // Lib
+import { dnsJoin, dnsSplit } from '@/lib/format';
 import { setState } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts';
 import { toast } from '@/lib/toast';
@@ -74,15 +75,6 @@ const emptyData: Readonly<Data> = Object.freeze({
     values: emptyStaticConf,
 } satisfies Data);
 
-function dnsJoin(value: string[]): string {
-    return value.join(', ');
-}
-function dnsSplit(value: string): string[] {
-    return value
-        .split(',')
-        .map(x => x.trim())
-        .filter(Boolean);
-}
 function staticConfToLocal(value: pb.NetworkConfigStatic): NetStaticConf {
     const { dnsServers, ...rest } = value;
     return { ...rest, dnsServers: dnsJoin(dnsServers) };

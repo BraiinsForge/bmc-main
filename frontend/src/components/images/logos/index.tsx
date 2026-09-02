@@ -20,6 +20,8 @@
 
 import BraiinsSVG from './braiins.svg';
 import HeaderSVG from './header.svg';
+import HeaderMinerSVG from './header-miner.svg';
 
 export const LogoBraiins = BraiinsSVG;
 export const LogoHeader = HeaderSVG;
+export const LogoHeaderMiner = HeaderMinerSVG;

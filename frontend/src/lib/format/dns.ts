@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,6 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-export * from './Layout';
-export * from './Welcome';
-export * from './Wifi';
+/** The comma-separated form the network forms show a DNS server list in. */
+export function dnsJoin(value: string[]): string {
+    return value.join(', ');
+}
+export function dnsSplit(value: string): string[] {
+    return value
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+}
