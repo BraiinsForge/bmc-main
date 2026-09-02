@@ -211,12 +211,12 @@ The crate exports **two** `SystemOverlay` implementations, `UpgradeOverlay::firm
 `UpgradeOverlay::packages()`, because `LayerConfig` is static and the two presentations differ in every field that
 matters:
 
-|           | Firmware                                  | Packages                                       |
-| --------- | ----------------------------------------- | ---------------------------------------------- |
-| Placement | full-screen (`LayerConfig::fullscreen`)   | bottom-right, `PACKAGE_SURFACE_SIZE` (384×192) |
-| Layer     | `Top`                                     | `Bottom`                                       |
-| Input     | full                                      | none                                           |
-| Effect    | modal: blocks the scene for the whole run | passive: widgets stay visible and interactive  |
+|           | Firmware                                  | Packages                                      |
+| --------- | ----------------------------------------- | --------------------------------------------- |
+| Placement | full-screen (`LayerConfig::fullscreen`)   | bottom-right card, or full-screen — see below |
+| Layer     | `Top`                                     | `Bottom`                                      |
+| Input     | full                                      | none                                          |
+| Effect    | modal: blocks the scene for the whole run | passive: widgets stay visible and interactive |
 
 Both clients bind the protocol and receive every snapshot; each maps only for its own kind and clears its view when a
 snapshot of the *other* kind arrives. The inactive client stays unmapped and holds no DMA-BUFs, so the split costs
@@ -225,6 +225,56 @@ that reboots the device blocks the screen.
 
 Making one surface reconfigure its size, anchors, layer, and input policy at runtime was the alternative. It was
 rejected: it would add runtime surface reconfiguration to the overlay framework for a single caller.
+
+### Per-product surfaces
+
+The firmware surface is full-screen everywhere and takes whatever size the compositor configures. The package surface
+comes from `package_surface(product)`, because `LayerConfig` is read before any size exists:
+
+| Product | Package surface                                                             |
+| ------- | --------------------------------------------------------------------------- |
+| BMC100  | 384×192 card, bottom-right                                                  |
+| BMM101  | 240×120 card, bottom-right                                                  |
+| BMM100  | full-screen: 320×240 leaves no room for a card that still holds the content |
+| BFM100  | 384×192 card — the round panel has no upgrade design of its own yet         |
+
+A full-screen package surface stays on `Bottom` with no input region, so it never takes touch. It does, however, satisfy
+the compositor's `is_fullscreen_blocker` test, which is purely geometric — any mapped non-`Background` surface covering
+the output — so while it is up, scene-drag is suppressed and the settings tray is retracted (see
+[`compositor-integration.md`](compositor-integration.md)). On the BMM100 that costs nothing, because the board has no
+touchscreen to drag a scene or open the tray with. On a product with touch, the same surface would make a package
+upgrade behave modally after all; `Layer::Background` would be the way out, at the price of the offline chip painting
+over the screen instead of being covered by it.
+
+### Sizing tiers
+
+`build_upgrade_tree` takes a `Surface` (size plus `Placement`) and reads its numbers from a `Tier` chosen by `tier_for`.
+Type and icons do not scale linearly with a display, so each tier states its own numbers instead of deriving them from a
+factor. Thresholds sit in the gaps between the surfaces that exist, so no product lands near an edge:
+
+| Tier          | Serves                         | Of note                                                  |
+| ------------- | ------------------------------ | -------------------------------------------------------- |
+| `FULL_LARGE`  | BMC100 1280×480                | the stable Deck screen                                   |
+| `FULL_MEDIUM` | BMM101 480×320                 | Deck type and icon; only the bar scales with the display |
+| `FULL_SMALL`  | BMM100 320×240, **both kinds** | smaller type, and the safety text wraps onto two lines   |
+| `CARD_LARGE`  | BMC100 384×192                 | the stable Deck card                                     |
+| `CARD_SMALL`  | BMM101 240×120                 | 18px type, no byte counts, `Downloading 54%...`          |
+
+The icon's top edge is one of those numbers, fixed per tier, and everything else is laid out downwards from it.
+
+Two content decisions belong to the tier rather than to the kind, because narrow surfaces drive them: whether the
+determinate screen draws the transferred/total byte counts, and whether its caption drops the subject noun
+(`UpgradePhase::short_label`). Everything else keyed on presentation stays keyed on the upgrade kind — the safety text
+is a firmware screen's, and the activity bar under a phase with no byte totals is a package screen's.
+
+The two edge dividers key off `Placement`, not the kind: they exist to give a card an extent against the black widgets
+it overlaps, and a full-screen package surface has nothing beside it.
+
+A canvas text draw is always a single unwrapped line — `max_width` and `text_overflow` never reach the layout — so the
+one tier that needs wrapping draws the safety text through `DrawCommand::AutofitText`, whose paragraph path takes a box.
+`min_size` equal to the style size makes it wrap without shrinking. The wider tiers stay on the single-line draw: the
+two paths anchor differently (glyph centre against line box), so moving stable copy across would shift it by a few
+pixels for no gain.
 
 Because the firmware surface is a full-screen `Top` surface, the compositor treats it as a modal blocker on the same
 generic policy as the alarm — suppressed scene navigation and a preempted settings tray, with no per-overlay wiring (see

@@ -93,8 +93,10 @@ never counts itself). This is purely geometric — any full-screen overlay below
 overlay needs no wiring here and the tray needs no per-feature knowledge. Today the alarm, the startup screen, and the
 firmware-upgrade blocker match; the startup screen only ever maps at boot, before the tray can be pulled down. The
 firmware blocker is the payoff for keeping this geometric: it preempts the tray without a line of upgrade-specific code
-here or in the tray. The package card does not qualify and must not — it is a corner surface that deliberately leaves
-the scene usable.
+here or in the tray. The package card does not qualify: it is a corner surface that deliberately leaves the scene
+usable. On the BMM100 the package surface takes the whole display and does qualify, which costs nothing there — the
+board has no touchscreen, so there is no tray to preempt and no scene drag to suppress (see
+[`overlays.md`](overlays.md)).
 
 Like the neighbor-suppression check, a modal map/unmap happens during dispatch, not on a scene command, so the main loop
 compares `modal_overlay_active()` against its last value each iteration and, on the edge, emits `deck_settings_v1`'s

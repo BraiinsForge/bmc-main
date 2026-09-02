@@ -1,8 +1,9 @@
 # Upgrade Progress
 
 On-device feedback for firmware and package upgrades. A firmware upgrade takes over the screen with a full-screen
-progress overlay; a package-only upgrade shows a small corner card while the widgets keep running. Both end in a clear
-success or failure screen, including after the restart that finishes an upgrade.
+progress overlay; a package-only upgrade shows a small corner card while the widgets keep running, or, on a display too
+small for a card, the same content over the whole screen without taking any input. Both end in a clear success or
+failure screen, including after the restart that finishes an upgrade.
 
 ## User stories
 
@@ -25,7 +26,9 @@ success or failure screen, including after the restart that finishes an upgrade.
 
 - A package-only upgrade shows a small card in the bottom-right corner naming the current stage — downloading,
   verifying, building, or activating packages.
-- The card takes no input; touches go to the scene as usual and widgets stay live throughout.
+- On the BMM100 the same content takes the whole display: 320×240 has no room for a card beside a widget. The board has
+  no touchscreen, so covering the widget costs no interaction.
+- The package surface takes no input; touches go to the scene as usual and widgets stay live throughout.
 
 ### Recognize success and failure
 
@@ -34,7 +37,7 @@ success or failure screen, including after the restart that finishes an upgrade.
 
 - A failure replaces any progress display immediately with a recognizable failure screen; it stays up for ten seconds
   and then returns the device to normal.
-- A package upgrade that finishes without a restart shows "Update Finished" in its corner card for ten seconds.
+- A package upgrade that finishes without a restart shows "Update Finished" on its package surface for ten seconds.
 - A firmware upgrade reports success only after the reboot that applies it, as part of the startup screens (below).
 - Neither the progress nor the failure screen can be dismissed by touch.
 
@@ -45,8 +48,8 @@ success or failure screen, including after the restart that finishes an upgrade.
 
 - After the reboot that applies a firmware upgrade, the device opens its startup screens on a full-screen "Update
   Finished" confirmation once it is up again.
-- A package upgrade that restarts the display as part of activation reports its success in the corner card, exactly as a
-  package upgrade that needed no restart does.
+- A package upgrade that restarts the display as part of activation reports its success on its package surface, exactly
+  as a package upgrade that needed no restart does.
 - The confirmation appears only on an operational device — a device in setup or factory-default state skips it.
 
 ### No redundant startup screens after an upgrade

@@ -55,8 +55,8 @@ The overlay crates are grouped under the top-level `system-overlays/` folder, mi
 - `system-overlays/bmc-overlay-offline` — bottom-right offline indicator.
 - `system-overlays/bmc-overlay-settings-tray` — swipe-from-top quick-settings panel.
 - `system-overlays/bmc-overlay-alarm` — full-screen firing-alarm screen (Stop / Snooze).
-- `system-overlays/bmc-overlay-upgrade` — upgrade progress: a full-screen firmware blocker and a passive package card,
-  two `SystemOverlay` impls from one crate.
+- `system-overlays/bmc-overlay-upgrade` — upgrade progress: a full-screen firmware blocker and a passive package surface
+  (a corner card, or the whole display on the BMM100), two `SystemOverlay` impls from one crate.
 - `system-overlays/layer-shell-test-client` — a standalone layer-shell client used to exercise the compositor support
   directly.
 
@@ -74,14 +74,14 @@ See [`protocols.md`](protocols.md) for all five.
 
 ## The concrete overlays
 
-| Overlay       | Crate                       | Layer        | Placement    | Input | Screen edge | Compositor IPC        |
-| ------------- | --------------------------- | ------------ | ------------ | ----- | ----------- | --------------------- |
-| Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen  | full  | no          | `deck_device_info_v1` |
-| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right | none  | no          | no                    |
-| Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen  | full  | `Top`       | `deck_settings_v1`    |
-| Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen  | full  | no          | `deck_alarm_v1`       |
-| Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen  | full  | no          | `deck_upgrade_v1`     |
-| Upgrade (pkg) | `bmc-overlay-upgrade`       | `Bottom`     | bottom-right | none  | no          | `deck_upgrade_v1`     |
+| Overlay       | Crate                       | Layer        | Placement                                    | Input | Screen edge | Compositor IPC        |
+| ------------- | --------------------------- | ------------ | -------------------------------------------- | ----- | ----------- | --------------------- |
+| Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen                                  | full  | no          | `deck_device_info_v1` |
+| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right                                 | none  | no          | no                    |
+| Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen                                  | full  | `Top`       | `deck_settings_v1`    |
+| Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen                                  | full  | no          | `deck_alarm_v1`       |
+| Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen                                  | full  | no          | `deck_upgrade_v1`     |
+| Upgrade (pkg) | `bmc-overlay-upgrade`       | `Bottom`     | bottom-right card; full-screen on the BMM100 | none  | no          | `deck_upgrade_v1`     |
 
 The startup screen also binds `deck_upgrade_v1`: a boot that follows a package restart skips it, and a boot that follows
 a firmware upgrade opens on the "Update Finished" screen it owns.
