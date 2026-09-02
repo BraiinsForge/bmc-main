@@ -101,10 +101,21 @@ pub async fn nameservers(path: &str) -> Vec<Ipv4Addr> {
     let Ok(contents) = tokio::fs::read_to_string(path).await else {
         return Vec::new();
     };
+    parse_nameservers(&contents)
+}
+
+/// IPv4 `nameserver` entries in resolv.conf text. A line may be indented and
+/// may carry a trailing comment - e.g. `nameserver 192.168.1.1 # eth0`, which
+/// is exactly what udhcpc writes - so only the keyword and the address token
+/// after it are considered; parsing the whole line remainder drops the address.
+fn parse_nameservers(contents: &str) -> Vec<Ipv4Addr> {
     contents
         .lines()
-        .filter_map(|line| line.strip_prefix("nameserver"))
-        .filter_map(|rest| rest.trim().parse().ok())
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next()? == "nameserver").then_some(())?;
+            fields.next()?.parse().ok()
+        })
         .collect()
 }
 
@@ -412,5 +423,47 @@ mod tests {
             }),
         };
         assert_eq!(pick_routable_ip(vec![loopback]), None);
+    }
+
+    #[test]
+    fn parses_nameserver_with_trailing_comment() {
+        // udhcpc writes `nameserver <ip> # <iface>`; the address must survive.
+        assert_eq!(
+            parse_nameservers("nameserver 192.168.1.1 # eth0\n"),
+            vec![Ipv4Addr::new(192, 168, 1, 1)]
+        );
+    }
+
+    #[test]
+    fn parses_indented_and_semicolon_comment_lines() {
+        let text = "\tnameserver 10.0.0.1 ; primary\nnameserver 10.0.0.2\n";
+        assert_eq!(
+            parse_nameservers(text),
+            vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]
+        );
+    }
+
+    #[test]
+    fn ignores_options_search_and_bad_lines() {
+        let text = "\
+# a comment
+search lan
+options ndots:1
+nameserver 8.8.8.8
+nameserverX 9.9.9.9
+nameserver not-an-ip
+";
+        assert_eq!(parse_nameservers(text), vec![Ipv4Addr::new(8, 8, 8, 8)]);
+    }
+
+    #[test]
+    fn skips_ipv6_nameservers() {
+        let text = "nameserver 2001:4860:4860::8888\nnameserver 1.1.1.1\n";
+        assert_eq!(parse_nameservers(text), vec![Ipv4Addr::new(1, 1, 1, 1)]);
+    }
+
+    #[test]
+    fn empty_input_yields_no_nameservers() {
+        assert!(parse_nameservers("").is_empty());
     }
 }
