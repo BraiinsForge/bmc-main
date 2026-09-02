@@ -2915,13 +2915,12 @@ impl Compositor for EglCompositor {
 #[cfg(test)]
 mod tests {
     use super::{
-    ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
-    GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
-    TRANSITION_WARM_UP_TIMEOUT, TransitionWarmUp, clamp_initial_lifecycle,
-    dispatch_timeout, emit_lifecycle_batches, emit_lifecycle_transitions,
-    emit_transition_incoming_batch, handle_command, process_protocol_events,
-    scene_buffers_committed, transition_incoming_widget_ids,
-    transition_warm_up_ready,
+        ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
+        GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState,
+        TRANSITION_WARM_UP_TIMEOUT, TouchSlot, TransitionWarmUp, clamp_initial_lifecycle,
+        dispatch_timeout, emit_lifecycle_batches, emit_lifecycle_transitions,
+        emit_transition_incoming_batch, handle_command, process_protocol_events,
+        scene_buffers_committed, transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,

@@ -55,8 +55,8 @@ use bmc_wasm_runtime::unified_fixture::{
     validate_fixture,
 };
 use bmc_wasm_runtime::{
-    DiskCache, FixtureEvent, FixtureEventKind, InterceptedReply, PackageAssetStore,
-    RenderStatus, RuntimeConfig, SystemSnapshot, TargetContents, WasmWidgetRuntime,
+    DiskCache, FixtureEvent, FixtureEventKind, InterceptedReply, PackageAssetStore, RenderStatus,
+    RuntimeConfig, SystemSnapshot, TargetContents, WasmWidgetRuntime,
 };
 
 /// Fixed timestep per frame (ms).

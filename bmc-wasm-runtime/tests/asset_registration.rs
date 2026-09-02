@@ -1448,7 +1448,8 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
     renderer.begin_frame(64, 64, 1.0);
     assert_eq!(
         first_runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16, TargetContents::Cleared))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: first widget render must complete"),
         RenderStatus::Ok
     );
@@ -1467,7 +1468,8 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
     renderer.begin_frame(64, 64, 1.0);
     assert_eq!(
         second_runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16, TargetContents::Cleared))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: second widget render must complete"),
         RenderStatus::Ok
     );
@@ -1477,7 +1479,8 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
     renderer.begin_frame(64, 64, 1.0);
     assert_eq!(
         first_runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16, TargetContents::Cleared))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: stale widget render must complete"),
         RenderStatus::Ok
     );

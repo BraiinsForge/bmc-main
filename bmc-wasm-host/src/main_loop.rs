@@ -526,6 +526,48 @@ struct PostPollState<'a> {
     to_teardown: Vec<SlotId>,
 }
 
+/// Apply a slot's lifecycle transition, releasing its cached static layer when
+/// that transition puts the slot to sleep.
+///
+/// A free function rather than a method: the caller holds `slot` borrowed out
+/// of `self.slots`, so a `&mut self` receiver would collide with it.
+///
+/// The layer is the largest thing a dormant slot keeps, and the renderer owning
+/// it lives on the host rather than the slot. Dropping it deletes a texture, so
+/// it takes the GPU lock like any other renderer mutation; waking pre-warms a
+/// render, so the re-capture lands before the scene is on screen.
+///
+/// `Err(())` means the GPU lock failed and the caller should skip this slot.
+fn advance_slot_lifecycle(
+    shared: &mut SharedHost,
+    slot: &mut WidgetSlot,
+    now: Instant,
+    renderer_ptr: NonNull<dyn bmc_render::renderer::Renderer>,
+) -> Result<(), ()> {
+    let hook = if slot.has_lifecycle_gpu_work(now) {
+        match shared.with_gpu_render_lock("host_widget_lifecycle", |shared| {
+            Ok(slot.apply_lifecycle(now, &shared.egl))
+        }) {
+            Ok(hook) => hook,
+            Err(error) => {
+                tracing::error!(?error, "failed to apply widget GPU lifecycle work");
+                return Err(());
+            }
+        }
+    } else {
+        slot.apply_lifecycle(now, &shared.egl)
+    };
+    if hook == Some(LifecycleHook::Sleep)
+        && let Err(error) = shared.with_gpu_render_lock("host_widget_layer_release", |_shared| {
+            slot.runtime.release_static_layer(renderer_ptr);
+            Ok(())
+        })
+    {
+        tracing::error!(?error, "failed to release the dormant static layer");
+    }
+    Ok(())
+}
+
 impl ControlFirstPostPoll for PostPollState<'_> {
     type Error = FatalError;
 
@@ -581,33 +623,8 @@ impl ControlFirstPostPoll for PostPollState<'_> {
                 tracing::error!(?error, "failed to reclaim retired widget GPU resources");
             }
             let now = Instant::now();
-            // Copied out so the closure below does not borrow `self` while
-            // `self.shared` is mutably borrowed by the lock.
-            let renderer_ptr = self.renderer_ptr;
-            let hook = if slot.has_lifecycle_gpu_work(now) {
-                match self
-                    .shared
-                    .with_gpu_render_lock("host_widget_lifecycle", |shared| {
-                        Ok(slot.apply_lifecycle(now, &shared.egl))
-                    }) {
-                    Ok(hook) => hook,
-                    Err(error) => {
-                        tracing::error!(?error, "failed to apply widget GPU lifecycle work");
-                        continue;
-                    }
-                }
-            } else {
-                slot.apply_lifecycle(now, &self.shared.egl)
-            };
-            if hook == Some(LifecycleHook::Sleep)
-                && let Err(error) =
-                    self.shared
-                        .with_gpu_render_lock("host_widget_layer_release", |_shared| {
-                            slot.runtime.release_static_layer(renderer_ptr);
-                            Ok(())
-                        })
-            {
-                tracing::error!(?error, "failed to release the dormant static layer");
+            if advance_slot_lifecycle(self.shared, slot, now, self.renderer_ptr).is_err() {
+                continue;
             }
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
             slot.runtime.stage_deliveries();

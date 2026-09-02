@@ -141,10 +141,9 @@ pub use host_api::{EXPORT_BUFFERS, FixtureEvent, FixtureEventKind, FixtureEventS
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use network::NetworkInfo;
 pub use runtime::{
-    BoundCredential, CredentialView, FetchAgent, InterceptedReply,
-    RendererAssetRestorationObservation, RendererAssetSuspensionObservation, RenderStatus,
-    RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, TargetContents, WasmWidgetModule,
-    WasmWidgetRuntime,
+    BoundCredential, CredentialView, FetchAgent, InterceptedReply, RenderStatus,
+    RendererAssetRestorationObservation, RendererAssetSuspensionObservation, RuntimeConfig,
+    RuntimeDisplayInfo, RuntimeResourceLimits, TargetContents, WasmWidgetModule, WasmWidgetRuntime,
 };
 pub use system::{NextAlarm, SystemSettings, SystemSnapshot};
 
