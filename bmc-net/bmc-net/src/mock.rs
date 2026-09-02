@@ -237,6 +237,7 @@ impl WifiControl for MockNetworkManager {
     }
 
     async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
+        self.provisioning.publish_setup_ap_active(true);
         Ok(())
     }
 

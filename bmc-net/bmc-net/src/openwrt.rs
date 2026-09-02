@@ -613,7 +613,9 @@ impl WifiControl for UciNetworkManager {
         if !self.provisioning.is_factory_default().await {
             return Err(InitialSetupError::NotSupported);
         }
-        self.configure_wifi_ap().await
+        self.configure_wifi_ap().await?;
+        self.provisioning.publish_setup_ap_active(true);
+        Ok(())
     }
 
     async fn enter_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {

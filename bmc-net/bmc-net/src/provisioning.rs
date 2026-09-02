@@ -159,19 +159,16 @@ impl ProvisioningState for UciProvisioningState {
     async fn advance(&self) -> anyhow::Result<()> {
         match self.device_state().await {
             BmcState::FactoryDefault => {
-                // Announce the setup AP is gone before the fallible unset calls:
-                // if the second unset fails, the watch must not keep advertising
-                // a setup AP we have already started tearing down.
-                self.setup_ap_active_sender.send_replace(false);
                 run_defaults_script("unset_factory_default").await?;
                 // Clear any stale wifi-reconfig flag too, consistent with
                 // factory-default outranking it in `device_state`.
                 run_defaults_script("unset_wifi_reconfig").await?;
+                self.setup_ap_active_sender.send_replace(false);
             }
             BmcState::SetupPending => run_defaults_script("unset_setup_pending").await?,
             BmcState::WifiReconfiguration => {
-                self.setup_ap_active_sender.send_replace(false);
                 run_defaults_script("unset_wifi_reconfig").await?;
+                self.setup_ap_active_sender.send_replace(false);
             }
             BmcState::Operational | BmcState::Unsupported => {}
         }
@@ -192,8 +189,8 @@ impl ProvisioningState for UciProvisioningState {
     }
 
     async fn clear_wifi_reconfig(&self) -> anyhow::Result<()> {
-        self.setup_ap_active_sender.send_replace(false);
         run_defaults_script("unset_wifi_reconfig").await?;
+        self.setup_ap_active_sender.send_replace(false);
         Ok(())
     }
 
@@ -431,5 +428,24 @@ mod tests {
 
         assert!(!*watcher.borrow_and_update());
         assert_eq!(state.device_state().await, BmcState::Operational);
+    }
+
+    /// The display listener re-reads `device_state` when the setup-AP watch
+    /// fires, so advancing out of factory default must notify only once the
+    /// state already reads as advanced.
+    #[tokio::test]
+    async fn advance_notifies_after_the_state_has_moved_on() {
+        let state = MockProvisioningState::new(true, true);
+        let mut watcher = state.watch_setup_ap_active();
+        assert!(*watcher.borrow_and_update());
+
+        state.advance().await.expect("BUG: advance must succeed");
+
+        assert!(
+            watcher.has_changed().expect("BUG: sender must be alive"),
+            "advance must wake setup-AP watchers"
+        );
+        assert!(!*watcher.borrow_and_update());
+        assert_eq!(state.device_state().await, BmcState::SetupPending);
     }
 }
