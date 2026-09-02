@@ -168,6 +168,21 @@ fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
     Ok(Some(RecordRequest { target, dataset }))
 }
 
+/// The clock and seal a runtime is born with.
+///
+/// Both belong to construction rather than the first tick — the constructor
+/// runs the guest's `init()`, and a poll registered there fetches at once.
+///
+/// Correcting afterwards is too late: the take has already recorded a request
+/// against the host's clock and an open network, and replay cannot reproduce it.
+fn take_conditions(
+    sandbox: &SandboxedState,
+    host_now: chrono::DateTime<chrono::Local>,
+) -> (chrono::DateTime<chrono::FixedOffset>, bool) {
+    let born_at = host_now + chrono::Duration::milliseconds(sandbox.clock_offset_ms);
+    (born_at.fixed_offset(), sandbox.offline)
+}
+
 /// Width of the right-side sidebar: Params when the manifest declares any,
 /// and the deck-wide System section always.
 pub(crate) const PARAM_PANEL_W: f32 = 320.0;
@@ -1437,6 +1452,7 @@ impl TestbedApp {
                 height,
                 geometry: RuntimeTileGeometry::for_viewport_shape(platform, placed_shape),
                 config,
+                system_time: take_conditions(self.state(), chrono::Local::now()).0,
                 label,
                 supported: true,
                 get_proc: self.get_proc.clone(),
@@ -1779,6 +1795,7 @@ impl TestbedApp {
                 height: h,
                 geometry: RuntimeTileGeometry::for_viewport_shape(platform, placed.shape),
                 config: rt_config,
+                system_time: take_conditions(self.state(), chrono::Local::now()).0,
                 label,
                 supported: self.manifest.supports_viewport_at_dpi(
                     manifest_viewport_shape(placed.shape),
@@ -1914,6 +1931,9 @@ impl TestbedApp {
         };
         config.mesh_msaa_samples = 4;
         config.package_assets = Some(self.prepared_widget.asset_store());
+        // Sealed here rather than on the first tick, so `init()`'s own fetch
+        // meets the seal the operator asked for.
+        config.hermetic = take_conditions(self.state(), chrono::Local::now()).1;
         config.params = self.state().params.clone();
         config.system = self.state().system.clone();
         // The sidebar's bindings as well: a rebuilt runtime starts unbound,

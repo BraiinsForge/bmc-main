@@ -126,6 +126,9 @@ pub(crate) struct ViewSeed {
     pub(crate) height: u32,
     pub(crate) geometry: super::RuntimeTileGeometry,
     pub(crate) config: bmc_wasm_runtime::RuntimeConfig,
+    /// The clock `init()` sees. A take gets its own, so the request a poll
+    /// issues there is one replay can reproduce from the fixture header.
+    pub(crate) system_time: chrono::DateTime<chrono::FixedOffset>,
     pub(crate) label: String,
     /// `false` for a viewport the manifest declines. Constructing a runtime
     /// runs the guest's `init` and its discovery, so a declined viewport skips
@@ -184,7 +187,7 @@ impl ViewSeed {
             self.height,
             self.geometry.viewport_shape,
             self.geometry.display,
-            chrono::Local::now().fixed_offset(),
+            self.system_time,
             self.config,
         )
         .with_context(|| format!("create runtime for {}", self.label))?;

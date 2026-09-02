@@ -903,10 +903,13 @@ impl RecordingState {
                 .collect(),
             system_snapshot: sandbox.system.clone(),
             credentials_snapshot: sandbox.credentials.clone(),
-            // Capture's fixture-header parser requires a timezone suffix on the
-            // time field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime
-            // is rejected.
-            start_time_iso: chrono::Local::now().to_rfc3339(),
+            // The fast-forward is included: the host's raw clock
+            // would start replay at a time the take never saw.
+            // Capture's parser also rejects a naive datetime,
+            // so keep the timezone suffix (e.g. `2026-05-13T15:48:38+02:00`).
+            start_time_iso: (chrono::Local::now()
+                + chrono::Duration::milliseconds(sandbox.clock_offset_ms.cast_signed()))
+            .to_rfc3339(),
             auto_capture: true,
         }
     }
@@ -1703,6 +1706,10 @@ mod begin_tests {
     const TAKE_EPOCH_MS: u64 = 180_000;
 
     fn begin(target: &str) -> RecordingState {
+        begin_fast_forwarded(target, 0)
+    }
+
+    fn begin_fast_forwarded(target: &str, clock_offset_ms: u64) -> RecordingState {
         let manifest_json = serde_json::json!({
             "uid": "550e8400-e29b-41d4-a716-446655440201",
             "version": "0.1.0",
@@ -1741,7 +1748,7 @@ mod begin_tests {
                 credentials,
                 offline: false,
                 dormant: false,
-                clock_offset_ms: 0,
+                clock_offset_ms,
             },
             TAKE_EPOCH_MS,
         )
@@ -1830,6 +1837,28 @@ mod begin_tests {
 
         chrono::DateTime::parse_from_rfc3339(&state.start_time_iso)
             .expect("BUG: the header parser rejects times without a timezone suffix");
+    }
+
+    /// Replay starts the widget at the header's time, so a take recorded
+    /// on a fast-forwarded clock must be stamped on that clock, not the host's.
+    #[test]
+    fn the_start_time_carries_the_clock_the_take_ran_on() {
+        const FAST_FORWARD_MS: u64 = 300_000;
+        let fast_forward = chrono::Duration::milliseconds(FAST_FORWARD_MS.cast_signed());
+
+        // Bracketed rather than given a tolerance:
+        // the stamp reads the host clock once, inside this span.
+        let before = chrono::Local::now().fixed_offset();
+        let state = begin_fast_forwarded("bmc100:full", FAST_FORWARD_MS);
+        let after = chrono::Local::now().fixed_offset();
+
+        let stamp = chrono::DateTime::parse_from_rfc3339(&state.start_time_iso)
+            .expect("BUG: the header parser rejects times without a timezone suffix");
+        assert!(
+            (before + fast_forward..=after + fast_forward).contains(&stamp),
+            "stamped {stamp}, which is not inside {before}..={after} \
+             shifted by the {FAST_FORWARD_MS} ms fast-forward",
+        );
     }
 
     #[test]
