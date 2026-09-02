@@ -25,6 +25,7 @@ mod ui;
 
 use std::time::{Duration, Instant};
 
+use bmc_platform::{BmcInfo, Product};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TreeUi,
@@ -32,13 +33,54 @@ use bmc_system_overlay::{
 };
 
 use crate::icons::UpgradeIcons;
+pub use crate::ui::{Placement, Surface};
 
 // Package realization can run for minutes under CPU and flash load, so keep
 // the indeterminate bar at 10 fps.
 const ANIMATION_FRAME: Duration = Duration::from_millis(100);
 
-/// Compact package surface size, shared by the runtime and the gallery scene.
+/// Package card size on the Deck, shared by the runtime and the gallery scene.
 pub const PACKAGE_SURFACE_SIZE: (u32, u32) = (384, 192);
+
+/// Package card size on the BMM101. Half the display width at the Deck card's
+/// 2:1 aspect, which is what its phase captions fit in.
+pub const PACKAGE_SURFACE_SIZE_BMM101: (u32, u32) = (240, 120);
+
+/// How the package overlay sits on a product's display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageSurface {
+    /// A corner card of this size, leaving the widget beside it visible.
+    Card((u32, u32)),
+    /// The whole display, because a card holding the same content would cover
+    /// most of it anyway. Still passive: it covers the widget without becoming
+    /// modal, so nothing about a package upgrade blocks the device.
+    Fullscreen,
+}
+
+impl PackageSurface {
+    #[must_use]
+    pub fn placement(self) -> Placement {
+        match self {
+            Self::Card(_) => Placement::Card,
+            Self::Fullscreen => Placement::Fullscreen,
+        }
+    }
+}
+
+/// Where the package overlay sits on `product`.
+#[must_use]
+pub fn package_surface(product: Product) -> PackageSurface {
+    match product {
+        // The Deck's card, and the round panel's by default: BFM100 has no
+        // upgrade design of its own yet, and while a corner card on a circle is
+        // wrong by construction, keeping today's is the change-nothing option.
+        Product::Bmc100 | Product::Bfm100 => PackageSurface::Card(PACKAGE_SURFACE_SIZE),
+        Product::Bmm101 => PackageSurface::Card(PACKAGE_SURFACE_SIZE_BMM101),
+        // 320x240 leaves no room for a card that still reads: the Deck card's
+        // own content needs most of that width.
+        Product::Bmm100 => PackageSurface::Fullscreen,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpgradeView {
@@ -104,7 +146,7 @@ impl UpgradeRenderState {
 /// Render an injected snapshot view with retained layout and registered icons.
 pub fn render_upgrade(
     renderer: &mut dyn Renderer,
-    size: (u32, u32),
+    surface: Surface,
     state: &mut UpgradeRenderState,
     view: &UpgradeView,
     now: Instant,
@@ -115,7 +157,8 @@ pub fn render_upgrade(
     let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
         .unwrap_or(u32::MAX);
     state.last_render = now;
-    let tree = ui::build_upgrade_tree(view, size, icons);
+    let size = (surface.width, surface.height);
+    let tree = ui::build_upgrade_tree(view, surface, icons);
     if let Err(err) = state.tree.render(&tree, size, delta_ms, renderer) {
         tracing::error!("upgrade tree render failed: {err}");
     }
@@ -123,6 +166,7 @@ pub fn render_upgrade(
 
 struct OverlayState {
     kind: UpgradeKind,
+    placement: Placement,
     view: Option<UpgradeView>,
     terminal_deadline: Option<Instant>,
     dirty: bool,
@@ -130,9 +174,10 @@ struct OverlayState {
 }
 
 impl OverlayState {
-    fn new(kind: UpgradeKind) -> Self {
+    fn new(kind: UpgradeKind, placement: Placement) -> Self {
         Self {
             kind,
+            placement,
             view: None,
             terminal_deadline: None,
             dirty: false,
@@ -197,9 +242,14 @@ impl OverlayState {
 
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
         if let Some(view) = self.view {
+            let surface = Surface {
+                width: size.0,
+                height: size.1,
+                placement: self.placement,
+            };
             render_upgrade(
                 renderer,
-                size,
+                surface,
                 &mut self.render_state,
                 &view,
                 Instant::now(),
@@ -214,20 +264,34 @@ impl OverlayState {
 )]
 pub struct UpgradeOverlay {
     state: OverlayState,
+    /// Only the package surface reads it, and only for its placement: the
+    /// firmware surface is fullscreen on every product.
+    package_surface: PackageSurface,
 }
 
 impl UpgradeOverlay {
     #[must_use]
     pub fn firmware() -> Self {
         Self {
-            state: OverlayState::new(UpgradeKind::Firmware),
+            state: OverlayState::new(UpgradeKind::Firmware, Placement::Fullscreen),
+            package_surface: PackageSurface::Fullscreen,
         }
     }
 
     #[must_use]
     pub fn packages() -> Self {
+        let product = BmcInfo::load()
+            .map(|info| info.bmc_platform.product())
+            .expect("BUG: platform detection must succeed for the upgrade overlay");
+        Self::packages_for_product(product)
+    }
+
+    #[must_use]
+    pub fn packages_for_product(product: Product) -> Self {
+        let package_surface = package_surface(product);
         Self {
-            state: OverlayState::new(UpgradeKind::Packages),
+            state: OverlayState::new(UpgradeKind::Packages, package_surface.placement()),
+            package_surface,
         }
     }
 }
@@ -236,10 +300,23 @@ impl SystemOverlay for UpgradeOverlay {
     fn layer_config(&self) -> LayerConfig {
         match self.state.kind {
             UpgradeKind::Firmware => LayerConfig::fullscreen("bmc-overlay-upgrade-firmware"),
+            // Passive on either placement: `Bottom` with no input region, so the
+            // widget below stays visible where there is room for it and
+            // interactive either way.
             UpgradeKind::Packages => LayerConfig {
                 layer: Layer::Bottom,
-                anchor: Anchor::Bottom | Anchor::Right,
-                size: PACKAGE_SURFACE_SIZE,
+                anchor: match self.package_surface {
+                    PackageSurface::Card(_) => Anchor::Bottom | Anchor::Right,
+                    PackageSurface::Fullscreen => {
+                        Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right
+                    }
+                },
+                // A fullscreen surface asks for (0, 0) and takes what the
+                // compositor configures.
+                size: match self.package_surface {
+                    PackageSurface::Card(size) => size,
+                    PackageSurface::Fullscreen => (0, 0),
+                },
                 margin_top: 0,
                 margin_right: 0,
                 margin_bottom: 0,
@@ -288,7 +365,7 @@ mod tests {
     #[test]
     fn overlays_ignore_the_other_upgrade_kind() {
         let now = Instant::now();
-        let mut firmware = OverlayState::new(UpgradeKind::Firmware);
+        let mut firmware = OverlayState::new(UpgradeKind::Firmware, Placement::Fullscreen);
         firmware.receive(running(UpgradeKind::Packages), now);
         assert!(!firmware.tick(now).visible);
     }
@@ -296,7 +373,7 @@ mod tests {
     #[test]
     fn a_new_opposite_kind_clears_the_previous_terminal_view() {
         let now = Instant::now();
-        let mut package = OverlayState::new(UpgradeKind::Packages);
+        let mut package = OverlayState::new(UpgradeKind::Packages, Placement::Card);
         package.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -315,7 +392,7 @@ mod tests {
     #[test]
     fn equal_snapshots_do_not_queue_another_render() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
         let snapshot = running(UpgradeKind::Packages);
         state.receive(snapshot, now);
         assert!(state.tick(now).wants_render);
@@ -326,7 +403,7 @@ mod tests {
     #[test]
     fn terminal_countdown_updates_do_not_redraw_unchanged_content() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
         state.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -355,7 +432,7 @@ mod tests {
     #[test]
     fn active_progress_schedules_animation_frames() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
         state.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -375,7 +452,7 @@ mod tests {
     #[test]
     fn terminal_deadline_hides_the_overlay() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
         state.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -392,7 +469,7 @@ mod tests {
     #[test]
     fn failure_replaces_running_progress_immediately() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Firmware);
+        let mut state = OverlayState::new(UpgradeKind::Firmware, Placement::Fullscreen);
         state.receive(running(UpgradeKind::Firmware), now);
         assert!(state.tick(now).wants_render);
 
@@ -469,7 +546,7 @@ mod tests {
         assert_eq!(firmware.namespace, "bmc-overlay-upgrade-firmware");
         assert_eq!(firmware.input, InputRegion::Full);
 
-        let packages = UpgradeOverlay::packages().layer_config();
+        let packages = UpgradeOverlay::packages_for_product(Product::Bmc100).layer_config();
         assert_eq!(packages.layer, Layer::Bottom);
         assert_eq!(packages.anchor, Anchor::Bottom | Anchor::Right);
         assert_eq!(packages.size, PACKAGE_SURFACE_SIZE);
@@ -485,5 +562,32 @@ mod tests {
         assert_eq!(packages.exclusive_zone, 0);
         assert_eq!(packages.namespace, "bmc-overlay-upgrade-packages");
         assert_eq!(packages.input, InputRegion::None);
+    }
+
+    /// The BMM101 card is smaller than the Deck's; the BMM100 has no room for a
+    /// card at all and takes the display. Neither may pick up an input region on
+    /// the way: a package upgrade stays passive on every product.
+    #[test]
+    fn the_package_surface_follows_the_product_without_gaining_input() {
+        let bmm101 = UpgradeOverlay::packages_for_product(Product::Bmm101).layer_config();
+        assert_eq!(bmm101.anchor, Anchor::Bottom | Anchor::Right);
+        assert_eq!(bmm101.size, PACKAGE_SURFACE_SIZE_BMM101);
+
+        let bmm100 = UpgradeOverlay::packages_for_product(Product::Bmm100).layer_config();
+        assert_eq!(
+            bmm100.anchor,
+            Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right
+        );
+        assert_eq!(
+            bmm100.size,
+            (0, 0),
+            "a fullscreen surface takes the size the compositor configures"
+        );
+
+        for config in [&bmm101, &bmm100] {
+            assert_eq!(config.layer, Layer::Bottom);
+            assert_eq!(config.input, InputRegion::None);
+            assert_eq!(config.exclusive_zone, 0);
+        }
     }
 }

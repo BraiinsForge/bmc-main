@@ -36,10 +36,13 @@ use bmc_overlay_alarm::{AlarmRenderState, AlarmView, render_alarm};
 use bmc_overlay_device_info::{DeviceInfoRenderState, DeviceInfoView, render_device_info};
 use bmc_overlay_offline::{OfflineView, render_offline};
 use bmc_overlay_settings_tray::{
-    NightModeView, SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView,
-    render_settings_tray,
+    NightModeView, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
 };
-use bmc_overlay_upgrade::{PACKAGE_SURFACE_SIZE, UpgradeRenderState, UpgradeView, render_upgrade};
+use bmc_overlay_upgrade::{
+    PackageSurface, Placement, Surface, UpgradeRenderState, UpgradeView, package_surface,
+    render_upgrade,
+};
+use bmc_platform::{HardwareProfile, Product};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{AccessPoint, DownloadProgress, UpgradeKind, UpgradePhase};
@@ -59,7 +62,7 @@ fn draw_backdrop(r: &mut dyn Renderer, w: f32, h: f32, flat: bool) {
 }
 
 fn tray_view(
-    product: SettingsTrayProduct,
+    product: Product,
     hostname: &str,
     ip: &str,
     ssid: &str,
@@ -82,7 +85,7 @@ fn tray_view(
 
 fn bmc100_tray_view() -> SettingsTrayView {
     tray_view(
-        SettingsTrayProduct::Bmc100,
+        Product::Bmc100,
         "braiins-deck",
         "192.168.1.42",
         "Braiins-WiFi",
@@ -92,7 +95,7 @@ fn bmc100_tray_view() -> SettingsTrayView {
 
 fn bmm101_tray_view() -> SettingsTrayView {
     tray_view(
-        SettingsTrayProduct::Bmm101,
+        Product::Bmm101,
         "braiins-mini",
         "10.0.0.42",
         "Workshop-WiFi",
@@ -102,7 +105,7 @@ fn bmm101_tray_view() -> SettingsTrayView {
 
 fn bmm100_tray_view() -> SettingsTrayView {
     tray_view(
-        SettingsTrayProduct::Bmm100,
+        Product::Bmm100,
         "braiins-micro",
         "10.0.0.99",
         "Garage-WiFi",
@@ -112,7 +115,7 @@ fn bmm100_tray_view() -> SettingsTrayView {
 
 fn bfm100_tray_view() -> SettingsTrayView {
     tray_view(
-        SettingsTrayProduct::Bfm100,
+        Product::Bfm100,
         "braiins-frame",
         "10.0.0.7",
         "Studio-WiFi",
@@ -230,6 +233,7 @@ fn alarm_cell(
 
 /// One retained state per stage: every phase is drawn each frame,
 /// and a shared state would make each draw continue the previous phase's animation.
+/// The per-product scenes share this set — only one of them draws at a time.
 macro_rules! upgrade_render_states {
     ($($state:ident),+ $(,)?) => {
         thread_local! {
@@ -269,11 +273,17 @@ fn upgrade_cell(
     view: UpgradeView,
     state_key: &'static LocalKey<RefCell<UpgradeRenderState>>,
     flat: bool,
+    placement: Placement,
 ) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
+        let surface = Surface {
+            width: w as u32,
+            height: h as u32,
+            placement,
+        };
         state_key.with_borrow_mut(|state| {
-            render_upgrade(r, (w as u32, h as u32), state, &view, Instant::now());
+            render_upgrade(r, surface, state, &view, Instant::now());
         });
         // Handed a clock of its own, so it can animate — the running phases never settle.
         true
@@ -286,17 +296,8 @@ fn upgrade_cell(
 struct Section {
     title: &'static str,
     size: (u32, u32),
+    placement: Placement,
 }
-
-const FIRMWARE: Section = Section {
-    title: "Firmware",
-    size: (DISPLAY_W, DISPLAY_H),
-};
-
-const PACKAGES: Section = Section {
-    title: "Packages",
-    size: PACKAGE_SURFACE_SIZE,
-};
 
 fn upgrade_stage(
     ctx: &mut SceneCtx,
@@ -309,7 +310,11 @@ fn upgrade_stage(
 ) {
     ui.heading(section.title);
     ui.label(phase);
-    ctx.custom_stage(ui, section.size, upgrade_cell(view, state, flat));
+    ctx.custom_stage(
+        ui,
+        section.size,
+        upgrade_cell(view, state, flat, section.placement),
+    );
 }
 
 /// What `matrix_with` measures its columns from: one entry per cell,
@@ -837,14 +842,32 @@ fn alarm(ctx: &mut SceneCtx, ui: &mut Ui) {
     );
 }
 
-#[scene]
+/// Every upgrade screen at one product's two surfaces: the firmware blocker over
+/// the whole display, and the package surface wherever that product puts it.
+/// Both come from the overlay crate, so a card size changed there shows up here.
 #[expect(
     clippy::too_many_lines,
     reason = "the two phase tables are the scene's content; naming each entry \
               once here beats hiding them behind a builder"
 )]
-fn upgrade_progress(ctx: &mut SceneCtx, ui: &mut Ui) {
+fn upgrade_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
     let flat = ctx.toggle("Flat backdrop", false);
+    let display = HardwareProfile::for_product(product).display;
+    let fullscreen = (display.logical_width, display.logical_height);
+    let firmware_surface = Section {
+        title: "Firmware",
+        size: fullscreen,
+        placement: Placement::Fullscreen,
+    };
+    let package_surface = package_surface(product);
+    let package_surface = Section {
+        title: "Packages",
+        size: match package_surface {
+            PackageSurface::Card(size) => size,
+            PackageSurface::Fullscreen => fullscreen,
+        },
+        placement: package_surface.placement(),
+    };
 
     // A download the server sized, and one it did not:
     // the second drives the indeterminate bar, which has no percentage to show.
@@ -917,13 +940,13 @@ fn upgrade_progress(ctx: &mut SceneCtx, ui: &mut Ui) {
             &FIRMWARE_FAILURE,
         ),
     ];
-    let firmware_sizes = matrix_sizes(FIRMWARE.size, firmware_phases.len());
+    let firmware_sizes = matrix_sizes(firmware_surface.size, firmware_phases.len());
     ctx.matrix_with(ui, &firmware_sizes, |ctx, ui, at| {
         let (phase, view, state) = firmware_phases[at];
         // A grid counts every widget as a column, so the caption rides with its card
         // as one block — the same reason a stage wraps itself.
         ui.vertical(|ui| {
-            upgrade_stage(ctx, ui, FIRMWARE, phase, view, state, flat);
+            upgrade_stage(ctx, ui, firmware_surface, phase, view, state, flat);
         });
     });
 
@@ -969,11 +992,56 @@ fn upgrade_progress(ctx: &mut SceneCtx, ui: &mut Ui) {
             &PACKAGE_FAILURE,
         ),
     ];
-    let package_sizes = matrix_sizes(PACKAGES.size, package_phases.len());
+    let package_sizes = matrix_sizes(package_surface.size, package_phases.len());
     ctx.matrix_with(ui, &package_sizes, |ctx, ui, at| {
         let (phase, view, state) = package_phases[at];
         ui.vertical(|ui| {
-            upgrade_stage(ctx, ui, PACKAGES, phase, view, state, flat);
+            upgrade_stage(ctx, ui, package_surface, phase, view, state, flat);
         });
     });
+}
+
+// A directory per product, each staging every screen at that display. One module
+// each, because a scene's place in the sidebar tree comes from the `scene_meta`
+// title of the module it lives in.
+mod upgrade_bmc100 {
+    use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
+    use bmc_platform::Product;
+
+    use super::upgrade_screens;
+
+    scene_meta! { title: "Overlays / Upgrade / BMC100" }
+
+    #[scene("Upgrade Progress", default)]
+    fn bmc100(ctx: &mut SceneCtx, ui: &mut Ui) {
+        upgrade_screens(ctx, ui, Product::Bmc100);
+    }
+}
+
+mod upgrade_bmm100 {
+    use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
+    use bmc_platform::Product;
+
+    use super::upgrade_screens;
+
+    scene_meta! { title: "Overlays / Upgrade / BMM100" }
+
+    #[scene("Upgrade Progress", default)]
+    fn bmm100(ctx: &mut SceneCtx, ui: &mut Ui) {
+        upgrade_screens(ctx, ui, Product::Bmm100);
+    }
+}
+
+mod upgrade_bmm101 {
+    use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
+    use bmc_platform::Product;
+
+    use super::upgrade_screens;
+
+    scene_meta! { title: "Overlays / Upgrade / BMM101" }
+
+    #[scene("Upgrade Progress", default)]
+    fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
+        upgrade_screens(ctx, ui, Product::Bmm101);
+    }
 }

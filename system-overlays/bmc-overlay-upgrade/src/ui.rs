@@ -20,8 +20,8 @@
 
 use bmc_render::colors::{BLACK, GRAY_50, GRAY_70, VIOLET_60, WHITE};
 use bmc_render::tree::{
-    DrawCommand, FontFamily, FontWeight, HostAnimationDef, PropsData, TextAlign, TextStyle,
-    TreeNode, VerticalAlign,
+    AutoFit, DrawCommand, FontFamily, FontWeight, HostAnimationDef, PropsData, TextAlign,
+    TextStyle, TreeNode, VerticalAlign,
 };
 use bmc_system_overlay::{DownloadProgress, UpgradeKind, UpgradePhase};
 use bmc_wasm_protocol::{
@@ -31,7 +31,7 @@ use bmc_wasm_protocol::{
 use crate::UpgradeView;
 use crate::icons::UpgradeIcons;
 
-const SAFETY_COPY: &str = "Keep the device plugged in and online during update";
+const SAFETY_COPY: &str = "Keep the device plugged in and online during the update";
 const ACTIVE_BAR_TRAVEL_MS: u32 = 800;
 /// Divider along the compact card's top and left edges. Both the card and the
 /// widgets behind it are black, so without it the card has no visible extent.
@@ -163,8 +163,197 @@ fn icon_for_view(view: &UpgradeView, icons: UpgradeIcons) -> Option<SvgId> {
     }
 }
 
-fn bar_height(compact: bool) -> f32 {
-    if compact { 5.0 } else { 7.0 }
+/// How the surface sits on the display. The two edge dividers key off this
+/// rather than off the upgrade kind: they give a card an extent against the
+/// black widgets it overlaps, and a fullscreen surface has nothing beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    Fullscreen,
+    Card,
+}
+
+/// The surface a tree is built for: its logical size and how it sits on the
+/// display. Which upgrade it presents comes from the view.
+#[derive(Debug, Clone, Copy)]
+pub struct Surface {
+    pub width: u32,
+    pub height: u32,
+    pub placement: Placement,
+}
+
+/// Per-surface sizing, selected by placement and width in [`tier_for`].
+/// Type and icons do not scale linearly with the display, so each tier states
+/// its own numbers rather than deriving them from a factor.
+#[derive(Debug, Clone, Copy)]
+struct Tier {
+    icon: f32,
+    icon_top_pad: f32,
+    icon_bottom_pad: f32,
+    title: u32,
+    body: u32,
+    gap: f32,
+    /// Floor for the content block's top edge, and the card's side padding.
+    inset: f32,
+    bar_height: f32,
+    /// Progress-bar inset from both surface edges.
+    bar_inset: f32,
+    /// Rightward nudge of the determinate caption, which the stable Deck screen
+    /// ships with. It predates this table and no reason for it is recorded, so
+    /// the narrower tiers do not repeat it.
+    caption_nudge: f32,
+    /// Whether the determinate screen draws the transferred/total byte counts.
+    /// The narrow card has no line to spare for them.
+    transfer_line: bool,
+    /// Whether the determinate caption drops its subject noun. It is the longest
+    /// string either surface draws — a phase label, a percentage and an ellipsis
+    /// — so the narrow card asks for [`UpgradePhase::short_label`] instead.
+    short_percent_caption: bool,
+    /// Lines the safety copy is allowed to take. Above one it is drawn as a
+    /// wrapped box instead of a single line — see [`safety_draw`].
+    safety_lines: f32,
+}
+
+/// The Deck's fullscreen firmware surface (1280x480).
+const FULL_LARGE: Tier = Tier {
+    icon: 80.0,
+    icon_top_pad: 40.0,
+    icon_bottom_pad: 15.0,
+    title: 24,
+    body: 18,
+    gap: 15.0,
+    inset: 0.0,
+    bar_height: 7.0,
+    bar_inset: 128.0,
+    caption_nudge: 10.0,
+    transfer_line: true,
+    short_percent_caption: false,
+    safety_lines: 1.0,
+};
+
+/// The BMM101's fullscreen surface (480x320). The Deck's type and icon carry
+/// over; only the bar, sized as a fraction of the display, comes in.
+const FULL_MEDIUM: Tier = Tier {
+    bar_inset: 48.0,
+    caption_nudge: 0.0,
+    ..FULL_LARGE
+};
+
+/// The Deck's package card (384x192).
+const CARD_LARGE: Tier = Tier {
+    icon: 40.0,
+    icon_top_pad: 0.0,
+    icon_bottom_pad: 0.0,
+    title: 20,
+    body: 16,
+    gap: 10.0,
+    inset: 16.0,
+    bar_height: 5.0,
+    bar_inset: 16.0,
+    caption_nudge: 0.0,
+    transfer_line: true,
+    short_percent_caption: false,
+    safety_lines: 1.0,
+};
+
+/// The BMM101's package card (240x120). The Deck card's phase labels reach the
+/// edges of this one, so the type steps down and the two longest strings give
+/// way: the byte counts go, and the determinate caption loses its noun.
+const CARD_SMALL: Tier = Tier {
+    icon: 36.0,
+    title: 18,
+    body: 14,
+    gap: 8.0,
+    inset: 12.0,
+    bar_inset: 12.0,
+    transfer_line: false,
+    short_percent_caption: true,
+    ..CARD_LARGE
+};
+
+/// The BMM100's fullscreen surface (320x240), which both kinds use: a card small
+/// enough to leave its widget visible would not hold the content. The Deck's
+/// icon and type do not fit across 320 px, and the safety copy needs two lines
+/// even after stepping down.
+const FULL_SMALL: Tier = Tier {
+    icon: 64.0,
+    icon_top_pad: 8.0,
+    icon_bottom_pad: 8.0,
+    title: 18,
+    body: 14,
+    gap: 8.0,
+    inset: 12.0,
+    bar_height: 5.0,
+    bar_inset: 24.0,
+    safety_lines: 2.0,
+    ..FULL_MEDIUM
+};
+
+/// Thresholds sit in the gaps between the surfaces that exist, so no product
+/// lands near an edge: cards are 240 and 384 wide, fullscreen surfaces 320, 480
+/// and 1280.
+fn tier_for(surface: Surface) -> Tier {
+    match surface.placement {
+        Placement::Fullscreen if surface.width >= 960 => FULL_LARGE,
+        Placement::Fullscreen if surface.width >= 400 => FULL_MEDIUM,
+        Placement::Fullscreen => FULL_SMALL,
+        Placement::Card if surface.width >= 320 => CARD_LARGE,
+        Placement::Card => CARD_SMALL,
+    }
+}
+
+/// The safety copy, on one line or wrapped into a box.
+///
+/// It is the longest string the overlay draws, and a canvas text draw is always
+/// a single unwrapped line, so a narrow display needs the paragraph path that
+/// [`DrawCommand::AutofitText`] reaches. `min_size` equal to the style size
+/// makes it wrap without shrinking.
+///
+/// The wide tiers stay on the single-line draw rather than taking the box for
+/// consistency: the two paths anchor differently — glyph centre against line
+/// box — so switching them over would move the stable copy a few pixels for no
+/// gain.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "type sizes are a couple of dozen pixels"
+)]
+fn safety_draw(tier: Tier, width: f32, center_y: f32, size: u32) -> DrawCommand {
+    if tier.safety_lines <= 1.0 {
+        return text_draw(
+            width / 2.0,
+            center_y,
+            SAFETY_COPY,
+            size,
+            GRAY_50,
+            FontWeight::REGULAR,
+        );
+    }
+    // TextStyle's own default, spelled out so the box and the layout agree.
+    let line_height = 1.4;
+    let box_height = size as f32 * line_height * tier.safety_lines;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "body type sizes are a couple of dozen pixels"
+    )]
+    let floor = size as u16;
+    DrawCommand::AutofitText {
+        x: tier.inset,
+        y: center_y - size as f32 / 2.0,
+        box_width: width - tier.inset * 2.0,
+        box_height,
+        mode: AutoFit::Shrink,
+        min_size: floor,
+        max_size: floor,
+        text: SAFETY_COPY.to_owned(),
+        style: TextStyle {
+            size,
+            color: GRAY_50,
+            weight: FontWeight::REGULAR,
+            align: TextAlign::Center,
+            line_height,
+            family: FontFamily::Sans,
+            ..TextStyle::default()
+        },
+    }
 }
 
 fn active_bar(draws: &mut Vec<DrawCommand>, x: f32, y: f32, width: f32, height: f32) {
@@ -206,17 +395,24 @@ fn active_bar(draws: &mut Vec<DrawCommand>, x: f32, y: f32, width: f32, height: 
 )]
 #[expect(
     clippy::too_many_lines,
-    reason = "flat mapping keeps the stable and compact arrangements directly comparable"
+    reason = "a flat mapping keeps every phase's arrangement directly comparable"
 )]
 #[must_use]
-pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIcons) -> TreeNode {
-    let (width, height) = (size.0 as f32, size.1 as f32);
-    let compact = matches!(view.kind(), UpgradeKind::Packages);
-    let (icon_size, title_size, body_size, gap, inset, icon_top_pad, icon_bottom_pad) = if compact {
-        (40.0, 20, 16, 10.0, 16.0, 0.0, 0.0)
-    } else {
-        (80.0, 24, 18, 15.0, 0.0, 40.0, 15.0)
-    };
+pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIcons) -> TreeNode {
+    let (width, height) = (surface.width as f32, surface.height as f32);
+    // Content follows the upgrade kind; sizing follows the surface.
+    let packages = matches!(view.kind(), UpgradeKind::Packages);
+    let tier = tier_for(surface);
+    let Tier {
+        icon: icon_size,
+        icon_top_pad,
+        icon_bottom_pad,
+        title: title_size,
+        body: body_size,
+        gap,
+        inset,
+        ..
+    } = tier;
     let mut draws = vec![DrawCommand::Rect {
         x: 0.0,
         y: 0.0,
@@ -224,7 +420,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
         h: height,
         fill: Fill::Solid(BLACK),
     }];
-    if compact {
+    if surface.placement == Placement::Card {
         draws.push(DrawCommand::Rect {
             x: 0.0,
             y: 0.0,
@@ -240,12 +436,18 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
             fill: Fill::Solid(GRAY_70),
         });
     }
-    let bar_height = bar_height(compact);
+    let bar_height = tier.bar_height;
+    let (bar_x, bar_w) = (tier.bar_inset, width - tier.bar_inset * 2.0);
     let content_height = match view {
         UpgradeView::Running {
             phase, progress, ..
         } => match progress_mode(*phase, *progress) {
             ProgressMode::Determinate(_) => {
+                let transfer = if tier.transfer_line {
+                    gap + body_size as f32
+                } else {
+                    0.0
+                };
                 icon_top_pad
                     + icon_size
                     + icon_bottom_pad
@@ -253,8 +455,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
                     + title_size as f32
                     + gap
                     + bar_height
-                    + gap
-                    + body_size as f32
+                    + transfer
             }
             ProgressMode::Indeterminate => {
                 icon_top_pad
@@ -265,10 +466,10 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
                     + gap
                     + bar_height
             }
-            ProgressMode::None if compact && phase.is_some() => {
+            ProgressMode::None if packages && phase.is_some() => {
                 icon_size + gap + title_size as f32 + gap + bar_height
             }
-            ProgressMode::None if compact => icon_size + gap + title_size as f32,
+            ProgressMode::None if packages => icon_size + gap + title_size as f32,
             ProgressMode::None => {
                 icon_top_pad
                     + icon_size
@@ -303,8 +504,14 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
             match progress_mode(*phase, *progress) {
                 ProgressMode::Determinate(fraction) => {
                     let percent = (fraction * 100.0).round();
+                    // Determinate progress only ever runs under a download
+                    // phase, so a phase is always in hand for the short form.
+                    let label = match (tier.short_percent_caption, phase) {
+                        (true, Some(phase)) => phase.short_label().to_owned(),
+                        (true, None) | (false, _) => label,
+                    };
                     draws.push(text_draw(
-                        width / 2.0 + if compact { 0.0 } else { 10.0 },
+                        width / 2.0 + tier.caption_nudge,
                         icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 / 2.0,
                         format!("{label} {percent:.0}%..."),
                         title_size,
@@ -313,12 +520,6 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
                     ));
                     let bar_y =
                         icon_top + icon_size + icon_bottom_pad + gap + title_size as f32 + gap;
-                    let bar_w = if compact {
-                        width - inset * 2.0
-                    } else {
-                        width * 0.8
-                    };
-                    let bar_x = (width - bar_w) / 2.0;
                     draws.push(DrawCommand::Rect {
                         x: bar_x,
                         y: bar_y,
@@ -333,7 +534,10 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
                         h: bar_height,
                         fill: Fill::Solid(VIOLET_60),
                     });
-                    if let Some(progress) = (*progress).and_then(transfer_text) {
+                    if let Some(progress) = (*progress)
+                        .filter(|_| tier.transfer_line)
+                        .and_then(transfer_text)
+                    {
                         draws.push(text_draw(
                             width / 2.0,
                             bar_y + bar_height + gap + body_size as f32 / 2.0,
@@ -356,12 +560,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
                     ));
                     let bar_y =
                         icon_top + icon_size + icon_bottom_pad + gap + label_size as f32 + gap;
-                    let bar_w = if compact {
-                        width - inset * 2.0
-                    } else {
-                        width * 0.8
-                    };
-                    active_bar(&mut draws, (width - bar_w) / 2.0, bar_y, bar_w, bar_height);
+                    active_bar(&mut draws, bar_x, bar_y, bar_w, bar_height);
                 }
                 ProgressMode::None => {
                     draws.push(text_draw(
@@ -372,12 +571,13 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
                         WHITE,
                         FontWeight::BOLD,
                     ));
-                    if compact && phase.is_some() {
+                    if packages && phase.is_some() {
                         let bar_y = icon_top + icon_size + gap + title_size as f32 + gap;
-                        active_bar(&mut draws, inset, bar_y, width - inset * 2.0, bar_height);
-                    } else if !compact {
-                        draws.push(text_draw(
-                            width / 2.0,
+                        active_bar(&mut draws, bar_x, bar_y, bar_w, bar_height);
+                    } else if !packages {
+                        draws.push(safety_draw(
+                            tier,
+                            width,
                             icon_top
                                 + icon_size
                                 + icon_bottom_pad
@@ -385,10 +585,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, size: (u32, u32), icons: UpgradeIc
                                 + title_size as f32
                                 + gap
                                 + body_size as f32 / 2.0,
-                            SAFETY_COPY,
                             body_size,
-                            GRAY_50,
-                            FontWeight::REGULAR,
                         ));
                     }
                 }
@@ -435,8 +632,29 @@ mod tests {
         }
     }
 
+    /// Draws for a view at `size`, on the placement that kind ships with:
+    /// firmware fullscreen, packages on the corner card. The cases that pair a
+    /// kind with the other placement spell the surface out instead.
     fn tree_draws(view: &UpgradeView, size: (u32, u32)) -> Vec<DrawCommand> {
-        let TreeNode::Canvas { draws, .. } = build_upgrade_tree(view, size, test_icons()) else {
+        let placement = match view.kind() {
+            UpgradeKind::Packages => Placement::Card,
+            UpgradeKind::Firmware => Placement::Fullscreen,
+            kind => panic!("BUG: unsupported upgrade kind {kind:?}"),
+        };
+        surface_draws(view, size, placement)
+    }
+
+    fn surface_draws(
+        view: &UpgradeView,
+        size: (u32, u32),
+        placement: Placement,
+    ) -> Vec<DrawCommand> {
+        let surface = Surface {
+            width: size.0,
+            height: size.1,
+            placement,
+        };
+        let TreeNode::Canvas { draws, .. } = build_upgrade_tree(view, surface, test_icons()) else {
             panic!("BUG: upgrade presentation must remain a canvas");
         };
         draws
@@ -754,6 +972,143 @@ mod tests {
                     if text == expected_title && style.color == WHITE
             ));
         }
+    }
+
+    /// The BMM101 card is the one surface where the determinate caption does not
+    /// fit: the phase noun goes, and the byte counts with it.
+    #[test]
+    fn the_narrow_card_sheds_the_phase_noun_and_the_byte_counts() {
+        let draws = surface_draws(
+            &running_view(
+                UpgradeKind::Packages,
+                Some(UpgradePhase::PackageRealizing),
+                Some(DownloadProgress {
+                    downloaded_bytes: 82_000_000,
+                    total_bytes: Some(151_000_000),
+                }),
+            ),
+            crate::PACKAGE_SURFACE_SIZE_BMM101,
+            Placement::Card,
+        );
+
+        assert!(matches!(
+            &draws[4],
+            DrawCommand::Text { text, style, .. }
+                if text == "Downloading 54%..." && style.size == 18
+        ));
+        assert!(
+            !draws.iter().any(|draw| matches!(
+                draw,
+                DrawCommand::Text { text, .. } if text.contains(" MB of ")
+            )),
+            "the byte counts have no line to sit on at 240x120"
+        );
+    }
+
+    /// The Deck card keeps both, so shedding them stays a property of the narrow
+    /// tier rather than of package upgrades.
+    #[test]
+    fn the_deck_card_keeps_the_phase_noun_and_the_byte_counts() {
+        let draws = compact_content_draws(&running_view(
+            UpgradeKind::Packages,
+            Some(UpgradePhase::PackageRealizing),
+            Some(DownloadProgress {
+                downloaded_bytes: 82_000_000,
+                total_bytes: Some(151_000_000),
+            }),
+        ));
+
+        assert!(matches!(
+            &draws[1],
+            DrawCommand::Text { text, .. } if text == "Downloading packages 54%..."
+        ));
+        assert!(draws.iter().any(|draw| matches!(
+            draw,
+            DrawCommand::Text { text, .. } if text == "82 MB of 151 MB"
+        )));
+    }
+
+    /// 320 px cannot hold the safety copy on one line at any readable size, and
+    /// a canvas text draw never wraps — so that tier alone takes the box.
+    #[test]
+    fn the_small_fullscreen_surface_wraps_the_safety_copy_into_a_box() {
+        let draws = tree_draws(
+            &running_view(
+                UpgradeKind::Firmware,
+                Some(UpgradePhase::FirmwareVerifying),
+                None,
+            ),
+            (320, 240),
+        );
+
+        assert!(matches!(
+            &draws[3],
+            DrawCommand::AutofitText {
+                x: 12.0,
+                box_width: 296.0,
+                box_height,
+                mode: AutoFit::Shrink,
+                min_size: 14,
+                max_size: 14,
+                text,
+                style,
+                ..
+            } if text == SAFETY_COPY
+                && style.size == 14
+                && (*box_height - 39.2).abs() < 0.01
+        ));
+    }
+
+    /// The Deck keeps the single-line draw: the two paths anchor differently, so
+    /// moving it onto the box would shift stable copy for nothing.
+    #[test]
+    fn the_wide_surfaces_keep_the_single_line_safety_draw() {
+        for size in [(1_280, 480), (480, 320)] {
+            let draws = tree_draws(
+                &running_view(
+                    UpgradeKind::Firmware,
+                    Some(UpgradePhase::FirmwareVerifying),
+                    None,
+                ),
+                size,
+            );
+            assert!(matches!(
+                &draws[3],
+                DrawCommand::Text { text, .. } if text == SAFETY_COPY
+            ));
+        }
+    }
+
+    /// The BMM101's fullscreen surface keeps the Deck's type and icon; only the
+    /// bar, which is a fraction of the display, comes in with the display.
+    #[test]
+    fn the_medium_fullscreen_surface_keeps_deck_type_with_its_own_bar() {
+        let draws = tree_draws(
+            &running_view(
+                UpgradeKind::Firmware,
+                Some(UpgradePhase::FirmwareDownloading),
+                Some(DownloadProgress {
+                    downloaded_bytes: 82_000_000,
+                    total_bytes: Some(151_000_000),
+                }),
+            ),
+            (480, 320),
+        );
+
+        assert!(matches!(
+            &draws[2],
+            DrawCommand::Text { x: 240.0, text, style, .. }
+                if text == "Downloading firmware 54%..." && style.size == 24
+        ));
+        assert!(matches!(
+            &draws[3],
+            DrawCommand::Rect {
+                x: 48.0,
+                w: 384.0,
+                h: 7.0,
+                ..
+            }
+        ));
     }
 
     #[test]

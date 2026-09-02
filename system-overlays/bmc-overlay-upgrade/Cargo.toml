@@ -22,6 +22,7 @@ path = "src/bin/packages.rs"
 
 [dependencies]
 anyhow.workspace = true
+bmc-platform.workspace = true
 bmc-render.workspace = true
 bmc-render-macros = { path = "../../bmc-render/macros" }
 bmc-system-overlay.workspace = true

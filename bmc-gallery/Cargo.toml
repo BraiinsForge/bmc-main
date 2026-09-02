@@ -95,6 +95,8 @@ bmc-overlay-device-info = { path = "../system-overlays/bmc-overlay-device-info" 
 bmc-overlay-offline = { path = "../system-overlays/bmc-overlay-offline" }
 bmc-overlay-settings-tray = { path = "../system-overlays/bmc-overlay-settings-tray" }
 bmc-overlay-upgrade = { path = "../system-overlays/bmc-overlay-upgrade" }
+# The per-product display geometry the overlay scenes stage at.
+bmc-platform = { path = "../bmc-platform" }
 bmc-render = { path = "../bmc-render" }
 bmc-render-keyboard = { path = "../bmc-render/keyboard" }
 bmc-render-skin = { path = "../bmc-render/skin" }
@@ -137,6 +139,7 @@ ignored = [
     "bmc-overlay-offline",
     "bmc-overlay-settings-tray",
     "bmc-overlay-upgrade",
+    "bmc-platform",
     "bmc-system-overlay",
     "braiins-pool",
     "fleet-management",

@@ -687,6 +687,7 @@ dependencies = [
  "bmc-overlay-offline",
  "bmc-overlay-settings-tray",
  "bmc-overlay-upgrade",
+ "bmc-platform",
  "bmc-render",
  "bmc-render-keyboard",
  "bmc-render-skin",
@@ -796,6 +797,7 @@ name = "bmc-overlay-upgrade"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-platform",
  "bmc-render",
  "bmc-render-macros",
  "bmc-system-overlay",
