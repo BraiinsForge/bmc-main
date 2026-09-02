@@ -1,0 +1,23 @@
+[fixtures.bmm101-full-price-up]
+path = "fixtures/bmm101-full-price-up.jsonl.gz"
+targets = ["bmm101:full"]
+
+[fixtures.bmm100-full-price-up]
+path = "fixtures/bmm100-full-price-up.jsonl.gz"
+targets = ["bmm100:full"]
+
+[fixtures.bmc100-small-price-up]
+path = "fixtures/bmc100-small-price-up.jsonl.gz"
+targets = ["bmc100:small"]
+
+[fixtures.bfm100-full-price-up]
+path = "fixtures/bfm100-full-price-up.jsonl.gz"
+targets = ["bfm100:full"]
+
+[fixtures.bmm101-full-price-down]
+path = "fixtures/bmm101-full-price-down.jsonl.gz"
+targets = ["bmm101:full"]
+
+[fixtures.bmm101-full-no-history]
+path = "fixtures/bmm101-full-no-history.jsonl.gz"
+targets = ["bmm101:full"]
