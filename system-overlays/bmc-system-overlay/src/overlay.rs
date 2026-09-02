@@ -272,6 +272,7 @@ pub enum DeviceState {
 pub enum SetupStep {
     Idle,
     ConnectingToWifi,
+    SwitchingUplink,
     WifiConnectionSuccess,
     WifiConnectionFailed,
     WifiReconfigSuccess,

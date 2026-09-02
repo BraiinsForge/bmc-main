@@ -31,6 +31,7 @@ mod ui;
 
 pub use ui::{DeviceInfoRenderState, DeviceInfoView, render_device_info};
 
+use bmc_platform::BmcInfo;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
@@ -102,6 +103,8 @@ enum Screen {
     /// Lifecycle unknown yet — stay unmapped rather than guess a flow.
     Hidden,
     SetupStart,
+    /// The setup AP is being torn down and the device continues over its wired uplink.
+    SetupSwitching,
     SetupConnecting,
     /// `to_scenes` distinguishes the reconfiguration success (straight back to scenes)
     /// from first-boot success (on to the setup connect-info).
@@ -118,9 +121,7 @@ enum Screen {
     SetupCompleted {
         since: Instant,
     },
-    SetupError {
-        since: Instant,
-    },
+    SetupError,
     /// Setup failure the overlay cannot resolve.
     /// `restarting` says whether bmc resolves it by restarting the device.
     /// A restart is worth waiting out, so that variant holds.
@@ -162,11 +163,12 @@ impl Screen {
         matches!(
             self,
             Screen::SetupStart
+                | Screen::SetupSwitching
                 | Screen::SetupConnecting
                 | Screen::SetupConnected { .. }
                 | Screen::SetupConnectInfo { .. }
                 | Screen::SetupCompleted { .. }
-                | Screen::SetupError { .. }
+                | Screen::SetupError
                 | Screen::SetupFatal {
                     restarting: true,
                     ..
@@ -183,6 +185,15 @@ impl Screen {
 /// screen and whether it changed.
 fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) -> (Screen, bool) {
     let next = match screen {
+        Screen::SetupSwitching => {
+            // Left by the lifecycle, not a timer: the switchover is done once
+            // the device has advanced past the setup AP.
+            if mode == Mode::SetupPending {
+                Screen::SetupConnecting
+            } else {
+                screen
+            }
+        }
         Screen::SetupConnecting => {
             // Only a SetupPending boot self-advances on the address: in AP
             // mode the join outcome arrives as an explicit setup event.
@@ -206,13 +217,6 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
         Screen::SetupCompleted { since } => {
             if now.duration_since(since) >= HOLD {
                 Screen::Done
-            } else {
-                screen
-            }
-        }
-        Screen::SetupError { since } => {
-            if now.duration_since(since) >= HOLD {
-                Screen::SetupStart
             } else {
                 screen
             }
@@ -261,7 +265,11 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
         } if mode.has_fallback() && now.duration_since(since) >= FATAL_SCREEN_TIMEOUT => {
             Screen::Done
         }
-        Screen::Hidden | Screen::SetupStart | Screen::SetupFatal { .. } | Screen::Done => screen,
+        Screen::Hidden
+        | Screen::SetupStart
+        | Screen::SetupError
+        | Screen::SetupFatal { .. }
+        | Screen::Done => screen,
     };
     let changed = next != screen;
     (next, changed)
@@ -287,10 +295,11 @@ enum NextWake {
 /// `None` when only external events can move it.
 fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
     match screen {
-        Screen::SetupConnecting => (mode == Mode::SetupPending).then_some(NextWake::Poll),
+        Screen::SetupConnecting | Screen::SetupSwitching => {
+            (mode == Mode::SetupPending).then_some(NextWake::Poll)
+        }
         Screen::SetupConnected { since, .. }
         | Screen::SetupCompleted { since }
-        | Screen::SetupError { since }
         | Screen::OpUpgraded { since } => Some(NextWake::At(since + HOLD)),
         // The shown address may still change (late DHCP), so keep polling.
         Screen::SetupConnectInfo { .. }
@@ -303,7 +312,11 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
         } => mode
             .has_fallback()
             .then_some(NextWake::At(since + FATAL_SCREEN_TIMEOUT)),
-        Screen::Hidden | Screen::SetupStart | Screen::SetupFatal { .. } | Screen::Done => None,
+        Screen::Hidden
+        | Screen::SetupStart
+        | Screen::SetupError
+        | Screen::SetupFatal { .. }
+        | Screen::Done => None,
     }
 }
 
@@ -323,6 +336,11 @@ pub struct DeviceInfoOverlay {
     /// Latched "content changed" from events between ticks.
     dirty: bool,
     render_state: DeviceInfoRenderState,
+    /// Product display name the screens address the user with
+    /// ("Braiins Deck", "Braiins Mini Miner", ...).
+    device_name: &'static str,
+    /// Whether this is a mining product; picks the device artwork.
+    miner: bool,
     env: Box<dyn Env>,
 }
 
@@ -351,6 +369,14 @@ impl Default for DeviceInfoOverlay {
             snapshot_version: None,
             dirty: false,
             render_state: DeviceInfoRenderState::new(Instant::now()),
+            device_name: BmcInfo::load().map_or("Braiins Deck", |info| {
+                info.bmc_platform.product().display_name()
+            }),
+            miner: BmcInfo::load().is_ok_and(|info| {
+                bmc_platform::HardwareProfile::for_product(info.bmc_platform.product())
+                    .capabilities()
+                    .mining_supported
+            }),
             env: Box::new(OsEnv),
         }
     }
@@ -390,6 +416,7 @@ impl DeviceInfoOverlay {
             Screen::SetupStart => DeviceInfoView::SetupStart {
                 ap: self.ap.clone(),
             },
+            Screen::SetupSwitching => DeviceInfoView::TurningApOff,
             Screen::SetupConnecting => DeviceInfoView::SetupConnecting {
                 ssid: self.setup_ssid(),
             },
@@ -401,7 +428,7 @@ impl DeviceInfoOverlay {
                 ssid: self.setup_ssid(),
             },
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
-            Screen::SetupError { .. } => DeviceInfoView::SetupError,
+            Screen::SetupError => DeviceInfoView::SetupError,
             Screen::SetupFatal { restarting, .. } => DeviceInfoView::SetupFatal {
                 restarting,
                 dismissible: self.fatal_dismissible(),
@@ -473,7 +500,12 @@ impl SystemOverlay for DeviceInfoOverlay {
                 }
             }
             Mode::SetupPending => {
-                if !self.screen.setup_in_progress() {
+                // The AP and switchover screens are stale once the lifecycle
+                // has advanced, so both move to the connect flow, which fills
+                // in the uplink address.
+                if matches!(self.screen, Screen::SetupStart | Screen::SetupSwitching)
+                    || !self.screen.setup_in_progress()
+                {
                     self.screen = Screen::SetupConnecting;
                 }
             }
@@ -502,6 +534,7 @@ impl SystemOverlay for DeviceInfoOverlay {
                 self.target_ssid = Some(wifi_ssid.to_owned());
                 Screen::SetupConnecting
             }
+            SetupStep::SwitchingUplink => Screen::SetupSwitching,
             SetupStep::WifiConnectionSuccess => Screen::SetupConnected {
                 since: now,
                 to_scenes: false,
@@ -510,7 +543,7 @@ impl SystemOverlay for DeviceInfoOverlay {
                 since: now,
                 to_scenes: true,
             },
-            SetupStep::WifiConnectionFailed => Screen::SetupError { since: now },
+            SetupStep::WifiConnectionFailed => Screen::SetupError,
             SetupStep::DeviceSetupSuccess => Screen::SetupCompleted { since: now },
             SetupStep::UnexpectedError { restarting } => Screen::SetupFatal {
                 since: now,
@@ -522,6 +555,9 @@ impl SystemOverlay for DeviceInfoOverlay {
 
     fn on_access_point(&mut self, ap: Option<&AccessPoint>) {
         self.ap = ap.cloned();
+        if self.ap.is_some() && self.screen == Screen::SetupError {
+            self.screen = Screen::SetupStart;
+        }
         self.dirty = true;
     }
 
@@ -592,7 +628,14 @@ impl SystemOverlay for DeviceInfoOverlay {
 
     fn render(&mut self, r: &mut dyn Renderer, size: (u32, u32)) {
         let view = self.view();
-        render_device_info(r, size, &mut self.render_state, &view);
+        render_device_info(
+            r,
+            size,
+            &mut self.render_state,
+            &view,
+            self.device_name,
+            self.miner,
+        );
     }
 
     fn on_touch(&mut self, event: TouchEvent) {
@@ -849,6 +892,44 @@ mod tests {
     }
 
     #[test]
+    fn skipping_wifi_shows_the_switchover_until_the_lifecycle_advances() {
+        // Ethernet skip: the switching event raises the switchover screen the
+        // moment the user skips, and only the lifecycle advance moves it on.
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        assert_eq!(overlay.screen, Screen::SetupStart);
+
+        overlay.on_setup_progress(SetupStep::SwitchingUplink, "");
+        assert_eq!(overlay.screen, Screen::SetupSwitching);
+        assert_eq!(overlay.view(), DeviceInfoView::TurningApOff);
+
+        // No timer moves it: the teardown can take as long as it takes.
+        let _ = overlay.tick(t0() + HOLD + HOLD);
+        assert_eq!(overlay.screen, Screen::SetupSwitching);
+
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        let _ = overlay.tick(t0());
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo {
+                ip: Some(Ipv4Addr::new(10, 0, 0, 5))
+            }
+        );
+    }
+
+    #[test]
+    fn skipping_wifi_without_the_event_still_leaves_the_ap_screen() {
+        // A lifecycle advance with no setup event (e.g. an overlay restarted
+        // mid-teardown that missed the replay) must still leave the stale AP
+        // screen for the connect flow.
+        let mut overlay = DeviceInfoOverlay::default();
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        assert_eq!(overlay.screen, Screen::SetupStart);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        assert_eq!(overlay.screen, Screen::SetupConnecting);
+    }
+
+    #[test]
     fn setup_pending_advances_to_connect_info_on_ip() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
         overlay.on_device_state(DeviceState::SetupPending, false);
@@ -862,13 +943,23 @@ mod tests {
     }
 
     #[test]
-    fn connection_failure_returns_to_setup_start() {
+    fn connection_failure_returns_to_setup_start_once_the_ap_is_back() {
         let mut overlay = overlay_with_ip(None);
         overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
-        let start = t0();
-        let _ = overlay.tick(start + HOLD);
-        assert!(matches!(overlay.screen, Screen::SetupStart));
+
+        let _ = overlay.tick(t0() + HOLD + HOLD);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupError,
+            "no timer moves the failure screen; the AP may still be down"
+        );
+
+        overlay.on_access_point(Some(&AccessPoint {
+            ssid: "Deck setup".to_owned(),
+            setup_url: "http://10.0.0.21/".to_owned(),
+        }));
+        assert_eq!(overlay.screen, Screen::SetupStart);
     }
 
     #[test]

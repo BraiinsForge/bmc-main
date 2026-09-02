@@ -35,6 +35,8 @@ const WIFI_ERROR: Svg = include_svg!("assets/wifi_error.svg");
 const SUCCESS: Svg = include_svg!("assets/success.svg");
 const REFRESH: Svg = include_svg!("assets/refresh.svg");
 const DESKTOP_CLOCK: Svg = include_svg!("assets/desktop_clock.svg");
+/// Miner device outline (BMM101), shown where the Deck screens show the clock.
+const MINER: Svg = include_svg!("assets/miner.svg");
 /// Carried over from the upgrade overlay rather than the legacy init-setup set,
 /// which has no icon for a failure that is not about WiFi.
 const ERROR: Svg = include_svg!("assets/error.svg");
@@ -60,6 +62,7 @@ pub struct DeviceInfoIcons {
     pub success: Icon,
     pub refresh: Icon,
     pub desktop_clock: Icon,
+    pub miner: Icon,
     pub error: Icon,
     pub close: Icon,
     pub swipe_down: Icon,
@@ -84,6 +87,7 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> DeviceInfoIcons {
         success: reg(&SUCCESS),
         refresh: reg(&REFRESH),
         desktop_clock: reg(&DESKTOP_CLOCK),
+        miner: reg(&MINER),
         error: reg(&ERROR),
         close: reg(&CLOSE),
         swipe_down: reg(&SWIPE_DOWN),

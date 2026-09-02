@@ -1108,6 +1108,7 @@ fn setup_step_from_wire(state: WireSetupState) -> Option<crate::overlay::SetupSt
     match state {
         WireSetupState::Idle => Some(crate::overlay::SetupStep::Idle),
         WireSetupState::ConnectingToWifi => Some(crate::overlay::SetupStep::ConnectingToWifi),
+        WireSetupState::SwitchingUplink => Some(crate::overlay::SetupStep::SwitchingUplink),
         WireSetupState::WifiConnectionSuccess => {
             Some(crate::overlay::SetupStep::WifiConnectionSuccess)
         }
@@ -1162,8 +1163,10 @@ impl Dispatch<DeckDeviceInfoV1, ()> for State {
                 }
             }
             deck_device_info_v1::Event::AccessPoint { ssid, setup_url } => {
-                let ap =
-                    (!ssid.is_empty()).then_some(crate::overlay::AccessPoint { ssid, setup_url });
+                // An empty SSID with a URL means setup over a wired uplink:
+                // there is no AP to join, only the address to open.
+                let ap = (!ssid.is_empty() || !setup_url.is_empty())
+                    .then_some(crate::overlay::AccessPoint { ssid, setup_url });
                 state.pending_access_point = Some(ap);
             }
             deck_device_info_v1::Event::ReportIp => state.pending_report_ip = true,

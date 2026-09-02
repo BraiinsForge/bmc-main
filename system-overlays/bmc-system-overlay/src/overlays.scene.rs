@@ -163,7 +163,7 @@ fn device_info_cell(
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
         state_key.with_borrow_mut(|state| {
-            render_device_info(r, (w as u32, h as u32), state, &view);
+            render_device_info(r, (w as u32, h as u32), state, &view, "Braiins Deck", false);
         });
         // Still, for the same reason as the offline card: a view and nothing else.
         false
