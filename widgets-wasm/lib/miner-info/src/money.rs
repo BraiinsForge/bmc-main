@@ -69,27 +69,6 @@ impl Money {
     }
 }
 
-/// Mining revenue density in money: what one terahash per second earns in a
-/// day. The fiat twin of [`bmc_wasm_sdk::units::Hashvalue`], which is a real
-/// quantity because satoshis per bitcoin is a constant.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Hashprice {
-    pub per_terahash_day: Money,
-}
-
-impl Hashprice {
-    /// Denominator appended when rendered; the currency symbol leads the value,
-    /// so it is not part of this.
-    pub const UNIT: &'static str = "TH/Day";
-
-    #[must_use]
-    pub const fn new(amount: f64, currency: Currency) -> Self {
-        Self {
-            per_terahash_day: Money::new(amount, currency),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

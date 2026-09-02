@@ -20,14 +20,10 @@
 
 use core::time::Duration;
 
-use bmc_wasm_sdk::{
-    BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
-};
-// Re-exported so a caller building a `Constraints` does not need a `mining`
-// dependency of its own just to name the type inside it.
+use bmc_wasm_sdk::{ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature};
 pub use mining::gauge::TargetRange;
 
-pub use crate::money::{Currency, Hashprice, Money};
+pub use crate::money::{Currency, Money};
 
 pub use crate::availability::Availability;
 
@@ -47,13 +43,10 @@ pub struct MinerData {
 }
 
 // Tuner min/default/max targets that anchor the gauge sweep.
-// Each is `Some` only when the endpoint reports all three of its leaves.
-// The faces render a single hashrate ring, so `power` is parsed
-// for parser parity but unused here.
+// `Some` only when the endpoint reports all three of its leaves.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Constraints {
     pub hashrate: Option<TargetRange>,
-    pub power: Option<TargetRange>,
 }
 
 /// Board and chip temperature, the pair the miner reports
@@ -71,7 +64,6 @@ pub struct PublicData {
     pub prev_diff_adjust: Availability<Ratio>,
     pub est_diff_adjust: Availability<Ratio>,
     pub epoch_progress: Availability<Ratio>,
-    pub avg_fee: Availability<BitcoinAmount>,
     pub avg_fee_share: Availability<Ratio>,
     pub block_height: Availability<u64>,
     pub hashvalue: Availability<Hashvalue>,

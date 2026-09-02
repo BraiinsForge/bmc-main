@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{BitcoinAmount, Hashvalue, Ratio, ufmt};
+use bmc_wasm_sdk::{Hashvalue, Ratio, ufmt};
 
 use crate::api::JsonLookup;
 use crate::model::{Availability, Currency, Money, PublicData};
@@ -57,9 +57,6 @@ pub(crate) fn parse_difficulty_stats(json: &impl JsonLookup, data: &mut PublicDa
 }
 
 pub(crate) fn parse_hashrate_stats(json: &impl JsonLookup, data: &mut PublicData) {
-    if let Some(avg_fee) = json.f64("/avg_fees_per_block") {
-        data.avg_fee = Availability::Available(BitcoinAmount::from_bitcoin(avg_fee));
-    }
     // Quoted as a percent, unlike the adjustment fields.
     if let Some(fee_percent) = json.f64("/fees_percent") {
         data.avg_fee_share = Availability::Available(Ratio::from_percent(fee_percent));
@@ -143,7 +140,6 @@ pub(crate) fn reset_difficulty_stats(data: &mut PublicData) {
 }
 
 pub(crate) fn reset_hashrate_stats(data: &mut PublicData) {
-    data.avg_fee = Availability::Unavailable;
     data.avg_fee_share = Availability::Unavailable;
     data.hashvalue = Availability::Unavailable;
 }
@@ -276,14 +272,12 @@ mod tests {
     #[test]
     fn reset_hashrate_stats_clears_only_its_own_fields() {
         let mut data = PublicData {
-            avg_fee: Availability::Available(BitcoinAmount::from_bitcoin(0.125)),
             avg_fee_share: Availability::Available(Ratio::from_percent(1.4)),
             hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(5.02)),
             btc_price: Availability::Available(Money::new(104_250.0, Currency::Usd)),
             ..PublicData::default()
         };
         reset_hashrate_stats(&mut data);
-        assert_eq!(data.avg_fee, Availability::Unavailable);
         assert_eq!(data.avg_fee_share, Availability::Unavailable);
         assert_eq!(data.hashvalue, Availability::Unavailable);
         assert!(matches!(data.btc_price, Availability::Available(_)));

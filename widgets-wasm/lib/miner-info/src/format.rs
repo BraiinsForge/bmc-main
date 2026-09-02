@@ -20,7 +20,7 @@
 
 use core::time::Duration;
 
-use bmc_wasm_sdk::{BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio};
+use bmc_wasm_sdk::{ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio};
 
 use crate::model::{Availability, Money, TemperatureRange};
 
@@ -42,14 +42,6 @@ pub struct Rendered {
 impl From<String> for Rendered {
     fn from(value: String) -> Self {
         Self { value, unit: None }
-    }
-}
-
-impl Rendered {
-    #[must_use]
-    pub fn with_unit(mut self, unit: &'static str) -> Self {
-        self.unit = Some(unit);
-        self
     }
 }
 
@@ -91,13 +83,6 @@ impl Measured for Ratio {
     const UNIT: &'static str = Self::UNIT;
     fn magnitude(self) -> f64 {
         self.as_percent()
-    }
-}
-
-impl Measured for BitcoinAmount {
-    const UNIT: &'static str = Self::UNIT;
-    fn magnitude(self) -> f64 {
-        self.as_bitcoin()
     }
 }
 

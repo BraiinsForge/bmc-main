@@ -112,8 +112,7 @@ pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) ->
         "/tuner_constraints/hashrate_target",
         "terahash_per_second",
     );
-    data.constraints.power = target_range(json, "/tuner_constraints/power_target", "watt");
-    data.constraints.hashrate.is_some() || data.constraints.power.is_some()
+    data.constraints.hashrate.is_some()
 }
 
 // Read a `{min,default,max}/<leaf>` target block, present only when all three
@@ -330,7 +329,6 @@ mod tests {
                     default: 100.0,
                     max: 120.0,
                 }),
-                power: None,
             },
         };
         reset_all(&mut data);
@@ -351,17 +349,11 @@ mod tests {
             "/tuner_constraints/hashrate_target/max/terahash_per_second",
             120.0,
         );
-        json.floats
-            .insert("/tuner_constraints/power_target/min/watt", 1_000.0);
-        json.floats
-            .insert("/tuner_constraints/power_target/default/watt", 3_000.0);
-        json.floats
-            .insert("/tuner_constraints/power_target/max/watt", 3_500.0);
         json
     }
 
     #[test]
-    fn parses_tuner_constraints_for_hashrate_and_power() {
+    fn parses_the_tuner_hashrate_target() {
         let mut data = MinerData::default();
         parse_constraints(&full_constraints_json(), &mut data);
         assert_eq!(
@@ -372,26 +364,19 @@ mod tests {
                 max: 120.0
             })
         );
-        assert_eq!(
-            data.constraints.power,
-            Some(TargetRange {
-                min: 1_000.0,
-                default: 3_000.0,
-                max: 3_500.0
-            })
-        );
     }
 
     #[test]
     fn constraint_target_is_absent_when_a_leaf_is_missing() {
         let mut json = full_constraints_json();
-        // Drop one power leaf: power becomes None, hashrate stays whole.
         json.floats
-            .remove("/tuner_constraints/power_target/max/watt");
+            .remove("/tuner_constraints/hashrate_target/max/terahash_per_second");
         let mut data = MinerData::default();
-        parse_constraints(&json, &mut data);
-        assert!(data.constraints.hashrate.is_some());
-        assert_eq!(data.constraints.power, None);
+        assert!(
+            !parse_constraints(&json, &mut data),
+            "a target missing one leaf stores nothing"
+        );
+        assert_eq!(data.constraints.hashrate, None);
     }
 
     #[test]

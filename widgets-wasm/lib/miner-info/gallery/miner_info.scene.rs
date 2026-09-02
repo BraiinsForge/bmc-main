@@ -22,8 +22,7 @@ use core::time::Duration;
 
 use bmc_gallery::prelude::*;
 use bmc_wasm_sdk::{
-    BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Svg, Temperature,
-    include_svg,
+    ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Svg, Temperature, include_svg,
 };
 use miner_info::availability::Availability;
 use miner_info::face;
@@ -106,7 +105,6 @@ fn miner(reported: Reported, hashrate_ths: Option<f64>) -> MinerData {
                 default: DEFAULT_TARGET_THS,
                 max: 1.4,
             }),
-            power: None,
         },
     }
 }
@@ -123,7 +121,6 @@ fn public(reported: Reported) -> PublicData {
         prev_diff_adjust: Availability::Available(Ratio::from_fraction(-0.021)),
         est_diff_adjust: Availability::Available(Ratio::from_fraction(-0.045)),
         epoch_progress: Availability::Available(Ratio::from_fraction(0.87)),
-        avg_fee: Availability::Available(BitcoinAmount::from_bitcoin(0.055)),
         avg_fee_share: Availability::Available(Ratio::from_percent(12.1)),
         block_height: Availability::Available(880_123),
         hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(70.0)),
