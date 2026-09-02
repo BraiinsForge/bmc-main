@@ -4,12 +4,15 @@
 # settled data and a finished transition rather than a mid-load state.
 settle_delay = 5
 
-[fixtures.bmm100-full]
-path = "fixtures/bmm100-full.jsonl.gz"
+# The `-parity` pair is the pixel proof that splitting mining-info
+# changed no rendering, so it must be replayed as-is.
+# Nothing enforces that: the dialog will offer to re-record either one.
+[fixtures.bmm100-full-parity]
+path = "fixtures/bmm100-full-parity.jsonl.gz"
 targets = ["bmm100:full"]
 
-[fixtures.bfm100-full]
-path = "fixtures/bfm100-full.jsonl.gz"
+[fixtures.bfm100-full-parity]
+path = "fixtures/bfm100-full-parity.jsonl.gz"
 targets = ["bfm100:full"]
 
 [fixtures.bmm101-full-healthy]
