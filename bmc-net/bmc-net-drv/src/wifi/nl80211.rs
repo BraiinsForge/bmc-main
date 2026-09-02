@@ -23,7 +23,7 @@
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use bmc_net_types::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
-use log::{debug, warn};
+use log::debug;
 use scanner::WifiScanner;
 use serde::Deserialize;
 use serde_json::json;
@@ -36,8 +36,9 @@ use wl_nl80211::Nl80211Handle;
 
 use super::uci::{HtMode, UciHelper, map_uci_iface_to_wifi_status};
 use super::utils::{
-    ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils, filter_empty_ssid,
-    filter_unsupported_enc, mark_connected, wait_for_network_ip_address, wait_for_wireless_config,
+    ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
+    filter_empty_ssid, filter_unsupported_enc, mark_connected, wait_for_interface_up,
+    wait_for_network_ip_address, wait_for_wireless_config,
 };
 use super::{SharedCache, WifiDriver};
 use crate::WIRELESS_CONFIG_FILE_PATH;
@@ -189,7 +190,13 @@ impl WifiDriver for OpenwrtWifiManager {
 
     async fn wait_for_ap_active(&self) -> Result<()> {
         let device = self.wifi_device_name().await?;
-        wait_for_ap_active(&device, ATTEMPTS_TO_ACTIVATE_AP).await
+        wait_for_ap_active(&device, ATTEMPTS_TO_ACTIVATE_AP).await?;
+        // hostapd reports the AP enabled about a second before netifd brings
+        // the `wifi_ap` interface up with its address. dnsmasq's DHCP range
+        // for the AP depends on that address (`dhcp_add` returns early
+        // without a device), so the raise is only complete once netifd says
+        // so -- the same contract the ESP32 backend already keeps.
+        wait_for_interface_up(WifiMode::Ap.to_uci_network(), ATTEMPTS_TO_ACTIVATE_AP).await
     }
 
     async fn configure_ap_mode(
@@ -200,7 +207,10 @@ impl WifiDriver for OpenwrtWifiManager {
     ) -> Result<()> {
         self.configure_radio_for_ap().await?;
         self.configure_wifi_iface(WifiMode::Ap, ssid, password, encryption)
-            .await
+            .await?;
+        // The UCI writes above are inert until a reload; enabling the radio
+        // last keeps that to a single one.
+        self.enable_radio(true).await
     }
 
     async fn stop_ap(&self) -> Result<()> {
@@ -283,8 +293,6 @@ const IWINFO_AP_MODE: &str = "Master";
 
 const AP_ACTIVE_WAIT_INTERVAL: Duration = Duration::from_secs(1);
 
-const ATTEMPTS_TO_ACTIVATE_AP: u8 = 20;
-
 #[derive(Deserialize)]
 struct IwinfoInfo {
     mode: String,
@@ -296,10 +304,10 @@ struct IwinfoInfo {
 /// reload the interface is legitimately absent or mid-reconfiguration, so one
 /// failed call says nothing about the eventual outcome.
 ///
-/// Exhausting every attempt only fails when `iwinfo` actually answered at some
-/// point and simply never reported AP mode. If it never answered at all the
-/// probe itself is unavailable, which is a gap in our diagnostics rather than
-/// evidence the AP is down, and bringing setup mode up must not hinge on it.
+/// Exhausting every attempt is a failure either way: an interface that never
+/// answered `iwinfo` for the whole window is not one a client can join, and
+/// reporting it as up would only move the failure to the phone trying to
+/// associate.
 async fn wait_for_ap_active(device: &str, attempts: u8) -> Result<()> {
     let mut interval = time::interval(AP_ACTIVE_WAIT_INTERVAL);
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -326,9 +334,7 @@ async fn wait_for_ap_active(device: &str, attempts: u8) -> Result<()> {
     if mode_observed {
         bail!("Access point on {device} did not start broadcasting")
     }
-
-    warn!("Unable to confirm the access point on {device} is broadcasting");
-    Ok(())
+    bail!("Access point on {device} never answered iwinfo, it is not up")
 }
 
 impl Drop for OpenwrtWifiManager {

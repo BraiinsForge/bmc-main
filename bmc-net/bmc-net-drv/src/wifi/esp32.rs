@@ -32,9 +32,9 @@ use tokio::time::Duration;
 
 use super::uci::{UciHelper, map_uci_iface_to_wifi_status};
 use super::utils::{
-    ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils, filter_empty_ssid,
-    filter_sort_by_strongest_signal, filter_unsupported_enc, mark_connected,
-    wait_for_network_ip_address, wait_for_wireless_config,
+    ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
+    filter_empty_ssid, filter_sort_by_strongest_signal, filter_unsupported_enc, mark_connected,
+    wait_for_interface_up, wait_for_network_ip_address, wait_for_wireless_config,
 };
 use super::{SharedCache, WifiDriver};
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
@@ -329,6 +329,9 @@ impl WifiDriver for Esp32WifiManager {
         // `default_ssid`, and taking it from the shell keeps this driver and
         // the boot-time `factory-default-wifi` service on one name.
         //
+        // `start_wifi_ap` returns once `ifup wifi_ap` is queued, not once the
+        // interface is up: `wait_for_ap_active` covers that.
+        //
         // The softAP lives behind the hosted-control node, which only the "FG"
         // firmware exposes; a board that has left factory default runs "NG" and
         // has none. `esp32-init` writes the right firmware at boot, and that is
@@ -343,6 +346,13 @@ impl WifiDriver for Esp32WifiManager {
 
         info!("Starting ESP32 setup AP (requested ssid ignored: {ssid})");
         run_sourced(r#"start_wifi_ap "$(default_ssid)""#).await
+    }
+
+    async fn wait_for_ap_active(&self) -> Result<()> {
+        // `start_wifi_ap` ends in `ifup wifi_ap`, which only queues the raise;
+        // netifd reporting the interface up with its address is what makes the
+        // AP joinable (and what dnsmasq needs to serve it).
+        wait_for_interface_up(WifiMode::Ap.to_uci_network(), ATTEMPTS_TO_ACTIVATE_AP).await
     }
 
     async fn stop_ap(&self) -> Result<()> {

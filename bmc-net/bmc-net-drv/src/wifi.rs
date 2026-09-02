@@ -88,9 +88,19 @@ pub trait WifiDriver: Debug + Send + Sync {
     ) -> Result<()>;
     /// Brings up an access point.
     ///
+    /// The implementation applies the configuration itself, so callers must not
+    /// follow this with [`enable_radio`].
+    ///
     /// Note: the `esp32` backend hosts a fixed open setup AP and therefore
     /// ignores `password`/`encryption`, whereas `nl80211` honours them. Callers
     /// needing secured AP mode must check the active backend.
+    ///
+    /// Returns once the raise is *requested* - a `wifi reload` queued
+    /// (`nl80211`) or `ifup wifi_ap` issued (`esp32`) - not once the AP is on
+    /// air. Callers that need that follow it with [`wait_for_ap_active`].
+    ///
+    /// [`enable_radio`]: WifiDriver::enable_radio
+    /// [`wait_for_ap_active`]: WifiDriver::wait_for_ap_active
     async fn configure_ap_mode(
         &self,
         ssid: String,
@@ -105,18 +115,12 @@ pub trait WifiDriver: Debug + Send + Sync {
     /// Enables or disables the radio.
     async fn enable_radio(&self, enable: bool) -> Result<()>;
     /// Waits until the access point brought up by [`configure_ap_mode`] is
-    /// actually on air.
-    ///
-    /// A `wifi reload` returns as soon as the reconfiguration is queued, well
-    /// before hostapd starts beaconing, so a written UCI section is not proof
-    /// that the AP can be joined. Backends whose AP liveness is owned
-    /// elsewhere (`esp32` hands it to the ESP32 firmware, which
-    /// [`configure_ap_mode`] already waits for) keep the default no-op.
+    /// actually up: beaconing (`nl80211`, via `iwinfo`) or reported up with
+    /// its address by netifd (`esp32`). Fails when that does not happen within
+    /// the backend's window, so a caller never announces an AP nobody can join.
     ///
     /// [`configure_ap_mode`]: WifiDriver::configure_ap_mode
-    async fn wait_for_ap_active(&self) -> Result<()> {
-        Ok(())
-    }
+    async fn wait_for_ap_active(&self) -> Result<()>;
     /// Resets the WiFi configuration to defaults.
     async fn reset_config(&self) -> Result<()>;
     /// SSID currently advertised in AP mode, if any.

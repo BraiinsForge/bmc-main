@@ -272,16 +272,26 @@ impl UciNetworkManager {
         wifi.configure_ap_mode(ssid, None, EncryptionType::None)
             .await
             .map_err(to_err)?;
-        wifi.enable_radio(true).await.map_err(to_err)?;
-        // The reload above only queues the reconfiguration, so returning here
-        // would report success while the radio is still switching modes.
-        wifi.wait_for_ap_active().await.map_err(to_err)?;
-        Ok(())
+        // `configure_ap_mode` only queues the reconfiguration, so returning
+        // here would report success while the radio is still switching modes.
+        //
+        // No dnsmasq restart here: dnsmasq's own netifd trigger reloads it
+        // when `wifi_ap` comes up with its address (the event its DHCP range
+        // depends on, later than the AP beaconing), for every way the AP can
+        // come up. A restart from here only raced that reload. The range
+        // surviving a stale `dhcp_check` stamp is bos/openwrt's job (`option
+        // force` on the `wifi_ap` dhcp section).
+        wifi.wait_for_ap_active().await.map_err(to_err)
     }
 
     async fn enable_captive_portal(&self) -> Result<(), InitialSetupError> {
+        // `reload`, not `restart`: a restart tears the procd instance down and
+        // with it the `interface.*` trigger dnsmasq registered, so an ifup of
+        // `wifi_ap` landing inside the stop/start window is lost and the DHCP
+        // range for it is never added. `reload` keeps the instance and the
+        // trigger alive while re-reading the captive-portal options.
         run_factory_default_script(&format!(
-            "enable_captive_portal \"$FACTORY_DEFAULT_AP_IP_ADDR\" && {INIT_SCRIPT_DNSMASQ} restart"
+            "enable_captive_portal \"$FACTORY_DEFAULT_AP_IP_ADDR\" && {INIT_SCRIPT_DNSMASQ} reload"
         ))
         .await
         .map_err(|e| InitialSetupError::UnexpectedFailure(format!("enable captive portal: {e}")))
@@ -289,7 +299,7 @@ impl UciNetworkManager {
 
     async fn disable_captive_portal(&self) -> Result<(), InitialSetupError> {
         run_factory_default_script(&format!(
-            "disable_captive_portal && {INIT_SCRIPT_DNSMASQ} restart"
+            "disable_captive_portal && {INIT_SCRIPT_DNSMASQ} reload"
         ))
         .await
         .map_err(|e| InitialSetupError::UnexpectedFailure(format!("disable captive portal: {e}")))
@@ -402,12 +412,9 @@ impl NetworkConfig for UciNetworkManager {
         if hostname.is_some() {
             call_command(INIT_SCRIPT_SYSTEM, &["reload"]).await?;
         }
-        // NOTE: this intentionally restarts networking, which drops the client
-        // connection that issued the request. udhcpc only re-advertises the
-        // hostname (`-x hostname:<name>`) when the network service (re)starts;
-        // a `system reload` alone updates the kernel hostname but leaves the
-        // active DHCP lease on the old name, so the restart is required for the
-        // rename to actually take effect.
+        // Restarting networking drops the requesting connection, but it's
+        // required: udhcpc only re-advertises the hostname on a network restart,
+        // not on a `system reload`.
         tracing::info!(
             "Applied network configuration ({summary}); restarting networking to take effect"
         );
@@ -419,10 +426,13 @@ impl NetworkConfig for UciNetworkManager {
     }
 
     async fn network_info(&self) -> Result<NetworkInfo> {
-        // One off-executor interface walk feeds both the MAC and the networks.
+        // One interface walk feeds every field, so name, MAC, addresses and
+        // gateway all describe the same link rather than a mix of two.
         let iface = self.primary_iface_nonblocking().await;
+        let interface_name = iface
+            .as_ref()
+            .map_or_else(|| self.interface_name.clone(), NetworkInterface::name);
         Ok(NetworkInfo {
-            interface_name: self.interface_name.clone(),
             mac_address: iface.as_ref().and_then(NetworkInterface::mac_address),
             hostname: self.hostname().await,
             protocol: self.network_protocol().await,
@@ -430,8 +440,12 @@ impl NetworkConfig for UciNetworkManager {
             // rtnetlink default route) rather than the UCI config, so the
             // reported DNS/gateway are correct on DHCP too, not just static.
             dns_servers: bmc_net_drv::resolved_nameservers().await,
-            networks: iface.map(|iface| iface.ipv4_networks()).unwrap_or_default(),
-            default_gateway: bmc_net_drv::default_gateway(&self.interface_name).await,
+            networks: iface
+                .as_ref()
+                .map(NetworkInterface::ipv4_networks)
+                .unwrap_or_default(),
+            default_gateway: bmc_net_drv::default_gateway(&interface_name).await,
+            interface_name,
         })
     }
 

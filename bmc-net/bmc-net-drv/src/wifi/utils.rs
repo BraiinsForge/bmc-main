@@ -26,14 +26,47 @@ use anyhow::{Error, Result, anyhow, bail};
 use bmc_net_types::wifi::{EncryptionType, WifiScanItem};
 use bstr::ByteSlice;
 use log::debug;
+use serde::Deserialize;
 use strum::{Display, EnumString};
 use tokio::process::Command;
 use tokio::time::{self, Duration, MissedTickBehavior};
 
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
 
+/// Polls netifd until `interface` (a `network` section name such as `wifi_ap`)
+/// reports itself up with an IPv4 address, which is the condition dnsmasq's
+/// `dhcp_add` needs before it serves the interface. `ifup` returns as soon as
+/// the request is queued, so this is what turns "asked for" into "up".
+pub(crate) async fn wait_for_interface_up(interface: &str, attempts: u8) -> Result<()> {
+    #[derive(Deserialize)]
+    struct InterfaceStatus {
+        up: bool,
+        #[serde(rename = "ipv4-address", default)]
+        ipv4_address: Vec<serde_json::Value>,
+    }
+
+    let object = format!("network.interface.{interface}");
+    let mut interval = time::interval(IP_CHECK_INTERVAL);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    for i in 0..attempts {
+        interval.tick().await;
+        debug!("Waiting for {interface} to come up. Attempt {i}/{attempts}");
+        match CommandUtils::call_ubus_cmd(&["call", &object, "status"]).await {
+            Ok(output) => match serde_json::from_str::<InterfaceStatus>(&output) {
+                Ok(status) if status.up && !status.ipv4_address.is_empty() => return Ok(()),
+                Ok(_) => {}
+                Err(e) => debug!("Unable to parse {object} status: {e}"),
+            },
+            Err(e) => debug!("Unable to query {object} status: {e}"),
+        }
+    }
+    bail!("{interface} did not come up with an address")
+}
+
 /// How many times [`wait_for_network_ip_address`] polls before giving up.
 pub(crate) const ATTEMPTS_TO_GET_IP: u8 = 30;
+/// How many times the AP-activation waits poll before giving up.
+pub(crate) const ATTEMPTS_TO_ACTIVATE_AP: u8 = 20;
 /// Delay between IP-assignment polls.
 const IP_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Delay between wireless-config existence polls.
