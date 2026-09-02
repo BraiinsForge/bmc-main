@@ -372,6 +372,9 @@ mod tests {
                 .push(Call::Reboot);
             Ok(())
         }
+        async fn control_service(&self, _service: &str, _actions: &[&str]) -> anyhow::Result<()> {
+            unimplemented!("{UNREACHABLE}")
+        }
         async fn handle_graceful_shutdown(&self) {
             unimplemented!("{UNREACHABLE}")
         }

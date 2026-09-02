@@ -3062,6 +3062,13 @@ mod tests {
             ) -> Result<(), Self::Error> {
                 unimplemented!("{UNREACHABLE}")
             }
+            async fn control_service(
+                &self,
+                _service: &str,
+                _actions: &[&str],
+            ) -> anyhow::Result<()> {
+                unimplemented!("{UNREACHABLE}")
+            }
             fn network_manager(&self) -> &dyn bmc_net::NetworkManager {
                 unimplemented!("{UNREACHABLE}")
             }

@@ -333,6 +333,14 @@ impl BmcManager for Manager {
             .await
             .map_err(|e| Error::UbootEnv(e.to_string()))
     }
+
+    async fn control_service(&self, service: &str, actions: &[&str]) -> anyhow::Result<()> {
+        let init_script = format!("/etc/init.d/{service}");
+        for action in actions {
+            call_command(init_script.as_str(), &[*action]).await?;
+        }
+        Ok(())
+    }
 }
 
 /// Resolve the platform from an explicit override or the loaded BMC info.

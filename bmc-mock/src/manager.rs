@@ -301,4 +301,9 @@ impl bmc::BmcManager for Manager {
         info!(?config, "Bootloader config sync (no-op in mock)");
         Ok(())
     }
+
+    async fn control_service(&self, service: &str, actions: &[&str]) -> anyhow::Result<()> {
+        info!(service, ?actions, "Service control (no-op in mock)");
+        Ok(())
+    }
 }

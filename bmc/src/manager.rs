@@ -154,4 +154,8 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     /// Platform-specific implementations (e.g., OpenWrt) write to U-Boot env,
     /// while other platforms (e.g., mock) may implement this as a no-op.
     async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error>;
+
+    /// Run actions on a system service, in order, e.g.
+    /// `control_service("dnsmasq", &["restart"])`.
+    async fn control_service(&self, service: &str, actions: &[&str]) -> anyhow::Result<()>;
 }
