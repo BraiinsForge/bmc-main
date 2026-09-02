@@ -567,7 +567,7 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
             }
         });
     } else {
-        log_warn!("miner-info: login failed with status {}", response.status);
+        log_warn!("login failed with status {}", response.status);
         let delay = STATE.with(|state| {
             let mut state = state.borrow_mut();
             miner_api::reset_all(&mut state.miner);
@@ -617,14 +617,14 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
         // but re-poll at the endpoint's cadence, not the failure back-off.
         if !stored {
             log_warn!(
-                "miner-info: miner endpoint {} returned no usable data",
+                "miner endpoint {} returned no usable data",
                 MINER_ENDPOINTS[idx].path
             );
             handle.retry_after(MINER_ENDPOINTS[idx].interval_ms.unwrap_or(RETRY_MS));
         }
     } else {
         log_warn!(
-            "miner-info: miner endpoint {} failed with status {}",
+            "miner endpoint {} failed with status {}",
             MINER_ENDPOINTS[idx].path,
             response.status
         );
@@ -647,7 +647,7 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
         });
     } else {
         log_warn!(
-            "miner-info: public endpoint {} failed with status {}",
+            "public endpoint {} failed with status {}",
             idx,
             response.status
         );

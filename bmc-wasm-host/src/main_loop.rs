@@ -599,6 +599,12 @@ impl ControlFirstPostPoll for PostPollState<'_> {
             let renderer_delivery_ready = slot.runtime.has_staged_renderer_delivery();
             #[cfg(feature = "profiling")]
             let mut delivery_memory = None;
+            // Delivery runs the guest's `__on_*` callbacks, so a widget's log line
+            // from a fetch reply is emitted here, not under the render scope's span.
+            // Gated like the scope itself: an idle slot runs no guest code,
+            // and the span would otherwise allocate once per slot per iteration.
+            let _delivery_span = renderer_delivery_ready
+                .then(|| tracing::info_span!("widget", wasm = %slot.wasm_basename).entered());
             let delivery_result = run_renderer_delivery_scope_if_ready(
                 renderer_delivery_ready,
                 || self.shared.acquire_gpu_render_lock("host_widget_delivery"),
