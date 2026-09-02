@@ -226,9 +226,7 @@ async fn get_softap_ssid() -> Option<String> {
         .output()
         .await
         .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+
     let stdout = output.stdout.to_str_lossy();
     let ssid = stdout.lines().next()?.splitn(3, ' ').nth(2)?;
     ssid.contains(AP_SSID_PREFIX)
