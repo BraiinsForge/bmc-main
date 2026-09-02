@@ -56,6 +56,21 @@ impl server::deck_upgrade_v1::DeckUpgradeV1 {
     }
 }
 
+impl client::deck_upgrade_v1::Phase {
+    /// Label without its subject noun, for a surface too narrow to hold the
+    /// [`Display`](std::fmt::Display) form beside a percentage.
+    #[must_use]
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::FirmwareDownloading | Self::PackageRealizing => "Downloading",
+            Self::FirmwareVerifying | Self::PackageVerifying => "Verifying",
+            Self::FirmwareApplying => "Applying",
+            Self::PackageBuilding => "Building",
+            Self::PackageActivating => "Activating",
+        }
+    }
+}
+
 /// User-facing upgrade-overlay label for the phase.
 impl std::fmt::Display for client::deck_upgrade_v1::Phase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
