@@ -110,6 +110,12 @@ mod wasm_glue {
         static MENU_MS: Cell<u32> = const { Cell::new(0) };
         // First render restores from cache (init() has no renderer scope).
         static INITIAL_RESTORE: Cell<bool> = const { Cell::new(false) };
+        /// Off-scene, between `on_sleep` and `on_wake`. The host keeps
+        /// delivering params and fetch replies there, and no SDK call answers
+        /// it, so the edge is tracked by hand. It starts set: every slot is
+        /// born dormant and `on_wake` always precedes the first frame, so a
+        /// widget built for a scene nobody opens must not fetch a picture.
+        static DORMANT: Cell<bool> = const { Cell::new(true) };
     }
 
     #[unsafe(no_mangle)]
@@ -149,7 +155,11 @@ mod wasm_glue {
         let cur = VIEW.with(|v| v.replace(View::Loading { decode: None }));
         let (next, actions) = machine::step(cur, event);
         VIEW.with(|v| *v.borrow_mut() = next);
+        let dormant = DORMANT.with(Cell::get);
         for action in actions {
+            if dormant && action.starts_fetch() {
+                continue;
+            }
             match action {
                 // The picture has no time-to-live to schedule against; the feed
                 // decides when a new one exists.
@@ -473,10 +483,12 @@ mod wasm_glue {
     pub extern "C" fn on_sleep() {
         dispatch(Event::Sleep);
         with_feed_poll(|h| h.set_enabled(false));
+        DORMANT.with(|d| d.set(true));
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
+        DORMANT.with(|d| d.set(false));
         INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes the cold-start restore
         // Off-scene time is unbounded, so ask the feed straight away rather
         // than waiting out the remainder of its interval.

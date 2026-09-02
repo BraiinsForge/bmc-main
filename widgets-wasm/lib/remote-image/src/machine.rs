@@ -184,6 +184,28 @@ pub enum Action {
     RequestFrame,
 }
 
+impl Action {
+    /// Whether running this puts the widget back on the network.
+    ///
+    /// A dormant widget skips these. The host delivers params and fetch
+    /// replies off-screen, so a poll enabled there keeps cycling on its
+    /// interval for pixels nobody is looking at; the wake restores against the
+    /// current target and re-derives what to fetch. The pacing actions need no
+    /// gate: they only annotate a poll that `on_sleep` has already disabled.
+    #[must_use]
+    pub const fn starts_fetch(self) -> bool {
+        match self {
+            Self::EnablePollAfter(_) | Self::ResumePoll => true,
+            Self::DisablePoll
+            | Self::Retry
+            | Self::DeferPoll
+            | Self::MarkStale
+            | Self::SeedAnchor(_)
+            | Self::RequestFrame => false,
+        }
+    }
+}
+
 /// Fold an event into the view, returning the next view and its side effects.
 #[must_use]
 #[expect(
@@ -1097,6 +1119,26 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn only_the_poll_enabling_actions_reach_the_network() {
+        for action in [Action::EnablePollAfter(0), Action::ResumePoll] {
+            assert!(action.starts_fetch(), "{action:?} enables a poll");
+        }
+        for action in [
+            Action::DisablePoll,
+            Action::Retry,
+            Action::DeferPoll,
+            Action::MarkStale,
+            Action::SeedAnchor(0),
+            Action::RequestFrame,
+        ] {
+            assert!(
+                !action.starts_fetch(),
+                "{action:?} cannot start a fetch on a disabled poll"
+            );
+        }
     }
 
     #[test]

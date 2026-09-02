@@ -260,6 +260,12 @@
 //! a draw uses them. `on_sleep` remains the place to persist guest state needed
 //! after wake.
 //!
+//! Dormancy stops renders, not deliveries: param, system and credential
+//! updates, fetch replies and socket callbacks all keep arriving off-scene.
+//! A widget that starts work from them therefore keeps the host busy for a
+//! scene nobody is looking at. There is no import that answers "am I dormant";
+//! a widget that needs to know tracks the `on_sleep`/`on_wake` edge itself.
+//!
 //! ## Lifecycle guard matrix
 //!
 //! A handful of host imports are only meaningful inside specific hooks.
