@@ -658,9 +658,8 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
 /// Which overlay, if any, belongs over the frame `auth_failed` describes.
 ///
 /// Auth error outranks stale, since both share the corner.
-/// Both scans consider only endpoints enabled for the current view:
-/// a disabled endpoint keeps its stale/offline history,
-/// which would otherwise leak across a view switch.
+/// Both scans consider only endpoints enabled for the current view,
+/// because a disabled endpoint keeps its stale/offline history.
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn overlay(view: View, auth_failed: bool) -> Option<mining::overlay::OverlayKind> {

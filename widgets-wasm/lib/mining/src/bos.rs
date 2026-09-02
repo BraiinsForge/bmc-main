@@ -34,8 +34,7 @@ use crate::hashboards::JsonLookup;
 pub const LOGIN_PATH: &str = "/auth/login";
 
 // Endpoints the widgets read, relative to a miner's API base.
-// `COOLING_PATH` and `NETWORK_PATH` have a single reader today,
-// and sit here so this module states the whole surface.
+// Listed in full, so the surface lives here rather than in per-widget slices.
 pub const STATS_PATH: &str = "/miner/stats";
 pub const HASHBOARDS_PATH: &str = "/miner/hw/hashboards";
 pub const DETAILS_PATH: &str = "/miner/details";

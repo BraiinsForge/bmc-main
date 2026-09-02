@@ -2,10 +2,11 @@ import '../common.justfile'
 
 # Braiins Pool widget: sim-backed dev, profiling, and fixture recording.
 mod braiins-pool 'braiins-pool'
+# Bitcoin Mining Data widget: sim-backed dev and fixture recording.
 mod bitcoin-mining-data 'bitcoin-mining-data'
 # Formula 1 widget: sim-backed dev and fixture recording.
 mod formula-1 'formula-1'
-# Miner Info - Mining: sim-backed dev and fixture recording.
+# Miner Info widgets: sim-backed dev and fixture recording.
 mod miner-info-geek 'miner-info-geek'
 mod miner-info-mining 'miner-info-mining'
 mod miner-info-overload 'miner-info-overload'

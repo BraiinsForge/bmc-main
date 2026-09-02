@@ -109,9 +109,6 @@ impl FamilyAdapter for BosAdapter {
         mining::bos::parse_token(json)
     }
 
-    // Kept per-family rather than taken from `mining::bos`:
-    // each family answers this differently, and the single-miner
-    // widgets treat only 401 as an auth failure.
     fn is_auth_error(&self, status: u32) -> bool {
         status == 401 || status == 403
     }

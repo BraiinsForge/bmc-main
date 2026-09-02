@@ -205,9 +205,7 @@ fn bmm_scenes() -> IndexMap<SceneId, Scene> {
     let mining = fullscreen(MINER_INFO_MINING_UID, rect, miner_info_params());
     let geek = fullscreen(MINER_INFO_GEEK_UID, rect, miner_info_params());
     let overload = fullscreen(MINER_INFO_OVERLOAD_UID, rect, miner_info_params());
-    // Takes the slot the Miner Info network view vacated: Bitcoin-network data
-    // still ships out of the box, from the widget that owns it. It declares no
-    // params.
+    // Bitcoin Mining Data declares no params of its own.
     let bitcoin = fullscreen(BITCOIN_MINING_DATA_UID, rect, BTreeMap::new());
 
     indexmap! {
