@@ -60,17 +60,26 @@ track, and a day/night terminator; at smaller sizes a position and telemetry pan
 sunlit/eclipsed). Pulls data from the Braiins nexus service and propagates the live position on-device between
 refreshes. Rectangular viewports only.
 
+### [Miner Info — Mining Widget](miner-info-mining.md)
+
+A miner overview: hashrate, temperature, power, MCR, fan speed and IP address, read over the BOS REST API. On the round
+panel the hashrate sits inside a gauge ring coloured by how the miner tracks its tuner target. Needs no internet.
+
+### [Miner Info — Geek Widget](miner-info-geek.md)
+
+A miner detail screen pairing hashrate, temperature, power, uptime and IP address with the current BTC price. Miner and
+price are fetched independently, so either can fail without blanking the other. Carries the same round gauge as Mining.
+
+### [Miner Info — Info Overload Widget](miner-info-overload.md)
+
+A dense dashboard combining one miner with the Bitcoin network — price and 24-hour change over a grid of difficulty
+adjustments, epoch progress, block height, fees and hashvalue. Drops to two columns on the smallest displays.
+
 ### [Mining Clock Widget](mining-clock.md)
 
 The clock widget reshaped for a miner: a round analog dial wrapped in two live gauge rings — an outer hashrate ring and
 an inner power ring — that reads stats from a BOS miner over its REST API. Keeps the clock's date, timezone, seconds,
 numeral weight, and next-alarm features. Renders full-screen on the round BFM100 panel only.
-
-### [Mining Info Widget](mining-info.md)
-
-A widget that shows mining and Bitcoin network information across four selectable views — a miner overview, a miner
-detail screen, a Bitcoin network screen, and a dense combined dashboard. Reads live miner stats over the BOS REST API
-and Bitcoin price and network data from the Braiins public API, with responsive field degradation on smaller displays.
 
 ### [SpaceX Launch Widget](spacex-launch.md)
 

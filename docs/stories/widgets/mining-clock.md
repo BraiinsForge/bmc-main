@@ -134,7 +134,7 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 - The next alarm and the 12-/24-hour time format come from device system state, not from widget configuration.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
 - The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
-  type yet. This is a known limitation, shared with the [Mining Info Widget](mining-info.md).
+  type yet. This is a known limitation, shared with the [Miner Info widgets](miner-info-mining.md).
 - Miner-local data comes from the miner's BOS REST API; the widget reads `/miner/stats` for live hashrate and power and
   `/configuration/constraints` for the gauge target scales, authenticating via `/auth/login`.
 

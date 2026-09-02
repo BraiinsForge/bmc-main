@@ -11,10 +11,10 @@ provisioned or factory-reset device meaningful content out of the box, before th
 > before it does anything.
 
 - The factory default scene set is built from the detected product instead of a single shared configuration.
-- BMC100 defaults to a digital clock, weather, and a combined scene with an analog clock, block height, and weather.
-- BFM100 defaults to the mining-info geek view and the mining clock, rendered round fullscreen.
-- BMM100 and BMM101 default to an analog clock, weather, and the four mining-info views (mining, geek, network, info
-  overload).
+- BMC100 defaults to a digital clock, a BTC ticker, and a combined scene of analog clock, block height and ticker.
+- BFM100 defaults to Miner Info — Geek and the mining clock, rendered round fullscreen.
+- BMM100 and BMM101 default to a digital clock, a BTC ticker, the three Miner Info widgets (Mining, Geek, Info
+  Overload), and Bitcoin Mining Data.
 
 ### See the default scenes rotate automatically
 
@@ -29,7 +29,7 @@ provisioned or factory-reset device meaningful content out of the box, before th
 > As a user with a deck mounted on a miner, I want the default mining widgets to work immediately so I don't have to
 > enter the miner address first.
 
-- The default mining-info and mining-clock widgets point at the miner API on localhost with the factory password.
+- The default Miner Info and mining-clock widgets point at the miner API on localhost with the factory password.
 
 ### Keep my own configuration untouched
 
@@ -46,4 +46,4 @@ provisioned or factory-reset device meaningful content out of the box, before th
 - The default scene set is fixed per product at build time.
 - Defaults reference only widgets shipped in the factory image; the init tarball carries every shippable widget so the
   default scenes are always satisfiable.
-- The default weather location is Prague; the user can change it per widget.
+- The default tickers track BTC-USD; the user can change the pair and period per widget.
