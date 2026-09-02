@@ -89,6 +89,7 @@ pub(crate) struct Icons {
     pub(crate) arrange_grid: Icon,
     pub(crate) debug: Icon,
     pub(crate) offline: Icon,
+    pub(crate) sleep: Icon,
     pub(crate) record: Icon,
     pub(crate) delay: Icon,
     pub(crate) devices: Icon,
@@ -118,6 +119,7 @@ impl Icons {
             arrange_grid: Icon::new(include_bytes!("assets/icons/arrange-grid.svg")),
             debug: Icon::new(include_bytes!("assets/icons/debug.svg")),
             offline: Icon::new(include_bytes!("assets/icons/offline.svg")),
+            sleep: Icon::new(include_bytes!("assets/icons/sleep.svg")),
             record: Icon::new(include_bytes!("assets/icons/record.svg")),
             delay: Icon::new(include_bytes!("assets/icons/delay.svg")),
             devices: Icon::new(include_bytes!("assets/icons/devices.svg")),
@@ -180,13 +182,14 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 23] = [
+        let named: [(&str, &Icon); 24] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
             ("arrange-grid", &icons.arrange_grid),
             ("debug", &icons.debug),
             ("offline", &icons.offline),
+            ("sleep", &icons.sleep),
             ("record", &icons.record),
             ("delay", &icons.delay),
             ("devices", &icons.devices),

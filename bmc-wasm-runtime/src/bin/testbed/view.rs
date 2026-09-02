@@ -54,6 +54,10 @@ pub(crate) struct ViewTick {
     pub(crate) monotonic_ms: u64,
     /// Seal live I/O so refreshes fail, mirroring an offline device.
     pub(crate) offline: bool,
+    /// Hold every view off-scene, mirroring a deck whose scene nobody opens.
+    /// A level, not an edge: each view compares it against what it last told
+    /// its widget and fires the hook on the difference.
+    pub(crate) dormant: bool,
     /// Drain the guest's profiling sections into this tick's report.
     /// Asked of one view: draining empties them, so two readers would
     /// halve what each sees.
@@ -77,6 +81,10 @@ struct LedState {
 }
 
 /// Render scheduling for one view, driven by the runtime's own frame requests.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent reason to render or not; folding them into one state would have to name every combination"
+)]
 #[derive(Default)]
 struct ViewSched {
     ever_rendered: bool,
@@ -91,6 +99,10 @@ struct ViewSched {
     next_render_at_ms: Option<u64>,
     /// A touch landed since the last render; forces the next tick to render.
     pending_interaction: bool,
+    /// What the widget was last told about being off-scene, compared against
+    /// the tick's level to fire each edge once. Starts awake: `build_runtime`
+    /// has already queued the wake that leaves the born-dormant start.
+    dormant: bool,
     /// When this view last rendered, or `None` while it is idle.
     /// Animations advance by the gap since then, not by the host's frame time,
     /// so a view due every other pass does not animate at half speed.
@@ -177,6 +189,11 @@ impl ViewSeed {
         )
         .with_context(|| format!("create runtime for {}", self.label))?;
         rt.set_network_info(super::stub_network());
+        // A device slot is born dormant and woken before its first frame.
+        // A widget that tracks the edge itself relies on that ordering.
+        // Both calls only queue: the hooks wait for the first renderer scope.
+        rt.initialize_dormant();
+        rt.notify_wake();
         Ok(Some(rt))
     }
 }
@@ -706,6 +723,16 @@ impl ViewCore {
             let rt = self.runtime.as_mut().expect("BUG: checked above");
             rt.set_hermetic(tick.offline);
             rt.set_time(tick.system_time, tick.monotonic_ms);
+            if tick.dormant != self.sched.dormant {
+                self.sched.dormant = tick.dormant;
+                if tick.dormant {
+                    rt.notify_dormant();
+                    // Off-scene time is not animation time, as when idling.
+                    self.sched.last_render_at = None;
+                } else {
+                    rt.notify_wake();
+                }
+            }
             let polled = rt.poll_deliveries_with_renderer(renderer_ptr);
             delivery_poll_outcome(polled, || rt.next_frame_delay() == Some(0))
         };
@@ -717,6 +744,13 @@ impl ViewCore {
                 return ViewTicked::default();
             }
         };
+
+        // Dormancy stops renders, not deliveries: the device never asks
+        // an off-scene slot to draw. The wake requests its own frame,
+        // so idling here owes nothing.
+        if self.sched.dormant {
+            return ViewTicked::default();
+        }
 
         let due = !self.sched.ever_rendered
             || self.sched.pending_interaction

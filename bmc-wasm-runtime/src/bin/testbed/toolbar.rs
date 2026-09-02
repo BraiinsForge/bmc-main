@@ -19,7 +19,7 @@
 // the grant above.
 
 //! Top toolbar: platform toggles and the host-level controls
-//! (reload, offline seal, debug layout, clock fast-forward).
+//! (reload, offline seal, sleep switch, debug layout, clock fast-forward).
 //!
 //! Everything here acts on the testbed as a whole; per-widget state
 //! stays in the right sidebar.
@@ -118,6 +118,19 @@ impl TestbedApp {
                         .clicked()
                     {
                         self.state_mut().offline = !offline;
+                    }
+                    let dormant = self.state().dormant;
+                    if Button::bar("Asleep")
+                        .icon(&mut self.icons.sleep)
+                        .tone(Tone::switch(palette, dormant))
+                        .show(row, palette)
+                        .on_hover_text(
+                            "take every tile off-scene: the sleep and wake hooks \
+                             fire, deliveries carry on, nothing renders",
+                        )
+                        .clicked()
+                    {
+                        self.state_mut().dormant = !dormant;
                     }
                     self.paint_clock_controls(row);
 

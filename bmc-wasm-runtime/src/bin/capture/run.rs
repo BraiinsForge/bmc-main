@@ -570,6 +570,11 @@ fn run_unified_capture(
 
     let (gl, fbo, _keep_alive, mut renderer, mut runtime) =
         setup_gl_and_runtime(ctx, system_time, rt_config)?;
+    // A device slot is born dormant and woken before its first frame.
+    // Both calls only queue: the hooks reach the guest in `deliver_all_io`,
+    // which runs before every render below.
+    runtime.initialize_dormant();
+    runtime.notify_wake();
     if ctx.layout_cache_profiling.is_enabled() {
         renderer.enable_text_layout_profiling();
     }

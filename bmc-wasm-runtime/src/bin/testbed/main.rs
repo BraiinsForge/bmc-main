@@ -1122,6 +1122,9 @@ pub(crate) struct SandboxedState {
     pub(crate) credentials: serde_json::Map<String, serde_json::Value>,
     /// Seals every tile's live I/O so refreshes fail.
     pub(crate) offline: bool,
+    /// Takes every tile off-scene, as on a deck whose scene nobody opens:
+    /// deliveries carry on and nothing renders.
+    pub(crate) dormant: bool,
     /// The displayed clock's fast-forward. Its monotonic twin stays on [`Clock`]:
     /// sandboxing a ratcheting offset would stall deadlines waiting past it.
     pub(crate) clock_offset_ms: u64,
@@ -1303,6 +1306,7 @@ impl TestbedApp {
                 system: pending_system,
                 credentials: serde_json::Map::new(),
                 offline: false,
+                dormant: false,
                 clock_offset_ms: 0,
             },
             gl,
@@ -1996,6 +2000,7 @@ impl TestbedApp {
             system_time,
             monotonic_ms,
             offline: self.state().offline,
+            dormant: self.state().dormant,
             profile: false,
         };
         // In recording mode only the active view runs; `App::ui` paints the rest

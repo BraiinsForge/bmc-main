@@ -2539,6 +2539,21 @@ mod tests {
         );
     }
 
+    /// A widget that tracks the edge itself starts dormant, so a wake lost
+    /// before the first delivery scope would leave it there for good.
+    #[test]
+    fn a_wake_queued_before_any_renderer_scope_stays_pending() {
+        let mut rt = minimal_runtime();
+
+        rt.initialize_dormant();
+        rt.notify_wake();
+
+        assert!(
+            rt.has_pending_lifecycle(),
+            "the wake must wait for a renderer rather than being dropped"
+        );
+    }
+
     #[test]
     fn panic_clears_renderer_gpu_access_callback() {
         let mut runtime = minimal_runtime();

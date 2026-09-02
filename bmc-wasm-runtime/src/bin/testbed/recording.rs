@@ -1740,6 +1740,7 @@ mod begin_tests {
                 system: bmc_wasm_runtime::SystemSnapshot::default(),
                 credentials,
                 offline: false,
+                dormant: false,
                 clock_offset_ms: 0,
             },
             TAKE_EPOCH_MS,
