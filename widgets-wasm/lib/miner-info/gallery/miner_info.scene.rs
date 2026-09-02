@@ -120,16 +120,12 @@ fn public(reported: Reported) -> PublicData {
     PublicData {
         btc_price: Availability::Available(Money::new(101_754.0, Currency::Usd)),
         btc_change_24h: Availability::Available(Ratio::from_percent(6.25)),
-        network_hashrate: Availability::Available(Hashrate::from_terahashes_per_second(
-            650_000_000.0,
-        )),
         prev_diff_adjust: Availability::Available(Ratio::from_fraction(-0.021)),
         est_diff_adjust: Availability::Available(Ratio::from_fraction(-0.045)),
         epoch_progress: Availability::Available(Ratio::from_fraction(0.87)),
         avg_fee: Availability::Available(BitcoinAmount::from_bitcoin(0.055)),
         avg_fee_share: Availability::Available(Ratio::from_percent(12.1)),
         block_height: Availability::Available(880_123),
-        hashprice: Availability::Available(Hashprice::new(0.052, Currency::Usd)),
         hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(70.0)),
         btc_price_history: (0..64).map(|i| 100_000.0 + f64::from(i) * 30.0).collect(),
     }

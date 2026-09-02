@@ -22,12 +22,12 @@ use core::time::Duration;
 
 use bmc_wasm_sdk::{BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio};
 
-use crate::model::{Availability, Hashprice, Money, TemperatureRange};
+use crate::model::{Availability, Money, TemperatureRange};
 
 pub const NOT_AVAILABLE: &str = "N/A";
 
 #[must_use]
-pub fn unavailable() -> String {
+pub(crate) fn unavailable() -> String {
     NOT_AVAILABLE.to_owned()
 }
 
@@ -108,7 +108,7 @@ impl Measured for Hashvalue {
     }
 }
 
-pub fn push_int(out: &mut String, value: u64) {
+pub(crate) fn push_int(out: &mut String, value: u64) {
     if value >= 10 {
         push_int(out, value.div_euclid(10));
     }
@@ -117,7 +117,7 @@ pub fn push_int(out: &mut String, value: u64) {
     ));
 }
 
-pub fn push_fixed_abs(out: &mut String, value: f64, decimals: u32) {
+pub(crate) fn push_fixed_abs(out: &mut String, value: f64, decimals: u32) {
     let scale = 10_u64.pow(decimals);
     #[expect(
         clippy::cast_precision_loss,
@@ -144,12 +144,12 @@ pub fn push_fixed_abs(out: &mut String, value: f64, decimals: u32) {
 
 /// Digit grouping and decimal mark as the operator configured them.
 #[must_use]
-pub fn group(magnitude: f64, decimals: u32) -> String {
+pub(crate) fn group(magnitude: f64, decimals: u32) -> String {
     bmc_wasm_sdk::format_number!(magnitude, decimals)
 }
 
 #[must_use]
-pub fn fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
+pub(crate) fn fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(value) => {
             let value = value.magnitude();
@@ -170,7 +170,10 @@ pub fn fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
 }
 
 #[must_use]
-pub fn fixed_strip_zero_fraction<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
+pub(crate) fn fixed_strip_zero_fraction<Q: Measured>(
+    value: Availability<Q>,
+    decimals: u32,
+) -> Rendered {
     let mut out = fixed(value, decimals);
     if decimals == 0 || out.value == NOT_AVAILABLE {
         return out;
@@ -187,44 +190,8 @@ pub fn fixed_strip_zero_fraction<Q: Measured>(value: Availability<Q>, decimals: 
 /// is appended once rather than read off either half.
 const UNIT_CELSIUS: &str = "°C";
 
-const TERAHASHES_PER_EXAHASH: f64 = 1_000_000.0;
-
-/// Network hashrate reads in EH/s, the scale the whole network is quoted at,
-/// where a miner's own hashrate reads in [`Hashrate`]'s canonical TH/s.
 #[must_use]
-pub fn network_hashrate(value: Availability<Hashrate>, decimals: u32) -> Rendered {
-    match value {
-        Availability::Available(rate) => Rendered {
-            value: group(
-                rate.as_terahashes_per_second() / TERAHASHES_PER_EXAHASH,
-                decimals,
-            ),
-            unit: Some("EH/s"),
-        },
-        Availability::Unavailable | Availability::Failed => unavailable().into(),
-    }
-}
-
-/// Hashprice renders as money over its denominator, e.g. `$ 0.052` + `TH/Day`,
-/// with the symbol read off the amount's own currency.
-#[must_use]
-pub fn hashprice(value: Availability<Hashprice>, decimals: u32) -> Rendered {
-    match value {
-        Availability::Available(price) => {
-            let mut out = String::from(price.per_terahash_day.currency.symbol());
-            out.push(' ');
-            out.push_str(&group(price.per_terahash_day.amount.abs(), decimals));
-            Rendered {
-                value: out,
-                unit: Some(Hashprice::UNIT),
-            }
-        }
-        Availability::Unavailable | Availability::Failed => unavailable().into(),
-    }
-}
-
-#[must_use]
-pub fn approx_fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
+pub(crate) fn approx_fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(_) => {
             let mut out = String::from("~ ");
@@ -239,7 +206,7 @@ pub fn approx_fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rende
 }
 
 #[must_use]
-pub fn signed_percent<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
+pub(crate) fn signed_percent<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(value) => {
             let value = value.magnitude();
@@ -256,7 +223,7 @@ pub fn signed_percent<Q: Measured>(value: Availability<Q>, decimals: u32) -> Ren
 }
 
 #[must_use]
-pub fn signed_percent_unit<Q: Measured>(value: Availability<Q>, decimals: u32) -> String {
+pub(crate) fn signed_percent_unit<Q: Measured>(value: Availability<Q>, decimals: u32) -> String {
     let Availability::Available(_) = value else {
         return unavailable();
     };
@@ -266,7 +233,7 @@ pub fn signed_percent_unit<Q: Measured>(value: Availability<Q>, decimals: u32) -
 }
 
 #[must_use]
-pub fn temperature(value: Availability<TemperatureRange>) -> Rendered {
+pub(crate) fn temperature(value: Availability<TemperatureRange>) -> Rendered {
     match value {
         Availability::Available(value) => {
             let mut out = String::new();
@@ -283,7 +250,7 @@ pub fn temperature(value: Availability<TemperatureRange>) -> Rendered {
 }
 
 #[must_use]
-pub fn chip_temperature(value: Availability<TemperatureRange>) -> Rendered {
+pub(crate) fn chip_temperature(value: Availability<TemperatureRange>) -> Rendered {
     match value {
         Availability::Available(value) => {
             let mut out = String::new();
@@ -298,7 +265,7 @@ pub fn chip_temperature(value: Availability<TemperatureRange>) -> Rendered {
 }
 
 #[must_use]
-pub fn money(value: Availability<Money>, decimals: u32) -> Rendered {
+pub(crate) fn money(value: Availability<Money>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(money) => {
             let mut out = String::from(money.currency.symbol());
@@ -314,7 +281,7 @@ pub fn money(value: Availability<Money>, decimals: u32) -> Rendered {
 // size than the amount (round clusters). `None` when the value is unavailable,
 // so the caller omits the symbol element entirely.
 #[must_use]
-pub fn money_symbol(value: Availability<Money>) -> Option<&'static str> {
+pub(crate) fn money_symbol(value: Availability<Money>) -> Option<&'static str> {
     match value {
         Availability::Available(money) => Some(money.currency.symbol()),
         Availability::Unavailable | Availability::Failed => None,
@@ -323,7 +290,7 @@ pub fn money_symbol(value: Availability<Money>) -> Option<&'static str> {
 
 // The grouped amount without the currency symbol, the companion to `money_symbol`.
 #[must_use]
-pub fn money_amount(value: Availability<Money>, decimals: u32) -> String {
+pub(crate) fn money_amount(value: Availability<Money>, decimals: u32) -> String {
     match value {
         Availability::Available(money) => group(money.amount.abs(), decimals),
         Availability::Unavailable | Availability::Failed => unavailable(),
@@ -331,7 +298,7 @@ pub fn money_amount(value: Availability<Money>, decimals: u32) -> String {
 }
 
 #[must_use]
-pub fn public_integer(value: Availability<u64>) -> Rendered {
+pub(crate) fn public_integer(value: Availability<u64>) -> Rendered {
     match value {
         Availability::Available(value) => {
             #[expect(
@@ -346,7 +313,7 @@ pub fn public_integer(value: Availability<u64>) -> Rendered {
 }
 
 #[must_use]
-pub fn uptime(value: Availability<Duration>) -> Rendered {
+pub(crate) fn uptime(value: Availability<Duration>) -> Rendered {
     let Availability::Available(total) = value else {
         return unavailable().into();
     };

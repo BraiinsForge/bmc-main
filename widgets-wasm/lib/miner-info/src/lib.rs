@@ -23,7 +23,7 @@
 //! `model` holds the two data bags the faces render from; `api` and `public`
 //! build the BOS and Braiins public-API requests and fold their replies into
 //! those bags; `format` and `layout` turn the values and the viewport into the
-//! strings and metrics a face draws.
+//! strings and metrics `face` draws with.
 //!
 //! Every dimensional quantity comes from [`bmc_wasm_sdk::units`]. `money` holds
 //! the fiat figures, which are not dimensional — there is no canonical currency
@@ -31,9 +31,10 @@
 //! `availability` carries the "no value yet" state a plain quantity cannot
 //! express.
 //!
-//! Everything here is host-pure and unit-tested apart from the `wasm32`-gated
-//! `JsonLookup` bridge in [`api`]. Each widget owns its own poll loop and the
-//! live `fetch`; this crate only builds paths, parses bodies and sizes text.
+//! `engine` is the crate's one `wasm32`-gated module: it owns the poll loop
+//! and the live `fetch`. Everything else is host-pure and unit-tested.
+//! Each widget hands it a config reader at `init`, and the `view` it returns
+//! picks that widget's endpoints.
 
 pub mod api;
 pub mod availability;

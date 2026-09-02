@@ -18,19 +18,15 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{BitcoinAmount, Hashrate, Hashvalue, Ratio, ufmt};
+use bmc_wasm_sdk::{BitcoinAmount, Hashvalue, Ratio, ufmt};
 
 use crate::api::JsonLookup;
-use crate::model::{Availability, Currency, Hashprice, Money, PublicData};
-
-/// Terahashes per second in one exahash per second.
-/// The endpoint quotes network hashrate in EH/s; [`Hashrate`] stores TH/s.
-const TERAHASHES_PER_EXAHASH: f64 = 1_000_000.0;
+use crate::model::{Availability, Currency, Money, PublicData};
 
 /// Blocks in a difficulty epoch, the denominator of the epoch progress.
 const BLOCKS_PER_EPOCH: f64 = 2016.0;
 
-pub fn parse_price_stats(json: &impl JsonLookup, currency: Currency, data: &mut PublicData) {
+pub(crate) fn parse_price_stats(json: &impl JsonLookup, currency: Currency, data: &mut PublicData) {
     if let Some(price) = json.f64("/price") {
         data.btc_price = Availability::Available(Money::new(price, currency));
     }
@@ -40,13 +36,13 @@ pub fn parse_price_stats(json: &impl JsonLookup, currency: Currency, data: &mut 
     }
 }
 
-pub fn parse_block(json: &impl JsonLookup, data: &mut PublicData) {
+pub(crate) fn parse_block(json: &impl JsonLookup, data: &mut PublicData) {
     if let Some(height) = json.i64("/0/height").and_then(|v| u64::try_from(v).ok()) {
         data.block_height = Availability::Available(height);
     }
 }
 
-pub fn parse_difficulty_stats(json: &impl JsonLookup, data: &mut PublicData) {
+pub(crate) fn parse_difficulty_stats(json: &impl JsonLookup, data: &mut PublicData) {
     // Both adjustments are quoted as fractions, which is what `Ratio` stores.
     if let Some(prev) = json.f64("/previous_adjustment") {
         data.prev_diff_adjust = Availability::Available(Ratio::from_fraction(prev));
@@ -60,21 +56,13 @@ pub fn parse_difficulty_stats(json: &impl JsonLookup, data: &mut PublicData) {
     }
 }
 
-pub fn parse_hashrate_stats(json: &impl JsonLookup, currency: Currency, data: &mut PublicData) {
-    if let Some(hashrate) = json.f64("/current_hashrate") {
-        data.network_hashrate = Availability::Available(Hashrate::from_terahashes_per_second(
-            hashrate * TERAHASHES_PER_EXAHASH,
-        ));
-    }
+pub(crate) fn parse_hashrate_stats(json: &impl JsonLookup, data: &mut PublicData) {
     if let Some(avg_fee) = json.f64("/avg_fees_per_block") {
         data.avg_fee = Availability::Available(BitcoinAmount::from_bitcoin(avg_fee));
     }
     // Quoted as a percent, unlike the adjustment fields.
     if let Some(fee_percent) = json.f64("/fees_percent") {
         data.avg_fee_share = Availability::Available(Ratio::from_percent(fee_percent));
-    }
-    if let Some(hashprice) = json.f64("/hash_price_currency") {
-        data.hashprice = Availability::Available(Hashprice::new(hashprice, currency));
     }
     if let Some(hashvalue) = json.f64("/hash_value") {
         data.hashvalue =
@@ -83,7 +71,7 @@ pub fn parse_hashrate_stats(json: &impl JsonLookup, currency: Currency, data: &m
 }
 
 #[must_use]
-pub fn price_stats_url(currency: Currency) -> String {
+pub(crate) fn price_stats_url(currency: Currency) -> String {
     bmc_wasm_sdk::fmt!(
         "https://public-api.braiins.com/v1/price-stats?currency={}",
         currency.code()
@@ -91,7 +79,7 @@ pub fn price_stats_url(currency: Currency) -> String {
 }
 
 #[must_use]
-pub fn block_url(currency: Currency) -> String {
+pub(crate) fn block_url(currency: Currency) -> String {
     bmc_wasm_sdk::fmt!(
         "https://public-api.braiins.com/v2/blocks?limit=1&currency={}",
         currency.code()
@@ -99,7 +87,7 @@ pub fn block_url(currency: Currency) -> String {
 }
 
 #[must_use]
-pub fn difficulty_url(currency: Currency) -> String {
+pub(crate) fn difficulty_url(currency: Currency) -> String {
     bmc_wasm_sdk::fmt!(
         "https://public-api.braiins.com/v1/difficulty-stats?currency={}",
         currency.code()
@@ -107,7 +95,7 @@ pub fn difficulty_url(currency: Currency) -> String {
 }
 
 #[must_use]
-pub fn hashrate_url(currency: Currency) -> String {
+pub(crate) fn hashrate_url(currency: Currency) -> String {
     bmc_wasm_sdk::fmt!(
         "https://public-api.braiins.com/v2/hashrate-stats?currency={}",
         currency.code()
@@ -122,11 +110,11 @@ const MAX_PRICE_HISTORY_POINTS: usize = 512;
 // in any fiat: the URL carries no currency and the endpoint is not refetched
 // on a currency change.
 #[must_use]
-pub fn price_history_url(_currency: Currency) -> String {
+pub(crate) fn price_history_url(_currency: Currency) -> String {
     "https://public-api.braiins.com/v1/price-history?timeframe=1d".to_owned()
 }
 
-pub fn parse_price_history(json: &impl JsonLookup, data: &mut PublicData) {
+pub(crate) fn parse_price_history(json: &impl JsonLookup, data: &mut PublicData) {
     let mut points = Vec::new();
     for index in 0..MAX_PRICE_HISTORY_POINTS {
         let Some(price) = json.f64(&bmc_wasm_sdk::fmt!("/price/{}/y", index)) else {
@@ -139,30 +127,28 @@ pub fn parse_price_history(json: &impl JsonLookup, data: &mut PublicData) {
     }
 }
 
-pub fn reset_price_stats(data: &mut PublicData) {
+pub(crate) fn reset_price_stats(data: &mut PublicData) {
     data.btc_price = Availability::Unavailable;
     data.btc_change_24h = Availability::Unavailable;
 }
 
-pub fn reset_block(data: &mut PublicData) {
+pub(crate) fn reset_block(data: &mut PublicData) {
     data.block_height = Availability::Unavailable;
 }
 
-pub fn reset_difficulty_stats(data: &mut PublicData) {
+pub(crate) fn reset_difficulty_stats(data: &mut PublicData) {
     data.prev_diff_adjust = Availability::Unavailable;
     data.est_diff_adjust = Availability::Unavailable;
     data.epoch_progress = Availability::Unavailable;
 }
 
-pub fn reset_hashrate_stats(data: &mut PublicData) {
-    data.network_hashrate = Availability::Unavailable;
+pub(crate) fn reset_hashrate_stats(data: &mut PublicData) {
     data.avg_fee = Availability::Unavailable;
     data.avg_fee_share = Availability::Unavailable;
-    data.hashprice = Availability::Unavailable;
     data.hashvalue = Availability::Unavailable;
 }
 
-pub fn reset_price_history(data: &mut PublicData) {
+pub(crate) fn reset_price_history(data: &mut PublicData) {
     data.btc_price_history.clear();
 }
 
@@ -231,25 +217,12 @@ mod tests {
         assert!(approx(progress.as_percent(), 50.0));
     }
 
-    /// The endpoint quotes network hashrate in EH/s; `Hashrate` stores TH/s.
-    #[test]
-    fn network_hashrate_scales_from_exahashes_to_the_canonical_terahashes() {
-        let mut json = MapJson::default();
-        json.floats.insert("/current_hashrate", 650.0);
-        let mut data = PublicData::default();
-        parse_hashrate_stats(&json, Currency::Usd, &mut data);
-        let Availability::Available(hashrate) = data.network_hashrate else {
-            panic!("BUG: network hashrate should be available");
-        };
-        assert!(approx(hashrate.as_terahashes_per_second(), 650_000_000.0));
-    }
-
     #[test]
     fn converts_hashvalue_bitcoin_to_satoshis() {
         let mut json = MapJson::default();
         json.floats.insert("/hash_value", 0.000_000_050_2);
         let mut data = PublicData::default();
-        parse_hashrate_stats(&json, Currency::Usd, &mut data);
+        parse_hashrate_stats(&json, &mut data);
         let Availability::Available(value) = data.hashvalue else {
             panic!("BUG: hashvalue should be available");
         };
@@ -261,13 +234,13 @@ mod tests {
     #[test]
     fn fiat_figures_carry_the_currency_they_were_fetched_in() {
         let mut json = MapJson::default();
-        json.floats.insert("/hash_price_currency", 0.052);
+        json.floats.insert("/price", 101_754.0);
         let mut data = PublicData::default();
-        parse_hashrate_stats(&json, Currency::Usd, &mut data);
-        let Availability::Available(hashprice) = data.hashprice else {
-            panic!("BUG: hashprice should be available");
+        parse_price_stats(&json, Currency::Usd, &mut data);
+        let Availability::Available(price) = data.btc_price else {
+            panic!("BUG: BTC price should be available");
         };
-        assert_eq!(hashprice.per_terahash_day.currency, Currency::Usd);
+        assert_eq!(price.currency, Currency::Usd);
     }
 
     #[test]
@@ -303,21 +276,15 @@ mod tests {
     #[test]
     fn reset_hashrate_stats_clears_only_its_own_fields() {
         let mut data = PublicData {
-            network_hashrate: Availability::Available(Hashrate::from_terahashes_per_second(
-                650_500_000.0,
-            )),
             avg_fee: Availability::Available(BitcoinAmount::from_bitcoin(0.125)),
             avg_fee_share: Availability::Available(Ratio::from_percent(1.4)),
-            hashprice: Availability::Available(Hashprice::new(0.052, Currency::Usd)),
             hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(5.02)),
             btc_price: Availability::Available(Money::new(104_250.0, Currency::Usd)),
             ..PublicData::default()
         };
         reset_hashrate_stats(&mut data);
-        assert_eq!(data.network_hashrate, Availability::Unavailable);
         assert_eq!(data.avg_fee, Availability::Unavailable);
         assert_eq!(data.avg_fee_share, Availability::Unavailable);
-        assert_eq!(data.hashprice, Availability::Unavailable);
         assert_eq!(data.hashvalue, Availability::Unavailable);
         assert!(matches!(data.btc_price, Availability::Available(_)));
     }

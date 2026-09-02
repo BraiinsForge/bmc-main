@@ -30,7 +30,7 @@ pub use mining::hashboards::JsonLookup;
 // Each `parse_*` returns whether it stored any of its fields.
 // A 2xx that yields no field is an unusable reply (unparsable body, or valid JSON of the wrong shape)
 // the caller treats as a failed refresh rather than banking it fresh.
-pub fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub(crate) fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let Some(uptime) = json
         .i64("/bosminer_uptime_s")
         .and_then(|v| u64::try_from(v).ok())
@@ -41,7 +41,7 @@ pub fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     true
 }
 
-pub fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let mut stored = false;
     if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
         data.hashrate = Availability::Available(Hashrate::from_gigahashes_per_second(ghs));
@@ -59,7 +59,7 @@ pub fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     stored
 }
 
-pub fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let mut stored = false;
     let board = json.f64("/hashboards/0/board_temp/degree_c");
     let chip = json.f64("/hashboards/0/highest_chip_temp/temperature/degree_c");
@@ -90,7 +90,7 @@ pub fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     stored
 }
 
-pub fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub(crate) fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let Some(ratio) = json.f64("/fans/0/target_speed_ratio") else {
         return false;
     };
@@ -98,7 +98,7 @@ pub fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     true
 }
 
-pub fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     let Some(ip) = json.str("/networks/0/address") else {
         return false;
     };
@@ -106,7 +106,7 @@ pub fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     true
 }
 
-pub fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     data.constraints.hashrate = target_range(
         json,
         "/tuner_constraints/hashrate_target",
@@ -127,39 +127,38 @@ fn target_range(json: &impl JsonLookup, base: &str, leaf: &str) -> Option<Target
     })
 }
 
-// A failed poll (network error or non-2xx) means the endpoint's fields are no longer trustworthy.
-// Each `reset_*` clears exactly the fields its matching `parse_*` produces, so an unreachable miner
-// shows unavailable instead of the last good reading, while a single flaky endpoint never wipes another's data.
-pub fn reset_details(data: &mut MinerData) {
+// A failed refresh does not come here — the engine keeps the last good reading
+// and flags it stale; this clears where the miner's identity or credentials changed.
+fn reset_details(data: &mut MinerData) {
     data.uptime = Availability::Unavailable;
 }
 
-pub fn reset_stats(data: &mut MinerData) {
+fn reset_stats(data: &mut MinerData) {
     data.hashrate = Availability::Unavailable;
     data.power = Availability::Unavailable;
     data.efficiency = Availability::Unavailable;
 }
 
-pub fn reset_hashboards(data: &mut MinerData) {
+fn reset_hashboards(data: &mut MinerData) {
     data.temperature = Availability::Unavailable;
     data.mcr = Availability::Unavailable;
     data.chip_type = Availability::Unavailable;
     data.chip_count = Availability::Unavailable;
 }
 
-pub fn reset_cooling(data: &mut MinerData) {
+fn reset_cooling(data: &mut MinerData) {
     data.fan_speed = Availability::Unavailable;
 }
 
-pub fn reset_network(data: &mut MinerData) {
+fn reset_network(data: &mut MinerData) {
     data.ip_address = Availability::Unavailable;
 }
 
-pub fn reset_constraints(data: &mut MinerData) {
+fn reset_constraints(data: &mut MinerData) {
     data.constraints = crate::model::Constraints::default();
 }
 
-pub fn reset_all(data: &mut MinerData) {
+pub(crate) fn reset_all(data: &mut MinerData) {
     reset_details(data);
     reset_stats(data);
     reset_hashboards(data);

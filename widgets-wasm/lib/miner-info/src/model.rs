@@ -68,14 +68,12 @@ pub struct TemperatureRange {
 pub struct PublicData {
     pub btc_price: Availability<Money>,
     pub btc_change_24h: Availability<Ratio>,
-    pub network_hashrate: Availability<Hashrate>,
     pub prev_diff_adjust: Availability<Ratio>,
     pub est_diff_adjust: Availability<Ratio>,
     pub epoch_progress: Availability<Ratio>,
     pub avg_fee: Availability<BitcoinAmount>,
     pub avg_fee_share: Availability<Ratio>,
     pub block_height: Availability<u64>,
-    pub hashprice: Availability<Hashprice>,
     pub hashvalue: Availability<Hashvalue>,
     // Chronological 1d price samples for the header sparkline.
     // Empty until the price-history endpoint replies;

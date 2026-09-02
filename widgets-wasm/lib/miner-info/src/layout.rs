@@ -81,7 +81,7 @@ pub struct BlockLayout {
 }
 
 #[must_use]
-pub fn mining_layout(class: ViewportClass) -> MiningLayout {
+pub(crate) fn mining_layout(class: ViewportClass) -> MiningLayout {
     match class {
         ViewportClass::Small => MiningLayout {
             padding_horizontal: 16.0,
@@ -109,7 +109,7 @@ pub fn mining_layout(class: ViewportClass) -> MiningLayout {
 /// and the 317 px BMC100 slot has room for two —
 /// the narrower block is what keeps that pair inside it.
 #[must_use]
-pub fn info_overload_layout(class: ViewportClass) -> BlockLayout {
+pub(crate) fn info_overload_layout(class: ViewportClass) -> BlockLayout {
     BlockLayout {
         padding_horizontal: 16.0,
         padding_top: 24.0,
@@ -129,7 +129,7 @@ pub fn info_overload_layout(class: ViewportClass) -> BlockLayout {
 }
 
 #[must_use]
-pub fn info_overload_fields(class: ViewportClass) -> InfoOverloadFields {
+pub(crate) fn info_overload_fields(class: ViewportClass) -> InfoOverloadFields {
     match class {
         ViewportClass::Small => InfoOverloadFields {
             show_price_graph: false,

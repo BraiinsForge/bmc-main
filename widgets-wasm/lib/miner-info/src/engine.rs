@@ -286,8 +286,8 @@ fn public_difficulty(json: &JsonDoc, _currency: Currency, data: &mut PublicData)
     public_api::parse_difficulty_stats(json, data);
 }
 #[cfg(target_arch = "wasm32")]
-fn public_hashrate(json: &JsonDoc, currency: Currency, data: &mut PublicData) {
-    public_api::parse_hashrate_stats(json, currency, data);
+fn public_hashrate(json: &JsonDoc, _currency: Currency, data: &mut PublicData) {
+    public_api::parse_hashrate_stats(json, data);
 }
 #[cfg(target_arch = "wasm32")]
 fn public_history(json: &JsonDoc, _currency: Currency, data: &mut PublicData) {
