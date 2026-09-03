@@ -1105,6 +1105,7 @@ pub(crate) struct TestbedApp {
     /// and a pending arrangement.
     pub(crate) stage: stage::Stage,
     clock: Clock,
+    pub(crate) clock_picker: ClockPicker,
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
@@ -1132,6 +1133,81 @@ impl Clock {
     }
 }
 
+/// The moment the date picker would jump to,
+/// held until `Set` applies it.
+///
+/// Deliberately not synced to the simulated clock:
+/// it is where the operator is heading, not where
+/// the widget is, and a field that re-seeded itself
+/// every frame would fight the drag that is editing it.
+pub(crate) struct ClockPicker {
+    pub(crate) year: u32,
+    pub(crate) month: u32,
+    pub(crate) day: u32,
+    pub(crate) hour: u32,
+    pub(crate) minute: u32,
+}
+
+impl ClockPicker {
+    /// Opens on the host's own date, the operator's likely starting point.
+    fn now() -> Self {
+        use chrono::{Datelike as _, Timelike as _};
+
+        let now = chrono::Local::now();
+        Self {
+            year: now.year().try_into().unwrap_or(1970),
+            month: now.month(),
+            day: now.day(),
+            hour: now.hour(),
+            minute: now.minute(),
+        }
+    }
+
+    /// The last day the picked month has.
+    fn last_day_of_month(&self) -> u32 {
+        use chrono::Datelike as _;
+
+        let (year, month) = if self.month == 12 {
+            (self.year.saturating_add(1), 1)
+        } else {
+            (self.year, self.month + 1)
+        };
+        year.try_into()
+            .ok()
+            .and_then(|year| chrono::NaiveDate::from_ymd_opt(year, month, 1))
+            .and_then(|first| first.pred_opt())
+            .map_or(31, |last| last.day())
+    }
+
+    /// Hold `day` inside the month it names.
+    ///
+    /// Without this the fields can spell 31 February, which `Set`
+    /// could only refuse — and refusing an action without saying
+    /// so is worse than never offering it.
+    fn clamp_day(&mut self) {
+        self.day = self.day.min(self.last_day_of_month());
+    }
+
+    /// The picked moment as an instant, with the UTC offset its own date
+    /// implies — a jump across a DST boundary must not carry today's.
+    ///
+    /// `None` for the hour a spring-forward skips, which is the one moment
+    /// the fields can spell that the local calendar does not have.
+    fn resolve(&self) -> Option<chrono::DateTime<chrono::Local>> {
+        use chrono::TimeZone as _;
+
+        let year = self.year.try_into().ok()?;
+        let naive = chrono::NaiveDate::from_ymd_opt(year, self.month, self.day)?.and_hms_opt(
+            self.hour,
+            self.minute,
+            0,
+        )?;
+        // Earliest, not single: a fall-back hour happens twice
+        // and either reading is the one the operator asked for.
+        chrono::Local.from_local_datetime(&naive).earliest()
+    }
+}
+
 /// Everything the operator can set that a widget then sees.
 ///
 /// One is the playground; a take clones it and keeps its own copy,
@@ -1147,21 +1223,24 @@ pub(crate) struct SandboxedState {
     /// Takes every tile off-scene, as on a deck whose scene nobody opens:
     /// deliveries carry on and nothing renders.
     pub(crate) dormant: bool,
-    /// The displayed clock's fast-forward. Its monotonic twin stays on [`Clock`]:
-    /// sandboxing a ratcheting offset would stall deadlines waiting past it.
-    pub(crate) clock_offset_ms: u64,
+    /// How far the displayed clock sits from the host's.
+    /// Signed, because the date picker can name a moment already past.
+    ///
+    /// Its monotonic twin stays on [`Clock`]: sandboxing
+    /// a ratcheting offset would stall deadlines waiting past it.
+    pub(crate) clock_offset_ms: i64,
 }
 
-/// The rebuild cycle end to end: the source watcher that starts a build, the
-/// wasm watcher that notices its result, and the phase both report into.
+/// The rebuild cycle end to end: the source watcher that starts a build,
+/// the wasm watcher that notices its result, and the phase both report into.
 ///
-/// Two watchers rather than one, because they answer different questions. The
-/// source watcher knows an edit landed and what cargo made of it; the wasm
-/// watcher knows a file arrived, whoever wrote it — a build run from a
-/// terminal reloads the same way an edit does.
+/// Two watchers rather than one, because they answer different questions.
+/// The source watcher knows an edit landed and what cargo made of it;
+/// the wasm watcher knows a file arrived, whoever wrote it — a build run
+/// from a terminal reloads the same way an edit does.
 struct HotReload {
-    /// Live `notify` watcher on the widget's wasm. Held to keep the watch
-    /// thread alive — when dropped, file events stop arriving.
+    /// Live `notify` watcher on the widget's wasm.
+    /// Held to keep the watch thread alive — when dropped, file events stop arriving.
     _watcher: RecommendedWatcher,
     /// Channel fed by `setup_watcher` whenever the wasm file on disk changes.
     watcher_rx: std::sync::mpsc::Receiver<()>,
@@ -1177,20 +1256,20 @@ struct HotReload {
 
 /// What the view pass hands to the paint pass that follows it.
 ///
-/// The two are separate phases because the views' GL work — drawing, and
-/// waiting on a threaded view's fence — belongs outside a pass that only
-/// builds a draw list.
+/// The two are separate phases because the views' GL work — drawing,
+/// and waiting on a threaded view's fence — belongs outside a pass
+/// that only builds a draw list.
 #[derive(Debug, Clone, Copy)]
 struct FramePass {
-    /// When the views ran, so the pass animates against the frame they
-    /// rendered rather than the moment it happens to paint.
+    /// When the views ran, so the pass animates against the frame
+    /// they rendered rather than the moment it happens to paint.
     now: std::time::Instant,
     /// Earliest deadline across the views, or `None` when all of them idle.
     next_wake_ms: Option<u64>,
 }
 
-/// A chrome banner: the outcome of an action whose other traces left the
-/// screen — a saved take, mostly. Holds until dismissed.
+/// A chrome banner: the outcome of an action whose other traces
+/// left the screen — a saved take, mostly. Holds until dismissed.
 struct Notice {
     text: String,
     kind: NoticeKind,
@@ -1271,9 +1350,9 @@ impl TestbedApp {
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
 
-        // The build runs from the widget's workspace, where its lock file and
-        // `target/` live; without a widget root there is no source to watch
-        // and the testbed only ever reloads what someone else builds.
+        // The build runs from the widget's workspace, where its lock file
+        // and `target/` live; without a widget root there is no source
+        // to watch and the testbed only ever reloads what someone else builds.
         let hot_status = hot::HotStatus::new();
         let source_watcher = cli.resolved_widget_root().and_then(|root| {
             let workspace = root.parent()?.to_owned();
@@ -1338,6 +1417,7 @@ impl TestbedApp {
                 start_instant: now,
                 monotonic_offset_ms: 0,
             },
+            clock_picker: ClockPicker::now(),
             hot_reload: HotReload {
                 _watcher: watcher,
                 watcher_rx,
@@ -1384,8 +1464,8 @@ impl TestbedApp {
         Ok((prepared, wasm))
     }
 
-    /// Drain pending watcher events; if any fired, rebuild every live view's
-    /// runtime from the (now-updated) wasm bytes on disk.
+    /// Drain pending watcher events; if any fired, rebuild every
+    /// live view's runtime from the (now-updated) wasm bytes on disk.
     fn poll_hot_reload(&mut self) {
         let manual = self.hot_reload.manual_reload;
         self.hot_reload.manual_reload = false;
@@ -1411,10 +1491,10 @@ impl TestbedApp {
             }
         };
         // Installed before the seeds are built, because `view_runtime_config`
-        // reads the asset root from here. After the loop, the seeds carry the
-        // *previous* extraction directory, which this assignment then deletes
-        // with its `TempDir` — and the first asset restore fails on a path
-        // that existed when the seed was made.
+        // reads the asset root from here. After the loop, the seeds carry
+        // the *previous* extraction directory, which this assignment then
+        // deletes with its `TempDir` — and the first asset restore fails
+        // on a path that existed when the seed was made.
         self.prepared_widget = prepared_widget;
         // Shared, because every view's seed carries a handle to the same bytes.
         let wasm_bytes: Arc<[u8]> = wasm_bytes.into();
@@ -1423,8 +1503,8 @@ impl TestbedApp {
             tiles = self.stage.tile_count(),
             "hot reload: rebuilding tile runtime(s)"
         );
-        // A rebuilt runtime starts with nothing bound, so the sidebar's bindings
-        // are re-delivered below — without that, a hot reload drops
+        // A rebuilt runtime starts with nothing bound, so the sidebar's
+        // bindings are re-delivered below — without that, a hot reload drops
         // a credential-fed widget back to its unbound state.
         let credentials = bmc_wasm_runtime::parse_credentials_json(&self.state().credentials);
         let secrets = self.secrets.clone();
@@ -1448,8 +1528,8 @@ impl TestbedApp {
             } else {
                 (None, None)
             };
-            // The same config the view was built with, so a reload keeps its
-            // KV store and — mid-recording — its fetch observer.
+            // The same config the view was built with, so a reload keeps
+            // its KV store and — mid-recording — its fetch observer.
             let kv_path = self.kv_dir(platform, view.kv_key());
             let mut config = self.view_runtime_config(kv_path, active_record_idx == Some(idx));
             config.led_request_sender = led_tx;
@@ -1477,8 +1557,8 @@ impl TestbedApp {
                 refused.get_or_insert_with(|| format!("{}: {e:#}", view.label()));
             }
         }
-        // A view that refused the rebuild is running what came before the edit,
-        // or nothing at all; either way the cycle did not land.
+        // A view that refused the rebuild is running what came before
+        // the edit, or nothing at all; either way the cycle did not land.
         match refused {
             None => self.hot_reload.status.swapped(),
             Some(why) => self.hot_reload.status.unloadable(why),
@@ -1502,14 +1582,14 @@ impl TestbedApp {
     }
 
     /// Open the choosing phase: every supported platform on the canvas,
-    /// packed to fit, each viewport wearing its choose overlay. Clicking one
-    /// opens its naming dialog; Cancel puts the canvas back.
+    /// packed to fit, each viewport wearing its choose overlay.
+    /// Clicking one opens its naming dialog; Cancel puts the canvas back.
     ///
-    /// `at` opens that target's dialog straight away — `--record` named a
-    /// viewport but no dataset, so the GUI is what asks for the name.
+    /// `at` opens that target's dialog straight away — `--record` named
+    /// a viewport but no dataset, so the GUI is what asks for the name.
     ///
-    /// Ctx-free, so startup can call it before the first frame; UI callers
-    /// follow it with `request_repaint`.
+    /// Ctx-free, so startup can call it before the first frame;
+    /// UI callers follow it with `request_repaint`.
     fn enter_choosing(&mut self, at: Option<platform_catalog::Target>) {
         if !self
             .recording_mode
@@ -1523,8 +1603,8 @@ impl TestbedApp {
                 .filter(|p| toolbar::platform_supported(p, &self.manifest))
                 .collect(),
         );
-        // Pack chooses the zoom that fits everything, so every candidate is
-        // in view when the overlays appear.
+        // Pack chooses the zoom that fits everything, so every candidate
+        // is in view when the overlays appear.
         self.stage.request_arrange();
         if let Some(target) = at {
             self.recording_mode.choose(target);
@@ -1571,11 +1651,12 @@ impl TestbedApp {
         recording::RecordedFixtures::new(recorded)
     }
 
-    /// Enter recording mode: pin the canvas to the take's platform and retire
-    /// every tile, so the next redraw rebuilds them through `build_views` with
-    /// the recording config, inline.
+    /// Enter recording mode: pin the canvas to the take's platform
+    /// and retire every tile, so the next redraw rebuilds them
+    /// through `build_views` with the recording config, inline.
     ///
     /// Ctx-free, so startup (`--record`) can call it before the first frame;
+    ///
     /// UI callers follow it with `request_repaint`.
     /// The take wipes the recorded viewport's KV store for a deterministic
     /// baseline, so the live dir is stashed aside first and put back on exit.
@@ -1614,10 +1695,9 @@ impl TestbedApp {
         self.stage.request_arrange();
     }
 
-    /// Save the take: write the fixture, and put the canvas back only if that
-    /// worked. The outcome stays on screen as a notice — a successful unwind
-    /// would otherwise say nothing about where the fixture went, and a failed
-    /// write nothing at all.
+    /// Save the take: write the fixture, and put the canvas back only if that worked.
+    /// The outcome stays on screen as a notice — a successful unwind would otherwise
+    /// say nothing about where the fixture went, and a failed write nothing at all.
     fn save_recording(&mut self, ctx: &egui::Context) {
         // Again, for the tail: fetches land off-thread, so one can arrive
         // between this frame's drain and the click that got here.
@@ -1663,6 +1743,12 @@ impl TestbedApp {
         self.recording_mode.sandbox().unwrap_or(&self.playground)
     }
 
+    /// The wall clock the widgets are being shown: the host's, moved by
+    /// whatever the operator set.
+    pub(crate) fn simulated_now(&self) -> chrono::DateTime<chrono::Local> {
+        chrono::Local::now() + chrono::Duration::milliseconds(self.state().clock_offset_ms)
+    }
+
     pub(crate) fn state_mut(&mut self) -> &mut SandboxedState {
         match self.recording_mode.sandbox_mut() {
             Some(take) => take,
@@ -1700,9 +1786,10 @@ impl TestbedApp {
                 self.stage.set_open(restore_platforms);
             }
         }
-        // The canvas widens by the sidebar's slice on the way out, and the
-        // windows were placed against the narrower one — entering already
-        // repacked them, so there is no untouched arrangement left to keep.
+        // The canvas widens by the sidebar's slice on the way out,
+        // and the windows were placed against the narrower one
+        // — entering already repacked them, so there is no
+        // untouched arrangement left to keep.
         self.stage.request_arrange();
         ctx.request_repaint();
     }
@@ -1736,8 +1823,8 @@ impl TestbedApp {
 
     /// Make sure every open platform has its views, building the missing ones.
     ///
-    /// Runs outside the egui pass, because registering a texture and painting
-    /// with it both want the painter.
+    /// Runs outside the egui pass, because registering
+    /// a texture and painting with it both want the painter.
     fn ensure_views(
         &mut self,
         painter: &mut egui_glow::Painter,
@@ -1782,8 +1869,8 @@ impl TestbedApp {
             } else {
                 (None, None)
             };
-            // Active recording tile wipes its KV first so the fixture
-            // starts from a known baseline.
+            // Active recording tile wipes its KV first so
+            // the fixture starts from a known baseline.
             let kv_path = self.kv_dir(platform, &placed.kv_key);
             if active_record_idx == Some(tile_idx) {
                 let _ = std::fs::remove_dir_all(&kv_path);
@@ -1836,9 +1923,9 @@ impl TestbedApp {
 
     /// Build one view, on a thread of its own where the driver allows it.
     ///
-    /// A view that cannot get a shared context falls back to the UI thread on
-    /// its own rather than failing the run: the fallback is only slower, and a
-    /// testbed that refuses to open teaches nothing about the widget.
+    /// A view that cannot get a shared context falls back to the UI thread
+    /// on its own rather than failing the run: the fallback is only slower,
+    /// and a testbed that refuses to open teaches nothing about the widget.
     fn build_one_view(
         &mut self,
         placed: &PlacedTile,
@@ -1852,8 +1939,8 @@ impl TestbedApp {
         let placement = placement_for_build(self.views, self.recording_mode.active().is_some());
         if placement == ViewPlacement::OwnThread {
             // Only the context is tried here. A build that fails on the worker
-            // would fail inline too — a bad wasm is not a threading problem —
-            // so that one is reported rather than quietly downgraded.
+            // would fail inline too — a bad wasm is not a threading problem
+            // — so that one is reported rather than quietly downgraded.
             match window.shared_offscreen() {
                 Ok(offscreen) => {
                     let (worker, textures) = view::worker::spawn(view::worker::WorkerSeed {
@@ -2013,15 +2100,12 @@ impl TestbedApp {
             (prev_fbo, vp)
         };
 
-        // A fast-forward advances both clocks so a due poll fires as its data
-        // ages out; "reset" rewinds only the display clock, never the monotonic
-        // one (which uses its own ratcheting offset).
-        let offset_ms = self.state().clock_offset_ms;
+        // A nudge advances both clocks so a due poll fires as its data ages
+        // out; the date picker and "reset" move only the display clock,
+        // never the monotonic one (which uses its own ratcheting offset).
         let monotonic_ms = self.clock.monotonic_ms(now);
         self.recording_mode.advance_clock(monotonic_ms);
-        let system_time = (chrono::Local::now()
-            + chrono::Duration::milliseconds(offset_ms.cast_signed()))
-        .fixed_offset();
+        let system_time = self.simulated_now().fixed_offset();
         let tick = view::ViewTick {
             now,
             system_time,
@@ -2069,8 +2153,8 @@ impl TestbedApp {
             self.perf.samples.push(timings);
             self.perf.section_samples.push(sections);
             self.perf.frame_count += 1;
-            // A report reads the whole run; without one the history is only
-            // ever drawn, and the chart shows its tail.
+            // A report reads the whole run; without one the history
+            // is only ever drawn, and the chart shows its tail.
             if self.cli.perf_report_path.is_none() {
                 let over = self
                     .perf
@@ -2102,8 +2186,8 @@ impl TestbedApp {
         next_wake_ms
     }
 
-    /// Trim `recent_frame_us` to a 60-sample sliding window so the FPS readout averages
-    /// roughly the last second at 60 fps.
+    /// Trim `recent_frame_us` to a 60-sample sliding window
+    /// so the FPS readout averages roughly the last second at 60 fps.
     fn record_frame_us(&mut self, us: u32) {
         if self.perf.recent_frame_us.len() == 60 {
             self.perf.recent_frame_us.pop_front();
@@ -2122,10 +2206,10 @@ fn can_switch_platform(recording_active: bool) -> Result<(), &'static str> {
 
 /// The devices a fresh testbed opens.
 ///
-/// Every platform the widget admits, since watching one change land
-/// everywhere at once is what the canvas is for.
-/// `pinned` — a recording, or an explicit `--platform` — asks for one
-/// device and gets only that.
+/// Every platform the widget admits, since watching one change
+/// land everywhere at once is what the canvas is for.
+/// `pinned` — a recording, or an explicit `--platform`
+/// asks for one device and gets only that.
 fn startup_platforms(
     active: &'static Platform,
     pinned: bool,
@@ -2138,8 +2222,8 @@ fn startup_platforms(
         .iter()
         .filter(|platform| toolbar::platform_supported(platform, manifest))
         .collect();
-    // A manifest admitting nothing still opens where it was pointed, so the
-    // operator sees the placeholder saying so rather than an empty canvas.
+    // A manifest admitting nothing still opens where it was pointed,
+    // so the operator sees the placeholder saying so rather than an empty canvas.
     if supported.is_empty() {
         vec![active]
     } else {
@@ -2276,8 +2360,8 @@ fn report_shared_gl(window: &window::GlWindow, gl: &egui_glow::glow::Context) {
                 let context = context
                     .make_current(&surface)
                     .map_err(|e| format!("make current on the view thread: {e}"))?;
-                // SAFETY: made current on this thread immediately above, and
-                // the loader outlives the scope.
+                // SAFETY: made current on this thread immediately above,
+                // and the loader outlives the scope.
                 let view_gl = unsafe {
                     egui_glow::glow::Context::from_loader_function_cstr(|name| {
                         context.display().get_proc_address(name)
@@ -2322,8 +2406,8 @@ fn report_shared_gl(window: &window::GlWindow, gl: &egui_glow::glow::Context) {
     println!("view GL: {version}");
 
     // The share group is the whole premise: a view renders into its own texture
-    // and the compositor samples it by name. Reading the size back proves the
-    // name resolves to that allocation here, not merely that the number crossed.
+    // and the compositor samples it by name. Reading the size back proves
+    // the name resolves to that allocation here, not merely that the number crossed.
     // SAFETY: the window context is current on this thread.
     let shared_size = unsafe {
         gl.bind_texture(egui_glow::glow::TEXTURE_2D, Some(texture));
@@ -2582,9 +2666,9 @@ impl TestbedApp {
         let palette = self.theme.palette(root_ui.ctx());
         theme::apply(root_ui.ctx(), palette);
 
-        // Debug layout means the whole layout, not only the widget's: egui's
-        // own inspector shows the chrome's rects, which is where a mock that
-        // paints itself is otherwise unfalsifiable.
+        // Debug layout means the whole layout, not only the widget's:
+        // egui's own inspector shows the chrome's rects, which is
+        // where a mock that paints itself is otherwise unfalsifiable.
         let debugging = bmc_render::tree::debug_layout_enabled();
         root_ui.ctx().style_mut(|style| {
             style.debug.debug_on_hover = debugging;
@@ -2596,8 +2680,8 @@ impl TestbedApp {
         });
 
         let ctx = root_ui.ctx().clone();
-        // The views already ran for this frame, outside the pass; this paints
-        // what they produced.
+        // The views already ran for this frame, outside the pass;
+        // this paints what they produced.
         let FramePass { now, next_wake_ms } = self.pass;
         let time_s = now.duration_since(self.clock.start_instant).as_secs_f32();
 
@@ -2610,8 +2694,8 @@ impl TestbedApp {
         self.hot_reload.status.settle();
 
         self.paint_toolbar(root_ui);
-        // Under the toolbar and above everything else: a failing build is the
-        // first thing to know about what is on the canvas.
+        // Under the toolbar and above everything else: a failing build
+        // is the first thing to know about what is on the canvas.
         self.paint_build_failure(&ctx);
         self.paint_status_bar(root_ui);
         self.paint_right_panel(root_ui);
@@ -2645,8 +2729,8 @@ impl TestbedApp {
         self.paint_device_windows(&ctx, time_s);
         self.paint_record_dialog(&ctx);
         self.paint_notice(&ctx);
-        // The dialog's submit, deferred here: it lands inside a borrow of the
-        // choosing state, and entering the take swaps the whole canvas.
+        // The dialog's submit, deferred here: it lands inside a borrow
+        // of the choosing state, and entering the take swaps the whole canvas.
         if let Some((target, dataset)) = self.recording_mode.take_choice() {
             self.enter_recording(target, dataset);
             ctx.request_repaint();
@@ -2660,8 +2744,8 @@ impl TestbedApp {
 
     /// The saved-a-take banner, floating over the top of the canvas.
     ///
-    /// A take leaves nothing else behind — the sidebar, the pinned platform and
-    /// the log all go with the unwind — so the write's result is stated here:
+    /// A take leaves nothing else behind — the sidebar, the pinned platform
+    /// and the log all go with the unwind — so the write's result is stated here:
     /// where the fixture landed, how much it holds, and what to run next.
     fn paint_notice(&mut self, ctx: &egui::Context) {
         // Held until dismissed either way: a fixture's path and the command
@@ -2730,6 +2814,69 @@ impl TestbedApp {
 #[cfg(test)]
 mod app_tests {
     use super::*;
+
+    /// The bug this guards is silent: carry today's UTC offset onto a date
+    /// months away and the widget renders an hour off. Reading the moment back
+    /// in local terms catches it in any zone, since a wrong offset can only
+    /// show up as a different wall time than the one asked for.
+    #[test]
+    fn a_picked_moment_reads_back_as_the_one_picked() {
+        // Either side of the northern DST boundary, so a zone that observes it
+        // resolves these two with different offsets.
+        for (month, day) in [(1, 15), (7, 15)] {
+            let picker = ClockPicker {
+                year: 2026,
+                month,
+                day,
+                hour: 12,
+                minute: 30,
+            };
+
+            let resolved = picker
+                .resolve()
+                .expect("BUG: midday is not a moment any zone skips");
+            assert_eq!(
+                resolved.format("%Y-%m-%d %H:%M").to_string(),
+                format!("2026-{month:02}-{day:02} 12:30"),
+            );
+        }
+    }
+
+    /// `Set` can only refuse a date it is handed, and refusing without saying
+    /// why is the failure this guards: the field must not reach the 31st of a
+    /// month that has thirty days.
+    #[test]
+    fn a_day_is_held_inside_the_month_it_names() {
+        for (month, last) in [(1, 31), (2, 28), (4, 30), (12, 31)] {
+            let mut picker = ClockPicker {
+                year: 2026,
+                month,
+                day: 31,
+                hour: 12,
+                minute: 0,
+            };
+            picker.clamp_day();
+
+            assert_eq!(picker.day, last, "month {month}");
+            assert!(picker.resolve().is_some(), "month {month} must resolve");
+        }
+    }
+
+    /// February gains a day every fourth year, so the bound cannot be a table
+    /// keyed on the month alone.
+    #[test]
+    fn february_gains_its_day_in_a_leap_year() {
+        let leap = ClockPicker {
+            year: 2028,
+            month: 2,
+            day: 29,
+            hour: 12,
+            minute: 0,
+        };
+
+        assert_eq!(leap.last_day_of_month(), 29);
+        assert!(leap.resolve().is_some());
+    }
 
     fn platform(id: &str) -> &'static Platform {
         platform_catalog::platform(id)

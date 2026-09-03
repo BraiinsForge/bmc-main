@@ -590,20 +590,39 @@ fn run_unified_capture(
     // Collect user-action events (Capture, Click, Scroll, Drag) with their
     // timestamps.  Network events and fetches are handled by the runtime's
     // inject_fixture_events and fetch_interceptor respectively.
+    //
+    // Exhaustive rather than a `matches!` whitelist: a variant missing
+    // from one is dropped before the dispatch loop ever sees it, which
+    // reads as the event doing nothing rather than as a mistake.
     let user_events: Vec<&TimelineEvent> = fixture
         .events
         .iter()
-        .filter(|e| {
-            matches!(
-                e.event,
-                UnifiedEvent::Capture { .. }
-                    | UnifiedEvent::Click { .. }
-                    | UnifiedEvent::Scroll { .. }
-                    | UnifiedEvent::Drag { .. }
-                    | UnifiedEvent::ParamDelivery { .. }
-                    | UnifiedEvent::SystemDelivery { .. }
-                    | UnifiedEvent::CredentialDelivery { .. }
-            )
+        .filter(|e| match e.event {
+            UnifiedEvent::Capture { .. }
+            | UnifiedEvent::Click { .. }
+            | UnifiedEvent::Scroll { .. }
+            | UnifiedEvent::Drag { .. }
+            | UnifiedEvent::ParamDelivery { .. }
+            | UnifiedEvent::SystemDelivery { .. }
+            | UnifiedEvent::CredentialDelivery { .. }
+            | UnifiedEvent::ClockSet { .. } => true,
+            // Served by the fetch interceptor, or injected on their own clock.
+            UnifiedEvent::Fetch { .. }
+            | UnifiedEvent::SsdpFound { .. }
+            | UnifiedEvent::SsdpRemoved { .. }
+            | UnifiedEvent::MdnsFound { .. }
+            | UnifiedEvent::MdnsRemoved { .. }
+            | UnifiedEvent::WsOpen { .. }
+            | UnifiedEvent::WsMessage { .. }
+            | UnifiedEvent::WsClose { .. }
+            | UnifiedEvent::SocketConnected { .. }
+            | UnifiedEvent::SocketData { .. }
+            | UnifiedEvent::SocketClosed { .. }
+            | UnifiedEvent::UdpResponse { .. }
+            | UnifiedEvent::AudioPlay { .. }
+            | UnifiedEvent::LedSetEndless { .. }
+            | UnifiedEvent::LedSetTemporary { .. }
+            | UnifiedEvent::LedStop => false,
         })
         .collect();
 
@@ -973,6 +992,15 @@ fn run_unified_capture(
                         bmc_wasm_runtime::parse_credentials_json(credentials),
                         bmc_widget_protocol::CredentialSecrets::default(),
                     );
+                }
+                // The wall clock alone: the operator moved the calendar,
+                // so no time elapsed and `monotonic_ms` must not follow.
+                // Walking the span instead would render every frame of it.
+                UnifiedEvent::ClockSet { time } => {
+                    system_time =
+                        chrono::DateTime::parse_from_rfc3339(time).with_context(|| {
+                            format!("clock_set at {event_cursor} carries an unreadable time")
+                        })?;
                 }
                 // Network events are handled by inject_fixture_events/fetch_interceptor
                 UnifiedEvent::Fetch { .. }
@@ -1505,6 +1533,7 @@ fn split_unified_events(
             | UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::SystemDelivery { .. }
             | UnifiedEvent::CredentialDelivery { .. }
+            | UnifiedEvent::ClockSet { .. }
             | UnifiedEvent::AudioPlay { .. }
             | UnifiedEvent::LedSetEndless { .. }
             | UnifiedEvent::LedSetTemporary { .. }

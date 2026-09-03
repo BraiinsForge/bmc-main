@@ -27,8 +27,8 @@
 use bmc_wasm_runtime::platform_catalog::{PLATFORMS, Platform, manifest_viewport_shape};
 
 use super::TestbedApp;
-use super::theme::Tone;
-use super::ui_helpers::{Button, ICON_SIZE, bar_readout};
+use super::theme::{Tone, spacing};
+use super::ui_helpers::{Button, ICON_SIZE};
 
 /// Tall enough for a stacked icon over its label, with breathing room; the
 /// toolbar owns its height now that nothing derives the window size from
@@ -37,6 +37,30 @@ pub(super) const TOOLBAR_H: f32 = 48.0;
 
 /// Keeps the outermost buttons off the window edges.
 pub(super) const BAR_INLINE_PAD: f32 = 8.0;
+
+/// Wide enough for the date row — five segments, their gaps and `Set` —
+/// plus the inset the sections are boxed with.
+///
+/// The header has to be given a width from somewhere: its right-aligned
+/// close button claims every pixel on offer, and without one the popover
+/// stretches to the window. A segment more, or a longer word under one,
+/// wraps the row and says so on sight.
+const CLOCK_POPOVER_W: f32 = 376.0;
+
+/// A setter section's inset from the box it sits in.
+const SECTION_PAD: i8 = spacing::S03 as i8;
+
+/// The surface left showing between two sunk blocks — wide enough
+/// to read as a divider, narrow enough not to read as a gap.
+const SECTION_SEPARATOR: f32 = spacing::S02;
+
+/// Between one segment and the next: closer
+/// than the gap that separates the date from the time.
+const SEGMENT_GAP: f32 = 3.0;
+
+/// Well under one unit per pixel: these are typed or nudged.
+/// Drag that runs away by a year per swipe is worse than none.
+const DATE_DRAG_SPEED: f32 = 0.05;
 
 impl TestbedApp {
     pub(super) fn paint_toolbar(&mut self, root_ui: &mut egui::Ui) {
@@ -337,46 +361,256 @@ impl TestbedApp {
         }
     }
 
-    /// An advance bumps both the display and monotonic offsets, to reach
-    /// time-gated states like staleness; "reset" zeroes only the display one
-    /// so the monotonic clock never rewinds past pending deadlines.
+    /// The simulated clock: its reading on the bar, its setters in a popover.
+    ///
+    /// One control rather than eight, which crowded the bar and read as
+    /// unrelated. The reading takes the accent whenever it is not the host's
+    /// own time, so a faked clock shows without opening anything.
     fn paint_clock_controls(&mut self, row: &mut egui::Ui) {
         let palette = self.theme.palette(row.ctx());
-        let secs = self.state().clock_offset_ms / 1_000;
-        let offset = format!("+{}:{:02}", secs / 60, secs % 60);
-        bar_readout(row, Some(&mut self.icons.delay), &offset, palette)
-            .on_hover_text("how far the simulated clock runs ahead of real time");
+        let faked = self.state().clock_offset_ms != 0;
+        let shown = self.simulated_now().format("%Y-%m-%d %H:%M").to_string();
+        let opener = Button::bar(&shown)
+            .icon(&mut self.icons.delay)
+            .tone(Tone {
+                ink: if faked {
+                    palette.accent_record
+                } else {
+                    palette.text_primary
+                },
+                ..Tone::secondary(palette)
+            })
+            .show(row, palette)
+            .on_hover_text("What the widgets are being shown as now — click to change it");
 
-        let mut advance_ms = 0_u64;
+        let popup = egui::Popup::from_toggle_button_response(&opener)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            // Padding belongs to the sections, which run to the popover's
+            // edge — and square, like every other surface the chrome paints.
+            .frame(
+                egui::Frame::popup(&row.ctx().style())
+                    .inner_margin(0)
+                    .corner_radius(0),
+            );
+        let close = popup
+            .show(|popover| self.paint_clock_popover(popover, palette))
+            .is_some_and(|shown| shown.inner);
+        // This one by id: closing "all" would take any popup the rest of the
+        // chrome happens to have open with it.
+        if close {
+            egui::Popup::close_id(row.ctx(), egui::Popup::default_response_id(&opener));
+        }
+    }
+
+    /// The clock's state, then the two ways to change it.
+    ///
+    /// They are different operations rather than a coarse and a fine version
+    /// of one: *Jump to* moves the calendar and nothing else, so no time
+    /// elapses and a recording carries it as a single event, while the nudges
+    /// bump the monotonic clock too — polls come due, and a recording carries
+    /// the whole span for replay to walk.
+    ///
+    /// Returns whether the operator asked to close it.
+    fn paint_clock_popover(&mut self, ui: &mut egui::Ui, palette: &super::theme::Palette) -> bool {
+        ui.set_max_width(CLOCK_POPOVER_W);
+        // The gap between blocks, not inside them: children inherit this,
+        // so the sections put back what they want between their own rows.
+        let inside = ui.spacing().item_spacing.y;
+        // A gap rather than a drawn rule: the popover's own surface shows
+        // through between the sunk blocks, as it does between the platform
+        // toggles, and runs the full bleed because the blocks do.
+        ui.spacing_mut().item_spacing.y = SECTION_SEPARATOR;
+        let field = super::ui_helpers::field_height(ui);
+
+        // The popover's frame carries no padding, so the boxes below
+        // can run edge to edge; the reading brings its own instead.
+        let close = egui::Frame::NONE
+            .inner_margin(egui::Margin::same(SECTION_PAD))
+            .show(ui, |head| {
+                head.spacing_mut().item_spacing.y = inside;
+                self.paint_clock_reading(head, palette, field)
+            })
+            .inner;
+        section_frame(palette).show(ui, |boxed| {
+            boxed.set_min_width(boxed.available_width());
+            boxed.spacing_mut().item_spacing.y = inside;
+            self.paint_clock_jump(boxed, palette, field);
+        });
+        section_frame(palette).show(ui, |boxed| {
+            boxed.set_min_width(boxed.available_width());
+            boxed.spacing_mut().item_spacing.y = inside;
+            self.paint_clock_nudges(boxed, palette, field);
+        });
+        close
+    }
+
+    /// What the widgets are being shown as now, and the way out.
+    ///
+    /// Accented whenever it is not the host's own time, so a clock left
+    /// faked from an earlier take cannot be mistaken for the real one.
+    fn paint_clock_reading(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &super::theme::Palette,
+        field: f32,
+    ) -> bool {
+        let faked = self.state().clock_offset_ms != 0;
+        let mut close = false;
         let mut reset = false;
-        row.scope(|group| {
-            group.spacing_mut().item_spacing.x = 1.0;
-            if Button::bar("+1m")
+        ui.horizontal(|head| {
+            // A button's height whether or not one is here, so the reading
+            // does not step down the moment `Reset` appears beside it.
+            head.set_min_height(field);
+            let reading = if faked {
+                self.simulated_now().format("%Y-%m-%d %H:%M:%S").to_string()
+            } else {
+                "Now — real time".to_owned()
+            };
+            head.label(
+                egui::RichText::new(reading)
+                    .monospace()
+                    .strong()
+                    .color(if faked {
+                        palette.accent_record
+                    } else {
+                        palette.text_secondary
+                    }),
+            );
+            // Beside the reading it undoes, not out by the dismiss,
+            // and only while there is something to undo.
+            if faked {
+                head.add_space(spacing::S03);
+                reset = Button::inline("Reset")
+                    .icon(&mut self.icons.reload)
+                    .tone(Tone::primary(palette))
+                    .min_height(field)
+                    .show(head, palette)
+                    // Says "displayed": time already let past stays past,
+                    // since the monotonic clock never rewinds.
+                    .on_hover_text("Return the displayed clock to real time")
+                    .clicked();
+            }
+            head.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
+                let centre = end.max_rect().right_center()
+                    - egui::vec2(super::ui_helpers::CLOSE_SIZE / 2.0, 0.0);
+                close = super::ui_helpers::close_button(
+                    end,
+                    &mut self.icons.close,
+                    centre,
+                    end.max_rect(),
+                    "Close",
+                );
+            });
+        });
+        if reset {
+            self.move_simulated_clock(0);
+        }
+        close
+    }
+
+    /// Put the displayed clock `offset_ms` from the host's, telling a take.
+    ///
+    /// The monotonic clock stays put: no time elapsed, so replay reproduces
+    /// the move from the event rather than by walking a span.
+    fn move_simulated_clock(&mut self, offset_ms: i64) {
+        self.state_mut().clock_offset_ms = offset_ms;
+        // Read back rather than passed in: the event has to carry where
+        // the clock landed, which for a reset is the host's own time.
+        let time = self.simulated_now().fixed_offset().to_rfc3339();
+        self.recording_mode
+            .record_delivery(|| bmc_wasm_runtime::unified_fixture::UnifiedEvent::ClockSet { time });
+    }
+
+    /// Moves the calendar and nothing else: no time elapses, so nothing ages
+    /// and a recording carries the move as one event rather than a span.
+    fn paint_clock_jump(&mut self, ui: &mut egui::Ui, palette: &super::theme::Palette, field: f32) {
+        // Before anything is read off the fields, so 31 February
+        // cannot be spelled and then refused.
+        self.clock_picker.clamp_day();
+        // The one moment the fields can still spell that
+        // does not exist: the hour a spring-forward skips.
+        //
+        // Said, rather than swallowed by a button that quietly does nothing.
+        let target = self.clock_picker.resolve();
+
+        ui.label(egui::RichText::new("Jump to").strong());
+        ui.label(
+            egui::RichText::new(match target {
+                Some(_) => "Nothing ages.",
+                None => "No such local time — daylight saving skips that hour.",
+            })
+            .color(match target {
+                Some(_) => palette.text_secondary,
+                None => palette.action_danger,
+            }),
+        );
+        ui.add_space(spacing::S02);
+        let mut set = false;
+        // Top-aligned, so `Set` sits level with the fields rather
+        // than being centred against a segment that is one label taller.
+        ui.horizontal_top(|group| {
+            // Tight between segments; the date and the time part at S05.
+            group.spacing_mut().item_spacing.x = SEGMENT_GAP;
+            let last_day = self.clock_picker.last_day_of_month();
+            let picker = &mut self.clock_picker;
+            segment(group, "Year", &mut picker.year, 1970..=2100, field, palette);
+            segment(group, "Month", &mut picker.month, 1..=12, field, palette);
+            // The month's own last day, so the field cannot leave the calendar.
+            segment(group, "Day", &mut picker.day, 1..=last_day, field, palette);
+            group.add_space(spacing::S05);
+            segment(group, "Hour", &mut picker.hour, 0..=23, field, palette);
+            segment(group, "Minute", &mut picker.minute, 0..=59, field, palette);
+            group.add_space(spacing::S05);
+            set = Button::inline("Set")
                 .icon(&mut self.icons.delay)
+                .tone(Tone::primary(palette))
+                .min_height(field)
+                .enabled(target.is_some())
+                .show(group, palette)
+                .clicked();
+        });
+
+        if set && let Some(target) = target {
+            self.move_simulated_clock((target - chrono::Local::now()).num_milliseconds());
+        }
+    }
+
+    /// Lets time elapse, so polls come due and the widgets' data ages.
+    ///
+    /// A recording carries the whole span, which replay walks a frame
+    /// at a time — cheap by the minute, ruinous by the month.
+    fn paint_clock_nudges(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &super::theme::Palette,
+        field: f32,
+    ) {
+        ui.label(egui::RichText::new("Let time pass").strong());
+        ui.label(
+            egui::RichText::new("Data ages, so polls come due.").color(palette.text_secondary),
+        );
+        ui.add_space(spacing::S02);
+        let mut advance_ms = 0_u64;
+        ui.horizontal(|group| {
+            if Button::inline("+1m")
+                .min_height(field)
                 .show(group, palette)
                 .clicked()
             {
                 advance_ms = 60_000;
             }
-            if Button::bar("+5m")
-                .icon(&mut self.icons.delay)
+            if Button::inline("+5m")
+                .min_height(field)
                 .show(group, palette)
                 .clicked()
             {
                 advance_ms = 300_000;
             }
-            reset = Button::bar("Reset")
-                .icon(&mut self.icons.delay)
-                .show(group, palette)
-                .on_hover_text("return the clock to real time")
-                .clicked();
         });
+        // Both clocks, unlike a jump: the span has to be real for
+        // the widgets to age across it and for a recording to carry it.
         self.clock.monotonic_offset_ms += advance_ms;
-        let displayed = &mut self.state_mut().clock_offset_ms;
-        *displayed += advance_ms;
-        if reset {
-            *displayed = 0;
-        }
+        self.state_mut().clock_offset_ms += advance_ms.cast_signed();
     }
 
     fn paint_theme_switch(&mut self, end: &mut egui::Ui) {
@@ -437,6 +671,53 @@ pub(super) fn target_recordable(
         target.viewport.height,
         target.platform.display().dpi,
     )
+}
+
+/// Sunk one tone under the popover, so each setter reads as its own block
+/// rather than as a run of controls beneath a heading.
+///
+/// Edge to edge and flush against its neighbour: a box with air around it
+/// reads as a card floating on the surface rather than as a band of it.
+fn section_frame(palette: &super::theme::Palette) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(palette.layer)
+        .inner_margin(egui::Margin::same(SECTION_PAD))
+}
+
+/// One named part of a date or time: the field, and under it what it is.
+///
+/// Named rather than initialled, and below rather than beside — an initial
+/// in front of a number reads as part of the value, and `M` serves month
+/// and minute equally badly. Zero-padded, so the row reads as a stamp.
+fn segment(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut u32,
+    range: std::ops::RangeInclusive<u32>,
+    height: f32,
+    palette: &super::theme::Palette,
+) {
+    // Wide enough for the longest thing it will hold
+    // — its own name, or the widest value the range admits
+    // — so a larger text style cannot clip it.
+    let width = super::ui_helpers::field_width(ui, label)
+        .max(super::ui_helpers::field_width(ui, &range.end().to_string()));
+    ui.vertical(|column| {
+        column.add_sized(
+            [width, height],
+            egui::DragValue::new(value)
+                .range(range)
+                .speed(DATE_DRAG_SPEED)
+                .custom_formatter(|n, _| format!("{n:02.0}")),
+        );
+        column.allocate_ui_with_layout(
+            egui::vec2(width, 0.0),
+            egui::Layout::top_down(egui::Align::Center),
+            |under| {
+                under.label(egui::RichText::new(label).color(palette.text_secondary));
+            },
+        );
+    });
 }
 
 /// Every (platform, viewport) the manifest admits, per [`target_recordable`].

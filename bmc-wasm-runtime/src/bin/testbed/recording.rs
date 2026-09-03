@@ -940,7 +940,7 @@ impl RecordingState {
             // Capture's parser also rejects a naive datetime,
             // so keep the timezone suffix (e.g. `2026-05-13T15:48:38+02:00`).
             start_time_iso: (chrono::Local::now()
-                + chrono::Duration::milliseconds(sandbox.clock_offset_ms.cast_signed()))
+                + chrono::Duration::milliseconds(sandbox.clock_offset_ms))
             .to_rfc3339(),
             auto_capture: true,
         }
@@ -1015,6 +1015,7 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             "LED temporary effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms scope={scope}"
         ),
         UnifiedEvent::LedStop => "LED stop".to_owned(),
+        UnifiedEvent::ClockSet { time } => format!("clock set to {time}"),
     }
 }
 
@@ -1343,7 +1344,8 @@ impl EventKind {
             | UnifiedEvent::Drag { .. } => Self::Touch,
             UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::SystemDelivery { .. }
-            | UnifiedEvent::CredentialDelivery { .. } => Self::Delivery,
+            | UnifiedEvent::CredentialDelivery { .. }
+            | UnifiedEvent::ClockSet { .. } => Self::Delivery,
             UnifiedEvent::Fetch { .. }
             | UnifiedEvent::SsdpFound { .. }
             | UnifiedEvent::SsdpRemoved { .. }
@@ -1817,7 +1819,7 @@ mod begin_tests {
         begin_fast_forwarded(target, 0)
     }
 
-    fn begin_fast_forwarded(target: &str, clock_offset_ms: u64) -> RecordingState {
+    fn begin_fast_forwarded(target: &str, clock_offset_ms: i64) -> RecordingState {
         let manifest_json = serde_json::json!({
             "uid": "550e8400-e29b-41d4-a716-446655440201",
             "version": "0.1.0",
@@ -1951,8 +1953,8 @@ mod begin_tests {
     /// on a fast-forwarded clock must be stamped on that clock, not the host's.
     #[test]
     fn the_start_time_carries_the_clock_the_take_ran_on() {
-        const FAST_FORWARD_MS: u64 = 300_000;
-        let fast_forward = chrono::Duration::milliseconds(FAST_FORWARD_MS.cast_signed());
+        const FAST_FORWARD_MS: i64 = 300_000;
+        let fast_forward = chrono::Duration::milliseconds(FAST_FORWARD_MS);
 
         // Bracketed rather than given a tolerance:
         // the stamp reads the host clock once, inside this span.

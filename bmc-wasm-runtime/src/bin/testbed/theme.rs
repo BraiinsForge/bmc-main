@@ -400,6 +400,10 @@ pub(crate) fn apply(ctx: &egui::Context, palette: &Palette) {
         spread: 0,
         color: Color32::from_black_alpha(72),
     };
+    // A popover hangs off the control that opened it, so it borrows
+    // that window's shadow rather than egui's default, which would
+    // read as a second light source.
+    visuals.popup_shadow = visuals.window_shadow;
     // One selection colour for both themes: the light base's pale blue
     // carries white text, which is unreadable on light chrome.
     visuals.selection.bg_fill = palette.action_primary;

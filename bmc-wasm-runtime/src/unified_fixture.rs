@@ -213,6 +213,20 @@ pub enum UnifiedEvent {
     SystemDelivery {
         system: SystemSnapshot,
     },
+    /// Operator moved the calendar to another moment.
+    ///
+    /// A discontinuity, not elapsed time: replay assigns the wall clock
+    /// and leaves the monotonic one alone, exactly as the testbed did.
+    ///
+    /// Recording the span instead would make replay render every frame
+    /// of it — eight months of them, for the jump this exists to serve.
+    ///
+    /// The offset is the one the *target* date implies,
+    /// so a jump across a daylight-saving boundary lands on the hour picked.
+    ClockSet {
+        /// RFC 3339, as [`FixtureHeader::time`] is.
+        time: String,
+    },
     /// Operator bound or unbound an account.
     /// Replay calls `WasmWidgetRuntime::deliver_credentials_update`,
     /// which fires `on_credentials_update` on the widget.
@@ -392,6 +406,13 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
                     bail!("events[{i}]: drag event has empty element ID");
                 }
             }
+            // Replay assigns this straight to the wall clock, so a time
+            // it cannot read would silently leave the clock where it was.
+            UnifiedEvent::ClockSet { time } => {
+                if chrono::DateTime::parse_from_rfc3339(time).is_err() {
+                    bail!("events[{i}]: clock_set time {time:?} is not RFC 3339 with an offset");
+                }
+            }
             UnifiedEvent::Fetch { .. }
             | UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::SystemDelivery { .. }
@@ -499,6 +520,45 @@ mod tests {
     #[test]
     fn validate_minimal_fixture() {
         validate_fixture(&minimal_fixture()).expect("BUG: minimal fixture should be valid");
+    }
+
+    /// Replay assigns this event's time to the wall clock, so one it
+    /// cannot read would leave the clock where it was and the jump would
+    /// vanish — silently, which is what this event exists to avoid.
+    #[test]
+    fn validate_rejects_a_clock_set_it_cannot_read() {
+        let mut f = minimal_fixture();
+        f.events.push(TimelineEvent {
+            at_ms: 10,
+            event: UnifiedEvent::ClockSet {
+                time: "2026-05-13 15:48:38".into(),
+            },
+        });
+
+        let err = validate_fixture(&f).expect_err("BUG: a naive datetime must fail validation");
+        assert!(format!("{err:#}").contains("RFC 3339"), "{err:#}");
+    }
+
+    /// The offset is the point: it carries the zone the picked date implies.
+    #[test]
+    fn a_clock_set_survives_the_round_trip() {
+        let stamped = "2026-05-13T15:48:38+02:00";
+        let mut f = minimal_fixture();
+        f.events.push(TimelineEvent {
+            at_ms: 10,
+            event: UnifiedEvent::ClockSet {
+                time: stamped.into(),
+            },
+        });
+        validate_fixture(&f).expect("BUG: an RFC 3339 clock_set must validate");
+
+        let line = serde_json::to_string(&f.events[1]).expect("BUG: the event must serialise");
+        let back: TimelineEvent =
+            serde_json::from_str(&line).expect("BUG: the event must parse back");
+        let UnifiedEvent::ClockSet { time } = back.event else {
+            panic!("BUG: a clock_set must read back as one, from {line}");
+        };
+        assert_eq!(time, stamped);
     }
 
     #[test]

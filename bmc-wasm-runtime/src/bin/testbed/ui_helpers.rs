@@ -93,6 +93,9 @@ pub(super) struct Button<'a> {
     tone: Option<Tone>,
     layout: Layout,
     enabled: bool,
+    /// Floor for the button's height, so one standing beside a field
+    /// can be told to match it rather than sizing to its own label.
+    min_height: f32,
 }
 
 impl<'a> Button<'a> {
@@ -103,6 +106,7 @@ impl<'a> Button<'a> {
             tone: None,
             layout: Layout::Stacked,
             enabled: true,
+            min_height: 0.0,
         }
     }
 
@@ -129,8 +133,14 @@ impl<'a> Button<'a> {
         self
     }
 
-    /// Disabled needs no colours of its own: `add_enabled_ui` fades the
-    /// painter, so fill, icon and label dim together.
+    /// Stand this tall at least — [`field_height`] for a button beside a field.
+    pub(super) fn min_height(mut self, min_height: f32) -> Self {
+        self.min_height = min_height;
+        self
+    }
+
+    /// Disabled needs no colours of its own: `add_enabled_ui`
+    /// fades the painter, so fill, icon and label dim together.
     pub(super) fn show(self, ui: &mut egui::Ui, palette: &Palette) -> egui::Response {
         let Self {
             label,
@@ -138,11 +148,18 @@ impl<'a> Button<'a> {
             tone,
             layout,
             enabled,
+            min_height,
         } = self;
         ui.add_enabled_ui(enabled, |ui| {
             let tone = tone.unwrap_or_else(|| Tone::secondary(palette));
-            let (rect, response) =
-                allocate_slot(ui, label, layout, icon.is_some(), egui::Sense::click());
+            let (rect, response) = allocate_slot(
+                ui,
+                label,
+                layout,
+                icon.is_some(),
+                egui::Sense::click(),
+                min_height,
+            );
             let corner_radius = ui.style().interact(&response).corner_radius;
             ui.painter()
                 .rect_filled(rect, corner_radius, tone_fill(tone, &response));
@@ -151,32 +168,6 @@ impl<'a> Button<'a> {
         })
         .inner
     }
-}
-
-/// Shaped like a stacked button but inert, so a reading
-/// on the bar sits level with the controls beside it.
-pub(super) fn bar_readout(
-    ui: &mut egui::Ui,
-    icon: Option<&mut super::icon::Icon>,
-    label: &str,
-    palette: &Palette,
-) -> egui::Response {
-    let (rect, response) = allocate_slot(
-        ui,
-        label,
-        Layout::Stacked,
-        icon.is_some(),
-        egui::Sense::hover(),
-    );
-    paint_slot(
-        ui,
-        rect,
-        icon,
-        label,
-        Layout::Stacked,
-        palette.text_secondary,
-    );
-    response
 }
 
 /// Held first: the pointer is over a button it is pressing,
@@ -205,6 +196,7 @@ fn allocate_slot(
     layout: Layout,
     has_icon: bool,
     sense: egui::Sense,
+    min_height: f32,
 ) -> (egui::Rect, egui::Response) {
     let padding = ui.spacing().button_padding;
     let text = button_label(ui, label);
@@ -227,7 +219,7 @@ fn allocate_slot(
     };
     let size = egui::vec2(
         (content.x + 2.0 * padding.x).max(floor),
-        content.y + 2.0 * padding.y,
+        (content.y + 2.0 * padding.y).max(min_height),
     );
     ui.allocate_exact_size(size, sense)
 }
@@ -315,10 +307,12 @@ pub(super) fn close_button(
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+    // Body weight at rest, not weak: the only way out
+    // of a surface has to be findable without hunting for it.
     let colour = if response.hovered() {
         ui.visuals().strong_text_color()
     } else {
-        ui.visuals().weak_text_color()
+        ui.visuals().text_color()
     };
     icon.paint(
         ui,
@@ -333,8 +327,19 @@ pub(super) fn field_height(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Body) + f32::from(FIELD_PAD_Y) * 2.0
 }
 
-/// A [`text_field`]'s fixed head — the part the caller supplies and the
-/// operator cannot edit.
+/// The width a field needs to show `sample`, measured rather than guessed:
+/// a chrome sized in raw pixels clips the moment the text style grows.
+pub(super) fn field_width(ui: &egui::Ui, sample: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        sample.to_owned(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        egui::Color32::PLACEHOLDER,
+    );
+    galley.size().x + f32::from(FIELD_PAD_X) * 2.0
+}
+
+/// A [`text_field`]'s fixed head — the part the caller supplies
+/// and the operator cannot edit.
 ///
 /// Shares the field's height, padding and font, and the caller zeroes
 /// `item_spacing.x` so the two abut: with square corners throughout the chrome
