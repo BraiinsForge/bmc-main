@@ -20,6 +20,41 @@ need z-ordering above scenes, edge anchoring, exclusive zones, and explicit inpu
 rather than protocol design. Keeping shell concerns out of the widget protocol is the
 [recorded decision](../../devlogs/BDK-416/non-widget-ui-protocol-strategy.md).
 
+## Geometry versus capability
+
+Overlays follow the same rule widgets do: **key layout on the display size, never on `Product`.** The widget form of it
+is in [`../wasm-widgets/display-geometry.md`](../wasm-widgets/display-geometry.md) ("Do not hardcode product dimensions
+in widget code"), and it holds here for the same reason. A product name in a layout decision hides what the decision is
+actually about, and the next display that ships has to be added to a match arm instead of just landing in a bucket.
+
+So: sizes, thresholds and tier tables read width and height. `bmc_overlay_upgrade::package_surface` is keyed that way.
+Round versus rectangular is display *shape*, part of the geometry, not a product gate.
+
+`Product` stays legitimate for capabilities — whether the board has a speaker, or drives its setup AP through a radio
+the overlay can speak to. Those are not readable off a screen size. The settings tray's `wifi_reconfig_supported` and
+`show_volume` are the current examples. Even they are the fallback path: the compositor sends `caps` over
+`deck_settings_v1` and the tray prefers it, which is where a new capability should go first.
+
+### Where the numbers come from
+
+Two sources, and they are not interchangeable. `SystemOverlay::render(renderer, size)` receives the size the compositor
+configured, which is the authoritative one. `HardwareProfile::for_product(…).display` is what the platform *expects* the
+display to be.
+
+Prefer the configured size. Reach for the profile only where the configured size does not exist yet: `layer_config()` is
+read before any configure arrives, so an overlay asking for a concrete surface size has to state one up front.
+`bmc_overlay_upgrade::packages()` does exactly that and nothing more — it reads the profile's display once, hands the
+numbers to `package_surface`, and never consults the product again.
+
+An overlay that anchors to all four edges avoids the problem entirely by passing `size: (0, 0)` and taking whatever the
+compositor gives it. The settings tray does that in `layer_config`, and the configured size becomes the taffy root box
+in `TreeUi::render`. But it feeds a second, independent size into the same layout: `view()` stamps the construction-time
+`width`/`height` onto the view, `build_tree` reads them off `Panel`, and they pick the tier, the usable content width
+and padding, and the close button's absolute origin. `panel_height_for` — the slide travel — comes off the profile too.
+The two sources agree on every current product and are never compared, so nothing is broken today; a configure that
+disagreed would lay the content out at one size inside a root box of another. Copy the tray for the capability split
+above, not for geometry.
+
 ## Run modes
 
 Every overlay crate always opens its own Wayland connection — from the compositor's view it is a separate client in both
@@ -56,7 +91,7 @@ The overlay crates are grouped under the top-level `system-overlays/` folder, mi
 - `system-overlays/bmc-overlay-settings-tray` — swipe-from-top quick-settings panel.
 - `system-overlays/bmc-overlay-alarm` — full-screen firing-alarm screen (Stop / Snooze).
 - `system-overlays/bmc-overlay-upgrade` — upgrade progress: a full-screen firmware blocker and a passive package surface
-  (a corner card, or the whole display on the BMM100), two `SystemOverlay` impls from one crate.
+  (a corner card, or the whole display where one will not fit), two `SystemOverlay` impls from one crate.
 - `system-overlays/layer-shell-test-client` — a standalone layer-shell client used to exercise the compositor support
   directly.
 
@@ -74,14 +109,14 @@ See [`protocols.md`](protocols.md) for all five.
 
 ## The concrete overlays
 
-| Overlay       | Crate                       | Layer        | Placement                                    | Input | Screen edge | Compositor IPC        |
-| ------------- | --------------------------- | ------------ | -------------------------------------------- | ----- | ----------- | --------------------- |
-| Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen                                  | full  | no          | `deck_device_info_v1` |
-| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right                                 | none  | no          | no                    |
-| Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen                                  | full  | `Top`       | `deck_settings_v1`    |
-| Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen                                  | full  | no          | `deck_alarm_v1`       |
-| Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen                                  | full  | no          | `deck_upgrade_v1`     |
-| Upgrade (pkg) | `bmc-overlay-upgrade`       | `Bottom`     | bottom-right card; full-screen on the BMM100 | none  | no          | `deck_upgrade_v1`     |
+| Overlay       | Crate                       | Layer        | Placement                                   | Input | Screen edge | Compositor IPC        |
+| ------------- | --------------------------- | ------------ | ------------------------------------------- | ----- | ----------- | --------------------- |
+| Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen                                 | full  | no          | `deck_device_info_v1` |
+| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right                                | none  | no          | no                    |
+| Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen                                 | full  | `Top`       | `deck_settings_v1`    |
+| Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen                                 | full  | no          | `deck_alarm_v1`       |
+| Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen                                 | full  | no          | `deck_upgrade_v1`     |
+| Upgrade (pkg) | `bmc-overlay-upgrade`       | `Bottom`     | bottom-right card; full-screen under 400 px | none  | no          | `deck_upgrade_v1`     |
 
 The startup screen also binds `deck_upgrade_v1`: a boot that follows a package restart skips it, and a boot that follows
 a firmware upgrade opens on the "Update Finished" screen it owns.
