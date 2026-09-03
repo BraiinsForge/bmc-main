@@ -22,97 +22,122 @@ use core::time::Duration;
 
 use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Ratio, Temperature, ufmt};
 
-use crate::model::{Availability, MinerData, TemperatureRange};
+use crate::model::{Availability, Constraints, MinerData, ParseResult, TemperatureRange, Verdict};
 use mining::gauge::TargetRange;
 
 pub use mining::hashboards::JsonLookup;
 
-// Each `parse_*` returns whether it stored any of its fields.
-// A 2xx that yields no field is an unusable reply (unparsable body, or valid JSON of the wrong shape)
-// the caller treats as a failed refresh rather than banking it fresh.
-pub(crate) fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
-    let Some(uptime) = json
+pub(crate) struct Details {
+    pub uptime: Option<Duration>,
+}
+
+pub(crate) struct Stats {
+    pub hashrate: Option<Hashrate>,
+    pub power: Option<ElectricPower>,
+    pub efficiency: Option<MiningEfficiency>,
+}
+
+pub(crate) struct Hashboards {
+    pub temperature: Option<TemperatureRange>,
+    pub mcr: Option<Ratio>,
+    pub chip_type: Option<String>,
+    pub chip_count: Option<usize>,
+}
+
+pub(crate) struct Cooling {
+    pub fan_speed: Option<Ratio>,
+}
+
+pub(crate) struct Network {
+    pub ip_address: Option<String>,
+}
+
+// `GetMinerDetailsResponse` is the only reply these read whose BOS+ schema
+// requires a field: `bosminer_uptime_s` (bos-main `open/boser/openapi.json`).
+// Everything else is optional, including empty `fans`, `hashboards`
+// and `networks` arrays: absence is a miner reporting nothing, not a fault.
+pub(crate) fn parse_details(json: &impl JsonLookup) -> ParseResult<Details> {
+    let uptime = json
         .i64("/bosminer_uptime_s")
-        .and_then(|v| u64::try_from(v).ok())
-    else {
-        return false;
-    };
-    data.uptime = Availability::Available(Duration::from_secs(uptime));
-    true
+        .and_then(|secs| u64::try_from(secs).ok())
+        .map(Duration::from_secs);
+    ParseResult {
+        data: Details { uptime },
+        verdict: Verdict::from_reported(uptime.is_some()),
+    }
 }
 
-pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
-    let mut stored = false;
-    if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
-        data.hashrate = Availability::Available(Hashrate::from_gigahashes_per_second(ghs));
-        stored = true;
+pub(crate) fn parse_stats(json: &impl JsonLookup) -> ParseResult<Stats> {
+    ParseResult {
+        data: Stats {
+            hashrate: json
+                .f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second")
+                .map(Hashrate::from_gigahashes_per_second),
+            power: json
+                .f64("/power_stats/approximated_consumption/watt")
+                .map(ElectricPower::from_watts),
+            efficiency: json
+                .f64("/power_stats/efficiency/joule_per_terahash")
+                .map(MiningEfficiency::from_joules_per_terahash),
+        },
+        verdict: Verdict::Answer,
     }
-    if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
-        data.power = Availability::Available(ElectricPower::from_watts(power));
-        stored = true;
-    }
-    if let Some(efficiency) = json.f64("/power_stats/efficiency/joule_per_terahash") {
-        data.efficiency =
-            Availability::Available(MiningEfficiency::from_joules_per_terahash(efficiency));
-        stored = true;
-    }
-    stored
 }
 
-pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> bool {
-    let mut stored = false;
+pub(crate) fn parse_hashboards(json: &impl JsonLookup) -> ParseResult<Hashboards> {
     let board = json.f64("/hashboards/0/board_temp/degree_c");
     let chip = json.f64("/hashboards/0/highest_chip_temp/temperature/degree_c");
-    if let (Some(board_c), Some(chip_c)) = (board, chip) {
-        data.temperature = Availability::Available(TemperatureRange {
-            board: Temperature::from_celsius(board_c),
-            chip: Temperature::from_celsius(chip_c),
-        });
-        stored = true;
-    }
     let nominal = json.f64("/hashboards/0/stats/nominal_hashrate/gigahash_per_second");
     let real = json.f64("/hashboards/0/stats/real_hashrate/last_1m/gigahash_per_second");
-    if let (Some(real), Some(nominal)) = (real, nominal)
-        && nominal > 0.0
-    {
-        data.mcr = Availability::Available(Ratio::from_fraction(real / nominal));
-        stored = true;
-    }
     let summary = mining::hashboards::sum_chips(json);
-    if let Some(model) = summary.model {
-        data.chip_type = Availability::Available(model);
-        stored = true;
+    ParseResult {
+        data: Hashboards {
+            temperature: board.zip(chip).map(|(board, chip)| TemperatureRange {
+                board: Temperature::from_celsius(board),
+                chip: Temperature::from_celsius(chip),
+            }),
+            mcr: real
+                .zip(nominal)
+                .filter(|(_, nominal)| *nominal > 0.0)
+                .map(|(real, nominal)| Ratio::from_fraction(real / nominal)),
+            chip_type: summary.model,
+            chip_count: summary.count,
+        },
+        verdict: Verdict::Answer,
     }
-    if let Some(count) = summary.count {
-        data.chip_count = Availability::Available(count);
-        stored = true;
+}
+
+pub(crate) fn parse_cooling(json: &impl JsonLookup) -> ParseResult<Cooling> {
+    ParseResult {
+        data: Cooling {
+            fan_speed: json
+                .f64("/fans/0/target_speed_ratio")
+                .map(Ratio::from_fraction),
+        },
+        verdict: Verdict::Answer,
     }
-    stored
 }
 
-pub(crate) fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) -> bool {
-    let Some(ratio) = json.f64("/fans/0/target_speed_ratio") else {
-        return false;
-    };
-    data.fan_speed = Availability::Available(Ratio::from_fraction(ratio));
-    true
+pub(crate) fn parse_network(json: &impl JsonLookup) -> ParseResult<Network> {
+    ParseResult {
+        data: Network {
+            ip_address: json.str("/networks/0/address"),
+        },
+        verdict: Verdict::Answer,
+    }
 }
 
-pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> bool {
-    let Some(ip) = json.str("/networks/0/address") else {
-        return false;
-    };
-    data.ip_address = Availability::Available(ip);
-    true
-}
-
-pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) -> bool {
-    data.constraints.hashrate = target_range(
-        json,
-        "/tuner_constraints/hashrate_target",
-        "terahash_per_second",
-    );
-    data.constraints.hashrate.is_some()
+pub(crate) fn parse_constraints(json: &impl JsonLookup) -> ParseResult<Constraints> {
+    ParseResult {
+        data: Constraints {
+            hashrate: target_range(
+                json,
+                "/tuner_constraints/hashrate_target",
+                "terahash_per_second",
+            ),
+        },
+        verdict: Verdict::Answer,
+    }
 }
 
 // Read a `{min,default,max}/<leaf>` target block, present only when all three
@@ -202,11 +227,9 @@ mod tests {
     fn parses_miner_details_uptime() {
         let mut json = MapJson::default();
         json.ints.insert("/bosminer_uptime_s", 187_020);
-        let mut data = MinerData::default();
-        parse_details(&json, &mut data);
         assert_eq!(
-            data.uptime,
-            Availability::Available(Duration::from_secs(187_020))
+            parse_details(&json).data.uptime,
+            Some(Duration::from_secs(187_020))
         );
     }
 
@@ -215,41 +238,56 @@ mod tests {
         let mut json = MapJson::default();
         json.floats
             .insert("/power_stats/efficiency/joule_per_terahash", 21.5);
-        let mut data = MinerData::default();
-        parse_stats(&json, &mut data);
         assert_eq!(
-            data.efficiency,
-            Availability::Available(MiningEfficiency::from_joules_per_terahash(21.5))
+            parse_stats(&json).data.efficiency,
+            Some(MiningEfficiency::from_joules_per_terahash(21.5))
         );
     }
 
     #[test]
-    fn leaves_efficiency_unavailable_when_absent() {
+    fn leaves_efficiency_absent_when_the_body_omits_it() {
         let json = MapJson::default();
-        let mut data = MinerData::default();
-        parse_stats(&json, &mut data);
-        assert_eq!(data.efficiency, Availability::Unavailable);
+        assert_eq!(parse_stats(&json).data.efficiency, None);
     }
 
+    /// `bosminer_uptime_s` is the one field the BOS+ schema requires of a reply
+    /// these parsers read, so it is the one absence that proves a broken body.
     #[test]
-    fn parse_reports_whether_it_stored_any_field() {
-        // A shapeless 2xx (empty / wrong-shape JSON) stores nothing → false,
-        // so the caller retries instead of banking it as a fresh success.
+    fn only_a_details_body_without_its_uptime_is_unusable() {
         let empty = MapJson::default();
-        let mut data = MinerData::default();
-        assert!(!parse_details(&empty, &mut data));
-        assert!(!parse_stats(&empty, &mut data));
-        assert!(!parse_hashboards(&empty, &mut data));
-        assert!(!parse_cooling(&empty, &mut data));
-        assert!(!parse_network(&empty, &mut data));
-        assert!(!parse_constraints(&empty, &mut data));
+        assert_eq!(parse_details(&empty).verdict, Verdict::Unusable);
 
         let mut json = MapJson::default();
-        json.floats.insert(
+        json.ints.insert("/bosminer_uptime_s", 187_020);
+        assert_eq!(parse_details(&json).verdict, Verdict::Answer);
+    }
+
+    /// Empty fan, hashboard and network arrays are legal, targets
+    /// are optional, and every stats field is nullable.
+    /// Failing the poll over that silence would stale a healthy miner.
+    #[test]
+    fn the_endpoints_whose_fields_are_all_optional_still_answer_when_empty() {
+        let empty = MapJson::default();
+        assert_eq!(parse_stats(&empty).verdict, Verdict::Answer);
+        assert_eq!(parse_hashboards(&empty).verdict, Verdict::Answer);
+        assert_eq!(parse_cooling(&empty).verdict, Verdict::Answer);
+        assert_eq!(parse_network(&empty).verdict, Verdict::Answer);
+        assert_eq!(parse_constraints(&empty).verdict, Verdict::Answer);
+    }
+
+    /// A parser hands back its endpoint's whole field set, so a dropped field
+    /// reads as absent rather than as a reading from a minute ago.
+    #[test]
+    fn a_body_that_drops_a_field_reports_it_absent() {
+        let mut hashrate_only = MapJson::default();
+        hashrate_only.floats.insert(
             "/miner_stats/real_hashrate/last_1m/gigahash_per_second",
             122_480.0,
         );
-        assert!(parse_stats(&json, &mut data));
+        let parsed = parse_stats(&hashrate_only);
+        assert_eq!(parsed.verdict, Verdict::Answer);
+        assert!(parsed.data.hashrate.is_some());
+        assert_eq!(parsed.data.power, None);
     }
 
     #[test]
@@ -257,10 +295,9 @@ mod tests {
         let mut json = MapJson::default();
         json.strings.insert("/hashboards/0/chip_type", "BM1370");
         json.ints.insert("/hashboards/0/chips_count", 108);
-        let mut data = MinerData::default();
-        parse_hashboards(&json, &mut data);
-        assert_eq!(data.chip_type, Availability::Available("BM1370".into()));
-        assert_eq!(data.chip_count, Availability::Available(108));
+        let parsed = parse_hashboards(&json);
+        assert_eq!(parsed.data.chip_type.as_deref(), Some("BM1370"));
+        assert_eq!(parsed.data.chip_count, Some(108));
     }
 
     #[test]
@@ -270,19 +307,17 @@ mod tests {
         json.ints.insert("/hashboards/0/chips_count", 108);
         json.ints.insert("/hashboards/1/chips_count", 108);
         json.ints.insert("/hashboards/2/chips_count", 108);
-        let mut data = MinerData::default();
-        parse_hashboards(&json, &mut data);
-        assert_eq!(data.chip_type, Availability::Available("BM1370".into()));
-        assert_eq!(data.chip_count, Availability::Available(324));
+        let parsed = parse_hashboards(&json);
+        assert_eq!(parsed.data.chip_type.as_deref(), Some("BM1370"));
+        assert_eq!(parsed.data.chip_count, Some(324));
     }
 
     #[test]
-    fn leaves_chips_unavailable_when_absent() {
+    fn leaves_chips_absent_when_the_body_omits_them() {
         let json = MapJson::default();
-        let mut data = MinerData::default();
-        parse_hashboards(&json, &mut data);
-        assert_eq!(data.chip_type, Availability::Unavailable);
-        assert_eq!(data.chip_count, Availability::Unavailable);
+        let parsed = parse_hashboards(&json);
+        assert_eq!(parsed.data.chip_type, None);
+        assert_eq!(parsed.data.chip_count, None);
     }
 
     #[test]
@@ -354,10 +389,8 @@ mod tests {
 
     #[test]
     fn parses_the_tuner_hashrate_target() {
-        let mut data = MinerData::default();
-        parse_constraints(&full_constraints_json(), &mut data);
         assert_eq!(
-            data.constraints.hashrate,
+            parse_constraints(&full_constraints_json()).data.hashrate,
             Some(TargetRange {
                 min: 50.0,
                 default: 100.0,
@@ -371,21 +404,18 @@ mod tests {
         let mut json = full_constraints_json();
         json.floats
             .remove("/tuner_constraints/hashrate_target/max/terahash_per_second");
-        let mut data = MinerData::default();
-        assert!(
-            !parse_constraints(&json, &mut data),
-            "a target missing one leaf stores nothing"
+        assert_eq!(
+            parse_constraints(&json).data.hashrate,
+            None,
+            "a target missing one leaf is no target"
         );
-        assert_eq!(data.constraints.hashrate, None);
     }
 
     #[test]
     fn parses_cooling_ratio_as_percent() {
         let mut json = MapJson::default();
         json.floats.insert("/fans/0/target_speed_ratio", 0.72);
-        let mut data = MinerData::default();
-        parse_cooling(&json, &mut data);
-        let Availability::Available(fan_speed) = data.fan_speed else {
+        let Some(fan_speed) = parse_cooling(&json).data.fan_speed else {
             panic!("BUG: fan speed should be available");
         };
         // The endpoint quotes a ratio; `Ratio` stores one, so nothing is scaled

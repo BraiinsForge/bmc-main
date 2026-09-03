@@ -38,7 +38,7 @@ use std::time::Duration;
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
-use crate::model::{Currency, MinerData, PublicData};
+use crate::model::{Currency, MinerData, PublicData, Verdict};
 #[cfg(target_arch = "wasm32")]
 use crate::{api as miner_api, model, public as public_api};
 #[cfg(target_arch = "wasm32")]
@@ -95,11 +95,11 @@ const MINER_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_LOGIN_RETRY_MS: u32 = 300_000;
 
 #[cfg(target_arch = "wasm32")]
-type MinerParser = fn(&JsonDoc, &mut MinerData) -> bool;
+type MinerParser = fn(&JsonDoc, &mut MinerData) -> Verdict;
 #[cfg(target_arch = "wasm32")]
 type PublicUrl = fn(Currency) -> String;
 #[cfg(target_arch = "wasm32")]
-type PublicParser = fn(&JsonDoc, Currency, &mut PublicData);
+type PublicParser = fn(&JsonDoc, Currency, &mut PublicData) -> Verdict;
 #[cfg(target_arch = "wasm32")]
 type PublicReset = fn(&mut PublicData);
 
@@ -250,48 +250,67 @@ fn public_endpoint_needed(idx: usize, view: View) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn miner_details(json: &JsonDoc, data: &mut MinerData) -> bool {
-    miner_api::parse_details(json, data)
+fn miner_details(json: &JsonDoc, data: &mut MinerData) -> Verdict {
+    miner_api::parse_details(json).stored(|details| data.uptime = details.uptime.into())
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_stats(json: &JsonDoc, data: &mut MinerData) -> bool {
-    miner_api::parse_stats(json, data)
+fn miner_stats(json: &JsonDoc, data: &mut MinerData) -> Verdict {
+    miner_api::parse_stats(json).stored(|stats| {
+        data.hashrate = stats.hashrate.into();
+        data.power = stats.power.into();
+        data.efficiency = stats.efficiency.into();
+    })
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_hashboards(json: &JsonDoc, data: &mut MinerData) -> bool {
-    miner_api::parse_hashboards(json, data)
+fn miner_hashboards(json: &JsonDoc, data: &mut MinerData) -> Verdict {
+    miner_api::parse_hashboards(json).stored(|boards| {
+        data.temperature = boards.temperature.into();
+        data.mcr = boards.mcr.into();
+        data.chip_type = boards.chip_type.into();
+        data.chip_count = boards.chip_count.into();
+    })
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_cooling(json: &JsonDoc, data: &mut MinerData) -> bool {
-    miner_api::parse_cooling(json, data)
+fn miner_cooling(json: &JsonDoc, data: &mut MinerData) -> Verdict {
+    miner_api::parse_cooling(json).stored(|cooling| data.fan_speed = cooling.fan_speed.into())
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_network(json: &JsonDoc, data: &mut MinerData) -> bool {
-    miner_api::parse_network(json, data)
+fn miner_network(json: &JsonDoc, data: &mut MinerData) -> Verdict {
+    miner_api::parse_network(json).stored(|network| data.ip_address = network.ip_address.into())
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_constraints(json: &JsonDoc, data: &mut MinerData) -> bool {
-    miner_api::parse_constraints(json, data)
+fn miner_constraints(json: &JsonDoc, data: &mut MinerData) -> Verdict {
+    miner_api::parse_constraints(json).stored(|constraints| data.constraints = constraints)
 }
 #[cfg(target_arch = "wasm32")]
-fn public_price(json: &JsonDoc, currency: Currency, data: &mut PublicData) {
-    public_api::parse_price_stats(json, currency, data);
+fn public_price(json: &JsonDoc, currency: Currency, data: &mut PublicData) -> Verdict {
+    public_api::parse_price_stats(json, currency).stored(|price| {
+        data.btc_price = price.btc_price.into();
+        data.btc_change_24h = price.btc_change_24h.into();
+    })
 }
 #[cfg(target_arch = "wasm32")]
-fn public_block(json: &JsonDoc, _currency: Currency, data: &mut PublicData) {
-    public_api::parse_block(json, data);
+fn public_block(json: &JsonDoc, _currency: Currency, data: &mut PublicData) -> Verdict {
+    public_api::parse_block(json).stored(|block| data.block_height = block.block_height.into())
 }
 #[cfg(target_arch = "wasm32")]
-fn public_difficulty(json: &JsonDoc, _currency: Currency, data: &mut PublicData) {
-    public_api::parse_difficulty_stats(json, data);
+fn public_difficulty(json: &JsonDoc, _currency: Currency, data: &mut PublicData) -> Verdict {
+    public_api::parse_difficulty_stats(json).stored(|difficulty| {
+        data.prev_diff_adjust = difficulty.prev_diff_adjust.into();
+        data.est_diff_adjust = difficulty.est_diff_adjust.into();
+        data.epoch_progress = difficulty.epoch_progress.into();
+    })
 }
 #[cfg(target_arch = "wasm32")]
-fn public_hashrate(json: &JsonDoc, _currency: Currency, data: &mut PublicData) {
-    public_api::parse_hashrate_stats(json, data);
+fn public_hashrate(json: &JsonDoc, _currency: Currency, data: &mut PublicData) -> Verdict {
+    public_api::parse_hashrate_stats(json).stored(|hashrate| {
+        data.avg_fee_share = hashrate.avg_fee_share.into();
+        data.hashvalue = hashrate.hashvalue.into();
+    })
 }
 #[cfg(target_arch = "wasm32")]
-fn public_history(json: &JsonDoc, _currency: Currency, data: &mut PublicData) {
-    public_api::parse_price_history(json, data);
+fn public_history(json: &JsonDoc, _currency: Currency, data: &mut PublicData) -> Verdict {
+    public_api::parse_price_history(json).stored(|history| data.btc_price_history = history.points)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -609,13 +628,13 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     }
     let idx = miner_index(handle);
     if response.ok() {
-        let stored = STATE.with(|state| {
+        let verdict = STATE.with(|state| {
             let mut state = state.borrow_mut();
             (MINER_ENDPOINTS[idx].parse)(&response.json(), &mut state.miner)
         });
-        // Empty 2xx (reachable, no data yet): flag stale,
-        // but re-poll at the endpoint's cadence, not the failure back-off.
-        if !stored {
+        // No answer is no refresh: the reading goes stale instead of banking,
+        // and the next attempt keeps the endpoint's own cadence.
+        if verdict == Verdict::Unusable {
             log_warn!(
                 "miner endpoint {} returned no usable data",
                 MINER_ENDPOINTS[idx].path
@@ -641,10 +660,14 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
     let idx = public_index(handle);
     if response.ok() {
         let currency = selected_currency();
-        STATE.with(|state| {
+        let verdict = STATE.with(|state| {
             let mut state = state.borrow_mut();
-            (PUBLIC_ENDPOINTS[idx].parse)(&response.json(), currency, &mut state.public);
+            (PUBLIC_ENDPOINTS[idx].parse)(&response.json(), currency, &mut state.public)
         });
+        if verdict == Verdict::Unusable {
+            log_warn!("public endpoint {} returned no usable data", idx);
+            handle.retry();
+        }
     } else {
         log_warn!(
             "public endpoint {} failed with status {}",

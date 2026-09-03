@@ -21,49 +21,91 @@
 use bmc_wasm_sdk::{Hashvalue, Ratio, ufmt};
 
 use crate::api::JsonLookup;
-use crate::model::{Availability, Currency, Money, PublicData};
+use crate::model::{Availability, Currency, Money, ParseResult, PublicData, Verdict};
 
 /// Blocks in a difficulty epoch, the denominator of the epoch progress.
 const BLOCKS_PER_EPOCH: f64 = 2016.0;
 
-pub(crate) fn parse_price_stats(json: &impl JsonLookup, currency: Currency, data: &mut PublicData) {
-    if let Some(price) = json.f64("/price") {
-        data.btc_price = Availability::Available(Money::new(price, currency));
-    }
-    // Quoted as a percent, unlike the adjustment fields below.
-    if let Some(change) = json.f64("/percent_change_24h") {
-        data.btc_change_24h = Availability::Available(Ratio::from_percent(change));
+pub(crate) struct PriceStats {
+    pub btc_price: Option<Money>,
+    pub btc_change_24h: Option<Ratio>,
+}
+
+pub(crate) struct Block {
+    pub block_height: Option<u64>,
+}
+
+pub(crate) struct DifficultyStats {
+    pub prev_diff_adjust: Option<Ratio>,
+    pub est_diff_adjust: Option<Ratio>,
+    pub epoch_progress: Option<Ratio>,
+}
+
+pub(crate) struct HashrateStats {
+    pub avg_fee_share: Option<Ratio>,
+    pub hashvalue: Option<Hashvalue>,
+}
+
+pub(crate) struct PriceHistory {
+    pub points: Vec<f64>,
+}
+
+// The public API publishes no schema of its own, so a body carrying nothing
+// we read is the only sign that it was not the answer.
+pub(crate) fn parse_price_stats(
+    json: &impl JsonLookup,
+    currency: Currency,
+) -> ParseResult<PriceStats> {
+    let data = PriceStats {
+        btc_price: json.f64("/price").map(|price| Money::new(price, currency)),
+        // Quoted as a percent, unlike the adjustment fields below.
+        btc_change_24h: json.f64("/percent_change_24h").map(Ratio::from_percent),
+    };
+    let reported = data.btc_price.is_some() || data.btc_change_24h.is_some();
+    ParseResult {
+        data,
+        verdict: Verdict::from_reported(reported),
     }
 }
 
-pub(crate) fn parse_block(json: &impl JsonLookup, data: &mut PublicData) {
-    if let Some(height) = json.i64("/0/height").and_then(|v| u64::try_from(v).ok()) {
-        data.block_height = Availability::Available(height);
+pub(crate) fn parse_block(json: &impl JsonLookup) -> ParseResult<Block> {
+    let block_height = json.i64("/0/height").and_then(|v| u64::try_from(v).ok());
+    ParseResult {
+        data: Block { block_height },
+        verdict: Verdict::from_reported(block_height.is_some()),
     }
 }
 
-pub(crate) fn parse_difficulty_stats(json: &impl JsonLookup, data: &mut PublicData) {
+pub(crate) fn parse_difficulty_stats(json: &impl JsonLookup) -> ParseResult<DifficultyStats> {
     // Both adjustments are quoted as fractions, which is what `Ratio` stores.
-    if let Some(prev) = json.f64("/previous_adjustment") {
-        data.prev_diff_adjust = Availability::Available(Ratio::from_fraction(prev));
-    }
-    if let Some(est) = json.f64("/estimated_adjustment") {
-        data.est_diff_adjust = Availability::Available(Ratio::from_fraction(est));
-    }
-    if let Some(epoch) = json.f64("/block_epoch") {
-        data.epoch_progress =
-            Availability::Available(Ratio::from_fraction(epoch / BLOCKS_PER_EPOCH));
+    let data = DifficultyStats {
+        prev_diff_adjust: json.f64("/previous_adjustment").map(Ratio::from_fraction),
+        est_diff_adjust: json.f64("/estimated_adjustment").map(Ratio::from_fraction),
+        epoch_progress: json
+            .f64("/block_epoch")
+            .map(|epoch| Ratio::from_fraction(epoch / BLOCKS_PER_EPOCH)),
+    };
+    let reported = data.prev_diff_adjust.is_some()
+        || data.est_diff_adjust.is_some()
+        || data.epoch_progress.is_some();
+    ParseResult {
+        data,
+        verdict: Verdict::from_reported(reported),
     }
 }
 
-pub(crate) fn parse_hashrate_stats(json: &impl JsonLookup, data: &mut PublicData) {
-    // Quoted as a percent, unlike the adjustment fields.
-    if let Some(fee_percent) = json.f64("/fees_percent") {
-        data.avg_fee_share = Availability::Available(Ratio::from_percent(fee_percent));
-    }
-    if let Some(hashvalue) = json.f64("/hash_value") {
-        data.hashvalue =
-            Availability::Available(Hashvalue::from_bitcoin_per_terahash_day(hashvalue));
+pub(crate) fn parse_hashrate_stats(json: &impl JsonLookup) -> ParseResult<HashrateStats> {
+    let data = HashrateStats {
+        // Quoted as a percent, unlike the adjustment fields.
+        avg_fee_share: json.f64("/fees_percent").map(Ratio::from_percent),
+        hashvalue: json
+            .f64("/hash_value")
+            .map(Hashvalue::from_bitcoin_per_terahash_day),
+    };
+    let reported = data.avg_fee_share.is_some() || data.hashvalue.is_some();
+    ParseResult {
+        data,
+        verdict: Verdict::from_reported(reported),
     }
 }
 
@@ -111,7 +153,8 @@ pub(crate) fn price_history_url(_currency: Currency) -> String {
     "https://public-api.braiins.com/v1/price-history?timeframe=1d".to_owned()
 }
 
-pub(crate) fn parse_price_history(json: &impl JsonLookup, data: &mut PublicData) {
+// A window with no samples answers with an empty series, which the chart draws.
+pub(crate) fn parse_price_history(json: &impl JsonLookup) -> ParseResult<PriceHistory> {
     let mut points = Vec::new();
     for index in 0..MAX_PRICE_HISTORY_POINTS {
         let Some(price) = json.f64(&bmc_wasm_sdk::fmt!("/price/{}/y", index)) else {
@@ -119,8 +162,9 @@ pub(crate) fn parse_price_history(json: &impl JsonLookup, data: &mut PublicData)
         };
         points.push(price);
     }
-    if !points.is_empty() {
-        data.btc_price_history = points;
+    ParseResult {
+        data: PriceHistory { points },
+        verdict: Verdict::Answer,
     }
 }
 
@@ -166,9 +210,7 @@ mod tests {
     fn parses_block_height() {
         let mut json = MapJson::default();
         json.ints.insert("/0/height", 900_123);
-        let mut data = PublicData::default();
-        parse_block(&json, &mut data);
-        assert_eq!(data.block_height, Availability::Available(900_123));
+        assert_eq!(parse_block(&json).data.block_height, Some(900_123));
     }
 
     /// The endpoint quotes the 24h change as a percent
@@ -180,9 +222,7 @@ mod tests {
     fn percent_and_fraction_fields_land_on_the_same_scale() {
         let mut price = MapJson::default();
         price.floats.insert("/percent_change_24h", 6.25);
-        let mut data = PublicData::default();
-        parse_price_stats(&price, Currency::Usd, &mut data);
-        let Availability::Available(change) = data.btc_change_24h else {
+        let Some(change) = parse_price_stats(&price, Currency::Usd).data.btc_change_24h else {
             panic!("BUG: the 24h change should be available");
         };
         assert!(approx(change.as_percent(), 6.25));
@@ -190,12 +230,10 @@ mod tests {
         let mut difficulty = MapJson::default();
         difficulty.floats.insert("/previous_adjustment", -0.045);
         difficulty.floats.insert("/estimated_adjustment", 0.105);
-        parse_difficulty_stats(&difficulty, &mut data);
-        let Availability::Available(prev) = data.prev_diff_adjust else {
-            panic!("BUG: the previous adjustment should be available");
-        };
-        let Availability::Available(est) = data.est_diff_adjust else {
-            panic!("BUG: the estimated adjustment should be available");
+        let adjustments = parse_difficulty_stats(&difficulty).data;
+        let (Some(prev), Some(est)) = (adjustments.prev_diff_adjust, adjustments.est_diff_adjust)
+        else {
+            panic!("BUG: both adjustments should be available");
         };
         assert!(approx(prev.as_percent(), -4.5));
         assert!(approx(est.as_percent(), 10.5));
@@ -205,9 +243,7 @@ mod tests {
     fn epoch_progress_is_the_block_count_over_the_epoch_length() {
         let mut json = MapJson::default();
         json.floats.insert("/block_epoch", 1008.0);
-        let mut data = PublicData::default();
-        parse_difficulty_stats(&json, &mut data);
-        let Availability::Available(progress) = data.epoch_progress else {
+        let Some(progress) = parse_difficulty_stats(&json).data.epoch_progress else {
             panic!("BUG: epoch progress should be available");
         };
         assert!(approx(progress.as_percent(), 50.0));
@@ -217,9 +253,7 @@ mod tests {
     fn converts_hashvalue_bitcoin_to_satoshis() {
         let mut json = MapJson::default();
         json.floats.insert("/hash_value", 0.000_000_050_2);
-        let mut data = PublicData::default();
-        parse_hashrate_stats(&json, &mut data);
-        let Availability::Available(value) = data.hashvalue else {
+        let Some(value) = parse_hashrate_stats(&json).data.hashvalue else {
             panic!("BUG: hashvalue should be available");
         };
         assert!(approx(value.as_satoshis_per_terahash_day(), 5.02));
@@ -231,9 +265,7 @@ mod tests {
     fn fiat_figures_carry_the_currency_they_were_fetched_in() {
         let mut json = MapJson::default();
         json.floats.insert("/price", 101_754.0);
-        let mut data = PublicData::default();
-        parse_price_stats(&json, Currency::Usd, &mut data);
-        let Availability::Available(price) = data.btc_price else {
+        let Some(price) = parse_price_stats(&json, Currency::Usd).data.btc_price else {
             panic!("BUG: BTC price should be available");
         };
         assert_eq!(price.currency, Currency::Usd);
@@ -247,12 +279,31 @@ mod tests {
         json.floats.insert("/price/2/y", 100_750.0);
         // index 3 missing on purpose: the series ends at the first gap
         json.floats.insert("/price/4/y", 999_999.0);
-        let mut data = PublicData::default();
-        parse_price_history(&json, &mut data);
         assert_eq!(
-            data.btc_price_history,
+            parse_price_history(&json).data.points,
             vec![101_000.0, 102_500.0, 100_750.0]
         );
+    }
+
+    #[test]
+    fn a_shapeless_body_is_unusable_wherever_the_endpoint_must_report_something() {
+        let empty = MapJson::default();
+        assert_eq!(
+            parse_price_stats(&empty, Currency::Usd).verdict,
+            Verdict::Unusable
+        );
+        assert_eq!(parse_block(&empty).verdict, Verdict::Unusable);
+        assert_eq!(parse_difficulty_stats(&empty).verdict, Verdict::Unusable);
+        assert_eq!(parse_hashrate_stats(&empty).verdict, Verdict::Unusable);
+    }
+
+    /// A window with no samples is still an answer: the chart draws nothing,
+    /// and the poll neither fails nor lets the figure go stale.
+    #[test]
+    fn an_empty_price_history_still_answers() {
+        let parsed = parse_price_history(&MapJson::default());
+        assert_eq!(parsed.verdict, Verdict::Answer);
+        assert!(parsed.data.points.is_empty());
     }
 
     #[test]

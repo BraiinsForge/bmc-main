@@ -269,11 +269,12 @@ impl Registry {
         ReplyAction::Deliver(Handle(idx))
     }
 
-    /// Mark the in-flight reply as unusable so the next reschedule retries
-    /// after `retry_ms` even on an HTTP-ok response. Meant to be called from a
-    /// reply handler when a 2xx body can't be used (malformed / out-of-range
-    /// payload) — the engine keys retry timing off the HTTP status alone and
-    /// would otherwise wait the full interval before trying again.
+    /// Mark the in-flight reply as unusable: a 2xx whose body
+    /// the handler cannot use, malformed or out of range.
+    ///
+    /// It then counts as no refresh: the poll reads as failing, the anchor
+    /// holds where the last good reply left it, and the next attempt waits
+    /// `retry_ms` rather than the poll interval.
     pub(crate) fn request_retry(&mut self, handle: Handle) {
         let delay = self.polls[handle.0].config.retry_ms;
         self.polls[handle.0].force_retry = Some(delay);
@@ -552,15 +553,17 @@ mod wasm {
             REGISTRY.with(|r| r.borrow_mut().invalidate(self, &mut ProdBackend));
         }
 
-        /// Treat the reply currently being delivered as unusable: the next
-        /// reschedule retries after `retry_ms` instead of the poll interval.
-        /// Call from a reply handler when a 2xx body can't be used.
+        /// Treat the reply being delivered as unusable, for a body
+        /// this handler cannot use despite the 2xx.
+        ///
+        /// The poll then reads as failing and keeps the anchor it had,
+        /// and the next attempt waits `retry_ms` rather than the interval.
         pub fn retry(self) {
             REGISTRY.with(|r| r.borrow_mut().request_retry(self));
         }
 
-        /// Like `retry`, but the next attempt waits `delay_ms` instead of
-        /// `retry_ms` — for a reply handler applying its own backoff.
+        /// Like [`retry`](Self::retry), including counting as no refresh,
+        /// but the next attempt waits `delay_ms` instead of `retry_ms`.
         pub fn retry_after(self, delay_ms: u32) {
             REGISTRY.with(|r| r.borrow_mut().request_retry_after(self, delay_ms));
         }

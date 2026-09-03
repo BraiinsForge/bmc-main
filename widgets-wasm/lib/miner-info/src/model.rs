@@ -27,6 +27,44 @@ pub use crate::money::{Currency, Money};
 
 pub use bmc_wasm_sdk::Availability;
 
+/// What a body reported for one endpoint: its whole field set, and the verdict
+/// on the body itself. Whole, so a reply replaces every reading its endpoint
+/// owns — a field the body dropped reads as absent, not as an older value.
+pub(crate) struct ParseResult<T> {
+    pub data: T,
+    pub verdict: Verdict,
+}
+
+impl<T> ParseResult<T> {
+    /// Store the fields, unless the body was no answer
+    /// — then the reading stands and goes stale.
+    pub(crate) fn stored(self, store: impl FnOnce(T)) -> Verdict {
+        if self.verdict == Verdict::Answer {
+            store(self.data);
+        }
+        self.verdict
+    }
+}
+
+/// Whether a 2xx body was the endpoint's answer. `Unusable` reaches the engine
+/// as a failed request would: the reading goes stale and the poll retries early.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Verdict {
+    Answer,
+    Unusable,
+}
+
+impl Verdict {
+    /// `Answer` when the body carried what the endpoint has to report.
+    pub(crate) fn from_reported(any_field: bool) -> Self {
+        if any_field {
+            Self::Answer
+        } else {
+            Self::Unusable
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MinerData {
     pub hashrate: Availability<Hashrate>,
