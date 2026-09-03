@@ -859,7 +859,7 @@ fn upgrade_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
         size: fullscreen,
         placement: Placement::Fullscreen,
     };
-    let package_surface = package_surface(product);
+    let package_surface = package_surface(fullscreen);
     let package_surface = Section {
         title: "Packages",
         size: match package_surface {

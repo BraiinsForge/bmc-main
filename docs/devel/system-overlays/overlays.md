@@ -226,17 +226,21 @@ that reboots the device blocks the screen.
 Making one surface reconfigure its size, anchors, layer, and input policy at runtime was the alternative. It was
 rejected: it would add runtime surface reconfiguration to the overlay framework for a single caller.
 
-### Per-product surfaces
+### Package surfaces
 
 The firmware surface is full-screen everywhere and takes whatever size the compositor configures. The package surface
-comes from `package_surface(product)`, because `LayerConfig` is read before any size exists:
+comes from `package_surface(display)`, keyed on the display width, because `LayerConfig` is read before any size exists:
 
-| Product | Package surface                                                             |
-| ------- | --------------------------------------------------------------------------- |
-| BMC100  | 384×192 card, bottom-right                                                  |
-| BMM101  | 240×120 card, bottom-right                                                  |
-| BMM100  | full-screen: 320×240 leaves no room for a card that still holds the content |
-| BFM100  | 384×192 card — the round panel has no upgrade design of its own yet         |
+| Display width | Package surface                                                         | Displays         |
+| ------------- | ----------------------------------------------------------------------- | ---------------- |
+| ≥ 960         | 384×192 card, bottom-right                                              | 1280×480         |
+| ≥ 400         | 240×120 card, bottom-right                                              | 480×320, 480×480 |
+| below         | full-screen: a card holding the content would cover most of the display | 320×240          |
+
+Width alone decides it: the card is wider than it is tall, and no display is taller than it is wide. On the round
+480×480 panel a corner card is wrong by construction whichever size it takes, and the BFM100 has no upgrade design of
+its own yet; the smaller card at least loses less of itself over the edge. Full-screen is not the way out there, because
+that panel has touch — see the blocker note below.
 
 A full-screen package surface stays on `Bottom` with no input region, so it never takes touch. It does, however, satisfy
 the compositor's `is_fullscreen_blocker` test, which is purely geometric — any mapped non-`Background` surface covering

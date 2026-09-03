@@ -617,7 +617,7 @@ mod tests {
     /// so content assertions index from the first content element
     /// and survive a change of chrome.
     fn compact_content_draws(view: &UpgradeView) -> Vec<DrawCommand> {
-        let mut draws = tree_draws(view, crate::PACKAGE_SURFACE_SIZE);
+        let mut draws = tree_draws(view, crate::PACKAGE_CARD_SURFACE_SIZE_LARGE);
         draws.drain(..3);
         draws
     }
@@ -799,7 +799,7 @@ mod tests {
     fn compact_card_marks_the_edges_that_meet_widget_content() {
         let draws = tree_draws(
             &running_view(UpgradeKind::Packages, None, None),
-            crate::PACKAGE_SURFACE_SIZE,
+            crate::PACKAGE_CARD_SURFACE_SIZE_LARGE,
         );
 
         assert!(matches!(
@@ -999,7 +999,7 @@ mod tests {
                     total_bytes: Some(151_000_000),
                 }),
             ),
-            crate::PACKAGE_SURFACE_SIZE_BMM101,
+            crate::PACKAGE_CARD_SURFACE_SIZE_SMALL,
             Placement::Card,
         );
 

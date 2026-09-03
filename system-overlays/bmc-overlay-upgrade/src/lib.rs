@@ -25,7 +25,7 @@ mod ui;
 
 use std::time::{Duration, Instant};
 
-use bmc_platform::{BmcInfo, Product};
+use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TreeUi,
@@ -39,14 +39,19 @@ pub use crate::ui::{Placement, Surface};
 // the indeterminate bar at 10 fps.
 const ANIMATION_FRAME: Duration = Duration::from_millis(100);
 
-/// Package card size on the Deck, shared by the runtime and the gallery scene.
-pub const PACKAGE_SURFACE_SIZE: (u32, u32) = (384, 192);
+/// Package card size on a wide display, rendered by `CARD_LARGE`.
+pub const PACKAGE_CARD_SURFACE_SIZE_LARGE: (u32, u32) = (384, 192);
 
-/// Package card size on the BMM101. Half the display width at the Deck card's
-/// 2:1 aspect, which is what its phase captions fit in.
-pub const PACKAGE_SURFACE_SIZE_BMM101: (u32, u32) = (240, 120);
+/// Package card size on a compact display, rendered by `CARD_SMALL`.
+pub const PACKAGE_CARD_SURFACE_SIZE_SMALL: (u32, u32) = (240, 120);
 
-/// How the package overlay sits on a product's display.
+/// Narrowest display that still leaves room beside the large card.
+const LARGE_CARD_MIN_DISPLAY_WIDTH: u32 = 960;
+
+/// Narrowest display that still leaves room beside the small card.
+const SMALL_CARD_MIN_DISPLAY_WIDTH: u32 = 400;
+
+/// How the package overlay sits on the display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackageSurface {
     /// A corner card of this size, leaving the widget beside it visible.
@@ -67,18 +72,22 @@ impl PackageSurface {
     }
 }
 
-/// Where the package overlay sits on `product`.
+/// Where the package overlay sits on a `display` of this size.
+///
+/// Keyed on the display, never on the product: a card has to leave its widget
+/// visible beside it, and that is a question about pixels. Width alone decides
+/// it, because the card is wider than it is tall and no display is taller than
+/// it is wide. Thresholds sit in the gaps between the widths that exist (320,
+/// 480 and 1280), so no display lands near an edge.
 #[must_use]
-pub fn package_surface(product: Product) -> PackageSurface {
-    match product {
-        // The Deck's card, and the round panel's by default: BFM100 has no
-        // upgrade design of its own yet, and while a corner card on a circle is
-        // wrong by construction, keeping today's is the change-nothing option.
-        Product::Bmc100 | Product::Bfm100 => PackageSurface::Card(PACKAGE_SURFACE_SIZE),
-        Product::Bmm101 => PackageSurface::Card(PACKAGE_SURFACE_SIZE_BMM101),
-        // 320x240 leaves no room for a card that still reads: the Deck card's
-        // own content needs most of that width.
-        Product::Bmm100 => PackageSurface::Fullscreen,
+pub fn package_surface(display: (u32, u32)) -> PackageSurface {
+    let width = display.0;
+    if width >= LARGE_CARD_MIN_DISPLAY_WIDTH {
+        PackageSurface::Card(PACKAGE_CARD_SURFACE_SIZE_LARGE)
+    } else if width >= SMALL_CARD_MIN_DISPLAY_WIDTH {
+        PackageSurface::Card(PACKAGE_CARD_SURFACE_SIZE_SMALL)
+    } else {
+        PackageSurface::Fullscreen
     }
 }
 
@@ -278,17 +287,21 @@ impl UpgradeOverlay {
         }
     }
 
+    /// The package overlay on this device's display. `layer_config` is read
+    /// before the compositor configures a size, so the display has to come from
+    /// the hardware profile rather than from the surface.
     #[must_use]
     pub fn packages() -> Self {
         let product = BmcInfo::load()
             .map(|info| info.bmc_platform.product())
             .expect("BUG: platform detection must succeed for the upgrade overlay");
-        Self::packages_for_product(product)
+        let display = HardwareProfile::for_product(product).display;
+        Self::packages_for_display((display.logical_width, display.logical_height))
     }
 
     #[must_use]
-    pub fn packages_for_product(product: Product) -> Self {
-        let package_surface = package_surface(product);
+    pub fn packages_for_display(display: (u32, u32)) -> Self {
+        let package_surface = package_surface(display);
         Self {
             state: OverlayState::new(UpgradeKind::Packages, package_surface.placement()),
             package_surface,
@@ -350,7 +363,35 @@ impl SystemOverlay for UpgradeOverlay {
 mod tests {
     use std::time::Duration;
 
+    use bmc_platform::Product;
+
     use super::*;
+
+    const DECK: (u32, u32) = (1_280, 480);
+    const BMM101: (u32, u32) = (480, 320);
+    const BMM100: (u32, u32) = (320, 240);
+    const BFM100: (u32, u32) = (480, 480);
+
+    /// Guards the fixtures above against a hardware profile moving under them,
+    /// and `package_surface`'s width-only key against a display that breaks the
+    /// assumption behind it.
+    #[test]
+    fn every_display_matches_its_fixture_and_is_no_taller_than_it_is_wide() {
+        for (product, expected) in [
+            (Product::Bmc100, DECK),
+            (Product::Bmm101, BMM101),
+            (Product::Bmm100, BMM100),
+            (Product::Bfm100, BFM100),
+        ] {
+            let display = HardwareProfile::for_product(product).display;
+            let (width, height) = (display.logical_width, display.logical_height);
+            assert_eq!((width, height), expected, "{product:?}");
+            assert!(
+                width >= height,
+                "{product:?} is {width}x{height}; package_surface keys on width alone"
+            );
+        }
+    }
 
     fn running(kind: UpgradeKind) -> UpgradeSnapshot {
         UpgradeSnapshot {
@@ -546,10 +587,10 @@ mod tests {
         assert_eq!(firmware.namespace, "bmc-overlay-upgrade-firmware");
         assert_eq!(firmware.input, InputRegion::Full);
 
-        let packages = UpgradeOverlay::packages_for_product(Product::Bmc100).layer_config();
+        let packages = UpgradeOverlay::packages_for_display(DECK).layer_config();
         assert_eq!(packages.layer, Layer::Bottom);
         assert_eq!(packages.anchor, Anchor::Bottom | Anchor::Right);
-        assert_eq!(packages.size, PACKAGE_SURFACE_SIZE);
+        assert_eq!(packages.size, PACKAGE_CARD_SURFACE_SIZE_LARGE);
         assert_eq!(
             (
                 packages.margin_top,
@@ -564,30 +605,42 @@ mod tests {
         assert_eq!(packages.input, InputRegion::None);
     }
 
-    /// The BMM101 card is smaller than the Deck's; the BMM100 has no room for a
-    /// card at all and takes the display. Neither may pick up an input region on
-    /// the way: a package upgrade stays passive on every product.
+    /// A 480-wide display gets a smaller card than the Deck's; 320 has no room
+    /// for a card at all and takes the display. Neither may pick up an input
+    /// region on the way: a package upgrade stays passive on every display.
     #[test]
-    fn the_package_surface_follows_the_product_without_gaining_input() {
-        let bmm101 = UpgradeOverlay::packages_for_product(Product::Bmm101).layer_config();
-        assert_eq!(bmm101.anchor, Anchor::Bottom | Anchor::Right);
-        assert_eq!(bmm101.size, PACKAGE_SURFACE_SIZE_BMM101);
+    fn the_package_surface_follows_the_display_without_gaining_input() {
+        let narrow_card = UpgradeOverlay::packages_for_display(BMM101).layer_config();
+        assert_eq!(narrow_card.anchor, Anchor::Bottom | Anchor::Right);
+        assert_eq!(narrow_card.size, PACKAGE_CARD_SURFACE_SIZE_SMALL);
 
-        let bmm100 = UpgradeOverlay::packages_for_product(Product::Bmm100).layer_config();
+        let no_card = UpgradeOverlay::packages_for_display(BMM100).layer_config();
         assert_eq!(
-            bmm100.anchor,
+            no_card.anchor,
             Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right
         );
         assert_eq!(
-            bmm100.size,
+            no_card.size,
             (0, 0),
             "a fullscreen surface takes the size the compositor configures"
         );
 
-        for config in [&bmm101, &bmm100] {
+        for config in [&narrow_card, &no_card] {
             assert_eq!(config.layer, Layer::Bottom);
             assert_eq!(config.input, InputRegion::None);
             assert_eq!(config.exclusive_zone, 0);
         }
+    }
+
+    /// The round panel is as wide as the BMM101, so it takes the same card. A
+    /// corner card on a circle is wrong by construction either way, and the
+    /// BFM100 has no upgrade design of its own yet; the smaller one at least
+    /// loses less of itself off the edge.
+    #[test]
+    fn the_round_panel_takes_the_same_card_as_a_display_of_its_width() {
+        assert_eq!(
+            package_surface(BFM100),
+            PackageSurface::Card(PACKAGE_CARD_SURFACE_SIZE_SMALL)
+        );
     }
 }
