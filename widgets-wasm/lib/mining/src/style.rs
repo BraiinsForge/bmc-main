@@ -18,11 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Gauge color palette and the per-state lit ring fill, shared by the
-//! mining-info gauge and both mining-clock rings. Render-only extras (the
-//! mining-info status-label color and center glow) are composed by the caller
-//! from these palette consts.
-
 use bmc_wasm_sdk::{ArcFill, Color};
 
 use crate::gauge::GaugeState;
@@ -38,8 +33,7 @@ pub const GREEN_BRIGHT: Color = Color::from_rgb(0x5a, 0xdf, 0x88);
 pub const GREEN_LABEL: Color = Color::from_rgb(0x34, 0xc0, 0x6a);
 pub const PURPLE: Color = Color::from_rgb(0x8b, 0x7c, 0xff);
 
-// The lit ring fill for each state, used by the mining-info gauge and both
-// mining-clock rings. `None` for `NotAvailable`, which renders neutral.
+// `None` for `NotAvailable`, which renders neutral.
 #[must_use]
 pub const fn ring_fill(state: GaugeState) -> Option<ArcFill> {
     match state {

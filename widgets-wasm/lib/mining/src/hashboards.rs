@@ -18,10 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Shared hashboard parsing for the mining widgets: a JSON-pointer lookup
-//! abstraction and the chip model/count summary folded across a miner's
-//! hashboards. `mining-info` and `fleet-management` both read it so the two
-//! stay in lock-step instead of carrying separate board-scan loops.
+//! Shared hashboard parsing: a JSON-pointer lookup abstraction
+//! plus the chip model and count folded across a miner's hashboards.
 
 use bmc_wasm_sdk::ufmt;
 

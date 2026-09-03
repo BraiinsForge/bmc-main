@@ -18,9 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Sparkline geometry, shared by both ticker widgets and mining-info. Free of
-//! SDK draw types so it builds and unit-tests on the host; the wasm render
-//! path turns these points into canvas draw commands.
+//! Sparkline geometry, free of SDK draw types so it unit-tests on the host.
+//! The wasm render path turns these points into canvas draw commands.
 
 /// Trend direction: the series ends at or above where it started.
 #[must_use]

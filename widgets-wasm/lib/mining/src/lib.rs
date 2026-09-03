@@ -21,10 +21,10 @@
 //! Shared vocabulary for the mining widgets: the gauge model, the palette,
 //! and the corner of the BOS API they all speak.
 //!
-//! `gauge` holds the state classification and tick geometry (no SDK types, so
-//! it unit-tests on the host); `style` holds the palette and the per-state ring
-//! fill. Both `mining-info` and `mining-clock` build their gauges from here.
-//! `hashboards` holds the shared JSON lookup trait and chip-summary fold.
+//! `gauge` holds the state classification and tick geometry,
+//! free of SDK types so it unit-tests on the host.
+//! `style` holds the palette and per-state ring fill,
+//! `hashboards` the JSON lookup trait and chip-summary fold.
 
 pub mod bos;
 pub mod gauge;

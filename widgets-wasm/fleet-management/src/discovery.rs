@@ -18,9 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-// The JSON lookup abstraction lives in the shared `mining` lib so this widget
-// and `mining-info` parse hashboards through one implementation. Re-exported
-// here so the family parsers keep referring to `crate::discovery::JsonLookup`.
+// Re-exported so the family parsers keep naming
+// `crate::discovery::JsonLookup` rather than the shared lib.
 pub use mining::hashboards::JsonLookup;
 
 /// Pull the user-facing name plus routing endpoint out of an mDNS `Found`
