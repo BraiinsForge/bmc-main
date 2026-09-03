@@ -25,7 +25,7 @@ pub use mining::gauge::TargetRange;
 
 pub use crate::money::{Currency, Money};
 
-pub use crate::availability::Availability;
+pub use bmc_wasm_sdk::Availability;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MinerData {

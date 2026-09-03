@@ -346,6 +346,7 @@ fn install_panic_hook() {
 #[cfg(target_arch = "wasm32")]
 pub mod alloc;
 pub mod assets;
+mod availability;
 pub mod cache;
 pub mod calendar;
 pub mod credentials;
@@ -409,6 +410,7 @@ pub mod ws;
 #[cfg(target_arch = "wasm32")]
 pub mod xml;
 
+pub use availability::Availability;
 pub use bmc_render_macros::*;
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;

@@ -28,8 +28,8 @@
 //! Every dimensional quantity comes from [`bmc_wasm_sdk::units`]. `money` holds
 //! the fiat figures, which are not dimensional — there is no canonical currency
 //! and no rate-free conversion — so they carry their currency as data instead.
-//! `availability` carries the "no value yet" state a plain quantity cannot
-//! express.
+//! [`bmc_wasm_sdk::Availability`] carries the "no value yet" state
+//! a quantity cannot express.
 //!
 //! `engine` is the crate's one `wasm32`-gated module: it owns the poll loop
 //! and the live `fetch`. Everything else is host-pure and unit-tested.
@@ -37,7 +37,6 @@
 //! picks that widget's endpoints.
 
 pub mod api;
-pub mod availability;
 pub mod engine;
 pub mod face;
 pub mod format;
