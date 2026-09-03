@@ -38,8 +38,6 @@ pub(crate) const BLOCK_HEIGHT_UID: Uuid =
 /// `widgets-wasm/halving-countdown`
 pub(crate) const HALVING_COUNTDOWN_UID: Uuid =
     Uuid::from_u128(0x8a87_742d_192d_4c80_bda2_d446_e9b9_aeae);
-/// `widgets-wasm/mining-info`
-pub(crate) const MINING_INFO_UID: Uuid = Uuid::from_u128(0x6d0c_6a2d_24d0_4384_8f8b_6f4a_c2c9_675a);
 /// `widgets-wasm/miner-info-mining`
 pub(crate) const MINER_INFO_MINING_UID: Uuid =
     Uuid::from_u128(0x378c_4d10_4561_4c3e_a453_c11b_eb8e_97b2);

@@ -31,7 +31,6 @@ members = [
     "miner-info-mining",
     "miner-info-overload",
     "mining-clock",
-    "mining-info",
     "nameday",
     "picture-of-the-day",
     "random-facts",

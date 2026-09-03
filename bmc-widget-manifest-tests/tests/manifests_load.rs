@@ -172,7 +172,6 @@ fn round_viewport_support_is_limited_to_the_expected_widgets() {
             "widgets-wasm/miner-info-mining/manifest.json",
             "widgets-wasm/miner-info-overload/manifest.json",
             "widgets-wasm/mining-clock/manifest.json",
-            "widgets-wasm/mining-info/manifest.json",
             // Last because a `PathBuf` sort compares components,
             // and `widgets-wasm` is a prefix of `widgets-wasm-examples`.
             // The SDK's demo widget lays out for the round BFM100 so
