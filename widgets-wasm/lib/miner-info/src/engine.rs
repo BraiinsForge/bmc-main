@@ -528,7 +528,7 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     if !view_needs_miner(params.view) || params.miner_password.is_empty() {
         return None;
     }
-    let url = endpoint(&params.miner_url, bos::LOGIN_PATH);
+    let url = endpoint(&params.miner_url, bos::LOGIN_PATH)?;
     let body = bos::login_body(&params.miner_password);
     Some(
         FetchSpec::post(url)
@@ -546,7 +546,7 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
     let url = endpoint(
         &config().miner_url,
         MINER_ENDPOINTS[miner_index(handle)].path,
-    );
+    )?;
     Some(
         FetchSpec::get(url)
             .headers(header)

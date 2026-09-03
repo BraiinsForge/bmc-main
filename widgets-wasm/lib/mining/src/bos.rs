@@ -44,13 +44,28 @@ pub const NETWORK_PATH: &str = "/network/";
 
 /// Join a miner's base URL to an endpoint path,
 /// tolerating a slash on either side of the seam.
+///
+/// Deliberately concatenation rather than a URL operation,
+/// since the base is expected to be `scheme://host[:port]/path`.
+///
+/// `None` for a base carrying a query or fragment,
+/// which would swallow the path appended after it.
 #[must_use]
-pub fn endpoint(base: &str, path: &str) -> String {
-    bmc_wasm_sdk::fmt!(
+pub fn endpoint(base: &str, path: &str) -> Option<String> {
+    if base.contains('?') || base.contains('#') {
+        // Refusing sends no request, so the log is where the reason shows.
+        #[cfg(target_arch = "wasm32")]
+        bmc_wasm_sdk::log_warn!(
+            "miner URL carries a query or fragment, so {} is unreachable",
+            path
+        );
+        return None;
+    }
+    Some(bmc_wasm_sdk::fmt!(
         "{}/{}",
         base.trim_end_matches('/'),
         path.trim_start_matches('/')
-    )
+    ))
 }
 
 /// Body of a login request. BOS authenticates the `root` account only.
@@ -102,9 +117,18 @@ mod tests {
 
     #[test]
     fn joins_base_url_and_path_once() {
-        assert_eq!(endpoint("http://miner", "/api"), "http://miner/api");
-        assert_eq!(endpoint("http://miner/", "/api"), "http://miner/api");
-        assert_eq!(endpoint("http://miner/", "api"), "http://miner/api");
+        let joined = Some("http://miner/api".to_owned());
+        assert_eq!(endpoint("http://miner", "/api"), joined);
+        assert_eq!(endpoint("http://miner/", "/api"), joined);
+        assert_eq!(endpoint("http://miner/", "api"), joined);
+    }
+
+    /// A path appended after a query or fragment lands inside it,
+    /// so the request would reach somewhere nobody asked for.
+    #[test]
+    fn refuses_a_base_carrying_a_query_or_fragment() {
+        assert_eq!(endpoint("http://miner/api?token=abc", "/stats"), None);
+        assert_eq!(endpoint("http://miner/api#frag", "/stats"), None);
     }
 
     #[test]

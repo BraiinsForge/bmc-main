@@ -144,7 +144,7 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     if params.miner_password.is_empty() {
         return None;
     }
-    let url = bos::endpoint(&params.miner_url, bos::LOGIN_PATH);
+    let url = bos::endpoint(&params.miner_url, bos::LOGIN_PATH)?;
     let body = bos::login_body(&params.miner_password);
     Some(
         FetchSpec::post(url)
@@ -161,8 +161,9 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
         MinerSource::Stats => bos::STATS_PATH,
         MinerSource::Constraints => bos::CONSTRAINTS_PATH,
     };
+    let url = bos::endpoint(&Params::current().miner_url, path)?;
     Some(
-        FetchSpec::get(bos::endpoint(&Params::current().miner_url, path))
+        FetchSpec::get(url)
             .headers(header)
             .timeout(MINER_FETCH_TIMEOUT),
     )
