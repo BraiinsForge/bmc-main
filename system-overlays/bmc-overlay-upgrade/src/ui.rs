@@ -181,6 +181,17 @@ pub struct Surface {
     pub placement: Placement,
 }
 
+/// How a tier draws the safety text — see [`safety_draw`].
+#[derive(Debug, Clone, Copy)]
+enum SafetyText {
+    SingleLine,
+    /// A box `lines` tall, inset from both surface edges.
+    Wrapped {
+        lines: usize,
+        inset: f32,
+    },
+}
+
 /// Per-surface sizing, selected by placement and width in [`tier_for`].
 /// Type and icons do not scale linearly with the display, so each tier states
 /// its own numbers rather than deriving them from a factor.
@@ -196,8 +207,6 @@ struct Tier {
     title: u32,
     body: u32,
     gap: f32,
-    /// Side padding, which the wrapped safety box is laid out inside.
-    inset: f32,
     bar_height: f32,
     /// Progress-bar inset from both surface edges.
     bar_inset: f32,
@@ -212,9 +221,7 @@ struct Tier {
     /// string either surface draws — a phase label, a percentage and an ellipsis
     /// — so the narrow card asks for [`UpgradePhase::short_label`] instead.
     short_percent_caption: bool,
-    /// Lines the safety text is allowed to take. Above one it is drawn as a
-    /// wrapped box instead of a single line — see [`safety_draw`].
-    safety_text_lines: f32,
+    safety: SafetyText,
 }
 
 /// The Deck's fullscreen firmware surface (1280x480).
@@ -225,13 +232,12 @@ const FULL_LARGE: Tier = Tier {
     title: 24,
     body: 18,
     gap: 15.0,
-    inset: 0.0,
     bar_height: 7.0,
     bar_inset: 128.0,
     caption_nudge: 10.0,
     transfer_line: true,
     short_percent_caption: false,
-    safety_text_lines: 1.0,
+    safety: SafetyText::SingleLine,
 };
 
 /// The BMM101's fullscreen surface (480x320). The Deck's type and icon carry
@@ -251,13 +257,12 @@ const CARD_LARGE: Tier = Tier {
     title: 20,
     body: 16,
     gap: 10.0,
-    inset: 16.0,
     bar_height: 5.0,
     bar_inset: 16.0,
     caption_nudge: 0.0,
     transfer_line: true,
     short_percent_caption: false,
-    safety_text_lines: 1.0,
+    safety: SafetyText::SingleLine,
 };
 
 /// The BMM101's package card (240x120). The Deck card's phase labels reach the
@@ -269,7 +274,6 @@ const CARD_SMALL: Tier = Tier {
     title: 18,
     body: 14,
     gap: 8.0,
-    inset: 12.0,
     bar_inset: 12.0,
     transfer_line: false,
     short_percent_caption: true,
@@ -287,10 +291,12 @@ const FULL_SMALL: Tier = Tier {
     title: 18,
     body: 14,
     gap: 8.0,
-    inset: 12.0,
     bar_height: 5.0,
     bar_inset: 24.0,
-    safety_text_lines: 2.0,
+    safety: SafetyText::Wrapped {
+        lines: 2,
+        inset: 12.0,
+    },
     ..FULL_MEDIUM
 };
 
@@ -322,8 +328,8 @@ fn tier_for(surface: Surface) -> Tier {
     clippy::cast_precision_loss,
     reason = "type sizes are a couple of dozen pixels"
 )]
-fn safety_draw(tier: Tier, width: f32, center_y: f32, size: u32) -> DrawCommand {
-    if tier.safety_text_lines <= 1.0 {
+fn safety_draw(safety: SafetyText, width: f32, center_y: f32, size: u32) -> DrawCommand {
+    let SafetyText::Wrapped { lines, inset } = safety else {
         return text_draw(
             width / 2.0,
             center_y,
@@ -332,19 +338,19 @@ fn safety_draw(tier: Tier, width: f32, center_y: f32, size: u32) -> DrawCommand 
             GRAY_50,
             FontWeight::REGULAR,
         );
-    }
-    // TextStyle's own default, spelled out so the box and the layout agree.
-    let line_height = 1.4;
-    let box_height = size as f32 * line_height * tier.safety_text_lines;
+    };
+
+    let line_height = TextStyle::default().line_height;
+    let box_height = size as f32 * line_height * lines as f32;
     #[expect(
         clippy::cast_possible_truncation,
         reason = "body type sizes are a couple of dozen pixels"
     )]
     let floor = size as u16;
     DrawCommand::AutofitText {
-        x: tier.inset,
+        x: inset,
         y: center_y - size as f32 / 2.0,
-        box_width: width - tier.inset * 2.0,
+        box_width: width - inset * 2.0,
         box_height,
         mode: AutoFit::Shrink,
         min_size: floor,
@@ -529,7 +535,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                         active_bar(&mut draws, bar_x, below_title_y, bar_w, bar_height);
                     } else if !packages {
                         draws.push(safety_draw(
-                            tier,
+                            tier.safety,
                             width,
                             below_title_y + body_size as f32 / 2.0,
                             body_size,
