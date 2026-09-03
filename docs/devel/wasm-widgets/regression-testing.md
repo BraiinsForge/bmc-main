@@ -140,7 +140,7 @@ target's platform, and arms the recorder.
 
 ```bash
 just wasm::record blockheight bmc100:full
-just wasm::record mining-info bmm101:full info-overload   # explicit dataset name
+just wasm::record miner-info-geek bmm101:full public-down   # explicit dataset name
 ```
 
 The target decides which platform the testbed opens, so `--platform` naming a different one is rejected rather than

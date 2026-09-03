@@ -71,7 +71,7 @@ just wasm::docs              # browse SDK API docs
 Widgets live in two workspaces:
 
 - `../widgets-wasm-examples/` — SDK demos (`hello-widget`, `metronome`, …)
-- `widgets-wasm/` — production widgets (`clock`, `weather`, `iss-position`, `spacex-launch`, `mining-info`, …)
+- `widgets-wasm/` — production widgets (`clock`, `weather`, `iss-position`, `spacex-launch`, `miner-info-mining`, …)
 
 Developer guides for writing widgets — best practices, params, system settings, display geometry, and the regression
 workflow — live in [`docs/devel/wasm-widgets/`](../docs/devel/wasm-widgets/README.md). Read Best Practices before
