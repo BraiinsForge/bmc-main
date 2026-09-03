@@ -52,16 +52,17 @@ impl std::error::Error for ConfigError {}
 
 // ── Types ────────────────────────────────────────────────────────────
 
-/// A named dataset and the targets it is replayed against.
+/// A named dataset and the target it is replayed against.
 ///
-/// A fixture carries no geometry of its own,
-/// so one dataset can drive several targets — and one target, several datasets.
+/// A fixture carries no geometry, so several datasets may share one recording;
+/// but a name must scope to its target for a re-record to reach it,
+/// which leaves each entry naming exactly one.
 #[derive(Debug)]
 pub struct FixtureEntry {
     /// Path to the `.jsonl.gz` recording, relative to the config directory
     /// until [`load_from_capture_dir`] resolves it.
     pub path: PathBuf,
-    pub targets: Vec<Target>,
+    pub target: Target,
     /// KV seed applied on top of the fixture's own.
     pub kv: HashMap<String, String>,
     /// Overrides the config-wide `settle_delay` for this dataset.
@@ -87,12 +88,7 @@ impl CaptureConfig {
     pub fn capture_matrix(&self) -> Vec<(&str, Target)> {
         self.fixtures
             .iter()
-            .flat_map(|(name, entry)| {
-                entry
-                    .targets
-                    .iter()
-                    .map(move |target| (name.as_str(), *target))
-            })
+            .map(|(name, entry)| (name.as_str(), entry.target))
             .collect()
     }
 
@@ -151,11 +147,9 @@ fn try_load_from_dir(capture_dir: &Path) -> Result<Option<CaptureConfig>> {
                 path: candidate.clone(),
                 message: format!("fixture '{dataset}' not found: {}", entry.path.display()),
                 hint: Some(format!(
-                    "record one with: just wasm::record <widget> {} {dataset}",
-                    entry
-                        .targets
-                        .first()
-                        .map_or_else(|| "<platform>:<viewport>".to_owned(), Target::to_string)
+                    "record one with: just wasm::record <widget> \
+                     --record={} --record-name={dataset}",
+                    entry.target
                 )),
             }
             .into());
@@ -170,7 +164,7 @@ fn try_load_from_dir(capture_dir: &Path) -> Result<Option<CaptureConfig>> {
 const KNOWN_CONFIG_KEYS: &[&str] = &["settle_delay", "fixtures"];
 
 /// All known keys inside a `[fixtures.<name>]` table.
-const KNOWN_FIXTURE_KEYS: &[&str] = &["path", "targets", "kv", "settle_delay"];
+const KNOWN_FIXTURE_KEYS: &[&str] = &["path", "target", "kv", "settle_delay"];
 
 pub fn parse_capture_config(content: &str) -> Result<CaptureConfig> {
     let table: toml::Table = content.parse().context("capture.toml is not valid TOML")?;
@@ -217,7 +211,7 @@ fn parse_fixtures_table(table: &toml::Table) -> Result<BTreeMap<String, FixtureE
     for (dataset, value) in fixtures {
         let toml::Value::Table(entry) = value else {
             bail!(
-                "'[fixtures.{dataset}]' must be a table with 'path' and 'targets' \
+                "'[fixtures.{dataset}]' must be a table with 'path' and 'target' \
                  (a bare path is the retired size-keyed form)"
             );
         };
@@ -236,6 +230,21 @@ fn parse_fixtures_table(table: &toml::Table) -> Result<BTreeMap<String, FixtureE
 #[must_use]
 pub fn conventional_dataset_name(target: Target) -> String {
     format!("{}-{}", target.platform.id, target.viewport.id)
+}
+
+/// The scenario suffix naming `dataset` at `target`,
+/// or `None` when the two disagree and no recording could produce that name.
+#[must_use]
+pub fn dataset_suffix(dataset: &str, target: Target) -> Option<&str> {
+    let prefix = conventional_dataset_name(target);
+    if dataset == prefix {
+        return Some("");
+    }
+    // A dangling separator means the empty suffix, which the dialog writes
+    // as the bare prefix — so this would name a take nothing could reproduce.
+    dataset
+        .strip_prefix(&format!("{prefix}-"))
+        .filter(|suffix| !suffix.is_empty())
 }
 
 /// Whether a dataset name is safe to use as one.
@@ -264,14 +273,18 @@ fn parse_fixture_entry(dataset: &str, entry: &toml::Table) -> Result<FixtureEntr
         .and_then(toml::Value::as_str)
         .context("'path' is required and must be a string")?;
 
-    let target_names = parse_string_array(entry, "targets")?;
-    if target_names.is_empty() {
-        bail!("'targets' is required and must list at least one <platform>:<viewport>");
+    let target: Target = entry
+        .get("target")
+        .and_then(toml::Value::as_str)
+        .context("'target' is required and must be a <platform>:<viewport> string")?
+        .parse()?;
+    if dataset_suffix(dataset, target).is_none() {
+        let prefix = conventional_dataset_name(target);
+        bail!(
+            "'{dataset}' does not name a take at {target}, so nothing could re-record it; \
+             it must be '{prefix}' or start with '{prefix}-'"
+        );
     }
-    let targets = target_names
-        .iter()
-        .map(|name| name.parse::<Target>().map_err(anyhow::Error::from))
-        .collect::<Result<Vec<_>>>()?;
 
     let kv = match entry.get("kv") {
         Some(toml::Value::Table(t)) => parse_kv_table(t, "kv")?,
@@ -281,7 +294,7 @@ fn parse_fixture_entry(dataset: &str, entry: &toml::Table) -> Result<FixtureEntr
 
     Ok(FixtureEntry {
         path: PathBuf::from(path),
-        targets,
+        target,
         kv,
         settle_delay: parse_optional_u32(entry, "settle_delay")?,
     })
@@ -299,24 +312,6 @@ fn parse_optional_u32(table: &toml::Table, key: &str) -> Result<Option<u32>> {
         }
         Some(_) => bail!("'{key}' must be an integer"),
         None => Ok(None),
-    }
-}
-
-fn parse_string_array(table: &toml::Table, key: &str) -> Result<Vec<String>> {
-    match table.get(key) {
-        Some(toml::Value::Array(a)) => {
-            let mut out = Vec::with_capacity(a.len());
-            for (i, v) in a.iter().enumerate() {
-                out.push(
-                    v.as_str()
-                        .with_context(|| format!("{key}[{i}] must be a string"))?
-                        .to_owned(),
-                );
-            }
-            Ok(out)
-        }
-        Some(_) => bail!("'{key}' must be an array of strings"),
-        None => Ok(Vec::new()),
     }
 }
 
@@ -387,15 +382,15 @@ mod tests {
         let toml = r#"
             settle_delay = 5
 
-            [fixtures.mining]
-            path = "fixtures/mining.jsonl.gz"
-            targets = ["bmm100:full"]
+            [fixtures.bmm100-full-mining]
+            path = "fixtures/bmm100-full-mining.jsonl.gz"
+            target = "bmm100:full"
             settle_delay = 40
             kv = { theme = "dark" }
         "#;
         let cfg = parse_capture_config(toml).expect("BUG: all known keys should be accepted");
-        assert_eq!(cfg.settle_delay_for("mining"), 40);
-        assert_eq!(cfg.fixtures["mining"].kv["theme"], "dark");
+        assert_eq!(cfg.settle_delay_for("bmm100-full-mining"), 40);
+        assert_eq!(cfg.fixtures["bmm100-full-mining"].kv["theme"], "dark");
     }
 
     #[test]
@@ -442,12 +437,12 @@ mod tests {
         let toml = r#"
             settle_delay = 5
 
-            [fixtures.common]
-            path = "fixtures/common.jsonl.gz"
-            targets = ["bmc100:full"]
+            [fixtures.bmc100-full]
+            path = "fixtures/bmc100-full.jsonl.gz"
+            target = "bmc100:full"
         "#;
         let cfg = parse_capture_config(toml).expect("BUG: config should parse");
-        assert_eq!(cfg.settle_delay_for("common"), 5);
+        assert_eq!(cfg.settle_delay_for("bmc100-full"), 5);
         assert_eq!(
             cfg.settle_delay_for("no-such-dataset"),
             5,
@@ -457,37 +452,47 @@ mod tests {
 
     // ── [fixtures] table ─────────────────────────────────────────────
 
+    /// The dialog writes an empty suffix as the bare prefix, never with the separator
+    /// still on it, so a trailing dash names a take the dialog cannot compose.
     #[test]
-    fn one_dataset_binds_to_many_targets() {
+    fn a_trailing_separator_does_not_name_a_take() {
+        let full: Target = "bmc100:full".parse().expect("BUG: the target must parse");
+
+        assert_eq!(dataset_suffix("bmc100-full", full), Some(""));
+        assert_eq!(dataset_suffix("bmc100-full-race", full), Some("race"));
+        assert_eq!(dataset_suffix("bmc100-full-", full), None);
+    }
+
+    /// A name scopes to a single target, so the schema takes one.
+    /// A list is the retired form, and nothing could name the viewports it left.
+    #[test]
+    fn a_target_list_is_not_a_target() {
         let toml = r#"
-            [fixtures.common]
-            path = "fixtures/common.jsonl.gz"
-            targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small"]
+            [fixtures.bmc100-full]
+            path = "fixtures/bmc100-full.jsonl.gz"
+            target = ["bmc100:full", "bmc100:large"]
         "#;
-        let cfg = parse_capture_config(toml).expect("BUG: multi-target config should parse");
-        let matrix = cfg.capture_matrix();
-        assert_eq!(matrix.len(), 4);
-        assert!(matrix.iter().all(|(dataset, _)| *dataset == "common"));
-        assert_eq!(matrix[0].1.to_string(), "bmc100:full");
+        let err = parse_capture_config(toml).expect_err("BUG: a target list must be rejected");
+        assert!(format!("{err:#}").contains("target"), "{err:#}");
     }
 
     #[test]
     fn one_target_takes_many_datasets() {
         let toml = r#"
-            [fixtures.mining]
-            path = "fixtures/mining.jsonl.gz"
-            targets = ["bfm100:full"]
+            [fixtures.bfm100-full-mining]
+            path = "fixtures/bfm100-full-mining.jsonl.gz"
+            target = "bfm100:full"
 
-            [fixtures.idle]
-            path = "fixtures/idle.jsonl.gz"
-            targets = ["bfm100:full"]
+            [fixtures.bfm100-full-idle]
+            path = "fixtures/bfm100-full-idle.jsonl.gz"
+            target = "bfm100:full"
         "#;
         let cfg = parse_capture_config(toml).expect("BUG: multi-dataset config should parse");
         let matrix = cfg.capture_matrix();
         assert_eq!(matrix.len(), 2);
         assert_eq!(
             matrix.iter().map(|(d, _)| *d).collect::<Vec<_>>(),
-            ["idle", "mining"],
+            ["bfm100-full-idle", "bfm100-full-mining"],
             "datasets iterate in name order so a run is reproducible",
         );
     }
@@ -502,41 +507,32 @@ mod tests {
     }
 
     #[test]
-    fn fixture_entry_requires_path_and_targets() {
-        let missing_targets = r#"
-            [fixtures.mining]
-            path = "fixtures/mining.jsonl.gz"
+    fn fixture_entry_requires_path_and_target() {
+        let missing_target = r#"
+            [fixtures.bmc100-full]
+            path = "fixtures/bmc100-full.jsonl.gz"
         "#;
-        let err = parse_capture_config(missing_targets)
-            .expect_err("BUG: a dataset without targets must fail");
-        assert!(format!("{err:#}").contains("targets"), "{err:#}");
+        let err = parse_capture_config(missing_target)
+            .expect_err("BUG: a dataset without a target must fail");
+        assert!(format!("{err:#}").contains("target"), "{err:#}");
 
         let missing_path = r#"
-            [fixtures.mining]
-            targets = ["bmc100:full"]
+            [fixtures.bmc100-full]
+            target = "bmc100:full"
         "#;
         let err = parse_capture_config(missing_path)
             .expect_err("BUG: a dataset without a path must fail");
         assert!(format!("{err:#}").contains("path"), "{err:#}");
-
-        let empty_targets = r#"
-            [fixtures.mining]
-            path = "fixtures/mining.jsonl.gz"
-            targets = []
-        "#;
-        let err =
-            parse_capture_config(empty_targets).expect_err("BUG: an empty targets list must fail");
-        assert!(format!("{err:#}").contains("targets"), "{err:#}");
     }
 
     #[test]
-    fn unknown_targets_name_what_is_available() {
+    fn an_unknown_target_names_what_is_available() {
         for (toml, expected) in [
             (
                 r#"
                 [fixtures.mining]
                 path = "f.jsonl.gz"
-                targets = ["nope:full"]
+                target = "nope:full"
                 "#,
                 "bmc100",
             ),
@@ -544,7 +540,7 @@ mod tests {
                 r#"
                 [fixtures.mining]
                 path = "f.jsonl.gz"
-                targets = ["bmm100:small"]
+                target = "bmm100:small"
                 "#,
                 "full",
             ),
@@ -552,7 +548,7 @@ mod tests {
                 r#"
                 [fixtures.mining]
                 path = "f.jsonl.gz"
-                targets = ["bmc100"]
+                target = "bmc100"
                 "#,
                 "<platform>:<viewport>",
             ),
@@ -572,7 +568,7 @@ mod tests {
             .expect_err("BUG: the size-keyed fixture form must fail to parse");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("targets") && msg.contains("size-keyed"),
+            msg.contains("target") && msg.contains("size-keyed"),
             "{msg}"
         );
     }
@@ -584,7 +580,7 @@ mod tests {
                 r#"
                 [fixtures."{bad}"]
                 path = "f.jsonl.gz"
-                targets = ["bmc100:full"]
+                target = "bmc100:full"
                 "#
             );
             assert!(
@@ -599,7 +595,7 @@ mod tests {
         let toml = r#"
             [fixtures.mining]
             path = "f.jsonl.gz"
-            targets = ["bmc100:full"]
+            target = "bmc100:full"
             sizes = ["full"]
         "#;
         let err = parse_capture_config(toml).expect_err("BUG: unknown fixture key must fail");
@@ -620,9 +616,9 @@ mod tests {
     #[test]
     fn a_round_target_keeps_its_shape_through_the_config() {
         let toml = r#"
-            [fixtures.round]
-            path = "fixtures/round.jsonl.gz"
-            targets = ["bfm100:full"]
+            [fixtures.bfm100-full]
+            path = "fixtures/bfm100-full.jsonl.gz"
+            target = "bfm100:full"
         "#;
         let cfg = parse_capture_config(toml).expect("BUG: round config should parse");
         let (_, target) = cfg.capture_matrix()[0];

@@ -163,7 +163,7 @@ fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
                 "--record-name={dataset} must be non-empty and use only letters, digits, '-', '_' or '.'"
             );
         }
-        if recording::suffix_of(dataset, target).is_none() {
+        if bmc_wasm_runtime::capture_config::dataset_suffix(dataset, target).is_none() {
             let prefix = bmc_wasm_runtime::capture_config::conventional_dataset_name(target);
             anyhow::bail!(
                 "--record-name={dataset} records at {target}, so it must be '{prefix}' \
@@ -1629,24 +1629,13 @@ impl TestbedApp {
             Err(e) => return recording::RecordedFixtures::unreadable(format!("{e:#}")),
         };
         for (dataset, entry) in &config.fixtures {
-            for target in &entry.targets {
-                let key = target.to_string();
-                let also_drives = entry
-                    .targets
-                    .iter()
-                    .map(ToString::to_string)
-                    .filter(|other| *other != key)
-                    .collect();
-                recorded
-                    .entry(key)
-                    .or_default()
-                    .push(recording::RecordedDataset {
-                        name: dataset.clone(),
-                        also_drives,
-                        settle_delay: entry.settle_delay,
-                        kv_keys: entry.kv.len(),
-                    });
-            }
+            recorded.entry(entry.target.to_string()).or_default().push(
+                recording::RecordedDataset {
+                    name: dataset.clone(),
+                    settle_delay: entry.settle_delay,
+                    kv_keys: entry.kv.len(),
+                },
+            );
         }
         recording::RecordedFixtures::new(recorded)
     }
@@ -2961,7 +2950,13 @@ mod app_tests {
     /// then read back as hand-edited the next time the dialog opened there.
     #[test]
     fn a_dataset_name_that_only_starts_like_the_target_is_rejected() {
-        for bad in ["bfm100-fullhealthy", "bfm100-full_x", "bfm100-full.old"] {
+        for bad in [
+            "bfm100-fullhealthy",
+            "bfm100-full_x",
+            "bfm100-full.old",
+            // `--record-name=<prefix>-$SCENARIO` with the variable unset.
+            "bfm100-full-",
+        ] {
             let err = resolve_record_request(&record_args("bfm100:full", Some(bad)))
                 .expect_err("BUG: a name the dialog cannot reproduce must be rejected");
             assert!(format!("{err:#}").contains(bad), "{err:#}");

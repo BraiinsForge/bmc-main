@@ -1,83 +1,83 @@
 [fixtures.bmc100-full-race]
 path = "fixtures/bmc100-full-race.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 
 [fixtures.bmc100-large-race]
 path = "fixtures/bmc100-large-race.jsonl.gz"
-targets = ["bmc100:large"]
+target = "bmc100:large"
 
 [fixtures.bmc100-medium-race]
 path = "fixtures/bmc100-medium-race.jsonl.gz"
-targets = ["bmc100:medium"]
+target = "bmc100:medium"
 
 [fixtures.bmc100-small-race]
 path = "fixtures/bmc100-small-race.jsonl.gz"
-targets = ["bmc100:small"]
+target = "bmc100:small"
 
 [fixtures.bmm100-full-race]
 path = "fixtures/bmm100-full-race.jsonl.gz"
-targets = ["bmm100:full"]
+target = "bmm100:full"
 
 [fixtures.bmm101-full-race]
 path = "fixtures/bmm101-full-race.jsonl.gz"
-targets = ["bmm101:full"]
+target = "bmm101:full"
 
 [fixtures.bmc100-full-sprint]
 path = "fixtures/bmc100-full-sprint.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 
 [fixtures.bmc100-large-sprint]
 path = "fixtures/bmc100-large-sprint.jsonl.gz"
-targets = ["bmc100:large"]
+target = "bmc100:large"
 
 [fixtures.bmc100-full-quali]
 path = "fixtures/bmc100-full-quali.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 
 [fixtures.bmc100-large-quali]
 path = "fixtures/bmc100-large-quali.jsonl.gz"
-targets = ["bmc100:large"]
+target = "bmc100:large"
 
 [fixtures.bmc100-medium-quali]
 path = "fixtures/bmc100-medium-quali.jsonl.gz"
-targets = ["bmc100:medium"]
+target = "bmc100:medium"
 
 [fixtures.bmm100-full-quali]
 path = "fixtures/bmm100-full-quali.jsonl.gz"
-targets = ["bmm100:full"]
+target = "bmm100:full"
 
 [fixtures.bmc100-full-practice]
 path = "fixtures/bmc100-full-practice.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 
 [fixtures.bmc100-large-practice]
 path = "fixtures/bmc100-large-practice.jsonl.gz"
-targets = ["bmc100:large"]
+target = "bmc100:large"
 
 [fixtures.bmc100-full-idle]
 path = "fixtures/bmc100-full-idle.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 
 [fixtures.bmm100-full-idle]
 path = "fixtures/bmm100-full-idle.jsonl.gz"
-targets = ["bmm100:full"]
+target = "bmm100:full"
 
 [fixtures.bmc100-small-idle]
 path = "fixtures/bmc100-small-idle.jsonl.gz"
-targets = ["bmc100:small"]
+target = "bmc100:small"
 
 [fixtures.bmm101-full-idle]
 path = "fixtures/bmm101-full-idle.jsonl.gz"
-targets = ["bmm101:full"]
+target = "bmm101:full"
 
 [fixtures.bmc100-full-off-season]
 path = "fixtures/bmc100-full-off-season.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 
 [fixtures.bmc100-full-cold-start]
 path = "fixtures/bmc100-full-cold-start.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 
 [fixtures.bmc100-full-warming]
 path = "fixtures/bmc100-full-warming.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"

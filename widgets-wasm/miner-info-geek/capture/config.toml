@@ -4,24 +4,24 @@ settle_delay = 5
 
 [fixtures.bmm101-full-healthy]
 path = "fixtures/bmm101-full-healthy.jsonl.gz"
-targets = ["bmm101:full"]
+target = "bmm101:full"
 
 [fixtures.bmm100-full-healthy]
 path = "fixtures/bmm100-full-healthy.jsonl.gz"
-targets = ["bmm100:full"]
+target = "bmm100:full"
 
 [fixtures.bfm100-full-gauge]
 path = "fixtures/bfm100-full-gauge.jsonl.gz"
-targets = ["bfm100:full"]
+target = "bfm100:full"
 
 [fixtures.bmm101-full-miner-down]
 path = "fixtures/bmm101-full-miner-down.jsonl.gz"
-targets = ["bmm101:full"]
+target = "bmm101:full"
 
 [fixtures.bmm101-full-public-down]
 path = "fixtures/bmm101-full-public-down.jsonl.gz"
-targets = ["bmm101:full"]
+target = "bmm101:full"
 
 [fixtures.bmc100-small-healthy]
 path = "fixtures/bmc100-small-healthy.jsonl.gz"
-targets = ["bmc100:small"]
+target = "bmc100:small"

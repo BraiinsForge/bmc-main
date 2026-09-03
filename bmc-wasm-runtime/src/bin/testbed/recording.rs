@@ -424,8 +424,6 @@ pub(super) struct Saved {
 /// One dataset a target already replays, as the naming dialog lists it.
 pub(super) struct RecordedDataset {
     pub(super) name: String,
-    /// The other targets this dataset drives.
-    pub(super) also_drives: Vec<String>,
     pub(super) settle_delay: Option<u32>,
     pub(super) kv_keys: usize,
 }
@@ -434,9 +432,6 @@ impl RecordedDataset {
     /// The row's attributes on one line, empty when it carries none.
     fn notes(&self) -> String {
         let mut notes = Vec::new();
-        if !self.also_drives.is_empty() {
-            notes.push(format!("also drives {}", self.also_drives.join(", ")));
-        }
         if let Some(settle) = self.settle_delay {
             notes.push(format!("settle {settle}"));
         }
@@ -458,10 +453,6 @@ pub(super) enum NameVerdict {
     New,
     /// Re-records the dataset this viewport already carries under that name.
     Replaces,
-    /// The name belongs to other viewports, listed. Recording it replaces
-    /// their data too, since the config writer keeps their bindings and a
-    /// dataset holds one fixture.
-    Rebinds { drives: Vec<String> },
     /// The config would not load, so what this name replaces is unknown.
     Unknown { why: String },
 }
@@ -469,10 +460,7 @@ pub(super) enum NameVerdict {
 impl NameVerdict {
     /// Whether committing would, or might, replace data already recorded.
     fn destructive(&self) -> bool {
-        matches!(
-            self,
-            Self::Replaces | Self::Rebinds { .. } | Self::Unknown { .. }
-        )
+        matches!(self, Self::Replaces | Self::Unknown { .. })
     }
 }
 
@@ -541,36 +529,10 @@ impl RecordedFixtures {
         if self.of(target).iter().any(|row| row.name == dataset) {
             return NameVerdict::Replaces;
         }
-        let mine = target.to_string();
-        // Sorted: the map's order is arbitrary, and this reads as a caption.
-        let mut drives: Vec<String> = self
-            .by_target
-            .iter()
-            .filter(|(id, rows)| **id != mine && rows.iter().any(|row| row.name == dataset))
-            .map(|(id, _)| id.clone())
-            .collect();
-        drives.sort();
-        if drives.is_empty() {
-            NameVerdict::New
-        } else {
-            NameVerdict::Rebinds { drives }
-        }
+        // No verdict for a name held elsewhere: it scopes to one target,
+        // and the loader refuses a config that binds it to another.
+        NameVerdict::New
     }
-}
-
-/// The scenario suffix that names `dataset` at `target`, or `None` when the
-/// two disagree and the dialog therefore cannot reproduce that name.
-pub(super) fn suffix_of(
-    dataset: &str,
-    target: bmc_wasm_runtime::platform_catalog::Target,
-) -> Option<String> {
-    let prefix = bmc_wasm_runtime::capture_config::conventional_dataset_name(target);
-    if dataset == prefix {
-        return Some(String::new());
-    }
-    dataset
-        .strip_prefix(&format!("{prefix}-"))
-        .map(str::to_owned)
 }
 
 /// A target clicked in the choosing phase, and the dialog naming its take.
@@ -1135,7 +1097,8 @@ fn paint_dataset_rows(
     for (order, row) in rows.iter().enumerate() {
         // A name the dialog cannot compose is a hand-edited one; it still
         // lists, so the operator sees what the viewport carries.
-        let reuse = suffix_of(&row.name, target);
+        let reuse =
+            bmc_wasm_runtime::capture_config::dataset_suffix(&row.name, target).map(str::to_owned);
         let sense = if reuse.is_some() {
             egui::Sense::click()
         } else {
@@ -1445,11 +1408,6 @@ impl TestbedApp {
                             egui::RichText::new("replaces the recording of that name")
                                 .color(palette.action_danger)
                         }
-                        NameVerdict::Rebinds { drives } => egui::RichText::new(format!(
-                            "that name is {}'s — recording it replaces theirs too",
-                            drives.join(", ")
-                        ))
-                        .color(palette.action_danger),
                         NameVerdict::Unknown { why } => egui::RichText::new(format!(
                             "cannot read what is already recorded — {why}"
                         ))
@@ -1466,10 +1424,9 @@ impl TestbedApp {
                         // an unreadable config cannot claim.
                         label: match verdict {
                             NameVerdict::Unknown { .. } => "Record anyway",
-                            NameVerdict::Unusable
-                            | NameVerdict::New
-                            | NameVerdict::Replaces
-                            | NameVerdict::Rebinds { .. } => "Re-record",
+                            NameVerdict::Unusable | NameVerdict::New | NameVerdict::Replaces => {
+                                "Re-record"
+                            }
                         },
                         tone: Tone::danger(palette),
                         enabled: true,
@@ -1588,7 +1545,6 @@ mod naming_tests {
     fn row(name: &str) -> RecordedDataset {
         RecordedDataset {
             name: name.to_owned(),
-            also_drives: Vec::new(),
             settle_delay: None,
             kv_keys: 0,
         }
@@ -1720,24 +1676,6 @@ mod naming_tests {
         );
     }
 
-    /// A dataset name is unique across the whole config, so one belonging to
-    /// another viewport is not a free name: the writer would point it at this
-    /// take's fixture and leave that viewport replaying it.
-    #[test]
-    fn a_name_another_viewport_owns_is_not_a_new_dataset() {
-        let recorded = fixtures(vec![
-            ("bmc100:full", vec![row("qualifying")]),
-            ("bmc100:medium", vec![row("qualifying")]),
-        ]);
-
-        assert_eq!(
-            recorded.judge("qualifying", target("bmc100:small")),
-            NameVerdict::Rebinds {
-                drives: vec!["bmc100:full".to_owned(), "bmc100:medium".to_owned()],
-            },
-        );
-    }
-
     #[test]
     fn the_take_starts_on_the_name_the_dialog_carries() {
         let mut mode = choosing(vec![("bmc100:small", vec![row("practice")])]);
@@ -1778,21 +1716,6 @@ mod naming_tests {
         let naming = Naming::new(target("bmc100:small"));
 
         assert_eq!(naming.dataset(), "bmc100-small");
-    }
-
-    /// The dialog fills its field from a row, so every name it lists has to be
-    /// one the field can produce again.
-    #[test]
-    fn a_listed_name_is_one_the_suffix_field_can_rebuild() {
-        let full = target("bmc100:full");
-
-        assert_eq!(super::suffix_of("bmc100-full", full).as_deref(), Some(""));
-        assert_eq!(
-            super::suffix_of("bmc100-full-race", full).as_deref(),
-            Some("race"),
-        );
-        assert_eq!(super::suffix_of("bmc100-small-race", full), None);
-        assert_eq!(super::suffix_of("common", full), None);
     }
 
     #[test]

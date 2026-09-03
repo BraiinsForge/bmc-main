@@ -250,17 +250,7 @@ pub fn update_config_toml_fixtures(
         .with_context(|| format!("fixture `{dataset}` is not a table"))?;
     entry["path"] = toml_edit::value(fixture_rel_path);
 
-    // Leave any targets the dataset already drives in place; a re-recording
-    // refreshes the data, it does not narrow the bindings.
-    let targets = entry
-        .entry("targets")
-        .or_insert(toml_edit::value(toml_edit::Array::new()));
-    if let Some(array) = targets.as_array_mut() {
-        let wanted = target.to_string();
-        if !array.iter().any(|t| t.as_str() == Some(wanted.as_str())) {
-            array.push(wanted);
-        }
-    }
+    entry["target"] = toml_edit::value(target.to_string());
 
     if let Some(parent) = config_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -602,57 +592,39 @@ mod tests {
 
         let entry = &config.fixtures["bfm100-full"];
         assert_eq!(entry.path, PathBuf::from("fixtures/bfm100-full.jsonl.gz"));
-        assert_eq!(entry.targets.len(), 1);
-        assert_eq!(entry.targets[0].to_string(), "bfm100:full");
+        assert_eq!(entry.target.to_string(), "bfm100:full");
     }
 
+    /// A binding left pointing elsewhere would send the next capture
+    /// to a viewport this take never ran at, so a re-record replaces it.
     #[test]
-    fn re_recording_keeps_the_other_targets_the_dataset_drives() {
-        let initial = r#"
-            [fixtures.common]
-            path = "fixtures/common.jsonl.gz"
-            targets = ["bmc100:full", "bmc100:large"]
+    fn re_recording_rebinds_the_dataset_to_the_target_it_ran_at() {
+        let stale = r#"
+            [fixtures.bmc100-full]
+            path = "fixtures/bmc100-full.jsonl.gz"
+            target = "bmc100:large"
         "#;
-        let config = round_trip(initial, "common", "bmc100:full");
+        let config = round_trip(stale, "bmc100-full", "bmc100:full");
 
-        let bound: Vec<String> = config.fixtures["common"]
-            .targets
-            .iter()
-            .map(ToString::to_string)
-            .collect();
         assert_eq!(
-            bound,
-            ["bmc100:full", "bmc100:large"],
-            "a re-recording refreshes data without narrowing the bindings",
+            config.fixtures["bmc100-full"].target.to_string(),
+            "bmc100:full"
         );
-    }
-
-    #[test]
-    fn recording_a_new_target_extends_the_dataset() {
-        let initial = r#"
-            [fixtures.common]
-            path = "fixtures/common.jsonl.gz"
-            targets = ["bmc100:full"]
-        "#;
-        let config = round_trip(initial, "common", "bmc100:small");
-
-        let bound: Vec<String> = config.fixtures["common"]
-            .targets
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        assert_eq!(bound, ["bmc100:full", "bmc100:small"]);
     }
 
     #[test]
     fn writing_preserves_comments_and_sibling_keys() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let config_path = dir.path().join("config.toml");
-        std::fs::write(
-            &config_path,
-            "# keep me\nsettle_delay = 40\n\n[fixtures.bmc100-full]\npath = \"fixtures/bmc100-full.jsonl.gz\"\ntargets = [\"bmc100:full\"]\n",
-        )
-        .expect("BUG: seed config");
+        let seed = indoc::indoc! {r#"
+            # keep me
+            settle_delay = 40
+
+            [fixtures.bmc100-full]
+            path = "fixtures/bmc100-full.jsonl.gz"
+            target = "bmc100:full"
+        "#};
+        std::fs::write(&config_path, seed).expect("BUG: seed config");
 
         update_config_toml_fixtures(
             &config_path,
@@ -679,7 +651,7 @@ mod tests {
     fn re_recording_converts_an_inline_entry() {
         let initial = indoc::indoc! {r#"
             [fixtures]
-            practice = { path = "fixtures/practice.jsonl.gz", targets = ["bmc100:full"] }
+            bmc100-small-practice = { path = "fixtures/bmc100-small-practice.jsonl.gz", target = "bmc100:small" }
         "#};
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let config_path = dir.path().join("config.toml");
@@ -687,22 +659,23 @@ mod tests {
 
         update_config_toml_fixtures(
             &config_path,
-            "practice",
-            "fixtures/practice.jsonl.gz",
+            "bmc100-small-practice",
+            "fixtures/bmc100-small-practice.jsonl.gz",
             target("bmc100:small"),
         )
         .expect("BUG: an inline entry must be updatable");
 
         let written = std::fs::read_to_string(&config_path).expect("BUG: read back");
-        assert!(written.contains("[fixtures.practice]"), "{written}");
+        assert!(
+            written.contains("[fixtures.bmc100-small-practice]"),
+            "{written}"
+        );
 
         let config = crate::capture_config::parse_capture_config(&written)
             .expect("BUG: a converted entry must still parse");
-        let bound: Vec<String> = config.fixtures["practice"]
-            .targets
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        assert_eq!(bound, ["bmc100:full", "bmc100:small"]);
+        assert_eq!(
+            config.fixtures["bmc100-small-practice"].target.to_string(),
+            "bmc100:small"
+        );
     }
 }

@@ -2,4 +2,4 @@ settle_delay = 60
 
 [fixtures.bmc100-full]
 path = "fixtures/bmc100-full.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"

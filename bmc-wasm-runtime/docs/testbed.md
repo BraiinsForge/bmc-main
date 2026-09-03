@@ -11,7 +11,7 @@ Capture and baselines: [`regression-testing.md`](regression-testing.md).
 just wasm::testbed <widget>        # debug, dev blob cache, hot reload on the widget's source
 just wasm::dev <widget>            # the same, both binaries prebuilt first
 just wasm::run <widget>            # release-built widget, once
-just wasm::record <widget> [<platform>:<viewport>] [name]
+just wasm::record <widget>         # the dialog picks the target and names the take
 just wasm::profile <widget>
 ```
 

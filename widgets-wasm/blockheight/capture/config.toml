@@ -6,16 +6,16 @@ settle_delay = 5
 
 [fixtures.bmc100-small]
 path = "fixtures/bmc100-small.jsonl.gz"
-targets = ["bmc100:small"]
+target = "bmc100:small"
 
 [fixtures.bmc100-medium]
 path = "fixtures/bmc100-medium.jsonl.gz"
-targets = ["bmc100:medium"]
+target = "bmc100:medium"
 
 [fixtures.bmc100-large]
 path = "fixtures/bmc100-large.jsonl.gz"
-targets = ["bmc100:large"]
+target = "bmc100:large"
 
 [fixtures.bmc100-full]
 path = "fixtures/bmc100-full.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"

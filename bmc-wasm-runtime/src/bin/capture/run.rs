@@ -2041,27 +2041,30 @@ pub fn write_default_capture_config(dir: &Path) -> Result<()> {
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
-# A fixture is a named dataset replayed against one or more targets, written
-# `<platform>:<viewport>`. Frames land in
+# A fixture is a named dataset replayed against one target, written
+# `<platform>:<viewport>`. The name is that target's own, optionally with a
+# scenario suffix, so the record dialog can rebuild it. Frames land in
 # `<output>/<platform>/<viewport>/<dataset>/`.
 #
-# Record one with: just wasm::record <widget> <platform>:<viewport> <dataset>
+# Record one with:
+#   just wasm::record <widget> --record=<platform>:<viewport> --record-name=<dataset>
 #
 # [fixtures.bmc100-full]
 # path = "fixtures/bmc100-full.jsonl.gz"
-# targets = ["bmc100:full"]
+# target = "bmc100:full"
 
-# One dataset can drive several targets:
+# A fixture carries no geometry, so several datasets may share one recording,
+# an entry each:
 #
-# [fixtures.common]
-# path = "fixtures/common.jsonl.gz"
-# targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small"]
+# [fixtures.bmc100-large]
+# path = "fixtures/bmc100-full.jsonl.gz"
+# target = "bmc100:large"
 
 # And a dataset may override the settle delay or seed its own KV:
 #
-# [fixtures.slow-feed]
-# path = "fixtures/slow-feed.jsonl.gz"
-# targets = ["bfm100:full"]
+# [fixtures.bfm100-full-slow-feed]
+# path = "fixtures/bfm100-full-slow-feed.jsonl.gz"
+# target = "bfm100:full"
 # settle_delay = 40
 # kv = { theme = "dark" }
 "#;
