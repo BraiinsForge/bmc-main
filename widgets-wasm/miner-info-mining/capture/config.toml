@@ -1,7 +1,7 @@
 # Capture configuration for visual regression testing.
 
-# Settle for a few frames after the chained fetch stubs fire so the widget
-# has parsed every miner response before the first capture.
+# Settle for a few frames before each capture, so a frame shows
+# settled data and a finished transition rather than a mid-load state.
 settle_delay = 5
 
 [fixtures.bmm100-full]

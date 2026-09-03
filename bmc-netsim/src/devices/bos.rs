@@ -160,6 +160,11 @@ impl Params {
     pub fn resource(&self, name: &str, port: u16) -> ResourceSpec {
         let ghs = leaf(drift(self.hashrate_ths.get() * 1_000.0));
         let watt = leaf(drift(self.power_w.get()));
+        // Joules per terahash is watts over terahashes, so a miner
+        // reporting no hashrate reports no efficiency either
+        // — which is also the shape of a firmware that leaves the field out.
+        let efficiency = (self.hashrate_ths.get() > 0.0)
+            .then(|| leaf(drift(self.power_w.get() / self.hashrate_ths.get())));
         let base = mix(0, name);
         let endpoints = vec![
             // The widget fingerprints BOS over this unauthenticated endpoint
@@ -181,7 +186,11 @@ impl Params {
                 "/api/v1/miner/stats",
                 json!({
                     "miner_stats": { "real_hashrate": { "last_1m": { "gigahash_per_second": ghs } } },
-                    "power_stats": { "approximated_consumption": { "watt": watt } },
+                    "power_stats": {
+                        "approximated_consumption": { "watt": watt },
+                        "efficiency": efficiency
+                            .map(|value| json!({ "joule_per_terahash": value })),
+                    },
                 }),
             ),
             self.telemetry(
@@ -417,6 +426,25 @@ mod tests {
         };
         let cooling = body(&params, "/api/v1/cooling/state", 0.0);
         assert_eq!(cooling["fans"][0]["target_speed_ratio"], json!(0.72));
+    }
+
+    /// Joules per terahash needs a terahash to divide by, so a stopped miner
+    /// reports none — the same shape as a firmware that omits the field.
+    #[test]
+    fn efficiency_is_reported_only_while_the_miner_hashes() {
+        let hashing = body(&Params::default(), "/api/v1/miner/stats", 0.0);
+        let efficiency = &hashing["power_stats"]["efficiency"]["joule_per_terahash"];
+        assert!(
+            efficiency.as_f64().is_some_and(|value| value > 0.0),
+            "a hashing miner reports its efficiency, got {efficiency}"
+        );
+
+        let stopped = Params {
+            hashrate_ths: NonNegative::from(0.0),
+            ..Params::default()
+        };
+        let stats = body(&stopped, "/api/v1/miner/stats", 0.0);
+        assert_eq!(stats["power_stats"]["efficiency"], json!(null));
     }
 
     #[test]

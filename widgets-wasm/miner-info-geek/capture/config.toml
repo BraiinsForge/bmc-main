@@ -1,3 +1,7 @@
+# Settle for a few frames before each capture, so a frame shows
+# settled data and a finished transition rather than a mid-load state.
+settle_delay = 5
+
 [fixtures.bmm101-full-healthy]
 path = "fixtures/bmm101-full-healthy.jsonl.gz"
 targets = ["bmm101:full"]
