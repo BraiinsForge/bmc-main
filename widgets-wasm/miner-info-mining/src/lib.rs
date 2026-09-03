@@ -94,18 +94,18 @@ pub extern "C" fn render(_delta_ms: u32) {
         height: viewport.height,
     };
     let (miner, _public, auth_failed) = engine::frame();
-    let first_frame = engine::take_first_frame();
+    // Only the round face draws a gauge, and it seeds from a single lit tick
+    // so the host animates the real fill in from an empty-ish baseline.
+    let seed_gauge = matches!(viewport.shape, ViewportShape::Round) && engine::take_first_frame();
     let root = match viewport.shape {
-        ViewportShape::Round => face::round::mining(size, &miner, first_frame, &CHIP_ICON),
+        ViewportShape::Round => face::round::mining(size, &miner, seed_gauge, &CHIP_ICON),
         ViewportShape::Rectangular => face::mining(size, &miner),
     };
     let overlay = engine::overlay(engine::View::Mining, auth_failed);
     let root = mining::overlay::apply_overlay(root, overlay, viewport.shape);
     let _ = render_ui(viewport.width, viewport.height, root);
-    // The seeded first frame shows one segment;
-    // schedule the real value
-    // so the transition animates from it on the next tick.
-    if first_frame {
+    // The seeded frame is not the reading, so ask for the one that is.
+    if seed_gauge {
         request_frame();
     }
 }
