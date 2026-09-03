@@ -1029,34 +1029,88 @@ def test_register_default_servers_dry_run_reads_but_skips_mutations() -> None:
     assert f"cat {catalog._SERVERS_JSON_DEFAULT}" in backend.runs[0][-1]
 
 
-def _flip_clock_plan() -> catalog.Deployment:
-    built = Built(
-        "widget-flip-clock", "1.0", Attr(".#x^out"), store_path=StorePath("/nix/store/wfc")
-    )
-    return catalog.Deployment(attrs=[], built=[built])
+def _plan_with(*names: str) -> catalog.Deployment:
+    built = [
+        Built(name, "1.0", Attr(".#x^out"), store_path=StorePath(f"/nix/store/{name}"))
+        for name in names
+    ]
+    return catalog.Deployment(attrs=[], built=built)
 
 
-def test_remove_legacy_flip_clock_issues_remove_command() -> None:
+def test_remove_superseded_drops_the_colliding_package() -> None:
     backend = _Exec(_routes({}))
-    catalog.remove_legacy_flip_clock(Device("h", backend=backend), _flip_clock_plan())
+    catalog.remove_superseded_packages(
+        Device("h", backend=backend), _plan_with("widget-flip-clock")
+    )
     assert "remove-packages --name flip-clock" in backend.runs[-1][-1]
 
 
-def test_remove_legacy_flip_clock_skips_without_successor() -> None:
-    # No widget-flip-clock in the deploy → no conflict → nothing to remove.
+def test_remove_superseded_drops_a_retired_widget() -> None:
+    # Any one successor means the split landed, so the retired widget goes
+    # even though its name corresponds to none of them.
     backend = _Exec(_routes({}))
-    plan = catalog.Deployment(
-        attrs=[],
-        built=[Built("core", "1.0", Attr(".#x^out"), store_path=StorePath("/nix/store/core"))],
+    catalog.remove_superseded_packages(
+        Device("h", backend=backend), _plan_with("widget-miner-info-geek")
     )
-    catalog.remove_legacy_flip_clock(Device("h", backend=backend), plan)
+    assert "remove-packages --name widget-mining-info" in backend.runs[-1][-1]
+
+
+def test_remove_superseded_drops_every_matched_package() -> None:
+    backend = _Exec(_routes({}))
+    catalog.remove_superseded_packages(
+        Device("h", backend=backend),
+        _plan_with("widget-flip-clock", "widget-miner-info-mining"),
+    )
+    issued = " ".join(run[-1] for run in backend.runs)
+    assert "--name flip-clock" in issued
+    assert "--name widget-mining-info" in issued
+
+
+def test_remove_superseded_skips_without_successor() -> None:
+    backend = _Exec(_routes({}))
+    catalog.remove_superseded_packages(Device("h", backend=backend), _plan_with("core"))
     assert backend.runs == []
 
 
-def test_remove_legacy_flip_clock_tolerates_failure() -> None:
-    # A device that never had the legacy package makes remove-packages exit
-    # non-zero; the deploy must swallow it rather than abort.
-    catalog.remove_legacy_flip_clock(Device("h", backend=_Exec(_unreachable)), _flip_clock_plan())
+def test_remove_superseded_tolerates_failure() -> None:
+    # remove-packages exits non-zero on a device that never had the package,
+    # and the deploy must swallow that rather than abort.
+    catalog.remove_superseded_packages(
+        Device("h", backend=_Exec(_unreachable)), _plan_with("widget-flip-clock")
+    )
+
+
+def _refusing(stderr: str) -> _Respond:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        raise subprocess.CalledProcessError(1, argv, stderr=stderr)
+
+    return respond
+
+
+def test_remove_superseded_reads_an_absent_package_as_nothing_to_do(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stderr = (
+        "Error: package `flip-clock` requested for removal but not present in the current profile"
+    )
+    catalog.remove_superseded_packages(
+        Device("h", backend=_Exec(_refusing(stderr))), _plan_with("widget-flip-clock")
+    )
+    assert "not present (ignored)" in capsys.readouterr().out
+
+
+def test_remove_superseded_reports_why_a_removal_failed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A dropped connection or a broken nix leaves the package installed,
+    # which the summary has to say rather than pass off as nothing to remove.
+    catalog.remove_superseded_packages(
+        Device("h", backend=_Exec(_refusing("ssh: connect to host h port 22: No route to host"))),
+        _plan_with("widget-flip-clock"),
+    )
+    out = capsys.readouterr().out
+    assert "not removed" in out
+    assert "No route to host" in out
 
 
 def test_stop_compositor_stops_the_profile_service() -> None:

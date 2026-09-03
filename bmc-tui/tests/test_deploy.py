@@ -48,7 +48,7 @@ def test_deploy_observes_activation_without_hard_restart(
         "resolve_packages",
         "build_packages",
         "copy_closures",
-        "remove_legacy_flip_clock",
+        "remove_superseded_packages",
         "register_packages",
         "clear_upgrade_servers",
     ):

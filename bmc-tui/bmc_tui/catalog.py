@@ -443,27 +443,72 @@ def copy_closures(nix: Nix, dev: Device, plan: Deployment) -> str:
     return f"{console.lit(len(plan.built))} closure(s) → {console.lit(dev.host)}"
 
 
-# Developers carry the pre-rename `flip-clock` package, which shares store
-# paths with `widget-flip-clock`; left in place it makes add-packages fail on a
-# symlink conflict. Drop it only when its successor is in this deploy, and treat
-# it as advisory — a device without it is already fine — so a failure here (e.g.
-# it was never installed) never blocks a deploy.
-_LEGACY_FLIP_CLOCK = "flip-clock"
-_WIDGET_FLIP_CLOCK = "widget-flip-clock"
+# Packages to drop, keyed on the arrivals that supersede them.
+# Only those make the old one wrong.
+# Removal is advisory — a device without the package is already right,
+# so a failure never blocks a deploy.
+
+# Predates the `widget-` prefix and shares store paths with its successor,
+# so leaving it makes add-packages fail on a symlink conflict.
+_COLLIDING: dict[str, tuple[str, ...]] = {
+    "flip-clock": ("widget-flip-clock",),
+}
+
+# No longer ships, so a device keeping it shows a catalog entry with no binary.
+_RETIRED: dict[str, tuple[str, ...]] = {
+    "widget-mining-info": (
+        "widget-miner-info-mining",
+        "widget-miner-info-geek",
+        "widget-miner-info-overload",
+    ),
+}
 
 
-@stage("Drop legacy flip-clock")
-def remove_legacy_flip_clock(dev: Device, plan: Deployment) -> str:
-    done_if(all(b.name != _WIDGET_FLIP_CLOCK for b in plan.built))
-    cmd = (
-        f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
-        f"remove-packages --name {shlex.quote(_LEGACY_FLIP_CLOCK)}"
-    )
-    try:
-        dev.run(cmd)
-    except subprocess.SubprocessError:
-        return f"{_LEGACY_FLIP_CLOCK} not present (ignored)"
-    return f"{_LEGACY_FLIP_CLOCK} removed"
+# What `remove-packages` says when the profile never carried
+# the name — see `PlanConflict::RemoveNotInstalled`
+# in bmc-nix/src/manifest.rs.
+#
+# That is the expected outcome here; every other failure
+# is the removal itself going wrong.
+_NOT_INSTALLED = "not present in the current profile"
+
+
+def _removal_failure(error: subprocess.SubprocessError) -> str | None:
+    """Why a removal failed, or `None` where the package simply was not there."""
+    stderr = str(getattr(error, "stderr", "") or "")
+    if _NOT_INSTALLED in stderr:
+        return None
+    reported = next((line.strip() for line in stderr.splitlines() if line.strip()), "")
+    return reported or str(error)
+
+
+@stage("Drop superseded packages")
+def remove_superseded_packages(dev: Device, plan: Deployment) -> str:
+    built = {b.name for b in plan.built}
+    names = [
+        name
+        for name, successors in (_COLLIDING | _RETIRED).items()
+        if any(successor in built for successor in successors)
+    ]
+    done_if(not names)
+    dropped = []
+    for name in names:
+        cmd = (
+            f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
+            f"remove-packages --name {shlex.quote(name)}"
+        )
+        try:
+            dev.run(cmd)
+        except subprocess.SubprocessError as error:
+            reason = _removal_failure(error)
+            dropped.append(
+                f"{name} not present (ignored)"
+                if reason is None
+                else f"{name} not removed: {reason}"
+            )
+        else:
+            dropped.append(f"{name} removed")
+    return ", ".join(dropped)
 
 
 @stage("Register in bmc profile")

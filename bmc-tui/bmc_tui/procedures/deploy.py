@@ -61,7 +61,7 @@ class Deploy:
         catalog.resolve_packages(backend, plan)
         catalog.build_packages(backend, plan)
         catalog.copy_closures(backend, dev, plan)
-        catalog.remove_legacy_flip_clock(dev, plan)
+        catalog.remove_superseded_packages(dev, plan)
         old_pid = catalog.compositor_pid(dev)
         catalog.register_packages(dev, plan)
         catalog.clear_upgrade_servers(dev)
