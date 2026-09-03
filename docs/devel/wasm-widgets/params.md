@@ -74,6 +74,9 @@ For example:
 just wasm::gen params-demo
 ```
 
+A change to the generator itself drifts every widget at once; `just wasm::gen-all` regenerates the lot rather than
+naming each one.
+
 The generated file contains:
 
 - A `Params` struct with one Rust field per manifest key.
