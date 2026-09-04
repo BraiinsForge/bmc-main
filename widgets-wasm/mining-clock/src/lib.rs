@@ -57,7 +57,8 @@ use shared::clock_palette;
 
 #[cfg(target_arch = "wasm32")]
 const STATS_REFRESH_MS: u32 = 5_000;
-// One-shot constraints re-poll delay on an empty reply.
+// Re-poll delay for the one-shot polls: constraints on
+// an empty reply, and the login after one it could not use.
 #[cfg(target_arch = "wasm32")]
 const RETRY_MS: u32 = 10_000;
 // The miner lives on the local network, so an unreachable one should fail
@@ -170,11 +171,13 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
 }
 
 // Deliberately requests no frame: the clock paints once per second
-// (`request_frame_after(1000)` in `render`), and refreshed auth state surfaces
-// on the next tick. Forcing a frame here would paint at a sub-second offset and
-// reset the 1s cadence, so the second hand stops advancing in even steps.
+// (`request_frame_after(1000)` in `render`), and refreshed
+// auth state surfaces on the next tick.
+//
+// Forcing a frame here would paint at a sub-second offset and reset
+// the 1s cadence, so the second hand stops advancing in even steps.
 #[cfg(target_arch = "wasm32")]
-fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
+fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
     if response.ok()
         && let Some(token) = bos::parse_token(&response.json())
     {
@@ -191,27 +194,47 @@ fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
             response.status
         );
         STATE.with(|state| state.borrow_mut().auth = AuthState::Failed);
+        // The queued requests carry the token this reply just rejected,
+        // so they are dropped rather than left to 401.
+        //
+        // That makes the retry below the only thing re-arming
+        // this one-shot login, where those 401s used to.
+        HANDLES.with(|handles| {
+            if let Some(handles) = handles.borrow().as_ref() {
+                handles.stats.invalidate();
+                handles.constraints.invalidate();
+            }
+        });
+        handle.retry_after(RETRY_MS);
     } else {
         log_warn!(
             "mining-clock: login got no answer, status {}",
             response.status
         );
         STATE.with(|state| state.borrow_mut().auth = AuthState::Unreachable);
+        handle.retry_after(RETRY_MS);
     }
 }
 
-// Requests no frame for the same reason as `on_login_reply`: fresh stats and
-// constraints land on the next 1s render tick. Painting on every fetch reply
-// would knock the second hand off its even one-second steps.
+// Requests no frame for the same reason as `on_login_reply`:
+// fresh stats and constraints land on the next 1s render tick.
+//
+// Painting on every fetch reply would knock
+// the second hand off its even one-second steps.
 #[cfg(target_arch = "wasm32")]
 fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     if response.status == 401 {
-        STATE.with(|state| state.borrow_mut().auth = AuthState::LoggingIn);
-        HANDLES.with(|handles| {
-            if let Some(handles) = handles.borrow().as_ref() {
-                handles.login.invalidate();
-            }
-        });
+        // A 401 built before the last refusal tells the login nothing new,
+        // and re-invalidating would restart the retry it is already waiting out.
+        let refused_already = STATE.with(|state| state.borrow().auth == AuthState::Failed);
+        if !refused_already {
+            STATE.with(|state| state.borrow_mut().auth = AuthState::LoggingIn);
+            HANDLES.with(|handles| {
+                if let Some(handles) = handles.borrow().as_ref() {
+                    handles.login.invalidate();
+                }
+            });
+        }
         return;
     }
 

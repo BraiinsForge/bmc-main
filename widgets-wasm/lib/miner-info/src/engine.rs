@@ -596,10 +596,13 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
             delay
         });
         // Blanked data drops its staleness — auth banner over N/A, not a stale pill.
+        // Invalidating drops the queued requests with it: each carries the token
+        // this reply just rejected, and its 401 would re-fire the backed-off login.
         HANDLES.with(|handles| {
             if let Some(handles) = handles.borrow().as_ref() {
                 for miner in &handles.miner {
                     miner.reset_staleness();
+                    miner.invalidate();
                 }
             }
         });
@@ -622,12 +625,17 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
 #[cfg(target_arch = "wasm32")]
 fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     if response.status == 401 {
-        STATE.with(|state| state.borrow_mut().auth = AuthState::LoggingIn);
-        HANDLES.with(|handles| {
-            if let Some(handles) = handles.borrow().as_ref() {
-                handles.login.invalidate();
-            }
-        });
+        // A 401 built before the last refusal tells the login nothing new,
+        // and re-invalidating would restart the backoff it is serving.
+        let refused_already = STATE.with(|state| state.borrow().auth == AuthState::Failed);
+        if !refused_already {
+            STATE.with(|state| state.borrow_mut().auth = AuthState::LoggingIn);
+            HANDLES.with(|handles| {
+                if let Some(handles) = handles.borrow().as_ref() {
+                    handles.login.invalidate();
+                }
+            });
+        }
         return;
     }
     let idx = miner_index(handle);
