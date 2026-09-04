@@ -4,6 +4,23 @@
 # parses the candles, and draws the chart before the first capture.
 settle_delay = 5
 
-[fixtures.common]
+# A fixture carries no geometry, so one recording serves every viewport.
+[fixtures.bmc100-full]
 path = "fixtures/common.jsonl.gz"
-targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small", "bmm101:full"]
+targets = ["bmc100:full"]
+
+[fixtures.bmc100-large]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmc100:large"]
+
+[fixtures.bmc100-medium]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmc100:medium"]
+
+[fixtures.bmc100-small]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmc100:small"]
+
+[fixtures.bmm101-full]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmm101:full"]
