@@ -33,9 +33,13 @@ fn main() -> gallery::eframe::Result {
                 .from_env_lossy(),
         )
         .init();
+    let window_icon =
+        gallery::eframe::icon_data::from_png_bytes(include_bytes!("assets/window-icon.png"))
+            .expect("BUG: the bundled window icon is not a valid PNG");
     gallery::launch!(
         |_| {},
         gallery::Settings::new(gallery::Renderer::Glow)
+            .window_icon(window_icon)
             .controls_default_width(260.0)
             .collapsed(true)
     )

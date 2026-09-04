@@ -84,9 +84,10 @@ name = "gallery"
 path = "main.rs"
 
 [dependencies]
-# Pinned by rev rather than tracking a branch: the lockfile beside this file is
-# what CI and a fresh clone resolve through, and a scene API moves under us otherwise.
-gallery = { git = "https://github.com/kubijo/rs-gallery.git", rev = "8fa0a90a4dfad1c999db352233ff57e60e3f7d7e" }
+# Pinned by tag rather than tracking a branch:
+# the lockfile beside this file is what CI and a fresh clone
+# resolve through, and a scene API moves under us otherwise.
+gallery = { git = "https://github.com/kubijo/rs-gallery.git", tag = "v0.8.0" }
 
 bitcoin-mining-data = { path = "../widgets-wasm/bitcoin-mining-data" }
 bmc-overlay-alarm = { path = "../system-overlays/bmc-overlay-alarm" }
@@ -124,7 +125,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bmc-render = { path = "../bmc-render", features = ["atlas-inspect"] }
 
 [build-dependencies]
-gallery-build = { git = "https://github.com/kubijo/rs-gallery.git", rev = "8fa0a90a4dfad1c999db352233ff57e60e3f7d7e" }
+gallery-build = { git = "https://github.com/kubijo/rs-gallery.git", tag = "v0.8.0" }
 
 # Reached only from scenes, which live in the crates they exercise and arrive
 # through the glob — nothing under this manifest's own directory names them.
