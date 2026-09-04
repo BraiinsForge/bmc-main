@@ -564,16 +564,6 @@ fn build_public(handle: PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(url))
 }
 
-// An auth verdict needs the miner to have answered: a rejected credential,
-// or a 2xx carrying no token. Anything else leaves the password unjudged.
-#[cfg(any(target_arch = "wasm32", test))]
-fn refused_us(outcome: Option<bmc_wasm_sdk::FetchOutcome>) -> bool {
-    matches!(
-        outcome,
-        Some(bmc_wasm_sdk::FetchOutcome::Http(401 | 403 | 200..=299))
-    )
-}
-
 // A token invalidates the miner endpoints,
 // so the ones the view needs refetch with it.
 // A refusal raises the auth overlay, anything else the offline one,
@@ -595,7 +585,7 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
                 }
             }
         });
-    } else if refused_us(response.outcome()) {
+    } else if bos::login_refused(response.outcome()) {
         log_warn!("login refused with status {}", response.status);
         let delay = STATE.with(|state| {
             let mut state = state.borrow_mut();
@@ -755,23 +745,8 @@ pub fn overlay(view: View, auth: &AuthState) -> Option<mining::overlay::OverlayK
 
 #[cfg(test)]
 mod tests {
-    use super::{View, endpoint_enabled, login_retry_delay, offline_label, refused_us};
-    use bmc_wasm_sdk::{FetchOutcome, ViewportShape};
-
-    /// A miner that never answered has rejected no password,
-    /// so the login backoff and the auth banner both answer the wrong question.
-    #[test]
-    fn only_a_miner_that_answered_can_refuse_the_login() {
-        assert!(refused_us(Some(FetchOutcome::Http(401))));
-        assert!(refused_us(Some(FetchOutcome::Http(403))));
-        assert!(refused_us(Some(FetchOutcome::Http(200))));
-        assert!(!refused_us(Some(FetchOutcome::Network)));
-        assert!(!refused_us(Some(FetchOutcome::Http(500))));
-        assert!(!refused_us(Some(FetchOutcome::Refused)));
-        assert!(!refused_us(Some(FetchOutcome::Aborted)));
-        assert!(!refused_us(Some(FetchOutcome::BodyTooLarge)));
-        assert!(!refused_us(None));
-    }
+    use super::{View, endpoint_enabled, login_retry_delay, offline_label};
+    use bmc_wasm_sdk::ViewportShape;
 
     #[test]
     fn offline_label_names_only_the_failing_groups() {

@@ -21,9 +21,10 @@
 //! The slice of the BOS REST API every miner widget speaks:
 //! the endpoint paths, the login exchange, and the auth state it leaves behind.
 //!
-//! Which statuses count as an auth failure is deliberately not here.
-//! The fleet adapters treat 403 as one and the single-miner widgets do not,
+//! Endpoint auth statuses are deliberately not here:
+//! the fleet adapters treat 403 as one and the single-miner widgets do not,
 //! and the other device families answer differently again.
+//! The login exchange is BOS's own, so [`login_refused`] does live here.
 
 // `fmt!` expands to a `uwrite!` that resolves `ufmt` in the caller's scope.
 use bmc_wasm_sdk::ufmt;
@@ -83,6 +84,16 @@ pub fn parse_token(json: &(impl JsonLookup + ?Sized)) -> Option<String> {
     json.str("/token")
 }
 
+/// Whether the miner turned the login away, as against never answering it:
+/// a rejected credential or a 2xx with no token, and nothing else.
+#[must_use]
+pub fn login_refused(outcome: Option<bmc_wasm_sdk::FetchOutcome>) -> bool {
+    matches!(
+        outcome,
+        Some(bmc_wasm_sdk::FetchOutcome::Http(401 | 403 | 200..=299))
+    )
+}
+
 /// Where a caller stands with the miner it polls.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum AuthState {
@@ -116,7 +127,23 @@ impl AuthState {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthState, endpoint, login_body};
+    use super::{AuthState, endpoint, login_body, login_refused};
+    use bmc_wasm_sdk::FetchOutcome;
+
+    /// A miner that never answered has rejected no password,
+    /// so the login backoff and the auth banner both answer the wrong question.
+    #[test]
+    fn only_a_miner_that_answered_can_refuse_the_login() {
+        assert!(login_refused(Some(FetchOutcome::Http(401))));
+        assert!(login_refused(Some(FetchOutcome::Http(403))));
+        assert!(login_refused(Some(FetchOutcome::Http(200))));
+        assert!(!login_refused(Some(FetchOutcome::Network)));
+        assert!(!login_refused(Some(FetchOutcome::Http(500))));
+        assert!(!login_refused(Some(FetchOutcome::Refused)));
+        assert!(!login_refused(Some(FetchOutcome::Aborted)));
+        assert!(!login_refused(Some(FetchOutcome::BodyTooLarge)));
+        assert!(!login_refused(None));
+    }
 
     #[test]
     fn joins_base_url_and_path_once() {

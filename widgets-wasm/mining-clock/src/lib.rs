@@ -185,9 +185,18 @@ fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
                 handles.constraints.invalidate();
             }
         });
-    } else {
-        log_warn!("mining-clock: login failed with status {}", response.status);
+    } else if bos::login_refused(response.outcome()) {
+        log_warn!(
+            "mining-clock: login refused with status {}",
+            response.status
+        );
         STATE.with(|state| state.borrow_mut().auth = AuthState::Failed);
+    } else {
+        log_warn!(
+            "mining-clock: login got no answer, status {}",
+            response.status
+        );
+        STATE.with(|state| state.borrow_mut().auth = AuthState::Unreachable);
     }
 }
 
