@@ -35,7 +35,7 @@
   "params": {
     "miner_url": {
       "name": "Miner URL",
-      "description": "Base BOS REST API URL for the miner",
+      "description": "Base BOS REST API URL for the miner, e.g. http://localhost/api/v1",
       "type": "string",
       "format": "uri",
       "default_value": "http://localhost/api/v1"
