@@ -62,6 +62,9 @@ pub(crate) struct Palette {
     pub(crate) field: Color32,
     pub(crate) field_hover: Color32,
     pub(crate) field_pressed: Color32,
+    /// A field's fixed head, one step off its face: enough to read as the part
+    /// that is not typed into, not so much that it leaves the field.
+    pub(crate) field_fixed: Color32,
     /// Separators between control groups.
     pub(crate) border_subtle: Color32,
 
@@ -129,6 +132,7 @@ pub(crate) const DARK: Palette = Palette {
     field: swatch::GRAY_80.to_egui(),
     field_hover: swatch::GRAY_70.to_egui(),
     field_pressed: swatch::GRAY_90.to_egui(),
+    field_fixed: swatch::GRAY_90.to_egui(),
     border_subtle: swatch::GRAY_80.to_egui(),
     backdrop: Color32::from_black_alpha(170),
     display_unlit: Color32::from_black_alpha(170),
@@ -170,6 +174,9 @@ pub(crate) const LIGHT: Palette = Palette {
     field: swatch::WHITE.to_egui(),
     field_hover: swatch::GRAY_20.to_egui(),
     field_pressed: swatch::GRAY_30.to_egui(),
+    // Between the white face and the GRAY_20 panel, so the head reads as part
+    // of the field rather than as a gap in it.
+    field_fixed: swatch::GRAY_10.to_egui(),
     border_subtle: swatch::GRAY_30.to_egui(),
     backdrop: Color32::from_black_alpha(150),
     display_unlit: Color32::from_black_alpha(110),

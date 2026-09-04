@@ -129,8 +129,8 @@ impl RuntimeTileGeometry {
 }
 
 /// What `--record` asks for: the viewport to pin, and the dataset to write
-/// when `--record-name` named one. Without a name the GUI asks for it, since
-/// defaulting would overwrite whatever that target already replays.
+/// when `--record-name` named one. Without a name the dialog composes one
+/// from the target, and `judge` warns before a take replaces what it holds.
 #[derive(Debug, Clone)]
 struct RecordRequest {
     target: platform_catalog::Target,
@@ -157,12 +157,19 @@ fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
     }
 
     let dataset = cli.record_name.clone();
-    if let Some(dataset) = &dataset
-        && !bmc_wasm_runtime::capture_config::is_valid_dataset_name(dataset)
-    {
-        anyhow::bail!(
-            "--record-name={dataset} must be non-empty and use only letters, digits, '-', '_' or '.'"
-        );
+    if let Some(dataset) = &dataset {
+        if !bmc_wasm_runtime::capture_config::is_valid_dataset_name(dataset) {
+            anyhow::bail!(
+                "--record-name={dataset} must be non-empty and use only letters, digits, '-', '_' or '.'"
+            );
+        }
+        if recording::suffix_of(dataset, target).is_none() {
+            let prefix = bmc_wasm_runtime::capture_config::conventional_dataset_name(target);
+            anyhow::bail!(
+                "--record-name={dataset} records at {target}, so it must be '{prefix}' \
+                 or start with '{prefix}-'"
+            );
+        }
     }
 
     Ok(Some(RecordRequest { target, dataset }))
@@ -216,8 +223,8 @@ struct CliArgs {
     /// Record a capture fixture for this target (e.g. `bmc100:small`).
     #[arg(long = "record")]
     record_target: Option<String>,
-    /// Dataset name for the recording. Omit it and the dialog asks,
-    /// offering `<platform>-<viewport>` on a button.
+    /// Dataset name for the recording, which must start with the target's own
+    /// `<platform>-<viewport>`. Omit it and the dialog asks for the suffix.
     #[arg(long = "record-name", requires = "record_target")]
     record_name: Option<String>,
     /// Platform id to select from the catalog.
@@ -2781,11 +2788,46 @@ mod app_tests {
 
     #[test]
     fn an_explicit_dataset_name_is_carried_to_the_take() {
-        let request = resolve_record_request(&record_args("bfm100:full", Some("night-shift")))
-            .expect("BUG: a named recording must resolve")
+        let request =
+            resolve_record_request(&record_args("bfm100:full", Some("bfm100-full-night-shift")))
+                .expect("BUG: a named recording must resolve")
+                .expect("BUG: a --record target must be Some");
+
+        assert_eq!(request.dataset.as_deref(), Some("bfm100-full-night-shift"));
+    }
+
+    /// The flag is the other way in, and misfiles just as easily.
+    #[test]
+    fn a_dataset_name_describing_another_viewport_is_rejected() {
+        let err = resolve_record_request(&record_args("bfm100:full", Some("bmm100-full-healthy")))
+            .expect_err("BUG: a name outside the target's prefix must be rejected");
+
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("bmm100-full-healthy") && message.contains("bfm100-full"),
+            "{message}"
+        );
+    }
+
+    /// The target's name is a whole segment, not a string prefix.
+    /// A name that merely starts like it would record fine,
+    /// then read back as hand-edited the next time the dialog opened there.
+    #[test]
+    fn a_dataset_name_that_only_starts_like_the_target_is_rejected() {
+        for bad in ["bfm100-fullhealthy", "bfm100-full_x", "bfm100-full.old"] {
+            let err = resolve_record_request(&record_args("bfm100:full", Some(bad)))
+                .expect_err("BUG: a name the dialog cannot reproduce must be rejected");
+            assert!(format!("{err:#}").contains(bad), "{err:#}");
+        }
+    }
+
+    #[test]
+    fn the_bare_target_name_is_accepted() {
+        let request = resolve_record_request(&record_args("bfm100:full", Some("bfm100-full")))
+            .expect("BUG: the bare target name must resolve")
             .expect("BUG: a --record target must be Some");
 
-        assert_eq!(request.dataset.as_deref(), Some("night-shift"));
+        assert_eq!(request.dataset.as_deref(), Some("bfm100-full"));
     }
 
     #[test]

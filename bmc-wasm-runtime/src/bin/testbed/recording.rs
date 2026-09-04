@@ -558,6 +558,21 @@ impl RecordedFixtures {
     }
 }
 
+/// The scenario suffix that names `dataset` at `target`, or `None` when the
+/// two disagree and the dialog therefore cannot reproduce that name.
+pub(super) fn suffix_of(
+    dataset: &str,
+    target: bmc_wasm_runtime::platform_catalog::Target,
+) -> Option<String> {
+    let prefix = bmc_wasm_runtime::capture_config::conventional_dataset_name(target);
+    if dataset == prefix {
+        return Some(String::new());
+    }
+    dataset
+        .strip_prefix(&format!("{prefix}-"))
+        .map(str::to_owned)
+}
+
 /// A target clicked in the choosing phase, and the dialog naming its take.
 ///
 /// One value for the whole lifecycle — open, typed into, submitted — so a
@@ -565,9 +580,8 @@ impl RecordedFixtures {
 /// exists where a choice is pending without the dialog it came from.
 pub(super) struct Naming {
     pub(super) target: bmc_wasm_runtime::platform_catalog::Target,
-    /// Starts empty: a take cannot be written without a name, so the dialog
-    /// asks for one rather than defaulting into an overwrite.
-    pub(super) dataset: String,
+    /// The scenario, which the target's own name prefixes.
+    pub(super) suffix: String,
     submitted: bool,
 }
 
@@ -575,8 +589,19 @@ impl Naming {
     fn new(target: bmc_wasm_runtime::platform_catalog::Target) -> Self {
         Self {
             target,
-            dataset: String::new(),
+            suffix: String::new(),
             submitted: false,
+        }
+    }
+
+    /// The target's name when no scenario is typed, since a viewport holding
+    /// one dataset has nothing to tell apart.
+    pub(super) fn dataset(&self) -> String {
+        let prefix = bmc_wasm_runtime::capture_config::conventional_dataset_name(self.target);
+        if self.suffix.is_empty() {
+            prefix
+        } else {
+            format!("{prefix}-{}", self.suffix)
         }
     }
 
@@ -741,7 +766,10 @@ impl RecordingMode {
         if !naming.as_ref().is_some_and(|n| n.submitted) {
             return None;
         }
-        naming.take().map(|n| (n.target, n.dataset))
+        naming.take().map(|n| {
+            let dataset = n.dataset();
+            (n.target, dataset)
+        })
     }
 
     /// Off or Choosing → Recording, snapshotting the app's live state into
@@ -1073,7 +1101,8 @@ fn paint_dataset_rows(
     ui: &mut egui::Ui,
     rows: &[RecordedDataset],
     unreadable: bool,
-    dataset: &mut String,
+    target: bmc_wasm_runtime::platform_catalog::Target,
+    suffix: &mut String,
     icons: &mut super::icon::Icons,
     palette: &super::theme::Palette,
 ) {
@@ -1103,9 +1132,16 @@ fn paint_dataset_rows(
     }
     let strong = ui.visuals().strong_text_color();
     for (order, row) in rows.iter().enumerate() {
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(width, ROW_H), egui::Sense::click());
-        if response.hovered() {
+        // A name the dialog cannot compose is a hand-edited one; it still
+        // lists, so the operator sees what the viewport carries.
+        let reuse = suffix_of(&row.name, target);
+        let sense = if reuse.is_some() {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        };
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(width, ROW_H), sense);
+        if response.hovered() && reuse.is_some() {
             ui.painter().rect_filled(rect, 0.0, palette.field);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -1138,41 +1174,40 @@ fn paint_dataset_rows(
                 palette.text_disabled,
             );
         }
-        if response.clicked() {
-            dataset.clone_from(&row.name);
+        match reuse {
+            Some(reuse) => {
+                if response.clicked() {
+                    suffix.clone_from(&reuse);
+                }
+                response.on_hover_text("Use this name to re-record it");
+            }
+            None => {
+                response
+                    .on_hover_text("not this viewport's name — edit the config to re-record it");
+            }
         }
-        response.on_hover_text("Use this name to re-record it");
     }
 }
 
-/// Smaller than the button's square, so the face reads as a button, not a glyph.
-const NAME_FILL_ICON: f32 = 14.0;
-
-/// Offers the conventional name rather than prefilling it:
-/// no take is written under a name nobody looked at.
-fn paint_name_field(ui: &mut egui::Ui, naming: &mut Naming, icons: &mut super::icon::Icons) {
-    let conventional = bmc_wasm_runtime::capture_config::conventional_dataset_name(naming.target);
+/// The target's prefix painted, not typed, so a take cannot be filed under
+/// another viewport's name.
+///
+/// The separator belongs to the head only while a scenario follows it, since
+/// the name an empty field writes is the bare prefix.
+fn paint_name_field(ui: &mut egui::Ui, naming: &mut Naming, palette: &super::theme::Palette) {
+    let prefix = bmc_wasm_runtime::capture_config::conventional_dataset_name(naming.target);
+    let head = if naming.suffix.is_empty() {
+        prefix
+    } else {
+        format!("{prefix}-")
+    };
     ui.horizontal(|row| {
-        row.spacing_mut().item_spacing.x = spacing::S02;
-        let side = super::ui_helpers::field_height(row);
-        let width = (row.available_width() - side - spacing::S02).max(0.0);
+        // Flush, so the head and the field read as one control.
+        row.spacing_mut().item_spacing.x = 0.0;
+        super::ui_helpers::field_prefix(row, &head, palette);
+        let width = row.available_width();
         // No hint: a placeholder name reads as one already given.
-        text_field(row, width, &mut naming.dataset, "");
-        let (rect, fill) = row.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::click());
-        let visuals = *row.style().interact(&fill);
-        row.painter()
-            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
-        icons.automatic.paint(
-            row,
-            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(NAME_FILL_ICON)),
-            visuals.fg_stroke.color,
-        );
-        if super::ui_helpers::with_pointer(fill)
-            .on_hover_text(format!("name it {conventional}"))
-            .clicked()
-        {
-            naming.dataset.clone_from(&conventional);
-        }
+        text_field(row, width, &mut naming.suffix, "");
     });
 }
 
@@ -1352,9 +1387,6 @@ impl EventKind {
 impl TestbedApp {
     /// The dialog a chosen target opens: what that viewport already replays,
     /// and the name this take will write.
-    ///
-    /// The name is required rather than defaulted, because a default is what
-    /// silently re-recorded whatever the viewport already carried.
     pub(super) fn paint_record_dialog(&mut self, ctx: &egui::Context) {
         let palette = self.theme.palette(ctx);
         let icons = &mut self.icons;
@@ -1370,7 +1402,8 @@ impl TestbedApp {
             .backdrop_color(palette.backdrop)
             .show(ctx, |ui| {
                 ui.set_width(DIALOG_W);
-                let verdict = recorded.judge(&naming.dataset, target);
+                let dataset = naming.dataset();
+                let verdict = recorded.judge(&dataset, target);
 
                 dialog_body(ui, |ui| {
                     dialog_header(
@@ -1387,7 +1420,8 @@ impl TestbedApp {
                         ui,
                         rows,
                         recorded.is_unreadable(),
-                        &mut naming.dataset,
+                        target,
+                        &mut naming.suffix,
                         icons,
                         palette,
                     );
@@ -1395,15 +1429,12 @@ impl TestbedApp {
                     ui.add_space(spacing::S05);
                     ui.label(egui::RichText::new("Dataset name").strong());
                     ui.add_space(spacing::S02);
-                    paint_name_field(ui, naming, icons);
+                    paint_name_field(ui, naming, palette);
 
                     // The caption keeps its line in every case, so typing
                     // into an empty field does not shunt the footer down
                     // under the pointer.
                     ui.label(match &verdict {
-                        NameVerdict::Unusable if naming.dataset.is_empty() => {
-                            egui::RichText::new("name the scenario this take records").weak()
-                        }
                         NameVerdict::Unusable => {
                             egui::RichText::new("letters, digits, '-', '_' and '.' only")
                                 .color(palette.action_danger)
@@ -1550,7 +1581,7 @@ impl TestbedApp {
 
 #[cfg(test)]
 mod naming_tests {
-    use super::{NameVerdict, RecordedDataset, RecordedFixtures, RecordingMode};
+    use super::{NameVerdict, Naming, RecordedDataset, RecordedFixtures, RecordingMode};
 
     fn row(name: &str) -> RecordedDataset {
         RecordedDataset {
@@ -1637,8 +1668,8 @@ mod naming_tests {
             "nothing was recorded for that viewport",
         );
         assert!(
-            naming.dataset.is_empty(),
-            "the name is asked for, never defaulted",
+            naming.suffix.is_empty(),
+            "the scenario is asked for, never defaulted",
         );
     }
 
@@ -1716,14 +1747,50 @@ mod naming_tests {
             1,
             "the dialog lists what that viewport carries",
         );
-        naming.dataset = "qualifying".to_owned();
+        naming.suffix = "qualifying".to_owned();
         naming.submit();
 
         let (chosen, dataset) = mode
             .take_choice()
             .expect("BUG: a submitted dialog must yield its choice");
         assert_eq!(chosen.viewport.id, "small");
-        assert_eq!(dataset, "qualifying");
+        assert_eq!(dataset, "bmc100-small-qualifying");
+    }
+
+    /// The defect this exists for: a take at one viewport, named for another.
+    #[test]
+    fn a_typed_suffix_is_filed_under_the_target_that_recorded_it() {
+        let mut mode = choosing(Vec::new());
+        mode.choose(target("bfm100:full"));
+
+        let (naming, _) = mode.naming_dialog().expect("BUG: the dialog must be open");
+        naming.suffix = "healthy".to_owned();
+
+        assert_eq!(naming.dataset(), "bfm100-full-healthy");
+    }
+
+    /// One dataset per viewport needs no scenario to tell it apart, which is
+    /// how most of the corpus is named.
+    #[test]
+    fn an_empty_suffix_names_the_target_itself() {
+        let naming = Naming::new(target("bmc100:small"));
+
+        assert_eq!(naming.dataset(), "bmc100-small");
+    }
+
+    /// The dialog fills its field from a row, so every name it lists has to be
+    /// one the field can produce again.
+    #[test]
+    fn a_listed_name_is_one_the_suffix_field_can_rebuild() {
+        let full = target("bmc100:full");
+
+        assert_eq!(super::suffix_of("bmc100-full", full).as_deref(), Some(""));
+        assert_eq!(
+            super::suffix_of("bmc100-full-race", full).as_deref(),
+            Some("race"),
+        );
+        assert_eq!(super::suffix_of("bmc100-small-race", full), None);
+        assert_eq!(super::suffix_of("common", full), None);
     }
 
     #[test]

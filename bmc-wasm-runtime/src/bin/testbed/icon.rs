@@ -97,7 +97,6 @@ pub(crate) struct Icons {
     pub(crate) timer: Icon,
     pub(crate) scale_in: Icon,
     pub(crate) scale_out: Icon,
-    pub(crate) automatic: Icon,
     pub(crate) camera: Icon,
     pub(crate) save: Icon,
     pub(crate) close: Icon,
@@ -127,7 +126,6 @@ impl Icons {
             timer: Icon::new(include_bytes!("assets/icons/timer.svg")),
             scale_in: Icon::new(include_bytes!("assets/icons/scale-in.svg")),
             scale_out: Icon::new(include_bytes!("assets/icons/scale-out.svg")),
-            automatic: Icon::new(include_bytes!("assets/icons/automatic.svg")),
             camera: Icon::new(include_bytes!("assets/icons/camera.svg")),
             save: Icon::new(include_bytes!("assets/icons/save.svg")),
             close: Icon::new(include_bytes!("assets/icons/close.svg")),
@@ -182,7 +180,7 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 24] = [
+        let named: [(&str, &Icon); 23] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
@@ -203,7 +201,6 @@ mod tests {
             ("output", &icons.output),
             ("scale-in", &icons.scale_in),
             ("scale-out", &icons.scale_out),
-            ("automatic", &icons.automatic),
             ("camera", &icons.camera),
             ("save", &icons.save),
             ("close", &icons.close),

@@ -333,6 +333,32 @@ pub(super) fn field_height(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Body) + f32::from(FIELD_PAD_Y) * 2.0
 }
 
+/// A [`text_field`]'s fixed head — the part the caller supplies and the
+/// operator cannot edit.
+///
+/// Shares the field's height, padding and font, and the caller zeroes
+/// `item_spacing.x` so the two abut: with square corners throughout the chrome
+/// they then read as one control, its head merely shaded apart.
+pub(super) fn field_prefix(ui: &mut egui::Ui, text: &str, palette: &Palette) {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        palette.text_secondary,
+    );
+    let size = egui::vec2(
+        galley.size().x + f32::from(FIELD_PAD_X) * 2.0,
+        field_height(ui),
+    );
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, palette.field_fixed);
+    let baseline = egui::pos2(
+        rect.left() + f32::from(FIELD_PAD_X),
+        rect.center().y - galley.size().y / 2.0,
+    );
+    ui.painter()
+        .galley(baseline, galley, palette.text_secondary);
+}
+
 /// A single-line text input at the chrome's field height.
 ///
 /// The height comes from the margin, never from `add_sized`: forcing a taller
