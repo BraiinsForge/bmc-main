@@ -21,10 +21,10 @@
 use core::time::Duration;
 
 use bmc_gallery::prelude::*;
-use bmc_wasm_sdk::{
-    Availability, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Svg, Temperature,
-    include_svg,
+use bmc_wasm_sdk::types::{
+    Availability, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
 };
+use bmc_wasm_sdk::{Svg, include_svg};
 use miner_info::face;
 use miner_info::face::RenderSize;
 use miner_info::model::{

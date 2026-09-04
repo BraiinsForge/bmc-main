@@ -31,7 +31,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use bmc_wasm_sdk::Hashrate;
+use bmc_wasm_sdk::types::Hashrate;
 
 use crate::device::{DeviceFamily, DeviceId, DeviceList, KnownDevice};
 use crate::summary::FleetSummary;
@@ -464,7 +464,7 @@ impl Tier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_wasm_sdk::{ElectricPower, MiningEfficiency, Temperature};
+    use bmc_wasm_sdk::types::{ElectricPower, MiningEfficiency, Temperature};
 
     /// The `value`s of a series, for terse assertions.
     fn vals(series: &[HistoryDatum]) -> Vec<Option<f32>> {

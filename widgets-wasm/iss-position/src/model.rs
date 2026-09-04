@@ -22,7 +22,7 @@
 
 #[cfg(target_arch = "wasm32")]
 use bmc_wasm_sdk::JsonDoc;
-use bmc_wasm_sdk::{Length, Speed};
+use bmc_wasm_sdk::types::{Length, Speed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Visibility {

@@ -20,12 +20,14 @@
 
 use core::time::Duration;
 
-use bmc_wasm_sdk::{ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature};
+use bmc_wasm_sdk::types::{
+    ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
+};
 pub use mining::gauge::TargetRange;
 
 pub use crate::money::{Currency, Money};
 
-pub use bmc_wasm_sdk::Availability;
+pub use bmc_wasm_sdk::types::Availability;
 
 /// What a body reported for one endpoint: its whole field set, and the verdict
 /// on the body itself. Whole, so a reply replaces every reading its endpoint

@@ -21,7 +21,7 @@
 //! Fixture pool data for the storybook screens, shaped after the design's
 //! sample values (349.8 PH/s fleet, ~2400 workers).
 
-use bmc_wasm_sdk::Hashrate;
+use bmc_wasm_sdk::types::Hashrate;
 use units::availability::Availability;
 
 use crate::model::{

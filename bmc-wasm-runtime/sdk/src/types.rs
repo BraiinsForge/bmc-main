@@ -18,7 +18,18 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Re-export of the SDK's [`Availability`], so a widget that reads it here
-//! and one that reads it from the SDK hold the same type.
+//! The vocabulary a widget holds its readings in:
+//! a quantity, and whether there is one to show.
+//!
+//! What earns a place here is dependency-free and domain-neutral.
+//! A dependency, or a domain model, belongs in a `widgets-wasm/lib` crate
+//! that only the widgets wanting it depend on.
 
-pub use bmc_wasm_sdk::types::Availability;
+mod availability;
+mod units;
+
+pub use availability::Availability;
+pub use units::{
+    BitcoinAmount, ElectricPower, Hashrate, Hashvalue, Length, Mass, MiningEfficiency, Ratio,
+    Speed, Temperature,
+};

@@ -20,6 +20,7 @@
 
 //! The upcoming race weekend: where it is run, and when.
 
+use bmc_wasm_sdk::types::Length;
 #[cfg_attr(
     not(test),
     expect(

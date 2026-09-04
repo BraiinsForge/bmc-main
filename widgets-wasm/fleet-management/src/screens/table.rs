@@ -21,6 +21,7 @@
 //! List view (per-model breakdown): the fleet's models as table rows,
 //! the list-view twin of the dashboard grid.
 
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 #[cfg_attr(
     not(test),
     expect(

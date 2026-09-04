@@ -22,6 +22,7 @@
 //! geometry — gutters, tick labels, time band, baseline style, payout
 //! markers — comes entirely from a per-layout [`ChartSpec`].
 
+use bmc_wasm_sdk::types::Hashrate;
 #[cfg_attr(
     not(test),
     expect(

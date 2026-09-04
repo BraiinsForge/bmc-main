@@ -21,6 +21,7 @@
 //! Grid view (fleet overview): status counts, a hashrate area chart,
 //! and Power / Efficiency / Temp tiles.
 
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 #[cfg_attr(
     not(test),
     expect(

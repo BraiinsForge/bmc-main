@@ -31,7 +31,7 @@ use crate::families::bos::BosAdapter;
 use crate::families::ubos::UbosAdapter;
 use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading};
-use bmc_wasm_sdk::Temperature;
+use bmc_wasm_sdk::types::Temperature;
 
 #[test]
 fn bos_sim_response_derives_the_intended_device() {

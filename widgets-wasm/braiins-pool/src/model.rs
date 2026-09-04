@@ -20,7 +20,7 @@
 
 //! Widget state: what the API replies fill in and what the render path reads.
 
-use bmc_wasm_sdk::Hashrate;
+use bmc_wasm_sdk::types::Hashrate;
 use units::availability::Availability;
 
 use crate::manifest_params::{ChartFrame, Style};

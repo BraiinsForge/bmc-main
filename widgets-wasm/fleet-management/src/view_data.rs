@@ -21,7 +21,7 @@
 //! Build the redesigned screens' view data from the live fleet summary
 //! and its recorded hashrate history.
 
-use bmc_wasm_sdk::Hashrate;
+use bmc_wasm_sdk::types::Hashrate;
 
 use crate::device::{DeviceId, KnownDevice};
 use crate::history::{ChartWindow, HistoryDatum, HistoryView};
@@ -218,7 +218,7 @@ mod tests {
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, Membership};
     use crate::history::{ChartSpan, HashrateHistory};
     use crate::telemetry::{DeviceTemp, TelemetryReading, TelemetrySnapshot};
-    use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
+    use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
     fn grp(label: &str, total: usize, ok: usize, off: usize) -> GroupSummary {
         GroupSummary {

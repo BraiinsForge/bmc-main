@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{Hashrate, Temperature};
+use bmc_wasm_sdk::types::{Hashrate, Temperature};
 
 /// A device's temperature at the fidelity its sensors provide.
 #[derive(Debug, Clone, Copy, PartialEq)]

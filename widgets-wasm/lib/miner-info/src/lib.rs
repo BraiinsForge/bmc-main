@@ -25,11 +25,12 @@
 //! those bags; `format` and `layout` turn the values and the viewport into the
 //! strings and metrics `face` draws with.
 //!
-//! Every dimensional quantity comes from [`bmc_wasm_sdk::units`]. `money` holds
-//! the fiat figures, which are not dimensional — there is no canonical currency
-//! and no rate-free conversion — so they carry their currency as data instead.
-//! [`bmc_wasm_sdk::Availability`] carries the "no value yet" state
-//! a quantity cannot express.
+//! Every dimensional quantity comes from [`bmc_wasm_sdk::types`],
+//! which also carries [`bmc_wasm_sdk::types::Availability`]:
+//! the "no value yet" state a quantity cannot express.
+//! `money` holds the fiat figures, which are not dimensional
+//! — there is no canonical currency and no rate-free conversion —
+//! so they carry their currency as data instead.
 //!
 //! `engine` is the crate's one `wasm32`-gated module: it owns the poll loop
 //! and the live `fetch`. Everything else is host-pure and unit-tested.

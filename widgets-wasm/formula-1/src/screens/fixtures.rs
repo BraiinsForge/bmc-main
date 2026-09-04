@@ -23,7 +23,8 @@
 //! Typed fixtures rather than recorded payloads: the states worth
 //! reviewing are the ones a live server rarely serves on demand.
 
-use bmc_wasm_sdk::{CalendarDate, Length, LocalDateTime, Mass};
+use bmc_wasm_sdk::types::{Length, Mass};
+use bmc_wasm_sdk::{CalendarDate, LocalDateTime};
 
 use crate::images::ImageKind;
 use crate::model::{

@@ -20,7 +20,7 @@
 
 //! Hand-picked fixture summaries for the gallery screens.
 
-use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::DeviceFamily;
 use crate::history::{ChartWindow, HistoryDatum};

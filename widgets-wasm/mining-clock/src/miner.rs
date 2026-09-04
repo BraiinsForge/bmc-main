@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{Hashrate, ufmt};
+use bmc_wasm_sdk::types::Hashrate;
+use bmc_wasm_sdk::ufmt;
 use mining::gauge::TargetRange;
 use mining::hashboards::JsonLookup;
 

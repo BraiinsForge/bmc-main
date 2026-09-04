@@ -33,6 +33,7 @@
 //!  the globe terminator shows sunlit vs shadow.
 //! ```
 
+use bmc_wasm_sdk::types::Speed;
 #[expect(
     clippy::wildcard_imports,
     reason = "widget render uses many SDK exports"

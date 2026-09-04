@@ -19,7 +19,8 @@
 // the grant above.
 
 use base64::prelude::{BASE64_STANDARD, Engine as _};
-use bmc_wasm_sdk::{ElectricPower, Hashrate, Temperature, ufmt};
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, Temperature};
+use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};

@@ -24,7 +24,8 @@
 //! Everything here is free of host calls so it can be exercised
 //! natively — by tests and by the gallery's fixtures.
 
-use bmc_wasm_sdk::{CalendarDate, Color, Length, LocalDateTime, Mass};
+use bmc_wasm_sdk::types::{Length, Mass};
+use bmc_wasm_sdk::{CalendarDate, Color, LocalDateTime};
 
 /// The design's four frames. The widget renders the same screens in each,
 /// dropping columns and rows as the box shrinks.

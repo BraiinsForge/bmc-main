@@ -168,7 +168,7 @@ mod wasm_glue {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_sdk::{Length, Speed};
+    use bmc_wasm_sdk::types::{Length, Speed};
 
     use super::*;
     use crate::model::{IssData, Visibility};

@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{Hashrate, Temperature, ufmt};
+use bmc_wasm_sdk::types::{Hashrate, Temperature};
+use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};

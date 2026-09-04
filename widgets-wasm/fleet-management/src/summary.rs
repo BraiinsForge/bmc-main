@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::{DeviceFamily, DeviceId, DeviceList, KnownDevice, PollFailure};
 use crate::telemetry::{DeviceTemp, TelemetryReading};

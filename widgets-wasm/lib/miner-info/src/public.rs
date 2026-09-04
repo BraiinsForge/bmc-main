@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{Hashvalue, Ratio, ufmt};
+use bmc_wasm_sdk::types::{Hashvalue, Ratio};
+use bmc_wasm_sdk::ufmt;
 
 use crate::api::JsonLookup;
 use crate::model::{Availability, Currency, Money, ParseResult, PublicData, Verdict};

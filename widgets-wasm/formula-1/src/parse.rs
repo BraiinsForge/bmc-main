@@ -25,9 +25,8 @@
 //! every rule that plain values can decide lives in `model.rs`,
 //! where it is natively testable.
 
-use bmc_wasm_sdk::{
-    CalendarDate, JsonDoc, JsonKind, Length, LocalDateTime, Mass, calendar, system,
-};
+use bmc_wasm_sdk::types::{Length, Mass};
+use bmc_wasm_sdk::{CalendarDate, JsonDoc, JsonKind, LocalDateTime, calendar, system};
 
 use crate::api::wire;
 use crate::model::{

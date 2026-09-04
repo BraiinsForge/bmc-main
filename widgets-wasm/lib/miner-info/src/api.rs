@@ -20,7 +20,8 @@
 
 use core::time::Duration;
 
-use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Ratio, Temperature, ufmt};
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Ratio, Temperature};
+use bmc_wasm_sdk::ufmt;
 
 use crate::model::{Availability, Constraints, MinerData, ParseResult, TemperatureRange, Verdict};
 use mining::gauge::TargetRange;

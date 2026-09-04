@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 #[cfg_attr(
     not(test),
     expect(

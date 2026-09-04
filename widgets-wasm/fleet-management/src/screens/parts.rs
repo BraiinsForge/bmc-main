@@ -22,6 +22,7 @@
 //! the header + view toggle, the status counts, and the area/spark chart.
 //! Kept here so the grid (dashboard) and list (per-model table) views render identically.
 
+use bmc_wasm_sdk::types::Hashrate;
 #[cfg_attr(
     not(test),
     expect(

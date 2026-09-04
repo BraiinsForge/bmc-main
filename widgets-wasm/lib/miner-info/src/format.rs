@@ -20,7 +20,7 @@
 
 use core::time::Duration;
 
-use bmc_wasm_sdk::{ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio};
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio};
 
 use crate::model::{Availability, Money, TemperatureRange};
 
@@ -329,7 +329,7 @@ pub(crate) fn uptime(value: Availability<Duration>) -> Rendered {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_wasm_sdk::Temperature;
+    use bmc_wasm_sdk::types::Temperature;
 
     #[test]
     fn formats_temperature_range_like_boser() {

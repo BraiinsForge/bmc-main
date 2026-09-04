@@ -346,7 +346,6 @@ fn install_panic_hook() {
 #[cfg(target_arch = "wasm32")]
 pub mod alloc;
 pub mod assets;
-mod availability;
 pub mod cache;
 pub mod calendar;
 pub mod credentials;
@@ -398,19 +397,16 @@ pub mod socket;
 pub mod ssdp;
 pub mod text;
 pub mod tree;
+pub mod types;
 pub mod tz;
 #[cfg(target_arch = "wasm32")]
 pub mod udp_broadcast;
 pub mod url;
-// Private module, types re-exported at the crate root below — so `units` can't
-// clash with the widget-local `units` crate some widgets still depend on.
-mod units;
 #[cfg(target_arch = "wasm32")]
 pub mod ws;
 #[cfg(target_arch = "wasm32")]
 pub mod xml;
 
-pub use availability::Availability;
 pub use bmc_render_macros::*;
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;
@@ -443,10 +439,6 @@ pub use slot::*;
 pub use tree::*;
 pub use tz::Tz;
 pub use ufmt;
-pub use units::{
-    BitcoinAmount, ElectricPower, Hashrate, Hashvalue, Length, Mass, MiningEfficiency, Ratio,
-    Speed, Temperature,
-};
 #[cfg(target_arch = "wasm32")]
 pub use ws::{Ws, WsEvent, ws_connect};
 #[cfg(target_arch = "wasm32")]

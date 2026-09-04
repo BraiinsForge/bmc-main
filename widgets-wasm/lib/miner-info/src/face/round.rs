@@ -23,6 +23,7 @@
 //! three-band layout. Geometry is authored in 480 native units and scaled by
 //! `min(w, h) / 480`; typography is fixed (not scaled) per project convention.
 
+use bmc_wasm_sdk::types::Hashrate;
 #[expect(
     clippy::wildcard_imports,
     reason = "widget render code uses many SDK exports and macros in one file"

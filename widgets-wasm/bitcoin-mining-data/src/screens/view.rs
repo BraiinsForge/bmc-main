@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::types::Hashrate;
 #[expect(
     clippy::wildcard_imports,
     reason = "screen code uses the SDK's tree builders, macros, and tokens throughout"
