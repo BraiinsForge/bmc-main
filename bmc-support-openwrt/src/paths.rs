@@ -1,4 +1,3 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
 // Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -19,21 +18,22 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-// files
-pub const BOS_VERSION: &str = "/etc/bos_version";
-pub const BOS_MAJOR: &str = "/etc/bos_major";
-pub const BOS_MODE: &str = "/etc/bos_mode";
-pub const BOS_PLATFORM: &str = "/etc/bos_platform";
-pub const BOARD: &str = "/etc/board.json";
-pub const FACTORY_DEFAULT: &str = "/etc/factory-default";
-pub const SETUP_PENDING: &str = "/etc/setup-pending";
-pub const PROC_MTD: &str = "/proc/mtd";
-pub const PROC_CPUINFO: &str = "/proc/cpuinfo";
-pub const ETC_HOSTS: &str = "/etc/hosts";
-pub const ETC_RESOLV_CONF: &str = "/etc/resolv.conf";
-pub const ETC_DNSMASQ_CONF: &str = "/etc/dnsmasq.conf";
+//! The paths only the OpenWrt board has, plus the files bmc owns there.
 
-// directories
-pub const SRC_LOGS: &str = "/var/log";
-pub const SRC_ETC_CONF: &str = "/etc/config";
-pub const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
+use crate::filters::{BMC_CONFIG_DIR, BMC_CONFIG_LEGACY};
+
+/// OpenWrt's board description and UCI config.
+pub const OPENWRT_FS_PATHS: &[&str] = &["/etc/board.json", "/etc/config"];
+
+/// Files bmc owns on the board: its config and the pre-migration copy,
+/// the setup markers, and the Nix upgrade configuration.
+pub const BMC_FS_PATHS: &[&str] = &[
+    // files
+    BMC_CONFIG_LEGACY,
+    "/etc/factory-default",
+    "/etc/setup-pending",
+    "/etc/nix/nix.conf",
+    // directories
+    BMC_CONFIG_DIR,
+    "/etc/nix-upgrade",
+];

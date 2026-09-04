@@ -20,16 +20,19 @@
 // the grant above.
 
 //! Support-archive pieces shared by every binary running on the OpenWrt board:
-//! credential filters for its config layout, plus the Nix profile and system log collectors.
+//! the board's and bmc's include paths, credential filters for its config
+//! layout, plus the Nix profile and system log collectors.
 //! Each binary assembles them into its own [`bmc_support::SupportConfig`].
 
 mod filters;
 mod nix_profile;
+mod paths;
 
 pub use filters::{
     BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BmcConfigCensor, SecretsExclusion, UciWirelessCensor,
 };
 pub use nix_profile::NixProfileExtension;
+pub use paths::{BMC_FS_PATHS, OPENWRT_FS_PATHS};
 
 use anyhow::Result;
 use bmc_support::{SupportArchive, SupportExtension};

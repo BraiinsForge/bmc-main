@@ -43,6 +43,7 @@ pub const PROC_PATHS: &[&str] = &[
     "/proc/loadavg",
     "/proc/cmdline",
     "/proc/crypto",
+    "/proc/cpuinfo",
     "/proc/devices",
     "/proc/iomem",
     "/proc/ioports",
@@ -51,11 +52,42 @@ pub const PROC_PATHS: &[&str] = &[
     "/proc/meminfo",
     "/proc/misc",
     "/proc/modules",
+    "/proc/mtd",
     "/proc/partitions",
     "/proc/stat",
     "/proc/uptime",
     "/proc/version",
     "/proc/net/arp",
+];
+
+/// Commands whose stdout every Braiins OS board captures.
+pub const BOS_COMMANDS: &[&[&str]] = &[
+    &["dmesg"],
+    &["fw_printenv"],
+    &["env"],
+    &["ifconfig", "-a"],
+    &["ip", "addr"],
+    &["ip", "route"],
+    &["ps", "aux"],
+    &["df"],
+    &["ls", "-l", "/tmp"],
+    &["killall", "-SIGUSR1", "dnsmasq"],
+];
+
+/// Paths every Braiins OS board collects wholesale.
+pub const BOS_FS_PATHS: &[&str] = &[
+    // files
+    "/etc/board.json",
+    "/etc/bos_version",
+    "/etc/bos_major",
+    "/etc/bos_mode",
+    "/etc/bos_platform",
+    "/etc/hosts",
+    "/etc/resolv.conf",
+    "/etc/dnsmasq.conf",
+    // directories
+    "/etc/config",
+    "/var/log",
 ];
 
 /// A binary-specific collector run during archive collection.
@@ -371,6 +403,23 @@ mod tests {
             entries.insert(file.name().to_owned(), buf);
         }
         entries
+    }
+
+    #[test]
+    fn shared_paths_include_board_configuration_on_every_platform() {
+        for path in ["/etc/board.json", "/etc/config"] {
+            assert!(
+                BOS_FS_PATHS.contains(&path),
+                "{path} must be collected on both OpenWrt and Buildroot"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_include_paths_are_absolute() {
+        for path in BOS_FS_PATHS.iter().chain(PROC_PATHS) {
+            assert!(path.starts_with('/'), "{path} must be absolute");
+        }
     }
 
     #[test]
