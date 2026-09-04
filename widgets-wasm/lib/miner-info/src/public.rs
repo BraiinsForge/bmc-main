@@ -154,7 +154,7 @@ pub(crate) fn price_history_url(_currency: Currency) -> String {
     "https://public-api.braiins.com/v1/price-history?timeframe=1d".to_owned()
 }
 
-// A window with no samples answers with an empty series, which the chart draws.
+// An empty `price` is a window with no samples; no `price` at all is not this reply.
 pub(crate) fn parse_price_history(json: &impl JsonLookup) -> ParseResult<PriceHistory> {
     let mut points = Vec::new();
     for index in 0..MAX_PRICE_HISTORY_POINTS {
@@ -165,7 +165,7 @@ pub(crate) fn parse_price_history(json: &impl JsonLookup) -> ParseResult<PriceHi
     }
     ParseResult {
         data: PriceHistory { points },
-        verdict: Verdict::Answer,
+        verdict: Verdict::from_reported(json.has("/price")),
     }
 }
 
@@ -302,9 +302,19 @@ mod tests {
     /// and the poll neither fails nor lets the figure go stale.
     #[test]
     fn an_empty_price_history_still_answers() {
-        let parsed = parse_price_history(&MapJson::default());
+        let mut json = MapJson::default();
+        json.empty_containers.insert("/price");
+        let parsed = parse_price_history(&json);
         assert_eq!(parsed.verdict, Verdict::Answer);
         assert!(parsed.data.points.is_empty());
+    }
+
+    #[test]
+    fn a_body_without_the_price_series_is_not_this_reply() {
+        assert_eq!(
+            parse_price_history(&MapJson::default()).verdict,
+            Verdict::Unusable
+        );
     }
 
     #[test]

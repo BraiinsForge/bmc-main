@@ -60,6 +60,13 @@ pub(crate) mod tests_support {
         fn f64(&self, path: &str) -> Option<f64> {
             self.floats.get(path).copied()
         }
+
+        fn has(&self, path: &str) -> bool {
+            let under = |key: &&str| key.starts_with(path);
+            self.strings.keys().any(under)
+                || self.ints.keys().any(under)
+                || self.floats.keys().any(under)
+        }
     }
 }
 

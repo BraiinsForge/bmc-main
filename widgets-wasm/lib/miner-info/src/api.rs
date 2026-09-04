@@ -53,10 +53,10 @@ pub(crate) struct Network {
     pub ip_address: Option<String>,
 }
 
-// `GetMinerDetailsResponse` is the only reply these read whose BOS+ schema
-// requires a field: `bosminer_uptime_s` (bos-main `open/boser/openapi.json`).
-// Everything else is optional, including empty `fans`, `hashboards`
-// and `networks` arrays: absence is a miner reporting nothing, not a fault.
+// Verdicts follow the BOS+ schema (bos-main `open/boser/openapi.json`).
+// `hashboards`, `fans` and `networks` are required containers:
+// absent is not this reply, empty is a miner reporting nothing.
+// Stats and constraints require nothing, so an empty body conforms.
 pub(crate) fn parse_details(json: &impl JsonLookup) -> ParseResult<Details> {
     let uptime = json
         .i64("/bosminer_uptime_s")
@@ -104,7 +104,7 @@ pub(crate) fn parse_hashboards(json: &impl JsonLookup) -> ParseResult<Hashboards
             chip_type: summary.model,
             chip_count: summary.count,
         },
-        verdict: Verdict::Answer,
+        verdict: Verdict::from_reported(json.has("/hashboards")),
     }
 }
 
@@ -115,7 +115,7 @@ pub(crate) fn parse_cooling(json: &impl JsonLookup) -> ParseResult<Cooling> {
                 .f64("/fans/0/target_speed_ratio")
                 .map(Ratio::from_fraction),
         },
-        verdict: Verdict::Answer,
+        verdict: Verdict::from_reported(json.has("/fans")),
     }
 }
 
@@ -124,7 +124,7 @@ pub(crate) fn parse_network(json: &impl JsonLookup) -> ParseResult<Network> {
         data: Network {
             ip_address: json.str("/networks/0/address"),
         },
-        verdict: Verdict::Answer,
+        verdict: Verdict::from_reported(json.has("/networks")),
     }
 }
 
@@ -195,13 +195,15 @@ pub(crate) fn reset_all(data: &mut MinerData) {
 #[cfg(test)]
 pub mod tests_support {
     use super::JsonLookup;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     #[derive(Default)]
     pub struct MapJson {
         pub strings: BTreeMap<&'static str, &'static str>,
         pub ints: BTreeMap<&'static str, i64>,
         pub floats: BTreeMap<&'static str, f64>,
+        /// Containers present but empty, which leaf paths cannot express.
+        pub empty_containers: BTreeSet<&'static str>,
     }
 
     impl JsonLookup for MapJson {
@@ -215,6 +217,14 @@ pub mod tests_support {
 
         fn f64(&self, path: &str) -> Option<f64> {
             self.floats.get(path).copied()
+        }
+
+        fn has(&self, path: &str) -> bool {
+            let under = |key: &&str| key.starts_with(path);
+            self.empty_containers.contains(path)
+                || self.strings.keys().any(under)
+                || self.ints.keys().any(under)
+                || self.floats.keys().any(under)
         }
     }
 }
@@ -263,12 +273,14 @@ mod tests {
         assert_eq!(parse_details(&json).verdict, Verdict::Answer);
     }
 
-    /// Empty fan, hashboard and network arrays are legal, targets
-    /// are optional, and every stats field is nullable.
-    /// Failing the poll over that silence would stale a healthy miner.
+    /// Empty arrays and absent optional fields are a healthy miner's silence;
+    /// failing the poll over it would stale a live reading.
     #[test]
     fn the_endpoints_whose_fields_are_all_optional_still_answer_when_empty() {
-        let empty = MapJson::default();
+        let mut empty = MapJson::default();
+        empty.empty_containers.insert("/hashboards");
+        empty.empty_containers.insert("/fans");
+        empty.empty_containers.insert("/networks");
         assert_eq!(parse_stats(&empty).verdict, Verdict::Answer);
         assert_eq!(parse_hashboards(&empty).verdict, Verdict::Answer);
         assert_eq!(parse_cooling(&empty).verdict, Verdict::Answer);
@@ -315,10 +327,62 @@ mod tests {
 
     #[test]
     fn leaves_chips_absent_when_the_body_omits_them() {
-        let json = MapJson::default();
+        let mut json = MapJson::default();
+        json.empty_containers.insert("/hashboards");
         let parsed = parse_hashboards(&json);
         assert_eq!(parsed.data.chip_type, None);
         assert_eq!(parsed.data.chip_count, None);
+    }
+
+    #[test]
+    fn an_absent_hashboards_container_is_not_this_reply() {
+        assert_eq!(
+            parse_hashboards(&MapJson::default()).verdict,
+            Verdict::Unusable
+        );
+    }
+
+    #[test]
+    fn an_empty_hashboards_container_is_a_miner_reporting_nothing() {
+        let mut json = MapJson::default();
+        json.empty_containers.insert("/hashboards");
+        assert_eq!(parse_hashboards(&json).verdict, Verdict::Answer);
+    }
+
+    #[test]
+    fn an_absent_fans_container_is_not_this_reply() {
+        assert_eq!(
+            parse_cooling(&MapJson::default()).verdict,
+            Verdict::Unusable
+        );
+    }
+
+    #[test]
+    fn an_empty_fans_container_is_a_miner_reporting_nothing() {
+        let mut json = MapJson::default();
+        json.empty_containers.insert("/fans");
+        assert_eq!(parse_cooling(&json).verdict, Verdict::Answer);
+    }
+
+    #[test]
+    fn an_absent_networks_container_is_not_this_reply() {
+        assert_eq!(
+            parse_network(&MapJson::default()).verdict,
+            Verdict::Unusable
+        );
+    }
+
+    #[test]
+    fn an_empty_networks_container_is_a_miner_reporting_nothing() {
+        let mut json = MapJson::default();
+        json.empty_containers.insert("/networks");
+        assert_eq!(parse_network(&json).verdict, Verdict::Answer);
+    }
+
+    // Deliberate: the schema permits this body, so nothing here can fault it.
+    #[test]
+    fn a_stats_body_carrying_neither_container_still_answers() {
+        assert_eq!(parse_stats(&MapJson::default()).verdict, Verdict::Answer);
     }
 
     #[test]

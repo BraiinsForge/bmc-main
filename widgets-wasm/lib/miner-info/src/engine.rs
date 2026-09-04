@@ -628,10 +628,16 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     }
     let idx = miner_index(handle);
     if response.ok() {
-        let verdict = STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            (MINER_ENDPOINTS[idx].parse)(&response.json(), &mut state.miner)
-        });
+        // A captive portal answers 200 with HTML, which no parser can judge.
+        let json = response.json();
+        let verdict = if json.is_valid() {
+            STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                (MINER_ENDPOINTS[idx].parse)(&json, &mut state.miner)
+            })
+        } else {
+            Verdict::Unusable
+        };
         // No answer is no refresh: the reading goes stale instead of banking,
         // and the next attempt keeps the endpoint's own cadence.
         if verdict == Verdict::Unusable {
@@ -660,10 +666,15 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
     let idx = public_index(handle);
     if response.ok() {
         let currency = selected_currency();
-        let verdict = STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            (PUBLIC_ENDPOINTS[idx].parse)(&response.json(), currency, &mut state.public)
-        });
+        let json = response.json();
+        let verdict = if json.is_valid() {
+            STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                (PUBLIC_ENDPOINTS[idx].parse)(&json, currency, &mut state.public)
+            })
+        } else {
+            Verdict::Unusable
+        };
         if verdict == Verdict::Unusable {
             log_warn!("public endpoint {} returned no usable data", idx);
             handle.retry();

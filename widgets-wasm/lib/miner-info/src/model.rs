@@ -58,8 +58,8 @@ pub(crate) enum Verdict {
 
 impl Verdict {
     /// `Answer` when the body carried what the endpoint has to report.
-    pub(crate) fn from_reported(any_field: bool) -> Self {
-        if any_field {
+    pub(crate) fn from_reported(reported: bool) -> Self {
+        if reported {
             Self::Answer
         } else {
             Self::Unusable

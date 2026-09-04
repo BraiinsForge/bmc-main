@@ -29,6 +29,10 @@ pub trait JsonLookup {
     fn str(&self, path: &str) -> Option<String>;
     fn i64(&self, path: &str) -> Option<i64>;
     fn f64(&self, path: &str) -> Option<f64>;
+
+    /// Whether the document carries `path` at all.
+    /// A leaf lookup cannot tell an omitted container from an empty one.
+    fn has(&self, path: &str) -> bool;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -43,6 +47,10 @@ impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
 
     fn f64(&self, path: &str) -> Option<f64> {
         self.f64(path)
+    }
+
+    fn has(&self, path: &str) -> bool {
+        self.kind(path).is_some()
     }
 }
 
@@ -104,6 +112,11 @@ mod tests {
 
         fn f64(&self, _path: &str) -> Option<f64> {
             None
+        }
+
+        fn has(&self, path: &str) -> bool {
+            let under = |key: &&str| key.starts_with(path);
+            self.strings.keys().any(under) || self.ints.keys().any(under)
         }
     }
 
