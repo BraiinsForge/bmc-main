@@ -89,12 +89,12 @@ pub extern "C" fn render(_delta_ms: u32) {
         width: viewport.width,
         height: viewport.height,
     };
-    let (miner, public, auth_failed) = engine::frame();
+    let (miner, public, auth) = engine::frame();
     let root = match viewport.shape {
         ViewportShape::Round => face::round::info_overload(&miner, &public),
         ViewportShape::Rectangular => face::info_overload(size, &miner, &public),
     };
-    let overlay = engine::overlay(engine::View::InfoOverload, auth_failed);
+    let overlay = engine::overlay(engine::View::InfoOverload, &auth);
     let root = mining::overlay::apply_overlay(root, overlay, viewport.shape);
     let _ = render_ui(viewport.width, viewport.height, root);
 }

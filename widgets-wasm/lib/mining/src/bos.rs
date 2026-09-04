@@ -93,6 +93,9 @@ pub enum AuthState {
     // A login attempt completed and was rejected — distinct from `LoggingIn`
     // so a rejection is visible, while the login poll keeps retrying underneath.
     Failed,
+    // The login never got an answer, so the miner refused nothing:
+    // no password is in question, and the last readings still stand.
+    Unreachable,
 }
 
 impl AuthState {
@@ -100,7 +103,7 @@ impl AuthState {
     pub fn token(&self) -> Option<&str> {
         match self {
             Self::Authenticated(token) => Some(token),
-            Self::NoToken | Self::LoggingIn | Self::Failed => None,
+            Self::NoToken | Self::LoggingIn | Self::Failed | Self::Unreachable => None,
         }
     }
 

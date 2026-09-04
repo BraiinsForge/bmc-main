@@ -382,16 +382,16 @@ pub fn take_first_frame() -> bool {
     FIRST_FRAME.replace(false)
 }
 
-/// The data a face draws, plus whether the login is currently refused.
+/// The data a face draws, plus where the login stands.
 #[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn frame() -> (MinerData, PublicData, bool) {
+pub fn frame() -> (MinerData, PublicData, AuthState) {
     STATE.with(|state| {
         let state = state.borrow();
         (
             state.miner.clone(),
             state.public.clone(),
-            state.auth == AuthState::Failed,
+            state.auth.clone(),
         )
     })
 }
@@ -564,10 +564,20 @@ fn build_public(handle: PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(url))
 }
 
+// An auth verdict needs the miner to have answered: a rejected credential,
+// or a 2xx carrying no token. Anything else leaves the password unjudged.
+#[cfg(any(target_arch = "wasm32", test))]
+fn refused_us(outcome: Option<bmc_wasm_sdk::FetchOutcome>) -> bool {
+    matches!(
+        outcome,
+        Some(bmc_wasm_sdk::FetchOutcome::Http(401 | 403 | 200..=299))
+    )
+}
+
 // A token invalidates the miner endpoints,
 // so the ones the view needs refetch with it.
-// Any other outcome surfaces the auth-error overlay
-// and re-arms the one-shot login through `retry_after` rather than wedging.
+// A refusal raises the auth overlay, anything else the offline one,
+// and either way the one-shot login re-arms rather than wedging.
 #[cfg(target_arch = "wasm32")]
 fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
     if response.ok()
@@ -585,8 +595,8 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
                 }
             }
         });
-    } else {
-        log_warn!("login failed with status {}", response.status);
+    } else if refused_us(response.outcome()) {
+        log_warn!("login refused with status {}", response.status);
         let delay = STATE.with(|state| {
             let mut state = state.borrow_mut();
             miner_api::reset_all(&mut state.miner);
@@ -604,6 +614,10 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
             }
         });
         handle.retry_after(delay);
+    } else {
+        log_warn!("login got no answer, status {}", response.status);
+        STATE.with(|state| state.borrow_mut().auth = AuthState::Unreachable);
+        handle.retry_after(RETRY_MS);
     }
     request_frame();
 }
@@ -696,8 +710,9 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
 /// because a disabled endpoint keeps its stale/offline history.
 #[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn overlay(view: View, auth_failed: bool) -> Option<mining::overlay::OverlayKind> {
-    if auth_failed && view_needs_miner(view) {
+pub fn overlay(view: View, auth: &AuthState) -> Option<mining::overlay::OverlayKind> {
+    let needs_miner = view_needs_miner(view);
+    if needs_miner && *auth == AuthState::Failed {
         Some(mining::overlay::OverlayKind::Auth)
     } else {
         HANDLES.with(|handles| {
@@ -718,12 +733,15 @@ pub fn overlay(view: View, auth_failed: bool) -> Option<mining::overlay::Overlay
                 return stale;
             }
             // Offline banner: an enabled source that never loaded and is failing.
-            let miner_offline = handles
-                .miner
-                .iter()
-                .copied()
-                .filter(|handle| handle.enabled())
-                .any(PollHandle::is_offline);
+            // A login with no answer counts as the miner: without a token
+            // its endpoints never fire, so they never report failing themselves.
+            let miner_offline = (needs_miner && *auth == AuthState::Unreachable)
+                || handles
+                    .miner
+                    .iter()
+                    .copied()
+                    .filter(|handle| handle.enabled())
+                    .any(PollHandle::is_offline);
             let public_offline = handles
                 .public
                 .iter()
@@ -737,8 +755,23 @@ pub fn overlay(view: View, auth_failed: bool) -> Option<mining::overlay::Overlay
 
 #[cfg(test)]
 mod tests {
-    use super::{View, endpoint_enabled, login_retry_delay, offline_label};
-    use bmc_wasm_sdk::ViewportShape;
+    use super::{View, endpoint_enabled, login_retry_delay, offline_label, refused_us};
+    use bmc_wasm_sdk::{FetchOutcome, ViewportShape};
+
+    /// A miner that never answered has rejected no password,
+    /// so the login backoff and the auth banner both answer the wrong question.
+    #[test]
+    fn only_a_miner_that_answered_can_refuse_the_login() {
+        assert!(refused_us(Some(FetchOutcome::Http(401))));
+        assert!(refused_us(Some(FetchOutcome::Http(403))));
+        assert!(refused_us(Some(FetchOutcome::Http(200))));
+        assert!(!refused_us(Some(FetchOutcome::Network)));
+        assert!(!refused_us(Some(FetchOutcome::Http(500))));
+        assert!(!refused_us(Some(FetchOutcome::Refused)));
+        assert!(!refused_us(Some(FetchOutcome::Aborted)));
+        assert!(!refused_us(Some(FetchOutcome::BodyTooLarge)));
+        assert!(!refused_us(None));
+    }
 
     #[test]
     fn offline_label_names_only_the_failing_groups() {
