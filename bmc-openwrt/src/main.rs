@@ -181,15 +181,18 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    // Has check on factory default already
-    if let Some(wifi) = manager.network_manager().wifi()
+    let profile = bmc_platform::HardwareProfile::for_product(manager.platform().product());
+    info!(product = ?profile.product, "resolved hardware profile");
+
+    // On a board with an ethernet uplink the platform's hotplug decides
+    // whether the setup AP runs, from the cable state; bmc only owns the AP
+    // where WiFi is the sole uplink.
+    if !profile.capabilities().ethernet_supported
+        && let Some(wifi) = manager.network_manager().wifi()
         && let Err(err) = wifi.init_wifi_ap().await
     {
         error!(?err, "Failed to setup init WiFi AP");
     }
-
-    let profile = bmc_platform::HardwareProfile::for_product(manager.platform().product());
-    info!(product = ?profile.product, "resolved hardware profile");
 
     let led_driver = led_driver_for_profile(&profile);
 
