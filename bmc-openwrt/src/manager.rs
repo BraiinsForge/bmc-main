@@ -36,7 +36,7 @@ use bmc_net::NetworkManager;
 use bmc_net::openwrt::UciNetworkManager;
 use bmc_net_drv::wifi::WifiDriver;
 use bmc_platform::serial_number::BoardSerial;
-use bmc_platform::{BmcInfo, BosPlatform, BosVersion};
+use bmc_platform::{BmcInfo, BosPlatform, BosVersion, HardwareProfile, Product};
 use bmc_shared_time::time::Timezone;
 use bmc_support::PasswordProtectedZip;
 use std::io;
@@ -72,7 +72,8 @@ impl Manager {
     const SYSUPGRADE_NIX_CLI_EXTRA_ARGS: &str = "--log-format internal-json";
     const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
     const DEFAULT_INTERFACE: &str = "wlan0";
-    const NETWORK_SECTION: &str = "wifi_sta";
+    const WIFI_NETWORK_SECTION: &str = "wifi_sta";
+    const ETH_NETWORK_SECTION: &str = "lan";
 
     const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
     const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
@@ -95,31 +96,11 @@ impl Manager {
             }
         };
 
-        // Resolve WiFi interface name once from wifi_manager (reads sysfs net/ dir).
-        // Falls back to DEFAULT_INTERFACE if the device isn't ready yet, and on a
-        // board without a radio, where there is no driver to ask.
-        let wifi_iface_name = match wifi_manager.as_ref() {
-            Some(wifi) => wifi.wifi_device_name().await.unwrap_or_else(|err| {
-                error!(?err, "failed to resolve WiFi interface name, using default");
-                Self::DEFAULT_INTERFACE.to_owned()
-            }),
-            None => Self::DEFAULT_INTERFACE.to_owned(),
-        };
-
         // `new()` resolves the platform eagerly, so a missing /etc/bos_platform
         // without --hardware-profile panics here; this is intended.
         let platform = resolve_platform(platform_override, bmc_info.as_ref());
-        let product_name = platform.product().display_name().to_owned();
-
-        let network_manager = Arc::new(
-            UciNetworkManager::new(
-                Self::NETWORK_SECTION,
-                wifi_manager,
-                wifi_iface_name,
-                product_name,
-            )
-            .await,
-        );
+        let network_manager =
+            Arc::new(create_network_manager(platform.product(), wifi_manager).await);
 
         Self {
             bmc_info: Arc::new(bmc_info),
@@ -341,6 +322,43 @@ impl BmcManager for Manager {
         }
         Ok(())
     }
+}
+
+/// The network manager for `product`: a wired board configures the ethernet
+/// port, the way the miner firmware always did; a WiFi-only board configures
+/// the station, named by the driver (sysfs `net/`) and falling back to
+/// `DEFAULT_INTERFACE` while the radio is not ready or the board has none.
+async fn create_network_manager(
+    product: Product,
+    wifi_manager: Option<Arc<dyn WifiDriver>>,
+) -> UciNetworkManager {
+    let ethernet_supported = HardwareProfile::for_product(product)
+        .capabilities()
+        .ethernet_supported;
+
+    let (network_section, interface_name) = if ethernet_supported {
+        (
+            Manager::ETH_NETWORK_SECTION,
+            bmc_net_drv::DEFAULT_ETH_INTERFACE.to_owned(),
+        )
+    } else {
+        let wifi_iface_name = match wifi_manager.as_deref() {
+            Some(wifi) => wifi.wifi_device_name().await.unwrap_or_else(|err| {
+                error!(?err, "failed to resolve WiFi interface name, using default");
+                Manager::DEFAULT_INTERFACE.to_owned()
+            }),
+            None => Manager::DEFAULT_INTERFACE.to_owned(),
+        };
+        (Manager::WIFI_NETWORK_SECTION, wifi_iface_name)
+    };
+
+    UciNetworkManager::new(
+        network_section,
+        wifi_manager,
+        interface_name,
+        product.display_name().to_owned(),
+    )
+    .await
 }
 
 /// Resolve the platform from an explicit override or the loaded BMC info.
