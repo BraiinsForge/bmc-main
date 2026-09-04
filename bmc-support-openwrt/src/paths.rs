@@ -22,8 +22,8 @@
 
 use crate::filters::{BMC_CONFIG_DIR, BMC_CONFIG_LEGACY};
 
-/// OpenWrt's board description and UCI config.
-pub const OPENWRT_FS_PATHS: &[&str] = &["/etc/board.json", "/etc/config"];
+/// The dmesg of the last sysupgrade run, saved by its COMMAND script.
+pub const OPENWRT_FS_PATHS: &[&str] = &["/overlay/.sysupgrade.log"];
 
 /// Files bmc owns on the board: its config and the pre-migration copy,
 /// the setup markers, and the Nix upgrade configuration.
