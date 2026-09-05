@@ -28,9 +28,9 @@ widgets-wasm/<widget>/
     README.md                   # optional, for a set worth explaining
 ```
 
-A large set earns a `README.md` beside its config: what each dataset covers, and — the part a re-recording needs most —
-which combinations were left out and why, so a gap reads as a decision rather than an oversight.
-`widgets-wasm/formula-1/capture/README.md` is the worked example.
+A large set earns a `README.md` beside its config: what each dataset covers, and which combinations were left out and
+why, so a gap reads as a decision rather than an oversight. `widgets-wasm/formula-1/capture/README.md` is the worked
+example.
 
 `capture/baselines.7z` is tracked via Git LFS. Commit it like any other tracked file; the LFS smudge filter handles the
 rest.
@@ -47,36 +47,44 @@ settle_delay = 5
 
 [fixtures.bmc100-small]
 path = "fixtures/bmc100-small.jsonl.gz"
-targets = ["bmc100:small"]
+target = "bmc100:small"
 
 [fixtures.bmc100-full]
 path = "fixtures/bmc100-full.jsonl.gz"
-targets = ["bmc100:full"]
+target = "bmc100:full"
 ```
 
 `settle_delay` is the number of extra frames rendered before **every** capture, ahead of the I/O drain that follows it.
 Bump it for widgets that need a few frames to settle visual state (fetch-then-format chains, animations winding down).
 
 Each settle frame advances the replay clock by 16 ms and delivers any timeline events that fall in it. So a widget whose
-visuals track the clock — a countdown, a progress meter, a time-windowed chart — captures a *later* state with a settle
-delay than without one, and the shift accumulates across a fixture's capture events. Changing it on such a widget
-therefore changes the frames, and baselines must be refreshed with them. The default zero is right for a widget that is
-ready as soon as its data lands. A dataset may override it with its own `settle_delay`, and seed extra KV with
+visuals track the clock — a countdown, a progress meter, a time-windowed chart — captures a *later* state, and the shift
+accumulates across a fixture's captures. Changing it there changes the frames, so baselines must be refreshed with it.
+The default zero suits a widget ready as soon as its data lands. A dataset may override it, and seed extra KV with
 `kv = { … }`.
 
-Replay renders on the widget's own `request_frame_after` cadence, which is what the device host and the testbed do. A
-widget that folds its data off the render loop — fleet-management folds on a ~1 s interval — therefore folds on the
-schedule hardware uses, and replay samples the state hardware would.
+Replay renders on the widget's own `request_frame_after` cadence, as the device host and the testbed do — so a widget
+that folds its data off the render loop (fleet-management folds on a ~1 s interval) folds on the schedule hardware uses,
+and replay samples what hardware would show.
 
-Because a fixture carries no geometry of its own, one dataset can drive several targets:
+An entry names one target: a dataset name scopes to the viewport it was recorded at, so it could not name two. Because a
+fixture carries no geometry of its own, several datasets can still replay the same recording — point their `path` at one
+file, and every name still says which viewport its baselines are of:
 
 ```toml
-[fixtures.common]
+[fixtures.bmc100-full]
 path = "fixtures/common.jsonl.gz"
-targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small"]
+target = "bmc100:full"
+
+[fixtures.bmc100-small]
+path = "fixtures/common.jsonl.gz"
+target = "bmc100:small"
 ```
 
-and one target can be driven by several datasets — give each a name that says what it holds. Frames land in
+Re-recording one writes a new file under its own name and repoints only that entry — the divergence shows in the config
+rather than silently refreshing every viewport.
+
+One target can also be driven by several datasets — give each a scenario suffix that says what it holds. Frames land in
 `<output>/<platform>/<viewport>/<dataset>/`.
 
 Only declare targets your widget actually supports. Every target is validated against the catalog when the config loads,
@@ -103,13 +111,24 @@ CI.
 
 A blockheight excerpt for reference:
 
-```
-{"time":"2026-05-22T10:30:00+00:00",
- "initial_params":{"numbers_font_style":"bold","show_timestamp":true},
- "initial_system":{"settings":{"timezone":"UTC","time_format":"hour24", ...}}}
-{"at_ms":0,"type":"fetch","method":"GET","url":"https://public-api.braiins.com/v2/blocks?...",
- "status":200,"body":{"text":"[{\"height\":900000,\"timestamp\":\"2026-05-22T10:30:00\"}]"}}
-{"at_ms":500,"type":"capture"}
+```jsonl
+{
+    "time": "2026-05-22T10:30:00+00:00",
+    "initial_params": { "numbers_font_style": "bold", "show_timestamp": true },
+    "initial_system": { "settings": { "timezone": "UTC", "time_format": "hour24", ... } }
+}
+{
+    "at_ms": 0,
+    "type": "fetch",
+    "method": "GET",
+    "url": "https://public-api.braiins.com/v2/blocks?...",
+    "status": 200,
+    "body":{ "text": "[{\"height\":900000,\"timestamp\":\"2026-05-22T10:30:00\"}]" }
+}
+{ 
+    "at_ms": 500, 
+    "type": "capture"
+}
 ```
 
 The fetch event stubs the live API call with a fixed JSON payload; without it, the widget would attempt real network in
@@ -135,23 +154,23 @@ its header was allowlisted simply does not carry one; absent means the origin se
 
 ## Record A Fixture
 
-Recording uses the testbed. `just wasm::record <widget> <target> [name]` builds the widget, launches the testbed on the
-target's platform, and arms the recorder.
+Recording uses the testbed. `just wasm::record <widget>` builds the widget, launches it, and arms the recorder; the
+dialog picks the target and names the take. The testbed's `--help` lists the flags that drive the same thing
+non-interactively.
 
-```bash
-just wasm::record blockheight bmc100:full
-just wasm::record miner-info-geek bmm101:full public-down   # explicit dataset name
-```
+**A dataset name is scoped to the target it was recorded at.** The dialog paints `<platform>-<viewport>` as a fixed
+prefix and takes only the scenario suffix, so a take at `bfm100:full` is filed as `bfm100-full` or
+`bfm100-full-<scenario>` and nothing else. A name that does not scope to its target is refused wherever it arrives — the
+dialog, the command line, or a hand-edited `config.toml`. A recording bound to the wrong viewport fails capture when the
+two disagree about shape, and silently produces a wrong-sized baseline when they do not.
 
-The target decides which platform the testbed opens, so `--platform` naming a different one is rejected rather than
-silently overridden. Omit the dataset name and the testbed asks for it, with a button offering the conventional
-`<platform>-<viewport>`; pass a third argument when one target holds several datasets and the names need to say them
-apart.
+Leave the suffix empty for a viewport that holds one dataset — there is nothing to tell apart — and add one as soon as
+it holds a second.
 
-A widget whose recordings differ by something the target cannot express should supply that name from its own recipe
-instead of leaving it to the operator. The pool widget records against a sim scenario, so its wrapper appends one —
-`bmc100-full-healthy`, leaving room for `-idle` and `-denied` beside it. Without that, every scenario writes the same
-fixture per target and overwrites the last, which only a baseline diff would reveal.
+A widget whose recordings differ by something the target cannot express should supply that suffix from its own recipe
+rather than leave it to the operator. The pool widget records against a sim scenario, so its wrapper appends one —
+`bmc100-full-healthy`, leaving room for `-idle` and `-denied`. Without it, every scenario overwrites the last, which
+only a baseline diff would reveal.
 
 Workflow:
 
@@ -161,17 +180,16 @@ Workflow:
    appended to the timeline. A `Capture` event marks where the visual snapshot is taken.
 4. Stop recording. The testbed writes `capture/fixtures/<dataset>.jsonl.gz` next to the widget and adds the matching
    `[fixtures.<dataset>]` entry to `config.toml`, binding it to the target it was recorded at. Re-recording an existing
-   dataset refreshes its data and leaves any other targets it already drives in place.
+   dataset refreshes its data and rebinds it to the target the take ran at.
 
 For a widget with a credential slot, bind an account in the sidebar's Credentials section and pass the real secret via
-`just wasm::record <widget> <target> '' --secrets ../secrets.local.json` (JSON shaped `{"<slot>": {"<field>": "…"}}`,
-kept gitignored at the repo root; the path is relative to `bmc-wasm-runtime/`, where `just` module recipes run) — the
+`just wasm::record <widget> --secrets ../secrets.local.json` (JSON shaped `{"<slot>": {"<field>": "…"}}`, kept
+gitignored at the repo root; the path is relative to `bmc-wasm-runtime/`, where `just` module recipes run) — the
 recording session needs one real authenticated egress pass. The fixture stays secret-free by construction: recording
 sees only the placeholder form, and substitution happens at the wire hop. Replay never needs the secret — recorded
 fetches are served by method + URL before substitution would run.
 
-Repeat per target you want covered. Each recording is an independent dataset; datasets do not share state. If several
-targets can replay the same recording, bind one dataset to all of them instead of recording it again.
+Repeat per target you want covered. Each recording is an independent dataset; datasets do not share state.
 
 ## Request URLs Must Be Stable
 
