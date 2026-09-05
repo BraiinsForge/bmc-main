@@ -1,0 +1,29 @@
+# These pull `core::fmt::Arguments` plus per-type `Display`/`Debug` codegen into every
+# widget binary, which costs tens of KB compressed.
+#
+# `ufmt::uwrite!` / `ufmt::uwriteln!` come with `bmc-wasm-sdk`; where they do not fit,
+# write into a pre-sized buffer with `write!`.
+#
+# cargo-deny cannot express this — its bans are crate-level, and this is macro-level.
+
+id: no-fmt-in-wasm
+language: rust
+severity: error
+
+message: Allocating fmt macro in widget code — use `ufmt::uwrite!` instead.
+
+files:
+  - "bmc-wasm-runtime/sdk/src/**/*.rs"
+  - "bmc-wasm-runtime/protocol/src/**/*.rs"
+  - "widgets-wasm-examples/*/src/**/*.rs"
+  - "widgets-wasm/src/**/*.rs"
+  - "widgets-wasm/**/src/**/*.rs"
+
+rule:
+  any:
+    - pattern: format!($$$)
+    - pattern: println!($$$)
+    - pattern: print!($$$)
+    - pattern: eprintln!($$$)
+    - pattern: eprint!($$$)
+    - pattern: dbg!($$$)

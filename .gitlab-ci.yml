@@ -82,11 +82,11 @@ cargo-deny-wasm:
     - nix build -L .#checks.x86_64-linux.cargo-deny-wasm
     - nix build -L .#checks.x86_64-linux.cargo-deny-wasm-examples
 
-no-fmt-in-wasm:
+ast-grep:
   stage: lint
   needs: []
   script:
-    - nix build -L .#checks.x86_64-linux.no-fmt-in-wasm
+    - nix run .#ast-grep
 
 "docs: wasm":
   stage: lint

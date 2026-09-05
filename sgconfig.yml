@@ -1,6 +1,0 @@
-# ast-grep configuration.
-# Rules under `rules/` enforce wasm-binary hygiene that cargo-deny
-# can't express (crate-level bans don't catch macro usage).
-
-ruleDirs:
-  - rules

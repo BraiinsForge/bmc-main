@@ -99,6 +99,7 @@
           inherit pkgs capture;
           inherit (workspace) wasmWidgets wasmWidgetCatalog;
         };
+        ast-grep-scan = import ./nix/ast-grep.nix { inherit pkgs; };
         # `checks.nix` directly, not `nixlib.braiinschk.<system>`: that output bakes
         # in nixlib's own `pkgs`, whose `just` predates the `default-list` setting.
         content-checks = import "${nixlib}/checks.nix" pkgs {
@@ -371,6 +372,12 @@
         apps.content-checks = {
           type = "app";
           program = pkgs.lib.getExe content-checks;
+        };
+
+        # `nix run .#ast-grep` — structural lints over the working tree.
+        apps.ast-grep = {
+          type = "app";
+          program = pkgs.lib.getExe ast-grep-scan;
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)

@@ -36,14 +36,12 @@ validate: format clippy python
     # workspace-wide feature unification), so each has to be named.
     just test bmc-netsim
     nix run ".#content-checks"
+    nix run ".#ast-grep"
 
     # Dependency policy, host and wasm.
     nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny"
     nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
     nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm-examples"
-
-    # No allocating fmt machinery in widget code.
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.no-fmt-in-wasm"
 
     # Public widget asset contract (icon paths, extension allowlist).
     nix build -L ".#checks.{{ NIX_SYSTEM }}.public-widget-assets"

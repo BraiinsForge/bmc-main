@@ -1,17 +1,21 @@
+# A widget's inputs all arrive through the SDK so a run can be driven deterministically:
+# the testbed sets a clock, a timezone and a seed, and capture replays them. Anything
+# read around the SDK makes a run depend on the machine it happens to be on.
+#
+# `host::SystemTime::now()` for the clock, `host::random_u32()` for randomness,
+# `system::current()` for deck settings, and the params channel for configuration.
+
 id: no-ambient-host-state
 language: rust
 severity: error
-message: |
-  Ambient host state read directly. A widget's inputs all arrive through the SDK so a run
-  can be driven deterministically — the testbed sets a clock, a timezone and a seed,
-  and capture replays them.
-  Anything read around the SDK makes a run depend on the machine it happens to be on.
-  Use `host::SystemTime::now()` for the clock, `host::random_u32()` for randomness,
-  `system::current()` for deck settings, and the params channel for configuration.
+
+message: Ambient host state read directly — take it from the SDK instead.
+
 files:
   - "widgets-wasm-examples/*/src/**/*.rs"
   - "widgets-wasm/src/**/*.rs"
   - "widgets-wasm/*/src/**/*.rs"
+
 rule:
   any:
     # `"Local"` resolves through `chrono::Local` — the host process's own zone,

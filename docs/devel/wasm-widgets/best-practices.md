@@ -89,8 +89,8 @@ See [Memory](memory.md) for the 64 KiB stack budget, measured high-water marks, 
 
 ## Build strings with the SDK macro
 
-Use the SDK `fmt!` macro, not `std`'s `format!`/`write!`. The `no-fmt-in-wasm` CI gate rejects the allocating `std`
-formatting macros in widget code.
+Use the SDK `fmt!` macro, not `std`'s `format!`/`write!`. The `no-fmt-in-wasm` ast-grep rule rejects the allocating
+`std` formatting macros in widget code.
 
 ## Match the source design
 

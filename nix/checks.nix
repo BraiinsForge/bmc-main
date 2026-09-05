@@ -299,33 +299,6 @@ in
     checks = [ "sources" ];
   };
 
-  # Block allocating fmt macros (format!, println!, dbg!, …)
-  # in widget code via ast-grep. cargo-deny is crate-level
-  # — this is macro-level.
-  no-fmt-in-wasm = pkgs.runCommand "no-fmt-in-wasm"
-    {
-      nativeBuildInputs = [ pkgs.ast-grep ];
-      src = lib.fileset.toSource {
-        root = ../.;
-        # Less `*.scene.rs`, which only the gallery's glob compiles —
-        # they sit beside the widget they exercise but reach no wasm binary.
-        fileset = lib.fileset.difference
-          (lib.fileset.unions [
-            ../sgconfig.yml
-            ../rules
-            ../bmc-wasm-runtime/sdk/src
-            ../bmc-wasm-runtime/protocol/src
-            ../widgets-wasm
-            ../widgets-wasm-examples
-          ])
-          (lib.fileset.fileFilter (file: lib.hasSuffix ".scene.rs" file.name) ../widgets-wasm);
-      };
-    } ''
-    cd $src
-    ast-grep scan --error
-    touch $out
-  '';
-
   # `-zstack-size` leaves no trace outside the linked module, so the only
   # honest confirmation is to read the reservation back off every shipped
   # widget. Guards the cargo-side copies of the size in the same pass.

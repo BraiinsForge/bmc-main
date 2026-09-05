@@ -1,0 +1,8 @@
+# ast-grep configuration, for rules cargo-deny and clippy cannot express
+# (crate-level bans do not catch macro usage; nothing else reads Nix).
+#
+# The scan walks the working tree, so every rule must carry its own
+# `files:` globs — one that omits them is matched against the whole repository.
+
+ruleDirs:
+  - rules
