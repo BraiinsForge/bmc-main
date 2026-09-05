@@ -1,0 +1,29 @@
+# A view is handed its time — `ViewSeed::system_time` at construction,
+# `ViewTick::system_time` per frame — because a take runs on the simulated clock
+# while the host stays on its own.
+#
+# The cost is not a wrong render. `init()` runs inside the runtime's constructor
+# and a poll registered there fetches at once, so the take dates its first request
+# by the host clock. Replay seeds that same `init()` from the fixture header,
+# asks for a different URL, and the capture fails as a hermetic breach.
+#
+# `Instant::now()` stays legal: monotonic host timing that never reaches the guest.
+
+id: no-host-clock-in-view
+language: rust
+severity: error
+
+message: Wall clock in the view layer — take it from the seed or the tick.
+
+files:
+  - "bmc-wasm-runtime/src/bin/testbed/view.rs"
+  - "bmc-wasm-runtime/src/bin/testbed/view/**/*.rs"
+
+rule:
+  any:
+    - pattern: chrono::Local::now()
+    - pattern: Local::now()
+    - pattern: chrono::Utc::now()
+    - pattern: Utc::now()
+    - pattern: std::time::SystemTime::now()
+    - pattern: SystemTime::now()
