@@ -83,14 +83,10 @@ impl From<UciWirelessIface> for WifiConfiguration {
     }
 }
 
-/// Build the reported [`WifiStatus`] for one `wifi-iface` section.
-///
-/// `enabled` folds in `radio_enabled` because the two `disabled` flags live in
-/// different UCI sections: `wifi_radio_enable` writes the one on the
-/// `wifi-device`, and never touches the `wifi-iface` sections. Reading only the
-/// iface flag therefore reports `enabled: true` for a configuration whose radio
-/// has been switched off, which is what the API used to answer right after a
-/// `set_wifi_enabled(false)`.
+/// Build the reported [`WifiStatus`] for one `wifi-iface` section. `enabled`
+/// folds in `radio_enabled`: the radio's `disabled` flag lives on the
+/// `wifi-device`, so reading the iface flag alone reports a switched-off radio
+/// as enabled.
 pub(crate) fn map_uci_iface_to_wifi_status(
     iface: UciWirelessIface,
     link_state: Option<WifiLinkState>,
@@ -229,12 +225,9 @@ impl UciHelper {
             .ok_or_else(|| anyhow!("Specified radio not found"))
     }
 
-    /// The radio's own enabled state together with the `wifi-iface` sections
-    /// bound to it, from a single radio lookup.
-    ///
-    /// Callers that report whether WiFi is on need both halves: `enable_radio`
-    /// only writes the `wifi-device` flag, so the iface sections say nothing
-    /// about it. See [`map_uci_iface_to_wifi_status`].
+    /// The radio's enabled state plus the `wifi-iface` sections bound to it,
+    /// from one lookup — callers reporting WiFi status need both halves (see
+    /// [`map_uci_iface_to_wifi_status`]).
     pub(crate) async fn radio_state_with_ifaces(&self) -> Result<(bool, Vec<UciWirelessIface>)> {
         let radio = self.get_radio().await?;
         let ifaces = UciCommand::get::<HashMap<String, UciWirelessIface>>(UciType::WifiIface)
@@ -467,17 +460,14 @@ mod tests {
 
     #[test]
     fn radio_disabled_reports_the_iface_as_not_enabled() {
-        // `enable_radio(false)` writes `disabled` on the `wifi-device` section
-        // and leaves every `wifi-iface` untouched, so an iface-only reading
-        // reports a switched-off radio as enabled. Pin the fold-in.
+        // A disabled radio with an untouched iface must read as not enabled.
         let section = iface("cfg_sta", "sta");
         assert!(section.disabled.is_none(), "BUG: fixture must be enabled");
 
         let status = map_uci_iface_to_wifi_status(section.clone(), None, false);
 
         assert!(!status.enabled);
-        // The saved configuration still comes back, so callers can report which
-        // network is configured while the radio is off.
+        // The saved configuration still comes back with the radio off.
         assert_eq!(
             status.configuration.map(|config| config.ssid),
             Some(section.ssid)
