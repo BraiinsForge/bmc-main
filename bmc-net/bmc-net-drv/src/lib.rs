@@ -104,10 +104,9 @@ pub async fn nameservers(path: &str) -> Vec<Ipv4Addr> {
     parse_nameservers(&contents)
 }
 
-/// IPv4 `nameserver` entries in resolv.conf text. A line may be indented and
-/// may carry a trailing comment - e.g. `nameserver 192.168.1.1 # eth0`, which
-/// is exactly what udhcpc writes - so only the keyword and the address token
-/// after it are considered; parsing the whole line remainder drops the address.
+/// IPv4 `nameserver` entries from resolv.conf text. Takes only the address
+/// token, so a trailing comment (`nameserver 192.168.1.1 # eth0`, as udhcpc
+/// writes) doesn't drop the address.
 fn parse_nameservers(contents: &str) -> Vec<Ipv4Addr> {
     contents
         .lines()

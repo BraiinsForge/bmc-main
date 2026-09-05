@@ -88,12 +88,9 @@ pub trait WifiDriver: Debug + Send + Sync {
     ) -> Result<()>;
     /// Brings up an access point.
     ///
-    /// The implementation applies the configuration itself, so callers must not
-    /// follow this with [`enable_radio`].
-    ///
-    /// Note: the `esp32` backend hosts a fixed open setup AP and therefore
-    /// ignores `password`/`encryption`, whereas `nl80211` honours them. Callers
-    /// needing secured AP mode must check the active backend.
+    /// Applies the config itself, so callers must not follow it with
+    /// [`enable_radio`]. The `esp32` backend hosts a fixed open setup AP and
+    /// ignores `password`/`encryption`; `nl80211` honours them.
     ///
     /// Returns once the raise is *requested* - a `wifi reload` queued
     /// (`nl80211`) or `ifup wifi_ap` issued (`esp32`) - not once the AP is on

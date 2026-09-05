@@ -49,9 +49,8 @@ enum WifiMode {
     Unknown,
 }
 
-/// Setup-AP interfaces that never appear in `uci` wireless config. The ESP32 is
-/// an external chip driven over its own firmware path, so its AP is reported as
-/// `Unknown` and would otherwise outrank a real wireless uplink.
+/// Setup-AP interfaces with no `uci` wireless section (the ESP32 AP), which
+/// would otherwise report as `Unknown` and outrank a real wireless uplink.
 const KNOWN_AP_INTERFACES: &[&str] = &["ethap0"];
 
 /// Uplink preference, best first. The order is the product decision: the
@@ -568,9 +567,8 @@ mod tests {
 
     #[test]
     fn the_esp32_setup_ap_never_shadows_a_wifi_uplink() {
-        // `ethap0` is the ESP32 setup AP. It has no `uci` wireless section, so it
-        // arrives as `Unknown`; ranking wired-first without naming it explicitly
-        // would let it outrank the station carrying the real uplink.
+        // `ethap0` (the ESP32 setup AP) arrives as `Unknown`; it must not
+        // outrank the station carrying the real uplink.
         let interfaces = vec![
             v4("ethap0", Ipv4Addr::new(10, 0, 0, 21)),
             v4("wlan0", Ipv4Addr::new(192, 168, 1, 106)),
