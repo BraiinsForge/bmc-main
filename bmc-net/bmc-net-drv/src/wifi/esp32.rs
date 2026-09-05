@@ -144,6 +144,21 @@ async fn discover_wlan_syspath() -> Option<String> {
     None
 }
 
+/// Whether the ESP32 runs the setup ("FG") firmware, probed by the presence of
+/// its hosted-control node. The decision is logged with the caller's name so a
+/// wrong branch (e.g. the node transiently absent while the module resets,
+/// which later surfaces as "No wireless interface found") is diagnosable from
+/// the log alone.
+async fn esp32_on_setup_firmware(caller: &str) -> bool {
+    let on_fg = tokio::fs::metadata(ESP_CONTROL_NODE).await.is_ok();
+    info!(
+        "{caller}: {ESP_CONTROL_NODE} {}, ESP32 is on {} firmware",
+        if on_fg { "present" } else { "absent" },
+        if on_fg { "setup (FG)" } else { "station (NG)" }
+    );
+    on_fg
+}
+
 /// Read the current station link RSSI from `iw dev <device> link`.
 async fn get_link_signal(device: &str) -> Option<i32> {
     let output = CommandUtils::call_iw_cmd(&["dev", device, "link"])
@@ -291,12 +306,17 @@ impl WifiDriver for Esp32WifiManager {
         password: Option<String>,
         encryption: EncryptionType,
     ) -> Result<()> {
-        // The station stack only exists once the ESP32 runs its "NG" firmware,
-        // so flash it before writing any wireless config; skipping it leaves a
-        // factory module with no station capability to configure.
-        info!("Flashing ESP32 NG firmware before joining {ssid}");
-        run_service_cmd(ESP32_SERVICE, &["reload_await", "--force-ng"]).await?;
-        wait_for_wireless_config().await?;
+        // The station stack needs the "NG" firmware, so flash only on the
+        // FG -> NG transition. Reflashing a settled station module every connect
+        // renames its netdev (wlan0 -> wlan1 -> ...); the cached
+        // `wlan_dev_syspath` still points at the old name, so the connect path
+        // loses track of the module and reports a failure even though the join
+        // succeeded.
+        if esp32_on_setup_firmware("save_and_connect").await {
+            info!("Flashing NG firmware before joining {ssid}");
+            run_service_cmd(ESP32_SERVICE, &["reload_await", "--force-ng"]).await?;
+            wait_for_wireless_config().await?;
+        }
 
         let device = self.get_device().await?;
         let uci = self.uci().await?;
@@ -337,7 +357,7 @@ impl WifiDriver for Esp32WifiManager {
         // has none. `esp32-init` writes the right firmware at boot, and that is
         // a minutes-long UART transfer needing the port's service stopped
         // first, so report the state rather than reflashing from in here.
-        if tokio::fs::metadata(ESP_CONTROL_NODE).await.is_err() {
+        if !esp32_on_setup_firmware("configure_ap_mode").await {
             bail!(
                 "{ESP_CONTROL_NODE} is missing: the ESP32 is running station firmware, so no \
                  setup AP can be started until the board boots in factory-default mode"
