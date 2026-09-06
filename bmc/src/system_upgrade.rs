@@ -678,8 +678,28 @@ fn spawn_packages_run(
             Err(err) => {
                 error!(error = %err, "Package upgrade failed");
                 let failure = match err {
-                    bmc_upgrade::packages::ApplyError::NotEnoughSpace(_) => {
-                        SystemUpgradeError::NotEnoughSpace
+                    bmc_upgrade::packages::ApplyError::Install(install_error) => {
+                        match install_error {
+                            bmc_nix::upgrade::InstallError::NotEnoughSpace { .. } => {
+                                SystemUpgradeError::NotEnoughSpace
+                            }
+                            other @ (bmc_nix::upgrade::InstallError::Lock(_)
+                            | bmc_nix::upgrade::InstallError::ReadManifest(_)
+                            | bmc_nix::upgrade::InstallError::StorePaths(_)
+                            | bmc_nix::upgrade::InstallError::BuildProfile(_)
+                            | bmc_nix::upgrade::InstallError::Activation(_)
+                            | bmc_nix::upgrade::InstallError::Plan(_)
+                            | bmc_nix::upgrade::InstallError::ResolveCurrent(_)
+                            | bmc_nix::upgrade::InstallError::MalformedCurrent {
+                                ..
+                            }
+                            | bmc_nix::upgrade::InstallError::StageNext(_)) => {
+                                SystemUpgradeError::PackageUpgradeFailed(other.to_string())
+                            }
+                        }
+                    }
+                    bmc_upgrade::packages::ApplyError::Resolve(resolve_error) => {
+                        SystemUpgradeError::PackageUpgradeFailed(resolve_error.to_string())
                     }
                     bmc_upgrade::packages::ApplyError::Failed(message) => {
                         SystemUpgradeError::PackageUpgradeFailed(message)
@@ -1748,8 +1768,12 @@ mod tests {
                 ApplyFailure::Generic => {
                     bmc_upgrade::packages::ApplyError::Failed("boom".to_owned())
                 }
-                ApplyFailure::StoreFull => bmc_upgrade::packages::ApplyError::NotEnoughSpace(
-                    "not enough space in the store".to_owned(),
+                ApplyFailure::StoreFull => bmc_upgrade::packages::ApplyError::Install(
+                    bmc_nix::upgrade::InstallError::NotEnoughSpace {
+                        free_bytes: 11,
+                        required_bytes: 22,
+                        unpacked_bytes: 17,
+                    },
                 ),
             })
         }

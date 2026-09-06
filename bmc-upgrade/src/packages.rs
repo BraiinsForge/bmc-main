@@ -177,6 +177,8 @@ impl std::fmt::Display for PackageProbeError {
     }
 }
 
+impl std::error::Error for PackageProbeError {}
+
 /// Classify a dry-run estimate failure. An unsubstitutable store path means
 /// the upgrade could never realize, so the probe must fail loud instead of
 /// offering a doomed upgrade. Every other estimate failure is transient — a
@@ -220,15 +222,12 @@ impl std::fmt::Display for PackagePlanFailure {
     }
 }
 
-/// A package upgrade application failure,
-/// carrying the display message of the underlying error.
-///
-/// A full store is kept distinct so callers can blame the user's disk
-/// rather than the daemon.
 #[derive(Debug, thiserror::Error)]
 pub enum ApplyError {
-    #[error("{0}")]
-    NotEnoughSpace(String),
+    #[error("resolving requested packages failed")]
+    Resolve(#[source] PackageProbeError),
+    #[error("installing packages failed")]
+    Install(#[source] bmc_nix::upgrade::InstallError),
     #[error("{0}")]
     Failed(String),
 }
@@ -524,8 +523,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         // by design: a slow substituter on a large upgrade is legitimate and a
         // wall-clock cap would kill it. nix's own `stalled-download-timeout`
         // plus `kill_on_drop(true)` on the child bound a genuinely stuck fetch.
-        let installs = resolve_installs(&merged, &install)
-            .map_err(|err| ApplyError::Failed(err.to_string()))?;
+        let installs = resolve_installs(&merged, &install).map_err(ApplyError::Resolve)?;
         bmc_nix::upgrade::apply_profile_change(
             &self.nix,
             &self.config.profile_dir,
@@ -541,14 +539,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         )
         .await
         .map(|_| ())
-        .map_err(|err| {
-            let message = err.to_string();
-            if matches!(err, bmc_nix::upgrade::InstallError::NotEnoughSpace { .. }) {
-                ApplyError::NotEnoughSpace(message)
-            } else {
-                ApplyError::Failed(message)
-            }
-        })
+        .map_err(ApplyError::Install)
     }
 
     async fn list_installable_widgets(
@@ -763,6 +754,7 @@ pub fn build_packages_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error as _;
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1778,6 +1770,174 @@ mod tests {
         ) -> Result<(), bmc_nix::gc::CollectGarbageError> {
             unreachable!("BUG: StubStore serves probe estimates only")
         }
+    }
+
+    #[derive(Debug)]
+    struct ApplyStore {
+        outcome: ApplyStoreOutcome,
+    }
+
+    #[derive(Debug)]
+    enum ApplyStoreOutcome {
+        SpaceRefusal,
+        RealizationFailure,
+    }
+
+    impl bmc_nix::store::StoreOperations for ApplyStore {
+        async fn estimate_realization(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> Result<bmc_nix::store::RealizeEstimate, bmc_nix::store::StorePathError> {
+            Ok(bmc_nix::store::RealizeEstimate {
+                fetch_paths: 1,
+                download_bytes: 13,
+                unpacked_bytes: 17,
+            })
+        }
+
+        fn store_free_bytes(&self, _profile_dir: &Path) -> std::io::Result<u64> {
+            Ok(match self.outcome {
+                ApplyStoreOutcome::SpaceRefusal => 11,
+                ApplyStoreOutcome::RealizationFailure => u64::MAX,
+            })
+        }
+
+        async fn realize_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+            _progress: Option<&dyn bmc_nix::store::RealizeProgress>,
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            match self.outcome {
+                ApplyStoreOutcome::RealizationFailure => {
+                    Err(bmc_nix::store::StorePathError::RealiseFailed(
+                        std::io::Error::other("scripted realization failure"),
+                    ))
+                }
+                ApplyStoreOutcome::SpaceRefusal => {
+                    unreachable!("BUG: a space refusal must precede realization")
+                }
+            }
+        }
+
+        async fn verify_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            unreachable!("BUG: apply failure must precede verification")
+        }
+
+        async fn collect_garbage(
+            &self,
+            _progress: Option<&dyn bmc_nix::gc::CollectGarbageProgress>,
+        ) -> Result<(), bmc_nix::gc::CollectGarbageError> {
+            unreachable!("BUG: package apply disables garbage collection")
+        }
+    }
+
+    #[derive(Debug)]
+    struct SilentProgress;
+
+    impl bmc_nix::upgrade::UpgradeProgress for SilentProgress {
+        fn on_phase(&self, _phase: bmc_nix::upgrade::UpgradePhase) {}
+        fn on_realization_started(&self, _total_paths: usize) {}
+        fn on_realization_finished(&self) {}
+        fn on_download_status(&self, _snapshot: &bmc_nix::store::progress::DownloadSnapshot) {}
+        fn on_gc_deleted(&self, _deleted_paths: usize) {}
+        fn on_gc_finished(&self, _deleted_paths: usize, _freed_bytes: Option<u64>) {}
+    }
+
+    async fn apply_one_widget(store: ApplyStore) -> ApplyError {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        write_base_manifest(&dir.path().join("profile"), &[]);
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &servers), store);
+
+        upgrader
+            .apply(
+                merged_with(&[("widget-weather", "widget", None)]),
+                vec!["widget-weather".to_owned()],
+                Arc::new(SilentProgress),
+            )
+            .await
+            .expect_err("scripted store must fail package apply")
+    }
+
+    #[tokio::test]
+    async fn apply_preserves_not_enough_space_fields_and_source() {
+        let error = apply_one_widget(ApplyStore {
+            outcome: ApplyStoreOutcome::SpaceRefusal,
+        })
+        .await;
+
+        let ApplyError::Install(
+            source @ bmc_nix::upgrade::InstallError::NotEnoughSpace {
+                free_bytes,
+                required_bytes,
+                unpacked_bytes,
+            },
+        ) = &error
+        else {
+            panic!("expected a typed not-enough-space install failure, got {error:?}");
+        };
+        assert_eq!(*free_bytes, 11);
+        assert_eq!(*required_bytes, bmc_nix::store::required_with_headroom(17));
+        assert_eq!(*unpacked_bytes, 17);
+        let preserved = error
+            .source()
+            .and_then(|source| source.downcast_ref::<bmc_nix::upgrade::InstallError>())
+            .expect("BUG: the apply error must expose the original install error as its source");
+        assert!(std::ptr::eq(preserved, source));
+    }
+
+    #[tokio::test]
+    async fn apply_preserves_non_space_install_source() {
+        let error = apply_one_widget(ApplyStore {
+            outcome: ApplyStoreOutcome::RealizationFailure,
+        })
+        .await;
+
+        let ApplyError::Install(source @ bmc_nix::upgrade::InstallError::StorePaths(_)) = &error
+        else {
+            panic!("expected a typed store-path install failure, got {error:?}");
+        };
+        let preserved = error
+            .source()
+            .and_then(|source| source.downcast_ref::<bmc_nix::upgrade::InstallError>())
+            .expect("BUG: the apply error must expose the original install error as its source");
+        assert!(std::ptr::eq(preserved, source));
+    }
+
+    #[tokio::test]
+    async fn apply_preserves_resolve_failure_source() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let upgrader = PackageUpgrader::with_store(
+            test_nix_config(dir.path(), &servers),
+            ApplyStore {
+                outcome: ApplyStoreOutcome::SpaceRefusal,
+            },
+        );
+
+        let error = upgrader
+            .apply(
+                merged_with(&[]),
+                vec!["widget-nope".to_owned()],
+                Arc::new(SilentProgress),
+            )
+            .await
+            .expect_err("an unavailable install target must fail resolution");
+        let ApplyError::Resolve(source) = &error else {
+            panic!("expected a typed resolve failure, got {error:?}");
+        };
+        assert!(matches!(
+            source,
+            PackageProbeError::InstallTargetUnavailable(_)
+        ));
+        let preserved = error
+            .source()
+            .and_then(|source| source.downcast_ref::<PackageProbeError>())
+            .expect("BUG: the apply error must expose the original probe error as its source");
+        assert!(std::ptr::eq(preserved, source));
     }
 
     /// Base `nix@1.0.0` with an index offering `nix@1.1.0` yields a non-empty
