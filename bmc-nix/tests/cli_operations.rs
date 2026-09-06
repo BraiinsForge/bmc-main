@@ -110,6 +110,7 @@ impl TestEnv {
         let output = Command::new(bin())
             .args(args)
             .env("PATH", &self.path_env)
+            .env("RUST_LOG", "info")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
