@@ -1088,24 +1088,14 @@ fn read_bos_version(path: &Path) -> anyhow::Result<String> {
 }
 
 fn store_is_initialized(data_dir: &Path) -> bool {
-    let nix_dir = data_dir.join("nix");
-    let store_has_paths = std::fs::read_dir(nix_dir.join("store"))
-        .is_ok_and(|mut entries| matches!(entries.next(), Some(Ok(_))));
-
-    store_has_paths
-        && nix_dir.join("var/nix/db/db.sqlite").is_file()
-        && nix_dir.join("var/nix/gcroots/profiles/bmc").is_dir()
+    bmc_nix::installation::store_is_initialized(&data_dir.join("nix")).unwrap_or(false)
 }
 
 /// Shell `[ a -ef b ]` equivalent: the promoted store and the mount
 /// point are the same filesystem object, i.e. the bind mount is in
 /// place (and is not some foreign mount shadowing the target).
 fn is_store_mounted(store_dir: &Path, nix_dir: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (std::fs::metadata(store_dir), std::fs::metadata(nix_dir)) {
-        (Ok(store), Ok(nix)) => store.dev() == nix.dev() && store.ino() == nix.ino(),
-        _ => false,
-    }
+    bmc_nix::installation::same_file(store_dir, nix_dir).unwrap_or(false)
 }
 
 #[expect(

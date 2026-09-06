@@ -36,6 +36,7 @@ pub mod gc;
 pub mod generation_path;
 pub mod hooks;
 pub mod index;
+pub mod installation;
 pub mod manifest;
 pub mod mount;
 pub mod partition;
