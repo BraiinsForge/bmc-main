@@ -20,19 +20,20 @@
 # the grant above.
 
 # Serve the local /nix/store as a signed binary cache plus a package
-# index a Deck device can upgrade from, and print the register-server
+# feed a Deck device can upgrade from, and print the register-server
 # command to run on the device.
 set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: upgrade-server --package NAME=VERSION=STORE_PATH... [options]
+Usage: upgrade-server --firmware BOS_VERSION --package NAME=VERSION=STORE_PATH... [options]
 
 Serve the local /nix/store as a signed binary cache and publish a
-nix-package-index.v1.json plus a servers.json fragment for a Deck
-device.
+firmware-scoped nix-package-feed.v1.json, its package index, and a
+servers.json fragment for a Deck device. Store initialization is unsupported.
 
 Options:
+  --firmware VERSION Required exact BOS firmware version for the feed entry.
   --package NAME=VERSION=STORE_PATH
                      Index entry (repeatable). Overrides a same-name
                      entry from --base-index.
@@ -65,6 +66,7 @@ index_port=""
 host=""
 key_dir="${XDG_STATE_HOME:-$HOME/.local/state}/bmc-upgrade-server"
 base_index=""
+firmware=""
 packages=()
 widgets=()
 
@@ -75,11 +77,12 @@ while [ $# -gt 0 ]; do
         usage
         exit 0
         ;;
-    --package | --widget | --base-index | --port | --index-port | --host | --key-dir)
+    --firmware | --package | --widget | --base-index | --port | --index-port | --host | --key-dir)
         [ $# -ge 2 ] || die "missing value for $arg"
         value="$2"
         shift 2
         case "$arg" in
+        --firmware) firmware="$value" ;;
         --package) packages+=("$value") ;;
         --widget) widgets+=("$value") ;;
         --base-index) base_index="$value" ;;
@@ -100,6 +103,7 @@ if [ "${#packages[@]}" -eq 0 ] && [ "${#widgets[@]}" -eq 0 ]; then
     usage >&2
     die "at least one --package or --widget NAME=VERSION=STORE_PATH is required"
 fi
+[ -n "$firmware" ] || die "--firmware BOS_VERSION is required"
 [ -n "$index_port" ] || index_port=$((port + 1))
 
 if [ -z "$host" ]; then
@@ -229,8 +233,17 @@ if jq -e '[.packages[].metadata.assets? // empty] | length > 0' "$index_file" >/
     mv "$index_file.tmp" "$index_file"
 fi
 
-jq -n --arg index_url "$base_url/nix-package-index.v1.json" --arg key "$cache_public_key" \
-    '{id: "dev-upgrade", index_url: $index_url, known_public_key: $key, priority: 50, enabled: true}' \
+# The feed schema requires init fields; this upgrade-only server serves no tarball.
+feed_file="$work_dir/nix-package-feed.v1.json"
+jq -n --arg firmware "$firmware" --arg base "$base_url" '{version: 1, entries: [{
+    bos_version: $firmware,
+    download_url: ($base + "/init-not-supported"),
+    profile_path: "/init-not-supported",
+    index_url: ($base + "/nix-package-index.v1.json")
+}]}' >"$feed_file"
+
+jq -n --arg feed_url "$base_url/nix-package-feed.v1.json" --arg key "$cache_public_key" \
+    '{id: "dev-upgrade", feed_url: $feed_url, known_public_key: $key, priority: 50, enabled: true}' \
     >"$work_dir/servers.json"
 
 # Compression off: narinfo FileSize is then the exact wire size, so the
@@ -248,16 +261,16 @@ python3 -m http.server --bind 0.0.0.0 --directory "$work_dir" "$index_port" &
 index_pid=$!
 server_pids+=("$index_pid")
 
-index_url="http://127.0.0.1:$index_port/nix-package-index.v1.json"
+feed_url="http://127.0.0.1:$index_port/nix-package-feed.v1.json"
 cache_info_url="http://127.0.0.1:$port/nix-cache-info"
-want_hash=$(sha256sum "$index_file" | cut -d' ' -f1)
+want_hash=$(sha256sum "$feed_file" | cut -d' ' -f1)
 deadline=$((SECONDS + 15))
 while true; do
     kill -0 "$cache_pid" 2>/dev/null \
         || die "binary cache exited before serving; is port $port already in use?"
     kill -0 "$index_pid" 2>/dev/null \
         || die "package index exited before serving; is port $index_port already in use?"
-    got_hash=$(curl -fsS "$index_url" 2>/dev/null | sha256sum | cut -d' ' -f1) || true
+    got_hash=$(curl -fsS "$feed_url" 2>/dev/null | sha256sum | cut -d' ' -f1) || true
     if [ "$got_hash" = "$want_hash" ] && curl -fsS "$cache_info_url" >/dev/null 2>&1; then
         break
     fi
@@ -269,6 +282,8 @@ done
 cat <<EOF
 
 binary cache:     $cache_url
+package feed:     $base_url/nix-package-feed.v1.json
+firmware:         $firmware
 package index:    $base_url/nix-package-index.v1.json
 cache public key: $cache_public_key
 
@@ -277,7 +292,7 @@ mirrors the cache key):
 
   bmc-nix-cli register-server \\
     --id dev-upgrade \\
-    --index-url $base_url/nix-package-index.v1.json \\
+    --feed-url $base_url/nix-package-feed.v1.json \\
     --index-public-key '$cache_public_key' \\
     --cache-url $cache_url \\
     --cache-public-key '$cache_public_key'

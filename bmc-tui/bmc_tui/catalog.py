@@ -2546,6 +2546,10 @@ class UpgradeCycle:
         return f"http://{self.host}:{self.index_port}"
 
     @property
+    def feed_url(self) -> str:
+        return f"{self.index_url}/nix-package-feed.v1.json"
+
+    @property
     def cache_url(self) -> str:
         return f"http://{self.host}:{self.port}"
 
@@ -2566,8 +2570,8 @@ def snapshot_profile(dev: Device, cycle: UpgradeCycle) -> str:
     )
 
 
-def _upgrade_server_argv(
-    *, host: str, port: int, index_port: int, key_dir: Path, built: list[Built]
+def _upgrade_server_argv(  # noqa: PLR0913
+    *, host: str, port: int, index_port: int, key_dir: Path, built: list[Built], firmware: str
 ) -> list[str]:
     """The ``nix run .#upgrade-server`` command for the built package set.
 
@@ -2580,6 +2584,8 @@ def _upgrade_server_argv(
         "run",
         _UPGRADE_SERVER_APP,
         "--",
+        "--firmware",
+        firmware,
         "--host",
         host,
         "--port",
@@ -2596,7 +2602,10 @@ def _upgrade_server_argv(
 
 
 @stage("Start upgrade server")
-def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> str:
+def start_upgrade_server(
+    dev: Device, plan: Deployment, cycle: UpgradeCycle, *, firmware: str
+) -> str:
+    require(bool(firmware.strip()), "package feed requires a firmware version")
     cycle.host = _local_addr(dev.host)
     cycle.log_path = Path(tempfile.gettempdir()) / "bmc-upgrade-server.log"
     argv = _upgrade_server_argv(
@@ -2605,6 +2614,7 @@ def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> 
         index_port=cycle.index_port,
         key_dir=cycle.key_dir,
         built=plan.built,
+        firmware=firmware,
     )
     with cycle.log_path.open("wb") as log:
         cycle.server = subprocess.Popen(
@@ -2615,7 +2625,7 @@ def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> 
         )
     _await_upgrade_server(cycle)
     cycle.cache_public_key = (cycle.key_dir / "public").read_text().strip()
-    return f"index {console.lit(cycle.index_url)}, cache {console.lit(cycle.cache_url)}"
+    return f"feed {console.lit(cycle.feed_url)}, cache {console.lit(cycle.cache_url)}"
 
 
 def _restore_each(*, failed: bool, actions: list[Callable[[], object]]) -> None:
@@ -2738,16 +2748,16 @@ def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
     if key is None:
         msg = "BUG: the upgrade server was not started before registration"
         raise RuntimeError(msg)
-    # The index is unsigned, so the index key mirrors the cache key —
-    # matches the register-server command upgrade-server itself prints.
+    # The index is unsigned; reuse the cache key for the required index key,
+    # matching the registration command printed by upgrade-server.
     args = [
         _NIX_CLI,
         "register-server",
         "--exclusive",
         "--id",
         _UPGRADE_SERVER_ID,
-        "--index-url",
-        f"{cycle.index_url}/nix-package-index.v1.json",
+        "--feed-url",
+        cycle.feed_url,
         "--index-public-key",
         key,
         "--cache-url",
@@ -2757,7 +2767,7 @@ def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
     ]
     inner = " ".join(shlex.quote(a) for a in args)
     dev.run(f"PATH=/run/current-profile/bin:$PATH {inner}")
-    return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.index_url)}"
+    return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.feed_url)}"
 
 
 @stage("Pre-run package config is the device's own")
@@ -3056,12 +3066,16 @@ def _local_addr(remote_host: str) -> str:
 
 
 def _await_upgrade_server(cycle: UpgradeCycle, *, timeout: float = 300) -> None:
-    """Wait until both the cache and the index answer HTTP; the first run of
-    `nix run` may still be realizing the app, hence the generous timeout."""
+    """Wait until the cache, feed and index answer HTTP;
+    the first `nix run` may still be realizing the app, hence the generous timeout."""
 
     deadline = time.monotonic() + timeout
     log_hint = f"see {console.lit(cycle.log_path)}"
-    urls = (f"{cycle.cache_url}/nix-cache-info", f"{cycle.index_url}/nix-package-index.v1.json")
+    urls = (
+        f"{cycle.cache_url}/nix-cache-info",
+        cycle.feed_url,
+        f"{cycle.index_url}/nix-package-index.v1.json",
+    )
     for url in urls:
         while not _http_ok(url):
             server = cycle.server

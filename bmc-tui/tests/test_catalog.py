@@ -1601,21 +1601,18 @@ def test_snapshot_profile_aborts_on_unexpected_link() -> None:
         catalog.snapshot_profile(Device("h", backend=backend), _cycle())
 
 
-def test_register_upgrade_server_registers_index_document_url() -> None:
-    # Regression: the register-server rename from --base-url to --index-url
-    # also changed URL semantics — --index-url is fetched verbatim rather than
-    # having the filename appended, so the harness must register the index
-    # document itself, not the bare serving base.
+def test_register_upgrade_server_registers_feed_document_url() -> None:
+    # Feed URLs are fetched verbatim; the client does not append a filename.
     backend = _Exec(_routes({}))
     cycle = _cycle()
     cycle.host = "10.0.0.20"
     cycle.cache_public_key = "dev-upgrade:KEY"
     catalog.register_upgrade_server(Device("h", backend=backend), cycle)
     cmd = backend.runs[-1][-1]
-    assert "--base-url" not in cmd
+    assert "--index-url" not in cmd
     assert (
         f"register-server --exclusive --id {catalog._UPGRADE_SERVER_ID} "
-        "--index-url http://10.0.0.20:8081/nix-package-index.v1.json "
+        "--feed-url http://10.0.0.20:8081/nix-package-feed.v1.json "
         "--index-public-key dev-upgrade:KEY "
         "--cache-url http://10.0.0.20:8080 "
         "--cache-public-key dev-upgrade:KEY"
@@ -1794,6 +1791,7 @@ def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:
         port=8080,
         index_port=8081,
         key_dir=Path("/k"),
+        firmware="target-firmware",
         built=[
             Built("core", "1.0", Attr(".#core^out"), store_path=StorePath("/nix/store/core")),
             Built(
@@ -1804,6 +1802,7 @@ def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:
             ),
         ],
     )
+    assert argv[argv.index("--firmware") + 1] == "target-firmware"
     assert argv[argv.index("--package") + 1] == "core=1.0=/nix/store/core"
     assert argv[argv.index("--widget") + 1] == "widget-weather=0.1.0=/nix/store/weather"
 

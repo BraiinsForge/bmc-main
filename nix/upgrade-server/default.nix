@@ -20,9 +20,9 @@
 
 # upgrade-server: Turn the developer machine into a Deck upgrade source.
 #
-# Serves the local /nix/store as a signed binary cache (harmonia, as in
-# production) and a package index plus servers.json fragment over static
-# HTTP, for `bmc-nix-cli register-server` on the device.
+# Serves /nix/store as a signed binary cache (harmonia, as in production)
+# plus a firmware-scoped package feed, index and servers.json over static HTTP,
+# for `bmc-nix-cli register-server` on the device.
 { pkgs }:
 pkgs.writeShellApplication {
   name = "upgrade-server";

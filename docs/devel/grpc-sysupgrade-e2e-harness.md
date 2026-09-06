@@ -111,3 +111,9 @@ never byte-restores the pre-reboot service script, opkg keys, or `bos_version` â
 generation the flash replaced. Either way it stops the package and index servers, removes the uploaded firmware tar, and
 deletes the snapshot directory. Unlike `e2e-sysupgrade`, this harness restores `/etc/nix/nix.conf` from a snapshot, so
 it leaves no rig lines behind on a completed run.
+
+The shared package server registers a feed containing only the image target firmware entry. The running (anchored)
+firmware has no entry, so resolving its index fails the test. Package-upgrade and widget-install harnesses instead read
+`/etc/bos_version` from the device and serve that firmware entry. Their package-only scenarios require no firmware
+upgrade offer. The development upgrade server requires `--firmware BOS_VERSION`; its feed supports upgrades, not store
+initialization (the init URL deliberately returns 404).

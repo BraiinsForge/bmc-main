@@ -86,7 +86,7 @@ class UpgradeE2e:
         catalog.capture_server_registry(dev, cycle)
         catalog.capture_nix_conf(dev, cycle)
         with catalog.package_upgrade_session(dev, cycle):
-            catalog.start_upgrade_server(dev, plan, cycle)
+            catalog.start_upgrade_server(dev, plan, cycle, firmware=dev.version)
             catalog.register_upgrade_server(dev, cycle)
             catalog.require_exclusive_package_server(dev)
             catalog.grpc_login(dev, cycle)

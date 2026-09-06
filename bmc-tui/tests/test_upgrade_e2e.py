@@ -26,6 +26,7 @@ seeing a real upgrade again."""
 import pytest
 
 from bmc_tui import catalog, nix
+from bmc_tui.device import Device
 from bmc_tui.procedures.install_widget_e2e import InstallWidgetE2e
 from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
 from bmc_tui.stage import Abort
@@ -36,6 +37,8 @@ def _stub_run(monkeypatch: pytest.MonkeyPatch, events: list[str], *, fail_at: st
 
     def record(name: str):
         def hook(*_args: object, **_kwargs: object) -> None:
+            if name == "start_upgrade_server":
+                assert _kwargs["firmware"] == "device-firmware"
             events.append(name)
             if name == fail_at:
                 raise Abort(f"scripted failure in {name}")
@@ -65,6 +68,7 @@ def _stub_run(monkeypatch: pytest.MonkeyPatch, events: list[str], *, fail_at: st
     ):
         monkeypatch.setattr(catalog, name, record(name))
 
+    monkeypatch.setattr(Device, "version", property(lambda _self: "device-firmware"))
     monkeypatch.setattr(nix, "real", lambda **_kw: object())
     monkeypatch.setattr(catalog, "package_prefix", lambda _profile: "")
 

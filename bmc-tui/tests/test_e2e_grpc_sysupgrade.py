@@ -169,7 +169,11 @@ def harness(  # noqa: PLR0915
 
     monkeypatch.setattr(catalog, "remove_uploaded_image", remove)
 
-    def start_server(_dev: object, _plan: object, cycle: catalog.UpgradeCycle) -> None:
+    def start_server(
+        _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmware: str
+    ) -> None:
+        assert firmware == state.cycle.image_version.canonical
+        assert firmware != state.cycle.running_version.canonical
         cycle.server = cast("subprocess.Popen[bytes]", SimpleNamespace(pid=4321))
         events.append("start host")
 
@@ -305,7 +309,9 @@ def test_registration_failure_restores_in_mandated_order_and_never_streams(
 def test_package_server_start_failure_stops_stored_process(
     harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail_after_start(_dev: object, _plan: object, cycle: catalog.UpgradeCycle) -> None:
+    def fail_after_start(
+        _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmware: str
+    ) -> None:
         cycle.server = cast("subprocess.Popen[bytes]", SimpleNamespace(pid=4321))
         raise Abort("package server startup")
 

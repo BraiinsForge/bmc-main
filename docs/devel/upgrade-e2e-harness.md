@@ -61,14 +61,15 @@ path that no longer reflects what ships.
     the `dev-upgrade:*` token from `extra-trusted-public-keys`; then re-run. On clean config, the bytes of both files
     are recorded for the restore.
 05. **Start upgrade server** — launches `nix run .#upgrade-server` in the background with one
-    `--package NAME=VERSION=STORE_PATH` per built package, waits until both the cache (`/nix-cache-info`) and the index
-    (`nix-package-index.v1.json`) answer HTTP, and reads the cache public key from the keypair directory
-    (`$XDG_STATE_HOME/bmc-upgrade-server`). Server output goes to `bmc-upgrade-server.log` in the system temp directory.
-    The advertised host address is autodetected from the route to the device.
+    `--package NAME=VERSION=STORE_PATH` per built package and `--firmware` read from the device’s `/etc/bos_version`. It
+    waits until the cache (`/nix-cache-info`), feed (`nix-package-feed.v1.json`), and package index answer HTTP, and
+    reads the cache public key from the keypair directory (`$XDG_STATE_HOME/bmc-upgrade-server`). Server output goes to
+    `bmc-upgrade-server.log` in the system temp directory. The advertised host address is autodetected from the route to
+    the device.
 06. **Register server on device** — runs `bmc-nix-cli register-server` on the device with id `dev-upgrade`, pointing
-    both the index document URL (`--index-url`) and the cache substituter at the developer machine. The index is
-    unsigned, so the index public key mirrors the cache key, matching the command `upgrade-server` itself prints. The
-    registration is `--exclusive`: it disables every other server entry, leaving the factory entry alone.
+    both the feed document URL (`--feed-url`) and the cache substituter at the developer machine. The index is unsigned,
+    so the index public key mirrors the cache key, matching the command `upgrade-server` itself prints. The registration
+    is `--exclusive`: it disables every other server entry, leaving the factory entry alone.
 07. **Only the harness server resolves** — asserts the exclusivity took, rather than assuming it. A public entry left
     enabled decides the upgrade whenever it publishes a higher version, because resolution ranks a candidate's version
     above its server's priority; and a `required` entry the device cannot reach fails the whole `CheckForUpgrade` probe.

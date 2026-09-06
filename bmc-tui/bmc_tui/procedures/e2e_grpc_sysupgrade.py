@@ -454,7 +454,11 @@ class E2eGrpcSysupgrade:
             catalog.upload_firmware(mutation_dev, image)
             catalog.trust_image_keys(mutation_dev, image)
             catalog.remove_uploaded_image(mutation_dev, image, cycle)
-            catalog.start_upgrade_server(mutation_dev, plan, packages)
+            offered = cycle.image_version
+            if offered is None:
+                msg = "BUG: target firmware was not resolved before package feed construction"
+                raise RuntimeError(msg)
+            catalog.start_upgrade_server(mutation_dev, plan, packages, firmware=offered.canonical)
             catalog.register_upgrade_server(mutation_dev, packages)
             catalog.require_exclusive_package_server(mutation_dev)
 
@@ -468,8 +472,7 @@ class E2eGrpcSysupgrade:
             index = server_factory(serve_root)
             base_url = f"http://{cycle.host}:{index.port}"
             running = cycle.running_version
-            offered = cycle.image_version
-            if running is None or offered is None:
+            if running is None:
                 msg = "BUG: versions were not resolved before index construction"
                 raise RuntimeError(msg)
             (serve_root / fw_index.INDEX_NAME).write_text(
