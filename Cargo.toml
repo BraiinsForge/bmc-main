@@ -399,7 +399,8 @@ schemars = "1.2.1"
 semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1.0.218", features = ["derive", "rc"] }
 serde_json = "1.0.149"
-serde_with = { version = "3.14.0", default-features = false, features = ["macros"] }
+# Boser's rand_distr 0.5.1 requires serde_with <=3.11.
+serde_with = { version = "3.11.0", default-features = false, features = ["macros"] }
 serial_test = "3.2.0"
 sevenz-rust2 = { version = "0.20", features = ["compress", "util"] }
 sha2 = "0.10.9"
