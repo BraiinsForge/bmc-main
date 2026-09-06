@@ -229,6 +229,7 @@ mod tests {
 
         async fn probe(
             &self,
+            _firmware: Option<&str>,
             _estimate: bmc_upgrade::packages::EstimateMode,
             _install: &[String],
         ) -> bmc_upgrade::packages::PackageProbe {
@@ -250,6 +251,7 @@ mod tests {
 
         async fn list_installable_widgets(
             &self,
+            _firmware: Option<&str>,
         ) -> Result<
             Vec<bmc_upgrade::packages::InstallableWidget>,
             bmc_upgrade::packages::PackageProbeError,

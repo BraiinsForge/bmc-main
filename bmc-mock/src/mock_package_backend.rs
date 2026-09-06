@@ -291,7 +291,12 @@ impl PackageBackend for MockPackageBackend {
             .unwrap_or(u64::MAX))
     }
 
-    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
+    async fn probe(
+        &self,
+        _firmware: Option<&str>,
+        estimate: EstimateMode,
+        install: &[String],
+    ) -> PackageProbe {
         let scenario = scenario::read(&self.scenario_path);
         if scenario.packages == PackagesScenario::FetchFailed {
             return PackageProbe::Failed(PackageProbeError::IndexFetchFailed(
@@ -433,7 +438,10 @@ impl PackageBackend for MockPackageBackend {
         Ok(())
     }
 
-    async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+    async fn list_installable_widgets(
+        &self,
+        _firmware: Option<&str>,
+    ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
         let scenario = scenario::read(&self.scenario_path);
         if scenario.packages == PackagesScenario::FetchFailed {
             return Err(PackageProbeError::IndexFetchFailed(
@@ -588,7 +596,8 @@ mod tests {
 
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
-        let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Estimate, &[]).await
+        let PackageProbe::Available(_, preview) =
+            backend.probe(None, EstimateMode::Estimate, &[]).await
         else {
             panic!("BUG: expected Available");
         };
@@ -599,21 +608,21 @@ mod tests {
         let path = write_scenario(dir.path(), r#"{"packages": "unavailable"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
-            backend.probe(EstimateMode::Estimate, &[]).await,
+            backend.probe(None, EstimateMode::Estimate, &[]).await,
             PackageProbe::UpToDate
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "fetch-failed"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
-            backend.probe(EstimateMode::Estimate, &[]).await,
+            backend.probe(None, EstimateMode::Estimate, &[]).await,
             PackageProbe::Failed(PackageProbeError::IndexFetchFailed(_))
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "precondition-failed"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
-            backend.probe(EstimateMode::Estimate, &[]).await,
+            backend.probe(None, EstimateMode::Estimate, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
     }
@@ -676,7 +685,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
-        let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Skip, &[]).await
+        let PackageProbe::Available(_, preview) =
+            backend.probe(None, EstimateMode::Skip, &[]).await
         else {
             panic!("BUG: expected Available");
         };
@@ -692,7 +702,7 @@ mod tests {
         );
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let PackageProbe::Available(_, preview) = backend
-            .probe(EstimateMode::Skip, &["widget-flip-clock".to_owned()])
+            .probe(None, EstimateMode::Skip, &["widget-flip-clock".to_owned()])
             .await
         else {
             panic!("BUG: expected an available probe");
@@ -722,7 +732,7 @@ mod tests {
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
             backend
-                .probe(EstimateMode::Skip, &["widget-nope".to_owned()])
+                .probe(None, EstimateMode::Skip, &["widget-nope".to_owned()])
                 .await,
             PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable(_))
         ));
@@ -739,7 +749,11 @@ mod tests {
         );
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let PackageProbe::Available(_, preview) = backend
-            .probe(EstimateMode::Estimate, &["widget-flip-clock".to_owned()])
+            .probe(
+                None,
+                EstimateMode::Estimate,
+                &["widget-flip-clock".to_owned()],
+            )
             .await
         else {
             panic!("BUG: an install request must produce an available plan");
@@ -755,7 +769,7 @@ mod tests {
         let path = write_scenario(dir.path(), r#"{"packages": "unavailable"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
-            backend.probe(EstimateMode::Skip, &[]).await,
+            backend.probe(None, EstimateMode::Skip, &[]).await,
             PackageProbe::UpToDate
         ));
     }
@@ -794,7 +808,7 @@ mod tests {
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier())
             .with_widgets_path(Some(widgets));
         let widgets = backend
-            .list_installable_widgets()
+            .list_installable_widgets(None)
             .await
             .expect("BUG: list failed");
         // Only the shadowed widget is offered, derived from its manifest in
@@ -825,7 +839,7 @@ mod tests {
         // not an empty tree, produces the empty list.
         assert!(
             backend
-                .list_installable_widgets()
+                .list_installable_widgets(None)
                 .await
                 .expect("BUG: list failed")
                 .is_empty()
@@ -853,7 +867,7 @@ mod tests {
         let backend = MockPackageBackend::new(scenario, UpgradePacing::Instant, notifier())
             .with_package_index(Some(index));
         let widgets = backend
-            .list_installable_widgets()
+            .list_installable_widgets(None)
             .await
             .expect("BUG: list failed");
         // The real mapping and the shadow gate both apply: only the shadowed
@@ -891,7 +905,7 @@ mod tests {
         let backend = MockPackageBackend::new(scenario, UpgradePacing::Instant, notifier())
             .with_package_index(Some(index));
         let widgets = backend
-            .list_installable_widgets()
+            .list_installable_widgets(None)
             .await
             .expect("BUG: list failed");
         assert_eq!(widgets.len(), 1);
@@ -921,7 +935,7 @@ mod tests {
         // A bad icon path must not break discovery: the widget still lists,
         // just without an icon.
         let widgets = backend
-            .list_installable_widgets()
+            .list_installable_widgets(None)
             .await
             .expect("BUG: list should succeed despite unreadable icon");
         assert_eq!(widgets.len(), 1);
@@ -948,7 +962,7 @@ mod tests {
         // An index format the mock doesn't understand must diverge the same way
         // the real backend does, not be served silently.
         assert!(matches!(
-            backend.list_installable_widgets().await,
+            backend.list_installable_widgets(None).await,
             Err(PackageProbeError::IndexFetchFailed(_))
         ));
     }
@@ -964,7 +978,7 @@ mod tests {
         let backend = MockPackageBackend::new(scenario, UpgradePacing::Instant, notifier())
             .with_package_index(Some(dir.path().to_path_buf()));
         assert!(matches!(
-            backend.list_installable_widgets().await,
+            backend.list_installable_widgets(None).await,
             Err(PackageProbeError::IndexFetchFailed(_))
         ));
     }
@@ -995,7 +1009,7 @@ mod tests {
         // A non-file icon path can never break discovery: the widget still lists,
         // and the is_file guard drops the icon to None.
         let widgets = backend
-            .list_installable_widgets()
+            .list_installable_widgets(None)
             .await
             .expect("BUG: list should succeed despite directory icon");
         assert_eq!(widgets.len(), 1);

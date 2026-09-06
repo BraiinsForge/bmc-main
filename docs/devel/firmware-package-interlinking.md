@@ -28,6 +28,14 @@ The important ownership boundary is between runtime and firmware construction. N
 in this application's upgrade flow. `bmc-main` starts `sysupgrade`; the payload assembled earlier by the `bos-main`
 firmware build makes the package step mandatory inside that command.
 
+## Discovery and release publication
+
+Upgrade checks and installable widget discovery resolve package feeds for the offered firmware version. Without a
+firmware offer, they use the running firmware version. Publish the required package feed entry and its index before
+advertising a firmware release: a missing target entry fails discovery, and the firmware staging step also requires that
+entry before flashing. If firmware discovery fails, widget discovery fails as well because the target package set is
+unknown.
+
 ## Execution Order
 
 For a normal firmware upgrade on a Nix-initialized device:

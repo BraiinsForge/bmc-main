@@ -266,14 +266,22 @@ impl PackageGcError {
 #[async_trait::async_trait]
 pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
     async fn gc(&self, request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError>;
-    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe;
+    async fn probe(
+        &self,
+        firmware: Option<&str>,
+        estimate: EstimateMode,
+        install: &[String],
+    ) -> PackageProbe;
     async fn apply(
         &self,
         merged: bmc_nix::types::MergedIndex,
         install: Vec<String>,
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError>;
-    async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError>;
+    async fn list_installable_widgets(
+        &self,
+        firmware: Option<&str>,
+    ) -> Result<Vec<InstallableWidget>, PackageProbeError>;
     /// Free bytes on the filesystem holding the package store.
     fn store_free_bytes(&self) -> std::io::Result<u64>;
 }
@@ -311,13 +319,13 @@ impl<N> PackageUpgrader<N> {
         }
     }
 
-    /// Shared prelude for `probe` and `list_installable_widgets`: load the
-    /// servers config, require an enabled server, fetch and merge the package
-    /// indexes, and read the profile manifest (current, falling back to
-    /// latest). Errors are mapped to `PackageProbeError`; each caller adapts
-    /// them to its own return shape.
+    /// Fetch merged indexes and the current manifest, falling back to the latest manifest.
+    /// Scope feeds to the explicit target firmware when supplied,
+    /// otherwise read the running firmware only if an enabled feed needs it.
+    /// Direct index servers need no firmware scope or local version file.
     async fn fetch_index_and_manifest(
         &self,
+        firmware: Option<&str>,
     ) -> Result<(bmc_nix::types::MergedIndex, bmc_nix::types::Manifest), PackageProbeError> {
         // Same convention as the CLI: the read-only shipped default lives
         // next to the runtime config under a literal ".default" suffix.
@@ -341,9 +349,9 @@ impl<N> PackageUpgrader<N> {
             return Err(PackageProbeError::NoEnabledServers);
         }
 
-        // Feed servers resolve their exact index server-side, keyed by the
-        // running firmware version; plain index servers need no scope.
-        let firmware_scope = if servers.iter().any(|server| {
+        let firmware_scope = if let Some(version) = firmware {
+            Some(version.to_owned())
+        } else if servers.iter().any(|server| {
             server.enabled && matches!(server.source, bmc_nix::types::ServerSource::Feed { .. })
         }) {
             let version = std::fs::read_to_string("/etc/bos_version").map_err(|err| {
@@ -430,8 +438,13 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         })
     }
 
-    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
-        let (merged, base) = match self.fetch_index_and_manifest().await {
+    async fn probe(
+        &self,
+        firmware: Option<&str>,
+        estimate: EstimateMode,
+        install: &[String],
+    ) -> PackageProbe {
+        let (merged, base) = match self.fetch_index_and_manifest(firmware).await {
             Ok(pair) => pair,
             Err(err) => return PackageProbe::Failed(err),
         };
@@ -538,8 +551,11 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         })
     }
 
-    async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
-        let (merged, base) = self.fetch_index_and_manifest().await?;
+    async fn list_installable_widgets(
+        &self,
+        firmware: Option<&str>,
+    ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+        let (merged, base) = self.fetch_index_and_manifest(firmware).await?;
         let installed = base.packages.keys().cloned().collect();
         Ok(installable_widgets_from(&merged, &installed))
     }
@@ -1395,6 +1411,109 @@ mod tests {
         assert!(widgets.is_empty(), "a widget without a uid must be dropped");
     }
 
+    async fn target_feed_upgrader() -> (tempfile::TempDir, PackageUpgrader) {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        let current_index = spawn_index_server(index_json(&[])).await;
+        let mut target: serde_json::Value = serde_json::from_str(&index_json(&[
+            ("nix", "2.0.0", "/nix/store/target-nix"),
+            ("widget-target", "1.0.0", "/nix/store/widget-target"),
+        ]))
+        .expect("BUG: valid index");
+        target["packages"][1]["category"] = serde_json::json!("widget");
+        target["packages"][1]["metadata"] = serde_json::json!({"widget": {"uid": "target-only"}});
+        let target_index = spawn_index_server(target.to_string()).await;
+        let feed = serde_json::json!({
+            "version": bmc_nix::feed::PACKAGE_FEED_VERSION,
+            "entries": [
+                {"bos_version": "current", "download_url": "http://unused/current",
+                 "profile_path": "/nix/store/current", "index_url": current_index},
+                {"bos_version": "target", "download_url": "http://unused/target",
+                 "profile_path": "/nix/store/target", "index_url": target_index}
+            ]
+        });
+        let feed_url = spawn_index_server(feed.to_string()).await;
+        let servers = serde_json::json!({
+            "factory": {"id": "forge", "base_url": "http://unused", "known_public_key": "k", "priority": 0, "enabled": false},
+            "servers": [{
+            "id": "release", "feed_url": feed_url, "known_public_key": "k", "priority": 10,
+            "enabled": true, "required": true
+        }]});
+        std::fs::write(&path, servers.to_string()).expect("BUG: write servers");
+        write_base_manifest(
+            &dir.path().join("profile"),
+            &[("nix", "1.0.0", "/nix/store/old-nix")],
+        );
+        let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
+
+        (dir, upgrader)
+    }
+
+    #[tokio::test]
+    async fn probe_selects_target_firmware_packages() {
+        let (_dir, upgrader) = target_feed_upgrader().await;
+        let PackageProbe::Available(merged, _) = upgrader
+            .probe(
+                Some("target"),
+                EstimateMode::Skip,
+                &["widget-target".to_owned()],
+            )
+            .await
+        else {
+            panic!("the target feed must offer the incoming packages");
+        };
+        let package = merged
+            .packages
+            .iter()
+            .find(|package| package.name == "nix")
+            .expect("BUG: the target must contain nix");
+        assert_eq!(package.version.to_string(), "2.0.0");
+        assert_eq!(package.store_path, "/nix/store/target-nix");
+    }
+
+    #[tokio::test]
+    async fn missing_target_feed_fails_the_probe() {
+        let (_dir, upgrader) = target_feed_upgrader().await;
+        let failure = upgrader
+            .probe(Some("missing"), EstimateMode::Skip, &[])
+            .await;
+        assert!(
+            matches!(failure, PackageProbe::Failed(PackageProbeError::IndexUnusable(ref message)) if message.contains("no package feed entry for BOS version 'missing'")),
+            "a missing target must fail instead of selecting another firmware: {failure:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn installable_widgets_come_from_target_firmware() {
+        let (_dir, upgrader) = target_feed_upgrader().await;
+        let widgets = upgrader
+            .list_installable_widgets(Some("target"))
+            .await
+            .expect("BUG: target feed must resolve");
+        assert_eq!(
+            widgets
+                .iter()
+                .map(|widget| widget.uid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["target-only"]
+        );
+        assert!(
+            upgrader
+                .list_installable_widgets(Some("current"))
+                .await
+                .expect("BUG: current feed must resolve")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_target_feed_fails_widget_discovery() {
+        let (_dir, upgrader) = target_feed_upgrader().await;
+        assert!(
+            matches!(upgrader.list_installable_widgets(Some("missing")).await, Err(PackageProbeError::IndexUnusable(message)) if message.contains("no package feed entry for BOS version 'missing'"))
+        );
+    }
+
     #[tokio::test]
     async fn probe_reports_no_enabled_servers() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
@@ -1404,7 +1523,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip, &[]).await,
+            upgrader.probe(None, EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
     }
@@ -1416,7 +1535,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -1440,7 +1559,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip, &[]).await,
+            upgrader.probe(None, EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
         assert!(
@@ -1464,7 +1583,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip, &[]).await,
+            upgrader.probe(None, EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
         assert!(
@@ -1481,7 +1600,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -1510,7 +1629,7 @@ mod tests {
 
         let PackageProbe::Failed(PackageProbeError::PlanFailed(
             PackagePlanFailure::MissingSystemPackages { names },
-        )) = upgrader.probe(EstimateMode::Skip, &[]).await
+        )) = upgrader.probe(None, EstimateMode::Skip, &[]).await
         else {
             panic!("expected a missing-system-package failure");
         };
@@ -1539,7 +1658,7 @@ mod tests {
 
         let PackageProbe::Failed(PackageProbeError::PlanFailed(
             PackagePlanFailure::MissingSystemPackages { names },
-        )) = upgrader.probe(EstimateMode::Skip, &[]).await
+        )) = upgrader.probe(None, EstimateMode::Skip, &[]).await
         else {
             panic!("expected a missing-system-package failure");
         };
@@ -1562,7 +1681,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -1586,7 +1705,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip, &[]).await,
+            upgrader.probe(None, EstimateMode::Skip, &[]).await,
             PackageProbe::UpToDate
         ));
     }
@@ -1681,7 +1800,7 @@ mod tests {
         ]));
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
-        let probe = upgrader.probe(EstimateMode::Estimate, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Estimate, &[]).await;
         let PackageProbe::Failed(PackageProbeError::Unrealizable(paths)) = probe else {
             panic!("an unsubstitutable estimate must fail the probe, got {probe:?}");
         };
@@ -1697,7 +1816,7 @@ mod tests {
         let store = StubStore(StubEstimate::Transient);
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
-        let probe = upgrader.probe(EstimateMode::Estimate, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Estimate, &[]).await;
         let PackageProbe::Available(_, preview) = probe else {
             panic!("a transient estimate error must still offer the upgrade, got {probe:?}");
         };
@@ -1720,7 +1839,7 @@ mod tests {
         let store = StubStore(StubEstimate::Downloads(4096));
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
-        let probe = upgrader.probe(EstimateMode::Estimate, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Estimate, &[]).await;
         let PackageProbe::Available(_, preview) = probe else {
             panic!("a successful estimate must offer the upgrade, got {probe:?}");
         };
@@ -1742,7 +1861,7 @@ mod tests {
         // The index carries only "nix"; a requested install the index does not
         // list fails the whole probe at the resolve stage.
         let probe = upgrader
-            .probe(EstimateMode::Skip, &["widget-nope".to_owned()])
+            .probe(None, EstimateMode::Skip, &["widget-nope".to_owned()])
             .await;
         assert!(
             matches!(
@@ -1768,7 +1887,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -1793,7 +1912,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
+        let probe = upgrader.probe(None, EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -1814,7 +1933,7 @@ mod tests {
         // list_installable_widgets duplicates probe's server-config prologue,
         // so it must reject a config with no enabled servers the same way.
         assert!(matches!(
-            upgrader.list_installable_widgets().await,
+            upgrader.list_installable_widgets(None).await,
             Err(PackageProbeError::NoEnabledServers)
         ));
     }

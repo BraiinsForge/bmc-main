@@ -753,7 +753,7 @@ impl DisplayStateService {
 pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     state_service: StateService,
     display_state_service: DisplayStateService,
-    firmware_upgrader: Arc<Mutex<FirmwareUpgrader<T>>>,
+    firmware_upgrader: Arc<FirmwareUpgrader<T>>,
     bmc_manager: Arc<U>,
     scheduler: JobScheduler,
     stagger: MaintenanceStagger,
@@ -820,7 +820,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Self {
             state_service,
             display_state_service: DisplayStateService::new(),
-            firmware_upgrader: Arc::new(Mutex::new(firmware_upgrader)),
+            firmware_upgrader: Arc::new(firmware_upgrader),
             bmc_manager,
             scheduler,
             stagger,
@@ -852,6 +852,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let probe = self
             .package_backend
             .probe(
+                firmware
+                    .as_ref()
+                    .map(|detail| detail.latest_release.version.as_str()),
                 if firmware.is_some() {
                     EstimateMode::Skip
                 } else {
@@ -901,8 +904,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     pub(crate) async fn list_installable_widgets(
         &self,
     ) -> Result<Vec<bmc_upgrade::packages::InstallableWidget>, SystemUpgradeError> {
+        let firmware = self.probe_firmware().await?;
         self.package_backend
-            .list_installable_widgets()
+            .list_installable_widgets(
+                firmware
+                    .as_ref()
+                    .map(|detail| detail.latest_release.version.as_str()),
+            )
             .await
             .map_err(SystemUpgradeError::PackageCheckFailed)
     }
@@ -1001,7 +1009,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let state_service = self.state_service.clone();
         let pending_install_path = self.pending_install_path.clone();
         task::spawn(async move {
-            let upgrader = firmware_upgrader.lock().await;
             let release = &detail.latest_release;
             let total_bytes = release.file_size as u64;
 
@@ -1014,7 +1021,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             // before entering the cancellable stop.
             let mut widget_guard = WidgetRestartGuard::stop_widgets(widget_lifecycle, gate).await;
             let handoff_accepted = async {
-                let mut download_rx = upgrader.download_firmware(
+                let mut download_rx = firmware_upgrader.download_firmware(
                     release.url.clone(),
                     release.hash.clone(),
                     total_bytes,
@@ -1059,7 +1066,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 }
 
                 _ = tx.send(UpgradeRunState::Phase(UpgradePhase::FirmwareVerifying));
-                if let Err(err) = upgrader.verify_firmware(&release.hash).await {
+                if let Err(err) = firmware_upgrader.verify_firmware(&release.hash).await {
                     warn!(error = %err, "Failed to verify downloaded firmware");
                     _ = tx.send(UpgradeRunState::Failed(err.into()));
                     return false;
@@ -1078,7 +1085,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
                 apply_firmware_upgrade(
                     bmc_manager.as_ref(),
-                    upgrader.upgrade_image_path(),
+                    firmware_upgrader.upgrade_image_path(),
                     &tx,
                     &state_service,
                     &install,
@@ -1103,10 +1110,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     async fn probe_firmware(&self) -> Result<Option<UpgradeDetail>, SystemUpgradeError> {
-        let Ok(upgrader) = self.firmware_upgrader.try_lock() else {
-            return Err(SystemUpgradeError::UpgradeInProgress);
-        };
-
         let platform = self.bmc_manager.platform();
         let Some(version) = self.bmc_manager.version().await else {
             error!("Failed to detect current firmware version");
@@ -1115,7 +1118,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
         info!(platform = %platform, version = %version.full, "Checking for firmware upgrade");
 
-        let Some(release_info) = upgrader
+        let Some(release_info) = self.firmware_upgrader
             .check_for_upgrade(platform, version.full)
             .await
             .inspect_err(|err| error!(error = %err, platform = %platform, "Failed to check for firmware upgrade"))
@@ -1642,7 +1645,12 @@ mod tests {
             Ok(PackageGcOutcome::Collected)
         }
 
-        async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
+        async fn probe(
+            &self,
+            _firmware: Option<&str>,
+            _estimate: EstimateMode,
+            _install: &[String],
+        ) -> PackageProbe {
             PackageProbe::UpToDate
         }
 
@@ -1657,6 +1665,7 @@ mod tests {
 
         async fn list_installable_widgets(
             &self,
+            _firmware: Option<&str>,
         ) -> Result<
             Vec<bmc_upgrade::packages::InstallableWidget>,
             bmc_upgrade::packages::PackageProbeError,
@@ -1685,7 +1694,12 @@ mod tests {
             Ok(PackageGcOutcome::Collected)
         }
 
-        async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
+        async fn probe(
+            &self,
+            _firmware: Option<&str>,
+            _estimate: EstimateMode,
+            _install: &[String],
+        ) -> PackageProbe {
             PackageProbe::UpToDate
         }
 
@@ -1707,6 +1721,7 @@ mod tests {
 
         async fn list_installable_widgets(
             &self,
+            _firmware: Option<&str>,
         ) -> Result<
             Vec<bmc_upgrade::packages::InstallableWidget>,
             bmc_upgrade::packages::PackageProbeError,
@@ -2010,7 +2025,12 @@ mod tests {
                 .unwrap_or(Ok(PackageGcOutcome::Collected))
         }
 
-        async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
+        async fn probe(
+            &self,
+            _firmware: Option<&str>,
+            _estimate: EstimateMode,
+            _install: &[String],
+        ) -> PackageProbe {
             PackageProbe::UpToDate
         }
 
@@ -2029,6 +2049,7 @@ mod tests {
 
         async fn list_installable_widgets(
             &self,
+            _firmware: Option<&str>,
         ) -> Result<
             Vec<bmc_upgrade::packages::InstallableWidget>,
             bmc_upgrade::packages::PackageProbeError,
@@ -2757,10 +2778,7 @@ mod tests {
         assert!(!SystemUpgradeState::Failed.blocks_restart());
     }
 
-    // The stubs panic on every use, so a service built from them can only
-    // survive the paths that never reach a dependency: applying the
-    // enable/disable state and a gated trigger.
-    mod enable_disable {
+    mod service {
         use super::*;
         use crate::bootloader_config::BootloaderConfig;
         use crate::manager::{UpgradeError, UpgradeMarker};
@@ -2794,7 +2812,13 @@ mod tests {
         }
 
         #[derive(Debug)]
-        struct StubBackend;
+        struct StubBackend(Option<Arc<std::sync::Mutex<Vec<DiscoveryCall>>>>);
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum DiscoveryCall {
+            Probe(Option<String>),
+            Widgets(Option<String>),
+        }
 
         #[async_trait::async_trait]
         impl PackageBackend for StubBackend {
@@ -2804,8 +2828,19 @@ mod tests {
             ) -> Result<PackageGcOutcome, PackageGcError> {
                 unimplemented!("{UNREACHABLE}")
             }
-            async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
-                unimplemented!("{UNREACHABLE}")
+            async fn probe(
+                &self,
+                firmware: Option<&str>,
+                _estimate: EstimateMode,
+                _install: &[String],
+            ) -> PackageProbe {
+                self.0
+                    .as_ref()
+                    .expect(UNREACHABLE)
+                    .lock()
+                    .expect("BUG: call log poisoned")
+                    .push(DiscoveryCall::Probe(firmware.map(str::to_owned)));
+                PackageProbe::UpToDate
             }
             async fn apply(
                 &self,
@@ -2817,8 +2852,15 @@ mod tests {
             }
             async fn list_installable_widgets(
                 &self,
+                firmware: Option<&str>,
             ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
-                unimplemented!("{UNREACHABLE}")
+                self.0
+                    .as_ref()
+                    .expect(UNREACHABLE)
+                    .lock()
+                    .expect("BUG: call log poisoned")
+                    .push(DiscoveryCall::Widgets(firmware.map(str::to_owned)));
+                Ok(Vec::new())
             }
             fn store_free_bytes(&self) -> std::io::Result<u64> {
                 unimplemented!("{UNREACHABLE}")
@@ -2894,10 +2936,10 @@ mod tests {
             type Error = std::io::Error;
 
             async fn version(&self) -> Option<BosVersion> {
-                unimplemented!("{UNREACHABLE}")
+                Some(BosVersion::new(&"current", &"current"))
             }
             fn platform(&self) -> BosPlatform {
-                unimplemented!("{UNREACHABLE}")
+                BosPlatform::Bmc1
             }
             async fn upgrade(
                 &self,
@@ -2963,20 +3005,113 @@ mod tests {
             SystemUpgradeService<StubIndex, StubManager>,
             watch::Sender<Timezone>,
         ) {
+            discovery_service(StubIndex, Arc::new(StubBackend(None))).await
+        }
+
+        async fn discovery_service<T: FirmwareIndex>(
+            index: T,
+            backend: Arc<dyn PackageBackend>,
+        ) -> (
+            SystemUpgradeService<T, StubManager>,
+            watch::Sender<Timezone>,
+        ) {
             let (timezone_sender, timezone_receiver) = watch::channel(Timezone::default());
             let scheduler = JobScheduler::init(timezone_receiver, None).await;
             let service = SystemUpgradeService::new(
-                StubIndex,
+                index,
                 &PathBuf::from("/nonexistent/upgrade.img"),
                 Arc::new(StubManager),
                 StateService::new(),
                 scheduler,
                 tokio::time::Instant::now(),
-                Arc::new(StubBackend),
+                backend,
                 Arc::new(StubLifecycle),
                 PathBuf::from("/nonexistent/pending-install"),
             );
             (service, timezone_sender)
+        }
+
+        #[derive(Debug)]
+        struct DiscoveryIndex(Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError>);
+
+        #[async_trait::async_trait]
+        impl FirmwareIndex for DiscoveryIndex {
+            async fn get_available_releases(
+                &self,
+                _client: &Client,
+                _platform: BosPlatform,
+                _version: String,
+            ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError> {
+                tokio::task::yield_now().await;
+                self.0.clone()
+            }
+        }
+
+        #[tokio::test]
+        async fn discovery_forwards_the_offered_firmware_or_running_fallback() {
+            for release in [None, Some(test_upgrade_detail().latest_release)] {
+                let expected = release.as_ref().map(|release| release.version.clone());
+                let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let backend = Arc::new(StubBackend(Some(Arc::clone(&calls))));
+                let (service, _timezone) = discovery_service(
+                    DiscoveryIndex(Ok(release.map(|release| vec![release]))),
+                    backend,
+                )
+                .await;
+                service
+                    .check_for_upgrade(Vec::new())
+                    .await
+                    .expect("BUG: check must succeed");
+                service
+                    .list_installable_widgets()
+                    .await
+                    .expect("BUG: listing must succeed");
+                assert_eq!(
+                    *calls.lock().expect("BUG: call log poisoned"),
+                    vec![
+                        DiscoveryCall::Probe(expected.clone()),
+                        DiscoveryCall::Widgets(expected),
+                    ]
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn widget_discovery_does_not_collide_with_an_upgrade_check() {
+            let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let backend = Arc::new(StubBackend(Some(Arc::clone(&calls))));
+            let (service, _timezone) = discovery_service(
+                DiscoveryIndex(Ok(Some(vec![test_upgrade_detail().latest_release]))),
+                backend,
+            )
+            .await;
+            let (check, first, second) = tokio::join!(
+                service.check_for_upgrade(Vec::new()),
+                service.list_installable_widgets(),
+                service.list_installable_widgets(),
+            );
+            assert!(
+                check.is_ok() && first.is_ok() && second.is_ok(),
+                "read-only discovery must coexist: {check:?}, {first:?}, {second:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn firmware_discovery_failure_cannot_list_from_an_unverified_feed() {
+            let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let backend = Arc::new(StubBackend(Some(Arc::clone(&calls))));
+            let (service, _timezone) = discovery_service(
+                DiscoveryIndex(Err(FirmwareDownloadError::IndexDownloadFailed)),
+                backend,
+            )
+            .await;
+            assert!(matches!(
+                service.list_installable_widgets().await,
+                Err(SystemUpgradeError::UnableToCheckForUpgrade(
+                    FirmwareDownloadError::IndexDownloadFailed
+                ))
+            ));
+            assert!(calls.lock().expect("BUG: call log poisoned").is_empty());
         }
 
         #[tokio::test]
