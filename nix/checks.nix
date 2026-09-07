@@ -21,6 +21,7 @@
 { pkgs
 , armv7Pkgs
 , ty-bin
+, python-lint-venv
 , profiles
 , crates
 , deckPackages
@@ -401,8 +402,10 @@ in
     cd $src
     export RUFF_CACHE_DIR="$(mktemp -d)"
     ruff check
+    # The uv workspace's own environment, so imports resolve to the versions `uv.lock` pins.
+    # Without it `ty` sees only the bare interpreter and every third-party import in `scripts/` is unresolved.
     # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
-    ty check --error deprecated
+    ty check --python ${python-lint-venv} --error deprecated
     touch $out
   '';
 }

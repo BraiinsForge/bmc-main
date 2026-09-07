@@ -1,0 +1,38 @@
+# Makes `scripts/` a member of the uv workspace, so what these files import
+# is declared by the directory that uses it. The nix `python-lint` check builds
+# an environment from this and hands it to `ty`, which otherwise sees only
+# the bare interpreter and cannot resolve a single third-party import here.
+#
+# `bypass-selection` keeps the wheel to metadata: nothing here is importable,
+# and a backend left to guess would either refuse the flat layout of four
+# top-level modules or ship them. uv would take `[tool.uv] package = false`
+# for the same thing, but uv2nix builds every member regardless, so the empty
+# wheel is what makes both agree. Hatchling, like the other members,
+# so no `egg-info` is left behind in the source tree.
+#
+# No `[tool.ruff]`, unlike the other members: theirs is what hands their formatting to ruff,
+# while these files stay with the root `ruff.toml` for lints and with treefmt for formatting.
+
+[project]
+name = "bmc-scripts"
+version = "0.0.0"
+description = "Repo utility scripts that are run as files, not imported"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12"
+dependencies = [
+    # CommonMark parser behind `md_to_adf.py`; also what mdformat parses with,
+    # so the converter and the formatter agree on these files.
+    "markdown-it-py>=4.2",
+]
+
+# The tests beside these scripts are the member's own, so the runner
+# they import is declared here rather than borrowed from the root's dev group.
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

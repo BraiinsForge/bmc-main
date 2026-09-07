@@ -61,8 +61,7 @@ def main() -> int:
     scene_count_matches = scene_count == EXPECTED_SCENE_COUNT
     if not scene_count_matches:
         print(
-            f'gallery source contains {scene_count} scenes; '
-            f'expected {EXPECTED_SCENE_COUNT}',
+            f'gallery source contains {scene_count} scenes; expected {EXPECTED_SCENE_COUNT}',
             file=sys.stderr,
         )
         print(

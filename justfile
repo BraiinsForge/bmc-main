@@ -71,6 +71,8 @@ format:
     # rejects, so without it a clean `just validate` says nothing about the fmt job.
     nix fmt -- --no-cache
     nix run .#fmt-svg
+    # The two workspace members only; `scripts/` is treefmt's,
+    # and handing it to both leaves them fighting for style.
     {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness
 
 # Stamp the `.license.tpl` GPL header onto any first-party source missing it.
@@ -87,15 +89,21 @@ clippy:
       --all-targets -- \
         -D warnings
 
+# Convert a markdown file to Atlassian Document Format on stdout (for Jira descriptions).
+md-to-adf FILE *ARGS:
+    # Silent: the ADF is meant to be redirected into a file, so nothing else may
+    # reach stdout.
+    @{{ NIX_DEV }} uv run scripts/md_to_adf.py {{ FILE }} {{ ARGS }}
+
 # Lint, type-check and test the Python uv workspace (bmc-tui + harness).
 python:
     # ruff/ty are nix-provided (PyPI binaries don't run in the pure-nix CI); pytest
     # runs through uv. `uv sync` first so ty sees the workspace .venv.
     {{ NIX_DEV }} uv sync
-    {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness scripts
     {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness
     # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
-    {{ NIX_DEV }} ty check --error deprecated bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} ty check --error deprecated bmc-tui bmc-virt/harness scripts
     # coverage.py opens its data file without creating the directory above it,
     # and this one lives under the scratch tree, which gets cleaned out —
     # so make it on every run rather than once.

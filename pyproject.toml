@@ -5,9 +5,11 @@
 members = [
     "bmc-tui",
     "bmc-virt/harness",
+    "scripts",
 ]
 
-# Shared dev tooling for the whole Python workspace, run via `uv run` (one venv covers both members).
+# Shared dev tooling for the whole Python workspace,
+# run via `uv run` (one venv covers the members).
 [dependency-groups]
 dev = [
     "grpcio>=1.60",
@@ -22,9 +24,11 @@ addopts = "--import-mode=importlib --cov --cov-report=term-missing --cov-report=
 testpaths = [
     "bmc-tui/tests",
     "bmc-virt/harness/tests",
+    "scripts/tests",
 ]
 
-# Scoped to one package so the reported total is not diluted by an unmeasured one.
+# Scoped to one package so the reported total
+# is not diluted by an unmeasured one.
 [tool.coverage.run]
 source = ["bmc_tui"]
 branch = true

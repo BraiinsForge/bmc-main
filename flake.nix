@@ -87,7 +87,7 @@
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
         };
         checks = import ./nix/checks.nix {
-          inherit pkgs ty-bin;
+          inherit pkgs ty-bin python-lint-venv;
           armv7Pkgs = workspace.bmc.armv7-nixpkgs;
           deckPackages = workspace.legacyPackages.deck-packages;
           frontend = workspace.deps.frontend;
@@ -129,6 +129,12 @@
 
         # Light venv backing the `deck` app — bmc-tui only (rich + tyro).
         bmc-tui-venv = pythonSet.mkVirtualEnv "bmc-tui" { bmc-tui = [ ]; };
+
+        # What `python-lint` type-checks against, so `ty` resolves the versions
+        # `uv.lock` pins rather than whatever the ambient interpreter carries.
+        # Just the scripts member and its test extra: the check's own source
+        # filter drops the other two members, so their trees would be dead weight.
+        python-lint-venv = pythonSet.mkVirtualEnv "python-lint" { bmc-scripts = [ "test" ]; };
 
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = (bmc.profiles.fast.mkShell {
