@@ -8,19 +8,21 @@
     state for the boot-time device-info overlay
   </copyright>
 
-  <interface name="deck_device_info_v1" version="1">
+  <interface name="deck_device_info_v1" version="2">
     <description summary="Deck device-info state feed">
       Lightweight compositor-relayed IPC for the device-info overlay. bmc owns
       the device lifecycle (setup mode, WiFi provisioning) and its recovery
       policies; this interface mirrors that state to the overlay for display.
-      It carries no control path: everything the user can trigger from these
-      screens is either overlay-local (touch dismiss) or owned by bmc's own
-      policy timers.
+      It carries no control path. Everything the user can trigger
+      from these screens is overlay-local (touch dismiss) or runs
+      on bmc's own policy timers; report_ip is bmc asking for a screen,
+      not a control the overlay exposes.
 
-      Every event is emitted on bind and again on each change, so a
-      late-binding overlay starts from a complete picture. The bind replay
-      carries current conditions; see setup_progress for the one event whose
-      replay is filtered, since a past transition is not a condition.
+      The three state events are emitted on bind and again on each change,
+      so a late-binding overlay starts from a complete picture. The bind replay
+      carries current conditions; see setup_progress for the one event
+      whose replay is filtered, since a past transition is not a condition,
+      and report_ip for the one event that is not a state at all.
     </description>
 
     <request name="destroy" type="destructor">
@@ -103,6 +105,26 @@
       </description>
       <arg name="ssid" type="string" summary="setup-AP SSID, empty when inactive"/>
       <arg name="setup_url" type="string" summary="setup URL, e.g. http://10.0.0.21/, empty when inactive"/>
+    </event>
+
+    <event name="report_ip" since="2">
+      <description summary="show the device address now">
+        The user asked for the device address, by pressing the IP-report
+        button. The overlay puts its connect-info screen up on the same timer
+        a boot uses, or the failure screen where the device has no address.
+        It may also decline: the lifecycle may still be unknown, a setup flow
+        may be on screen, or a boot may be about to show the address anyway.
+        The overlay decides; this event only asks.
+
+        Unlike the other events this describes neither a condition
+        nor a transition, so it is never replayed: a request to show something
+        now is spent the moment it is delivered, and a client binding later
+        is not the client that asked.
+
+        The address is not an argument. The overlay reads it
+        from the same connectivity source its boot screens use,
+        so a second source could only disagree with the first.
+      </description>
     </event>
   </interface>
 </protocol>

@@ -93,13 +93,15 @@ edge-triggered emit) is in [`compositor-integration.md`](compositor-integration.
 
 ## `deck_device_info_v1`
 
-New for the device-info overlay. A one-way, event-only state feed: bmc owns the device lifecycle (setup mode, WiFi
-provisioning) and its recovery policies, and this interface mirrors that state to the overlay for display. There is
-deliberately no control path — everything the user can trigger from these screens is either overlay-local (touch dismiss
-of the operational flow) or owned by bmc's own policy timers, so the compositor dispatch is pure fan-out with a replay
-cache and needs no command channel back to bmc.
+New for the device-info overlay. A one-way, event-only feed: bmc owns the device lifecycle (setup mode, WiFi
+provisioning) and its recovery policies, and this interface mirrors that state to the overlay for display. The overlay
+sends nothing back — everything the user can trigger from these screens is either overlay-local (touch dismiss of the
+operational flow) or owned by bmc's own policy timers, so the compositor dispatch is pure fan-out with a replay cache
+and needs no command channel back to bmc.
 
-### `deck_device_info_v1` (version 1)
+### `deck_device_info_v1` (version 2)
+
+Version 2 adds `report_ip`, which the IP-report button drives.
 
 | Member                                     | Kind    | Args                                             | Notes                                                                                                                                                                      |
 | ------------------------------------------ | ------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,11 +109,13 @@ cache and needs no command channel back to bmc.
 | `device_state(state, boot_flow_delivered)` | event   | `state: uint(enum)`, `boot_flow_delivered: uint` | bmc's `BmcState`; selects the flow. Emitted on bind and on change. See "Once-per-session" below.                                                                           |
 | `setup_progress(state, wifi_ssid)`         | event   | `state: uint(enum)`, `wifi_ssid: string`         | Setup-flow transition (`InitSetupState` + an `idle` entry, with the two `unexpected_error` variants split into their own entries). SSID set only for `connecting_to_wifi`. |
 | `access_point(ssid, setup_url)`            | event   | `ssid: string`, `setup_url: string`              | Setup-AP SSID and wizard URL, e.g. `http://10.0.0.21/`. Both empty while the AP is down.                                                                                   |
+| `report_ip`                                | event   | —, v2                                            | The user pressed the IP-report button. The overlay raises its operational connect-info screen. Edge-driven; not replayed on bind. See "The IP-report button" below.        |
 
-**Replay-on-bind.** Each event's last value is cached compositor-side and replayed on bind, so a late-binding overlay
-starts from the complete picture. `device_state` is replayed only once known — an overlay bound before bmc is up keeps
-waiting instead of acting on a guessed lifecycle state. `access_point` replays empty strings while the AP is down
-(mirroring `wifi_ap`).
+**Replay-on-bind.** The last value of each of the three state events is cached compositor-side and replayed on bind, so
+a late-binding overlay starts from the complete picture; `report_ip` is not a state and is never replayed (see "The
+IP-report button" below). `device_state` is replayed only once known — an overlay bound before bmc is up keeps waiting
+instead of acting on a guessed lifecycle state. `access_point` replays empty strings while the AP is down (mirroring
+`wifi_ap`).
 
 `setup_progress` is the one event that is **not** replayed verbatim, because it is the only one describing a
 *transition* rather than a current condition. The replay carries only the steps a client cannot reconstruct from the
@@ -140,8 +144,13 @@ it costs a screen only where two steps are microseconds apart: a join that fails
 queue would fix it and has not been needed. The `access_point` event deliberately duplicates the settings protocol's
 `wifi_ap` (bmc broadcasts once, the compositor fans out to both) so the device-info overlay does not bind
 `deck_settings_v1`, which carries tray semantics (preemption, brightness). A retry/reconfigure control on the failure
-screens was considered and dropped — recovery lives in the settings tray — and would be a v2 version bump adding a
-request plus the inbound command plumbing.
+screens was considered and dropped — recovery lives in the settings tray — and would be a version bump adding a request
+plus the inbound command plumbing.
+
+**The IP-report button.** `report_ip` is the one event that describes neither a condition nor a transition: it is bmc
+asking for a screen on the user's behalf after a short press. Nothing caches it, nothing replays it, and it carries no
+address; the event's description in the protocol XML has the reasoning for both. What the overlay shows in answer, and
+when it declines, is in [`overlays.md`](overlays.md) under "IP-report button".
 
 ## `deck_alarm_v1`
 
