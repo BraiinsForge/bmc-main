@@ -24,13 +24,16 @@ wizard URL (so the overlay hard-codes no AP addressing). The displayed device ad
 prober's `station_ipv4` — the pick that excludes AP-mode interfaces, so the setup AP's own address never counts as an
 uplink. Until the first `device_state` event the overlay stays unmapped rather than guess a flow.
 
-All three events replay on bind, but the overlay is careful about what a replay is allowed to start, because a restarted
-overlay binds with no memory of what it already showed. The **setup** screens reflect a standing condition — the device
-really is waiting in setup right now — so they are re-derived on every bind, and the setup connect-info comes back on
-its own from `device_state` plus the station address. The **operational connect** screens are a boot sequence instead:
-they run once per session, gated on `device_state`'s `boot_flow_delivered` flag, so a restart neither replays them over
-the scenes nor undoes a dismissal. On the setup side the same distinction is drawn compositor-side, by not replaying the
-announcement steps.
+A fourth event, `report_ip`, is the IP-report button reaching the overlay: it raises the operational connect-info screen
+on demand, on the same timer a boot uses. See "IP-report button" below.
+
+The three state events replay on bind, but the overlay is careful about what a replay is allowed to start, because a
+restarted overlay binds with no memory of what it already showed. The **setup** screens reflect a standing condition —
+the device really is waiting in setup right now — so they are re-derived on every bind, and the setup connect-info comes
+back on its own from `device_state` plus the station address. The **operational connect** screens are a boot sequence
+instead: they run once per session, gated on `device_state`'s `boot_flow_delivered` flag, so a restart neither replays
+them over the scenes nor undoes a dismissal. On the setup side the same distinction is drawn compositor-side, by not
+replaying the announcement steps.
 
 Every screen-hold timer lives in the overlay; bmc emits transitions the moment they happen (recovery policies — the
 no-IP factory reset, and a reboot when the setup AP will not come up on a device that has nothing to fall back to — stay
@@ -70,6 +73,26 @@ connect-progress screen would be a dead end — no bmc event is coming, there is
 touch — while the address is exactly what the user still needs to finish the wizard in a browser. The screens render
 through the `bmc-render` tree pipeline with the six legacy init-setup SVG icons embedded at build time; every screen has
 a gallery cell (`overlays.scene.rs`).
+
+### IP-report button
+
+A `report_ip` event puts the device address back on screen after the boot sequence is long gone: the overlay raises the
+operational connect-info screen for its usual 10 s, or the failure screen where the device has no address, since a press
+deserves an answer either way.
+
+The address comes from the same connectivity prober the boot screens read. Its thread keeps publishing while the overlay
+is unmapped, and a publish that changed the content moves the snapshot version, so the poll on the press picks up
+whatever changed while nothing was watching.
+
+Three conditions gate the press: the device must be operational, no setup flow may be live on screen, and a boot must
+not still be on its connect or post-upgrade screen. A setup screen hands back to the scenes when it expires and a device
+mid-setup has none to hand back to, and reconfiguration reaches `operational` before its closing setup event, which is
+why the lifecycle state alone does not decide it. A fatal screen the user can dismiss, the one drawn with the close
+glyph, is not a live flow: a press replaces it the way a touch would, and shows the address where the touch shows
+nothing. A fatal waiting for a restart stays, as it does for a touch. A boot's connect screen is about to show the
+address on its own, and a press before the lease arrives would replace the wait with a failure screen the lease could
+never undo. `boot_flow_delivered` is deliberately ignored: it exists so a restarted overlay does not replay a *boot*
+sequence, and a button press is not a boot.
 
 ### Opening after an upgrade
 

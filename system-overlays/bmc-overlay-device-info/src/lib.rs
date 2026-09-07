@@ -525,6 +525,29 @@ impl SystemOverlay for DeviceInfoOverlay {
         self.dirty = true;
     }
 
+    /// Put the operational connect-info screen back up, on its usual timer,
+    /// or the failure screen when there is no address. When it declines,
+    /// `docs/devel/system-overlays/overlays.md` ("IP-report button") has the reasons.
+    fn on_report_ip(&mut self) {
+        if self.mode != Mode::Operational
+            || self.screen.setup_in_progress()
+            || matches!(
+                self.screen,
+                Screen::OpConnecting { .. } | Screen::OpUpgraded { .. }
+            )
+        {
+            tracing::debug!(mode = ?self.mode, screen = ?self.screen, "ignoring report_ip");
+            return;
+        }
+        self.refresh_from_snapshot();
+        let now = Instant::now();
+        self.screen = match self.station_ip {
+            Some(ip) => Screen::OpSuccess { since: now, ip },
+            None => Screen::OpFailed { since: now },
+        };
+        self.dirty = true;
+    }
+
     fn uses_upgrade(&self) -> bool {
         true
     }
@@ -600,6 +623,9 @@ impl SystemOverlay for DeviceInfoOverlay {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use bmc_system_overlay::Snapshot;
 
     use super::*;
@@ -615,36 +641,50 @@ mod tests {
         }
     }
 
-    struct StaticEnv {
-        snapshot: Option<Snapshot>,
-    }
+    /// A prober the test publishes to, versioned like the real one:
+    /// each publish is a new version, and a reader that has folded
+    /// the current one in gets no re-read.
+    #[derive(Clone, Default)]
+    struct Prober(Rc<RefCell<Option<VersionedSnapshot>>>);
 
-    impl Env for StaticEnv {
-        fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
-            // Mimic the prober contract: the fixed snapshot is the first
-            // version, so a caller that has folded it in gets no re-read.
-            if seen.is_some() {
-                return None;
-            }
-            self.snapshot.clone().map(|snapshot| VersionedSnapshot {
-                version: SnapshotVersion::FIRST,
-                snapshot,
-            })
-        }
-    }
-
-    fn overlay_with_ip(ip: Option<Ipv4Addr>) -> DeviceInfoOverlay {
-        DeviceInfoOverlay {
-            env: Box::new(StaticEnv {
-                snapshot: Some(Snapshot {
+    impl Prober {
+        fn publish(&self, ip: Option<Ipv4Addr>) {
+            let mut slot = self.0.borrow_mut();
+            let version = slot
+                .as_ref()
+                .map_or(SnapshotVersion::FIRST, |latest| latest.version.next());
+            *slot = Some(VersionedSnapshot {
+                version,
+                snapshot: Snapshot {
                     ipv4: ip,
                     station_ipv4: ip,
                     station_ssid: None,
                     wifi_signal_dbm: None,
-                }),
-            }),
-            ..DeviceInfoOverlay::default()
+                },
+            });
         }
+    }
+
+    impl Env for Prober {
+        fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+            let slot = self.0.borrow();
+            let latest = slot.as_ref()?;
+            (seen != Some(latest.version)).then(|| latest.clone())
+        }
+    }
+
+    fn overlay_with_prober(ip: Option<Ipv4Addr>) -> (DeviceInfoOverlay, Prober) {
+        let prober = Prober::default();
+        prober.publish(ip);
+        let overlay = DeviceInfoOverlay {
+            env: Box::new(prober.clone()),
+            ..DeviceInfoOverlay::default()
+        };
+        (overlay, prober)
+    }
+
+    fn overlay_with_ip(ip: Option<Ipv4Addr>) -> DeviceInfoOverlay {
+        overlay_with_prober(ip).0
     }
 
     fn succeeded(kind: UpgradeKind, remaining: Duration) -> UpgradeSnapshot {
@@ -1167,5 +1207,158 @@ mod tests {
         let tick = overlay.tick(t0());
         assert!(!tick.visible);
         assert_eq!(tick.next_wake, None);
+    }
+
+    /// A device sitting on its scenes, its boot sequence long spent.
+    fn dismissed_operational(ip: Option<Ipv4Addr>) -> DeviceInfoOverlay {
+        let mut overlay = overlay_with_ip(ip);
+        overlay.on_device_state(DeviceState::Operational, true);
+        let _ = overlay.tick(t0());
+        assert_eq!(overlay.screen, Screen::Hidden);
+        overlay
+    }
+
+    #[test]
+    fn the_button_brings_the_address_back_after_the_boot_flow_is_spent() {
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let mut overlay = dismissed_operational(Some(ip));
+
+        overlay.on_report_ip();
+        let start = t0();
+        let tick = overlay.tick(start);
+
+        assert!(tick.visible);
+        assert_eq!(overlay.view(), DeviceInfoView::Success { ip });
+        assert!(
+            !overlay.tick(start + SUCCESS_VISIBLE_FOR + POLL).visible,
+            "the screen must hand back to the scenes on its own timer"
+        );
+    }
+
+    #[test]
+    fn the_button_answers_with_the_failure_screen_when_there_is_no_address() {
+        let mut overlay = dismissed_operational(None);
+
+        overlay.on_report_ip();
+        let _ = overlay.tick(t0());
+
+        assert_eq!(overlay.view(), DeviceInfoView::Failed { ssid: None });
+    }
+
+    #[test]
+    fn the_button_shows_the_address_that_changed_while_the_screen_was_away() {
+        let (mut overlay, prober) = overlay_with_prober(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational, true);
+        let _ = overlay.tick(t0());
+        assert_eq!(overlay.screen, Screen::Hidden);
+        let renewed = Ipv4Addr::new(10, 0, 0, 7);
+        prober.publish(Some(renewed));
+
+        overlay.on_report_ip();
+
+        assert!(matches!(overlay.screen, Screen::OpSuccess { ip, .. } if ip == renewed));
+    }
+
+    #[test]
+    fn the_button_leaves_a_boot_still_waiting_for_its_address_alone() {
+        let (mut overlay, prober) = overlay_with_prober(None);
+        overlay.on_device_state(DeviceState::Operational, false);
+        let start = t0();
+        let _ = overlay.tick(start);
+        assert!(matches!(overlay.screen, Screen::OpConnecting { .. }));
+
+        overlay.on_report_ip();
+
+        assert!(
+            matches!(overlay.screen, Screen::OpConnecting { .. }),
+            "a press before the lease must not end the wait with a failure screen"
+        );
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        prober.publish(Some(ip));
+        let _ = overlay.tick(start + POLL);
+        assert_eq!(overlay.view(), DeviceInfoView::Success { ip });
+    }
+
+    #[test]
+    fn the_button_leaves_the_post_upgrade_screen_alone() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        overlay.on_device_state(DeviceState::Operational, false);
+        assert!(matches!(overlay.screen, Screen::OpUpgraded { .. }));
+
+        overlay.on_report_ip();
+
+        assert!(matches!(overlay.screen, Screen::OpUpgraded { .. }));
+    }
+
+    #[test]
+    fn the_button_leaves_a_setup_flow_alone() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_access_point(Some(&setup_ap()));
+
+        overlay.on_report_ip();
+
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupStart,
+            "a device mid-setup has no scenes to hand back to"
+        );
+    }
+
+    /// A reconfiguration that died after the lifecycle already went operational.
+    fn fatal_over_scenes(restarting: bool) -> DeviceInfoOverlay {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_device_state(DeviceState::Operational, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting }, "");
+        assert!(matches!(overlay.screen, Screen::SetupFatal { .. }));
+        overlay
+    }
+
+    #[test]
+    fn the_button_sends_a_dismissible_fatal_away_like_a_touch_would() {
+        let mut overlay = fatal_over_scenes(false);
+        assert!(
+            overlay.fatal_dismissible(),
+            "the screen draws the close glyph"
+        );
+
+        overlay.on_report_ip();
+
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::Success {
+                ip: Ipv4Addr::new(10, 0, 0, 5)
+            }
+        );
+    }
+
+    #[test]
+    fn the_button_leaves_a_pending_restart_on_screen() {
+        let mut overlay = fatal_over_scenes(true);
+        assert!(
+            !overlay.fatal_dismissible(),
+            "the screen draws no close glyph"
+        );
+
+        overlay.on_report_ip();
+
+        assert!(matches!(
+            overlay.screen,
+            Screen::SetupFatal {
+                restarting: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn the_button_does_nothing_before_the_lifecycle_is_known() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+
+        overlay.on_report_ip();
+
+        assert_eq!(overlay.screen, Screen::Hidden);
     }
 }

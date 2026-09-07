@@ -436,6 +436,10 @@ pub trait SystemOverlay {
     /// `None` means the AP is down.
     fn on_access_point(&mut self, _ap: Option<&AccessPoint>) {}
 
+    /// The user pressed the IP-report button and wants the device address
+    /// on screen. Delivered before `tick`, never replayed on bind.
+    fn on_report_ip(&mut self) {}
+
     /// Opt in to screen-edge reveal. `None` (default) means a normal overlay
     /// whose visibility is driven by [`TickOutcome::visible`]. `Some(edge)` arms
     /// that edge at startup: the surface stays hidden (no buffer) until the

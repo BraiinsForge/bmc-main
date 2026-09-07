@@ -258,6 +258,9 @@ fn deliver_device_info_events(client: &mut LayerSurfaceClient, overlay: &mut dyn
     if let Some(ap) = client.take_access_point() {
         overlay.on_access_point(ap.as_ref());
     }
+    if client.take_report_ip() {
+        overlay.on_report_ip();
+    }
 }
 
 fn forward_alarm_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {

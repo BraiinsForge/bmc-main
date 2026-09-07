@@ -101,7 +101,8 @@ the compositor free of a dependency into the overlay folder:
 
 - `deck-screen-edge-v1` — top/bottom edge swipe-reveal (`deck_screen_edge_v1`).
 - `deck-settings-v1` — compositor-relayed settings control and modal-overlay preemption (`deck_settings_v1`).
-- `deck-device-info-v1` — one-way device-lifecycle and setup-progress state (`deck_device_info_v1`).
+- `deck-device-info-v1` — one-way device-lifecycle and setup-progress state, plus the IP-report button's display request
+  (`deck_device_info_v1`).
 - `deck-alarm-v1` — firing-alarm ring/stop signalling and dismiss/snooze return path (`deck_alarm_v1`).
 - `deck-upgrade-v1` — one-way upgrade-progress snapshots (`deck_upgrade_v1`).
 

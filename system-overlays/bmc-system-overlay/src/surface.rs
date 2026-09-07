@@ -145,6 +145,10 @@ struct State {
         reason = "outer Option latches event-arrived; inner Option carries AP up/down"
     )]
     pending_access_point: Option<Option<crate::overlay::AccessPoint>>,
+    /// Latched `report_ip`. A bool, not a count:
+    /// two presses in one dispatch round ask for the same screen,
+    /// and the second would only restart a hold the first had barely begun.
+    pending_report_ip: bool,
 
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
@@ -209,6 +213,7 @@ impl Default for State {
             pending_device_lifecycle: None,
             pending_setup_progress: None,
             pending_access_point: None,
+            pending_report_ip: false,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -694,6 +699,10 @@ impl LayerSurfaceClient {
         self.state.pending_access_point.take()
     }
 
+    pub fn take_report_ip(&mut self) -> bool {
+        std::mem::take(&mut self.state.pending_report_ip)
+    }
+
     pub fn send_settings_request(
         &self,
         req: crate::overlay::SettingsRequest,
@@ -862,7 +871,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "deck_device_info_v1" if state.wants_device_info => {
                     let device_info =
-                        registry.bind::<DeckDeviceInfoV1, _, _>(name, version.min(1), qh, ());
+                        registry.bind::<DeckDeviceInfoV1, _, _>(name, version.min(2), qh, ());
                     state.device_info = Some(device_info);
                 }
                 _ => {}
@@ -1103,6 +1112,7 @@ impl Dispatch<DeckDeviceInfoV1, ()> for State {
                     (!ssid.is_empty()).then_some(crate::overlay::AccessPoint { ssid, setup_url });
                 state.pending_access_point = Some(ap);
             }
+            deck_device_info_v1::Event::ReportIp => state.pending_report_ip = true,
             other => tracing::debug!(?other, "unhandled deck_device_info_v1 event"),
         }
     }

@@ -207,6 +207,9 @@ impl HostedOverlay {
             if let Some(ap) = self.client.take_access_point() {
                 self.overlay.on_access_point(ap.as_ref());
             }
+            if self.client.take_report_ip() {
+                self.overlay.on_report_ip();
+            }
         }
         for released in self.client.drain_released_buffers() {
             self.target.mark_released_buffer(&released);
