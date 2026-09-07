@@ -157,6 +157,14 @@ record WIDGET *ARGS:
 
 # === Visual regression ===
 
+# Which catalog targets each widget's manifest admits. FORMAT: table, markdown or json.
+support-matrix FORMAT="table" ARGS="":
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- \
+        support-matrix \
+            --workspace {{ dir }}/../widgets-wasm-examples \
+            --workspace {{ dir }}/../widgets-wasm \
+            --format {{ FORMAT }} {{ ARGS }}
+
 # Capture a single widget. Extra args go to the capture binary.
 capture WIDGET ARGS="":
     #!/usr/bin/env bash

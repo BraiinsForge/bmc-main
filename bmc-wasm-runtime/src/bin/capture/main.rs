@@ -31,6 +31,7 @@ mod preview;
 mod run;
 mod run_all;
 mod set_baseline;
+mod support_matrix;
 mod tools;
 mod verify;
 
@@ -190,6 +191,20 @@ enum Command {
         /// Path to the widget's output directory (contains `current/`).
         #[arg(long)]
         output: PathBuf,
+    },
+    /// Report which catalog targets each widget's manifest admits.
+    /// Reads manifests only — no build, no wasm, no GL.
+    SupportMatrix {
+        // Not `WorkspaceArgs`: nothing here is built, so `--wasm-dir` has nothing to point at.
+        /// Cargo workspace containing widget crates (repeatable).
+        #[arg(long, required = true)]
+        workspace: Vec<PathBuf>,
+        /// Sweep only this platform (e.g. "bmm101") instead of the whole catalog.
+        #[arg(long)]
+        platform: Option<String>,
+        /// How to write the grid out.
+        #[arg(long, value_enum, default_value = "table")]
+        format: support_matrix::Format,
     },
     /// Generate a default capture/config.toml template.
     Init {
@@ -372,6 +387,15 @@ fn dispatch() -> Result<()> {
         } => set_baseline::execute(&set_baseline::SetBaselineArgs {
             capture_dir,
             output,
+        }),
+        Command::SupportMatrix {
+            workspace,
+            platform,
+            format,
+        } => support_matrix::execute(&support_matrix::SupportMatrixArgs {
+            workspaces: workspace,
+            platform,
+            format,
         }),
         Command::Init { dir } => run::write_default_capture_config(&dir),
     }
