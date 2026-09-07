@@ -27,8 +27,8 @@ is in [`../wasm-widgets/display-geometry.md`](../wasm-widgets/display-geometry.m
 in widget code"), and it holds here for the same reason. A product name in a layout decision hides what the decision is
 actually about, and the next display that ships has to be added to a match arm instead of just landing in a bucket.
 
-So: sizes, thresholds and tier tables read width and height. `bmc_overlay_upgrade::package_surface` is keyed that way.
-Round versus rectangular is display *shape*, part of the geometry, not a product gate.
+So: sizes, thresholds and tier tables read width and height. `bmc_overlay_upgrade::SurfaceTier` is keyed that way. Round
+versus rectangular is display *shape*, part of the geometry, not a product gate.
 
 `Product` stays legitimate for capabilities — whether the board has a speaker, or drives its setup AP through a radio
 the overlay can speak to. Those are not readable off a screen size. The settings tray's `wifi_reconfig_supported` and
@@ -44,7 +44,7 @@ display to be.
 Prefer the configured size. Reach for the profile only where the configured size does not exist yet: `layer_config()` is
 read before any configure arrives, so an overlay asking for a concrete surface size has to state one up front.
 `bmc_overlay_upgrade::packages()` does exactly that and nothing more — it reads the profile's display once, hands the
-numbers to `package_surface`, and never consults the product again.
+numbers to `SurfaceTier::for_package_display`, and never consults the product again.
 
 An overlay that anchors to all four edges avoids the problem entirely by passing `size: (0, 0)` and taking whatever the
 compositor gives it. The settings tray does that in `layer_config`, and the configured size becomes the taffy root box

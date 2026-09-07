@@ -38,10 +38,7 @@ use bmc_overlay_offline::{OfflineView, render_offline};
 use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
 };
-use bmc_overlay_upgrade::{
-    PackageSurface, Placement, Surface, UpgradeRenderState, UpgradeView, package_surface,
-    render_upgrade,
-};
+use bmc_overlay_upgrade::{Surface, SurfaceTier, UpgradeRenderState, UpgradeView, render_upgrade};
 use bmc_platform::{HardwareProfile, Product};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
@@ -273,14 +270,14 @@ fn upgrade_cell(
     view: UpgradeView,
     state_key: &'static LocalKey<RefCell<UpgradeRenderState>>,
     flat: bool,
-    placement: Placement,
+    tier: SurfaceTier,
 ) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
         let surface = Surface {
             width: w as u32,
             height: h as u32,
-            placement,
+            tier,
         };
         state_key.with_borrow_mut(|state| {
             render_upgrade(r, surface, state, &view, Instant::now());
@@ -296,7 +293,7 @@ fn upgrade_cell(
 struct Section {
     title: &'static str,
     size: (u32, u32),
-    placement: Placement,
+    tier: SurfaceTier,
 }
 
 fn upgrade_stage(
@@ -313,7 +310,7 @@ fn upgrade_stage(
     ctx.custom_stage(
         ui,
         section.size,
-        upgrade_cell(view, state, flat, section.placement),
+        upgrade_cell(view, state, flat, section.tier),
     );
 }
 
@@ -857,16 +854,13 @@ fn upgrade_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
     let firmware_surface = Section {
         title: "Firmware",
         size: fullscreen,
-        placement: Placement::Fullscreen,
+        tier: SurfaceTier::fullscreen_for_width(display.logical_width),
     };
-    let package_surface = package_surface(fullscreen);
+    let package_tier = SurfaceTier::for_package_display(fullscreen);
     let package_surface = Section {
         title: "Packages",
-        size: match package_surface {
-            PackageSurface::Card(size) => size,
-            PackageSurface::Fullscreen => fullscreen,
-        },
-        placement: package_surface.placement(),
+        size: package_tier.card_size().unwrap_or(fullscreen),
+        tier: package_tier,
     };
 
     // A download the server sized, and one it did not:

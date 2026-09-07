@@ -229,7 +229,8 @@ rejected: it would add runtime surface reconfiguration to the overlay framework 
 ### Package surfaces
 
 The firmware surface is full-screen everywhere and takes whatever size the compositor configures. The package surface
-comes from `package_surface(display)`, keyed on the display width, because `LayerConfig` is read before any size exists:
+comes from `SurfaceTier::for_package_display(display)`, keyed on the display width, because `LayerConfig` is read before
+any size exists:
 
 | Display width | Package surface                                                         | Displays         |
 | ------------- | ----------------------------------------------------------------------- | ---------------- |
@@ -252,9 +253,9 @@ over the screen instead of being covered by it.
 
 ### Sizing tiers
 
-`build_upgrade_tree` takes a `Surface` (size plus `Placement`) and reads its numbers from a `Tier` chosen by `tier_for`.
-Type and icons do not scale linearly with a display, so each tier states its own numbers instead of deriving them from a
-factor. Thresholds sit in the gaps between the surfaces that exist, so no product lands near an edge:
+`build_upgrade_tree` takes a `Surface` — a size plus the `SurfaceTier` it is — and reads its numbers from a `Tier` that
+`tier_for` looks up, one entry per variant. Type and icons do not scale linearly with a display, so each tier states its
+own numbers instead of deriving them from a factor.
 
 | Tier          | Serves                         | Of note                                                  |
 | ------------- | ------------------------------ | -------------------------------------------------------- |
@@ -266,13 +267,19 @@ factor. Thresholds sit in the gaps between the surfaces that exist, so no produc
 
 The icon's top edge is one of those numbers, fixed per tier, and everything else is laid out downwards from it.
 
+Every width threshold lives on `SurfaceTier` in `lib.rs`, so nothing downstream re-derives a tier from a size: adding a
+surface means adding a variant, and the compiler then points at each match that has not handled it. The two cuts there
+ask different questions — `for_package_display` whether a card leaves its widget visible, `fullscreen_for_width` whether
+the type stays legible — and reach the same answer on every display that exists only because both sets of thresholds sit
+in the gaps between 320, 480 and 1280. Neither is derived from the other, and they are free to diverge.
+
 Two content decisions belong to the tier rather than to the kind, because narrow surfaces drive them: whether the
 determinate screen draws the transferred/total byte counts, and whether its caption drops the subject noun
 (`UpgradePhase::short_label`). Everything else keyed on presentation stays keyed on the upgrade kind — the safety text
 is a firmware screen's, and the activity bar under a phase with no byte totals is a package screen's.
 
-The two edge dividers key off `Placement`, not the kind: they exist to give a card an extent against the black widgets
-it overlaps, and a full-screen package surface has nothing beside it.
+The two edge dividers key off `SurfaceTier::is_card`, not the kind: they exist to give a card an extent against the
+black widgets it overlaps, and a full-screen package surface has nothing beside it.
 
 A canvas text draw is always a single unwrapped line — `max_width` and `text_overflow` never reach the layout — so the
 one tier that needs wrapping draws the safety text through `DrawCommand::AutofitText`, whose paragraph path takes a box.

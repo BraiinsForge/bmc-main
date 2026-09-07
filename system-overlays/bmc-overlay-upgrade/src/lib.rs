@@ -33,7 +33,7 @@ use bmc_system_overlay::{
 };
 
 use crate::icons::UpgradeIcons;
-pub use crate::ui::{Placement, Surface};
+pub use crate::ui::Surface;
 
 // Package realization can run for minutes under CPU and flash load, so keep
 // the indeterminate bar at 10 fps.
@@ -51,43 +51,80 @@ const LARGE_CARD_MIN_DISPLAY_WIDTH: u32 = 960;
 /// Narrowest display that still leaves room beside the small card.
 const SMALL_CARD_MIN_DISPLAY_WIDTH: u32 = 400;
 
-/// How the package overlay sits on the display.
+/// Narrowest fullscreen surface that carries the largest type and icon.
+const FULLSCREEN_LARGE_MIN_WIDTH: u32 = 960;
+
+/// Narrowest fullscreen surface whose safety warning still fits on one line.
+/// Below it the type steps down and the warning wraps.
+const FULLSCREEN_MEDIUM_MIN_WIDTH: u32 = 400;
+
+/// One of the five upgrade surfaces: two corner-card sizes, and three scales
+/// for a fullscreen surface.
+///
+/// Every width cut lives on this type, so nothing downstream re-derives
+/// a tier from a size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackageSurface {
-    /// A corner card of this size, leaving the widget beside it visible.
-    Card((u32, u32)),
-    /// The whole display, because a card holding the same content would cover
-    /// most of it anyway. Still passive: it covers the widget without becoming
-    /// modal, so nothing about a package upgrade blocks the device.
-    Fullscreen,
+pub enum SurfaceTier {
+    FullscreenLarge,
+    FullscreenMedium,
+    FullscreenSmall,
+    CardLarge,
+    CardSmall,
 }
 
-impl PackageSurface {
+impl SurfaceTier {
+    /// The tier for a surface `width` px across that takes the whole display.
+    ///
+    /// This cut asks whether the type stays legible;
+    /// [`Self::for_package_display`] asks whether a card leaves its widget
+    /// visible. Both sit in the gaps between the widths that exist (320, 480
+    /// and 1280), so they agree today and neither is derived from the other.
     #[must_use]
-    pub fn placement(self) -> Placement {
-        match self {
-            Self::Card(_) => Placement::Card,
-            Self::Fullscreen => Placement::Fullscreen,
+    pub fn fullscreen_for_width(width: u32) -> Self {
+        if width >= FULLSCREEN_LARGE_MIN_WIDTH {
+            Self::FullscreenLarge
+        } else if width >= FULLSCREEN_MEDIUM_MIN_WIDTH {
+            Self::FullscreenMedium
+        } else {
+            Self::FullscreenSmall
         }
     }
-}
 
-/// Where the package overlay sits on a `display` of this size.
-///
-/// Keyed on the display, never on the product: a card has to leave its widget
-/// visible beside it, and that is a question about pixels. Width alone decides
-/// it, because the card is wider than it is tall and no display is taller than
-/// it is wide. Thresholds sit in the gaps between the widths that exist (320,
-/// 480 and 1280), so no display lands near an edge.
-#[must_use]
-pub fn package_surface(display: (u32, u32)) -> PackageSurface {
-    let width = display.0;
-    if width >= LARGE_CARD_MIN_DISPLAY_WIDTH {
-        PackageSurface::Card(PACKAGE_CARD_SURFACE_SIZE_LARGE)
-    } else if width >= SMALL_CARD_MIN_DISPLAY_WIDTH {
-        PackageSurface::Card(PACKAGE_CARD_SURFACE_SIZE_SMALL)
-    } else {
-        PackageSurface::Fullscreen
+    /// The tier the package overlay takes on a `display` of this size.
+    ///
+    /// Keyed on the display, never on the product: a card has to leave its widget
+    /// visible beside it, and that is a question about pixels.
+    /// Width alone decides it, because the card is wider than it is tall
+    /// and no display is taller than it is wide.
+    /// Where no card fits, the surface takes the display and stays passive:
+    /// it covers the widget without becoming modal,
+    /// so nothing about a package upgrade blocks the device.
+    #[must_use]
+    pub fn for_package_display(display: (u32, u32)) -> Self {
+        let width = display.0;
+        if width >= LARGE_CARD_MIN_DISPLAY_WIDTH {
+            Self::CardLarge
+        } else if width >= SMALL_CARD_MIN_DISPLAY_WIDTH {
+            Self::CardSmall
+        } else {
+            Self::fullscreen_for_width(width)
+        }
+    }
+
+    /// The fixed size a card asks for, or `None` when the surface takes
+    /// whatever size the compositor configures.
+    #[must_use]
+    pub fn card_size(self) -> Option<(u32, u32)> {
+        match self {
+            Self::CardLarge => Some(PACKAGE_CARD_SURFACE_SIZE_LARGE),
+            Self::CardSmall => Some(PACKAGE_CARD_SURFACE_SIZE_SMALL),
+            Self::FullscreenLarge | Self::FullscreenMedium | Self::FullscreenSmall => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_card(self) -> bool {
+        self.card_size().is_some()
     }
 }
 
@@ -175,7 +212,11 @@ pub fn render_upgrade(
 
 struct OverlayState {
     kind: UpgradeKind,
-    placement: Placement,
+    /// The tier fixed from the display, because `layer_config` is read
+    /// before the compositor configures a size.
+    /// `None` for a surface that takes the display and reads its tier
+    /// off the size it is configured with.
+    fixed_tier: Option<SurfaceTier>,
     view: Option<UpgradeView>,
     terminal_deadline: Option<Instant>,
     dirty: bool,
@@ -183,10 +224,10 @@ struct OverlayState {
 }
 
 impl OverlayState {
-    fn new(kind: UpgradeKind, placement: Placement) -> Self {
+    fn new(kind: UpgradeKind, fixed_tier: Option<SurfaceTier>) -> Self {
         Self {
             kind,
-            placement,
+            fixed_tier,
             view: None,
             terminal_deadline: None,
             dirty: false,
@@ -254,7 +295,9 @@ impl OverlayState {
             let surface = Surface {
                 width: size.0,
                 height: size.1,
-                placement: self.placement,
+                tier: self
+                    .fixed_tier
+                    .unwrap_or_else(|| SurfaceTier::fullscreen_for_width(size.0)),
             };
             render_upgrade(
                 renderer,
@@ -273,17 +316,13 @@ impl OverlayState {
 )]
 pub struct UpgradeOverlay {
     state: OverlayState,
-    /// Only the package surface reads it, and only for its placement: the
-    /// firmware surface is fullscreen on every product.
-    package_surface: PackageSurface,
 }
 
 impl UpgradeOverlay {
     #[must_use]
     pub fn firmware() -> Self {
         Self {
-            state: OverlayState::new(UpgradeKind::Firmware, Placement::Fullscreen),
-            package_surface: PackageSurface::Fullscreen,
+            state: OverlayState::new(UpgradeKind::Firmware, None),
         }
     }
 
@@ -301,10 +340,11 @@ impl UpgradeOverlay {
 
     #[must_use]
     pub fn packages_for_display(display: (u32, u32)) -> Self {
-        let package_surface = package_surface(display);
         Self {
-            state: OverlayState::new(UpgradeKind::Packages, package_surface.placement()),
-            package_surface,
+            state: OverlayState::new(
+                UpgradeKind::Packages,
+                Some(SurfaceTier::for_package_display(display)),
+            ),
         }
     }
 }
@@ -318,18 +358,16 @@ impl SystemOverlay for UpgradeOverlay {
             // interactive either way.
             UpgradeKind::Packages => LayerConfig {
                 layer: Layer::Bottom,
-                anchor: match self.package_surface {
-                    PackageSurface::Card(_) => Anchor::Bottom | Anchor::Right,
-                    PackageSurface::Fullscreen => {
-                        Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right
-                    }
+                anchor: if self.state.fixed_tier.is_some_and(SurfaceTier::is_card) {
+                    Anchor::Bottom | Anchor::Right
+                } else {
+                    Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right
                 },
-                // A fullscreen surface asks for (0, 0) and takes what the
-                // compositor configures.
-                size: match self.package_surface {
-                    PackageSurface::Card(size) => size,
-                    PackageSurface::Fullscreen => (0, 0),
-                },
+                size: self
+                    .state
+                    .fixed_tier
+                    .and_then(SurfaceTier::card_size)
+                    .unwrap_or((0, 0)),
                 margin_top: 0,
                 margin_right: 0,
                 margin_bottom: 0,
@@ -373,8 +411,8 @@ mod tests {
     const BFM100: (u32, u32) = (480, 480);
 
     /// Guards the fixtures above against a hardware profile moving under them,
-    /// and `package_surface`'s width-only key against a display that breaks the
-    /// assumption behind it.
+    /// and `for_package_display`'s width-only key against a display that breaks
+    /// the assumption behind it.
     #[test]
     fn every_display_matches_its_fixture_and_is_no_taller_than_it_is_wide() {
         for (product, expected) in [
@@ -388,7 +426,7 @@ mod tests {
             assert_eq!((width, height), expected, "{product:?}");
             assert!(
                 width >= height,
-                "{product:?} is {width}x{height}; package_surface keys on width alone"
+                "{product:?} is {width}x{height}; the package tier keys on width alone"
             );
         }
     }
@@ -406,7 +444,7 @@ mod tests {
     #[test]
     fn overlays_ignore_the_other_upgrade_kind() {
         let now = Instant::now();
-        let mut firmware = OverlayState::new(UpgradeKind::Firmware, Placement::Fullscreen);
+        let mut firmware = OverlayState::new(UpgradeKind::Firmware, None);
         firmware.receive(running(UpgradeKind::Packages), now);
         assert!(!firmware.tick(now).visible);
     }
@@ -414,7 +452,7 @@ mod tests {
     #[test]
     fn a_new_opposite_kind_clears_the_previous_terminal_view() {
         let now = Instant::now();
-        let mut package = OverlayState::new(UpgradeKind::Packages, Placement::Card);
+        let mut package = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
         package.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -433,7 +471,7 @@ mod tests {
     #[test]
     fn equal_snapshots_do_not_queue_another_render() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
         let snapshot = running(UpgradeKind::Packages);
         state.receive(snapshot, now);
         assert!(state.tick(now).wants_render);
@@ -444,7 +482,7 @@ mod tests {
     #[test]
     fn terminal_countdown_updates_do_not_redraw_unchanged_content() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
         state.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -473,7 +511,7 @@ mod tests {
     #[test]
     fn active_progress_schedules_animation_frames() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
         state.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -493,7 +531,7 @@ mod tests {
     #[test]
     fn terminal_deadline_hides_the_overlay() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Packages, Placement::Card);
+        let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
         state.receive(
             UpgradeSnapshot {
                 kind: UpgradeKind::Packages,
@@ -510,7 +548,7 @@ mod tests {
     #[test]
     fn failure_replaces_running_progress_immediately() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Firmware, Placement::Fullscreen);
+        let mut state = OverlayState::new(UpgradeKind::Firmware, None);
         state.receive(running(UpgradeKind::Firmware), now);
         assert!(state.tick(now).wants_render);
 
@@ -639,8 +677,8 @@ mod tests {
     #[test]
     fn the_round_panel_takes_the_same_card_as_a_display_of_its_width() {
         assert_eq!(
-            package_surface(BFM100),
-            PackageSurface::Card(PACKAGE_CARD_SURFACE_SIZE_SMALL)
+            SurfaceTier::for_package_display(BFM100),
+            SurfaceTier::CardSmall
         );
     }
 }

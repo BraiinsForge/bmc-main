@@ -28,8 +28,8 @@ use bmc_wasm_protocol::{
     AnimProperty, Color, ColorSpace, Easing, Fill, LoopMode, SvgId, TRANSPARENT,
 };
 
-use crate::UpgradeView;
 use crate::icons::UpgradeIcons;
+use crate::{SurfaceTier, UpgradeView};
 
 const SAFETY_TEXT: &str = "Keep the device plugged in and online during the update";
 const ACTIVE_BAR_TRAVEL_MS: u32 = 800;
@@ -163,22 +163,13 @@ fn icon_for_view(view: &UpgradeView, icons: UpgradeIcons) -> Option<SvgId> {
     }
 }
 
-/// How the surface sits on the display. The two edge dividers key off this
-/// rather than off the upgrade kind: they give a card an extent against the
-/// black widgets it overlaps, and a fullscreen surface has nothing beside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Placement {
-    Fullscreen,
-    Card,
-}
-
-/// The surface a tree is built for: its logical size and how it sits on the
-/// display. Which upgrade it presents comes from the view.
+/// The surface a tree is built for: its logical size and its tier.
+/// Which upgrade it presents comes from the view.
 #[derive(Debug, Clone, Copy)]
 pub struct Surface {
     pub width: u32,
     pub height: u32,
-    pub placement: Placement,
+    pub tier: SurfaceTier,
 }
 
 /// How a tier draws the safety text — see [`safety_draw`].
@@ -192,7 +183,7 @@ enum SafetyText {
     },
 }
 
-/// Per-surface sizing, selected by placement and width in [`tier_for`].
+/// Per-surface sizing, one entry per [`SurfaceTier`].
 /// Type and icons do not scale linearly with the display, so each tier states
 /// its own numbers rather than deriving them from a factor.
 #[derive(Debug, Clone, Copy)]
@@ -300,16 +291,13 @@ const FULL_SMALL: Tier = Tier {
     ..FULL_MEDIUM
 };
 
-/// Thresholds sit in the gaps between the surfaces that exist, so no product
-/// lands near an edge: cards are 240 and 384 wide, fullscreen surfaces 320, 480
-/// and 1280.
 fn tier_for(surface: Surface) -> Tier {
-    match surface.placement {
-        Placement::Fullscreen if surface.width >= 960 => FULL_LARGE,
-        Placement::Fullscreen if surface.width >= 400 => FULL_MEDIUM,
-        Placement::Fullscreen => FULL_SMALL,
-        Placement::Card if surface.width >= 320 => CARD_LARGE,
-        Placement::Card => CARD_SMALL,
+    match surface.tier {
+        SurfaceTier::FullscreenLarge => FULL_LARGE,
+        SurfaceTier::FullscreenMedium => FULL_MEDIUM,
+        SurfaceTier::FullscreenSmall => FULL_SMALL,
+        SurfaceTier::CardLarge => CARD_LARGE,
+        SurfaceTier::CardSmall => CARD_SMALL,
     }
 }
 
@@ -431,7 +419,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
         h: height,
         fill: Fill::Solid(BLACK),
     }];
-    if surface.placement == Placement::Card {
+    if surface.tier.is_card() {
         draws.push(DrawCommand::Rect {
             x: 0.0,
             y: 0.0,
@@ -585,27 +573,27 @@ mod tests {
         }
     }
 
-    /// Draws for a view at `size`, on the placement that kind ships with:
-    /// firmware fullscreen, packages on the corner card. The cases that pair a
-    /// kind with the other placement spell the surface out instead.
+    /// Draws for a view at `size`, on the surface that kind ships with:
+    /// firmware fullscreen at the display's width, packages on that card size.
+    /// The cases that pair a kind with another tier name it instead.
     fn tree_draws(view: &UpgradeView, size: (u32, u32)) -> Vec<DrawCommand> {
-        let placement = match view.kind() {
-            UpgradeKind::Packages => Placement::Card,
-            UpgradeKind::Firmware => Placement::Fullscreen,
+        let tier = match view.kind() {
+            UpgradeKind::Firmware => SurfaceTier::fullscreen_for_width(size.0),
+            UpgradeKind::Packages => match size {
+                crate::PACKAGE_CARD_SURFACE_SIZE_LARGE => SurfaceTier::CardLarge,
+                crate::PACKAGE_CARD_SURFACE_SIZE_SMALL => SurfaceTier::CardSmall,
+                _ => panic!("BUG: no package card is {size:?}"),
+            },
             kind => panic!("BUG: unsupported upgrade kind {kind:?}"),
         };
-        surface_draws(view, size, placement)
+        surface_draws(view, size, tier)
     }
 
-    fn surface_draws(
-        view: &UpgradeView,
-        size: (u32, u32),
-        placement: Placement,
-    ) -> Vec<DrawCommand> {
+    fn surface_draws(view: &UpgradeView, size: (u32, u32), tier: SurfaceTier) -> Vec<DrawCommand> {
         let surface = Surface {
             width: size.0,
             height: size.1,
-            placement,
+            tier,
         };
         let TreeNode::Canvas { draws, .. } = build_upgrade_tree(view, surface, test_icons()) else {
             panic!("BUG: upgrade presentation must remain a canvas");
@@ -946,13 +934,29 @@ mod tests {
                 .expect("BUG: every upgrade screen draws an icon")
         };
 
-        for (kind, placement, size) in [
-            (UpgradeKind::Firmware, Placement::Fullscreen, (1_280, 480)),
-            (UpgradeKind::Firmware, Placement::Fullscreen, (480, 320)),
-            (UpgradeKind::Firmware, Placement::Fullscreen, (320, 240)),
-            (UpgradeKind::Packages, Placement::Card, (384, 192)),
-            (UpgradeKind::Packages, Placement::Card, (240, 120)),
-            (UpgradeKind::Packages, Placement::Fullscreen, (320, 240)),
+        for (kind, tier, size) in [
+            (
+                UpgradeKind::Firmware,
+                SurfaceTier::FullscreenLarge,
+                (1_280, 480),
+            ),
+            (
+                UpgradeKind::Firmware,
+                SurfaceTier::FullscreenMedium,
+                (480, 320),
+            ),
+            (
+                UpgradeKind::Firmware,
+                SurfaceTier::FullscreenSmall,
+                (320, 240),
+            ),
+            (UpgradeKind::Packages, SurfaceTier::CardLarge, (384, 192)),
+            (UpgradeKind::Packages, SurfaceTier::CardSmall, (240, 120)),
+            (
+                UpgradeKind::Packages,
+                SurfaceTier::FullscreenSmall,
+                (320, 240),
+            ),
         ] {
             let download = if kind == UpgradeKind::Firmware {
                 UpgradePhase::FirmwareDownloading
@@ -975,13 +979,13 @@ mod tests {
             ];
             let tops: Vec<f32> = views
                 .iter()
-                .map(|view| icon_y(&surface_draws(view, size, placement)))
+                .map(|view| icon_y(&surface_draws(view, size, tier)))
                 .collect();
 
             assert!(
                 tops.windows(2)
                     .all(|pair| (pair[0] - pair[1]).abs() < f32::EPSILON),
-                "{kind:?} on {placement:?} {size:?} moves its icon across phases: {tops:?}"
+                "{kind:?} on {tier:?} {size:?} moves its icon across phases: {tops:?}"
             );
         }
     }
@@ -1000,7 +1004,7 @@ mod tests {
                 }),
             ),
             crate::PACKAGE_CARD_SURFACE_SIZE_SMALL,
-            Placement::Card,
+            SurfaceTier::CardSmall,
         );
 
         assert!(matches!(
