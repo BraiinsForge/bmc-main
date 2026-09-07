@@ -675,7 +675,12 @@ where
         led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
 
         let screen_activity = Arc::new(tokio::sync::Notify::new());
-        let button_manager = ButtonManager::new(buttons, manager.clone(), screen_activity.clone());
+        let button_manager = ButtonManager::new(
+            buttons,
+            manager.clone(),
+            screen_activity.clone(),
+            compositor.clone(),
+        );
         let compositor_for_events = compositor.clone();
 
         let system_manager = SystemManager::init(

@@ -69,6 +69,7 @@ tokio-util = { workspace = true, features = ["io-util"] }
 tracing.workspace = true
 
 [dev-dependencies]
+bmc-kobject = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 wayland-client.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["client"] }

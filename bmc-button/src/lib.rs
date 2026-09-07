@@ -27,6 +27,7 @@ use futures::stream::BoxStream;
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ButtonId {
     Reset,
+    IpReport,
 }
 /// Enum to hold different button events
 #[derive(Clone, Debug)]

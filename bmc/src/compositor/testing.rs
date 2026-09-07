@@ -67,6 +67,7 @@ pub(crate) struct RecordingCompositor {
     next_parameter_error: Mutex<Option<CompositorError>>,
     credential_update_attempts: AtomicUsize,
     shutdown_calls: AtomicUsize,
+    report_ip_broadcasts: AtomicUsize,
 }
 
 impl RecordingCompositor {
@@ -86,6 +87,10 @@ impl RecordingCompositor {
 
     pub(crate) fn shutdown_call_count(&self) -> usize {
         self.shutdown_calls.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn report_ip_broadcast_count(&self) -> usize {
+        self.report_ip_broadcasts.load(Ordering::Relaxed)
     }
 
     pub(crate) fn credential_update_attempt_count(&self) -> usize {
@@ -518,6 +523,11 @@ impl Compositor for RecordingCompositor {
 
     fn shutdown(&self) -> Result<(), CompositorError> {
         self.shutdown_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn broadcast_report_ip(&self) -> Result<(), CompositorError> {
+        self.report_ip_broadcasts.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 }

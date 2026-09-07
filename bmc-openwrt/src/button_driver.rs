@@ -51,14 +51,8 @@ impl Buttons for UEventButtons {
                 // Ignore parsing errors, we don't need to handle every event
                 if let Ok(uevent) = bmc_kobject::UEvent::from_netlink_packet(&buf[..]) {
                     log::debug!("new uevent: {uevent:?}");
-                    let button_type = uevent
-                         .button.and_then(|b| match b.as_str() {
-                             "reset" => Some(ButtonId::Reset),
-                             _ => None
-                         });
-
                     // Skip unknown buttons
-                    if let Some(button_type) = button_type {
+                    if let Some(button_type) = uevent.button.as_deref().and_then(button_id) {
                         match uevent.action {
                             Some(bmc_kobject::ActionType::Pressed) => {
                                 yield Ok(ButtonEvent::Pressed(button_type))
@@ -73,6 +67,16 @@ impl Buttons for UEventButtons {
             }
         })
         .boxed())
+    }
+}
+
+/// gpio-button-hotplug names a button after its linux,code, not its device-tree
+/// label, so the BMM ip-report node arrives under the keycode's name.
+fn button_id(uevent_button: &str) -> Option<ButtonId> {
+    match uevent_button {
+        "reset" => Some(ButtonId::Reset),
+        "BTN_0" => Some(ButtonId::IpReport),
+        _ => None,
     }
 }
 
@@ -263,9 +267,22 @@ impl Buttons for GpiodButtons {
 // Test for UeventButton
 #[cfg(test)]
 mod tests {
+    use super::*;
     use bmc_gpio::PinGpiod;
-    use futures::StreamExt;
     use gpiod::{Chip, EdgeDetect, Options};
+
+    #[test]
+    fn the_captured_bmm_packet_maps_to_the_ip_report_button() {
+        let uevent =
+            bmc_kobject::UEvent::from_netlink_packet(bmc_kobject::test_support::BMM_BTN_0_PRESSED)
+                .expect("BUG: bmc-kobject's own test parses this packet");
+        let name = uevent
+            .button
+            .as_deref()
+            .expect("BUG: the captured packet carries BUTTON=");
+
+        assert_eq!(button_id(name), Some(ButtonId::IpReport));
+    }
 
     /// Test for sysfs_gpio button driver
     #[tokio::test]

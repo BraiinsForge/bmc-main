@@ -21,6 +21,7 @@
 
 // Button manager taken from BOS
 
+use crate::compositor::Compositor;
 use crate::manager::BmcManager;
 use bmc_button::{ButtonEvent, ButtonId, Buttons};
 use std::collections::HashMap;
@@ -34,6 +35,9 @@ use tracing::log::warn;
 const REBOOT_MAX_HOLD_DURATION: Duration = Duration::from_secs(2);
 /// Minimum hold duration to trigger a factory reset (5+ seconds)
 const FACTORY_RESET_MIN_HOLD_DURATION: Duration = Duration::from_secs(5);
+/// Mirrors boser's `LOCATE_AND_SWAP_SCREEN_MAX_HOLD_DURATION`.
+/// A release under it sends the IP-report packet; the same release shows the address here.
+const BOSER_REPORT_IP_MAX_HOLD_DURATION: Duration = Duration::from_secs(1);
 
 /// Button current state enum up/down, with holding time
 #[derive(Clone, Debug)]
@@ -50,6 +54,7 @@ where
     pub state: HashMap<ButtonId, ButtonState>,
     pub bmc_manager: Arc<T>,
     pub screen_activity: Arc<tokio::sync::Notify>,
+    pub compositor: Arc<dyn Compositor>,
 }
 
 impl<T> std::fmt::Debug for ButtonManager<T>
@@ -74,12 +79,14 @@ where
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
         bmc_manager: Arc<T>,
         screen_activity: Arc<tokio::sync::Notify>,
+        compositor: Arc<dyn Compositor>,
     ) -> Self {
         Self {
             buttons,
             state: HashMap::new(),
             bmc_manager,
             screen_activity,
+            compositor,
         }
     }
 
@@ -92,6 +99,12 @@ where
         // Initialize the state of all buttons to `Up`
         self.state.insert(
             ButtonId::Reset,
+            ButtonState::Up {
+                released: Instant::now(),
+            },
+        );
+        self.state.insert(
+            ButtonId::IpReport,
             ButtonState::Up {
                 released: Instant::now(),
             },
@@ -133,6 +146,9 @@ where
                             ButtonId::Reset => {
                                 self.handle_reset_button(pressed).await;
                             }
+                            ButtonId::IpReport => {
+                                report_ip_on_release(self.compositor.as_ref(), pressed.elapsed());
+                            }
                         }
                     } else {
                         warn!("Button released without being pressed: {button:?}");
@@ -171,5 +187,49 @@ where
                 FACTORY_RESET_MIN_HOLD_DURATION.as_secs()
             );
         }
+    }
+}
+
+/// Ask the device-info overlay to show the device address on a short press;
+/// what the overlay does with it is in `docs/devel/system-overlays/overlays.md`.
+fn report_ip_on_release(compositor: &dyn Compositor, held: Duration) {
+    if held < BOSER_REPORT_IP_MAX_HOLD_DURATION {
+        info!("Reporting the device address on screen");
+        if let Err(e) = compositor.broadcast_report_ip() {
+            warn!("Error while requesting the address screen: {e}");
+        }
+    } else {
+        info!(
+            "IP-report button held for {} ms, not under the {} s bound; ignoring",
+            held.as_millis(),
+            BOSER_REPORT_IP_MAX_HOLD_DURATION.as_secs()
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compositor::testing::RecordingCompositor;
+
+    #[test]
+    fn a_release_under_the_bound_asks_for_the_address_screen() {
+        let compositor = RecordingCompositor::default();
+
+        report_ip_on_release(
+            &compositor,
+            BOSER_REPORT_IP_MAX_HOLD_DURATION.saturating_sub(Duration::from_millis(1)),
+        );
+
+        assert_eq!(compositor.report_ip_broadcast_count(), 1);
+    }
+
+    #[test]
+    fn a_release_at_the_bound_is_ignored() {
+        let compositor = RecordingCompositor::default();
+
+        report_ip_on_release(&compositor, BOSER_REPORT_IP_MAX_HOLD_DURATION);
+
+        assert_eq!(compositor.report_ip_broadcast_count(), 0);
     }
 }

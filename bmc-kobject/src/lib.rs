@@ -19,6 +19,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::{FromStr, from_utf8};
@@ -161,17 +164,9 @@ mod tests {
 
     #[test]
     fn test_captured_buffer() {
-        let packet: Vec<u8> = vec![
-            112, 114, 101, 115, 115, 101, 100, 64, 0, 72, 79, 77, 69, 61, 47, 0, 80, 65, 84, 72,
-            61, 47, 115, 98, 105, 110, 58, 47, 98, 105, 110, 58, 47, 117, 115, 114, 47, 115, 98,
-            105, 110, 58, 47, 117, 115, 114, 47, 98, 105, 110, 0, 83, 85, 66, 83, 89, 83, 84, 69,
-            77, 61, 98, 117, 116, 116, 111, 110, 0, 65, 67, 84, 73, 79, 78, 61, 112, 114, 101, 115,
-            115, 101, 100, 0, 66, 85, 84, 84, 79, 78, 61, 66, 84, 78, 95, 48, 0, 83, 69, 69, 78,
-            61, 49, 51, 48, 0, 83, 69, 81, 78, 85, 77, 61, 49, 50, 48, 53, 0,
-        ];
-
-        let uevent =
-            UEvent::from_netlink_packet(&packet[..packet.len()]).expect("BUG: parsing failed");
+        let uevent = UEvent::from_netlink_packet(test_support::BMM_BTN_0_PRESSED)
+            .expect("BUG: parsing failed");
         assert_eq!(uevent.action, Some(ActionType::Pressed));
+        assert_eq!(uevent.button.as_deref(), Some("BTN_0"));
     }
 }

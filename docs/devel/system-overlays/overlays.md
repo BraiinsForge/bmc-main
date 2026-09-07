@@ -80,6 +80,11 @@ A `report_ip` event puts the device address back on screen after the boot sequen
 operational connect-info screen for its usual 10 s, or the failure screen where the device has no address, since a press
 deserves an answer either way.
 
+bmc sends it on a short press of the IP-report button (`ButtonId::IpReport`, `bmc/src/button_manager.rs`). The button
+arrives from the kernel as `BTN_0` and is handled wherever the kernel reports it; BMM100 and BMM101 are the products
+wired with one today. A release strictly under `BOSER_REPORT_IP_MAX_HOLD_DURATION` (1 s, boser's bound for sending the
+IP-report packet) becomes `broadcast_report_ip`. A longer hold does nothing.
+
 The address comes from the same connectivity prober the boot screens read. Its thread keeps publishing while the overlay
 is unmapped, and a publish that changed the content moves the snapshot version, so the poll on the press picks up
 whatever changed while nothing was watching.
