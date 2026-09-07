@@ -482,6 +482,12 @@ pub trait Compositor: Send + Sync {
         Ok(())
     }
 
+    /// Ask the device-info overlay to show the device address, via the
+    /// one-shot `deck_device_info_v1` `report_ip` event. Default: no-op.
+    fn broadcast_report_ip(&self) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
     /// Broadcast that the alarm is ringing to the alarm-overlay via `deck_alarm_v1`
     /// `alarm_ringing` event.
     /// Default: no-op.

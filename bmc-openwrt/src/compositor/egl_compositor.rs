@@ -2376,6 +2376,9 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::SetAccessPoint { ap } => {
             state.compositor.device_info.set_access_point(ap);
         }
+        CompositorCommand::ReportIp => {
+            state.compositor.device_info.report_ip();
+        }
     }
 }
 
@@ -2820,6 +2823,12 @@ impl Compositor for EglCompositor {
     fn broadcast_access_point(&self, ap: Option<AccessPointInfo>) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetAccessPoint { ap })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_report_ip(&self) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::ReportIp)
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

@@ -181,6 +181,15 @@ impl DeviceInfoState {
         }
     }
 
+    /// Ask every live v2 overlay to show the device address.
+    /// Nothing is cached and nothing is replayed (see protocol XML descriptions).
+    pub fn report_ip(&mut self) {
+        self.prune();
+        for r in self.resources.iter().filter(|r| r.version() >= 2) {
+            r.report_ip();
+        }
+    }
+
     /// Replay the cached values to a freshly bound resource so a late binder
     /// starts from the complete picture instead of waiting for the next
     /// change. Announcement steps are downgraded to `idle` (see `replayable`),
@@ -243,7 +252,7 @@ impl Dispatch<DeckDeviceInfoV1, ()> for CompositorState {
 
 /// Advertise the `deck_device_info_v1` global.
 pub fn create_global(display: &DisplayHandle) {
-    display.create_global::<CompositorState, DeckDeviceInfoV1, ()>(1, ());
+    display.create_global::<CompositorState, DeckDeviceInfoV1, ()>(2, ());
 }
 
 #[cfg(test)]
@@ -334,7 +343,7 @@ mod replay_wire_test {
     use bmc::compositor::{AccessPointInfo, SetupProgress};
     use bmc::manager::BmcState;
     use smithay::reexports::wayland_server::Display;
-    use wayland_client::protocol::wl_registry;
+    use wayland_client::protocol::{wl_callback, wl_registry};
     use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 
     use crate::compositor::state::{ClientState, CompositorState};
@@ -354,10 +363,13 @@ mod replay_wire_test {
             ssid: String,
             setup_url: String,
         },
+        ReportIp,
     }
 
-    #[derive(Default)]
     struct TestClient {
+        /// The interface version this client asks for, capped by the advertised one.
+        /// Below 2 it stands in for an overlay binary built before `report_ip` existed.
+        bind_version: u32,
         feed: Option<client_api::DeckDeviceInfoV1>,
         seen: Vec<Seen>,
     }
@@ -380,11 +392,23 @@ mod replay_wire_test {
             {
                 state.feed = Some(registry.bind::<client_api::DeckDeviceInfoV1, _, _>(
                     name,
-                    version.min(1),
+                    version.min(state.bind_version),
                     qh,
                     (),
                 ));
             }
+        }
+    }
+
+    impl Dispatch<wl_callback::WlCallback, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_callback::WlCallback,
+            _: wl_callback::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
         }
     }
 
@@ -415,6 +439,7 @@ mod replay_wire_test {
                 client_api::Event::AccessPoint { ssid, setup_url } => {
                     Seen::AccessPoint { ssid, setup_url }
                 }
+                client_api::Event::ReportIp => Seen::ReportIp,
                 other => panic!("BUG: unexpected deck_device_info_v1 event {other:?}"),
             };
             state.seen.push(seen);
@@ -438,12 +463,49 @@ mod replay_wire_test {
         (display, compositor)
     }
 
-    /// Bind `deck_device_info_v1` from a fresh client and return what the bind
-    /// replayed, in arrival order.
-    fn bind_and_collect(
+    /// A client that has bound the feed, kept alive
+    /// so events broadcast after the bind can be collected too.
+    struct Bound {
+        conn: Connection,
+        queue: EventQueue<TestClient>,
+        client: TestClient,
+    }
+
+    impl Bound {
+        /// Drop the bind's replay, dispatch one more round,
+        /// and return what arrived in that round alone.
+        fn collect_next(
+            &mut self,
+            display: &mut Display<CompositorState>,
+            compositor: &mut CompositorState,
+        ) -> Vec<Seen> {
+            self.client.seen.clear();
+            // The sync's `done` gives the round traffic even when the server has nothing to say,
+            // so an event that never comes fails the assertion
+            // instead of blocking the dispatch forever.
+            self.conn.display().sync(&self.queue.handle(), ());
+            pump(
+                display,
+                compositor,
+                &self.conn,
+                &mut self.queue,
+                &mut self.client,
+            );
+            std::mem::take(&mut self.client.seen)
+        }
+    }
+
+    /// Bind `deck_device_info_v1` at the current version from a fresh client,
+    /// leaving the bind's own replay in `client.seen`.
+    fn bind(display: &mut Display<CompositorState>, compositor: &mut CompositorState) -> Bound {
+        bind_at(display, compositor, 2)
+    }
+
+    fn bind_at(
         display: &mut Display<CompositorState>,
         compositor: &mut CompositorState,
-    ) -> Vec<Seen> {
+        version: u32,
+    ) -> Bound {
         let (server_stream, client_stream) =
             UnixStream::pair().expect("BUG: unix socket pair should be creatable");
         display
@@ -455,7 +517,11 @@ mod replay_wire_test {
             .expect("BUG: test client socket should form a valid connection");
         let mut queue: EventQueue<TestClient> = conn.new_event_queue();
         let qh = queue.handle();
-        let mut client = TestClient::default();
+        let mut client = TestClient {
+            bind_version: version,
+            feed: None,
+            seen: Vec::new(),
+        };
 
         conn.display().get_registry(&qh, ());
         pump(display, compositor, &conn, &mut queue, &mut client);
@@ -466,7 +532,20 @@ mod replay_wire_test {
         // The bind itself, then the three events the server replayed to it.
         pump(display, compositor, &conn, &mut queue, &mut client);
 
-        client.seen
+        Bound {
+            conn,
+            queue,
+            client,
+        }
+    }
+
+    /// Bind `deck_device_info_v1` from a fresh client and return what the bind
+    /// replayed, in arrival order.
+    fn bind_and_collect(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+    ) -> Vec<Seen> {
+        bind(display, compositor).client.seen
     }
 
     fn pump(
@@ -597,6 +676,54 @@ mod replay_wire_test {
                 boot_flow_delivered: 1,
             }),
             "a client binding after the boot screens ran must not restart them: {second:?}"
+        );
+    }
+
+    #[test]
+    fn report_ip_reaches_a_bound_overlay() {
+        let (mut display, mut compositor) = compositor();
+        compositor
+            .device_info
+            .set_device_state(BmcState::Operational);
+        let mut bound = bind(&mut display, &mut compositor);
+
+        compositor.device_info.report_ip();
+
+        assert_eq!(
+            bound.collect_next(&mut display, &mut compositor),
+            vec![Seen::ReportIp]
+        );
+    }
+
+    #[test]
+    fn a_v1_client_is_spared_the_report_ip_it_never_asked_for() {
+        // The server advertises 2 and nothing downstream checks `since` on an outgoing event,
+        // so the filter in `report_ip` is all that keeps an older overlay binary
+        // from a protocol error on the first press.
+        let (mut display, mut compositor) = compositor();
+        compositor
+            .device_info
+            .set_device_state(BmcState::Operational);
+        let mut bound = bind_at(&mut display, &mut compositor, 1);
+
+        compositor.device_info.report_ip();
+
+        assert_eq!(bound.collect_next(&mut display, &mut compositor), vec![]);
+    }
+
+    #[test]
+    fn a_report_ip_nobody_was_listening_for_is_not_replayed() {
+        let (mut display, mut compositor) = compositor();
+        compositor
+            .device_info
+            .set_device_state(BmcState::Operational);
+        compositor.device_info.report_ip();
+
+        let seen = bind_and_collect(&mut display, &mut compositor);
+
+        assert!(
+            !seen.contains(&Seen::ReportIp),
+            "a press is spent on delivery; a client binding later never asked: {seen:?}"
         );
     }
 

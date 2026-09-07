@@ -112,6 +112,7 @@ pub enum CompositorCommand {
     SetAccessPoint {
         ap: Option<AccessPointInfo>,
     },
+    ReportIp,
 }
 
 #[derive(Debug)]

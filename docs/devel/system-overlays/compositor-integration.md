@@ -197,15 +197,16 @@ only renders.
 bmc pushes state through three `Compositor` trait methods — `broadcast_device_state`, `broadcast_setup_progress`, and
 `broadcast_access_point` — which arrive as `CompositorCommand`s and land in `DeviceInfoState`. The last value of each
 event is cached and replayed on bind (the `device_state` only once bmc has reported one, so an early-bound overlay waits
-instead of guessing). Two things the cache does beyond storing the latest value, both so a *restarted* overlay is not
-handed a past moment as if it were current: the `setup_progress` replay downgrades announcement steps to `idle`, and
-`device_state` carries a `boot_flow_delivered` flag that latches once an operational state has reached a client. See
-[`protocols.md`](protocols.md) for the reasoning. The events are fed by the device-info listener in
-`bmc/src/startup.rs`, which mirrors the `BmcState`, forwards `InitialSetup` transitions the moment they happen, resolves
-the setup-AP SSID/URL when the AP watch flips, and carries the stable-26.02 recovery policies — broadcasting
-`unexpected_error` before acting, flagged with whether it is about to restart the device. Resolving the AP runs in its
-own task: the SSID and address waits together run to half a minute, and the listener has to keep forwarding setup
-transitions while they do.
+instead of guessing). `broadcast_report_ip` is the fourth and the exception: an IP-report button press fans straight out
+to the live v2 clients and is stored nowhere. Two things the cache does beyond storing the latest value, both so a
+*restarted* overlay is not handed a past moment as if it were current: the `setup_progress` replay downgrades
+announcement steps to `idle`, and `device_state` carries a `boot_flow_delivered` flag that latches once an operational
+state has reached a client. See [`protocols.md`](protocols.md) for the reasoning. The events are fed by the device-info
+listener in `bmc/src/startup.rs`, which mirrors the `BmcState`, forwards `InitialSetup` transitions the moment they
+happen, resolves the setup-AP SSID/URL when the AP watch flips, and carries the stable-26.02 recovery policies —
+broadcasting `unexpected_error` before acting, flagged with whether it is about to restart the device. Resolving the AP
+runs in its own task: the SSID and address waits together run to half a minute, and the listener has to keep forwarding
+setup transitions while they do.
 
 ## `deck_upgrade_v1` dispatch
 
