@@ -18,12 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Package feed (`nix-package-feed.v1.json`): the per-firmware release
-//! catalog. Each entry names a BOS version, the init tarball that
-//! bootstraps it, and optionally the package index that serves it.
-//! Store init consumes the tarball fields; upgrade resolution follows
-//! `index_url`. Pure validation and selection only — fetching and JSON
-//! parsing stay with the callers.
+//! Package feed (`nix-package-feed.v1.json`): release artifacts keyed by
+//! full BOS versions or shared release names. Each entry provides an init
+//! tarball and an optional package index. Fetching and JSON parsing stay
+//! with the callers.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +34,7 @@ pub struct PackageFeed {
     pub entries: Vec<PackageFeedEntry>,
 }
 
-/// A single per-firmware feed entry.
+/// Release artifacts selected by a full BOS version or shared release key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageFeedEntry {
     pub bos_version: String,
@@ -95,8 +93,30 @@ pub fn validate_feed(url: &str, feed: &PackageFeed) -> Result<(), FeedError> {
     Ok(())
 }
 
-/// Select the entry with `bos_version == target`. Callers run
-/// [`validate_feed`] first.
+// The release tail matches published keys verbatim; validating calendar dates
+// or numeric ranges in the discarded prefix would not improve that lookup.
+fn shared_release_name(bos_version: &str) -> Option<&str> {
+    let mut parts = bos_version.splitn(6, '-');
+    for width in [4, 2, 2] {
+        let part = parts.next()?;
+        if part.len() != width || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+    }
+    let day_index = parts.next()?;
+    if day_index.is_empty() || !day_index.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let commit = parts.next()?;
+    if commit.len() != 8 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    parts.next().filter(|release| !release.is_empty())
+}
+
+/// Prefer the exact BOS version, then its shared release name.
+/// Callers run [`validate_feed`] first. An exact entry stays authoritative
+/// even when its artifacts cannot satisfy the operation.
 ///
 /// # Errors
 ///
@@ -106,13 +126,37 @@ pub fn select_entry<'a>(
     feed: &'a PackageFeed,
     bos_version: &str,
 ) -> Result<&'a PackageFeedEntry, FeedError> {
-    feed.entries
+    let entry = feed
+        .entries
         .iter()
         .find(|entry| entry.bos_version == bos_version)
+        .or_else(|| {
+            let release = shared_release_name(bos_version)?;
+            let entry = feed
+                .entries
+                .iter()
+                .find(|entry| entry.bos_version == release);
+            if entry.is_none() {
+                tracing::info!(
+                    feed_url = url,
+                    firmware = bos_version,
+                    shared_bos_version = release,
+                    "No matching package feed entry"
+                );
+            }
+            entry
+        })
         .ok_or_else(|| FeedError::MissingEntry {
             url: url.to_owned(),
             bos_version: bos_version.to_owned(),
-        })
+        })?;
+    tracing::info!(
+        feed_url = url,
+        firmware = bos_version,
+        selected_bos_version = entry.bos_version,
+        "Selected package feed entry"
+    );
+    Ok(entry)
 }
 
 /// Require the selected entry's `index_url` — upgrade resolution only;
@@ -194,6 +238,161 @@ mod tests {
             select_entry("u", &feed, "x"),
             Err(FeedError::MissingEntry { .. })
         ));
+    }
+
+    #[test]
+    fn select_preserves_release_variant_patch_and_suffix() {
+        for release in [
+            "26.09",
+            "26.09-plus",
+            "26.09-rc",
+            "26.09-plus-rc",
+            "26.09-plus-nightly",
+            "26.09.1-plus-nightly",
+            "26.09-plus-a",
+            "26.09-plus-custom",
+        ] {
+            let target = format!("2026-09-07-0-abcdef12-{release}");
+            let feed = PackageFeed {
+                version: PACKAGE_FEED_VERSION,
+                entries: vec![entry(release, Some("https://example.com/shared.json"))],
+            };
+            validate_feed("u", &feed).expect("BUG: shared keys are valid v1 entries");
+            assert_eq!(
+                select_entry("u", &feed, &target)
+                    .expect("a rebuild must find the published shared entry")
+                    .bos_version,
+                release
+            );
+
+            for other in [
+                "26.08-plus-nightly",
+                "26.09",
+                "26.09-plus",
+                "26.09-rc",
+                "26.09-plus-rc",
+                "26.09-plus-nightly",
+                "26.09.1-plus-nightly",
+                "26.09-plus-a",
+                "26.09-plus-custom",
+            ] {
+                if other != release {
+                    let other_target = format!("2026-09-07-0-abcdef12-{other}");
+                    assert!(
+                        matches!(
+                            select_entry("u", &feed, &other_target),
+                            Err(FeedError::MissingEntry { .. })
+                        ),
+                        "{other_target} must not select {release}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exact_entry_wins_whole_regardless_of_feed_order() {
+        let target = "2026-09-07-0-abcdef12-26.09-plus-nightly";
+        let mut feed = PackageFeed {
+            version: PACKAGE_FEED_VERSION,
+            entries: vec![
+                entry(
+                    "26.09-plus-nightly",
+                    Some("https://example.com/shared.json"),
+                ),
+                entry(target, None),
+            ],
+        };
+        for _ in 0..2 {
+            validate_feed("u", &feed).expect("BUG: exact and shared entries can coexist");
+            let selected = select_entry("u", &feed, target).expect("the exact entry must win");
+            assert_eq!(selected.bos_version, target);
+            assert!(
+                matches!(
+                    require_index_url("u", selected),
+                    Err(FeedError::MissingIndexUrl { .. })
+                ),
+                "an incomplete exact entry must not borrow the shared index"
+            );
+            feed.entries.reverse();
+        }
+    }
+
+    #[test]
+    fn release_extraction_preserves_the_tail_without_normalization() {
+        for release in [
+            "26.09",
+            "26.09-plus",
+            "26.09-rc",
+            "26.09-plus-nightly",
+            "26.09.1-plus-rc",
+            "26.09-plus-custom",
+            "26.9",
+            "26.09.01",
+            "custom-release-name",
+        ] {
+            let firmware = format!("2026-09-07-0-abcdef12-{release}");
+            assert_eq!(shared_release_name(&firmware), Some(release), "{firmware}");
+        }
+    }
+
+    #[test]
+    fn release_extraction_does_not_validate_calendar_or_day_index_ranges() {
+        for prefix in [
+            "2026-02-30-0-abcdef12",
+            "2026-09-07-256-abcdef12",
+            "2026-09-07-999999999999999999999999-ABCDEF12",
+        ] {
+            let firmware = format!("{prefix}-26.09-plus-custom");
+            assert_eq!(
+                shared_release_name(&firmware),
+                Some("26.09-plus-custom"),
+                "{firmware}"
+            );
+        }
+    }
+
+    #[test]
+    fn release_extraction_requires_a_complete_bos_prefix_and_tail() {
+        for firmware in [
+            "26.09-plus-nightly",
+            "2026-09-07-0-abcdef12",
+            "2026-09-07-0-abcdef12-",
+            "2026-09-07--abcdef12-26.09",
+            "2026-09-07-x-abcdef12-26.09",
+            "2026-09-07-0-abcdef1-26.09",
+            "2026-09-07-0-abcdef123-26.09",
+            "2026-09-07-０-abcdef12-26.09",
+            "2026-09-07-0-abcdefg1-26.09",
+            "2026-9-07-0-abcdef12-26.09",
+            "2026-09-7-0-abcdef12-26.09",
+            "026-09-07-0-abcdef12-26.09",
+            "２０２６-09-07-0-abcdef12-26.09",
+        ] {
+            assert_eq!(shared_release_name(firmware), None, "{firmware}");
+        }
+    }
+
+    #[test]
+    fn malformed_targets_do_not_guess_shared_entries() {
+        let feed = PackageFeed {
+            version: PACKAGE_FEED_VERSION,
+            entries: vec![entry("26.09-plus-nightly", None)],
+        };
+        for target in [
+            "garbage-26.09-plus-nightly",
+            "2026-xx-30-0-abcdef12-26.09-plus-nightly",
+            "2026-09-07-0-notahash-26.09-plus-nightly",
+            "2026-09-07-0-abcdef12-26.09-plus-unknown",
+        ] {
+            assert!(
+                matches!(
+                    select_entry("u", &feed, target),
+                    Err(FeedError::MissingEntry { .. })
+                ),
+                "{target} must not acquire a guessed fallback"
+            );
+        }
     }
 
     #[test]

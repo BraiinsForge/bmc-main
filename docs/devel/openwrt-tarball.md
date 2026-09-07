@@ -165,8 +165,9 @@ in the tarball.
    `/etc/bos_version` when the flag is omitted. The firmware `COMMAND` passes the incoming version explicitly because
    the running file still names the outgoing firmware. The version is matched against the factory server's package feed
    (`nix-package-feed.v1.json`, fetched from the `factory` entry of `/etc/nix-upgrade/servers.json`). If no feed entry
-   matches the requested BOS version, `init` fails — the factory server has to keep an entry for every Nix-capable BOS
-   version, otherwise this path breaks.
+   matches the full version, selection tries the corresponding shared release key, preserving variant, patch and build
+   suffix. If both entries are absent, `init` fails. This is the same selection used for package upgrades; see
+   [shared release entries](upgrades.md#shared-release-entries). A selected entry's failure never triggers fallback.
 4. **Verify the tarball signature.** The feed entry carries a nix-style `name:base64` Ed25519 signature of the init
    tarball, and `init` verifies it against the factory entry's `known_public_key` by default. The tarball is hashed
    (SHA-256) while it streams to disk; the signature covers a domain-separated fingerprint of that digest

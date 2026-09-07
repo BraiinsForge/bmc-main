@@ -44,6 +44,30 @@ The firmware scope for feed-entry selection comes from `bmc-nix-cli upgrade --fi
 `/etc/bos_version` is read — but only when an enabled feed-linked server actually participates, so index-only registries
 and `--only-indexes` runs never touch it.
 
+### Shared release entries
+
+Package upgrades and factory initialization/reset use the same feed selector. It first looks for an exact `bos_version`
+entry. Only when that entry is absent does it recognize the `YYYY-MM-DD-index-hash-` prefix and use the remaining
+release name unchanged, preserving the patch version, `plus` variant, and build suffix. For example,
+`2026-09-07-0-abcdef12-26.09-plus-nightly` can select `26.09-plus-nightly`. `26.09-plus-rc`, `26.09-plus`, `26.09`, and
+`26.09.1-plus-nightly` remain separate keys. Release and internal builds use the same rule; there is no
+production/development gate.
+
+Shared entries use the existing `bos_version` field in `nix-package-feed.v1.json`. Publishers enable fallback by
+publishing the shared key, and can retain exact-only selection by leaving it unpublished. The prefix check requires
+four/two/two ASCII date digits, a nonempty numeric day index, an eight-digit hexadecimal commit hash, and a nonempty
+release tail. It checks structure only: it does not validate calendar dates, numeric ranges, or release suffix names.
+The release tail is neither parsed nor normalized. Strings without the expected prefix remain exact-only. Selection
+returns one whole entry: a missing index, invalid signature, or failed download from an exact entry does not cause a
+fallback or borrow fields from a shared entry. Missing candidates and invalid feeds retain the existing error and
+required/optional server policies. The CLI log file records the requested firmware and selected entry. Upgrade staging
+and activation continue to use the full target firmware identity.
+
+Shared development entries track packages supported by the latest firmware in that release/channel. Updating them may
+break older development builds; the client does not track compatibility or require protective exact entries. Older CLIs
+without this selection behavior still need exact entries. Publisher tooling must support creating shared entries before
+firmware rebuilds can use them.
+
 ## Resolution Algorithm
 
 `bmc-nix` merges all enabled indexes into a single view keyed by package name, then resolves each package the manifest

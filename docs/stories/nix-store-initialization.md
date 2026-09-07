@@ -3,7 +3,7 @@
 A device running firmware without Nix support gains its Nix package store — the storage all installable applications
 live in — during an ordinary firmware upgrade. Initialization downloads the store contents from the Braiins factory
 server, and the user expects it to be both seamless (no steps beyond the firmware upgrade itself) and secure (the device
-installs only content published, and cryptographically signed, for exactly the firmware release being installed).
+installs only content published, and cryptographically signed, for the selected firmware or shared release entry).
 
 ## User stories
 
@@ -14,11 +14,11 @@ installs only content published, and cryptographically signed, for exactly the f
 
 - The regular firmware upgrade is the only action required: the upgrade prepares the device's data storage, downloads
   the initial store contents, and leaves the initial applications ready to activate on the next boot.
-- The device downloads the store contents published for exactly the firmware version being installed — the factory
-  server's release catalog maps each firmware version to its own artifacts, so the device never installs content the
-  release was not tested with.
-- If the release catalog has no entry for the firmware being installed, initialization fails visibly instead of guessing
-  at a substitute.
+- The device prefers store contents published for the exact firmware version. If no exact entry exists, it uses a
+  published shared release entry with the same release version, variant and suffix, such as `26.09-plus-nightly`.
+  Initialization, reset and package upgrades use the same selection rules.
+- If neither entry exists, initialization fails visibly. An exact entry with broken or missing artifacts still fails; it
+  never silently switches to shared content.
 
 ### Downloading only trusted content
 
@@ -46,7 +46,10 @@ installs only content published, and cryptographically signed, for exactly the f
 ## Constraints
 
 - Initialization is carried by the first Nix-capable firmware release, which users cannot skip; the factory server must
-  keep a catalog entry for every Nix-capable firmware version.
+  publish an exact or matching shared catalog entry for each firmware it supports. Older clients require exact entries.
+- Publishers choose whether to provide shared release entries. Shared development entries support the latest firmware;
+  updating them may break older development builds. The device does not infer compatibility or distinguish production
+  firmware to decide whether fallback is allowed.
 - Release publishing must sign every catalog entry before firmware carrying this initialization ships — the device
   refuses unsigned entries by default.
 - Signature verification covers tarballs downloaded from the network; initializing from a locally supplied tarball is a

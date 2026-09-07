@@ -377,7 +377,7 @@ async fn fetch_package_feed(
 /// Resolve one configured server to its package index.
 ///
 /// An index-linked server fetches its exact document. A feed-linked
-/// server fetches the feed, selects the `firmware` entry, and follows
+/// server fetches the feed, selects an exact or shared entry, and follows
 /// that entry's `index_url`; feed selection failures surface as
 /// [`FetchIndexesError::FeedResolution`] and transport failures as
 /// [`FetchIndexesError::FeedFetch`], both naming the server id and the
@@ -2730,52 +2730,102 @@ mod tests {
 
     #[tokio::test]
     async fn feed_server_resolves_firmware_index_at_exact_paths() {
-        let pending = bind_route_server().await;
-        let base = pending.base_url();
-        let (hits, server) = pending.serve(vec![
+        for (firmware, feed_key) in [
+            ("fw1", "fw1"),
             (
-                "/custom-feed-name.json".to_owned(),
-                feed_json(vec![feed_entry(
-                    "fw1",
-                    Some(&format!("{base}/custom-index-name.json")),
-                )]),
+                "2026-09-07-0-abcdef12-26.09-plus-nightly",
+                "26.09-plus-nightly",
             ),
-            ("/custom-index-name.json".to_owned(), index_json("clock")),
-        ]);
+            ("2026-09-07-0-abcdef12-26.09-plus", "26.09-plus"),
+        ] {
+            let pending = bind_route_server().await;
+            let base = pending.base_url();
+            let (hits, server) = pending.serve(vec![
+                (
+                    "/custom-feed-name.json".to_owned(),
+                    feed_json(vec![feed_entry(
+                        feed_key,
+                        Some(&format!("{base}/custom-index-name.json")),
+                    )]),
+                ),
+                ("/custom-index-name.json".to_owned(), index_json("clock")),
+            ]);
 
-        let client = reqwest::Client::new();
-        let servers = vec![feed_server(
-            "feedsrv",
-            &format!("{base}/custom-feed-name.json"),
-            10,
-            true,
-        )];
-        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
-            .await
-            .expect("BUG: feed-linked resolution should merge");
+            let client = reqwest::Client::new();
+            let servers = vec![feed_server(
+                "feedsrv",
+                &format!("{base}/custom-feed-name.json"),
+                10,
+                true,
+            )];
+            let merged =
+                fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some(firmware), 256)
+                    .await
+                    .expect("BUG: feed-linked resolution should merge");
 
-        server.abort();
+            server.abort();
 
-        assert_eq!(
-            merged.by_name.get("clock").map(Vec::len),
-            Some(1),
-            "the feed-resolved index's package must be merged"
-        );
-        assert_eq!(
-            hit_count(&hits, "/custom-feed-name.json"),
-            1,
-            "the feed must be requested at exactly its configured URL"
-        );
-        assert_eq!(
-            hit_count(&hits, "/custom-index-name.json"),
-            1,
-            "the index must be requested at exactly the feed entry's URL"
-        );
-        assert_eq!(
-            hits.lock().expect("BUG: hits lock").len(),
-            2,
-            "no other path may be requested (no filename appending)"
-        );
+            assert_eq!(
+                merged.by_name.get("clock").map(Vec::len),
+                Some(1),
+                "the feed-resolved index's package must be merged"
+            );
+            assert_eq!(
+                hit_count(&hits, "/custom-feed-name.json"),
+                1,
+                "the feed must be requested at exactly its configured URL"
+            );
+            assert_eq!(
+                hit_count(&hits, "/custom-index-name.json"),
+                1,
+                "the index must be requested at exactly the feed entry's URL"
+            );
+            assert_eq!(
+                hits.lock().expect("BUG: hits lock").len(),
+                2,
+                "no other path may be requested (no filename appending)"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_feed_entry_failure_does_not_fetch_shared_index() {
+        let firmware = "2026-09-07-0-abcdef12-26.09-plus-nightly";
+        for exact_path in [None, Some("/unavailable.json")] {
+            let pending = bind_route_server().await;
+            let base = pending.base_url();
+            let exact_url = exact_path.map(|path| format!("{base}{path}"));
+            let (hits, server) = pending.serve(vec![
+                (
+                    "/feed.json".to_owned(),
+                    feed_json(vec![
+                        feed_entry("26.09-plus-nightly", Some(&format!("{base}/shared.json"))),
+                        feed_entry(firmware, exact_url.as_deref()),
+                    ]),
+                ),
+                ("/shared.json".to_owned(), index_json("clock")),
+            ]);
+            let entry = feed_server("release", &format!("{base}/feed.json"), 10, true);
+            let err = fetch_server_index(&reqwest::Client::new(), &entry, Some(firmware))
+                .await
+                .expect_err("a broken exact entry must stay authoritative");
+            server.abort();
+            match exact_path {
+                None => assert!(matches!(
+                    err,
+                    FetchIndexesError::FeedResolution {
+                        source: crate::feed::FeedError::MissingIndexUrl { .. },
+                        ..
+                    }
+                )),
+                Some(_) => assert!(matches!(err, FetchIndexesError::FeedFetch { .. })),
+            }
+            assert_eq!(
+                hit_count(&hits, "/shared.json"),
+                0,
+                "selected-entry failures must never fetch the shared index"
+            );
+        }
     }
 
     #[tokio::test]

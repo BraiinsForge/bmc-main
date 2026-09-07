@@ -816,13 +816,13 @@ async fn init_store_wipe_replaces_existing_store() {
     std::fs::write(stage_dir.join("nix/store/old/marker"), "old")
         .expect("BUG: write pre-existing marker");
 
-    let bos_version = "2026-test-1";
+    let bos_version = "2026-09-07-0-abcdef12-26.09-plus-nightly";
     let pending = bind_server();
     let base_url = pending.base_url();
     let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
     let tarball_bytes = build_tarball(tmp.path(), &[("nix/store/newpkg/marker", b"new")]);
     let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
-        bos_version: bos_version.to_owned(),
+        bos_version: "26.09-plus-nightly".to_owned(),
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
@@ -1067,39 +1067,92 @@ async fn run_init_store(
 
 #[tokio::test]
 #[serial]
-async fn init_store_accepts_correctly_signed_tarball() {
+async fn init_store_does_not_borrow_shared_signature_for_exact_entry() {
     let tmp = TempDir::new().expect("BUG: tempdir");
-    let bos_version = "2026-test-1";
+    let target = "2026-09-07-0-abcdef12-26.09-plus-nightly";
     let (secret, public) = signing_keypair("braiins-init-1", &[7; 32]);
-    let (_server, base_url) = serve_init_routes(&tmp, bos_version, |bytes| {
-        Some(bmc_nix::signature::sign(&secret, &sha256(bytes)).expect("BUG: valid secret key"))
-    });
-
-    let result = run_init_store(
+    let pending = bind_server();
+    let base_url = pending.base_url();
+    let shared = PackageFeedEntry {
+        bos_version: "26.09-plus-nightly".to_owned(),
+        download_url: format!("{base_url}/shared.tar.gz"),
+        profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
+        signature: Some(
+            bmc_nix::signature::sign(&secret, &sha256(b"shared tarball"))
+                .expect("BUG: valid secret key"),
+        ),
+    };
+    let exact = PackageFeedEntry {
+        bos_version: target.to_owned(),
+        signature: None,
+        ..shared.clone()
+    };
+    let server = pending.serve(vec![Route {
+        path: "/nix-package-feed.v1.json".to_owned(),
+        body: package_feed_bytes(vec![shared, exact]),
+    }]);
+    let err = run_init_store(
         &tmp,
         base_url,
-        bos_version,
+        target,
         &SignatureVerification::Enabled {
             trusted_public_key: public,
         },
     )
     .await
-    .expect("a correctly signed tarball must initialize");
-
-    assert_eq!(result.profile_path, PathBuf::from(PROFILE_PATH));
-    assert!(
-        tmp.path().join("stage/nix/store/signedpkg/marker").exists(),
-        "the verified store must be promoted"
+    .expect_err("the unsigned exact entry must stay authoritative");
+    assert!(matches!(err, InitStoreError::MissingSignature(ref version) if version == target));
+    assert_eq!(
+        server.hits(),
+        1,
+        "an unsigned exact entry must fail before any tarball download"
     );
+}
+
+#[tokio::test]
+#[serial]
+async fn init_store_accepts_correctly_signed_tarball() {
+    for (bos_version, feed_version) in [
+        ("2026-test-1", "2026-test-1"),
+        (
+            "2026-09-07-0-abcdef12-26.09-plus-nightly",
+            "26.09-plus-nightly",
+        ),
+        ("2026-09-07-0-abcdef12-26.09-plus", "26.09-plus"),
+    ] {
+        let tmp = TempDir::new().expect("BUG: tempdir");
+        let (secret, public) = signing_keypair("braiins-init-1", &[7; 32]);
+        let (_server, base_url) = serve_init_routes(&tmp, feed_version, |bytes| {
+            Some(bmc_nix::signature::sign(&secret, &sha256(bytes)).expect("BUG: valid secret key"))
+        });
+
+        let result = run_init_store(
+            &tmp,
+            base_url,
+            bos_version,
+            &SignatureVerification::Enabled {
+                trusted_public_key: public,
+            },
+        )
+        .await
+        .expect("a correctly signed tarball must initialize");
+
+        assert_eq!(result.profile_path, PathBuf::from(PROFILE_PATH));
+        assert!(
+            tmp.path().join("stage/nix/store/signedpkg/marker").exists(),
+            "the verified store must be promoted"
+        );
+    }
 }
 
 #[tokio::test]
 #[serial]
 async fn init_store_rejects_signature_over_different_content() {
     let tmp = TempDir::new().expect("BUG: tempdir");
-    let bos_version = "2026-test-1";
+    let bos_version = "2026-09-07-0-abcdef12-26.09-plus-nightly";
     let (secret, public) = signing_keypair("braiins-init-1", &[7; 32]);
-    let (_server, base_url) = serve_init_routes(&tmp, bos_version, |_| {
+    let (_server, base_url) = serve_init_routes(&tmp, "26.09-plus-nightly", |_| {
         Some(
             bmc_nix::signature::sign(&secret, &sha256(b"not the served tarball"))
                 .expect("BUG: valid secret key"),
@@ -1176,9 +1229,9 @@ async fn init_store_rejects_signature_by_untrusted_key() {
 #[serial]
 async fn init_store_requires_signature_before_download() {
     let tmp = TempDir::new().expect("BUG: tempdir");
-    let bos_version = "2026-test-1";
+    let bos_version = "2026-09-07-0-abcdef12-26.09-plus-nightly";
     let (_, public) = signing_keypair("braiins-init-1", &[7; 32]);
-    let (server, base_url) = serve_init_routes(&tmp, bos_version, |_| None);
+    let (server, base_url) = serve_init_routes(&tmp, "26.09-plus-nightly", |_| None);
 
     let err = run_init_store(
         &tmp,

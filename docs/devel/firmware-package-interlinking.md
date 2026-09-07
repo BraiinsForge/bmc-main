@@ -31,10 +31,10 @@ firmware build makes the package step mandatory inside that command.
 ## Discovery and release publication
 
 Upgrade checks and installable widget discovery resolve package feeds for the offered firmware version. Without a
-firmware offer, they use the running firmware version. Publish the required package feed entry and its index before
-advertising a firmware release: a missing target entry fails discovery, and the firmware staging step also requires that
-entry before flashing. If firmware discovery fails, widget discovery fails as well because the target package set is
-unknown.
+firmware offer, they use the running firmware version. Publish an exact entry or a matching
+[shared release entry](upgrades.md#shared-release-entries) and its index before advertising a firmware release: without
+either entry, discovery and firmware staging fail before flashing. If firmware discovery fails, widget discovery fails
+as well because the target package set is unknown.
 
 ## Execution Order
 
