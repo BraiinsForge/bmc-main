@@ -48,6 +48,14 @@ import sys
 
 RUNNERS = frozenset({'just', 'make'})
 
+# Targets whose stdout *is* the product: `md-to-adf` prints ADF and is `@`-silent
+# so nothing else reaches the stream. Redirecting one into a file is its documented
+# use, not output massaging, so a redirect — and only a redirect — is allowed on it.
+REDIRECTABLE_TARGETS = frozenset({'md-to-adf'})
+
+# Operator characters that only move a stream, as against opening a command.
+REDIRECT_CHARS = frozenset('<>')
+
 # `shlex(punctuation_chars=True)` emits runs of these as standalone operator tokens.
 PUNCTUATION = frozenset('();<>|&')
 
@@ -99,14 +107,23 @@ def offending_runner(line: str) -> str | None:
     if not scaffolded:
         return None
 
+    redirects_only = '`' not in line and all(
+        set(token) <= REDIRECT_CHARS for token in tokens if is_operator(token)
+    )
+
     at_command_position = True
-    for token in tokens:
+    for index, token in enumerate(tokens):
         if is_operator(token):
             at_command_position = any(char in COMMAND_OPENERS for char in token)
             continue
         if at_command_position and ENV_ASSIGNMENT.match(token):
             continue
         if at_command_position and os.path.basename(token) in RUNNERS:
+            target = next(
+                (later for later in tokens[index + 1 :] if not is_operator(later)), None
+            )
+            if redirects_only and target in REDIRECTABLE_TARGETS:
+                return None
             return os.path.basename(token)
         at_command_position = False
     return None
