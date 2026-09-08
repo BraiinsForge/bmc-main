@@ -44,6 +44,8 @@ fn registered_codes() -> impl Iterator<Item = u16> {
 
 impl HttpStatus {
     pub const OK: Self = Self(StatusCode::OK);
+    /// What boser answers on the performance endpoints while bosminer is not running.
+    pub const PRECONDITION_FAILED: Self = Self(StatusCode::PRECONDITION_FAILED);
     pub const SERVICE_UNAVAILABLE: Self = Self(StatusCode::SERVICE_UNAVAILABLE);
 
     #[must_use]

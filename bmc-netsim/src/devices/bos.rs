@@ -52,6 +52,10 @@ const BOARDS: usize = 2;
 /// How far the board sensor sits below the hottest chip on the same board.
 const BOARD_BELOW_CHIP_C: f64 = 13.0;
 
+/// BOS `TunerState::Stable`: the tuner has settled
+/// and the miner runs at its chosen frequencies.
+const TUNER_STABLE: i32 = 2;
+
 /// One board's share of the miner's hashrate, since the miner
 /// reports totals and each board reports its own part of them.
 #[expect(
@@ -111,6 +115,11 @@ pub struct Params {
     pub hashrate_target: Option<TargetRange>,
     /// Tuner power target, in W.
     pub power_target: Option<TargetRange>,
+    /// `overall_tuner_state` reported on `/performance/tuner-state`, the BOS
+    /// `TunerState` integer: 1 disabled, 2 stable, 3 tuning, 4 error,
+    /// 5 continuous, 6 preheat. Anything else is served as it stands, which
+    /// is how a blueprint stages the state a reader does not know.
+    pub tuner_state: i32,
 }
 
 /// The `{min, default, max}` triple a tuner target reports.
@@ -151,6 +160,7 @@ impl Default for Params {
                 default: 32.0,
                 max: 45.0,
             }),
+            tuner_state: TUNER_STABLE,
         }
     }
 }
@@ -196,8 +206,12 @@ impl Params {
             self.telemetry(
                 "/api/v1/miner/hw/hashboards",
                 json!({
-                    "hashboards": (0..BOARDS).map(|index| self.board(board_offset(base, index))).collect::<Vec<_>>(),
+                    "hashboards": (0..BOARDS).map(|index| self.board(index, board_offset(base, index))).collect::<Vec<_>>(),
                 }),
+            ),
+            self.telemetry(
+                "/api/v1/performance/tuner-state",
+                json!({ "overall_tuner_state": self.tuner_state }),
             ),
             self.telemetry(
                 "/api/v1/miner/details",
@@ -280,13 +294,20 @@ impl Params {
     /// The board runs cooler than its hottest chip, and carries its own share of
     /// the miner's hashrate: the single-miner widgets read both pairs, pairing
     /// board with chip for one temperature reading and real against nominal for
-    /// the mining-mode ratio.
-    fn board(&self, offset_c: f64) -> Json {
+    /// the mining-mode ratio. The 1-minute and 5-minute means sit on the same
+    /// centre, and every board reports `enabled`.
+    fn board(&self, index: usize, offset_c: f64) -> Json {
+        let real_ghs = self.hashrate_ths.get() * BOARD_SHARE * 1_000.0;
         let mut board = json!({
+            "id": index.to_string(),
+            "enabled": true,
             "board_temp": { "degree_c": leaf(celsius(self.temp_c.get() + offset_c - BOARD_BELOW_CHIP_C)) },
             "highest_chip_temp": { "temperature": { "degree_c": leaf(celsius(self.temp_c.get() + offset_c)) } },
             "stats": {
-                "real_hashrate": { "last_1m": { "gigahash_per_second": leaf(drift(self.hashrate_ths.get() * BOARD_SHARE * 1_000.0)) } },
+                "real_hashrate": {
+                    "last_1m": { "gigahash_per_second": leaf(drift(real_ghs)) },
+                    "last_5m": { "gigahash_per_second": leaf(drift(real_ghs)) },
+                },
                 "nominal_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths.get() * BOARD_SHARE * 1_000.0)) },
             },
         });
@@ -366,6 +387,7 @@ mod tests {
                 "/api/v1/auth/login",
                 "/api/v1/miner/stats",
                 "/api/v1/miner/hw/hashboards",
+                "/api/v1/performance/tuner-state",
                 "/api/v1/miner/details",
                 "/api/v1/cooling/state",
                 "/api/v1/network/",
@@ -384,6 +406,48 @@ mod tests {
         assert!(board["highest_chip_temp"]["temperature"]["degree_c"].is_number());
         assert!(board["stats"]["real_hashrate"]["last_1m"]["gigahash_per_second"].is_number());
         assert!(board["stats"]["nominal_hashrate"]["gigahash_per_second"].is_number());
+    }
+
+    /// The mining-status overlay counts only enabled boards with a nominal
+    /// and judges them on the 5-minute mean;
+    /// a board missing any of the three reads as inactive or underperforming.
+    #[test]
+    fn a_hashboard_carries_what_the_mining_status_overlay_reads() {
+        let boards = body(&Params::default(), "/api/v1/miner/hw/hashboards", 0.0);
+        let board = &boards["hashboards"][1];
+        assert_eq!(board["id"], json!("1"), "boser's id is a string");
+        assert_eq!(board["enabled"], json!(true));
+        assert!(board["stats"]["real_hashrate"]["last_5m"]["gigahash_per_second"].is_number());
+    }
+
+    #[test]
+    fn the_tuner_reports_the_configured_state() {
+        let stable = body(&Params::default(), "/api/v1/performance/tuner-state", 0.0);
+        assert_eq!(stable["overall_tuner_state"], json!(2));
+
+        let tuning = Params {
+            tuner_state: 3,
+            ..Params::default()
+        };
+        let mid_tune = body(&tuning, "/api/v1/performance/tuner-state", 0.0);
+        assert_eq!(mid_tune["overall_tuner_state"], json!(3));
+    }
+
+    /// boser answers 412 on the performance endpoints while bosminer is down;
+    /// the overlay treats it like any other failed poll,
+    /// so the profile has to produce it after an opening healthy stretch.
+    #[test]
+    fn a_stopped_bosminer_can_be_staged_with_a_412() {
+        let stopping = Params {
+            status: HttpStatus::PRECONDITION_FAILED,
+            fail_after_secs: Some(30),
+            ..Params::default()
+        };
+        assert_eq!(stopping.status_at(&ctx(29.0)), HttpStatus::OK);
+        assert_eq!(
+            stopping.status_at(&ctx(30.0)),
+            HttpStatus::PRECONDITION_FAILED
+        );
     }
 
     #[test]

@@ -1,0 +1,44 @@
+{
+  "$schema": "../blueprint.schema.json",
+
+  // One BOS miner per state the mining-status pickaxe can show, on pinned
+  // ports so an overlay can be pointed at a chosen one with
+  // `BMC_MINING_API_URL=http://127.0.0.1:<port>/api/v1`.
+  //
+  // Run with `just netsim::run mining-status`.
+  instances: [
+    {
+        device: "bos",
+        label: "Tuning at full rate → violet",
+        port: 20400,
+        params: { tuner_state: 3 }
+    },
+
+    {
+        device: "bos",
+        label: "Stable at nominal → no pickaxe",
+        port: 20401,
+    },
+
+    {
+        device: "bos",
+        label: "Stable but hashing half of nominal → red",
+        port: 20402,
+        params: { hashrate_ths: 0.5 }
+    },
+
+    {
+        device: "bos",
+        label: "Paused mid-tune: tuner still says tuning, no board hashes → red",
+        port: 20403,
+        params: { tuner_state: 3, hashrate_ths: 0 }
+    },
+
+    {
+        device: "bos",
+        label: "bosminer stops after 30 s: 412 until the retry budget runs out → red",
+        port: 20404,
+        params: { status: 412, fail_after_secs: 30 }
+    },
+  ],
+}

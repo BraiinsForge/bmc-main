@@ -257,6 +257,12 @@
           "description": "Junction temperature to hover around, in °C.",
           "$ref": "#/$defs/Celsius"
         },
+        "tuner_state": {
+          "description": "`overall_tuner_state` reported on `/performance/tuner-state`, the BOS\n`TunerState` integer: 1 disabled, 2 stable, 3 tuning, 4 error,\n5 continuous, 6 preheat. Anything else is served as it stands, which\nis how a blueprint stages the state a reader does not know.",
+          "type": "integer",
+          "format": "int32",
+          "default": 2
+        },
         "uptime_s": {
           "description": "Reported uptime, in seconds.",
           "type": "integer",
