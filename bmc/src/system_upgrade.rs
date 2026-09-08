@@ -33,12 +33,10 @@ use bmc_scheduler::jobs::to_boxed;
 use bmc_scheduler::scheduler::{JobConfig, Schedule, Task};
 use bmc_scheduler::{Cron, JobScheduler};
 pub(crate) use bmc_upgrade::arbitration::Disruption;
-use bmc_upgrade::arbitration::arbitrate;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeDetail};
-use bmc_upgrade::packages::{
-    EstimateMode, PackageBackend, PackageGcRequest, PackageProbe, PackageProbeError,
-};
+use bmc_upgrade::offers::{PackageOffer, UpgradeOffer, UpgradeOfferCache};
+use bmc_upgrade::packages::{PackageBackend, PackageGcRequest, PackageProbe, PackageProbeError};
 pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
@@ -47,9 +45,9 @@ use futures::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use std::{collections::HashMap, sync::LazyLock};
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::{self, Receiver};
@@ -121,58 +119,13 @@ pub(crate) enum UpgradeRunState {
     Failed(SystemUpgradeError),
 }
 
-#[derive(Clone, Debug)]
-pub(crate) enum AvailableSystemUpgrade {
-    Firmware {
-        detail: UpgradeDetail,
-        install: Vec<String>,
-    },
-    Packages {
-        merged: bmc_nix::types::MergedIndex,
-        install: Vec<String>,
-        download_size_bytes: Option<u64>,
-        unpacked_size_bytes: Option<u64>,
-    },
-}
+type AvailableSystemUpgrade = UpgradeOffer<UpgradeDetail>;
+type SystemOfferCache = UpgradeOfferCache<UpgradeDetail>;
 
-impl AvailableSystemUpgrade {
-    /// A firmware image downloads to tmpfs, not the store, so only the
-    /// packages variant has an estimate to check the store against.
-    fn store_unpacked_size_bytes(&self) -> Option<u64> {
-        match self {
-            Self::Firmware { .. } => None,
-            Self::Packages {
-                unpacked_size_bytes,
-                ..
-            } => *unpacked_size_bytes,
-        }
-    }
-}
-
-/// Select the upgrade a check offers under its minted id. Firmware wins
-/// over packages: the target firmware changes what the servers' index
-/// offers, so packages resolve in the new firmware's context and applying
-/// them first would be redone — and possibly superseded — once it lands.
-fn select_offer(
-    firmware: Option<&UpgradeDetail>,
-    merged: Option<bmc_nix::types::MergedIndex>,
-    packages: Option<&PackagesPreview>,
-    install: &[String],
-) -> Option<AvailableSystemUpgrade> {
-    if let Some(detail) = firmware {
-        return Some(AvailableSystemUpgrade::Firmware {
-            detail: detail.clone(),
-            install: install.to_vec(),
-        });
-    }
-    let preview = packages?;
-    let merged = merged.expect("BUG: packages preview present without a merged index");
-    Some(AvailableSystemUpgrade::Packages {
-        merged,
-        install: install.to_vec(),
-        download_size_bytes: preview.download_size_bytes,
-        unpacked_size_bytes: preview.unpacked_size_bytes,
-    })
+fn store_unpacked_size_bytes(upgrade: &AvailableSystemUpgrade) -> Option<u64> {
+    upgrade
+        .package_preview()
+        .and_then(|preview| preview.unpacked_size_bytes)
 }
 
 #[derive(Debug)]
@@ -570,7 +523,7 @@ impl bmc_nix::upgrade::UpgradeProgress for ChannelUpgradeProgress {
 
 async fn claim_upgrade(
     run_gate: &Arc<Mutex<()>>,
-    system_upgrades: &Mutex<HashMap<String, AvailableSystemUpgrade>>,
+    system_upgrades: &Mutex<SystemOfferCache>,
     upgrade_id: &str,
 ) -> Result<(tokio::sync::OwnedMutexGuard<()>, AvailableSystemUpgrade), UpgradeRunStream> {
     let Ok(gate) = Arc::clone(run_gate).try_lock_owned() else {
@@ -580,7 +533,7 @@ async fn claim_upgrade(
         )));
     };
 
-    let Some(upgrade) = system_upgrades.lock().await.remove(upgrade_id) else {
+    let Some(upgrade) = system_upgrades.lock().await.claim(upgrade_id) else {
         warn!(upgrade_id, "Upgrade id is unknown or already consumed");
         return Err(one_shot(UpgradeRunState::Failed(
             SystemUpgradeError::UpgradeExpired,
@@ -802,8 +755,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     autoupgrade: Arc<AutoUpgrade>,
     autoupgrade_enabled: Arc<AtomicBool>,
     run_gate: Arc<Mutex<()>>,
-    upgrade_id_seq: Arc<AtomicUsize>,
-    system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
+    system_upgrades: Arc<Mutex<SystemOfferCache>>,
     package_backend: Arc<dyn PackageBackend>,
     widget_lifecycle: Arc<dyn WidgetLifecycle>,
     pending_install_path: PathBuf,
@@ -827,7 +779,6 @@ where
             autoupgrade: self.autoupgrade.clone(),
             autoupgrade_enabled: Arc::clone(&self.autoupgrade_enabled),
             run_gate: self.run_gate.clone(),
-            upgrade_id_seq: self.upgrade_id_seq.clone(),
             system_upgrades: self.system_upgrades.clone(),
             package_backend: self.package_backend.clone(),
             widget_lifecycle: self.widget_lifecycle.clone(),
@@ -872,8 +823,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             autoupgrade: Arc::new(autoupgrade),
             autoupgrade_enabled: Arc::new(AtomicBool::new(false)),
             run_gate: Arc::new(Mutex::new(())),
-            upgrade_id_seq: Arc::new(AtomicUsize::new(0)),
-            system_upgrades: Arc::new(Mutex::new(HashMap::new())),
+            system_upgrades: Arc::new(Mutex::new(SystemOfferCache::default())),
             package_backend,
             widget_lifecycle,
             pending_install_path,
@@ -889,59 +839,38 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             .try_lock()
             .map_err(|_| SystemUpgradeError::UpgradeInProgress)?;
 
-        self.system_upgrades.lock().await.clear();
-
+        let mut offers = self.system_upgrades.lock().await;
+        offers.invalidate();
         let firmware = self.probe_firmware().await?;
-
-        let probe = self
-            .package_backend
-            .probe(
-                firmware
-                    .as_ref()
-                    .map(|detail| detail.latest_release.version.as_str()),
-                if firmware.is_some() {
-                    EstimateMode::Skip
-                } else {
-                    EstimateMode::Estimate
+        let target_firmware = firmware
+            .as_ref()
+            .map(|detail| detail.latest_release.version.clone());
+        let outcome = offers
+            .check(
+                install.clone(),
+                async { Ok(firmware) },
+                |estimate| async move {
+                    match self
+                        .package_backend
+                        .probe(target_firmware.as_deref(), estimate, &install)
+                        .await
+                    {
+                        PackageProbe::Available(index, preview) => {
+                            Ok(Some(PackageOffer { index, preview }))
+                        }
+                        PackageProbe::UpToDate => Ok(None),
+                        PackageProbe::Failed(error) => {
+                            Err(SystemUpgradeError::PackageCheckFailed(error))
+                        }
+                    }
                 },
-                &install,
             )
-            .await;
-
-        let packages = match probe {
-            PackageProbe::Available(merged, preview) => Some((merged, preview)),
-            PackageProbe::UpToDate => None,
-            PackageProbe::Failed(err) => return Err(SystemUpgradeError::PackageCheckFailed(err)),
-        };
-
-        let disruption = arbitrate(firmware.as_ref(), packages.as_ref().map(|(_, p)| p));
-
-        let (merged, packages) = match packages {
-            Some((merged, preview)) => (Some(merged), Some(preview)),
-            None => (None, None),
-        };
-
-        let upgrade_id = if let Some(upgrade) =
-            select_offer(firmware.as_ref(), merged, packages.as_ref(), &install)
-        {
-            let upgrade_id = format!(
-                "upgrade-{}",
-                self.upgrade_id_seq.fetch_add(1, Ordering::Relaxed)
-            );
-            self.system_upgrades
-                .lock()
-                .await
-                .insert(upgrade_id.clone(), upgrade);
-            Some(upgrade_id)
-        } else {
-            None
-        };
-
+            .await?;
         Ok(CheckOutcome {
-            firmware,
-            packages,
-            upgrade_id,
-            disruption,
+            firmware: outcome.firmware,
+            packages: outcome.packages,
+            upgrade_id: outcome.upgrade_id,
+            disruption: outcome.disruption,
         })
     }
 
@@ -968,7 +897,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let gate = match store_space_preflight(
             gate,
             &self.package_backend,
-            upgrade.store_unpacked_size_bytes(),
+            store_unpacked_size_bytes(&upgrade),
         ) {
             Ok(gate) => gate,
             Err(stream) => return stream,
@@ -982,27 +911,29 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         upgrade: AvailableSystemUpgrade,
     ) -> UpgradeRunStream {
         let (kind, run) = match upgrade {
-            AvailableSystemUpgrade::Firmware { detail, install } => (
+            AvailableSystemUpgrade::Firmware {
+                firmware: detail,
+                install,
+                ..
+            } => (
                 UpgradeKind::Firmware,
                 self.spawn_firmware_run(gate, detail, install),
             ),
-            AvailableSystemUpgrade::Packages {
-                merged,
-                install,
-                download_size_bytes,
-                ..
-            } => (
-                UpgradeKind::Packages,
-                spawn_packages_run(
-                    gate,
-                    Arc::clone(&self.package_backend),
-                    Arc::clone(&self.widget_lifecycle),
-                    merged,
-                    install,
-                    download_size_bytes,
-                    self.state_service.clone(),
-                ),
-            ),
+            AvailableSystemUpgrade::Packages { packages, install } => {
+                let download_size_bytes = packages.preview.download_size_bytes;
+                (
+                    UpgradeKind::Packages,
+                    spawn_packages_run(
+                        gate,
+                        Arc::clone(&self.package_backend),
+                        Arc::clone(&self.widget_lifecycle),
+                        packages.index,
+                        install,
+                        download_size_bytes,
+                        self.state_service.clone(),
+                    ),
+                )
+            }
         };
         forward_upgrade_events(
             self.state_service.clone(),
@@ -1030,7 +961,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let gate = match automatic_gc_preflight(
             gate,
             &self.package_backend,
-            upgrade.store_unpacked_size_bytes(),
+            store_unpacked_size_bytes(&upgrade),
         )
         .await
         {
@@ -1425,10 +1356,6 @@ impl SystemUpgradeError {
         if let Self::PackageCheckFailed(err) = self {
             return err.is_transient();
         }
-        // `UpgradeInProgress` and `UpgradeExpired` are transient collisions
-        // with another run (e.g. a UI-driven check during the scheduled slot
-        // evicting the id the autoupgrade just minted): the autoupgrade must
-        // back off and retry, not wait for the next cron slot.
         matches!(
             self,
             Self::UnableToCheckForUpgrade(
@@ -1443,6 +1370,7 @@ impl SystemUpgradeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmc_upgrade::packages::EstimateMode;
     use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome};
     use chrono::TimeZone as _;
     use futures::StreamExt;
@@ -1504,43 +1432,43 @@ mod tests {
         }
     }
 
+    async fn firmware_offer(offers: &Mutex<SystemOfferCache>) -> String {
+        offers
+            .lock()
+            .await
+            .check(
+                Vec::new(),
+                async { Ok::<_, ()>(Some(test_upgrade_detail())) },
+                |_| async { Ok(None::<PackageOffer>) },
+            )
+            .await
+            .expect("BUG: fixture check succeeds")
+            .upgrade_id
+            .expect("BUG: firmware creates an offer")
+    }
+
     #[tokio::test]
     async fn start_upgrade_unknown_id_expires_and_frees_gate() {
         let run_gate = Arc::new(Mutex::new(()));
-        let system_upgrades = Mutex::new(HashMap::new());
-        let claim = claim_upgrade(&run_gate, &system_upgrades, "unknown-id").await;
-
-        let Err(mut stream) = claim else {
-            panic!("BUG: unknown id must not claim an upgrade");
+        let offers = Mutex::new(SystemOfferCache::default());
+        let Err(mut stream) = claim_upgrade(&run_gate, &offers, "unknown").await else {
+            panic!("BUG: unknown offer must not start");
         };
         assert!(matches!(
             stream.next().await,
             Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
         ));
-        assert!(stream.next().await.is_none());
         assert!(run_gate.try_lock().is_ok());
     }
 
     #[tokio::test]
-    async fn start_upgrade_while_gate_held_keeps_id_and_reports_in_progress() {
+    async fn busy_does_not_consume_the_offer() {
         let run_gate = Arc::new(Mutex::new(()));
-        let system_upgrades = Mutex::new(HashMap::new());
-        system_upgrades.lock().await.insert(
-            "upgrade-0".to_owned(),
-            AvailableSystemUpgrade::Firmware {
-                detail: test_upgrade_detail(),
-                install: Vec::new(),
-            },
-        );
-
-        let guard = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
-
-        let claim = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
-
-        let Err(mut stream) = claim else {
-            panic!("BUG: held gate must not claim an upgrade");
+        let offers = Mutex::new(SystemOfferCache::default());
+        let id = firmware_offer(&offers).await;
+        let guard = run_gate.try_lock().expect("BUG: fresh gate");
+        let Err(mut stream) = claim_upgrade(&run_gate, &offers, &id).await else {
+            panic!("BUG: busy gate must reject start");
         };
         assert!(matches!(
             stream.next().await,
@@ -1548,76 +1476,27 @@ mod tests {
                 SystemUpgradeError::UpgradeInProgress
             ))
         ));
-        assert!(system_upgrades.lock().await.contains_key("upgrade-0"));
-
         drop(guard);
-        assert!(run_gate.try_lock().is_ok());
+        assert!(claim_upgrade(&run_gate, &offers, &id).await.is_ok());
     }
 
     #[tokio::test]
-    async fn claimed_upgrade_id_is_single_use() {
+    async fn consumed_offer_expires_and_is_retriable() {
         let run_gate = Arc::new(Mutex::new(()));
-        let system_upgrades = Mutex::new(HashMap::new());
-        system_upgrades.lock().await.insert(
-            "upgrade-0".to_owned(),
-            AvailableSystemUpgrade::Firmware {
-                detail: test_upgrade_detail(),
-                install: Vec::new(),
-            },
-        );
-
-        let claim = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
-        let Ok((gate, _upgrade)) = claim else {
-            panic!("BUG: a fresh id with a free gate must claim");
+        let offers = Mutex::new(SystemOfferCache::default());
+        let id = firmware_offer(&offers).await;
+        let Ok((guard, _)) = claim_upgrade(&run_gate, &offers, &id).await else {
+            panic!("BUG: fresh offer must start");
         };
-        drop(gate);
-
-        // The first claim consumed the id: starting the same id again
-        // must expire even though the gate is free again.
-        let claim = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
-        let Err(mut stream) = claim else {
-            panic!("BUG: a consumed id must not claim again");
+        drop(guard);
+        let Err(mut stream) = claim_upgrade(&run_gate, &offers, &id).await else {
+            panic!("BUG: consumed offer must not start");
         };
-        assert!(matches!(
-            stream.next().await,
-            Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
-        ));
-    }
-
-    #[tokio::test]
-    async fn expired_upgrade_after_racing_claim_is_retriable() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let system_upgrades = Mutex::new(HashMap::new());
-        system_upgrades.lock().await.insert(
-            "upgrade-0".to_owned(),
-            AvailableSystemUpgrade::Firmware {
-                detail: test_upgrade_detail(),
-                install: Vec::new(),
-            },
-        );
-
-        // A racing UI-driven start consumes the id the autoupgrade just
-        // minted; the autoupgrade's own claim then expires.
-        let winner = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
-        let Ok((gate, _upgrade)) = winner else {
-            panic!("BUG: the racing claim must win the fresh id");
+        let Some(UpgradeRunState::Failed(error)) = stream.next().await else {
+            panic!("BUG: expired offer must report failure");
         };
-        drop(gate);
-
-        let Err(mut stream) = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await else {
-            panic!("BUG: the evicted id must not claim");
-        };
-        let Some(UpgradeRunState::Failed(err)) = stream.next().await else {
-            panic!("BUG: the evicted id must fail with an error");
-        };
-        assert!(
-            matches!(err, SystemUpgradeError::UpgradeExpired),
-            "expected UpgradeExpired, got {err:?}"
-        );
-        assert!(
-            err.is_retriable(),
-            "a racing claim evicting the autoupgrade's id must be retriable"
-        );
+        assert!(matches!(error, SystemUpgradeError::UpgradeExpired));
+        assert!(error.is_retriable());
     }
 
     fn empty_merged_index() -> bmc_nix::types::MergedIndex {
@@ -1625,70 +1504,6 @@ mod tests {
             packages: Vec::new(),
             by_name: std::collections::BTreeMap::new(),
         }
-    }
-
-    fn test_packages_preview() -> PackagesPreview {
-        PackagesPreview {
-            changes: Vec::new(),
-            download_size_bytes: Some(42),
-            unpacked_size_bytes: Some(84),
-            bmc_version: None,
-            bmc_changelog: None,
-        }
-    }
-
-    #[test]
-    fn offer_prefers_firmware_over_packages() {
-        let detail = test_upgrade_detail();
-
-        let offer = select_offer(
-            Some(&detail),
-            Some(empty_merged_index()),
-            Some(&test_packages_preview()),
-            &[],
-        )
-        .expect("BUG: firmware present must mint an offer");
-
-        assert!(
-            matches!(offer, AvailableSystemUpgrade::Firmware { .. }),
-            "a pending firmware upgrade must win over packages"
-        );
-    }
-
-    #[test]
-    fn firmware_wins_even_with_pending_install() {
-        let firmware = test_upgrade_detail();
-        let preview = test_packages_preview();
-        let offer = select_offer(
-            Some(&firmware),
-            Some(empty_merged_index()),
-            Some(&preview),
-            &["widget-weather".to_owned()],
-        );
-        assert!(matches!(
-            offer,
-            Some(AvailableSystemUpgrade::Firmware { .. })
-        ));
-    }
-
-    #[test]
-    fn offer_falls_back_to_packages_without_firmware() {
-        let offer = select_offer(
-            None,
-            Some(empty_merged_index()),
-            Some(&test_packages_preview()),
-            &[],
-        )
-        .expect("BUG: available packages must mint an offer");
-
-        assert!(matches!(
-            offer,
-            AvailableSystemUpgrade::Packages {
-                download_size_bytes: Some(42),
-                ..
-            }
-        ));
-        assert!(select_offer(None, None, None, &[]).is_none());
     }
 
     #[derive(Debug)]

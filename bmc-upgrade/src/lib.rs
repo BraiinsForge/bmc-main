@@ -24,6 +24,7 @@ pub mod autoupgrade;
 pub mod bmc_index;
 pub mod downloader;
 pub mod firmware;
+pub mod offers;
 pub mod packages;
 pub mod upgrader;
 mod utils;
