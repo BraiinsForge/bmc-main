@@ -220,6 +220,20 @@ pub struct SettingsCaps {
     pub wifi_setup: bool,
 }
 
+/// Decoded `deck_platform_v1` capability set: what the hardware platform
+/// supports. Plain bools so overlays never touch the raw protocol bitfield.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent per-board hardware flags, mirroring bmc_platform::HardwareCapabilities"
+)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlatformCaps {
+    pub wifi: bool,
+    pub ethernet: bool,
+    pub mining: bool,
+    pub boser_managed: bool,
+}
+
 /// A control request an overlay wants to send over `deck_alarm_v1`. The
 /// framework drains these after `tick` and forwards them to the compositor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -440,6 +454,18 @@ pub trait SystemOverlay {
     /// on screen. Delivered before `tick`, never replayed on bind.
     fn on_report_ip(&mut self) {}
 
+    /// Whether this overlay binds the `deck_platform_v1` capability feed.
+    /// `false` (default) means the framework neither binds it nor delivers
+    /// platform capabilities to this overlay.
+    fn uses_platform(&self) -> bool {
+        false
+    }
+
+    /// Hardware platform capabilities reported by the compositor. Delivered
+    /// once, before the first `tick` that follows the bind; the set never
+    /// changes for the compositor's lifetime. Default: no-op.
+    fn on_platform_capabilities(&mut self, _caps: PlatformCaps) {}
+
     /// Opt in to screen-edge reveal. `None` (default) means a normal overlay
     /// whose visibility is driven by [`TickOutcome::visible`]. `Some(edge)` arms
     /// that edge at startup: the surface stays hidden (no buffer) until the
@@ -567,6 +593,19 @@ pub trait SystemOverlay {
     fn on_frame_submitted(&mut self, _now: Instant) {}
 }
 
+/// Hand a received capability set to an overlay that asked for it. Runs before
+/// its `tick`, so the set is in place before the overlay decides anything on it.
+pub(crate) fn deliver_platform_capabilities(
+    overlay: &mut dyn SystemOverlay,
+    caps: Option<PlatformCaps>,
+) {
+    if overlay.uses_platform()
+        && let Some(caps) = caps
+    {
+        overlay.on_platform_capabilities(caps);
+    }
+}
+
 pub(crate) fn deliver_upgrade_snapshot_and_tick(
     overlay: &mut dyn SystemOverlay,
     snapshot: Option<UpgradeSnapshot>,
@@ -667,6 +706,56 @@ mod tests {
 
         assert_eq!(overlay.snapshot, None);
         assert_eq!(overlay.calls, vec!["tick"]);
+    }
+
+    #[derive(Default)]
+    struct RecordingPlatformOverlay {
+        enabled: bool,
+        caps: Option<PlatformCaps>,
+    }
+
+    impl SystemOverlay for RecordingPlatformOverlay {
+        fn layer_config(&self) -> LayerConfig {
+            LayerConfig::fullscreen("recording-platform-overlay")
+        }
+
+        fn tick(&mut self, _now: Instant) -> TickOutcome {
+            TickOutcome::default()
+        }
+
+        fn render(&mut self, _renderer: &mut dyn Renderer, _size: (u32, u32)) {}
+
+        fn uses_platform(&self) -> bool {
+            self.enabled
+        }
+
+        fn on_platform_capabilities(&mut self, caps: PlatformCaps) {
+            self.caps = Some(caps);
+        }
+    }
+
+    const MINER_CAPS: PlatformCaps = PlatformCaps {
+        wifi: true,
+        ethernet: true,
+        mining: true,
+        boser_managed: true,
+    };
+
+    #[test]
+    fn platform_capabilities_reach_an_opted_in_overlay() {
+        let mut overlay = RecordingPlatformOverlay {
+            enabled: true,
+            caps: None,
+        };
+        deliver_platform_capabilities(&mut overlay, Some(MINER_CAPS));
+        assert_eq!(overlay.caps, Some(MINER_CAPS));
+    }
+
+    #[test]
+    fn platform_capabilities_skip_an_opted_out_overlay() {
+        let mut overlay = RecordingPlatformOverlay::default();
+        deliver_platform_capabilities(&mut overlay, Some(MINER_CAPS));
+        assert_eq!(overlay.caps, None);
     }
 
     #[test]

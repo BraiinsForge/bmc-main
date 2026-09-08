@@ -29,8 +29,9 @@ use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
 use crate::overlay::{
-    AlarmEvent, LayerConfig, MIN_INTER_FRAME, SystemOverlay, deliver_upgrade_snapshot_and_tick,
-    resize_transition, resolved_configured_size, screen_edge_visible,
+    AlarmEvent, LayerConfig, MIN_INTER_FRAME, SystemOverlay, deliver_platform_capabilities,
+    deliver_upgrade_snapshot_and_tick, resize_transition, resolved_configured_size,
+    screen_edge_visible,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -104,6 +105,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         deliver_settings_events(&mut client, &mut *overlay);
         deliver_alarm_events(&mut client, &mut *overlay);
         deliver_device_info_events(&mut client, &mut *overlay);
+        deliver_platform_capabilities(&mut *overlay, client.take_platform_caps());
 
         let now = Instant::now();
         let tick =

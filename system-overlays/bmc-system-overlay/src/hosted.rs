@@ -26,9 +26,9 @@ use bmc_widget::egl::{DmaBufInfo, EglContext};
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
     AlarmEvent, FenceState, HideFenceAction, HideFenceGate, MIN_INTER_FRAME, PollGate, RenderGate,
-    SystemOverlay, deliver_upgrade_snapshot_and_tick, hide_fence_action, hide_fence_after_tick,
-    overlay_needs_hide, overlay_needs_render, overlay_poll_timeout, resize_transition,
-    resolved_configured_size, screen_edge_visible,
+    SystemOverlay, deliver_platform_capabilities, deliver_upgrade_snapshot_and_tick,
+    hide_fence_action, hide_fence_after_tick, overlay_needs_hide, overlay_needs_render,
+    overlay_poll_timeout, resize_transition, resolved_configured_size, screen_edge_visible,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -211,6 +211,7 @@ impl HostedOverlay {
                 self.overlay.on_report_ip();
             }
         }
+        deliver_platform_capabilities(&mut *self.overlay, self.client.take_platform_caps());
         for released in self.client.drain_released_buffers() {
             self.target.mark_released_buffer(&released);
         }

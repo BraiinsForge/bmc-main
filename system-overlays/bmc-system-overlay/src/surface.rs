@@ -35,6 +35,9 @@ use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1, Snooze};
 use ::deck_device_info_v1::client::deck_device_info_v1::{
     self, DeckDeviceInfoV1, DeviceState as WireDeviceState, SetupState as WireSetupState,
 };
+use ::deck_platform_v1::client::deck_platform_v1::{
+    self, Capability as PlatformCapability, DeckPlatformV1,
+};
 use ::deck_upgrade_v1::UpgradeDecoder;
 use ::deck_upgrade_v1::client::deck_upgrade_v1::{self, DeckUpgradeV1};
 use anyhow::Context;
@@ -150,6 +153,13 @@ struct State {
     /// and the second would only restart a hold the first had barely begun.
     pending_report_ip: bool,
 
+    /// Whether this overlay opted into `deck_platform_v1`
+    /// (its `SystemOverlay::uses_platform`).
+    wants_platform: bool,
+    platform: Option<DeckPlatformV1>,
+    /// Set on the `capabilities` event, the one event the bind answers with.
+    pending_platform_caps: Option<crate::overlay::PlatformCaps>,
+
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
     /// Compositor-suggested size from the latest Configure.
@@ -214,6 +224,9 @@ impl Default for State {
             pending_setup_progress: None,
             pending_access_point: None,
             pending_report_ip: false,
+            wants_platform: false,
+            platform: None,
+            pending_platform_caps: None,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -377,6 +390,7 @@ pub struct ProtocolOptIns {
     pub alarm: bool,
     pub upgrade: bool,
     pub device_info: bool,
+    pub platform: bool,
 }
 
 impl ProtocolOptIns {
@@ -386,6 +400,7 @@ impl ProtocolOptIns {
             alarm: overlay.uses_alarm(),
             upgrade: overlay.uses_upgrade(),
             device_info: overlay.uses_device_info(),
+            platform: overlay.uses_platform(),
         }
     }
 }
@@ -408,6 +423,7 @@ impl LayerSurfaceClient {
             wants_alarm: opt_ins.alarm,
             wants_upgrade: opt_ins.upgrade,
             wants_device_info: opt_ins.device_info,
+            wants_platform: opt_ins.platform,
             ..State::default()
         };
         queue
@@ -703,6 +719,10 @@ impl LayerSurfaceClient {
         std::mem::take(&mut self.state.pending_report_ip)
     }
 
+    pub fn take_platform_caps(&mut self) -> Option<crate::overlay::PlatformCaps> {
+        self.state.pending_platform_caps.take()
+    }
+
     pub fn send_settings_request(
         &self,
         req: crate::overlay::SettingsRequest,
@@ -874,6 +894,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                         registry.bind::<DeckDeviceInfoV1, _, _>(name, version.min(2), qh, ());
                     state.device_info = Some(device_info);
                 }
+                "deck_platform_v1" if state.wants_platform => {
+                    let platform =
+                        registry.bind::<DeckPlatformV1, _, _>(name, version.min(1), qh, ());
+                    state.platform = Some(platform);
+                }
                 _ => {}
             }
         }
@@ -990,6 +1015,35 @@ impl Dispatch<DeckSettingsV1, ()> for State {
                 state.pending_preempted = Some(active != 0);
             }
             other => tracing::debug!(?other, "unhandled deck_settings_v1 event"),
+        }
+    }
+}
+
+impl Dispatch<DeckPlatformV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckPlatformV1,
+        event: deck_platform_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_platform_v1::Event::Capabilities { capabilities } => {
+                let caps = match capabilities {
+                    WEnum::Value(c) => c,
+                    // An unknown bit from a newer compositor
+                    // must not drop the known bits with it.
+                    WEnum::Unknown(raw) => PlatformCapability::from_bits_truncate(raw),
+                };
+                state.pending_platform_caps = Some(crate::overlay::PlatformCaps {
+                    wifi: caps.contains(PlatformCapability::Wifi),
+                    ethernet: caps.contains(PlatformCapability::Ethernet),
+                    mining: caps.contains(PlatformCapability::Mining),
+                    boser_managed: caps.contains(PlatformCapability::BoserManaged),
+                });
+            }
+            other => tracing::debug!(?other, "unhandled deck_platform_v1 event"),
         }
     }
 }
