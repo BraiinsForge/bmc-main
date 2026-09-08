@@ -81,8 +81,22 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
     // Step 2: Diff each widget against baselines (parallel — each thread
     // spawns its own odiff server since the server
     // handles one request at a time).
-    let widgets =
+    let mut widgets =
         super::run_all::resolve_widgets(&args.workspaces, &args.wasm_dirs, args.widget.as_deref())?;
+
+    // A widget that ships no capture config has nothing to verify
+    // and a sweep must not read that as a regression: `nix/wasm-regression.nix`
+    // filters the same way, so an unfiltered sweep is redder than CI over widgets CI never checks.
+    //
+    // Naming one explicitly still reports its missing baseline,
+    // as `run.rs` does for a named target the manifest declines.
+    if args.widget.is_none() {
+        widgets.retain(|entry| {
+            super::run_all::capture_dir(&entry.workspace, &entry.name)
+                .join("config.toml")
+                .is_file()
+        });
+    }
 
     super::diff::section("Compare");
 
