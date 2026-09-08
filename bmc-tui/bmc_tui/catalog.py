@@ -2573,7 +2573,7 @@ def snapshot_profile(dev: Device, cycle: UpgradeCycle) -> str:
     )
 
 
-def _upgrade_server_argv(  # noqa: PLR0913
+def upgrade_server_argv(  # noqa: PLR0913
     *, host: str, port: int, index_port: int, key_dir: Path, built: list[Built], firmware: str
 ) -> list[str]:
     """The ``nix run .#upgrade-server`` command for the built package set.
@@ -2611,7 +2611,7 @@ def start_upgrade_server(
     require(bool(firmware.strip()), "package feed requires a firmware version")
     cycle.host = _local_addr(dev.host)
     cycle.log_path = Path(tempfile.gettempdir()) / "bmc-upgrade-server.log"
-    argv = _upgrade_server_argv(
+    argv = upgrade_server_argv(
         host=cycle.host,
         port=cycle.port,
         index_port=cycle.index_port,
@@ -2619,6 +2619,13 @@ def start_upgrade_server(
         built=plan.built,
         firmware=firmware,
     )
+    launch_upgrade_server(cycle, argv)
+    return f"feed {console.lit(cycle.feed_url)}, cache {console.lit(cycle.cache_url)}"
+
+
+def launch_upgrade_server(cycle: UpgradeCycle, argv: list[str]) -> None:
+    if cycle.log_path is None:
+        raise RuntimeError("BUG: upgrade server needs a log path before launch")
     with cycle.log_path.open("wb") as log:
         cycle.server = subprocess.Popen(
             argv,
@@ -2628,7 +2635,6 @@ def start_upgrade_server(
         )
     _await_upgrade_server(cycle)
     cycle.cache_public_key = (cycle.key_dir / "public").read_text().strip()
-    return f"feed {console.lit(cycle.feed_url)}, cache {console.lit(cycle.cache_url)}"
 
 
 def _restore_each(*, failed: bool, actions: list[Callable[[], object]]) -> None:
@@ -2747,6 +2753,11 @@ def stop_upgrade_server_group(cycle: UpgradeCycle) -> None:
 
 @stage("Register server on device")
 def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
+    dev.run(upgrade_server_registration_command(cycle))
+    return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.feed_url)}"
+
+
+def upgrade_server_registration_command(cycle: UpgradeCycle) -> str:
     key = cycle.cache_public_key
     if key is None:
         msg = "BUG: the upgrade server was not started before registration"
@@ -2769,8 +2780,7 @@ def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
         key,
     ]
     inner = " ".join(shlex.quote(a) for a in args)
-    dev.run(f"PATH=/run/current-profile/bin:$PATH {inner}")
-    return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.feed_url)}"
+    return f"PATH=/run/current-profile/bin:$PATH {inner}"
 
 
 @stage("Pre-run package config is the device's own")

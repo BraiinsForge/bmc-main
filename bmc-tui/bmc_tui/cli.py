@@ -20,6 +20,7 @@
 
 """Single `deck` entry point: dispatch to a procedure subcommand."""
 
+from bmc_tui.procedures.boser_upgrade_e2e import BoserUpgradeE2e
 from bmc_tui.procedures.check_credential_egress import CheckCredentialEgress
 from bmc_tui.procedures.deploy import Deploy
 from bmc_tui.procedures.e2e_grpc_sysupgrade import E2eGrpcSysupgrade
@@ -45,6 +46,7 @@ def main(
     | InstallWidgetE2e
     | E2eSysupgrade
     | E2eGrpcSysupgrade
+    | BoserUpgradeE2e
     | ImageFormats
     | E2eSysupgradeFaults
     | WidgetHostE2e

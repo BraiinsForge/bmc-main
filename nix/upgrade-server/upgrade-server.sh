@@ -26,7 +26,7 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: upgrade-server --firmware BOS_VERSION --package NAME=VERSION=STORE_PATH... [options]
+Usage: upgrade-server --firmware BOS_VERSION [--base-index FILE] [--package NAME=VERSION=STORE_PATH...] [options]
 
 Serve the local /nix/store as a signed binary cache and publish a
 firmware-scoped nix-package-feed.v1.json, its package index, and a
@@ -43,7 +43,7 @@ Options:
                      (uid, name, category) and an icon asset so the
                      frontend add-a-widget menu can list it.
   --base-index FILE  Existing nix-package-index.v1.json used as the
-                     baseline. The served index must contain every
+                     baseline; may be used without --package/--widget. The served index must contain every
                      installed system package (at minimum core), or the
                      device reports packages-unavailable.
   --port N           Binary cache port (default 8080).
@@ -99,9 +99,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ "${#packages[@]}" -eq 0 ] && [ "${#widgets[@]}" -eq 0 ]; then
+if [ "${#packages[@]}" -eq 0 ] && [ "${#widgets[@]}" -eq 0 ] && [ -z "$base_index" ]; then
     usage >&2
-    die "at least one --package or --widget NAME=VERSION=STORE_PATH is required"
+    die "a --base-index, --package or --widget is required"
 fi
 [ -n "$firmware" ] || die "--firmware BOS_VERSION is required"
 [ -n "$index_port" ] || index_port=$((port + 1))

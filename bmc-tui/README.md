@@ -8,6 +8,10 @@ Run it via `nix run .#deck -- <init|deploy|sysupgrade> --help`.
 
 ## Architecture
 
+For BMM101 testing through Boser's temporary upgrade console, use `nix run .#deck -- boser-upgrade-e2e --help`. See the
+[interactive Boser E2E procedure](../docs/devlogs/BDK-787/e2e-usage.md) for host inputs and manual device steps. The
+runner serves test indexes/cache only; it does not contact or upgrade a device.
+
 A procedure is a flat sequence of stages; each stage is a typed function guarded by prose verbs that carry the
 run/skip/fail verdict.
 

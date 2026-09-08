@@ -1784,7 +1784,7 @@ def test_verify_profile_advanced_aborts_on_non_json_manifest() -> None:
 def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:
     # widget-* packages must go in as --widget so the server attaches picker
     # metadata; other packages stay plain --package entries.
-    argv = catalog._upgrade_server_argv(
+    argv = catalog.upgrade_server_argv(
         host="10.0.0.1",
         port=8080,
         index_port=8081,
