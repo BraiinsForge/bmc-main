@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["Braiins Systems s.r.o."]
-description = "Bottom-right indicator shown while the device is offline"
+description = "Bottom-right corner status: the offline chip and the mining-status pickaxe"
+
+# The pickaxe SVG is compiled in via include_svg!; the nix source filter keeps
+# only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["assets/*"]
 
 [lib]
 path = "src/lib.rs"
@@ -16,7 +21,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 bmc-render.workspace = true
+bmc-render-macros = { path = "../../bmc-render/macros" }
 bmc-system-overlay.workspace = true
+bmc-wasm-protocol.workspace = true
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+ureq.workspace = true
 
 [lints]
 workspace = true

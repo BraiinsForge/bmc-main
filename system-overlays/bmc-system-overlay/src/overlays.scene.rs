@@ -34,7 +34,7 @@ use bmc_gallery::prelude::*;
 
 use bmc_overlay_alarm::{AlarmRenderState, AlarmView, render_alarm};
 use bmc_overlay_device_info::{DeviceInfoRenderState, DeviceInfoView, render_device_info};
-use bmc_overlay_offline::{OfflineView, render_offline};
+use bmc_overlay_offline::{Connectivity, OfflineView, Status, decide, render_offline};
 use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
 };
@@ -141,10 +141,10 @@ fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
     clippy::cast_sign_loss,
     reason = "a stage hands its cell a size in whole positive logical pixels"
 )]
-fn offline_cell(flat: bool) -> CustomRenderFn {
+fn offline_cell(view: OfflineView, flat: bool) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
-        render_offline(r, (w as u32, h as u32), OfflineView { visible: true });
+        render_offline(r, (w as u32, h as u32), view);
         // Still: `render_offline` is given no clock to move against.
         false
     })
@@ -380,12 +380,34 @@ fn settings_tray_cell(
     })
 }
 
+/// The corner status: the offline chip,
+/// or the mining-status pickaxe where the platform mines.
+/// Both are translucent and always sit over a widget on the device,
+/// so the backdrop stands in for one by default.
 #[scene(default)]
 fn offline(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let flat = ctx.toggle("Flat backdrop", false);
-    ui.heading("Offline");
-    ui.label("no routable IPv4");
-    ctx.custom_stage(ui, (160_u32, 48_u32), offline_cell(flat));
+    let flat = ctx.toggle("Flat backdrop", true);
+    let offline = ctx.toggle("Offline", false);
+    let mining = ctx.radio("Mining", &["Tuning", "Ok", "Low"], 0);
+    let status = match mining {
+        0 => Status::Tuning,
+        1 => Status::Ok,
+        _ => Status::Low,
+    };
+    let connectivity = if offline {
+        Connectivity::Offline
+    } else {
+        Connectivity::Online
+    };
+    let view = decide(connectivity, Some(status));
+
+    ui.heading("Corner status");
+    ui.label("the overlay's own 160×48 surface");
+    ctx.custom_stage(ui, (160_u32, 48_u32), offline_cell(view, flat));
+
+    ui.heading("On a BMM101 display");
+    ui.label("480×320, the indicator in its corner");
+    ctx.custom_stage(ui, (480_u32, 320_u32), offline_cell(view, flat));
 }
 
 fn device_info_stage(

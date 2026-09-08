@@ -774,7 +774,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-render",
+ "bmc-render-macros",
  "bmc-system-overlay",
+ "bmc-wasm-protocol",
+ "bmc-wasm-sdk",
+ "serde",
+ "serde_json",
+ "tracing",
+ "ureq",
 ]
 
 [[package]]
@@ -919,6 +926,7 @@ dependencies = [
  "bmc-widget",
  "deck-alarm-v1",
  "deck-device-info-v1",
+ "deck-platform-v1",
  "deck-screen-edge-v1",
  "deck-settings-v1",
  "deck-upgrade-v1",
@@ -1640,6 +1648,17 @@ dependencies = [
 name = "deck-device-info-v1"
 version = "0.1.0"
 dependencies = [
+ "wayland-backend",
+ "wayland-client",
+ "wayland-scanner",
+ "wayland-server",
+]
+
+[[package]]
+name = "deck-platform-v1"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.1",
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",

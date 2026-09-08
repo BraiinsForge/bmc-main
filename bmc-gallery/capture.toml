@@ -112,3 +112,40 @@ frames = 4
 
 [shot.knobs]
 "Headline size" = 100
+
+# The corner status shared by the offline chip and the mining-status pickaxe.
+[[shot]]
+name = "offline-mining-tuning"
+scene = "bmc_gallery::overlays::Offline"
+frames = 2
+
+[shot.knobs]
+Offline = false
+Mining = "Tuning"
+
+[[shot]]
+name = "offline-mining-ok"
+scene = "bmc_gallery::overlays::Offline"
+frames = 2
+
+[shot.knobs]
+Offline = false
+Mining = "Ok"
+
+[[shot]]
+name = "offline-mining-low"
+scene = "bmc_gallery::overlays::Offline"
+frames = 2
+
+[shot.knobs]
+Offline = false
+Mining = "Low"
+
+[[shot]]
+name = "offline-chip-over-tuning"
+scene = "bmc_gallery::overlays::Offline"
+frames = 2
+
+[shot.knobs]
+Offline = true
+Mining = "Tuning"
