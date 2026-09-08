@@ -33,7 +33,9 @@ versus rectangular is display *shape*, part of the geometry, not a product gate.
 `Product` stays legitimate for capabilities — whether the board has a speaker, or drives its setup AP through a radio
 the overlay can speak to. Those are not readable off a screen size. The settings tray's `wifi_reconfig_supported` and
 `show_volume` are the current examples. Even they are the fallback path: the compositor sends `caps` over
-`deck_settings_v1` and the tray prefers it, which is where a new capability should go first.
+`deck_settings_v1` and the tray prefers it. A capability of the *board* rather than of the tray's controls goes over
+`deck_platform_v1`, which carries `bmc_platform::HardwareCapabilities` as a bitfield; the corner status gates its mining
+poller on its `mining` bit and never reads the product.
 
 ### Where the numbers come from
 
@@ -87,7 +89,8 @@ The overlay crates are grouped under the top-level `system-overlays/` folder, mi
 - `system-overlays/bmc-system-overlay` — the framework crate (the `SystemOverlay` trait, the layer-surface client, the
   render target, the hosted and standalone entrypoints).
 - `system-overlays/bmc-overlay-device-info` — full-screen boot, setup and connect-info screens.
-- `system-overlays/bmc-overlay-offline` — bottom-right offline indicator.
+- `system-overlays/bmc-overlay-offline` — the bottom-right corner: the offline indicator and, where the platform mines,
+  the mining-status pickaxe.
 - `system-overlays/bmc-overlay-settings-tray` — swipe-from-top quick-settings panel.
 - `system-overlays/bmc-overlay-alarm` — full-screen firing-alarm screen (Stop / Snooze).
 - `system-overlays/bmc-overlay-upgrade` — upgrade progress: a full-screen firmware blocker and a passive package surface
@@ -105,15 +108,16 @@ the compositor free of a dependency into the overlay folder:
   (`deck_device_info_v1`).
 - `deck-alarm-v1` — firing-alarm ring/stop signalling and dismiss/snooze return path (`deck_alarm_v1`).
 - `deck-upgrade-v1` — one-way upgrade-progress snapshots (`deck_upgrade_v1`).
+- `deck-platform-v1` — the hardware platform's capability set, sent once on bind (`deck_platform_v1`).
 
-See [`protocols.md`](protocols.md) for all five.
+See [`protocols.md`](protocols.md) for all six.
 
 ## The concrete overlays
 
 | Overlay       | Crate                       | Layer        | Placement                                   | Input | Screen edge | Compositor IPC        |
 | ------------- | --------------------------- | ------------ | ------------------------------------------- | ----- | ----------- | --------------------- |
 | Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen                                 | full  | no          | `deck_device_info_v1` |
-| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right                                | none  | no          | no                    |
+| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right                                | none  | no          | `deck_platform_v1`    |
 | Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen                                 | full  | `Top`       | `deck_settings_v1`    |
 | Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen                                 | full  | no          | `deck_alarm_v1`       |
 | Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen                                 | full  | no          | `deck_upgrade_v1`     |
@@ -151,8 +155,8 @@ configuration mechanism. Both gates live in `bmc-wasm-host/src/overlays.rs` (`bu
 - [Compositor integration](compositor-integration.md) — how the Smithay compositor advertises `wlr-layer-shell`,
   composites layer surfaces above the scene, tracks their buffers, evicts textures on a NULL-buffer unmap, hit-tests
   touch, suppresses scene-drag, and recognizes the edge-reveal gesture.
-- [Protocols](protocols.md) — the five Wayland protocols `deck_screen_edge_v1`, `deck_settings_v1`,
-  `deck_device_info_v1`, `deck_alarm_v1`, and `deck_upgrade_v1`: interfaces, requests, events, the responsibility split,
-  and how the forked two diverge from their upstreams.
+- [Protocols](protocols.md) — the six Wayland protocols `deck_screen_edge_v1`, `deck_settings_v1`,
+  `deck_device_info_v1`, `deck_alarm_v1`, `deck_upgrade_v1` and `deck_platform_v1`: interfaces, requests, events, the
+  responsibility split, and how the forked two diverge from their upstreams.
 - [Overlays](overlays.md) — the five concrete overlays: what each shows, when it maps and dismisses, its data sources,
   and its platform gating.

@@ -1,15 +1,16 @@
 # Overlay Protocols
 
-System overlays use five small Wayland protocols beyond `wlr-layer-shell`, each its own crate at the workspace root
-(`deck-screen-edge-v1/`, `deck-settings-v1/`, `deck-device-info-v1/`, `deck-alarm-v1/`, `deck-upgrade-v1/`) beside
-`bmc-widget-protocol`. They are shared between the compositor and the overlay framework, so they do not live under
-`system-overlays/`. Each crate carries the `.xml` and generates both server and client bindings with `wayland_scanner`
-(`generate_server_code!` / `generate_client_code!`), matching the `bmc-widget-protocol` convention.
+System overlays use six small Wayland protocols beyond `wlr-layer-shell`, each its own crate at the workspace root
+(`deck-screen-edge-v1/`, `deck-settings-v1/`, `deck-device-info-v1/`, `deck-alarm-v1/`, `deck-upgrade-v1/`,
+`deck-platform-v1/`) beside `bmc-widget-protocol`. They are shared between the compositor and the overlay framework, so
+they do not live under `system-overlays/`. Each crate carries the `.xml` and generates both server and client bindings
+with `wayland_scanner` (`generate_server_code!` / `generate_client_code!`), matching the `bmc-widget-protocol`
+convention.
 
-The first two are forks with deliberately renamed interfaces; the device-info, alarm and upgrade protocols are
+The first two are forks with deliberately renamed interfaces; the device-info, alarm, upgrade and platform protocols are
 Deck-owned. The `deck_` prefix follows the `deck_widget` precedent of not impersonating someone else's protocol: the
 contracts differ from their upstreams, so keeping the upstream interface names would mislead the next reader into
-assuming upstream semantics. The compositor-side dispatch for all five is in
+assuming upstream semantics. The compositor-side dispatch for all six is in
 [`compositor-integration.md`](compositor-integration.md); the client-side binding is in [`framework.md`](framework.md).
 
 ## `deck_screen_edge_v1`
@@ -211,3 +212,30 @@ an invalid enum value or bad ordering is discarded whole and the client keeps it
 consequence: how long a finished upgrade stays on screen is decided by bmc's display projection, and the compositor
 recomputes the remainder against the cached deadline on each replay so a client binding late gets the time actually
 left, not a fresh full interval.
+
+## `deck_platform_v1`
+
+New for the mining-status pickaxe, and generic on purpose: it carries the hardware platform's capability set, the same
+bools `bmc_platform::HardwareCapabilities` holds and bmc already reports over gRPC, so an overlay can gate a function on
+what the board supports without reading the product name itself. It is where a new capability goes first (see the
+"Geometry versus capability" rule in [`README.md`](README.md)); `deck_settings_v1`'s own `capabilities` bitfield
+predates it and stays where it is because its bits describe controls the tray offers, not the board.
+
+### `deck_platform_v1` (version 1)
+
+| Member               | Kind    | Args                                 | Notes                                                                                                |
+| -------------------- | ------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `destroy`            | request | —                                    | Destructor.                                                                                          |
+| `capabilities(caps)` | event   | `capabilities: uint` (enum bitfield) | Emitted exactly once per resource, as the first event on bind; static for the compositor's lifetime. |
+
+The `capability` bitfield is `wifi = 1`, `ethernet = 2`, `mining = 4` (the board mines, and a BOS API answers on the
+local host), `boser_managed = 8` (boser owns the device configuration). A client decodes unknown bits with
+`from_bits_truncate`, so a newer compositor adding a bit does not cost the known ones.
+
+**Responsibility split.** The compositor derives the bitfield from the `HardwareProfile` it was started with
+(`platform.rs`, `caps_wire`), so there is no second per-product table to keep in step. The interface is event-only and
+the set never changes, so the compositor keeps no resource list: a bind is answered and forgotten. On the client side
+the framework delivers the set through `SystemOverlay::on_platform_capabilities` before the first `tick`, gated on
+`uses_platform`, the same way the tray receives `SettingsCaps`.
+
+Anything else the board can tell an overlay about itself goes here as a version bump, not as a protocol of its own.

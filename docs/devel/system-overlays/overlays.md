@@ -124,19 +124,70 @@ gated on `Connecting` so an upgrade finishing minutes later cannot resurrect it.
 where the snapshot lands with no connect screen to replace: only the operational entry consumes it, so a success
 arriving mid-setup cannot disturb the setup screens.
 
-## Offline (`bmc-overlay-offline`)
+## Offline and mining status (`bmc-overlay-offline`)
 
-A passive bottom-right "OFFLINE" indicator, mapped only while the device has no routable IPv4 and unmapped again when
-connectivity returns (and re-mapped if it drops again).
+The passive bottom-right corner. Two indicators share its one surface, and the crate keeps the name of the first:
+
+- the **"OFFLINE" chip**, mapped while the device has no routable IPv4 and unmapped again when connectivity returns;
+- the **mining-status pickaxe**, a 20×20 icon centred on a square translucent card of the chip's height, violet while
+  the miner tunes and red while it underperforms, is stopped, or cannot be reached. A miner that is simply mining draws
+  nothing: there is no positive indicator, so an empty corner is the healthy state.
 
 `LayerConfig::bottom_right("bmc-overlay-offline", (160, 48))` → `Layer::Background` with **no input region**, so touches
 in its corner fall through to whatever is behind it. `Background` is the lowest rank, so every other overlay draws over
 it; it still paints above the scene, so the indicator stays visible over the clock.
 
+### The chip
+
 `tick` polls the prober's `snapshot_if_changed` on every wake (`POLL` = 2s) and keeps the state derived from the last
-changed snapshot; the overlay is visible exactly when a published snapshot holds no routable IPv4 (before the first
-snapshot the chip stays hidden). It draws a content-tight box at the bottom-right corner (opaque black background, red
-label), with the rest of the surface transparent. It takes no touch input.
+changed snapshot; the chip shows exactly when a published snapshot holds no routable IPv4 (before the first snapshot it
+stays hidden, so boot never flashes it). It is a content-tight card at the bottom-right corner (translucent black
+background, red label), with the rest of the surface transparent. The pickaxe's card shares its height and background,
+so the two read as one indicator changing content.
+
+### The pickaxe
+
+It exists only where the compositor's `deck_platform_v1` reports the `mining` capability (BMM100, BMM101, BFM100). The
+overlay opts into that protocol (`uses_platform`), and `on_platform_capabilities` starts the polling thread when the bit
+is set; on a Deck the thread never starts and the corner is the chip alone. The gate is inside the overlay rather than
+in the host's registry because the surface has to exist everywhere for the chip.
+
+The thread (`poller.rs`) reads the local boser's REST API every 5 s with a 1 s request cap, over the login mechanism the
+miner-info widget also uses: a token from `POST /api/v1/auth/login`, sent bare in the `Authorization` header. The widget
+asks the user for the BOS password and polls nothing until it has one; the overlay has nobody to ask and logs in as
+`root`/`root`. (A user who changed the BOS password gets 401s here and a red pickaxe, until boser issues on-device
+clients a local token file and the constant goes. A refused login is retried on the widget's doubling delay, 10 s up to
+5 min, so the polls keep counting against the budget without hitting boser's auth log every 5 s.)
+`GET /api/v1/performance/tuner-state` and `GET /api/v1/miner/hw/hashboards` are the only two reads (`bos.rs`); bosminer
+IPC and gRPC are not involved. `BMC_MINING_API_URL` points the poller at a `bmc-netsim` instance during development
+(`just netsim::run mining-status` serves one miner per state on pinned ports).
+
+The status rule (`mining.rs`) reads the tuner state and the hashboards, and nothing else:
+
+- a board is *active* when `enabled` and its nominal is above 0, *hashing* when active with `last_1m > 0`, and
+  *underperforming* when active with `last_5m` null or under 80 % of nominal;
+- **Tuning** (violet) when `overall_tuner_state` is TUNING, CONTINUOUS or PREHEAT and at least one board hashes;
+- **Ok** (nothing) when no tuning stage is reported, at least one board is active and none underperforms;
+- **Low** (red) otherwise, including a tuning stage with no board hashing, which is how a miner paused mid-tune reads
+  once its 1-minute rate has drained. Disabled boards are ignored, so one left off never holds the corner red.
+
+Any failed poll — no answer, a login refusal, a non-2xx read (boser sends 412 while bosminer is down), a body that does
+not parse — keeps the last answer for 5 consecutive failures and then shows Low. Before the first success there is
+nothing to keep, so the pickaxe stays hidden until the budget runs out. A success resets the budget at once. The failure
+that uses up the budget is logged once at `warn` with its cause, and the success that ends the outage once at `info`;
+the polls in between stay at `debug`.
+
+A pause, a dead pool or a stopped process reaches the corner through the hashrate means, about a minute late, rather
+than from a liveness read. That trade keeps the overlay at two REST calls; the lifecycle and pools endpoints exist if a
+faster answer is ever wanted.
+
+### The corner
+
+`decide` folds the two into one `OfflineView`: the chip takes the corner outright, and the pickaxe is drawn only while
+the device is online and the status is Tuning or Low. Polling continues while offline, so the pickaxe returns in its
+current state with connectivity. A frame is requested only when the visible view changes, so a chip-to-pickaxe or
+violet-to-red flip repaints and an unchanged corner does not. The gallery's `Offline` scene drives every combination
+from the same `decide`, on the bare surface and on a 480×320 BMM101 backdrop.
 
 ## Settings tray (`bmc-overlay-settings-tray`)
 

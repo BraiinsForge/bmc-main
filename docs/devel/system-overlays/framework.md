@@ -34,6 +34,8 @@ required; the rest have defaults so a passive overlay stays small.
 | `uses_device_info() -> bool`                                                                               | no       | Whether to bind `deck_device_info_v1`; gates the device-info hooks below.                                                                                                                                                                              |
 | `on_device_state` / `on_setup_progress` / `on_access_point`                                                | no       | Device lifecycle, setup-flow, and setup-AP events, delivered before `tick`. One latest-wins slot per event kind (the bind replay sends all three). `on_device_state` also reports whether a once-per-session boot sequence has already been delivered. |
 | `on_report_ip`                                                                                             | no       | The user pressed the IP-report button and wants the device address on screen. Delivered last of the device-info hooks, so a press arriving alongside a lifecycle change lands on the screen that change selected. Never replayed on bind.              |
+| `uses_platform() -> bool`                                                                                  | no       | Whether to bind `deck_platform_v1`; gates the hook below.                                                                                                                                                                                              |
+| `on_platform_capabilities(caps)`                                                                           | no       | The hardware platform's capability set, delivered once before the first `tick` after the bind. An overlay gates a function on it (the corner status starts polling the miner only where `mining` is set).                                              |
 | `wants_cached_blit(now)` / `take_content_dirty` / `mark_content_dirty`                                     | no       | Hooks for the blit-only reveal animation (see below).                                                                                                                                                                                                  |
 
 `TickOutcome` carries three fields: `visible` (want to be on-screen — when `false` the framework unmaps the surface and
@@ -41,11 +43,11 @@ frees its buffers), `wants_render` (content changed; ignored while `!visible`), 
 tick again; `None` means "only on external events").
 
 `LayerConfig` has two constructors that cover the common shapes: `LayerConfig::fullscreen(namespace)` (all four anchors,
-`Layer::Top`, full input) and `LayerConfig::bottom_right(namespace, size)` (`Layer::Bottom`, bottom-right anchor, **no**
-input region so passive corner content does not eat touches). The settings tray builds a `LayerConfig` by hand because
-it wants `Layer::Overlay`, and the package-upgrade card because it wants a bottom-right surface on `Bottom` rather than
-`Background`. `InputRegion` is just `Full` or `None`; the layer-shell default (whole surface accepts input) is the wrong
-default for a passive indicator, so it is always set explicitly.
+`Layer::Top`, full input) and `LayerConfig::bottom_right(namespace, size)` (`Layer::Background`, bottom-right anchor,
+**no** input region so passive corner content does not eat touches). The settings tray builds a `LayerConfig` by hand
+because it wants `Layer::Overlay`, and the package-upgrade card because it wants a bottom-right surface on `Bottom`
+rather than `Background`. `InputRegion` is just `Full` or `None`; the layer-shell default (whole surface accepts input)
+is the wrong default for a passive indicator, so it is always set explicitly.
 
 The trait re-exports the layer-shell `Layer` and `Anchor` enums from the crate root, so an overlay never depends on the
 `wayland-protocols-wlr` crate directly.
