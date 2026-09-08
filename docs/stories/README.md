@@ -122,6 +122,13 @@ network to join and a QR code to the setup wizard on a factory-default device, t
 address the web UI is reachable at after every boot. Also covers re-running Wi-Fi setup from the device and the
 confirmation shown after a firmware update restarts.
 
+### [Physical Buttons](physical-buttons.md)
+
+What the Deck's physical buttons do. A short press of the IP-report button brings the device's address and QR code back
+on screen, waking a dark display first; the reset button restarts the device on a short press and factory-resets it on a
+long hold. Also covers which product answers to which button and the split with the mining firmware that reads the same
+buttons.
+
 ### Audio & Alarms
 
 See [Clock Alarm](alarm.md) for the whole alarm feature — configuring alarms from the web app (time, repeat days, label,

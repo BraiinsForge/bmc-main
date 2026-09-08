@@ -61,6 +61,8 @@ factory-reset device can be set up from a phone without knowing anything about i
 - The screen holds briefly and then hands over to the scenes on its own.
 - If the address is lost for a moment while the screen is up, the screen keeps showing the last address rather than
   jumping back a step.
+- On products with an IP-report button, a short press brings this screen back at any later time; see
+  [Physical Buttons](physical-buttons.md).
 
 ### Confirm a finished update
 
