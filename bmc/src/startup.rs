@@ -680,6 +680,7 @@ where
             manager.clone(),
             screen_activity.clone(),
             compositor.clone(),
+            hardware_capabilities,
         );
         let compositor_for_events = compositor.clone();
 

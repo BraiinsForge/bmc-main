@@ -2,7 +2,7 @@
 
 The Deck's physical buttons let the user act on the device without its screen or the web UI: an IP-report button puts
 the device's address on screen, and a reset button restarts or factory-resets the device. Which buttons a product
-carries, and which of them the device software answers to, depends on the product.
+carries, and which of them the BMC application answers to, depends on the product.
 
 ## User stories
 
@@ -34,17 +34,19 @@ carries, and which of them the device software answers to, depends on the produc
 - A hold of five seconds or longer factory-resets it: the device wipes its configuration and comes back up in setup,
   showing its setup network. The installed firmware stays.
 - A release between two and five seconds does nothing, so a hesitant hold cannot pick either action by accident.
-- On BMM100 and BMM101 the reset button belongs to the mining firmware; the device software leaves it alone (BDK-797).
+- Where Boser owns the board's buttons, the reset button is its alone: the BMC application ignores the press, so the two
+  never act on the same reset. Today Boser owns the buttons on BMM100, BMM101 and BFM100; BMC100 does not run Boser and
+  answers the button itself.
 
 ## Constraints
 
-- Buttons arrive as kernel button events, and a button is handled wherever the kernel reports it; no product list gates
-  the handling. BMM100 and BMM101 carry an IP-report button today.
-- The mining firmware reads the same IP-report button and sends the IP-report network packet on the same short press;
-  the one-second bound is its own, so the press that shows the address is the press that sends the packet. Neither
-  application relays the button to the other, and the device software never sends the packet itself.
+- Buttons arrive as kernel button events. The IP-report button is handled wherever the kernel reports it; the reset
+  button only where Boser does not own the buttons. BMM100 and BMM101 carry an IP-report button today.
+- Boser reads the same IP-report button and sends the IP-report network packet on the same short press; the one-second
+  bound is its own, so the press that shows the address is the press that sends the packet. Neither application relays
+  the button to the other, and the BMC application never sends the packet itself.
 - The address screen the button raises behaves like the boot connect screens in
   [Device Setup & Connect Screens](device-setup-screens.md): a tap dismisses it where the device has touch, and a firing
   alarm, the upgrade screens and the settings tray draw above it.
-- Button presses count as activity for [Night Mode](night-mode.md)'s screen auto-off: they wake a dark screen and
-  restart its timeout.
+- Button presses the BMC application answers to count as activity for [Night Mode](night-mode.md)'s screen auto-off:
+  they wake a dark screen and restart its timeout. A reset press on a board Boser owns does neither.
