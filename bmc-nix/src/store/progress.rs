@@ -71,7 +71,7 @@ impl Default for AggregateTotalBytes {
 /// Tracks download progress by parsing `nix --log-format internal-json` output.
 #[derive(Debug, Default)]
 pub struct DownloadStatusTracker {
-    substitutes: BTreeMap<Id, SubstituteActivity>,
+    substitution_activities: BTreeMap<Id, SubstituteActivity>,
     transfers: BTreeMap<Id, FileTransferActivity>,
     finished_downloaded_bytes: u64,
     finished_total_bytes: AggregateTotalBytes,
@@ -150,7 +150,7 @@ impl DownloadStatusTracker {
             } => {
                 let store_path = fields.first().and_then(|v| v.as_str()).map(str::to_owned);
                 let source = fields.get(1).and_then(|v| v.as_str()).map(str::to_owned);
-                self.substitutes
+                self.substitution_activities
                     .insert(id, SubstituteActivity { store_path, source });
                 None
             }
@@ -163,9 +163,10 @@ impl DownloadStatusTracker {
                 ..
             } => {
                 let transfer_source = fields.first().and_then(|v| v.as_str()).map(str::to_owned);
-                let parent_sub = self.substitutes.get(&parent);
-                let source = transfer_source.or_else(|| parent_sub.and_then(|s| s.source.clone()));
-                let store_path = parent_sub.and_then(|s| s.store_path.clone());
+                // Nix's expected bytes cover archives, not cache metadata requests.
+                let parent_sub = self.substitution_activities.get(&parent)?;
+                let source = transfer_source.or_else(|| parent_sub.source.clone());
+                let store_path = parent_sub.store_path.clone();
                 self.transfers.insert(
                     id,
                     FileTransferActivity {
@@ -229,11 +230,22 @@ impl DownloadStatusTracker {
                     // transfers, so a snapshot here would duplicate the
                     // previous one. Drop the tracked substitute and emit
                     // nothing.
-                    self.substitutes.remove(&id);
+                    self.substitution_activities.remove(&id);
                     None
                 }
             }
 
+            Actions::Start {
+                id,
+                parent,
+                activity: Activities::CopyPath,
+                ..
+            } => {
+                if let Some(substitute) = self.substitution_activities.get(&parent).cloned() {
+                    self.substitution_activities.insert(id, substitute);
+                }
+                None
+            }
             Actions::Start { .. } | Actions::Message { .. } | Actions::Result { .. } => None,
         }
     }
@@ -558,6 +570,54 @@ mod cognos_api_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tracker_excludes_metadata_from_archive_download_progress() {
+        let mut tracker = DownloadStatusTracker::default();
+        for line in [
+            r#"@nix {"action":"start","id":1,"level":3,"parent":0,"text":"","type":109,"fields":[]}"#,
+            r#"@nix {"action":"start","id":2,"level":3,"parent":1,"text":"","type":101,"fields":["https://cache/a.narinfo"]}"#,
+            r#"@nix {"action":"result","id":2,"type":105,"fields":[438,438,1,0]}"#,
+            r#"@nix {"action":"stop","id":2}"#,
+            r#"@nix {"action":"stop","id":1}"#,
+        ] {
+            assert!(tracker.ingest_line(line).is_none());
+        }
+        tracker.ingest_line(r#"@nix {"action":"result","id":1,"type":106,"fields":[101,632]}"#);
+        tracker.ingest_line(
+            r#"@nix {"action":"start","id":42,"level":3,"parent":0,"text":"","type":108,"fields":["/nix/store/a","https://cache"]}"#,
+        );
+        tracker.ingest_line(
+            r#"@nix {"action":"start","id":43,"level":3,"parent":42,"text":"","type":100,"fields":[]}"#,
+        );
+        for line in [
+            r#"@nix {"action":"start","id":50,"level":3,"parent":43,"text":"","type":109,"fields":[]}"#,
+            r#"@nix {"action":"start","id":51,"level":3,"parent":50,"text":"","type":101,"fields":["https://cache/a.narinfo"]}"#,
+            r#"@nix {"action":"result","id":51,"type":105,"fields":[438,438,1,0]}"#,
+            r#"@nix {"action":"stop","id":51}"#,
+            r#"@nix {"action":"stop","id":50}"#,
+        ] {
+            assert!(tracker.ingest_line(line).is_none());
+        }
+        tracker.ingest_line(
+            r#"@nix {"action":"start","id":44,"level":3,"parent":43,"text":"","type":101,"fields":["https://cache/nar/a"]}"#,
+        );
+        tracker
+            .ingest_line(r#"@nix {"action":"result","id":44,"type":105,"fields":[632,632,1,0]}"#);
+        assert_eq!(
+            tracker.snapshot().active[0].store_path.as_deref(),
+            Some("/nix/store/a")
+        );
+        for id in [44, 43, 42] {
+            tracker.ingest_line(&format!(r#"@nix {{"action":"stop","id":{id}}}"#));
+        }
+        let snapshot = tracker.snapshot();
+        assert_eq!(snapshot.downloaded_bytes, 632);
+        assert_eq!(snapshot.total_bytes, Some(632));
+        assert_eq!(snapshot.remaining_bytes, Some(0));
+        assert!(snapshot.active.is_empty());
+        assert!(tracker.substitution_activities.is_empty());
+    }
 
     #[test]
     fn tracker_ignores_non_internal_json_lines() {
