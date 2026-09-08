@@ -19,7 +19,7 @@
 // the grant above.
 
 use bitcoin_mining_data::model::{SizeBucket, size_bucket};
-use bitcoin_mining_data::screens::{bitcoin_mining_view, fixtures};
+use bitcoin_mining_data::screens::{ViewData, bitcoin_mining_view, fixtures};
 use bmc_gallery::prelude::*;
 
 scene_meta! { title: "Widgets / Bitcoin Mining Data" }
@@ -64,9 +64,29 @@ fn size_stages<Build: FnOnce() -> Node>(
     }
 }
 
+/// One state's fixture, built for whichever bucket the viewport snaps to.
+type StateFixture = fn(SizeBucket) -> ViewData;
+
+/// Every state, for the one scene that reaches a device viewport.
+/// [`size_stages`] offers Deck buckets only, so without this knob
+/// no state but healthy can be seen at 320x240 or 480x320.
+const DEVICE_STATES: [(&str, StateFixture); 8] = [
+    ("Healthy", fixtures::healthy),
+    ("Loading", fixtures::loading),
+    ("Failed", fixtures::failed),
+    ("Stale", fixtures::stale),
+    ("Rate Limited", fixtures::rate_limited),
+    ("Extremes", fixtures::extremes),
+    ("Unit Rollover", fixtures::unit_rollover),
+    ("Flat History", fixtures::flat_history),
+];
+
 #[scene]
 fn supported_devices(ctx: &mut SceneCtx, ui: &mut Ui) {
     let selected = ctx.select("Viewport", &["All", "BMM100", "BMM101"], 0);
+    let state_labels: Vec<&str> = DEVICE_STATES.iter().map(|(label, _)| *label).collect();
+    let state = ctx.select("State", &state_labels, 0);
+    let build_state = DEVICE_STATES[state].1;
     system_settings(ctx);
     for (index, (width, height, label)) in DEVICE_VIEWPORTS.into_iter().enumerate() {
         if selected != 0 && selected != index + 1 {
@@ -75,7 +95,7 @@ fn supported_devices(ctx: &mut SceneCtx, ui: &mut Ui) {
         ui.heading(label);
         let bucket = size_bucket(width, height);
         ctx.node_stage(ui, (width, height), move || {
-            bitcoin_mining_view(&fixtures::healthy(bucket))
+            bitcoin_mining_view(&build_state(bucket))
         });
     }
 }

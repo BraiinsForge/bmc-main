@@ -119,3 +119,76 @@ frames = 24
 [shot.knobs]
 Size = "Fullscreen"
 Numbers = "1 234.5"
+
+# BMM101 states come from Supported Devices: the state scenes
+# above go through `size_stages`, which knows Deck buckets only.
+
+[[shot]]
+name = "loading-bmm101"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+State = "Loading"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "failed-bmm101"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+State = "Failed"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "stale-bmm101"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+State = "Stale"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "rate-limited-bmm101"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+State = "Rate Limited"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "extremes-bmm101"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+State = "Extremes"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "unit-rollover-bmm101"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+State = "Unit Rollover"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "flat-history-bmm101"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+State = "Flat History"
+Numbers = "1 234.5"
