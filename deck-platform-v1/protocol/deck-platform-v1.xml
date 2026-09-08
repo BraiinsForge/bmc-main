@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_platform_v1">
+  <copyright>
+    Copyright (C) 2026  Braiins Forge s.r.o.
+    SPDX-License-Identifier: MIT
+
+    A protocol exposing the hardware platform's capability set
+    to overlay clients
+  </copyright>
+
+  <interface name="deck_platform_v1" version="1">
+    <description summary="Deck platform capability feed">
+      Tells a client what the hardware it runs on can do,
+      so an overlay can decide which of its functions to run
+      without reading the product name itself.
+      The set is fixed for the compositor's lifetime: it is derived from
+      the hardware profile the compositor was started with,
+      the same source bmc reports over gRPC.
+
+      The interface is event-only. Capabilities describe the board,
+      not anything a client could change,
+      so there is no request beyond the destructor.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the platform interface"/>
+    </request>
+
+    <enum name="capability" bitfield="true">
+      <description summary="what the hardware platform supports">
+        One bit per optional hardware function.
+        A bit that is unset means the board has no such hardware or firmware path,
+        and a client should not start the function that depends on it.
+      </description>
+      <entry name="wifi" value="1" summary="a WiFi station interface"/>
+      <entry name="ethernet" value="2" summary="a wired Ethernet interface"/>
+      <entry name="mining" value="4" summary="the board mines; a BOS API answers on the local host"/>
+      <entry name="boser_managed" value="8" summary="boser owns the device configuration"/>
+    </enum>
+
+    <event name="capabilities">
+      <description summary="the platform capability set">
+        Emitted exactly once per resource, as the first event on bind,
+        and static for the compositor's lifetime.
+      </description>
+      <arg name="capabilities" type="uint" enum="capability" summary="bitfield of capability"/>
+    </event>
+  </interface>
+</protocol>

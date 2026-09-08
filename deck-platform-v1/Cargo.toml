@@ -1,0 +1,22 @@
+[package]
+name = "deck-platform-v1"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["Braiins Systems s.r.o."]
+description = "Vendored deck_platform_v1 Wayland protocol (platform capability feed)"
+
+# Wayland protocol XML read by wayland_scanner proc macros; the nix source
+# filter keeps only rust/toml/lock unless a crate opts extra files in here.
+[package.metadata.nix]
+include = ["protocol/deck-platform-v1.xml"]
+
+[dependencies]
+bitflags.workspace = true
+wayland-backend.workspace = true
+wayland-client.workspace = true
+wayland-scanner.workspace = true
+wayland-server.workspace = true
+
+[lints]
+workspace = true

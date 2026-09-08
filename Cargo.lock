@@ -2447,6 +2447,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "deck-platform-v1"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.0",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-scanner",
+ "wayland-server",
+]
+
+[[package]]
 name = "deck-screen-edge-v1"
 version = "0.1.0"
 dependencies = [
