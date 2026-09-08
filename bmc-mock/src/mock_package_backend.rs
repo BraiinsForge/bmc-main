@@ -26,6 +26,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use base64::Engine as _;
+use bmc::installable_widgets::{
+    InstallableCategory, InstallablePreview, InstallableWidget, from_packages,
+};
 use bmc_nix::index::merge_indexes;
 use bmc_nix::service_orchestrator::publish_upgraded_service_marker;
 use bmc_nix::store::progress::DownloadSnapshot;
@@ -33,9 +36,9 @@ use bmc_nix::types::{FetchedIndex, MergedIndex, PackageIndex};
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_shared_utils::include_png;
 use bmc_upgrade::packages::{
-    ApplyError, EstimateMode, InstallableCategory, InstallablePreview, InstallableWidget,
-    PackageBackend, PackageGcError, PackageGcOutcome, PackageGcRequest, PackageProbe,
-    PackageProbeError, PackagesPreview, SystemPackageChange, installable_widgets_from,
+    ApplyError, EstimateMode, InstallablePackage, PackageBackend, PackageGcError, PackageGcOutcome,
+    PackageGcRequest, PackageProbe, PackageProbeError, PackagesPreview, SystemPackageChange,
+    installable_packages_from,
 };
 use bmc_widget_manifest::Manifest;
 use tokio::sync::Notify;
@@ -109,6 +112,40 @@ pub struct MockPackageBackend {
 }
 
 impl MockPackageBackend {
+    fn prepare_catalog_package(&self, mut package: InstallablePackage) -> InstallablePackage {
+        if let Some(widget) = from_packages(vec![package.clone()]).pop() {
+            let widget = if self.index_path.is_some() {
+                inline_widget_icon(widget)
+            } else {
+                widget
+            };
+            let assets = package
+                .metadata
+                .entry("assets".to_owned())
+                .or_insert_with(|| serde_json::json!({}));
+            if !assets.is_object() {
+                *assets = serde_json::json!({});
+            }
+            if let Some(assets) = assets.as_object_mut() {
+                assets.insert("icon".to_owned(), serde_json::json!(widget.icon));
+                if widget.previews.is_empty() {
+                    assets.insert(
+                        "previews".to_owned(),
+                        serde_json::Value::Object(
+                            PLACEHOLDER_PREVIEWS
+                                .iter()
+                                .map(|preview| {
+                                    (preview.size.clone(), serde_json::json!(preview.image))
+                                })
+                                .collect(),
+                        ),
+                    );
+                }
+            }
+        }
+        package
+    }
+
     #[must_use]
     pub fn new(scenario_path: PathBuf, pacing: UpgradePacing, stop: Arc<Notify>) -> Self {
         Self {
@@ -221,7 +258,7 @@ fn static_preview(estimate: EstimateMode) -> PackagesPreview {
 /// set and the staged set partition the same widgets) becomes an
 /// [`InstallableWidget`] named `widget-<name>`, mirroring the nix package
 /// convention; the shadow gate then decides which are offered. Manifests carry
-/// no preview art; `list_installable_widgets` attaches the shared placeholder
+/// no preview art; the mock catalog attaches the shared placeholder
 /// set.
 fn installable_widgets_from_dir(root: &Path) -> Vec<InstallableWidget> {
     crate::widget_staging::widget_dirs(root)
@@ -255,7 +292,7 @@ fn widget_from_manifest(manifest_path: &Path) -> Option<InstallableWidget> {
     }))
 }
 
-/// `installable_widgets_from` carries the icon as a raw store-path string,
+/// Package indexes carry the icon as a raw store-path string,
 /// which the frontend cannot render; inline it as a `data:` URI, dropping to
 /// `None` when the file is absent or unreadable rather than failing discovery.
 fn inline_widget_icon(mut widget: InstallableWidget) -> InstallableWidget {
@@ -438,17 +475,17 @@ impl PackageBackend for MockPackageBackend {
         Ok(())
     }
 
-    async fn list_installable_widgets(
+    async fn list_installable_packages(
         &self,
         _firmware: Option<&str>,
-    ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+    ) -> Result<Vec<InstallablePackage>, PackageProbeError> {
         let scenario = scenario::read(&self.scenario_path);
         if scenario.packages == PackagesScenario::FetchFailed {
             return Err(PackageProbeError::IndexFetchFailed(
                 "mock: index fetch failed".to_owned(),
             ));
         }
-        let widgets: Vec<InstallableWidget> = match &self.index_path {
+        let packages: Vec<InstallablePackage> = match &self.index_path {
             None => self
                 .widgets_path
                 .as_deref()
@@ -456,6 +493,7 @@ impl PackageBackend for MockPackageBackend {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|w| scenario.shadowed_packages.contains(&w.package_name))
+                .map(package_from_widget)
                 .collect(),
             Some(path) => {
                 let meta = std::fs::metadata(path).map_err(|err| {
@@ -502,25 +540,52 @@ impl PackageBackend for MockPackageBackend {
                     server_priority: 0,
                     index,
                 }]);
-                installable_widgets_from(&merged, &BTreeSet::new())
+                installable_packages_from(&merged, &BTreeSet::new())
                     .into_iter()
-                    .filter(|w| scenario.shadowed_packages.contains(&w.package_name))
-                    .map(inline_widget_icon)
+                    .filter(|package| scenario.shadowed_packages.contains(&package.name))
                     .collect()
             }
         };
-        // Neither the widget tree nor the mock index carries preview art, so
-        // stand in the shared placeholder set for any widget still missing one.
-        let widgets = widgets
+        Ok(packages
             .into_iter()
-            .map(|mut widget| {
-                if widget.previews.is_empty() {
-                    widget.previews.clone_from(&PLACEHOLDER_PREVIEWS);
-                }
-                widget
-            })
-            .collect();
-        Ok(widgets)
+            .map(|package| self.prepare_catalog_package(package))
+            .collect())
+    }
+}
+
+fn package_from_widget(widget: InstallableWidget) -> InstallablePackage {
+    let category = match widget.category {
+        InstallableCategory::Known(category) => serde_json::json!(category),
+        InstallableCategory::Unknown => serde_json::Value::Null,
+    };
+    InstallablePackage {
+        name: widget.package_name,
+        version: widget.version,
+        category: Some("widget".to_owned()),
+        description: widget.description,
+        metadata: std::collections::BTreeMap::from([
+            (
+                "widget".to_owned(),
+                serde_json::json!({
+                    "uid": widget.uid, "display_name": widget.display_name,
+                    "subname": widget.subname, "category": category,
+                    "supported_viewports": widget.supported_viewports,
+                }),
+            ),
+            (
+                "assets".to_owned(),
+                serde_json::json!({ "icon": widget.icon }),
+            ),
+        ]),
+    }
+}
+
+#[cfg(test)]
+impl MockPackageBackend {
+    async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+        self.list_installable_packages(None)
+            .await
+            .map(from_packages)
     }
 }
 
@@ -808,7 +873,7 @@ mod tests {
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier())
             .with_widgets_path(Some(widgets));
         let widgets = backend
-            .list_installable_widgets(None)
+            .list_installable_widgets()
             .await
             .expect("BUG: list failed");
         // Only the shadowed widget is offered, derived from its manifest in
@@ -839,7 +904,7 @@ mod tests {
         // not an empty tree, produces the empty list.
         assert!(
             backend
-                .list_installable_widgets(None)
+                .list_installable_widgets()
                 .await
                 .expect("BUG: list failed")
                 .is_empty()
@@ -867,7 +932,7 @@ mod tests {
         let backend = MockPackageBackend::new(scenario, UpgradePacing::Instant, notifier())
             .with_package_index(Some(index));
         let widgets = backend
-            .list_installable_widgets(None)
+            .list_installable_widgets()
             .await
             .expect("BUG: list failed");
         // The real mapping and the shadow gate both apply: only the shadowed
@@ -905,7 +970,7 @@ mod tests {
         let backend = MockPackageBackend::new(scenario, UpgradePacing::Instant, notifier())
             .with_package_index(Some(index));
         let widgets = backend
-            .list_installable_widgets(None)
+            .list_installable_widgets()
             .await
             .expect("BUG: list failed");
         assert_eq!(widgets.len(), 1);
@@ -935,7 +1000,7 @@ mod tests {
         // A bad icon path must not break discovery: the widget still lists,
         // just without an icon.
         let widgets = backend
-            .list_installable_widgets(None)
+            .list_installable_widgets()
             .await
             .expect("BUG: list should succeed despite unreadable icon");
         assert_eq!(widgets.len(), 1);
@@ -962,7 +1027,7 @@ mod tests {
         // An index format the mock doesn't understand must diverge the same way
         // the real backend does, not be served silently.
         assert!(matches!(
-            backend.list_installable_widgets(None).await,
+            backend.list_installable_widgets().await,
             Err(PackageProbeError::IndexFetchFailed(_))
         ));
     }
@@ -978,7 +1043,7 @@ mod tests {
         let backend = MockPackageBackend::new(scenario, UpgradePacing::Instant, notifier())
             .with_package_index(Some(dir.path().to_path_buf()));
         assert!(matches!(
-            backend.list_installable_widgets(None).await,
+            backend.list_installable_widgets().await,
             Err(PackageProbeError::IndexFetchFailed(_))
         ));
     }
@@ -1009,7 +1074,7 @@ mod tests {
         // A non-file icon path can never break discovery: the widget still lists,
         // and the is_file guard drops the icon to None.
         let widgets = backend
-            .list_installable_widgets(None)
+            .list_installable_widgets()
             .await
             .expect("BUG: list should succeed despite directory icon");
         assert_eq!(widgets.len(), 1);

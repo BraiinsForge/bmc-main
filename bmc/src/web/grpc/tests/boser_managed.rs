@@ -44,7 +44,7 @@ use bmc_platform::{BosPlatform, BosVersion, HardwareProfile, Product};
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeMetadata};
 use bmc_upgrade::packages::{
-    ApplyError, EstimateMode, InstallableWidget, PackageBackend, PackageGcError, PackageGcOutcome,
+    ApplyError, EstimateMode, InstallablePackage, PackageBackend, PackageGcError, PackageGcOutcome,
     PackageGcRequest, PackageProbe, PackageProbeError,
 };
 use prost::Message;
@@ -144,10 +144,10 @@ impl PackageBackend for StubPackageBackend {
         unimplemented!("{GATED_ROUTE_UNREACHABLE}")
     }
 
-    async fn list_installable_widgets(
+    async fn list_installable_packages(
         &self,
         _firmware: Option<&str>,
-    ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+    ) -> Result<Vec<InstallablePackage>, PackageProbeError> {
         unimplemented!("{GATED_ROUTE_UNREACHABLE}")
     }
 

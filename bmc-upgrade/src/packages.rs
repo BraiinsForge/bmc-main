@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bmc_nix::store::ESTIMATE_TIMEOUT;
-use serde::Deserialize;
 use tracing::{info, warn};
 
 /// Package-index fetches run under the upgrade run gate: a hung index
@@ -61,55 +60,12 @@ pub struct PackagesPreview {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstallablePreview {
-    pub image: String,
-    /// Scene size the preview depicts (the `assets.previews` map key). Kept as
-    /// a free-form string so a size a newer index introduces still round-trips.
-    pub size: String,
-}
-
-/// Re-exported so consumers can name the known categories without depending
-/// on `bmc-widget-manifest` directly.
-pub use bmc_widget_manifest::WidgetCategory;
-
-/// Catalog category of an installable widget, read from a package index.
-///
-/// Locally-authored manifests only ever carry the known [`WidgetCategory`]
-/// values, but an index produced by a newer release may list a category this
-/// build does not recognize. Unrecognized (or absent) values become
-/// [`Self::Unknown`] so one new category cannot break listing the rest of the
-/// catalog — mirroring how the index's strategy hints tolerate unknown values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InstallableCategory {
-    Known(WidgetCategory),
-    Unknown,
-}
-
-impl<'de> Deserialize<'de> for InstallableCategory {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Ok(WidgetCategory::deserialize(
-            serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&raw),
-        )
-        .map_or(Self::Unknown, Self::Known))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstallableWidget {
-    pub package_name: String,
-    pub uid: String,
+pub struct InstallablePackage {
+    pub name: String,
     pub version: String,
-    pub display_name: String,
-    pub subname: Option<String>,
-    pub category: InstallableCategory,
+    pub category: Option<String>,
     pub description: Option<String>,
-    pub icon: Option<String>,
-    pub previews: Vec<InstallablePreview>,
-    pub supported_viewports: Vec<bmc_widget_manifest::WidgetViewportConstraint>,
+    pub metadata: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -277,10 +233,10 @@ pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
         install: Vec<String>,
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError>;
-    async fn list_installable_widgets(
+    async fn list_installable_packages(
         &self,
         firmware: Option<&str>,
-    ) -> Result<Vec<InstallableWidget>, PackageProbeError>;
+    ) -> Result<Vec<InstallablePackage>, PackageProbeError>;
     /// Free bytes on the filesystem holding the package store.
     fn store_free_bytes(&self) -> std::io::Result<u64>;
 }
@@ -542,13 +498,13 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         .map_err(ApplyError::Install)
     }
 
-    async fn list_installable_widgets(
+    async fn list_installable_packages(
         &self,
         firmware: Option<&str>,
-    ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+    ) -> Result<Vec<InstallablePackage>, PackageProbeError> {
         let (merged, base) = self.fetch_index_and_manifest(firmware).await?;
         let installed = base.packages.keys().cloned().collect();
-        Ok(installable_widgets_from(&merged, &installed))
+        Ok(installable_packages_from(&merged, &installed))
     }
 
     fn store_free_bytes(&self) -> std::io::Result<u64> {
@@ -557,24 +513,12 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
     }
 }
 
-/// Discover installable widgets from a merged index: every name not
-/// already in the profile that resolves to a `category == "widget"`
-/// package, mapped from the resolved entry's `metadata` picker fields.
-/// Resolving (rather than reading a raw entry) makes the listed version
-/// and metadata match exactly what installing the name would land.
+/// Resolve uninstalled names using the same index selection as installation.
 #[must_use]
-pub fn installable_widgets_from(
+pub fn installable_packages_from(
     merged: &bmc_nix::types::MergedIndex,
     installed: &std::collections::BTreeSet<String>,
-) -> Vec<InstallableWidget> {
-    let widget_str = |resolved: &bmc_nix::types::ResolvedPackage, key: &str| {
-        resolved
-            .metadata
-            .get("widget")
-            .and_then(|w| w.get(key))
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned)
-    };
+) -> Vec<InstallablePackage> {
     merged
         .by_name
         .keys()
@@ -587,59 +531,12 @@ pub fn installable_widgets_from(
                 bmc_nix::types::InstalledBy::User,
             )
             .ok()?;
-            if resolved.category.as_deref() != Some("widget") {
-                return None;
-            }
-            // `uid` is load-bearing (the frontend places the widget into a
-            // scene by it); a widget missing it is useless, so drop it rather
-            // than publish an empty uid.
-            let uid = widget_str(&resolved, "uid")?;
-            Some(InstallableWidget {
-                uid,
-                display_name: widget_str(&resolved, "display_name")
-                    .unwrap_or_else(|| resolved.name.clone()),
-                subname: widget_str(&resolved, "subname"),
-                category: resolved
-                    .metadata
-                    .get("widget")
-                    .and_then(|w| w.get("category"))
-                    .and_then(|c| InstallableCategory::deserialize(c).ok())
-                    .unwrap_or(InstallableCategory::Unknown),
-                icon: resolved
-                    .metadata
-                    .get("assets")
-                    .and_then(|a| a.get("icon"))
-                    .and_then(serde_json::Value::as_str)
-                    .map(ToOwned::to_owned),
-                previews: resolved
-                    .metadata
-                    .get("assets")
-                    .and_then(|a| a.get("previews"))
-                    .and_then(serde_json::Value::as_object)
-                    .map(|by_size| {
-                        by_size
-                            .iter()
-                            .filter_map(|(size, image)| {
-                                image.as_str().map(|image| InstallablePreview {
-                                    image: image.to_owned(),
-                                    size: size.clone(),
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                supported_viewports: resolved
-                    .metadata
-                    .get("widget")
-                    .and_then(|widget| widget.get("supported_viewports"))
-                    .and_then(|value| {
-                        Vec::<bmc_widget_manifest::WidgetViewportConstraint>::deserialize(value)
-                            .ok()
-                    })
-                    .unwrap_or_default(),
-                package_name: resolved.name,
+            Some(InstallablePackage {
+                name: resolved.name,
                 version: resolved.version,
+                category: resolved.category,
                 description: resolved.description,
+                metadata: resolved.metadata,
             })
         })
         .collect()
@@ -647,13 +544,6 @@ pub fn installable_widgets_from(
 
 /// Resolve requested install names against the merged index into
 /// user-installed [`ResolvedPackage`]s for the plan/apply add-set.
-///
-/// Any package name resolves here, not only `category == "widget"`:
-/// installing arbitrary packages is a supported capability of the backend.
-/// The widget-only restriction is a presentation concern — the picker
-/// surfaces just widgets via [`installable_widgets_from`] — so today users
-/// can only reach widget installs, but the plan/apply path deliberately
-/// imposes no such limit.
 pub fn resolve_installs(
     merged: &bmc_nix::types::MergedIndex,
     names: &[String],
@@ -1222,6 +1112,24 @@ mod tests {
     }
 
     #[test]
+    fn installable_packages_preserves_arbitrary_metadata_and_non_widgets() {
+        let metadata =
+            serde_json::json!({"future": {"nested": [true, 7, null]}, "service": "metrics"});
+        let merged = merged_with(&[
+            ("metrics", "service", Some(metadata.clone())),
+            ("installed", "widget", None),
+        ]);
+        let packages = installable_packages_from(
+            &merged,
+            &std::collections::BTreeSet::from(["installed".to_owned()]),
+        );
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "metrics");
+        assert_eq!(packages[0].category.as_deref(), Some("service"));
+        assert_eq!(serde_json::json!(packages[0].metadata), metadata);
+    }
+
+    #[test]
     fn resolve_installs_reports_unknown_target() {
         let merged = merged_with(&[("widget-weather", "widget", None)]);
         let err = resolve_installs(&merged, &["widget-nope".to_owned()])
@@ -1230,177 +1138,6 @@ mod tests {
             matches!(err, PackageProbeError::InstallTargetUnavailable(_)),
             "got {err:?}"
         );
-    }
-
-    #[test]
-    fn installable_widgets_keeps_uninstalled_widget_category_only() {
-        let merged = merged_with(&[
-            (
-                "widget-weather",
-                "widget",
-                Some(serde_json::json!({
-                    "widget": {"uid": "uid-weather", "display_name": "Weather", "subname": "Forecast", "category": "info"},
-                    "assets": {"icon": "/nix/store/widget-weather/lib/bmc-widgets/weather/icon.svg"}
-                })),
-            ),
-            (
-                "widget-clock",
-                "widget",
-                Some(serde_json::json!({
-                    "widget": {"uid": "uid-clock", "display_name": "Clock", "category": "clock"}
-                })),
-            ),
-            ("core", "system", None),
-        ]);
-        let installed: std::collections::BTreeSet<String> =
-            ["widget-clock".to_owned(), "core".to_owned()]
-                .into_iter()
-                .collect();
-
-        let widgets = installable_widgets_from(&merged, &installed);
-
-        assert_eq!(widgets.len(), 1, "only the uninstalled widget survives");
-        let w = &widgets[0];
-        assert_eq!(w.package_name, "widget-weather");
-        assert_eq!(w.uid, "uid-weather");
-        assert_eq!(w.display_name, "Weather");
-        assert_eq!(w.subname.as_deref(), Some("Forecast"));
-        // "info" is not a category this build knows, so it folds to Unknown
-        // rather than dropping the widget from the catalog.
-        assert_eq!(w.category, InstallableCategory::Unknown);
-        assert_eq!(
-            w.icon.as_deref(),
-            Some("/nix/store/widget-weather/lib/bmc-widgets/weather/icon.svg")
-        );
-        // No `assets.previews` in the index, so the preview list defaults empty.
-        assert!(w.previews.is_empty());
-    }
-
-    #[test]
-    fn installable_widgets_read_supported_viewports_from_index() {
-        let merged = merged_with(&[(
-            "widget-fullscreen",
-            "widget",
-            Some(serde_json::json!({
-                "widget": {
-                    "uid": "uid-fullscreen",
-                    "supported_viewports": [{
-                        "type": "rectangular",
-                        "min_width": 1280,
-                        "max_width": 1280,
-                        "min_height": 480,
-                        "max_height": 480
-                    }]
-                }
-            })),
-        )]);
-
-        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
-
-        assert_eq!(
-            widgets[0].supported_viewports,
-            vec![bmc_widget_manifest::WidgetViewportConstraint {
-                viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
-                min_width: Some(1280),
-                max_width: Some(1280),
-                min_height: Some(480),
-                max_height: Some(480),
-                min_dpi: None,
-                max_dpi: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn installable_widgets_default_missing_supported_viewports_to_empty() {
-        let merged = merged_with(&[(
-            "widget-legacy",
-            "widget",
-            Some(serde_json::json!({"widget": {"uid": "uid-legacy"}})),
-        )]);
-
-        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
-
-        assert!(widgets[0].supported_viewports.is_empty());
-    }
-
-    #[test]
-    fn installable_widgets_default_invalid_supported_viewports_to_empty() {
-        let merged = merged_with(&[(
-            "widget-invalid",
-            "widget",
-            Some(serde_json::json!({
-                "widget": {"uid": "uid-invalid", "supported_viewports": "full"}
-            })),
-        )]);
-
-        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
-
-        assert!(widgets[0].supported_viewports.is_empty());
-    }
-
-    #[test]
-    fn installable_widgets_reads_previews_from_index() {
-        // Preview art lives under `assets.previews` in the index (a not-yet
-        // installed widget has no parsed manifest to read it from), keyed by the
-        // scene size it depicts; each entry becomes one `InstallablePreview`.
-        let merged = merged_with(&[(
-            "widget-weather",
-            "widget",
-            Some(serde_json::json!({
-                "widget": {"uid": "uid-weather", "display_name": "Weather", "category": "weather"},
-                "assets": {
-                    "icon": "/nix/store/w/icon.svg",
-                    "previews": {
-                        "full": "https://example.test/weather-full.png",
-                        "medium": "https://example.test/weather-medium.png"
-                    }
-                }
-            })),
-        )]);
-
-        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
-
-        assert_eq!(widgets.len(), 1);
-        let by_size: std::collections::BTreeMap<&str, &str> = widgets[0]
-            .previews
-            .iter()
-            .map(|p| (p.size.as_str(), p.image.as_str()))
-            .collect();
-        assert_eq!(
-            by_size,
-            std::collections::BTreeMap::from([
-                ("full", "https://example.test/weather-full.png"),
-                ("medium", "https://example.test/weather-medium.png"),
-            ])
-        );
-    }
-
-    #[test]
-    fn installable_category_deserializes_known_and_unknown() {
-        let known: InstallableCategory =
-            serde_json::from_value(serde_json::json!("weather")).expect("BUG: known category");
-        assert_eq!(known, InstallableCategory::Known(WidgetCategory::Weather));
-
-        // A category value a newer index might carry that this build predates.
-        let unknown: InstallableCategory =
-            serde_json::from_value(serde_json::json!("teleportation")).expect("BUG: unknown ok");
-        assert_eq!(unknown, InstallableCategory::Unknown);
-    }
-
-    #[test]
-    fn installable_widgets_drops_widget_without_uid() {
-        // `uid` is load-bearing; a widget package whose metadata lacks it must
-        // not be offered, rather than surfacing with an empty uid.
-        let merged = merged_with(&[(
-            "widget-broken",
-            "widget",
-            Some(serde_json::json!({
-                "widget": {"display_name": "Broken", "category": "info"}
-            })),
-        )]);
-        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
-        assert!(widgets.is_empty(), "a widget without a uid must be dropped");
     }
 
     async fn target_feed_upgrader() -> (tempfile::TempDir, PackageUpgrader) {
@@ -1476,22 +1213,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn installable_widgets_come_from_target_firmware() {
+    async fn installable_packages_come_from_target_firmware() {
         let (_dir, upgrader) = target_feed_upgrader().await;
         let widgets = upgrader
-            .list_installable_widgets(Some("target"))
+            .list_installable_packages(Some("target"))
             .await
             .expect("BUG: target feed must resolve");
         assert_eq!(
             widgets
                 .iter()
-                .map(|widget| widget.uid.as_str())
+                .map(|widget| widget.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["target-only"]
+            vec!["widget-target"]
         );
         assert!(
             upgrader
-                .list_installable_widgets(Some("current"))
+                .list_installable_packages(Some("current"))
                 .await
                 .expect("BUG: current feed must resolve")
                 .is_empty()
@@ -1499,13 +1236,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_target_feed_fails_widget_discovery() {
+    async fn missing_target_feed_fails_package_discovery() {
         let (_dir, upgrader) = target_feed_upgrader().await;
         assert!(
-            matches!(upgrader.list_installable_widgets(Some("missing")).await, Err(PackageProbeError::IndexUnusable(message)) if message.contains("no package feed entry for BOS version 'missing'"))
+            matches!(upgrader.list_installable_packages(Some("missing")).await, Err(PackageProbeError::IndexUnusable(message)) if message.contains("no package feed entry for BOS version 'missing'"))
         );
     }
-
     #[tokio::test]
     async fn probe_reports_no_enabled_servers() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
@@ -2083,17 +1819,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_installable_widgets_reports_no_enabled_servers() {
+    async fn list_installable_packages_reports_no_enabled_servers() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = dir.path().join("servers.json");
         std::fs::write(&path, FACTORY_ONLY).expect("BUG: write servers.json");
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        // list_installable_widgets duplicates probe's server-config prologue,
-        // so it must reject a config with no enabled servers the same way.
         assert!(matches!(
-            upgrader.list_installable_widgets(None).await,
+            upgrader.list_installable_packages(None).await,
             Err(PackageProbeError::NoEnabledServers)
         ));
     }

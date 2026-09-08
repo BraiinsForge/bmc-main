@@ -1378,7 +1378,6 @@ dependencies = [
  "bmc-nix",
  "bmc-platform",
  "bmc-scheduler",
- "bmc-widget-manifest",
  "bytes",
  "chrono",
  "data-encoding",

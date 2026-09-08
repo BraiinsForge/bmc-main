@@ -876,15 +876,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
     pub(crate) async fn list_installable_widgets(
         &self,
-    ) -> Result<Vec<bmc_upgrade::packages::InstallableWidget>, SystemUpgradeError> {
+    ) -> Result<Vec<crate::installable_widgets::InstallableWidget>, SystemUpgradeError> {
         let firmware = self.probe_firmware().await?;
         self.package_backend
-            .list_installable_widgets(
+            .list_installable_packages(
                 firmware
                     .as_ref()
                     .map(|detail| detail.latest_release.version.as_str()),
             )
             .await
+            .map(crate::installable_widgets::from_packages)
             .map_err(SystemUpgradeError::PackageCheckFailed)
     }
 
@@ -1533,11 +1534,11 @@ mod tests {
             Ok(())
         }
 
-        async fn list_installable_widgets(
+        async fn list_installable_packages(
             &self,
             _firmware: Option<&str>,
         ) -> Result<
-            Vec<bmc_upgrade::packages::InstallableWidget>,
+            Vec<bmc_upgrade::packages::InstallablePackage>,
             bmc_upgrade::packages::PackageProbeError,
         > {
             Ok(Vec::new())
@@ -1593,11 +1594,11 @@ mod tests {
             })
         }
 
-        async fn list_installable_widgets(
+        async fn list_installable_packages(
             &self,
             _firmware: Option<&str>,
         ) -> Result<
-            Vec<bmc_upgrade::packages::InstallableWidget>,
+            Vec<bmc_upgrade::packages::InstallablePackage>,
             bmc_upgrade::packages::PackageProbeError,
         > {
             Ok(Vec::new())
@@ -1968,11 +1969,11 @@ mod tests {
             Ok(())
         }
 
-        async fn list_installable_widgets(
+        async fn list_installable_packages(
             &self,
             _firmware: Option<&str>,
         ) -> Result<
-            Vec<bmc_upgrade::packages::InstallableWidget>,
+            Vec<bmc_upgrade::packages::InstallablePackage>,
             bmc_upgrade::packages::PackageProbeError,
         > {
             Ok(Vec::new())
@@ -2706,7 +2707,7 @@ mod tests {
         use bmc_shared_time::time::Timezone;
         use bmc_upgrade::firmware::{FirmwareDownloadError, UpgradeMetadata};
         use bmc_upgrade::packages::{
-            ApplyError, EstimateMode, InstallableWidget, PackageGcRequest, PackageProbe,
+            ApplyError, EstimateMode, InstallablePackage, PackageGcRequest, PackageProbe,
             PackageProbeError,
         };
         use tokio::sync::watch;
@@ -2773,10 +2774,10 @@ mod tests {
             ) -> Result<(), ApplyError> {
                 unimplemented!("{UNREACHABLE}")
             }
-            async fn list_installable_widgets(
+            async fn list_installable_packages(
                 &self,
                 firmware: Option<&str>,
-            ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+            ) -> Result<Vec<InstallablePackage>, PackageProbeError> {
                 self.0
                     .as_ref()
                     .expect(UNREACHABLE)

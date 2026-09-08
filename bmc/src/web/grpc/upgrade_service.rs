@@ -240,8 +240,8 @@ fn map_package_upgrade_plan(preview: PackagesPreview) -> PackageUpgradePlan {
     }
 }
 
-fn installable_category_to_proto(c: bmc_upgrade::packages::InstallableCategory) -> i32 {
-    use bmc_upgrade::packages::InstallableCategory as Cat;
+fn installable_category_to_proto(c: crate::installable_widgets::InstallableCategory) -> i32 {
+    use crate::installable_widgets::InstallableCategory as Cat;
     let proto = match c {
         Cat::Known(k) => super::scene_management::category_to_proto(k),
         Cat::Unknown => bmc_grpc::web::WidgetCategory::Unspecified,
@@ -251,7 +251,7 @@ fn installable_category_to_proto(c: bmc_upgrade::packages::InstallableCategory) 
 
 fn map_installable_widget(
     platform: &PlatformDescriptor,
-    w: bmc_upgrade::packages::InstallableWidget,
+    w: crate::installable_widgets::InstallableWidget,
 ) -> InstallableWidget {
     let supported_sizes = supported_sizes_for_constraints(platform, &w.supported_viewports)
         .into_iter()
@@ -373,13 +373,13 @@ mod tests {
             bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
                 .capabilities();
         let platform = super::super::scene_management::PlatformDescriptor::from(&capabilities);
-        let widget = bmc_upgrade::packages::InstallableWidget {
+        let widget = crate::installable_widgets::InstallableWidget {
             package_name: "widget-fullscreen".to_owned(),
             uid: "uid-fullscreen".to_owned(),
             version: "1.0.0".to_owned(),
             display_name: "Fullscreen".to_owned(),
             subname: None,
-            category: bmc_upgrade::packages::InstallableCategory::Unknown,
+            category: crate::installable_widgets::InstallableCategory::Unknown,
             description: None,
             icon: None,
             previews: Vec::new(),

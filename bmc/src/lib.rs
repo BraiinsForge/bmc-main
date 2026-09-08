@@ -32,6 +32,7 @@ pub mod entry;
 mod file_token;
 pub mod firmware;
 mod initial_setup;
+pub mod installable_widgets;
 mod led;
 pub mod led_coordinator;
 pub mod log;

@@ -249,11 +249,11 @@ mod tests {
             Ok(u64::MAX)
         }
 
-        async fn list_installable_widgets(
+        async fn list_installable_packages(
             &self,
             _firmware: Option<&str>,
         ) -> Result<
-            Vec<bmc_upgrade::packages::InstallableWidget>,
+            Vec<bmc_upgrade::packages::InstallablePackage>,
             bmc_upgrade::packages::PackageProbeError,
         > {
             Ok(Vec::new())
