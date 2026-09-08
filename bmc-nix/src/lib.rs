@@ -18,6 +18,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+//! Nix package management for BMC.
+//!
+//! The `release-log-debug` feature removes TRACE instrumentation from
+//! release builds while retaining DEBUG. `RUST_LOG=trace` cannot restore it.
+//! Debug builds retain TRACE. The static CLI and Deck CLI packages enable
+//! this feature; ordinary native development builds leave it disabled.
+//!
+//! Cargo unifies dependency features within a build graph: enabling this
+//! feature in a workspace release build also caps other binaries in that build.
+//! `bmc-openwrt` rejects builds that remove its TRACE instrumentation.
+
 pub mod activation;
 pub mod feed;
 pub mod fs_sync;

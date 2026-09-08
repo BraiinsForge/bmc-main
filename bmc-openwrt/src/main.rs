@@ -44,6 +44,20 @@ use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
+const _: () = {
+    assert!(
+        matches!(
+            tracing::level_filters::STATIC_MAX_LEVEL,
+            tracing::level_filters::LevelFilter::TRACE
+        ),
+        "bmc-openwrt requires TRACE; do not enable CLI logging caps in its build graph"
+    );
+    assert!(
+        matches!(log::STATIC_MAX_LEVEL, log::LevelFilter::Trace),
+        "bmc-openwrt requires TRACE for forwarded log records"
+    );
+};
+
 fn led_driver_for_profile(
     profile: &bmc_platform::HardwareProfile,
 ) -> bmc_led::led_driver::LedDriver {

@@ -13,6 +13,9 @@ include = [
     "../nix/pkgs/core/default.nix",
 ]
 
+[features]
+release-log-debug = ["dep:log", "tracing/release_max_level_debug", "log/release_max_level_debug"]
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
@@ -22,6 +25,7 @@ cognos.workspace = true
 file-rotate.workspace = true
 futures.workspace = true
 libc.workspace = true
+log = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true
 semver.workspace = true

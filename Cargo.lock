@@ -1040,6 +1040,7 @@ dependencies = [
  "file-rotate",
  "futures",
  "libc",
+ "log",
  "reqwest",
  "ring",
  "semver",

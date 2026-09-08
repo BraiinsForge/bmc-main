@@ -100,7 +100,7 @@ wasmWidgetPackages // {
   };
   bos-avahi = import ./pkgs/bos-avahi { inherit bmc armv7Pkgs; };
   bmc-nix-cli = {
-    pkg = profile.buildCrate crates.bmc-nix-cli { };
+    pkg = profile.buildCrate crates.bmc-nix-cli { features = [ "release-log-debug" ]; };
     version = "0.1.0";
     category = "core";
     description = "Nix package management CLI tool";

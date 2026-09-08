@@ -722,7 +722,7 @@ in
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     bmc-nix-cli-armv7-release =
-      let package = bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-cli { };
+      let package = bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-cli { features = [ "release-log-debug" ]; };
       in package.overrideAttrs (old: {
         cargoArtifacts = old.cargoArtifacts.overrideAttrs (_: {
           cargoArtifacts = armv7MuslDeps;

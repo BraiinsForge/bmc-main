@@ -1435,6 +1435,21 @@ fn sha256_file(path: &Path) -> anyhow::Result<[u8; 32]> {
         .expect("BUG: SHA-256 digests are 32 bytes"))
 }
 
+#[cfg(all(feature = "release-log-debug", not(debug_assertions)))]
+const _: () = {
+    assert!(
+        matches!(
+            tracing::level_filters::STATIC_MAX_LEVEL,
+            tracing::level_filters::LevelFilter::DEBUG
+        ),
+        "release logging must retain DEBUG and exclude TRACE"
+    );
+    assert!(
+        matches!(log::STATIC_MAX_LEVEL, log::LevelFilter::Debug),
+        "forwarded log records must retain DEBUG and exclude TRACE"
+    );
+};
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
