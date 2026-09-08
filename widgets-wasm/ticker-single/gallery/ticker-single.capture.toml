@@ -1,0 +1,51 @@
+# The presentations the recorded session never reached: it runs one rising
+# sparkline on an open market, so the candlestick view and the closed-market
+# dimming have no frame at any geometry.
+#
+# The scene stages every viewport at once and offers no size knob, so a shot
+# here is a comparison sheet across all five rather than one frame per size.
+
+size = "1280x1600"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "candlestick-open"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 8
+
+[shot.knobs]
+View = "Candlestick"
+"Market open" = true
+Trend = "Rising"
+
+[[shot]]
+name = "candlestick-closed"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 8
+
+[shot.knobs]
+View = "Candlestick"
+"Market open" = false
+Trend = "Rising"
+
+[[shot]]
+name = "sparkline-closed"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 8
+
+[shot.knobs]
+View = "Sparkline"
+"Market open" = false
+Trend = "Rising"
+
+[[shot]]
+name = "sparkline-falling"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 8
+
+[shot.knobs]
+View = "Sparkline"
+"Market open" = true
+Trend = "Falling"

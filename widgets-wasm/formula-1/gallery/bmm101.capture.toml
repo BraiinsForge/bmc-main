@@ -1,0 +1,195 @@
+# Every board at 480x320. The recorded sessions reach two season scenarios
+# there; these reach all of them, plus the empty and unavailable states no
+# recording ever captured at any geometry.
+#
+# The `*-widest` and `*-ruler` scenes are deliberately absent: they stress
+# the longest strings a layout survives, which is a developer's question.
+#
+# The four Deck fullscreen shots at the end are the same scenes from the same
+# fixtures, so a screen can be compared across sizes without crossing sources.
+
+size = "640x480"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "standings-bmm101"
+scene = "bmc_gallery::f1::Standings"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "standings-unranked-bmm101"
+scene = "bmc_gallery::f1::Standings Unranked"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "standings-empty-bmm101"
+scene = "bmc_gallery::f1::Standings Empty"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "standings-season-start-bmm101"
+scene = "bmc_gallery::f1::Standings Season Start"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "next-race-bmm101"
+scene = "bmc_gallery::f1::Next Race"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "next-race-unavailable-bmm101"
+scene = "bmc_gallery::f1::Next Race Unavailable"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "next-race-sparse-bmm101"
+scene = "bmc_gallery::f1::Next Race Sparse"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-race-bmm101"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-quali-bmm101"
+scene = "bmc_gallery::f1::Live Quali"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-practice-bmm101"
+scene = "bmc_gallery::f1::Live Practice"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-idle-bmm101"
+scene = "bmc_gallery::f1::Live Idle"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-lapped-bmm101"
+scene = "bmc_gallery::f1::Live Lapped"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-unranked-bmm101"
+scene = "bmc_gallery::f1::Live Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "driver-bmm101"
+scene = "bmc_gallery::f1::Driver"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "driver-sparse-bmm101"
+scene = "bmc_gallery::f1::Driver Sparse"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "driver-placeholders-bmm101"
+scene = "bmc_gallery::f1::Driver Placeholders"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "driver-unranked-bmm101"
+scene = "bmc_gallery::f1::Driver Unranked"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "driver-unavailable-bmm101"
+scene = "bmc_gallery::f1::Driver Unavailable"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+# `Driver Grid` is absent with the stress scenes: it walks the whole field at
+# fullscreen and declares no size knob, so it cannot be pinned to a viewport.
+
+# Deck fullscreen, same scenes and fixtures, to compare against.
+
+[[shot]]
+name = "standings-deck-full"
+scene = "bmc_gallery::f1::Standings"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "next-race-deck-full"
+scene = "bmc_gallery::f1::Next Race"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "live-race-deck-full"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "driver-deck-full"
+scene = "bmc_gallery::f1::Driver"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
