@@ -27,6 +27,7 @@ use super::lifecycle_emitter::LifecycleEmitter;
 use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
+use super::settings::{SettingsState, caps_for_product};
 use super::widget_tracker::{LifecycleState, WidgetTracker};
 use crate::compositor::layer_surface::{LayerEntry, replace_buffer};
 use bmc::compositor::InstanceId;
@@ -34,7 +35,6 @@ use bmc_widget_protocol::server::{
     deck_widget_manager_v2::DeckWidgetManagerV2, deck_widget_surface_v1::DeckWidgetSurfaceV1,
 };
 use deck_screen_edge_v1::server::deck_screen_edge_manager_v1::Border;
-use deck_settings_v1::server::deck_settings_v1::Capability;
 use smithay::{
     backend::allocator::{Buffer, Format, Fourcc, Modifier, dmabuf::Dmabuf},
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_image_capture_source,
@@ -168,6 +168,7 @@ pub struct CompositorState {
     pub alarm: crate::compositor::alarm::AlarmState,
     pub upgrade: crate::compositor::upgrade::UpgradeState,
     pub device_info: crate::compositor::device_info::DeviceInfoState,
+    pub platform: crate::compositor::platform::PlatformState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub deck_widget_state: DeckWidgetProtocolState,
@@ -339,7 +340,7 @@ impl CompositorState {
     #[must_use]
     #[expect(
         clippy::too_many_arguments,
-        reason = "compositor construction threads display geometry, seat, and the settings capability set"
+        reason = "compositor construction threads display geometry, seat, and the hardware profile"
     )]
     pub fn new(
         display: &Display<Self>,
@@ -349,7 +350,7 @@ impl CompositorState {
         physical_height: u32,
         refresh_mhz: i32,
         seat_name: &str,
-        settings_caps: Capability,
+        profile: &bmc_platform::HardwareProfile,
     ) -> Self {
         let display_handle = display.handle();
 
@@ -394,6 +395,7 @@ impl CompositorState {
         super::upgrade::create_global(&display_handle);
         super::settings::create_global(&display_handle);
         super::device_info::create_global(&display_handle);
+        super::platform::create_global(&display_handle);
 
         // Advertise the display as a wl_output so capture clients can reference it.
         let output = Output::new(
@@ -428,10 +430,11 @@ impl CompositorState {
             layer_shell_state,
             layer_surfaces: Vec::new(),
             screen_edge_sessions: Vec::new(),
-            settings: crate::compositor::settings::SettingsState::new(settings_caps),
+            settings: SettingsState::new(caps_for_product(profile.product)),
             alarm: crate::compositor::alarm::AlarmState::default(),
             upgrade: crate::compositor::upgrade::UpgradeState::default(),
             device_info: crate::compositor::device_info::DeviceInfoState::default(),
+            platform: crate::compositor::platform::PlatformState::new(profile.capabilities()),
             seat_state,
             data_device_state,
             deck_widget_state,
@@ -1684,7 +1687,7 @@ mod keyed_widget_protocol_test {
             1280,
             60_000,
             "test-seat",
-            crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+            &bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100),
         );
         (display, compositor)
     }
@@ -2139,7 +2142,7 @@ mod layer_frame_callback_damage_test {
             1280,
             60_000,
             "test-seat",
-            crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+            &bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100),
         );
 
         let (server_stream, client_stream) =

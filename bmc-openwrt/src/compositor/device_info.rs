@@ -460,7 +460,7 @@ mod replay_wire_test {
             1280,
             60_000,
             "test-seat",
-            crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+            &bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100),
         );
         (display, compositor)
     }

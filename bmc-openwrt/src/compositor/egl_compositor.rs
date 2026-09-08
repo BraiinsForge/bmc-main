@@ -426,7 +426,7 @@ impl EglCompositor {
             physical_height,
             refresh_mhz,
             seat_name,
-            super::settings::caps_for_product(profile.product),
+            profile,
         );
         let listening_socket = try_init!(
             ListeningSocket::bind_auto("wayland", 0..33),
@@ -3049,7 +3049,7 @@ mod tests {
             1280,
             60_000,
             "test-seat",
-            crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+            &bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100),
         );
         let listening_socket = ListeningSocket::bind_absolute(make_test_socket_path())
             .expect("BUG: test Wayland socket should bind");

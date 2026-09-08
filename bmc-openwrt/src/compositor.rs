@@ -27,6 +27,7 @@ mod device_info;
 mod egl_compositor;
 mod layer_surface;
 mod lifecycle_emitter;
+mod platform;
 mod protocol;
 mod render;
 mod scene_cycling;
