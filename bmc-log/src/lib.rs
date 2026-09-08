@@ -26,6 +26,11 @@
 //! log to stderr ([`init_console`]), or combine both behind a sidecar
 //! flock ([`init_file_and_console`]), which falls back to stderr only
 //! when the file is contended.
+//!
+//! `RUST_LOG` accepts level and target-prefix directives, such as
+//! `info,bmc_nix=debug`. Span context and regex field-value filters are
+//! unsupported. Missing or invalid configuration defaults to INFO;
+//! an empty value disables ordinary events. Empty directives are ignored.
 
 use std::ffi::OsString;
 use std::io;
@@ -36,8 +41,8 @@ use file_rotate::compression::Compression;
 use file_rotate::suffix::AppendCount;
 use file_rotate::{ContentLimit, FileRotate};
 use tracing_subscriber::filter::{FilterExt, LevelFilter, Targets};
+use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{EnvFilter, fmt};
 
 pub mod flock;
 
@@ -127,10 +132,13 @@ fn open_log_file(path: &Path) -> io::Result<FileRotate<AppendCount>> {
 
 /// Initialize tracing to stderr, without ANSI escapes.
 pub fn init_console() {
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter())
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(false)
+                .with_filter(env_filter()),
+        )
         .init();
 }
 
@@ -227,9 +235,21 @@ pub fn init_file_with_widget_capture(path: &Path, widget_log_path: &Path) -> io:
     Ok(())
 }
 
-fn env_filter() -> EnvFilter {
-    EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::default().add_directive(LevelFilter::INFO.into()))
+fn env_filter() -> Targets {
+    parse_env_filter(std::env::var("RUST_LOG").ok().as_deref())
+}
+
+fn parse_env_filter(value: Option<&str>) -> Targets {
+    value
+        .and_then(|value| {
+            let directives: Vec<_> = value.split(',').filter(|part| !part.is_empty()).collect();
+            if directives.is_empty() {
+                Some(Targets::new())
+            } else {
+                directives.join(",").parse().ok()
+            }
+        })
+        .unwrap_or_else(|| Targets::new().with_default(LevelFilter::INFO))
 }
 
 #[cfg(test)]
@@ -237,6 +257,36 @@ mod tests {
     use std::io::Write as _;
 
     use super::open_log_file;
+
+    #[test]
+    fn missing_or_invalid_filter_keeps_info_diagnostics() {
+        for value in [None, Some("bmc_nix=invalid"), Some("bmc_nix=debug=trace")] {
+            let filter = super::parse_env_filter(value);
+            assert!(filter.would_enable("bmc_nix", &tracing::Level::INFO));
+            assert!(!filter.would_enable("bmc_nix", &tracing::Level::DEBUG));
+        }
+    }
+
+    #[test]
+    fn empty_directives_do_not_enable_verbose_logging() {
+        for value in ["", ",", ",,", "off", "off,,"] {
+            assert!(
+                !super::parse_env_filter(Some(value))
+                    .would_enable("bmc_nix", &tracing::Level::ERROR),
+                "{value:?} must leave ordinary logging disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn target_overrides_preserve_global_and_prefix_filtering() {
+        let filter = super::parse_env_filter(Some("info,,bmc_nix=debug,bmc_nix::store=off,"));
+        assert!(filter.would_enable("other", &tracing::Level::INFO));
+        assert!(!filter.would_enable("other", &tracing::Level::DEBUG));
+        assert!(filter.would_enable("bmc_nix::index", &tracing::Level::DEBUG));
+        assert!(!filter.would_enable("bmc_nix::index", &tracing::Level::TRACE));
+        assert!(!filter.would_enable("bmc_nix::store", &tracing::Level::ERROR));
+    }
 
     #[test]
     fn open_log_file_creates_parent_and_appends() {
