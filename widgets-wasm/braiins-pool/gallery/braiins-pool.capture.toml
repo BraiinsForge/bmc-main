@@ -1,0 +1,163 @@
+# The widget's own fixtures are recorded sessions and carry no 480x320 take —
+# their three URL sets differ, so none replays at another viewport. These
+# scenes render the same screens straight from view fixtures instead, which is
+# what covers BMM101 at all.
+
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "overview-bmm101"
+scene = "bmc_gallery::pool::Overview"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "big-chart-bmm101"
+scene = "bmc_gallery::pool::Big Chart"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "overview-unbound-bmm101"
+scene = "bmc_gallery::pool::Overview Unbound"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "overview-loading-bmm101"
+scene = "bmc_gallery::pool::Overview Loading"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "overview-empty-bmm101"
+scene = "bmc_gallery::pool::Overview Empty"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "overview-failed-bmm101"
+scene = "bmc_gallery::pool::Overview Failed"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "overview-denied-bmm101"
+scene = "bmc_gallery::pool::Overview Denied"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "big-chart-unbound-bmm101"
+scene = "bmc_gallery::pool::Big Chart Unbound"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "big-chart-loading-bmm101"
+scene = "bmc_gallery::pool::Big Chart Loading"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "big-chart-empty-bmm101"
+scene = "bmc_gallery::pool::Big Chart Empty"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "big-chart-failed-bmm101"
+scene = "bmc_gallery::pool::Big Chart Failed"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "big-chart-denied-bmm101"
+scene = "bmc_gallery::pool::Big Chart Denied"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+# The Deck bands the BMM101 layouts are judged against.
+
+[[shot]]
+name = "overview-deck-full"
+scene = "bmc_gallery::pool::Overview"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "overview-deck-large"
+scene = "bmc_gallery::pool::Overview"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "overview-deck-medium"
+scene = "bmc_gallery::pool::Overview"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "overview-deck-small"
+scene = "bmc_gallery::pool::Overview"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "overview-unbound-deck-medium"
+scene = "bmc_gallery::pool::Overview Unbound"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "big-chart-deck-full"
+scene = "bmc_gallery::pool::Big Chart"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "big-chart-deck-medium"
+scene = "bmc_gallery::pool::Big Chart"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"

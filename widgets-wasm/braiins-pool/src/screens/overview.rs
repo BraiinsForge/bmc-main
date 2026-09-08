@@ -89,13 +89,16 @@ const SPARKLINE: ChartSpec = ChartSpec {
     marker_size: None,
 };
 
+/// Medium's design frame width, from the band table in `model`.
+const MEDIUM_DESIGN_W: f32 = 620.0;
+
 /// The Overview screen for one widget viewport.
 #[must_use]
 pub fn overview_view(view: &OverviewViewData) -> Node {
     if view.account.is_none() {
         return frame(vec![
             header(None),
-            parts::unbound_body(view.bucket, &view.bind_hint),
+            parts::unbound_body(view.bucket, view.width, &view.bind_hint),
         ]);
     }
     if view.data.access_denied {
@@ -108,6 +111,10 @@ pub fn overview_view(view: &OverviewViewData) -> Node {
     }
     match view.bucket {
         SizeBucket::Small => small(view),
+        // BMM101 snaps to Medium at 480 px against its 620 px design frame,
+        // where the two stat columns and the workers card have to wrap to
+        // fit. The layout drawn for a narrow frame carries it whole instead.
+        SizeBucket::Medium if view.width < MEDIUM_DESIGN_W => small(view),
         SizeBucket::Medium => medium(view),
         SizeBucket::Large => large(view),
         SizeBucket::Full => full(view),

@@ -79,7 +79,7 @@ pub fn big_chart_view(view: &BigChartViewData) -> Node {
             props!(padding: space::PADDING, gap: space::GAP, background: color::BG, flex: 1.0),
             [
                 header(None),
-                parts::unbound_body(view.bucket, &view.bind_hint),
+                parts::unbound_body(view.bucket, view.width, &view.bind_hint),
             ],
         );
     }

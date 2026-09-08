@@ -595,9 +595,9 @@ pub fn workers_panel(workers: &Availability<WorkerCounts>, spec: &WorkersSpec) -
     col(props!(gap: 10.0), vec![label("Workers"), body])
 }
 
-/// Where the unbound state points the operator: the Deck web app on the
-/// current network. Empty strings drop their line, down to the bare
-/// instruction when the network is unknown.
+/// Where the unbound state points the operator: the Deck web app
+/// on the current network. Empty strings drop their line, down
+/// to the bare instruction when the network is unknown.
 #[derive(Clone, Debug, Default)]
 pub struct BindHint {
     pub ssid: String,
@@ -606,30 +606,48 @@ pub struct BindHint {
 
 const BIND_LINE_GAP: f32 = 12.0;
 
-/// Leading inside the hint's wrapped prose — the widget's only wrapping
-/// copy, so unlike the single-line voices it needs real leading. Declared
-/// rather than left to the default so the QR can match the block's height.
+/// Leading inside the hint's wrapped prose — the widget's only wrapping copy,
+/// so unlike the single-line voices it needs real leading.
+///
+/// Declared rather than left to the default
+/// so the QR can match the block's height.
 const BIND_LINE_HEIGHT: f32 = 1.3;
 
-/// The instruction's wrapped line count at every cap `unbound_body` sets.
+/// The instruction's wrapped line count at each band's design cap.
 const BIND_INSTRUCTION_LINES: f32 = 2.0;
 
+/// The smallest QR the widget draws: a bind URL is 29 modules across
+/// at the default quiet zone, so this holds four pixels each
+/// — what a camera needs.
+const QR_MIN_SIZE: f32 = 116.0;
+
+const BIND_ROW_GAP: f32 = 32.0;
+
+/// The column a frame narrower than its band wraps its prose in. The frame's
+/// own width fits, but splits the sentence and the network line as a full
+/// line over a stub; this breaks each near its middle instead.
+const BIND_NARROW_TEXT_W: f32 = 215.0;
+
+/// The network line's rendered height, in lines.
+/// It is the one run whose length is the operator's: a name long enough
+/// to wrap only shifts where the QR squares off, never whether the prose fits.
+const BIND_NETWORK_LINES: f32 = 2.0;
+
 /// The hint text block's height, so a QR beside it squares off against it:
-/// the instruction's wrapped lines plus one per extra line, each at the
-/// hint's leading, with a gap between the blocks.
+/// its rendered `lines` at the hint's leading, with a gap between `blocks`.
 #[expect(
     clippy::cast_precision_loss,
     reason = "a small font size and line count are exact in f32"
 )]
-fn bind_text_height(extra_lines: usize) -> f32 {
+fn bind_text_height(lines: f32, blocks: usize) -> f32 {
     let line = font::BODY as f32 * BIND_LINE_HEIGHT;
-    (BIND_INSTRUCTION_LINES + extra_lines as f32) * line + BIND_LINE_GAP * extra_lines as f32
+    lines * line + BIND_LINE_GAP * blocks.saturating_sub(1) as f32
 }
 
-/// Unbound-state body: centered bind instructions, led by a QR code to the
-/// Deck web app where the frame fits one.
+/// Unbound-state body: centered bind instructions, led
+/// by a QR code to the Deck web app where the frame fits one.
 #[must_use]
-pub fn unbound_body(bucket: SizeBucket, hint: &BindHint) -> Node {
+pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> Node {
     // The wide frames run the QR beside the text; the narrow ones stack it.
     let beside = matches!(bucket, SizeBucket::Medium | SizeBucket::Full);
     let text_align = if beside {
@@ -637,39 +655,65 @@ pub fn unbound_body(bucket: SizeBucket, hint: &BindHint) -> Node {
     } else {
         TextAlign::Center
     };
-    // The smallest frame fits the instruction and the address only; the
-    // wrapped full sentence plus a network line runs past its 220 px.
+    // Cap the run so long instruction lines wrap instead of overflowing
+    // the centered box, and so the wrap lands on balanced lines rather
+    // than a full line over a stub: the stacked frames cap near half
+    // the sentence's width, Medium near the width left beside its QR.
+    let design_cap: f32 = match bucket {
+        SizeBucket::Small => 274.0,
+        SizeBucket::Medium => 572.0,
+        SizeBucket::Large => 440.0,
+        SizeBucket::Full => 700.0,
+    };
+    // A cap is drawn for its band's design frame, which can outrun a viewport
+    // that snapped to that band: BMM101 is 480 px wide in Medium's 620 px band.
+    let narrow = frame_width - 2.0 * space::PADDING < design_cap;
+    // The smallest frame fits the instruction and the address only;
+    // the wrapped full sentence plus a network line runs past its 220px.
+    // A narrow frame keeps the network line but takes the short sentence.
     let compact = bucket == SizeBucket::Small;
-    let instruction = if compact {
+    let instruction = if compact || narrow {
         "Bind an account in the Deck web app"
     } else {
         "Bind a Braiins Pool account in the Deck web app to see your stats."
     };
+    // Rendered lines, not paragraphs: the QR squares off against what
+    // the prose actually occupies, and a narrow column wraps the network line.
+    let mut rendered = BIND_INSTRUCTION_LINES;
     let mut lines = vec![text(
         instruction,
         style!(size: font::BODY, color: color::TEXT, align: text_align, line_height: BIND_LINE_HEIGHT),
     )];
     if !compact && !hint.ssid.is_empty() {
+        rendered += if narrow { BIND_NETWORK_LINES } else { 1.0 };
         lines.push(text(
             fmt!("On the network \u{201c}{}\u{201d}", hint.ssid),
             style!(size: font::BODY, color: color::TEXT_MUTED, align: text_align, line_height: BIND_LINE_HEIGHT),
         ));
     }
     if !hint.url.is_empty() {
+        rendered += 1.0;
         lines.push(text(
             hint.url.as_str(),
             style!(size: font::BODY, color: color::WORKERS, align: text_align, line_height: BIND_LINE_HEIGHT),
         ));
     }
-    // Beside the text the QR takes the text block's exact height, so their
-    // top and bottom edges line up; stacked above it, the frame's own size.
+    // Beside the text the QR takes the block's height, so the two square off.
     let qr_size = if beside {
-        Some(bind_text_height(lines.len() - 1))
+        Some(bind_text_height(rendered, lines.len()).max(QR_MIN_SIZE))
     } else {
         match bucket {
             SizeBucket::Large => Some(170.0),
             SizeBucket::Small | SizeBucket::Medium | SizeBucket::Full => None,
         }
+    };
+    // Beside the prose a narrow frame sizes the row from its parts: capping
+    // the row itself would take back from the column whatever the QR grew by.
+    // Stacked, there is no row to sum, so the frame's own width is the cap.
+    let max_w = match qr_size.filter(|_| narrow && beside) {
+        Some(qr) => qr + BIND_ROW_GAP + BIND_NARROW_TEXT_W,
+        None if narrow => frame_width - 2.0 * space::PADDING,
+        None => design_cap,
     };
     let qr_code = qr_size.filter(|_| !hint.url.is_empty()).map(|size| {
         canvas(
@@ -678,20 +722,10 @@ pub fn unbound_body(bucket: SizeBucket, hint: &BindHint) -> Node {
         )
     });
     let mut cells: Vec<Node> = qr_code.into_iter().collect();
-    // Cap the run so long instruction lines wrap instead of overflowing
-    // the centered box, and so the wrap lands on balanced lines rather
-    // than a full line over a stub: the stacked frames cap near half the
-    // sentence's width, Medium near the width left beside its QR.
-    let max_w = match bucket {
-        SizeBucket::Small => 274.0,
-        SizeBucket::Medium => 572.0,
-        SizeBucket::Large => 440.0,
-        SizeBucket::Full => 700.0,
-    };
     let content = if beside {
         cells.push(col(props!(gap: 12.0), lines));
         row(
-            props!(gap: 32.0, cross_align: CrossAlign::Center, max_width: max_w),
+            props!(gap: BIND_ROW_GAP, cross_align: CrossAlign::Start, max_width: max_w),
             cells,
         )
     } else {
@@ -701,7 +735,16 @@ pub fn unbound_body(bucket: SizeBucket, hint: &BindHint) -> Node {
             cells,
         )
     };
-    center(props!(flex: 1.0), [content])
+    if narrow {
+        // The tuned cap leaves real slack on a narrow frame; centring would
+        // strand it on both sides, so the block starts at the padding.
+        col(
+            props!(flex: 1.0, justify_content: Justify::Center, cross_align: CrossAlign::Start),
+            [content],
+        )
+    } else {
+        center(props!(flex: 1.0), [content])
+    }
 }
 
 /// Denied-state body: the API recognizes the key but refuses its reads
@@ -709,12 +752,12 @@ pub fn unbound_body(bucket: SizeBucket, hint: &BindHint) -> Node {
 /// with monitoring access.
 #[must_use]
 pub fn denied_body(bucket: SizeBucket) -> Node {
-    // One text node per line: free wrapping breaks wherever the width
-    // runs out; these breaks keep the lines balanced.
+    // One text node per line: free wrapping breaks wherever
+    // the width runs out; these breaks keep the lines balanced.
     //
-    // The short frames fit a nudge toward the key's settings and nothing more
-    // — 140 px of body against 190 for the full stack — and Medium runs
-    // that nudge on one line, being the wide one of the two.
+    // The short frames fit a nudge toward the key's settings
+    // and nothing more — 140 px of body against 190 for the full stack
+    // — and Medium runs that nudge on one line, being the wide one of the two.
     let detail: &[&str] = match bucket {
         SizeBucket::Small => &["Check the API key's", "permissions"],
         SizeBucket::Medium => &["Check the API key's permissions"],
@@ -774,9 +817,9 @@ mod tests {
 
     #[test]
     fn header_shows_account_when_bound() {
-        // Node has no public inspection API; presence of both texts is
-        // covered visually by the storybook and captures. This test pins
-        // that assembly does not panic on either shape.
+        // Node has no public inspection API; presence of both texts
+        // is covered visually by the storybook and captures.
+        // This test pins that assembly does not panic on either shape.
         bmc_wasm_sdk::assets::init_test_registrars();
         let _ = header_left(Some("user.braiins"));
         let _ = header_left(None);
