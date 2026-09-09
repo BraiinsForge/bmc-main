@@ -206,6 +206,7 @@ pub async fn build_symlink_tree(
 ///
 /// Creates a generation directory under `profile_dir` containing a merged
 /// symlink tree of all packages, runs hooks, and writes the manifest.
+/// Every package root is also linked under `.links` so GC retains empty packages.
 ///
 /// The generation directory is named `{generation}-link`.
 ///
@@ -248,6 +249,21 @@ pub async fn build_profile(
 
     // Step 1: Build symlink tree
     build_symlink_tree(&tmp_path, packages).await?;
+
+    let links_path = tmp_path.join(".links");
+    std::fs::create_dir(&links_path).map_err(|source| BuildProfileError::CreateDir {
+        path: links_path.display().to_string(),
+        source,
+    })?;
+    for (index, package) in packages.iter().enumerate() {
+        let link_path = links_path.join(index.to_string());
+        std::os::unix::fs::symlink(&package.store_path, &link_path).map_err(|source| {
+            BuildProfileError::CreateSymlink {
+                path: link_path.display().to_string(),
+                source,
+            }
+        })?;
+    }
 
     // Step 2: Run hooks
     crate::hooks::run_hooks(&tmp_path, hooks_dir_name, hooks_override_path).await?;
@@ -879,6 +895,65 @@ mod tests {
             std::fs::read_link(&cache).expect("BUG: should read symlink"),
             store_a.join("share/icons/hicolor/icon-theme.cache"),
             "first package's symlink should win",
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn build_profile_roots_empty_and_nonempty_packages() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).expect("BUG: should create empty package");
+        let nonempty = tmp.path().join("nonempty");
+        create_fake_store(&nonempty, &["bin/hello"]);
+        let packages = [
+            test_resolved_package("empty", empty.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("nonempty", nonempty.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let generation = build_profile(&tmp.path().join("profile"), 1, &packages, "hooks", None)
+            .await
+            .expect("BUG: profile should build");
+        let roots: std::collections::BTreeSet<_> =
+            std::fs::read_dir(generation.path.join(".links"))
+                .expect("BUG: should read package roots")
+                .map(|entry| {
+                    std::fs::read_link(entry.expect("BUG: should read root entry").path())
+                        .expect("BUG: package root should be a symlink")
+                })
+                .collect();
+        assert_eq!(
+            roots,
+            [empty, nonempty].into_iter().collect(),
+            "GC must find every package root even when a package contributes no files"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn build_profile_rejects_package_links_directory_without_mutating_store() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let store = tmp.path().join("store");
+        create_fake_store(&store, &[".links/existing"]);
+        let packages = [test_resolved_package(
+            "pkg",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+        let profile = tmp.path().join("profile");
+
+        let result = build_profile(&profile, 1, &packages, "hooks", None).await;
+
+        assert!(matches!(result, Err(BuildProfileError::CreateDir { .. })));
+        assert!(
+            !profile.join("1-link").exists(),
+            "a conflicting generation must not be published"
+        );
+        assert_eq!(
+            std::fs::read_dir(store.join(".links"))
+                .expect("BUG: should read package directory")
+                .count(),
+            1,
+            "profile roots must never be written through a package-provided symlink"
         );
     }
 

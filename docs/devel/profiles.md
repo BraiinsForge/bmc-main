@@ -25,6 +25,10 @@ Each `N-link` directory is complete enough to activate or roll back independentl
 such as `bin/`, `lib/`, `etc/`, `core/activation/scripts/`, `hooks/`, `special/copy/`, plus generated files such as
 `manifest` and `core/activation/entrypoint`.
 
+The builder also creates `.links/` with a symlink to every selected package root. These links keep packages reachable
+from the GC roots even when they contribute no entries to the merged tree. Existing generations are not modified; this
+protection applies to generations built by the updated profile builder.
+
 ## Build Flow
 
 `bmc_nix::profile::build_profile` builds a new generation in a temporary directory, then renames it to `N-link` only
@@ -32,9 +36,10 @@ after the build succeeds:
 
 1. Create `<N>-link.tmp` under the profile directory.
 2. Build the package symlink tree from all resolved package store paths.
-3. Run profile-build hooks from `hooks/` or from `--hooks-override-path`.
-4. Write the generated `manifest`.
-5. Rename `<N>-link.tmp` to `<N>-link`.
+3. Link every package root under `.links/`.
+4. Run profile-build hooks from `hooks/` or from `--hooks-override-path`.
+5. Write the generated `manifest`.
+6. Rename `<N>-link.tmp` to `<N>-link`.
 
 Activation is separate. Building a generation does not make it active and does not change `/etc`, services, or the
 `current` symlink.
@@ -71,6 +76,9 @@ Packages are assembled by `nix/package.nix::mkPackage`. A package may contribute
 
 Use package contents for static files that can remain symlinks into `/nix/store`. Use generated profile files only when
 the profile builder or a built-in hook must synthesize content from the whole generation.
+
+The top-level `.links` name is reserved for the profile builder. Packages must not provide it; any such entry causes the
+profile build to fail. Hooks must preserve these package-root links.
 
 ## Hooks
 
