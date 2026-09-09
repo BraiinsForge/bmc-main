@@ -84,8 +84,7 @@ interface State {
     isLoading: boolean;
 
     scenes: pb.Scene[];
-    runningWidgetCount: number;
-    maxRunningWidgetCount: number;
+    runningWidgets: null | { count: number; max: number };
     manifestWidgets: pb.WidgetManifest[];
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
@@ -109,8 +108,7 @@ const getInitialState = (): State => ({
     isLoading: false,
 
     scenes: [],
-    runningWidgetCount: 0,
-    maxRunningWidgetCount: 0,
+    runningWidgets: null,
     manifestWidgets: [],
     manifestLookup: new Map(),
     manifestsLoading: false,
@@ -295,7 +293,11 @@ class View extends Component<Props, State> {
         try {
             const { signal } = this.abortLoadScenes.replace();
             const { scenes, runningWidgetCount, maxRunningWidgetCount } = await pb.rpc.scenes.getScenes({}, { signal });
-            this.setState({ isLoading: false, scenes, runningWidgetCount, maxRunningWidgetCount });
+            this.setState({
+                isLoading: false,
+                scenes,
+                runningWidgets: { count: runningWidgetCount, max: maxRunningWidgetCount },
+            });
             return scenes;
         } catch ($) {
             if (pb.abort.is($)) return [];
@@ -1018,7 +1020,7 @@ class View extends Component<Props, State> {
 
     render() {
         const { intl } = this.props;
-        const { scenes, cycle, runningWidgetCount, maxRunningWidgetCount } = this.state;
+        const { scenes, cycle, runningWidgets } = this.state;
 
         return (
             <div className={css.root}>
@@ -1033,12 +1035,12 @@ class View extends Component<Props, State> {
                                     'Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.',
                             })}
                         />
-                        {maxRunningWidgetCount > 0 ? (
+                        {runningWidgets ? (
                             <div
                                 className={css.capacity}
                                 children={intl.formatMessage(
                                     { defaultMessage: 'Running widgets: {running} / {maximum}' },
-                                    { running: runningWidgetCount, maximum: maxRunningWidgetCount },
+                                    { running: runningWidgets.count, maximum: runningWidgets.max },
                                 )}
                             />
                         ) : null}

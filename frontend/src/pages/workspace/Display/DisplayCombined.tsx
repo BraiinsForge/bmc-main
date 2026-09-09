@@ -89,8 +89,7 @@ interface State {
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
     scene: null | pb.Scene;
-    runningWidgetCount: number;
-    maxRunningWidgetCount: number;
+    runningWidgets: null | { count: number; max: number };
     timezones: pb.Timezone[];
     hardwareCapabilities: null | pb.HardwareCapabilities;
     accounts: pb.Account[];
@@ -108,8 +107,7 @@ const getInitialState = (): State => ({
     manifestLookup: new Map(),
     manifestsLoading: false,
     scene: null,
-    runningWidgetCount: 0,
-    maxRunningWidgetCount: 0,
+    runningWidgets: null,
     timezones: [],
     hardwareCapabilities: null,
     accounts: [],
@@ -253,7 +251,11 @@ class View extends Component<Props, State> {
                 { signal },
             );
 
-            this.setState({ isLoading: false, scene: scene || null, runningWidgetCount, maxRunningWidgetCount });
+            this.setState({
+                isLoading: false,
+                scene: scene || null,
+                runningWidgets: { count: runningWidgetCount, max: maxRunningWidgetCount },
+            });
             return scene;
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -763,8 +765,7 @@ class View extends Component<Props, State> {
             manifestWidgets,
             addPosition,
             hardwareCapabilities,
-            runningWidgetCount,
-            maxRunningWidgetCount,
+            runningWidgets,
         } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
@@ -794,12 +795,12 @@ class View extends Component<Props, State> {
                             />
                             <h1 className={css.title} children={this.#txt.title} />
                         </div>
-                        {maxRunningWidgetCount > 0 ? (
+                        {runningWidgets ? (
                             <div
                                 className={css.capacity}
                                 children={intl.formatMessage(
                                     { defaultMessage: 'Running widgets: {running} / {maximum}' },
-                                    { running: runningWidgetCount, maximum: maxRunningWidgetCount },
+                                    { running: runningWidgets.count, maximum: runningWidgets.max },
                                 )}
                             />
                         ) : null}
