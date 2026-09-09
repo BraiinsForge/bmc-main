@@ -139,6 +139,16 @@ const getInitialState = (): State => ({
     },
 });
 
+// A saved scene is no longer the dialog's to undo, so its session fields are dropped.
+// `manifest` stays, or the modal would vanish instead of animating closed.
+const endedManifestSession = (form: ManifestFormState): ManifestFormState => ({
+    ...form,
+    sceneID: '',
+    widgetID: '',
+    isNewScene: false,
+    originalParams: {},
+});
+
 class View extends Component<Props, State> {
     readonly state = getInitialState();
 
@@ -371,6 +381,11 @@ class View extends Component<Props, State> {
         this.#notifySceneAdded();
     };
 
+    // The picker opens no session, so closing it must not run session cleanup.
+    #pickerClose = (): void => {
+        this.setState({ openDialogKind: null });
+    };
+
     #openDialogCancel = async (): Promise<DialogCloseResult> => {
         const { formatMessage } = this.props.intl;
         const { manifestForm } = this.state;
@@ -548,7 +563,7 @@ class View extends Component<Props, State> {
 
             toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
             this.abortPreview.abort();
-            this.setState({ openDialogKind: null });
+            this.setState(s => ({ openDialogKind: null, manifestForm: endedManifestSession(s.manifestForm) }));
             this.#loadScenesDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -573,7 +588,7 @@ class View extends Component<Props, State> {
             <Fragment>
                 <Comp.FormSceneSelect
                     isOpen={openDialogKind === 'scene-select'}
-                    onClose={this.#openDialogCancel}
+                    onClose={this.#pickerClose}
                     onManifestSelection={this.#sceneAddFullscreenManifest}
                     manifestWidgets={fullscreenWidgets}
                     isLoading={this.state.manifestsLoading}
