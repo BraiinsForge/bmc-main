@@ -44,6 +44,8 @@ if TYPE_CHECKING:
     from bmc_tui.nix import Nix
 
 _classify_stream = catalog.classify_stream
+_check_for_firmware_upgrade = catalog.check_for_firmware_upgrade
+_require_fresh_firmware_staging = catalog.require_fresh_firmware_staging
 
 
 class _Device:
@@ -132,6 +134,7 @@ def harness(  # noqa: PLR0915
     monkeypatch.setattr(catalog, "validate_firmware_image", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(catalog, "require_nix_era", lambda _image: None)
     monkeypatch.setattr(catalog, "preflight_device", lambda _dev: None)
+    monkeypatch.setattr(catalog, "require_fresh_firmware_staging", lambda *_args: None)
     monkeypatch.setattr(catalog, "ensure_nix_cli", lambda *_args: events.append("ensure cli"))
     monkeypatch.setattr(catalog, "resolve_packages", lambda *_args: events.append("resolve"))
     monkeypatch.setattr(catalog, "build_packages", lambda *_args: events.append("build"))
@@ -216,7 +219,15 @@ def harness(  # noqa: PLR0915
     monkeypatch.setattr(catalog, "point_bmc_at_index", lambda *_args: events.append("point"))
     monkeypatch.setattr(catalog, "await_bmc_ready", lambda *_args: events.append("await"))
 
-    def check(_dev: object, _image: Image, cycle: catalog.FirmwareCycle, _index: object) -> None:
+    def check(
+        _dev: object,
+        _image: Image,
+        cycle: catalog.FirmwareCycle,
+        _index: object,
+        *,
+        require_package_progress: bool = True,
+    ) -> None:
+        assert require_package_progress
         cycle.upgrade_id = "upgrade-1"
         events.append("check")
 
@@ -260,7 +271,17 @@ def harness(  # noqa: PLR0915
 
     def run_stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
         cycle.started_upgrade = True
-        return catalog.StreamResult([], 1, "Unavailable", "stream diagnostic", "stderr")
+        return catalog.StreamResult(
+            [
+                {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"},
+                {"packagePhase": "PACKAGE_UPGRADE_PHASE_REALIZING"},
+                {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_APPLYING"},
+            ],
+            1,
+            "Unavailable",
+            "stream diagnostic",
+            "stderr",
+        )
 
     procedure = e2e_grpc_sysupgrade.E2eGrpcSysupgrade(device="deck", image=_image(tmp_path).path)
     return SimpleNamespace(
@@ -283,6 +304,93 @@ def _run(harness: SimpleNamespace, **kwargs: object) -> None:
         stream=kwargs.pop("stream", harness.stream),
         **kwargs,
     )
+
+
+def test_matching_staging_marker_aborts_before_device_preparation(
+    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(catalog, "require_fresh_firmware_staging", _require_fresh_firmware_staging)
+    monkeypatch.setattr(
+        harness.dev, "read", lambda _command: Image(harness.procedure.image).version
+    )
+    with pytest.raises(Abort, match="reboot the device"):
+        _run(harness)
+    assert not harness.state.cycle.mutation_started
+    assert not harness.state.cycle.started_upgrade
+    assert "snapshot config" not in harness.events
+    assert not harness.snapshot.exists()
+
+
+def test_empty_package_offer_restores_configuration_without_starting_upgrade(
+    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = Image(harness.procedure.image)
+    monkeypatch.setattr(catalog, "check_for_firmware_upgrade", _check_for_firmware_upgrade)
+    monkeypatch.setattr(
+        catalog,
+        "_grpcurl",
+        lambda *_args, **_kwargs: {
+            "upgradeId": "firmware-only",
+            "firmware": {
+                "version": image.version,
+                "hash": image.sha256,
+                "fileSizeBytes": str(image.size),
+            },
+            "disruption": "UPGRADE_DISRUPTION_REBOOT",
+        },
+    )
+    with pytest.raises(Abort, match="no package changes"):
+        _run(harness)
+    assert not harness.state.cycle.started_upgrade
+    assert "restore bos_version" in harness.events
+    assert "restore service script" in harness.events
+    assert "restore servers" in harness.events
+    assert harness.server.stopped
+    assert not harness.snapshot.exists()
+
+
+def test_allow_empty_plan_runs_firmware_only_upgrade(
+    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = Image(harness.procedure.image)
+    harness.procedure.allow_empty_plan = True
+    monkeypatch.setattr(catalog, "check_for_firmware_upgrade", _check_for_firmware_upgrade)
+    monkeypatch.setattr(
+        catalog,
+        "_grpcurl",
+        lambda *_args, **_kwargs: {
+            "upgradeId": "firmware-only",
+            "firmware": {
+                "version": image.version,
+                "hash": image.sha256,
+                "fileSizeBytes": str(image.size),
+            },
+            "disruption": "UPGRADE_DISRUPTION_REBOOT",
+        },
+    )
+    monkeypatch.setattr(
+        catalog,
+        "require_fresh_firmware_staging",
+        lambda *_args: pytest.fail("staging gate must be disabled"),
+    )
+
+    def stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
+        cycle.started_upgrade = True
+        return catalog.StreamResult(
+            [
+                {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"},
+                {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_APPLYING"},
+            ],
+            0,
+            None,
+            None,
+            "",
+        )
+
+    _run(harness, stream=stream)
+    assert harness.state.cycle.started_upgrade
+    assert "restore success" in harness.events and "stop host" in harness.events
+    assert harness.server.stopped and not harness.snapshot.exists()
 
 
 def test_registration_failure_restores_in_mandated_order_and_never_streams(
@@ -391,8 +499,13 @@ def test_restore_failure_retains_hosts_and_snapshot_and_reports_both(
 
 def test_pre_verifying_error_includes_bmc_log(harness: SimpleNamespace) -> None:
     harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
+
+    def stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
+        cycle.started_upgrade = True
+        return catalog.StreamResult([], 1, "Unavailable", None, "")
+
     with pytest.raises(Abort) as error:
-        _run(harness)
+        _run(harness, stream=stream)
     assert "bmc-tail" in error.value.hint
 
 
@@ -573,6 +686,41 @@ def test_finished_event_names_package_upgrade_path(
     assert "package-upgrade path" in error.value.hint
     assert "instead of a firmware flash" in error.value.hint
     assert "events=[{'finished': {}}]" in error.value.hint
+
+
+@pytest.mark.parametrize("status", [None, "Unavailable"])
+@pytest.mark.parametrize("package_progress", ["missing", "before_verify", "during_apply"])
+def test_firmware_progress_requires_sysupgrade_events_even_after_successful_reboot(
+    harness: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str | None,
+    package_progress: str,
+) -> None:
+    monkeypatch.setattr(catalog, "classify_stream", _classify_stream)
+    events = [
+        {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"},
+        {"download": {"downloadedBytes": "1"}},
+    ]
+    package_event = {"packagePhase": "PACKAGE_UPGRADE_PHASE_REALIZING"}
+    if package_progress == "before_verify":
+        events.append(package_event)
+    events.append({"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"})
+    if package_progress == "during_apply":
+        events.append(package_event)
+    if status is None:
+        events.append({"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_APPLYING"})
+
+    def stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
+        cycle.started_upgrade = True
+        return catalog.StreamResult(events, 0 if status is None else 1, status, None, "")
+
+    if package_progress == "during_apply":
+        _run(harness, stream=stream)
+    else:
+        with pytest.raises(Abort, match=r"package REALIZING.*firmware VERIFYING"):
+            _run(harness, stream=stream)
+    assert "restore success" in harness.events and "stop host" in harness.events
+    assert harness.server.stopped and not harness.snapshot.exists()
 
 
 def test_provisional_success_without_provenance_cleans_then_aborts(

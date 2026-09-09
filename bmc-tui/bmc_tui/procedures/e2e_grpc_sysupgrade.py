@@ -20,9 +20,10 @@
 
 """Drive a firmware upgrade through the Deck's production gRPC API.
 
-Re-run recipe: a successful run leaves the device on the image's version;
-re-running the same image needs no manual prep — the anchor-ensure stage
-rewrites /etc/bos_version below the image's release again.
+By default, re-running the same image requires another package change to
+exercise staging progress. ``--allow-empty-plan`` retains the firmware-only
+path. The anchor-ensure stage rewrites /etc/bos_version below the image's
+release; an interrupted staging attempt may also require a reboot first.
 """
 
 import shutil
@@ -377,6 +378,7 @@ class E2eGrpcSysupgrade:
     packages_port: int = 8080
     packages_index_port: int = 8081
     stream_deadline: float = 900.0
+    allow_empty_plan: bool = False  # permit a firmware-only run without staging assertions
 
     def run(  # noqa: PLR0912, PLR0913, PLR0915
         self,
@@ -438,6 +440,8 @@ class E2eGrpcSysupgrade:
             mutation_dev = self._pinned(dev, cycle, device_factory)
             cleanup_dev = mutation_dev
             catalog.verify_device_identity(mutation_dev, cycle)
+            if not self.allow_empty_plan:
+                catalog.require_fresh_firmware_staging(mutation_dev, image)
             catalog.snapshot_upgrade_config(mutation_dev, cycle)
             catalog.snapshot_opkg_keys(mutation_dev, cycle)
             catalog.snapshot_bos_version(mutation_dev, cycle)
@@ -492,7 +496,13 @@ class E2eGrpcSysupgrade:
             catalog.await_bmc_ready(mutation_dev, cycle)
             catalog.grpc_login(mutation_dev, cycle)
             try:
-                catalog.check_for_firmware_upgrade(mutation_dev, image, cycle, index)
+                catalog.check_for_firmware_upgrade(
+                    mutation_dev,
+                    image,
+                    cycle,
+                    index,
+                    require_package_progress=not self.allow_empty_plan,
+                )
             except subprocess.CalledProcessError as error:
                 raise Abort(
                     "firmware check RPC failed; a package-check failure points to "
@@ -514,6 +524,25 @@ class E2eGrpcSysupgrade:
                 sleep=sleep,
                 clock=clock,
             )
+            if resolution.verdict is None and not self.allow_empty_plan:
+                phases = [event.get("firmwarePhase") for event in result.events]
+                try:
+                    verified_at = phases.index("FIRMWARE_UPGRADE_PHASE_VERIFYING")
+                except ValueError:
+                    verified_at = len(result.events)
+                # Package staging runs in sysupgrade's COMMAND after image verification;
+                # earlier package events can come from a standalone package upgrade.
+                package_progress = any(
+                    event.get("packagePhase") == "PACKAGE_UPGRADE_PHASE_REALIZING"
+                    for event in result.events[verified_at + 1 :]
+                )
+                if not package_progress:
+                    resolution.verdict = Abort(
+                        "no package REALIZING event after firmware VERIFYING; package progress "
+                        "must arrive through sysupgrade — check that it requests internal-json "
+                        "and the tarball honors it, or pass --allow-empty-plan for a "
+                        "firmware-only run"
+                    )
         except BaseException as error:
             if resolution.retain:
                 resolution.verdict = error
