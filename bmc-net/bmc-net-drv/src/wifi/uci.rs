@@ -281,6 +281,23 @@ impl UciHelper {
         Ok(())
     }
 
+    /// Re-enable the wifi-iface section saved for `mode` and `ssid`, keeping its
+    /// stored key. Returns `false` when no such section exists.
+    pub async fn wifi_iface_enable(&self, mode: WifiMode, ssid: &str) -> Result<bool> {
+        let uci_mode = mode.to_uci_mode();
+        let Some(section) = self
+            .get_all_wifi_ifaces()
+            .await?
+            .into_iter()
+            .find(|iface| iface.ssid == ssid && iface.mode == uci_mode)
+            .map(|iface| iface.name)
+        else {
+            return Ok(false);
+        };
+        UciCommand::set(section, json!({"disabled": "0"})).await?;
+        Ok(true)
+    }
+
     /// Disables only the wifi-iface sections configured for `mode`, leaving
     /// sections in other modes (e.g. an active station) untouched.
     pub async fn wifi_iface_disable_by_mode(&self, mode: WifiMode) -> Result<()> {
