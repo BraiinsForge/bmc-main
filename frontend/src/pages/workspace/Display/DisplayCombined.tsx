@@ -58,15 +58,22 @@ interface ManifestFormState {
     size: pb.WidgetSize;
     sizeOptions: CombinedSize[];
     position: pb.WidgetPosition;
-    // Where the widget sat when the dialog opened.
-    // A size change relocates it, so this is both what
-    // a resize tries to fit around and what a cancel restores.
-    anchorPosition: pb.WidgetPosition;
-    originalParams: FormifiedParams;
-    originalSize: pb.WidgetSize;
+    // What the widget looked like when the dialog opened: what a cancel restores,
+    // and — since a size change relocates the widget — what a resize fits around.
+    undo: {
+        params: FormifiedParams;
+        size: pb.WidgetSize;
+        position: pb.WidgetPosition;
+    };
     isNewWidget: boolean;
     credentialBindings: Record<string, string>;
 }
+
+const noUndo = (): ManifestFormState['undo'] => ({
+    params: {},
+    size: pb.WidgetSize.UNSPECIFIED,
+    position: pb.create(pb.WidgetPositionSchema),
+});
 
 interface Props {
     navigate: NavigateFunction;
@@ -117,9 +124,7 @@ const getInitialState = (): State => ({
         size: pb.WidgetSize.SMALL,
         sizeOptions: [],
         position: pb.create(pb.WidgetPositionSchema),
-        anchorPosition: pb.create(pb.WidgetPositionSchema),
-        originalParams: {},
-        originalSize: pb.WidgetSize.UNSPECIFIED,
+        undo: noUndo(),
         isNewWidget: false,
         credentialBindings: {},
     },
@@ -131,9 +136,7 @@ const endedManifestSession = (form: ManifestFormState): ManifestFormState => ({
     ...form,
     widgetID: '',
     isNewWidget: false,
-    originalParams: {},
-    originalSize: pb.WidgetSize.UNSPECIFIED,
-    anchorPosition: pb.create(pb.WidgetPositionSchema),
+    undo: noUndo(),
 });
 
 const $ = getID('combined').get;
@@ -413,9 +416,7 @@ class View extends Component<Props, State> {
                 size: widget.size,
                 sizeOptions,
                 position,
-                anchorPosition: position,
-                originalParams: { ...params },
-                originalSize: widget.size,
+                undo: { params: { ...params }, size: widget.size, position },
                 isNewWidget: false,
                 credentialBindings: { ...bindings },
             },
@@ -495,9 +496,9 @@ class View extends Component<Props, State> {
                     size: resolvedSize,
                     sizeOptions,
                     position: resolvedPosition,
-                    anchorPosition: resolvedPosition,
-                    originalParams: {},
-                    originalSize: pb.WidgetSize.UNSPECIFIED,
+                    // Nothing to restore on a widget that did not exist a moment ago;
+                    // only the slot it went into, for a resize to fit around.
+                    undo: { ...noUndo(), position: resolvedPosition },
                     isNewWidget: true,
                     credentialBindings: {},
                 },
@@ -596,11 +597,11 @@ class View extends Component<Props, State> {
     #handleManifestSizeChange = (size: pb.WidgetSize): void => {
         if (this.state.manifestForm.size === size) return;
 
-        const { widgetID, anchorPosition, position } = this.state.manifestForm;
+        const { widgetID, undo, position } = this.state.manifestForm;
         const scene = this.state.scene;
         const widgets = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
         const canonicalPosition =
-            fn.getWidgetInsertionSlot(widgets, { id: widgetID, size, position: anchorPosition }) ??
+            fn.getWidgetInsertionSlot(widgets, { id: widgetID, size, position: undo.position }) ??
             fn.getWidgetInsertionSlot(widgets, { id: widgetID, size, position }) ??
             position;
 
@@ -670,8 +671,7 @@ class View extends Component<Props, State> {
 
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { widgetID, anchorPosition, originalSize, originalParams, isNewWidget, manifest } =
-            this.state.manifestForm;
+        const { widgetID, undo, isNewWidget, manifest } = this.state.manifestForm;
         this.setState({ openDialogKind: null, addPosition: null });
         if (!widgetID) return;
         this.#livePreviewWidget.cancel();
@@ -690,14 +690,14 @@ class View extends Component<Props, State> {
         }
 
         if (!manifest) return;
-        const built = fn.buildWidgetDataStruct(manifest, originalParams);
+        const built = fn.buildWidgetDataStruct(manifest, undo.params);
         if (!built.ok) return;
         try {
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
                 sceneId: this.props.sceneId,
-                position: anchorPosition,
-                size: originalSize,
+                position: undo.position,
+                size: undo.size,
                 params: built.value,
                 // Bindings are left out: only params are pushed live, so only params need reverting.
                 // Sending them back would re-validate a binding this dialog never touched,
