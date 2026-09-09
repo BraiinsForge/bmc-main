@@ -122,6 +122,16 @@ const getInitialState = (): State => ({
     },
 });
 
+// A saved widget is no longer the dialog's to undo, so its session fields are dropped.
+// `manifest` stays, or the modal would vanish instead of animating closed.
+const endedManifestSession = (form: ManifestFormState): ManifestFormState => ({
+    ...form,
+    widgetID: '',
+    isNewWidget: false,
+    originalParams: {},
+    originalSize: pb.WidgetSize.UNSPECIFIED,
+});
+
 const $ = getID('combined').get;
 
 class View extends Component<Props, State> {
@@ -625,7 +635,11 @@ class View extends Component<Props, State> {
             });
 
             toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
-            this.setState({ openDialogKind: null, addPosition: null });
+            this.setState(s => ({
+                openDialogKind: null,
+                addPosition: null,
+                manifestForm: endedManifestSession(s.manifestForm),
+            }));
             this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -643,6 +657,11 @@ class View extends Component<Props, State> {
 
     #goBack = (): void => {
         this.props.navigate(URLS.pages.display.list);
+    };
+
+    // The picker opens no session, so closing it must not run session cleanup.
+    #pickerClose = (): void => {
+        this.setState({ openDialogKind: null, addPosition: null });
     };
 
     #openDialogCancel = async (): Promise<void> => {
@@ -815,7 +834,7 @@ class View extends Component<Props, State> {
 
                     <Comp.FormSceneSelect
                         isOpen={openDialogKind === 'scene-select'}
-                        onClose={this.#openDialogCancel}
+                        onClose={this.#pickerClose}
                         onManifestSelection={this.#handleManifestWidgetAdd}
                         manifestWidgets={pickerWidgets}
                         isLoading={this.state.manifestsLoading}
