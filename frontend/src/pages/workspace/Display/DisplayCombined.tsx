@@ -58,6 +58,9 @@ interface ManifestFormState {
     size: pb.WidgetSize;
     sizeOptions: CombinedSize[];
     position: pb.WidgetPosition;
+    // Where the widget sat when the dialog opened.
+    // A size change relocates it, so this is both what
+    // a resize tries to fit around and what a cancel restores.
     anchorPosition: pb.WidgetPosition;
     originalParams: FormifiedParams;
     originalSize: pb.WidgetSize;
@@ -130,6 +133,7 @@ const endedManifestSession = (form: ManifestFormState): ManifestFormState => ({
     isNewWidget: false,
     originalParams: {},
     originalSize: pb.WidgetSize.UNSPECIFIED,
+    anchorPosition: pb.create(pb.WidgetPositionSchema),
 });
 
 const $ = getID('combined').get;
@@ -666,7 +670,8 @@ class View extends Component<Props, State> {
 
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { widgetID, position, originalSize, originalParams, isNewWidget, manifest } = this.state.manifestForm;
+        const { widgetID, anchorPosition, originalSize, originalParams, isNewWidget, manifest } =
+            this.state.manifestForm;
         this.setState({ openDialogKind: null, addPosition: null });
         if (!widgetID) return;
         this.#livePreviewWidget.cancel();
@@ -691,7 +696,7 @@ class View extends Component<Props, State> {
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
                 sceneId: this.props.sceneId,
-                position,
+                position: anchorPosition,
                 size: originalSize,
                 params: built.value,
                 // Bindings are left out: only params are pushed live, so only params need reverting.
