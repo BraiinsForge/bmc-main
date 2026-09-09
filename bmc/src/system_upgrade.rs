@@ -242,18 +242,14 @@ async fn apply_firmware_upgrade<U: BmcManager>(
     pending_install_path: &std::path::Path,
     widget_guard: &mut WidgetRestartGuard,
 ) -> bool {
-    let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (line_tx, line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service.clone());
-    let reader = task::spawn(async move {
-        while let Some(line) = line_rx.recv().await {
-            bmc_nix::progress::feed_line(&line, &adapter);
-        }
-    });
+    let reader = task::spawn(read_firmware_progress(line_rx, adapter));
 
     let result = bmc_manager
         .upgrade(true, upgrade_image_path, Some(line_tx))
         .await;
-    finish_firmware_upgrade(
+    let (applied, progress_counts) = finish_firmware_upgrade(
         result,
         reader,
         tx,
@@ -261,25 +257,47 @@ async fn apply_firmware_upgrade<U: BmcManager>(
         pending_install_path,
         widget_guard,
     )
-    .await
+    .await;
+    if let Some((output_lines, 0)) = progress_counts
+        && output_lines > 0
+    {
+        warn!(
+            output_lines,
+            "Sysupgrade produced output but no structured progress events; upgrade progress is unavailable"
+        );
+    }
+    applied
+}
+
+async fn read_firmware_progress(
+    mut lines: UnboundedReceiver<String>,
+    adapter: ChannelUpgradeProgress,
+) -> (usize, usize) {
+    let mut output_lines = 0_usize;
+    let mut parsed_events = 0_usize;
+    while let Some(line) = lines.recv().await {
+        output_lines += 1;
+        parsed_events += usize::from(bmc_nix::progress::feed_line(&line, &adapter));
+    }
+    (output_lines, parsed_events)
 }
 
 async fn finish_firmware_upgrade(
     result: Result<(), crate::UpgradeError>,
-    reader: task::JoinHandle<()>,
+    reader: task::JoinHandle<(usize, usize)>,
     tx: &tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
     install: &[String],
     pending_install_path: &std::path::Path,
     widget_guard: &mut WidgetRestartGuard,
-) -> bool {
+) -> (bool, Option<(usize, usize)>) {
     if result.is_ok() {
         widget_guard.disarm();
     }
     // `upgrade` consumed the only sender, so the reader drains the backlog
     // and exits; awaiting it keeps every `Package*` event
     // ahead of the terminal Phase/Failed event.
-    _ = reader.await;
-    match result {
+    let progress_counts = reader.await.ok();
+    let applied = match result {
         Ok(()) => true,
         Err(err) => {
             error!(error = %err, "Firmware upgrade failed");
@@ -292,7 +310,8 @@ async fn finish_firmware_upgrade(
             _ = tx.send(UpgradeRunState::Failed(failure));
             false
         }
-    }
+    };
+    (applied, progress_counts)
 }
 
 /// Restarts the widgets when dropped, unless disarmed. A firmware run stops
@@ -1787,6 +1806,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn firmware_progress_counts_output_and_events() {
+        let realizing = r#"@bmc {"type":"phase","phase":"realizing"}"#;
+        let verifying = r#"@bmc {"type":"phase","phase":"verifying"}"#;
+        for (lines, expected_counts, expected_events) in [
+            (vec![], (0, 0), 0),
+            (vec!["realizing packages", "verifying packages"], (2, 0), 0),
+            (vec!["@bmc {broken json}"], (1, 0), 0),
+            (vec![realizing, verifying], (2, 2), 2),
+            (
+                vec![
+                    "starting",
+                    realizing,
+                    "@bmc {broken json}",
+                    verifying,
+                    "done",
+                ],
+                (5, 2),
+                2,
+            ),
+        ] {
+            let (line_tx, line_rx) = tokio::sync::mpsc::unbounded_channel();
+            for line in &lines {
+                line_tx
+                    .send((*line).to_owned())
+                    .expect("BUG: reader is open");
+            }
+            drop(line_tx);
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+            let adapter = ChannelUpgradeProgress::new(event_tx, StateService::new());
+
+            let counts = read_firmware_progress(line_rx, adapter).await;
+            assert_eq!(
+                counts, expected_counts,
+                "output and parsed-event counts must drive the missing-progress diagnostic: {lines:?}"
+            );
+            let mut events = 0;
+            while event_rx.try_recv().is_ok() {
+                events += 1;
+            }
+            assert_eq!(
+                events, expected_events,
+                "all valid progress events must still be forwarded: {lines:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn successful_handoff_disarms_recovery_before_progress_drain() {
         let run_gate = Arc::new(Mutex::new(()));
         let gate = Arc::clone(&run_gate)
@@ -1794,7 +1860,7 @@ mod tests {
             .expect("BUG: fresh gate is lockable");
         let lifecycle = Arc::new(GatedRestartLifecycle::default());
         let mut guard = WidgetRestartGuard::new(lifecycle.clone(), gate);
-        let reader = tokio::spawn(std::future::pending::<()>());
+        let reader = tokio::spawn(std::future::pending::<(usize, usize)>());
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut finish = Box::pin(finish_firmware_upgrade(
             Ok(()),

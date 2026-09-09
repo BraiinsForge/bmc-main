@@ -85,6 +85,13 @@ the incoming firmware's version. Staging completes before the flash — a failur
 the boot into the new firmware only ever consumes what staging left behind (the promoted store, or the
 `next.<bos-version>` marker).
 
+`COMMAND` passes `BOS_BMC_NIX_CLI_EXTRA_ARGS` to the tarball's CLI before its subcommand. The value is deliberately
+shell word-split into arguments; embedded quotes do not preserve spaces inside an argument. BMC and the Deck TUI set
+`BOS_BMC_NIX_CLI_EXTRA_ARGS='--log-format internal-json'` to receive the `@bmc` progress stream. Manual sysupgrade uses
+the CLI's default human logging unless the caller sets an override. Preserve the `--log-format internal-json` spelling
+in incoming firmware: the outgoing BMC supplies those arguments to the incoming tarball's CLI, so already-deployed
+callers must remain compatible across firmware versions.
+
 The branch decision uses `bmc-nix-cli is-initialized`, whose exit status is a contract with the `COMMAND`:
 
 - `0` — the store is fully initialized and bind-mounted at `/nix`;
@@ -100,13 +107,11 @@ its profile. Exit `2` aborts the sysupgrade so a runtime failure can never be mi
 BOS validates a sysupgrade image twice per run: `/sbin/sysupgrade` calls `platform_check_image` through
 `/usr/libexec/validate_firmware_image`, and procd's `upgraded` re-validates the image before flashing. Without a guard,
 each pass would stage the profile and build its own generation. The `COMMAND` therefore records the target firmware
-version in `/tmp/bos-nix-profile-prepared` after a successful staging pass; the second pass finds its own target version
-in the marker, skips staging, and consumes the marker. Consuming it (rather than keeping it until reboot) means a
-leftover marker from an interrupted run can only shift staging to a later run's second pass, never suppress it for a
-whole run; the version content means a marker left by a run targeting a different firmware never matches. `/tmp` is
-tmpfs, so a reboot clears the marker regardless. The marker is an optimization, not a correctness gate — a missed skip
-only builds a redundant generation, and a second `--next-boot` run simply replaces the pending marker with the newer
-generation.
+version in `/dev/shm/bos-nix-profile-prepared` after a successful staging pass; later passes targeting that version skip
+staging. The marker persists until reboot, so an interrupted attempt can also suppress staging throughout a retry of the
+same image. Reboot before retrying when the purpose is to exercise staging progress, as in the
+[gRPC harness](grpc-sysupgrade-e2e-harness.md). A marker naming a different firmware does not match. A missed skip
+builds a redundant generation; a second `--next-boot` run replaces the pending marker with the newer generation.
 
 ## Consequences for the Firmware Build
 
@@ -208,5 +213,6 @@ resolution algorithm. See [`upgrades.md`](upgrades.md#bos-downgrade).
   the schema is what lets one CLI serve both flows.
 - The no-downgrade rule applies here too. Do not add a firmware-upgrade-only bypass to "force" older versions in — that
   is what manual profile rollback is for.
-- Staging runs from image validation, which BOS performs twice per sysupgrade. Keep the `/tmp/bos-nix-profile-prepared`
-  guard version-keyed and consumed on use, and never make correctness depend on it.
+- Staging runs from image validation, which BOS performs twice per sysupgrade. Keep the
+  `/dev/shm/bos-nix-profile-prepared` guard version-keyed and retain it until reboot. Re-validation runs after network
+  teardown, so consuming a match can force staging without network access.
