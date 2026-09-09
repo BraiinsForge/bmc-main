@@ -347,3 +347,50 @@ describe('dialog session lifecycle', () => {
         expect(updates.length).toBe(updatesAfterSave);
     });
 });
+
+describe('cancelling an edit', () => {
+    const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
+
+    function closeManifestEditor(): void {
+        fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('button', { name: /close/i }));
+    }
+
+    // A size change relocates the widget when the new span will not fit in place:
+    // MEDIUM spans two columns, so one parked in the last column shifts left.
+    test('restores the position that a cancelled size change moved the widget from', async () => {
+        const resizable = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.SMALL, pb.WidgetSize.MEDIUM],
+        });
+        const widget = pb.create(pb.WidgetSchema, {
+            id: 'widget-1',
+            position: pb.create(pb.WidgetPositionSchema, { row: 0, col: 3 }),
+            size: pb.WidgetSize.SMALL,
+            config: pb.create(pb.WidgetConfigSchema, { widgetUid: resizable.uid }),
+        });
+        const updates: pb.UpdateWidgetRequest[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getScene: () => ({ scene: combinedScene([widget]), runningWidgetCount: 1, maxRunningWidgetCount: 56 }),
+            getAvailableWidgets: () => ({ widgets: [resizable] }),
+            previewScene: () => (async function* () {})(),
+            updateWidget: ({ req }) => {
+                updates.push(req);
+                return {};
+            },
+        });
+
+        renderPage();
+
+        await screen.findByText('Running widgets: 1 / 56');
+        fireEvent.click(await waitFor(() => elementById(WIDGET_1_EDIT_ID)));
+        fireEvent.click(await screen.findByRole('button', { name: 'Medium' }));
+        closeManifestEditor();
+        // Cancelling cancels the live-preview debounce, so the revert is the only write.
+        await waitFor(() => expect(updates).toHaveLength(1));
+
+        const [revert] = updates;
+        expect(revert.size).toBe(pb.WidgetSize.SMALL);
+        expect(revert.position?.col).toBe(3);
+    });
+});
