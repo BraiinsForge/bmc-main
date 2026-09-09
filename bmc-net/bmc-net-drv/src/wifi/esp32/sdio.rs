@@ -23,6 +23,7 @@
 use anyhow::{Context, Result, bail};
 use std::io::BufRead;
 use tokio::process::Command;
+use tokio::time::Duration;
 
 #[derive(Debug)]
 pub struct Esp32Sdio;
@@ -30,6 +31,8 @@ pub struct Esp32Sdio;
 pub(super) const CLI_COMMAND: &str = "esp32-sdio-cli";
 pub(super) const GET_SOFTAP_CONFIG: &str = "get_softap_config";
 const GET_AP_SCAN_LIST: &str = "get_ap_scan_list";
+/// Upper bound for one AP-mode scan through the CLI.
+const AP_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, PartialEq)]
 pub struct Ap {
@@ -40,18 +43,17 @@ pub struct Ap {
 
 impl Esp32Sdio {
     pub async fn get_ap_scan_list() -> Result<Vec<Ap>> {
-        let output = Command::new(CLI_COMMAND)
-            .arg(GET_AP_SCAN_LIST)
-            .output()
-            .await
-            .with_context(|| format!("spawning `{CLI_COMMAND}`"))?;
-
-        if !output.status.success() {
-            bail!(
-                "`{CLI_COMMAND} {GET_AP_SCAN_LIST}` failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        // The CLI talks to the module over the SDIO control channel; a scan
+        // the firmware never answers would otherwise hang the caller (and the
+        // setup UI polling it) forever. The station-mode scan has the same
+        // bound.
+        let output = tokio::time::timeout(
+            AP_SCAN_TIMEOUT,
+            Command::new(CLI_COMMAND).arg(GET_AP_SCAN_LIST).output(),
+        )
+        .await
+        .with_context(|| format!("`{CLI_COMMAND} {GET_AP_SCAN_LIST}` timed out"))?
+        .with_context(|| format!("spawning `{CLI_COMMAND}`"))?;
 
         let networks = output
             .stdout
@@ -61,6 +63,24 @@ impl Esp32Sdio {
                     .and_then(|network| Self::parse_ap_scan_line(&network))
             })
             .collect::<Vec<Ap>>();
+
+        // The CLI reports a non-zero status even for a scan that listed
+        // networks (the pre-bmc-net driver never looked at the status). Keep
+        // what it printed and only fail when there is nothing to show.
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if networks.is_empty() {
+                bail!(
+                    "`{CLI_COMMAND} {GET_AP_SCAN_LIST}` failed ({}): {stderr}",
+                    output.status
+                );
+            }
+            log::debug!(
+                "`{CLI_COMMAND} {GET_AP_SCAN_LIST}` exited with {} after listing {} networks: {stderr}",
+                output.status,
+                networks.len()
+            );
+        }
 
         Ok(networks)
     }

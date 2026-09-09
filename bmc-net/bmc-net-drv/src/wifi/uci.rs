@@ -218,11 +218,31 @@ impl UciHelper {
     }
 
     async fn get_radio(&self) -> Result<UciWirelessRadio> {
-        UciCommand::get::<HashMap<String, UciWirelessRadio>>(UciType::WifiDevice)
-            .await?
-            .into_values()
+        let radios: Vec<UciWirelessRadio> =
+            UciCommand::get::<HashMap<String, UciWirelessRadio>>(UciType::WifiDevice)
+                .await?
+                .into_values()
+                .collect();
+        if let Some(radio) = radios
+            .iter()
             .find(|radio| self.wifi_device_syspath.contains(&radio.path))
-            .ok_or_else(|| anyhow!("Specified radio not found"))
+        {
+            return Ok(radio.clone());
+        }
+        // The path recorded in UCI can differ from the live sysfs path (the
+        // ESP32 on its setup firmware, a re-enumerated USB adapter). A board
+        // with exactly one radio has nothing to disambiguate, so use it — the
+        // pre-bmc-net driver always addressed `radio0` and never failed here.
+        match radios.as_slice() {
+            [radio] => {
+                debug!(
+                    "No radio matches {}; using the only configured radio {}",
+                    self.wifi_device_syspath, radio.name
+                );
+                Ok(radio.clone())
+            }
+            _ => Err(anyhow!("Specified radio not found")),
+        }
     }
 
     /// The radio's enabled state plus the `wifi-iface` sections bound to it,
