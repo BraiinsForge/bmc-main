@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, beforeEach, describe, test, expect, rstest } from '@rstest/core';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react/pure';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { MemoryRouter } from 'react-router';
 import { IntlProvider } from 'react-intl';
@@ -55,6 +55,12 @@ function rowSceneIds(container: HTMLElement): string[] {
 
 function makeScene(id: string): pb.Scene {
     return pb.create(pb.SceneSchema, { id, enabled: true, cycleDurationSec: 30 });
+}
+
+function elementById(id: string): HTMLElement {
+    const el = document.getElementById(id);
+    if (!el) throw new Error(`#${id} not rendered`);
+    return el;
 }
 
 // Backend scene store stand-in; the cloneScene mock inserts one fresh scene next
@@ -570,4 +576,84 @@ test('shows running widget capacity reported by the backend', async () => {
     await flush();
 
     expect(screen.getByText('Running widgets: 1 / 56')).toBeTruthy();
+});
+
+describe('dialog session lifecycle', () => {
+    // Spelled out rather than composed with `getID`, so a change
+    // to the id scheme fails here instead of being silently followed.
+    const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
+    const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
+
+    // Carbon keeps both dialogs mounted and toggles `is-visible`,
+    // so presence in the DOM says nothing about which one is open.
+    function modalIsOpen(id: string): boolean {
+        return document.getElementById(id)?.classList.contains('is-visible') ?? false;
+    }
+
+    function openFullscreenPicker(): void {
+        fireEvent.click(screen.getByRole('button', { name: 'Add New' }));
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Full Screen' }));
+    }
+
+    function closePicker(): void {
+        const modal = document.getElementById(PICKER_MODAL_ID);
+        if (!modal) throw new Error('widget picker not rendered');
+        fireEvent.click(within(modal).getByRole('button', { name: /close/i }));
+    }
+
+    test('closing the picker after saving a fullscreen scene leaves that scene in place', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        const created = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: true,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-b',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        const removedSceneIds: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => {
+                server.push(created);
+                return { value: created.id };
+            },
+            getScene: () => ({ scene: created, runningWidgetCount: 2, maxRunningWidgetCount: 56 }),
+            updateWidget: () => ({}),
+            removeScene: ({ req }) => {
+                removedSceneIds.push(req.value);
+                server = server.filter(scene => scene.id !== req.value);
+                return {};
+            },
+            previewScene: () => (async function* () {})(),
+        });
+
+        renderPage();
+        await flush();
+
+        openFullscreenPicker();
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+        fireEvent.click(elementById(MANIFEST_DONE_ID));
+        await flush();
+
+        openFullscreenPicker();
+        await flush();
+        expect(modalIsOpen(PICKER_MODAL_ID)).toBe(true);
+        closePicker();
+        await flush();
+
+        expect(removedSceneIds).toEqual([]);
+        expect(server.some(scene => scene.id === created.id)).toBe(true);
+    });
 });
