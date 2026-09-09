@@ -146,7 +146,23 @@ impl Esp32WifiManager {
     }
 
     async fn get_device(&self) -> Result<String> {
-        WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath().await?).await
+        let syspath = self.wlan_dev_syspath().await?;
+        match WifiUtils::get_device_by_syspath(&syspath).await {
+            Ok(device) => Ok(device),
+            Err(e) => {
+                // The cached path can go stale across a firmware swap (the
+                // setup AP netdev disappears, the station netdev appears);
+                // rediscover once before giving up.
+                debug!("No netdev under {syspath} ({e}); rediscovering the ESP32");
+                let mut cached = self.wlan_dev_syspath.lock().await;
+                *cached = discover_wlan_syspath().await;
+                let syspath = cached
+                    .clone()
+                    .ok_or_else(|| anyhow!("No wireless interface found"))?;
+                drop(cached);
+                WifiUtils::get_device_by_syspath(&syspath).await
+            }
+        }
     }
 
     /// The ESP32 setup AP exposes its own bridged interface; its presence marks
@@ -163,7 +179,10 @@ impl Esp32WifiManager {
 
 /// Resolve the sysfs device path of the wireless interface (the directory holding
 /// `net/` and `ieee80211/`) so the shared UCI helper can locate the radio. Returns
-/// `None` when no wireless interface is present yet.
+/// `None` when no wireless interface is present: on the setup ("FG") firmware
+/// the module only exposes virtual `ethap0`/`ethsta0` netdevs and no radio, so
+/// the callers that can answer without UCI (status, radio power) must handle
+/// that state themselves instead of failing.
 async fn discover_wlan_syspath() -> Option<String> {
     let mut interfaces = tokio::fs::read_dir("/sys/class/net").await.ok()?;
     while let Ok(Some(interface)) = interfaces.next_entry().await {
@@ -307,7 +326,27 @@ impl WifiDriver for Esp32WifiManager {
     }
 
     async fn status_all(&self) -> Result<Vec<WifiStatus>> {
-        let syspath = self.wlan_dev_syspath().await?;
+        let syspath = match self.wlan_dev_syspath().await {
+            Ok(syspath) => syspath,
+            // Setup ("FG") firmware: no wireless netdev and no `wireless` UCI
+            // config exist yet, only the softAP. Report that instead of
+            // failing, or boser hides WiFi altogether and initial setup can
+            // neither list networks nor switch the radio (the pre-bmc-net
+            // driver answered `enabled: false, mode: AP` here).
+            Err(e) if Self::is_ap_mode().await => {
+                debug!("No wireless netdev ({e}); reporting the setup AP status");
+                return Ok(vec![WifiStatus {
+                    enabled: false,
+                    configuration: Some(WifiConfiguration {
+                        mode: WifiMode::Ap,
+                        ssid: get_softap_ssid().await.unwrap_or_default(),
+                        encryption_type: EncryptionType::None,
+                    }),
+                    sta_link_state: None,
+                }]);
+            }
+            Err(e) => return Err(e),
+        };
         self.status_cache
             .lock()
             .await
@@ -441,7 +480,21 @@ impl WifiDriver for Esp32WifiManager {
     }
 
     async fn enable_radio(&self, enable: bool) -> Result<()> {
-        let uci = self.uci().await?;
+        let uci = match self.uci().await {
+            Ok(uci) => uci,
+            // Setup ("FG") firmware: there is no station radio to switch, only
+            // the softAP that initial setup itself depends on. Enabling is a
+            // no-op success so the setup flow can proceed to the scan;
+            // disabling would take the setup AP away from under the client.
+            Err(e) if Self::is_ap_mode().await => {
+                if enable {
+                    info!("Setup AP active and no station radio yet ({e}); nothing to enable");
+                    return Ok(());
+                }
+                bail!("the WiFi radio cannot be switched off while the setup AP is active");
+            }
+            Err(e) => return Err(e),
+        };
         uci.wifi_radio_enable(enable).await?;
         uci.save_changes().await?;
         WifiCommand::reload().await
