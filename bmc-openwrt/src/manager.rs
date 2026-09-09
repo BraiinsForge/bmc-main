@@ -68,6 +68,8 @@ pub struct Manager {
 impl Manager {
     const SYSUPGRADE_BIN: &str = "/sbin/sysupgrade";
     const SYSUPGRADE_ARG_NO_SAVE: &str = "-n";
+    const SYSUPGRADE_NIX_CLI_EXTRA_ARGS_ENV: &str = "BOS_BMC_NIX_CLI_EXTRA_ARGS";
+    const SYSUPGRADE_NIX_CLI_EXTRA_ARGS: &str = "--log-format internal-json";
     const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
     const DEFAULT_INTERFACE: &str = "wlan0";
     const NETWORK_SECTION: &str = "wifi_sta";
@@ -136,19 +138,28 @@ impl Manager {
         self.board_serial
     }
 
-    async fn run_sysupgrade(
-        keep_settings: bool,
-        upgrade_image_path: &Path,
-        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
-    ) -> Result<(), UpgradeError> {
+    fn sysupgrade_command(keep_settings: bool, upgrade_image_path: &Path) -> Command {
         let mut sysupgrade = Command::new(Self::SYSUPGRADE_BIN);
+        // The tarball's COMMAND word-splits these arguments.
+        // Progress parsing requires JSON instead of the default human output.
+        sysupgrade.env(
+            Self::SYSUPGRADE_NIX_CLI_EXTRA_ARGS_ENV,
+            Self::SYSUPGRADE_NIX_CLI_EXTRA_ARGS,
+        );
         if !keep_settings {
             sysupgrade.arg(Self::SYSUPGRADE_ARG_NO_SAVE);
         }
         sysupgrade.arg(upgrade_image_path.as_os_str());
         sysupgrade.stdout(Stdio::piped()).stderr(Stdio::piped());
+        sysupgrade
+    }
 
-        let mut handle = sysupgrade
+    async fn run_sysupgrade(
+        keep_settings: bool,
+        upgrade_image_path: &Path,
+        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> Result<(), UpgradeError> {
+        let mut handle = Self::sysupgrade_command(keep_settings, upgrade_image_path)
             .spawn()
             .map_err(|e| UpgradeError::Failed(format!("failed to spawn sysupgrade: {e}")))?;
         let stdout = handle
@@ -424,7 +435,41 @@ pub enum Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpgradeError, drain_lines, interpret_sysupgrade_exit};
+    use super::{Manager, UpgradeError, drain_lines, interpret_sysupgrade_exit};
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    #[test]
+    fn sysupgrade_requests_structured_progress_with_or_without_saved_settings() {
+        for keep_settings in [true, false] {
+            let command =
+                Manager::sysupgrade_command(keep_settings, Path::new("/tmp/firmware.tar"));
+            assert!(
+                command.as_std().get_envs().any(|(name, value)| {
+                    name == "BOS_BMC_NIX_CLI_EXTRA_ARGS"
+                        && value == Some(OsStr::new("--log-format internal-json"))
+                }),
+                "BMC upgrade progress requires internal JSON even when keep_settings={keep_settings}"
+            );
+        }
+    }
+
+    #[test]
+    fn sysupgrade_places_no_save_before_image_only_when_discarding_settings() {
+        let image = Path::new("/tmp/firmware.tar");
+        for (keep_settings, expected_args) in [
+            (true, vec![image.as_os_str()]),
+            (false, vec![OsStr::new("-n"), image.as_os_str()]),
+        ] {
+            let command = Manager::sysupgrade_command(keep_settings, image);
+            assert_eq!(command.as_std().get_program(), "/sbin/sysupgrade");
+            assert_eq!(
+                command.as_std().get_args().collect::<Vec<_>>(),
+                expected_args,
+                "-n must precede the image only when discarding settings; keep_settings={keep_settings}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn drain_lines_survives_non_utf8_output() {
