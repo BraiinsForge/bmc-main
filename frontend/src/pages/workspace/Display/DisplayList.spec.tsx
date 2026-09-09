@@ -656,4 +656,46 @@ describe('dialog session lifecycle', () => {
         expect(removedSceneIds).toEqual([]);
         expect(server.some(scene => scene.id === created.id)).toBe(true);
     });
+
+    // The scene is created before its widget is read back, so one
+    // that resolves without a widget has already taken a running slot.
+    test('a fullscreen add whose scene resolves without a widget leaves no orphan', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        const widgetless = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: true,
+            kind: { case: 'fullscreen', value: pb.create(pb.Scene_FullscreenSchema, {}) },
+        });
+        const removedSceneIds: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => {
+                server.push(widgetless);
+                return { value: widgetless.id };
+            },
+            getScene: () => ({ scene: widgetless, runningWidgetCount: 2, maxRunningWidgetCount: 56 }),
+            removeScene: ({ req }) => {
+                removedSceneIds.push(req.value);
+                server = server.filter(scene => scene.id !== req.value);
+                return {};
+            },
+            previewScene: () => (async function* () {})(),
+        });
+
+        renderPage();
+        await flush();
+
+        openFullscreenPicker();
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+
+        expect(removedSceneIds).toEqual([widgetless.id]);
+        expect(document.body.textContent).toContain('Failed to add manifest widget!');
+        expect(document.body.textContent).not.toContain('successfully added');
+    });
 });
