@@ -698,4 +698,53 @@ describe('dialog session lifecycle', () => {
         expect(document.body.textContent).toContain('Failed to add manifest widget!');
         expect(document.body.textContent).not.toContain('successfully added');
     });
+
+    test('a fullscreen add whose scene cannot be read back leaves no orphan', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        const created = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: true,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-b',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        const removedSceneIds: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => {
+                server.push(created);
+                return { value: created.id };
+            },
+            getScene: () => {
+                throw new ConnectError('connection lost', Code.Unavailable);
+            },
+            removeScene: ({ req }) => {
+                removedSceneIds.push(req.value);
+                server = server.filter(scene => scene.id !== req.value);
+                return {};
+            },
+            previewScene: () => (async function* () {})(),
+        });
+
+        renderPage();
+        await flush();
+
+        openFullscreenPicker();
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+
+        expect(removedSceneIds).toEqual([created.id]);
+        expect(document.body.textContent).not.toContain('successfully added');
+    });
 });
