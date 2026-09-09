@@ -267,9 +267,12 @@ def sysupgrade(
         "flash declined — pass --yes to skip the prompt",
     )
     flag = "-F " if force else ""
-    # BOS_NIX_SKIP=1 skips the firmware's Nix-profile staging.
-    # The escape hatch when an old device nix.conf (build-users-group=nixbld) breaks it.
-    env = "BOS_NIX_SKIP=1 " if skip_nix else ""
+    # The tarball's COMMAND word-splits these arguments.
+    # Progress parsing requires JSON instead of the default human output.
+    env = "BOS_BMC_NIX_CLI_EXTRA_ARGS='--log-format internal-json' "
+    if skip_nix:
+        # Old device nix.conf files with build-users-group=nixbld can break staging.
+        env += "BOS_NIX_SKIP=1 "
     nix_progress.stream_flash(dev, f"{env}sysupgrade {flag}{shlex.quote(image.remote_path)}")
     return f"{console.lit(image.version)} → reboot"
 
@@ -3616,12 +3619,28 @@ def require_auto_upgrade_disabled(dev: Device, session: GrpcSession) -> str:
     return "auto-upgrade disabled"
 
 
+_NIX_PREPARED_MARKER = "/dev/shm/bos-nix-profile-prepared"
+
+
+@stage("Require fresh firmware staging")
+def require_fresh_firmware_staging(dev: Device, image: Image) -> None:
+    marker = _NIX_PREPARED_MARKER
+    prepared = dev.read(f"if [ -f {marker} ]; then cat {marker}; fi")
+    require(
+        prepared != image.version,
+        f"{marker} already records this image — reboot the device before retrying "
+        "so package staging runs and its progress can be verified",
+    )
+
+
 @stage("Check for firmware upgrade")
 def check_for_firmware_upgrade(
     dev: Device,
     image: Image,
     cycle: FirmwareCycle,
     index: FirmwareIndex,
+    *,
+    require_package_progress: bool = True,
 ) -> str:
     running_version = cycle.running_version
     image_version = cycle.image_version
@@ -3664,6 +3683,15 @@ def check_for_firmware_upgrade(
         index.completed("/index.v1.json"),
         "firmware offer was returned without a completed /index.v1.json fetch",
     )
+    if require_package_progress:
+        packages = response.get("packages")
+        require(
+            isinstance(packages, dict) and bool(packages.get("changes")),
+            "no package changes offered for the target firmware — serve a changed package "
+            "that upgrades an installed package within its version pin before retrying; "
+            "an empty plan cannot exercise structured staging progress; pass "
+            "--allow-empty-plan for a firmware-only run",
+        )
     cycle.upgrade_id = upgrade_id
     return f"{console.lit(image_version.canonical)} ({console.human_size(image.size)})"
 

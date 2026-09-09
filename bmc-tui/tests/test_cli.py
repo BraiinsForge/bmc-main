@@ -82,6 +82,15 @@ def test_e2e_grpc_sysupgrade_parses_args() -> None:
     assert cmd.packages_port == 8080
     assert cmd.packages_index_port == 8081
     assert cmd.stream_deadline == 900.0
+    assert cmd.allow_empty_plan is False
+
+
+def test_e2e_grpc_sysupgrade_allows_empty_plan() -> None:
+    cmd = tyro.cli(
+        E2eGrpcSysupgrade,
+        args=["--device", "h", "--image", "firmware.tar", "--allow-empty-plan"],
+    )
+    assert cmd.allow_empty_plan is True
 
 
 def test_register_server_is_a_deck_subcommand(capsys: pytest.CaptureFixture[str]) -> None:

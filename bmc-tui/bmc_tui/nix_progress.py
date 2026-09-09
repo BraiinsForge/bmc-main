@@ -20,11 +20,12 @@
 
 """Consume a device flash's `@bmc {json}` progress stream and render it live.
 
-An on-device `sysupgrade` emits its Nix-staging progress as `@bmc {json}` lines
-(schema: `bmc-nix/src/progress.rs`). Run directly over SSH those lines have no
-consumer and flood the terminal unthrottled — one download re-emits the same
-snapshot thousands of times. This parses them, collapses them into a bounded
-live region, and tees the raw stream to a log.
+The caller requests `@bmc {json}` Nix-staging progress through
+`BOS_BMC_NIX_CLI_EXTRA_ARGS='--log-format internal-json'`
+(schema: `bmc-nix/src/progress.rs`). These unthrottled snapshots can repeat
+thousands of times during a download. This collapses them into a bounded live
+region and tees the raw stream to a log. Invoking `/sbin/sysupgrade` directly
+on the device keeps human logging unless that environment override is set.
 
 `parse_line` mirrors the Rust contract: a line without the prefix, or one whose
 payload cannot be classified, returns None — raw device output the caller echoes.

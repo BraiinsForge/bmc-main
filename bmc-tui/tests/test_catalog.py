@@ -348,26 +348,24 @@ def test_sysupgrade_skips_when_already_on_target(tmp_path: Path) -> None:
     assert backend.stream_outputs == []
 
 
-def test_sysupgrade_runs_with_force(tmp_path: Path) -> None:
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("skip_nix", [False, True])
+def test_sysupgrade_requests_structured_progress(
+    tmp_path: Path, force: bool, skip_nix: bool
+) -> None:
     image = _image(tmp_path)
     backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
-    catalog.sysupgrade(Device("h", backend=backend), image, force=True, assume_yes=True)
-    assert any("sysupgrade -F " in argv[-1] for argv in backend.stream_outputs)
-
-
-def test_sysupgrade_runs_with_assume_yes(tmp_path: Path) -> None:
-    image = _image(tmp_path)
-    backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
-    catalog.sysupgrade(Device("h", backend=backend), image, assume_yes=True)
-    argv = backend.stream_outputs[0][-1]
-    assert argv.startswith("sysupgrade ")  # no BOS_NIX_SKIP prefix by default
-
-
-def test_sysupgrade_skip_nix_prefixes_env(tmp_path: Path) -> None:
-    image = _image(tmp_path)
-    backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
-    catalog.sysupgrade(Device("h", backend=backend), image, assume_yes=True, skip_nix=True)
-    assert any("BOS_NIX_SKIP=1 sysupgrade " in argv[-1] for argv in backend.stream_outputs)
+    catalog.sysupgrade(
+        Device("h", backend=backend), image, assume_yes=True, force=force, skip_nix=skip_nix
+    )
+    expected = ["BOS_BMC_NIX_CLI_EXTRA_ARGS=--log-format internal-json"]
+    if skip_nix:
+        expected.append("BOS_NIX_SKIP=1")
+    expected.append("sysupgrade")
+    if force:
+        expected.append("-F")
+    expected.append(image.remote_path)
+    assert shlex.split(backend.stream_outputs[0][-1]) == expected
 
 
 def test_cleanup_firmware_removes_uploaded_tar(tmp_path: Path) -> None:
@@ -3668,6 +3666,7 @@ def _firmware_offer(image: Image, cycle: catalog.FirmwareCycle) -> dict[str, obj
             "hash": image.sha256.upper(),
             "fileSizeBytes": str(image.size),
         },
+        "packages": {"changes": [{"name": "core", "versionFrom": "0.1.0", "versionTo": "0.1.1"}]},
         "disruption": "UPGRADE_DISRUPTION_REBOOT",
     }
 
@@ -3719,6 +3718,31 @@ def test_check_for_firmware_upgrade_accepts_canonical_offer(
     assert cycle.upgrade_id == "offer-1"
 
 
+@pytest.mark.parametrize("prepared", [None, "2025-06-15-0-acde0123-25.06"])
+def test_fresh_firmware_staging_allows_absent_or_other_version_marker(
+    tmp_path: Path, prepared: str | None
+) -> None:
+    image, _ = _checked_firmware_cycle(tmp_path)
+    marker = tmp_path / "bos-nix-profile-prepared"
+    if prepared is not None:
+        marker.write_text(prepared + "\n")
+
+    def run_probe(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        assert "/dev/shm/bos-nix-profile-prepared" in argv[-1], "probe must check COMMAND's marker"
+        command = argv[-1].replace("/dev/shm/bos-nix-profile-prepared", shlex.quote(str(marker)))
+        return subprocess.run(["sh", "-c", command], check=True, capture_output=True, text=True)
+
+    dev = Device("h", backend=_Exec(run_probe))
+    catalog.require_fresh_firmware_staging(dev, image)
+
+
+def test_fresh_firmware_staging_requires_reboot_for_matching_marker(tmp_path: Path) -> None:
+    image, _ = _checked_firmware_cycle(tmp_path)
+    backend = _Exec(_routes({"bos-nix-profile-prepared": image.version + "\n"}))
+    with pytest.raises(Abort, match="reboot the device"):
+        catalog.require_fresh_firmware_staging(Device("h", backend=backend), image)
+
+
 @pytest.mark.parametrize(
     ("change", "hint"),
     [
@@ -3728,6 +3752,9 @@ def test_check_for_firmware_upgrade_accepts_canonical_offer(
         (lambda response: response["firmware"].update(fileSizeBytes="1"), "size"),
         (lambda response: response.update(disruption="UPGRADE_DISRUPTION_APP_RESTART"), "REBOOT"),
         (lambda response: response.pop("upgradeId"), "upgrade id"),
+        (lambda response: response.pop("packages"), "no package changes"),
+        (lambda response: response.update(packages={}), "no package changes"),
+        (lambda response: response.update(packages={"changes": []}), "no package changes"),
     ],
 )
 def test_check_for_firmware_upgrade_rejects_invalid_offer(
@@ -3744,6 +3771,7 @@ def test_check_for_firmware_upgrade_rejects_invalid_offer(
         catalog.check_for_firmware_upgrade(
             Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState()
         )
+    assert cycle.upgrade_id is None, "a rejected offer must not authorize StartUpgrade"
 
 
 def test_check_for_firmware_upgrade_missing_offer_names_versions_and_response(

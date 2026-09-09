@@ -17,7 +17,10 @@ machine:
   image and points bmc at it via `BMC_INDEX_URL`; the offer is asserted to match the image's canonical version before
   anything is flashed.
 - **`StartUpgrade`** streams the upgrade phases (`FIRMWARE_UPGRADE_PHASE_DOWNLOADING` → `…_VERIFYING` → `…_APPLYING`).
-  The device downloads the image from the host index, verifies it, and flashes it.
+  The device downloads the image from the host index, verifies it, and flashes it. The stream must also contain
+  `PACKAGE_UPGRADE_PHASE_REALIZING` after firmware `…_VERIFYING`, proving structured package-staging progress reached
+  the API. A successful flash without this event fails the run after cleanup unless `--allow-empty-plan` selects the
+  firmware-only mode.
 - **The flash is proven, not assumed.** After the stream, the harness requires a changed boot id, the target firmware
   version, and fetch provenance (the index actually served `/firmware.tar`) — all re-checked through a pinned device
   identity so a resolver handing out a different Deck cannot pass the run.
@@ -36,8 +39,12 @@ members); a legacy or wrong-board image is rejected in the "Validate firmware im
 There is no two-image dance and no manual version bookkeeping. `CheckForUpgrade` only offers a release strictly newer
 than the installed one, so the harness **anchors** the device first: the "Ensure anchor version" stage rewrites
 `/etc/bos_version` to a synthetic release below the image's, preserving the running date, commit, and build suffix. Any
-newer Nix-era image works, and re-running the same image needs no prep — the anchor is re-applied on each run and
-restored on the failure paths that stay on the same boot.
+newer Nix-era image can be reused — the anchor is re-applied on each run and restored on the failure paths that stay on
+the same boot. By default, each run still needs an offered package change: after a successful run, prepare another
+package upgrade within an installed package's version pin. Re-serving the installed packages produces an empty plan and
+cannot exercise staging progress. Use `--allow-empty-plan` to exercise the firmware-only path instead. If an interrupted
+attempt left `/dev/shm/bos-nix-profile-prepared` naming the image, reboot before retrying; the default mode rejects that
+marker before preparing the device.
 
 ## Prerequisites
 
@@ -55,6 +62,11 @@ restored on the failure paths that stay on the same boot.
   (sysupgrade stages the tar in tmpfs and pivots to a ramdisk). The "Memory headroom" check runs before any mutation and
   aborts with the shortfall rather than flashing blind.
 
+- At least one package change offered for the target firmware unless `--allow-empty-plan` selects firmware-only mode. In
+  the default mode, `CheckForUpgrade` must return a nonempty package plan before the harness calls `StartUpgrade`;
+  version pins and downgrade protection still apply. A different store path by itself does not establish that the
+  installed package can upgrade.
+
 ## Invocation
 
 ```sh
@@ -66,6 +78,7 @@ nix run .#deck -- e2e-grpc-sysupgrade --device DEVICE_IP --image PATH_TO_TARBALL
   index, which `CheckForUpgrade` also probes.
 - `--password` — the device login password, if the web password is set.
 - `--stream-deadline` (default 900) — seconds to wait on the `StartUpgrade` stream before giving up.
+- `--allow-empty-plan` — permit a firmware-only run without requiring package changes or staging-progress events.
 
 ## What the Stages Do
 
@@ -76,8 +89,9 @@ auto-upgrade disabled**. A failure here leaves the device untouched.
 
 **Snapshot and pin:** **Snapshot device identity** (the board serial from `/proc/device-tree/serial-number`) and **Pin
 device address** (resolve `--device` to a numeric address for the reboot window), then **Verify device identity**
-through the pinned address. **Snapshot** the upgrade config, opkg keys, `/etc/bos_version`, and the bmc service script —
-the byte snapshots used to restore the device afterwards.
+through the pinned address. **Require fresh firmware staging** rejects a marker for this image left by an earlier
+attempt in the default package-progress mode. **Snapshot** the upgrade config, opkg keys, `/etc/bos_version`, and the
+bmc service script — the byte snapshots used to restore the device afterwards.
 
 **Prepare the device:** **Memory headroom**, then **Ensure anchor version** (rewrite `/etc/bos_version` below the image
 release so the offer appears), **Upload firmware** and **Trust image signing keys** (accept the dev-signed image),
@@ -92,10 +106,11 @@ the index** — inject `BMC_INDEX_URL` into the procd service environment and re
 under procd through the flash; an unsupervised bmc outlives procd's sysupgrade teardown and misreads the success-path
 exit (see #BDK-611).
 
-**Drive the upgrade:** **Await bmc ready**, **gRPC login**, **CheckForUpgrade** (assert the offer is the image version),
-**Snapshot boot id**, then stream **StartUpgrade** and classify the outcome. On a provisional success the harness polls
-for a boot-id change, re-pins and re-verifies identity through the pinned address, and requires the flashed version to
-match the image and the index to have served `/firmware.tar`.
+**Drive the upgrade:** **Await bmc ready**, **gRPC login**, **CheckForUpgrade** (assert the offer is the image version
+and, by default, includes package changes; an empty plan aborts here and restores configuration), **Snapshot boot id**,
+then stream **StartUpgrade** and classify the outcome. `--allow-empty-plan` skips the package-plan and package-progress
+assertions. On a provisional success the harness polls for a boot-id change, re-pins and re-verifies identity through
+the pinned address, and requires the flashed version to match the image and the index to have served `/firmware.tar`.
 
 **Safety properties:** identity is pinned before any mutation and re-verified after the reboot; an identity mismatch
 performs no restoration, keeps the firmware index server alive for up to 120 s so any in-flight transfer to the intended
