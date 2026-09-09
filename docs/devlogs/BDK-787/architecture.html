@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BDK-787 · Upgrade ownership &amp; package architecture</title>
+  <style>
+    :root { color-scheme: light; --ink: #172b3a; --muted: #526574; --line: #ccd8df; --paper: #f3f6f8; --blue: #15558c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 system-ui, sans-serif; }
+    main { max-width: 1160px; margin: auto; padding: 48px 28px; }
+    header { margin-bottom: 36px; }
+    .eyebrow { color: var(--blue); font-weight: 750; letter-spacing: .12em; font-size: 13px; text-transform: uppercase; }
+    h1 { font-size: clamp(32px, 5vw, 56px); line-height: 1.12; letter-spacing: -.035em; margin: 14px 0 20px; }
+    h2 { font-size: 27px; line-height: 1.25; margin: 0 0 18px; }
+    h3 { font-size: 18px; margin: 0 0 8px; }
+    p { margin: 10px 0; }
+    a { color: var(--blue); text-underline-offset: 3px; }
+    nav { display: flex; flex-wrap: wrap; gap: 10px 24px; margin-top: 24px; }
+    section { background: white; border: 1px solid var(--line); border-radius: 16px; padding: 28px; margin: 24px 0; }
+    .lede { font-size: 21px; max-width: 850px; }
+    .muted, figcaption { color: var(--muted); font-size: 15px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .card { border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; }
+    .node { border: 1px solid #99b8cf; background: #f0f6fc; border-radius: 8px; padding: 12px 16px; }
+    .arrow { text-align: center; color: var(--blue); padding: 7px; font-size: 14px; }
+    .decision-flow { display: grid; grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr); align-items: center; gap: 8px; }
+    .decision-no { grid-column: 1; text-align: center; color: var(--blue); padding: 10px; }
+    .decision-flow .outcome { background: #eaf5ef; border-color: #9bc4b0; }
+    .callout { border-left: 4px solid var(--blue); background: #f0f6fc; padding: 14px 18px; margin-top: 20px; }
+    figure { margin: 20px 0; }
+    figcaption { margin-top: 12px; }
+    code { font: .88em ui-monospace, monospace; overflow-wrap: anywhere; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    th, td { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-size: 13px; }
+    .install-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .exchange { margin-top: 14px; padding-top: 10px; border-top: 2px solid var(--blue); font-size: 15px; }
+    .reply { border-color: var(--line); color: var(--muted); }
+    .watch-diagram { margin-top: 32px; }
+    .watch-flow { display: grid; grid-template-columns: minmax(0, 1fr) 160px minmax(0, 1fr); align-items: stretch; margin-top: 20px; }
+    .process { border: 2px solid var(--line); border-radius: 12px; padding: 16px; }
+    .process > .eyebrow { margin-bottom: 14px; }
+    .sources { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 14px; }
+    .sources .node { padding: 10px; }
+    .wire { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 12px 8px; font-size: 13px; color: var(--blue); }
+    .wire .muted { font-size: 12px; margin: 8px 0; }
+    .subscribe-arrow { font-size: 30px; line-height: 1; }
+    .state-arrow { font-size: 62px; line-height: 1.15; }
+    .device { background: var(--ink); color: white; padding: 18px; border-radius: 12px; border: 5px solid #526574; font-size: 14px; }
+    .device .eyebrow { color: #b9d9f6; font-size: 11px; margin-bottom: 8px; }
+    .device strong { font-size: 19px; }
+    .phase-indicator { display: flex; gap: 5px; margin: 14px 0; }
+    .phase-indicator span { height: 6px; flex: 1; background: #526574; border-radius: 4px; }
+    .phase-indicator span:nth-child(-n+3) { background: #8fc6f4; }
+    details { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 14px; }
+    summary { cursor: pointer; color: var(--blue); font-weight: 650; }
+    li { margin-bottom: 8px; }
+    footer { color: var(--muted); font-size: 14px; }
+    @media (max-width: 850px) { .install-flow, .watch-flow { grid-template-columns: 1fr; } .subscribe-arrow { transform: rotate(90deg); } .state-arrow { transform: rotate(90deg); } .wire { gap: 6px; } }
+    @media (max-width: 700px) { main { padding: 24px 14px; } section { padding: 20px; } .grid { grid-template-columns: 1fr; } }
+    @media print { body { background: white; font-size: 11pt; } main { max-width: none; padding: 0; } nav { display: none; } section { border-radius: 0; break-inside: avoid; } h1 { font-size: 30pt; } .card { break-inside: avoid; } a { color: inherit; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">BDK-787 · Architecture discussion · 6 September 2026</div>
+    <h1>One system owner.<br>Two upgrade paths.</h1>
+    <p class="lede">Boser owns firmware and package upgrades on managed miners. BMC presents progress and requests package installation. Deck keeps its existing local upgrade path.</p>
+    <p class="muted">Upgrade ownership and backend boundaries are agreed. External transport, authentication and API/display integration remain to be designed.</p>
+    <nav aria-label="Document sections">
+      <a href="#decision">Upgrade decision</a>
+      <a href="#dependencies">Dependencies</a><a href="#firmware">Sysupgrade output</a>
+      <a href="#client">BMC flow</a><a href="#changes">Change map</a><a href="#decisions">Maintenance ownership</a>
+    </nav>
+  </header>
+
+  <section id="decision">
+    <h2>01 / What upgrade do we offer?</h2>
+    <p>Check firmware first. Package changes accompany the firmware offer, or become a package-only offer when no firmware upgrade is available.</p>
+    <figure aria-labelledby="decision-caption">
+      <div class="decision-flow">
+        <div class="node"><strong>Firmware upgrade available?</strong></div>
+        <div class="arrow">Yes →</div>
+        <div class="node outcome"><strong>Offer firmware upgrade</strong><br>Also show the package changes included in that firmware upgrade.</div>
+        <div class="decision-no">No ↓</div>
+        <div class="node" style="grid-column: 1"><strong>Package upgrades available?</strong></div>
+        <div class="arrow">Yes →</div>
+        <div class="node outcome"><strong>Offer package-only upgrade</strong><br>No firmware upgrade or reboot is required.</div>
+        <div class="decision-no">No ↓</div>
+        <div class="node outcome" style="grid-column: 1"><strong>No upgrade available</strong></div>
+      </div>
+      <figcaption id="decision-caption">One offer: firmware with its package changes, package-only, or no upgrade. Failed checks are errors, not “no upgrade.”</figcaption>
+    </figure>
+    <div class="grid">
+      <div class="card"><h3>Starting a firmware upgrade</h3><p>The firmware upgrade performs the package upgrade too. The displayed package changes are information, not a second package-only operation.</p></div>
+      <div class="card"><h3>Starting a package-only upgrade</h3><p>When Start is requested, verify that package-only execution is possible on the current system, then prepare and apply the package update. An earlier offer does not bypass these checks.</p></div>
+    </div>
+  </section>
+
+  <section id="dependencies">
+    <h2>02 / Package upgrades use bmc-upgrade</h2>
+    <p><code>boser-openwrt</code> uses <code>bmc-upgrade</code> to discover and install packages.</p>
+    <figure>
+      <div class="grid">
+        <div class="card">
+          <h3>Production package dependency chain</h3>
+          <div class="node"><strong>boser-openwrt</strong><br>Constructs the package adapter and owns platform configuration.</div>
+          <div class="arrow">↓ depends on and calls</div>
+          <div class="node"><strong>bmc-upgrade::packages</strong><br><code>PackageBackend</code> trait · <code>PackageUpgrader</code> implementation<br>Catalog, index resolution, preview and apply.</div>
+          <div class="arrow">↓ uses</div>
+          <div class="node"><strong>bmc-nix</strong><br>Nix store, profile generation, activation and GC primitives.</div>
+        </div>
+        <div class="card">
+          <h3>Core and other platforms</h3>
+          <div class="node"><strong>boser core</strong><br>Nix-independent package service, intents and snapshots.<br>One <code>SystemTaskLock</code> + one execution watch.</div>
+          <div class="arrow">↑ platform adapters implement the core boundary</div>
+          <div class="node"><strong>boser-openwrt</strong> → real package backend<br><strong>boser-buildroot</strong> → unsupported packages<br><strong>boser-mockup</strong> → opt-in scripted packages</div>
+          <p class="muted">Within Boser, neither core, Unix nor mockup gains a dependency on <code>bmc-upgrade</code> or <code>bmc-nix</code>. OpenWrt already uses <code>bmc-nix</code> to decode firmware progress.</p>
+        </div>
+      </div>
+      <figcaption>Arrows in this diagram mean Rust dependency/call direction, not network traffic. Deck continues using the same package library through its local BMC service.</figcaption>
+    </figure>
+    <div class="callout">
+      <strong>Why not use bmc-upgrade for firmware now?</strong>
+      <p>Packages have their own <code>PackageBackend</code> trait and do not require adopting the firmware upgrader.
+      Boser already has image verification, sysupgrade synchronization, platform managers and legacy API callers.
+      Replacing that working path adds a separate migration without being necessary for package support.
+      Share execution ownership and reporting now; leave a firmware refactor for a demonstrated need.</p>
+    </div>
+  </section>
+
+  <section id="firmware">
+    <h2>03 / From sysupgrade stderr to observable state</h2>
+    <p>Boser supervises the child independently of the request that started it.</p>
+    <figure>
+      <div class="node"><strong>sysupgrade → incoming image’s COMMAND → Nix upgrade</strong><br>Structured Nix progress lines, such as <code>@bmc {"type":"phase","phase":"building"}</code>, travel through process output.</div>
+      <div class="arrow">↓ stdout pipe + stderr pipe · drained concurrently</div>
+      <div class="node"><strong>boser-unix: supervise_sysupgrade() → drain_lines()</strong><br>Two reader tasks pass lines to an injected decoder. Unrecognized output is logged. No Nix dependency here.</div>
+      <div class="arrow">↓ line callback</div>
+      <div class="node"><strong>boser-openwrt: output_decoder()</strong><br><code>bmc_nix::progress::feed_line</code> decodes events; the adapter updates phases and byte counts through <code>ExecutionReporter</code>.</div>
+      <div class="arrow">↓ structured snapshot, not raw stderr</div>
+      <div class="node"><strong>Boser execution state → internal Tokio watch</strong><br>Current snapshot retained without subscribers. Request loss does not cancel the worker.</div>
+      <figcaption>Existing ready/proceed synchronization still controls firmware handoff. Output supplies progress; it is not the sole evidence of success or failure. Separate pipes do not provide a global stdout/stderr ordering.</figcaption>
+    </figure>
+    <p><strong>The first Nix-enabled firmware still bootstraps itself.</strong> Older Boser need not know Nix exists: initialization stays in the incoming image’s <code>COMMAND</code>. Missing Nix never requires a package-only request first.</p>
+  </section>
+
+  <section id="client">
+    <h2>04 / One install request. A separate stream to the display.</h2>
+    <p>BMC asks Boser what can be installed, then sends the selected package names. Boser performs the entire update.</p>
+    <figure aria-labelledby="install-title">
+      <h3 id="install-title">Install in three steps</h3>
+      <div class="install-flow">
+        <div class="card">
+          <div class="eyebrow">1 · Browse</div>
+          <h3>Get packages from Boser</h3>
+          <div class="exchange">BMC → Boser<br><strong>List installable packages</strong></div>
+          <div class="exchange reply">Boser → BMC<br>Names, versions and display metadata</div>
+        </div>
+        <div class="card">
+          <div class="eyebrow">2 · Install</div>
+          <h3>Send one request</h3>
+          <div class="exchange">BMC → Boser<br><strong>Install selected packages</strong></div>
+          <div class="exchange reply">Boser → BMC<br>Accepted + execution ID</div>
+        </div>
+        <div class="card">
+          <div class="eyebrow">3 · Observe</div>
+          <h3>Show progress</h3>
+          <div class="exchange">Boser → BMC<br><strong>Watch updates</strong></div>
+          <div class="exchange reply">BMC → display<br>Progress, completion or error</div>
+        </div>
+      </div>
+      <figcaption><strong>Install = update the existing package set + add the selected packages.</strong> No separate upgrade request and no local BMC package execution.</figcaption>
+    </figure>
+
+    <figure class="watch-diagram" aria-labelledby="watch-title">
+      <h3 id="watch-title">How a change reaches the display</h3>
+      <p class="muted">A persistent subscription, independent of the install request.</p>
+      <div class="watch-flow">
+        <div class="process">
+          <div class="eyebrow">Boser process</div>
+          <div class="sources">
+            <div class="node"><strong>Firmware</strong><br>sysupgrade output<br>↓ decoded events</div>
+            <div class="node"><strong>Packages</strong><br>PackageUpgrader<br>↓ progress callbacks</div>
+          </div>
+          <div class="arrow">↓ both publish through ExecutionReporter</div>
+          <div class="node"><strong>Execution state</strong><br>ID · kind · phase · bytes · outcome</div>
+          <div class="arrow">↓ publish changed snapshot</div>
+          <div class="node"><strong>Internal Tokio watch</strong><br>Retain the current snapshot</div>
+          <div class="arrow">↓ subscription</div>
+          <div class="node"><strong>Stream adapter</strong><br>Expose structured upgrade state</div>
+        </div>
+        <div class="wire">
+          <div class="muted">BMC subscribes</div>
+          <div class="subscribe-arrow" aria-hidden="true">←</div>
+          <strong>WATCH STREAM</strong>
+          <div class="state-arrow" aria-hidden="true">→</div>
+          <div>Current snapshot<br>+ subsequent changes</div>
+          <div class="muted">Transport to be agreed</div>
+        </div>
+        <div class="process">
+          <div class="eyebrow">bmc-openwrt process</div>
+          <div class="node"><strong>Boser client</strong><br>Receive structured state</div>
+          <div class="arrow">↓ update</div>
+          <div class="node"><strong>Local upgrade state</strong><br>Notify the display of changes</div>
+          <div class="arrow">↓ display observes state</div>
+          <div class="node"><strong>Display UI / compositor</strong><br>Map phase, bytes and outcome to the upgrade view</div>
+          <div class="arrow">↓ render</div>
+          <div class="device">
+            <div class="eyebrow">Miner display · example</div>
+            <strong>Installing packages</strong>
+            <div class="phase-indicator"><span></span><span></span><span></span><span></span></div>
+            <div>Building package profile…</div>
+          </div>
+        </div>
+      </div>
+      <figcaption>Solid state flow: Boser → watch stream → BMC client → local state → display.
+      BMC does not parse raw stderr. Firmware output and in-process package callbacks converge on the same watch.</figcaption>
+    </figure>
+
+    <div class="grid">
+      <div class="card"><h3>Always listening</h3><p>The display also reflects upgrades started by the Boser FE or scheduler. It does not need a BMC install request to begin watching.</p></div>
+      <div class="card"><h3>Reconnect without restarting work</h3><p>Boser immediately sends its current snapshot on subscription. Stream loss does not cancel the upgrade or imply success; BMC shows a disconnected state until it reconnects.</p></div>
+    </div>
+    <details>
+      <summary>Contract details</summary>
+      <p>Operation names are illustrative; the BMC wire transport remains undecided. Boser owns catalog resolution. Checking caches the selected offer; starting uses the cached package index while rechecking the installed profile. Acceptance is not completion; reconcile a lost response through state rather than blindly retrying.</p>
+      <p>On package completion, refresh available and installed items. Package completion does not trigger firmware reboot polling. Firmware handoff is Rebooting, not verified reboot success. Widget reload uses the activation signalling path, separately from upgrade-status rendering.</p>
+    </details>
+    <p>On Boser-managed products, BMC does not execute local upgrades or scheduled profile mutations, with no local fallback. Boser-owned automatic upgrades and GC are handled in the separate mini-miner maintenance work. Deck retains local execution.</p>
+  </section>
+  <section>
+    <h2>05 / One FE contract across architectures</h2>
+    <p>Expose the shared backend operations through transport adapters agreed with the API work, preserving existing firmware clients. The FE consumes the same package-aware contract on every architecture; platform capability determines the available operations.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th scope="col">Platform</th><th scope="col">Normal upgrade check</th><th scope="col">Explicit package install</th></tr></thead>
+        <tbody>
+          <tr><td>OpenWrt with usable Nix</td><td>Firmware with its package changes; otherwise package-only or no upgrade</td><td>Update current set + requested additions</td></tr>
+          <tr><td>OpenWrt without package support or a Nix root</td><td>Firmware or no upgrade, with capability reason</td><td>Reject package requests; no firmware substitution</td></tr>
+          <tr><td>Other production backends</td><td>Firmware or no upgrade</td><td>Unsupported</td></tr>
+          <tr><td>Mockup</td><td>Firmware-only by default; package simulation with explicit opt-in</td><td>Scripted execution with <code>--mock-package-upgrades</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">A failed applicable check is an error, not “no upgrade.” Mini-miner scheduling and GC are handled separately from the backend. Authentication is part of the API design; localhost cannot establish trust behind the local reverse proxy.</p>
+  </section>
+
+  <section id="changes">
+    <h2>06 / Where the package changes go</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th scope="col">Repository / area</th><th scope="col">Change</th></tr></thead>
+        <tbody>
+          <tr><td><strong>bmc-main</strong><br><code>bmc-upgrade/src/packages.rs</code></td><td>Use the package backend and catalog support. Preserve structured errors so Boser can report failures and handle retries safely, while retaining Deck behavior.</td></tr>
+          <tr><td><strong>bmc-main</strong><br><code>bmc-nix</code></td><td>Expose a read-only check for a usable Nix installation. Reuse the package upgrade and activation semantics.</td></tr>
+          <tr><td><strong>bos-main</strong><br><code>boser/src/system_upgrade</code></td><td>Add Nix-independent package intents/service, package execution kind and retained Completed state. Reuse the manager’s existing system lock and watch. Add catalog and external-stream adapters.</td></tr>
+          <tr><td><strong>bos-main</strong><br><code>boser-openwrt</code></td><td>Use <code>bmc-upgrade</code> through a platform adapter. Map library metadata, errors and progress to core types. Enable package operations when Nix is usable.</td></tr>
+          <tr><td><strong>bos-main</strong><br>Mockup / API adapters / FE</td><td>Add an opt-in fake backend; extend the common FE contract and migrate upgrade UI callers. No package dependencies in mockup or core.</td></tr>
+          <tr><td><strong>bmc-main</strong><br><code>bmc</code> / <code>bmc-openwrt</code></td><td>Disable local mutation paths on managed products. Add Boser catalog/install/watch client integration and display mapping. Coordinate the maintenance handover with Boser-owned scheduling. Preserve local Deck upgrades.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="decisions">
+    <h2>07 / Service ownership and maintenance</h2>
+    <div class="grid">
+      <div class="card"><h3>Firmware owns Boser</h3><p>Package activation manages Nix-owned services. Boser stays in firmware and is not restarted by package upgrades.</p></div>
+      <div class="card"><h3>Boser owns garbage collection</h3><p>Boser removes unused store data and old generations on managed miners. Keep cleanup failures distinct from installation failures.</p></div>
+    </div>
+    <p>Separate mini-miner maintenance work adds Boser-owned automatic upgrades and GC, targeting the Deck-style <strong>two-hour cadence</strong> and reusing scheduling code where appropriate. Disable competing BMC autoupgrades as part of that handover. Deck retains its local maintenance.</p>
+    <p>The maintenance work settles schedule integration and GC policy. BMC API/display integration is separate; the watch remains independent of who requested the upgrade.</p>
+    <p>Accepted work survives request/watch loss. Proven stopped failure releases the lock; uncertain failure retains it.
+      The watch stores current state, not an event history or durable reboot journal. No cancellation, queue or automatic retry is implied.</p>
+  </section>
+
+  <footer>
+    <p>These diagrams describe the overall architecture, not delivery status. External API, authentication and display integration remain follow-up work.</p>
+  </footer>
+</main>
+</body>
+</html>
