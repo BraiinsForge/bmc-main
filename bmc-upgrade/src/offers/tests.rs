@@ -43,14 +43,33 @@ async fn check(
     firmware: Option<&'static str>,
     packages: Option<PackageOffer>,
 ) -> OfferCheck<&'static str> {
-    offers
-        .check(
-            vec!["requested".to_owned()],
-            async { Ok::<_, ()>(firmware) },
-            |_| async { Ok(packages) },
-        )
+    offers.invalidate();
+    let prepared = prepare(vec!["requested".to_owned()], firmware, async {
+        Ok::<_, ()>(packages)
+    })
+    .await
+    .expect("BUG: fixture probes succeed");
+    offers.cache(prepared)
+}
+
+#[tokio::test]
+async fn direct_preparation_does_not_replace_an_interactive_offer_or_its_install_intent() {
+    let mut offers = UpgradeOfferCache::default();
+    let id = check(&mut offers, None, Some(packages("interactive")))
         .await
-        .expect("BUG: fixture probes succeed")
+        .upgrade_id
+        .expect("BUG: interactive offer exists");
+    let automatic = prepare(Vec::new(), None::<&str>, async {
+        Ok::<_, ()>(Some(packages("automatic")))
+    })
+    .await
+    .expect("BUG: automatic preparation succeeds");
+    assert!(
+        matches!(automatic.upgrade, Some(UpgradeOffer::Packages { packages, install }) if packages.preview.bmc_version.as_deref() == Some("automatic") && install.is_empty())
+    );
+    assert!(
+        matches!(offers.claim(&id), Some(UpgradeOffer::Packages { packages, install }) if packages.preview.bmc_version.as_deref() == Some("interactive") && install == ["requested"])
+    );
 }
 
 #[tokio::test]
@@ -91,61 +110,15 @@ async fn no_changes_produces_no_id() {
 }
 
 #[tokio::test]
-async fn package_error_blocks_firmware_and_invalidates_old_offer() {
-    let mut offers = UpgradeOfferCache::default();
-    let old = check(&mut offers, Some("old"), None)
-        .await
-        .upgrade_id
-        .expect("BUG: old offer");
-    let result = offers
-        .check(
-            Vec::new(),
-            async { Ok(Some("new")) },
-            |estimate| async move {
-                assert!(matches!(estimate, EstimateMode::Skip));
-                Err::<Option<PackageOffer>, _>("package check failed")
-            },
-        )
-        .await;
+async fn package_error_blocks_firmware() {
+    let result = prepare(Vec::new(), Some("new"), async move {
+        Err::<Option<PackageOffer>, _>("package check failed")
+    })
+    .await;
     assert_eq!(
         result.expect_err("BUG: package failure must propagate"),
         "package check failed"
     );
-    assert!(offers.claim(&old).is_none());
-}
-
-#[tokio::test]
-async fn firmware_failure_skips_package_probe() {
-    let result = UpgradeOfferCache::<&str>::default()
-        .check(
-            Vec::new(),
-            async { Err::<Option<&str>, _>("firmware failed") },
-            |_| async {
-                panic!("BUG: package probe must not run after firmware failure");
-                #[expect(unreachable_code)]
-                Ok(None::<PackageOffer>)
-            },
-        )
-        .await;
-    assert_eq!(
-        result.expect_err("BUG: failure must propagate"),
-        "firmware failed"
-    );
-}
-
-#[tokio::test]
-async fn package_only_check_requests_size_estimation() {
-    UpgradeOfferCache::<&str>::default()
-        .check(
-            Vec::new(),
-            async { Ok::<_, ()>(None) },
-            |estimate| async move {
-                assert!(matches!(estimate, EstimateMode::Estimate));
-                Ok(Some(packages("packages")))
-            },
-        )
-        .await
-        .expect("BUG: fixture check succeeds");
 }
 
 #[tokio::test]
@@ -174,23 +147,4 @@ async fn a_new_check_replaces_previous_offer() {
     assert_ne!(old, new);
     assert!(offers.claim(&old).is_none());
     assert!(offers.claim(&new).is_some());
-}
-
-#[tokio::test]
-async fn cancelled_check_does_not_restore_previous_offer() {
-    let mut offers = UpgradeOfferCache::default();
-    let old = check(&mut offers, Some("old"), None)
-        .await
-        .upgrade_id
-        .expect("BUG: old offer");
-    {
-        let future = offers.check(
-            Vec::new(),
-            std::future::pending::<Result<Option<&str>, ()>>(),
-            |_| async { Ok(None::<PackageOffer>) },
-        );
-        tokio::pin!(future);
-        assert!(futures::poll!(&mut future).is_pending());
-    }
-    assert!(offers.claim(&old).is_none());
 }

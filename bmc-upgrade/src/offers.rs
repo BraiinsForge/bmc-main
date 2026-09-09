@@ -24,7 +24,7 @@ use bmc_nix::types::MergedIndex;
 use uuid::Uuid;
 
 use crate::arbitration::Disruption;
-use crate::packages::{EstimateMode, PackagesPreview};
+use crate::packages::PackagesPreview;
 
 #[derive(Clone, Debug)]
 pub struct PackageOffer {
@@ -65,7 +65,52 @@ pub struct OfferCheck<F> {
     pub disruption: Disruption,
 }
 
-/// Callers hold their operation lock across checking or claiming and through execution.
+#[derive(Debug)]
+pub struct UpgradePreparation<F> {
+    pub firmware: Option<F>,
+    pub packages: Option<PackagesPreview>,
+    pub upgrade: Option<UpgradeOffer<F>>,
+    pub disruption: Disruption,
+}
+
+pub async fn prepare<F: Clone, E, PF>(
+    install: Vec<String>,
+    firmware: Option<F>,
+    packages: PF,
+) -> Result<UpgradePreparation<F>, E>
+where
+    PF: Future<Output = Result<Option<PackageOffer>, E>>,
+{
+    let packages = packages.await?;
+    let packages_preview = packages.as_ref().map(|packages| packages.preview.clone());
+    let (upgrade, disruption) = if let Some(firmware) = firmware.clone() {
+        (
+            Some(UpgradeOffer::Firmware {
+                firmware,
+                package_preview: packages_preview.clone(),
+                install,
+            }),
+            Disruption::Reboot,
+        )
+    } else if let Some(packages) = packages {
+        (
+            Some(UpgradeOffer::Packages { packages, install }),
+            Disruption::AppRestart,
+        )
+    } else {
+        (None, Disruption::Unspecified)
+    };
+    Ok(UpgradePreparation {
+        firmware,
+        packages: packages_preview,
+        upgrade,
+        disruption,
+    })
+}
+
+/// Callers hold their operation lock across checking or claiming and through execution, and
+/// invalidate before preparing a new check so a failed or cancelled preparation leaves no stale
+/// offer behind.
 #[derive(Debug)]
 pub struct UpgradeOfferCache<F> {
     current: Option<(String, UpgradeOffer<F>)>,
@@ -82,54 +127,17 @@ impl<F> UpgradeOfferCache<F> {
         self.current = None;
     }
 
-    pub async fn check<E, FF, PF>(
-        &mut self,
-        install: Vec<String>,
-        firmware: FF,
-        packages: impl FnOnce(EstimateMode) -> PF,
-    ) -> Result<OfferCheck<F>, E>
-    where
-        F: Clone,
-        FF: Future<Output = Result<Option<F>, E>>,
-        PF: Future<Output = Result<Option<PackageOffer>, E>>,
-    {
-        self.invalidate();
-        let firmware = firmware.await?;
-        let estimate = if firmware.is_some() {
-            EstimateMode::Skip
-        } else {
-            EstimateMode::Estimate
-        };
-        let packages = packages(estimate).await?;
-        let packages_preview = packages.as_ref().map(|packages| packages.preview.clone());
-        let (offer, disruption) = if let Some(firmware) = firmware.clone() {
-            (
-                Some(UpgradeOffer::Firmware {
-                    firmware,
-                    package_preview: packages_preview.clone(),
-                    install,
-                }),
-                Disruption::Reboot,
-            )
-        } else if let Some(packages) = packages {
-            (
-                Some(UpgradeOffer::Packages { packages, install }),
-                Disruption::AppRestart,
-            )
-        } else {
-            (None, Disruption::Unspecified)
-        };
-        let upgrade_id = offer.map(|offer| {
-            let id = Uuid::new_v4().to_string();
-            self.current = Some((id.clone(), offer));
-            id
-        });
-        Ok(OfferCheck {
-            firmware,
-            packages: packages_preview,
+    pub fn cache(&mut self, prepared: UpgradePreparation<F>) -> OfferCheck<F> {
+        self.current = prepared
+            .upgrade
+            .map(|offer| (Uuid::new_v4().to_string(), offer));
+        let upgrade_id = self.current.as_ref().map(|(id, _)| id.clone());
+        OfferCheck {
+            firmware: prepared.firmware,
+            packages: prepared.packages,
             upgrade_id,
-            disruption,
-        })
+            disruption: prepared.disruption,
+        }
     }
 
     pub fn claim(&mut self, id: &str) -> Option<UpgradeOffer<F>> {

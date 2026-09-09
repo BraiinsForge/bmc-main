@@ -35,8 +35,12 @@ use bmc_scheduler::{Cron, JobScheduler};
 pub(crate) use bmc_upgrade::arbitration::Disruption;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeDetail};
-use bmc_upgrade::offers::{PackageOffer, UpgradeOffer, UpgradeOfferCache};
-use bmc_upgrade::packages::{PackageBackend, PackageGcRequest, PackageProbe, PackageProbeError};
+use bmc_upgrade::offers::{
+    PackageOffer, UpgradeOffer, UpgradeOfferCache, UpgradePreparation, prepare,
+};
+use bmc_upgrade::packages::{
+    EstimateMode, PackageBackend, PackageGcRequest, PackageProbe, PackageProbeError,
+};
 pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
@@ -592,7 +596,7 @@ fn store_space_preflight(
     if free_bytes < required_bytes {
         error!(
             free_bytes,
-            required_bytes, unpacked_bytes, "Not enough store space for the automatic upgrade"
+            required_bytes, unpacked_bytes, "Not enough store space for the upgrade"
         );
         return Err(one_shot(UpgradeRunState::Failed(
             SystemUpgradeError::NotEnoughSpace,
@@ -841,37 +845,38 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
         let mut offers = self.system_upgrades.lock().await;
         offers.invalidate();
-        let firmware = self.probe_firmware().await?;
-        let target_firmware = firmware
-            .as_ref()
-            .map(|detail| detail.latest_release.version.clone());
-        let outcome = offers
-            .check(
-                install.clone(),
-                async { Ok(firmware) },
-                |estimate| async move {
-                    match self
-                        .package_backend
-                        .probe(target_firmware.as_deref(), estimate, &install)
-                        .await
-                    {
-                        PackageProbe::Available(index, preview) => {
-                            Ok(Some(PackageOffer { index, preview }))
-                        }
-                        PackageProbe::UpToDate => Ok(None),
-                        PackageProbe::Failed(error) => {
-                            Err(SystemUpgradeError::PackageCheckFailed(error))
-                        }
-                    }
-                },
-            )
-            .await?;
+        let prepared = self.prepare_upgrade(install).await?;
+        let outcome = offers.cache(prepared);
         Ok(CheckOutcome {
             firmware: outcome.firmware,
             packages: outcome.packages,
             upgrade_id: outcome.upgrade_id,
             disruption: outcome.disruption,
         })
+    }
+
+    async fn prepare_upgrade(
+        &self,
+        install: Vec<String>,
+    ) -> Result<UpgradePreparation<UpgradeDetail>, SystemUpgradeError> {
+        let firmware = self.probe_firmware().await?;
+        let target_firmware = firmware
+            .as_ref()
+            .map(|detail| detail.latest_release.version.clone());
+        prepare(install.clone(), firmware, async move {
+            match self
+                .package_backend
+                .probe(target_firmware.as_deref(), EstimateMode::Estimate, &install)
+                .await
+            {
+                PackageProbe::Available(index, preview) => {
+                    Ok(Some(PackageOffer { index, preview }))
+                }
+                PackageProbe::UpToDate => Ok(None),
+                PackageProbe::Failed(error) => Err(SystemUpgradeError::PackageCheckFailed(error)),
+            }
+        })
+        .await
     }
 
     pub(crate) async fn list_installable_widgets(
@@ -953,12 +958,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         self.display_state_service.publish_post_reboot_success(kind);
     }
 
-    async fn start_automatic_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
-        let (gate, upgrade) =
-            match claim_upgrade(&self.run_gate, &self.system_upgrades, &upgrade_id).await {
-                Ok(claimed) => claimed,
-                Err(stream) => return stream,
-            };
+    async fn start_automatic_upgrade(
+        &self,
+    ) -> Result<Option<UpgradeRunStream>, SystemUpgradeError> {
+        let gate = Arc::clone(&self.run_gate)
+            .try_lock_owned()
+            .map_err(|_| SystemUpgradeError::UpgradeInProgress)?;
+        let Some(upgrade) = self.prepare_upgrade(Vec::new()).await?.upgrade else {
+            return Ok(None);
+        };
+        self.system_upgrades.lock().await.invalidate();
         let gate = match automatic_gc_preflight(
             gate,
             &self.package_backend,
@@ -967,9 +976,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         .await
         {
             Ok(gate) => gate,
-            Err(stream) => return stream,
+            Err(stream) => return Ok(Some(stream)),
         };
-        self.dispatch_claimed_upgrade(gate, upgrade)
+        Ok(Some(self.dispatch_claimed_upgrade(gate, upgrade)))
     }
 
     fn spawn_firmware_run(
@@ -1198,15 +1207,12 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         }
 
         debug!("Auto-upgrade triggered");
-        let outcome = self.check_for_upgrade(Vec::new()).await?;
-
-        let Some(upgrade_id) = outcome.upgrade_id else {
+        let Some(mut run) = self.start_automatic_upgrade().await? else {
             debug!("No upgrade available");
             return Ok(());
         };
 
-        info!(upgrade_id, "Auto-upgrade found an upgrade, starting");
-        let mut run = self.start_automatic_upgrade(upgrade_id).await;
+        info!("Auto-upgrade started");
         while let Some(state) = run.next().await {
             match state {
                 UpgradeRunState::Phase(phase) => debug!(?phase, "Auto-upgrade phase"),
@@ -1434,16 +1440,15 @@ mod tests {
     }
 
     async fn firmware_offer(offers: &Mutex<SystemOfferCache>) -> String {
+        let prepared = prepare(Vec::new(), Some(test_upgrade_detail()), async {
+            Ok::<_, ()>(None::<PackageOffer>)
+        })
+        .await
+        .expect("BUG: fixture check succeeds");
         offers
             .lock()
             .await
-            .check(
-                Vec::new(),
-                async { Ok::<_, ()>(Some(test_upgrade_detail())) },
-                |_| async { Ok(None::<PackageOffer>) },
-            )
-            .await
-            .expect("BUG: fixture check succeeds")
+            .cache(prepared)
             .upgrade_id
             .expect("BUG: firmware creates an offer")
     }
@@ -2157,6 +2162,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn firmware_package_preview_drives_store_preflight() {
+        let upgrade = AvailableSystemUpgrade::Firmware {
+            firmware: test_upgrade_detail(),
+            package_preview: Some(PackagesPreview {
+                changes: Vec::new(),
+                download_size_bytes: None,
+                unpacked_size_bytes: Some(10_000),
+                bmc_version: None,
+                bmc_changelog: None,
+            }),
+            install: Vec::new(),
+        };
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::with_free_bytes([], Some(1_000)));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+
+        let Err(mut run) =
+            store_space_preflight(gate, &backend_dyn, store_unpacked_size_bytes(&upgrade))
+        else {
+            panic!("BUG: firmware package estimates must be checked before dispatch");
+        };
+        assert!(matches!(
+            run.next().await,
+            Some(UpgradeRunState::Failed(SystemUpgradeError::NotEnoughSpace))
+        ));
+
+        let firmware_only = AvailableSystemUpgrade::Firmware {
+            firmware: test_upgrade_detail(),
+            package_preview: None,
+            install: Vec::new(),
+        };
+        assert_eq!(store_unpacked_size_bytes(&firmware_only), None);
+    }
+
+    #[tokio::test]
     async fn manual_upgrade_does_not_run_forced_gc() {
         let run_gate = Arc::new(Mutex::new(()));
         let gate = Arc::clone(&run_gate)
@@ -2740,8 +2783,23 @@ mod tests {
 
         #[derive(Debug, PartialEq, Eq)]
         enum DiscoveryCall {
-            Probe(Option<String>),
+            Probe(Option<String>, RecordedEstimateMode),
             Widgets(Option<String>),
+        }
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum RecordedEstimateMode {
+            Estimate,
+            Skip,
+        }
+
+        impl From<EstimateMode> for RecordedEstimateMode {
+            fn from(value: EstimateMode) -> Self {
+                match value {
+                    EstimateMode::Estimate => Self::Estimate,
+                    EstimateMode::Skip => Self::Skip,
+                }
+            }
         }
 
         #[async_trait::async_trait]
@@ -2755,7 +2813,7 @@ mod tests {
             async fn probe(
                 &self,
                 firmware: Option<&str>,
-                _estimate: EstimateMode,
+                estimate: EstimateMode,
                 _install: &[String],
             ) -> PackageProbe {
                 self.0
@@ -2763,7 +2821,10 @@ mod tests {
                     .expect(UNREACHABLE)
                     .lock()
                     .expect("BUG: call log poisoned")
-                    .push(DiscoveryCall::Probe(firmware.map(str::to_owned)));
+                    .push(DiscoveryCall::Probe(
+                        firmware.map(str::to_owned),
+                        estimate.into(),
+                    ));
                 PackageProbe::UpToDate
             }
             async fn apply(
@@ -2880,7 +2941,54 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn discovery_forwards_the_offered_firmware_or_running_fallback() {
+        async fn automatic_noop_and_failed_preparation_preserve_interactive_offers() {
+            for firmware in [Ok(None), Err(FirmwareDownloadError::IndexDownloadFailed)] {
+                let fails = firmware.is_err();
+                let backend = Arc::new(StubBackend(Some(Arc::new(std::sync::Mutex::new(
+                    Vec::new(),
+                )))));
+                let (service, _timezone) =
+                    discovery_service(DiscoveryIndex(firmware), backend).await;
+                let id = firmware_offer(&service.system_upgrades).await;
+                let mut automatic = Box::pin(service.start_automatic_upgrade());
+                assert!(futures::poll!(&mut automatic).is_pending());
+                assert!(
+                    service.run_gate.try_lock().is_err(),
+                    "preparation must exclude competing operations"
+                );
+                let result = automatic.await;
+                if fails {
+                    assert!(matches!(
+                        result,
+                        Err(SystemUpgradeError::UnableToCheckForUpgrade(_))
+                    ));
+                } else {
+                    assert!(matches!(result, Ok(None)));
+                }
+                assert!(service.run_gate.try_lock().is_ok());
+                assert!(
+                    service.system_upgrades.lock().await.claim(&id).is_some(),
+                    "a non-executing automatic check must preserve the user's offer"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn cancelled_automatic_preparation_releases_admission_without_replacing_offer() {
+            let (service, _timezone) =
+                discovery_service(DiscoveryIndex(Ok(None)), Arc::new(StubBackend(None))).await;
+            let id = firmware_offer(&service.system_upgrades).await;
+            {
+                let mut automatic = Box::pin(service.start_automatic_upgrade());
+                assert!(futures::poll!(&mut automatic).is_pending());
+                assert!(service.run_gate.try_lock().is_err());
+            }
+            assert!(service.run_gate.try_lock().is_ok());
+            assert!(service.system_upgrades.lock().await.claim(&id).is_some());
+        }
+
+        #[tokio::test]
+        async fn interactive_discovery_estimates_with_or_without_firmware() {
             for release in [None, Some(test_upgrade_detail().latest_release)] {
                 let expected = release.as_ref().map(|release| release.version.clone());
                 let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2901,11 +3009,23 @@ mod tests {
                 assert_eq!(
                     *calls.lock().expect("BUG: call log poisoned"),
                     vec![
-                        DiscoveryCall::Probe(expected.clone()),
+                        DiscoveryCall::Probe(expected.clone(), RecordedEstimateMode::Estimate),
                         DiscoveryCall::Widgets(expected),
                     ]
                 );
             }
+        }
+
+        #[tokio::test]
+        async fn automatic_discovery_estimates_package_storage() {
+            let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let backend = Arc::new(StubBackend(Some(Arc::clone(&calls))));
+            let (service, _timezone) = discovery_service(DiscoveryIndex(Ok(None)), backend).await;
+            assert!(matches!(service.start_automatic_upgrade().await, Ok(None)));
+            assert_eq!(
+                *calls.lock().expect("BUG: call log poisoned"),
+                vec![DiscoveryCall::Probe(None, RecordedEstimateMode::Estimate)]
+            );
         }
 
         #[tokio::test]

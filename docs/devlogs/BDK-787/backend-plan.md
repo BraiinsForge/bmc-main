@@ -31,8 +31,24 @@ capability still reports the unhealthy state for diagnostics. A genuine probe fa
 an automatic run with firmware available falls back to the firmware offer. Initial Nix bootstrap remains hidden in the
 incoming firmware's COMMAND.
 
-Master's target-firmware feed support is retained in BMC's package probe and catalog during the rebase. The Boser
-adapter must be adapted to that shared API when its dependency is next updated.
+Both BMC and Boser OpenWrt resolve package probes and catalogs against the offered firmware, falling back to the running
+firmware when no firmware upgrade is offered.
+
+## Automatic preparation and execution
+
+Share ID-free preparation in bmc-upgrade. Interactive checks cache its result under an offer ID; automatic upgrades
+prepare and execute directly under one admission guard. Automatic preparation must not publish an offer or borrow
+another caller's install intent. A no-op or failed preparation must not replace an interactive offer. Once execution
+starts, existing offers can become stale and must be rejected.
+
+Keep BMC's GC/free-space preflight, execution-stream monitoring and retry policy. Boser OpenWrt uses the same shared
+preparation through its core-independent adapter; mockup simulates it without a bmc-upgrade dependency. Buildroot
+retains its existing firmware-only fallback. Boser's automatic trigger observes its own execution outcome, while workers
+publish API watch state independently of the trigger and subscriber lifetime.
+
+Verify shared selection, cache isolation, admission across preparation/start, cached-index execution, cancellation,
+terminal outcome monitoring, and watch publication without consumers. Implement and review BMC first, publish its
+reviewed dependency revision with authorization, then adapt and review Boser. Keep interactive protocols unchanged.
 
 ## Execution and reporting
 
@@ -72,6 +88,6 @@ adapters can connect to these without transferring execution ownership to a requ
 
 - BDK-796 connects BMC to Boser's API and upgrade state. The [architecture presentation](architecture.html) shows the
   intended watch-to-display flow without choosing a wire protocol.
-- BDK-820 adds Boser-owned GC and mini-miner automatic upgrades, targeting the Deck-style two-hour cadence, reusing
-  scheduling code where appropriate and disabling competing BMC autoupgrades. Preserve Deck behavior.
+- BDK-820 adds Boser-owned GC and the mini-miner two-hour automatic-upgrade cadence, reusing scheduling code where
+  appropriate and disabling competing BMC autoupgrades. Preserve Deck behavior.
 - Firmware-library sharing remains a later refactor. Display-removal MR !2522 is not integrated here.

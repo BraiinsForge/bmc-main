@@ -116,9 +116,10 @@ async fn default_scenario_offers_firmware_and_packages() {
     let packages = response.packages.expect("packages offered");
     assert!(!packages.changes.is_empty());
     assert!(packages.bmc_version.is_some());
-    // Firmware is available, so the check skips the size estimate: the
-    // packages preview carries no download size.
-    assert!(packages.download_size_bytes.is_none());
+    assert!(
+        packages.download_size_bytes.is_some(),
+        "firmware offers need package estimates for store preflight"
+    );
 }
 
 #[tokio::test]
