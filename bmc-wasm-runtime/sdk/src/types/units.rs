@@ -482,6 +482,16 @@ impl BitcoinAmount {
     /// Unit appended by [`Self::format`].
     pub const UNIT: &'static str = "BTC";
 
+    /// The currency sign leading a [`Self::format_with_sign`] rendering,
+    /// the way a fiat amount wears one.
+    pub const SIGN: &'static str = "\u{20bf}";
+
+    /// Decimals every rendering carries.
+    /// A satoshi is bitcoin's atomic unit, so a coarser rendering
+    /// drops value the amount actually holds rather than tidying up
+    /// a digit nobody reads — hence no per-call choice.
+    pub const DECIMALS: u32 = 8;
+
     #[must_use]
     pub const fn from_bitcoin(btc: f64) -> Self {
         Self(btc)
@@ -502,18 +512,34 @@ impl BitcoinAmount {
         self.0 * SATOSHIS_PER_BITCOIN
     }
 
-    /// The number alone (no unit), for split value/unit rendering.
+    /// The number alone, wearing neither unit nor sign.
     #[must_use]
-    pub fn format_value(self, decimals: u32) -> String {
-        crate::format::_host_format_number(self.as_bitcoin(), decimals)
+    pub fn format_value(self) -> String {
+        crate::format::_host_format_number(self.as_bitcoin(), Self::DECIMALS)
     }
 
-    /// Render with the operator's number format, e.g. `0.055 BTC`.
+    /// Render with the operator's number format, e.g. `0,05500000 BTC`.
     #[must_use]
-    pub fn format(self, decimals: u32) -> String {
-        let mut s = self.format_value(decimals);
+    pub fn format(self) -> String {
+        let mut s = self.format_value();
         s.push(' ');
         s.push_str(Self::UNIT);
+        s
+    }
+
+    /// Render led by the currency sign, e.g. `₿0,05500000` — three glyphs
+    /// shorter than [`Self::format`], for a column that cannot seat the unit word.
+    /// A negative amount puts its minus ahead of the sign, `-₿0,05500000`,
+    /// the way a fiat amount does.
+    #[must_use]
+    pub fn format_with_sign(self) -> String {
+        let magnitude = Self::from_bitcoin(self.0.abs()).format_value();
+        let mut s = String::with_capacity(1 + Self::SIGN.len() + magnitude.len());
+        if self.0 < 0.0 {
+            s.push('-');
+        }
+        s.push_str(Self::SIGN);
+        s.push_str(&magnitude);
         s
     }
 }
@@ -592,6 +618,62 @@ mod tests {
             BitcoinAmount::from_satoshis(5_500_000.0).as_bitcoin(),
             0.055
         ));
+    }
+
+    /// A day's reward at a single miner's hashrate is a small fraction of a bitcoin.
+    /// Rendered coarser than a satoshi, the digits carrying it round away
+    /// and an earning account reads as zero.
+    #[test]
+    fn a_bitcoin_amount_below_a_microbitcoin_keeps_its_digits() {
+        assert_eq!(
+            BitcoinAmount::from_bitcoin(0.000_000_29).format_value(),
+            "0,00000029"
+        );
+    }
+
+    #[test]
+    fn a_bitcoin_amount_renders_down_to_the_satoshi() {
+        assert_eq!(
+            BitcoinAmount::from_bitcoin(0.000_17).format_value(),
+            "0,00017000"
+        );
+    }
+
+    #[test]
+    fn a_single_satoshi_survives_rendering() {
+        assert_eq!(
+            BitcoinAmount::from_satoshis(1.0).format_value(),
+            "0,00000001"
+        );
+    }
+
+    /// A true zero has to stay distinguishable from an amount rounded away.
+    #[test]
+    fn a_zero_bitcoin_amount_stays_zero() {
+        assert_eq!(BitcoinAmount::default().format_value(), "0,00000000");
+    }
+
+    /// Which decoration an amount wears is the caller's, so both stay
+    /// available and neither changes the number between them.
+    #[test]
+    fn an_amount_wears_either_its_unit_or_its_sign() {
+        let amount = BitcoinAmount::from_bitcoin(0.000_17);
+        assert_eq!(amount.format(), "0,00017000 BTC");
+        assert_eq!(amount.format_with_sign(), "\u{20bf}0,00017000");
+    }
+
+    /// The minus belongs ahead of the currency sign, as it does on fiat.
+    #[test]
+    fn a_negative_amount_leads_with_its_minus() {
+        assert_eq!(
+            BitcoinAmount::from_bitcoin(-0.5).format_with_sign(),
+            "-\u{20bf}0,50000000"
+        );
+        assert_eq!(
+            BitcoinAmount::from_bitcoin(-0.0).format_with_sign(),
+            "\u{20bf}0,00000000",
+            "a negative zero is still zero"
+        );
     }
 
     /// The public API quotes hashvalue in BTC; the faces render satoshis.
