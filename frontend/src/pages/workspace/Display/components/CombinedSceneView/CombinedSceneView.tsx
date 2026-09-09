@@ -26,6 +26,7 @@ import { mergeRefs } from '@/lib/react';
 // App
 import * as pb from '@/proto';
 import * as fn from '../../fn';
+import { getID } from '../const';
 
 // DnD
 import {
@@ -191,6 +192,7 @@ function Widget(props: WidgetProps) {
     } = props;
     const { row, col } = position;
 
+    const $ = getID('combined', 'scene', 'widget', id).get;
     const intl = useIntl();
     const ref = useRef<null | HTMLDivElement>(null);
     const handleAdd = useCallback(() => {
@@ -292,6 +294,7 @@ function Widget(props: WidgetProps) {
                         <button
                             // We have to "disable" the tooltips when DnD is active to prevent visual glitching
                             ref={disableTooltips ? null : r}
+                            id={$('edit')}
                             type="button"
                             className={css.widgetEditButton}
                             onClick={onEdit}
@@ -314,6 +317,7 @@ function Widget(props: WidgetProps) {
                         <button
                             // We have to "disable" the tooltips when DnD is active to prevent visual glitching
                             ref={disableTooltips ? null : r}
+                            id={$('delete')}
                             type="button"
                             className={css.widgetDeleteButton}
                             onClick={onDelete}
@@ -327,6 +331,7 @@ function Widget(props: WidgetProps) {
             <div className={css.widgetContent}>
                 {onAdd && !$drag.active ? (
                     <button
+                        id={$('add')}
                         type="button"
                         className={css.widgetAddButtom}
                         onClick={handleAdd}

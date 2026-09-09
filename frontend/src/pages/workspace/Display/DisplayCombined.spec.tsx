@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/core';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react/pure';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
 import { IntlProvider } from 'react-intl';
@@ -69,6 +69,58 @@ function installMocks(): void {
     registerMocks(pb.services.AccountManagementService, { getAllAccounts: () => ({ accounts: [] }) });
     registerMocks(pb.services.CredentialManagementService, { getCredentialTypes: () => ({ credentialTypes: [] }) });
     registerMocks(pb.services.SystemService, { getTimezoneList: () => ({ timezones: [] }) });
+}
+
+// Spelled out rather than composed with `getID`, so a change to the id scheme
+// fails here instead of being silently followed.
+const WIDGET_ID_PREFIX = 'bmc-display-comp-combined-scene-widget-';
+const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
+const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
+const WIDGET_1_EDIT_ID = `${WIDGET_ID_PREFIX}widget-1-edit`;
+
+function elementById(id: string): HTMLElement {
+    const el = document.getElementById(id);
+    if (!el) throw new Error(`#${id} not rendered`);
+    return el;
+}
+
+function combinedScene(widgets: pb.Widget[]): pb.Scene {
+    return pb.create(pb.SceneSchema, {
+        id: 'scene-1',
+        enabled: true,
+        kind: { case: 'combined', value: pb.create(pb.Scene_CombinedSchema, { widgets }) },
+    });
+}
+
+// Placeholder slots carry generated ids, so the first free one is matched by shape.
+function clickAddSlot(container: HTMLElement): void {
+    const addButton = container.querySelector<HTMLButtonElement>(`[id^="${WIDGET_ID_PREFIX}"][id$="-add"]`);
+    if (!addButton) throw new Error('combined-scene add button not rendered');
+    fireEvent.click(addButton);
+}
+
+// The page footer carries its own "Done" that navigates away,
+// so the manifest editor's has to be reached by id rather than by role.
+async function clickManifestDone(): Promise<void> {
+    fireEvent.click(await waitFor(() => elementById(MANIFEST_DONE_ID)));
+}
+
+// Carbon keeps both dialogs mounted and toggles `is-visible`,
+// so presence in the DOM says nothing about which one is open.
+function modalIsOpen(id: string): boolean {
+    return document.getElementById(id)?.classList.contains('is-visible') ?? false;
+}
+
+// These tests assert that an RPC did *not* fire,
+// so the pending chain must drain or they would pass by asserting too early.
+async function settle(): Promise<void> {
+    await act(async () => {});
+}
+
+function closePicker(): void {
+    const modal = document.getElementById(PICKER_MODAL_ID);
+    if (!modal) throw new Error('widget picker not rendered');
+    fireEvent.click(within(modal).getByRole('button', { name: /close/i }));
 }
 
 function renderPage() {
@@ -168,5 +220,130 @@ describe('running widget limit', () => {
 
         await waitFor(() => expect(document.body.textContent).toContain(LIMIT_MESSAGE));
         expect(screen.queryByRole('dialog', { name: 'Configure Widget' })).toBeNull();
+    });
+});
+
+describe('dialog session lifecycle', () => {
+    let stored: pb.Widget[];
+    let removedWidgetIds: string[];
+
+    beforeEach(() => {
+        stored = [];
+        removedWidgetIds = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getScene: () => ({
+                scene: combinedScene(stored),
+                runningWidgetCount: stored.length,
+                maxRunningWidgetCount: 56,
+            }),
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            previewScene: () => (async function* () {})(),
+            addWidget: ({ req }) => {
+                const widget = pb.create(pb.WidgetSchema, {
+                    id: `widget-${stored.length + 1}`,
+                    position: req.position,
+                    size: req.size,
+                    config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                });
+                stored.push(widget);
+                return { value: widget.id };
+            },
+            updateWidget: () => ({}),
+            removeWidget: ({ req }) => {
+                removedWidgetIds.push(req.id);
+                stored = stored.filter(w => w.id !== req.id);
+                return {};
+            },
+        });
+    });
+
+    test('closing the picker after saving a widget leaves that widget in place', async () => {
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 0 / 56');
+        clickAddSlot(container);
+        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        await clickManifestDone();
+        await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
+
+        clickAddSlot(container);
+        await waitFor(() => expect(modalIsOpen(PICKER_MODAL_ID)).toBe(true));
+        closePicker();
+        await waitFor(() => expect(modalIsOpen(PICKER_MODAL_ID)).toBe(false));
+        await settle();
+
+        expect(removedWidgetIds).toEqual([]);
+        expect(stored.map(w => w.id)).toEqual(['widget-1']);
+    });
+
+    test('closing the picker after a refused second add leaves the saved widget in place', async () => {
+        let addCalls = 0;
+        registerMocks(pb.services.SceneManagementService, {
+            addWidget: ({ req }) => {
+                addCalls += 1;
+                if (addCalls > 1) throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+                const widget = pb.create(pb.WidgetSchema, {
+                    id: 'widget-1',
+                    position: req.position,
+                    size: req.size,
+                    config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                });
+                stored.push(widget);
+                return { value: widget.id };
+            },
+        });
+
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 0 / 56');
+        clickAddSlot(container);
+        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        await clickManifestDone();
+        await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
+
+        clickAddSlot(container);
+        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        await waitFor(() => expect(document.body.textContent).toContain(LIMIT_MESSAGE));
+
+        closePicker();
+        await waitFor(() => expect(modalIsOpen(PICKER_MODAL_ID)).toBe(false));
+        await settle();
+
+        expect(removedWidgetIds).toEqual([]);
+        expect(stored.map(w => w.id)).toEqual(['widget-1']);
+    });
+
+    test('closing the picker after saving an edit does not revert it', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        stored.push(
+            pb.create(pb.WidgetSchema, {
+                id: 'widget-1',
+                position: pb.create(pb.WidgetPositionSchema, { row: 0, col: 0 }),
+                size: pb.WidgetSize.SMALL,
+                config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+            }),
+        );
+        registerMocks(pb.services.SceneManagementService, {
+            updateWidget: ({ req }) => {
+                updates.push(req);
+                return {};
+            },
+        });
+
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 1 / 56');
+        fireEvent.click(await waitFor(() => elementById(WIDGET_1_EDIT_ID)));
+        await clickManifestDone();
+        await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
+        const updatesAfterSave = updates.length;
+
+        clickAddSlot(container);
+        await waitFor(() => expect(modalIsOpen(PICKER_MODAL_ID)).toBe(true));
+        closePicker();
+        await waitFor(() => expect(modalIsOpen(PICKER_MODAL_ID)).toBe(false));
+        await settle();
+
+        expect(updates.length).toBe(updatesAfterSave);
     });
 });
