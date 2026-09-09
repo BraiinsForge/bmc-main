@@ -104,6 +104,41 @@ pub(crate) async fn wait_for_network_ip_address(device: &str, attempts: u8) -> R
     Err(anyhow!("IP cannot be assigned. Failed to setup wifi"))
 }
 
+/// SSID of the association `iw dev <device> link` reports, `None` while the
+/// station is not connected (`Not connected.`) or the SSID line is missing.
+pub(crate) fn parse_iw_link_ssid(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("SSID:"))
+        .map(|ssid| ssid.trim().to_owned())
+        .filter(|ssid| !ssid.is_empty())
+}
+
+/// Wait until `device` is associated with `ssid`, polling once per second.
+///
+/// An address check alone is not enough for a connect: right after the
+/// station is reconfigured the previous lease can still sit on the netdev, so
+/// "has an IPv4 address" reports success for an SSID that does not exist.
+/// Requiring the live link to name the target SSID first closes that hole.
+pub(crate) async fn wait_for_station_joined(device: &str, ssid: &str, attempts: u8) -> Result<()> {
+    let mut interval = time::interval(IP_CHECK_INTERVAL);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    for i in 0..attempts {
+        interval.tick().await;
+        debug!("{i}/{attempts} attempt to see {device} associated with {ssid}");
+        match CommandUtils::call_iw_cmd(&["dev", device, "link"]).await {
+            Ok(output) => {
+                if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid) {
+                    debug!("{device} is associated with {ssid}");
+                    return Ok(());
+                }
+            }
+            Err(e) => debug!("Unable to query the {device} link: {e}"),
+        }
+    }
+    bail!("{device} did not associate with {ssid}")
+}
+
 /// Wait until `/etc/config/wireless` exists and looks fully written.
 ///
 /// Freshly flashed firmware writes the file asynchronously, so the size check
@@ -364,7 +399,9 @@ impl WifiCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_sort_by_strongest_signal, mark_connected, redact_wifi_key};
+    use super::{
+        filter_sort_by_strongest_signal, mark_connected, parse_iw_link_ssid, redact_wifi_key,
+    };
     use bmc_net_types::wifi::{EncryptionType, WifiScanItem};
 
     #[test]
@@ -394,6 +431,17 @@ mod tests {
         let mut items = vec![WifiScanItem::new("home".into(), -50, EncryptionType::Wpa2)];
         mark_connected(&mut items, None);
         assert!(!items[0].connected);
+    }
+
+    #[test]
+    fn parses_the_joined_ssid_from_iw_link() {
+        let connected = "Connected to 11:22:33:44:55:66 (on wlan0)\n\tSSID: Home Net\n\tfreq: 2412\n\tsignal: -47 dBm\n";
+        assert_eq!(parse_iw_link_ssid(connected).as_deref(), Some("Home Net"));
+        assert_eq!(parse_iw_link_ssid("Not connected.\n"), None);
+        assert_eq!(
+            parse_iw_link_ssid("Connected to 11:22:33:44:55:66 (on wlan0)\n\tSSID: \n"),
+            None
+        );
     }
 
     #[test]

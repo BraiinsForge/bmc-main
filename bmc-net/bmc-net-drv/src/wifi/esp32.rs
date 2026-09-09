@@ -22,9 +22,11 @@
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
-use bmc_net_types::wifi::{EncryptionType, WifiLinkState, WifiMode, WifiScanItem, WifiStatus};
+use bmc_net_types::wifi::{
+    EncryptionType, WifiConfiguration, WifiLinkState, WifiMode, WifiScanItem, WifiStatus,
+};
 use bstr::ByteSlice;
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::fmt::Debug;
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -34,7 +36,8 @@ use super::uci::{UciHelper, map_uci_iface_to_wifi_status, pick_reported_status};
 use super::utils::{
     ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
     filter_empty_ssid, filter_sort_by_strongest_signal, filter_unsupported_enc, mark_connected,
-    wait_for_interface_up, wait_for_network_ip_address, wait_for_wireless_config,
+    wait_for_interface_up, wait_for_network_ip_address, wait_for_station_joined,
+    wait_for_wireless_config,
 };
 use super::{SharedCache, WifiDriver};
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
@@ -104,6 +107,38 @@ impl Esp32WifiManager {
         syspath
             .clone()
             .ok_or_else(|| anyhow!("No wireless interface found"))
+    }
+
+    /// After a failed join, re-enable the station that was active before so a
+    /// typo in an SSID does not leave the miner without connectivity. Errors
+    /// are logged: the caller reports the join failure itself.
+    async fn restore_station(&self, previous: Option<WifiConfiguration>, attempted: &str) {
+        let Some(previous) = previous else {
+            return;
+        };
+        let restored = async {
+            let uci = self.uci().await?;
+            uci.wifi_iface_disable_all().await?;
+            if !uci
+                .wifi_iface_enable(WifiMode::Station, &previous.ssid)
+                .await?
+            {
+                bail!("no saved wifi-iface for {}", previous.ssid);
+            }
+            uci.save_changes().await?;
+            self.enable_radio(true).await
+        }
+        .await;
+        match restored {
+            Ok(()) => warn!(
+                "Joining {attempted} failed; restored the previous station {}",
+                previous.ssid
+            ),
+            Err(e) => warn!(
+                "Joining {attempted} failed and the previous station {} could not be restored: {e:#}",
+                previous.ssid
+            ),
+        }
     }
 
     async fn uci(&self) -> Result<UciHelper> {
@@ -329,10 +364,15 @@ impl WifiDriver for Esp32WifiManager {
 
         let device = self.get_device().await?;
         let uci = self.uci().await?;
+        // Remember the station we are leaving so a failed join can put it back.
+        let previous = uci
+            .wifi_iface_find_enabled()
+            .await
+            .filter(|config| config.mode == WifiMode::Station);
         uci.wifi_iface_disable_all().await?;
         uci.wifi_iface_configure(
             WifiMode::Station,
-            ssid,
+            ssid.clone(),
             encryption,
             password.unwrap_or_default(),
         )
@@ -340,7 +380,16 @@ impl WifiDriver for Esp32WifiManager {
         uci.save_changes().await?;
 
         self.enable_radio(true).await?;
-        wait_for_network_ip_address(&device, ATTEMPTS_TO_GET_IP).await
+        let joined = async {
+            wait_for_station_joined(&device, &ssid, ATTEMPTS_TO_GET_IP).await?;
+            wait_for_network_ip_address(&device, ATTEMPTS_TO_GET_IP).await
+        }
+        .await;
+        if let Err(e) = joined {
+            self.restore_station(previous, &ssid).await;
+            return Err(e);
+        }
+        Ok(())
     }
 
     async fn configure_ap_mode(
