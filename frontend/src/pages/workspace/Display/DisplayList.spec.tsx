@@ -799,3 +799,39 @@ describe('dialog session lifecycle', () => {
         expect(document.body.textContent).toContain('server cancelled the read-back');
     });
 });
+
+describe('the add control at capacity', () => {
+    const SLOTS_FULL_TITLE = 'All widget slots are in use';
+
+    function addNewButton(): HTMLElement {
+        return screen.getByRole('button', { name: 'Add New' });
+    }
+
+    function atCapacity(count: number, max: number): void {
+        registerMocks(pb.services.SceneManagementService, {
+            getScenes: () => ({
+                scenes: server.map(s => ({ ...s })),
+                runningWidgetCount: count,
+                maxRunningWidgetCount: max,
+            }),
+        });
+    }
+
+    test('a full device explains the state and offers no way to add', async () => {
+        atCapacity(56, 56);
+        renderPage();
+        await flush();
+
+        expect(document.body.textContent).toContain(SLOTS_FULL_TITLE);
+        expect(addNewButton().hasAttribute('disabled')).toBe(true);
+    });
+
+    test('a device with room left says nothing and stays addable', async () => {
+        atCapacity(55, 56);
+        renderPage();
+        await flush();
+
+        expect(document.body.textContent).not.toContain(SLOTS_FULL_TITLE);
+        expect(addNewButton().hasAttribute('disabled')).toBe(false);
+    });
+});

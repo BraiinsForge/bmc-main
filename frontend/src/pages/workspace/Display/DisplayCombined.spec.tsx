@@ -394,3 +394,34 @@ describe('cancelling an edit', () => {
         expect(revert.position?.col).toBe(3);
     });
 });
+
+describe('the add control at capacity', () => {
+    const SLOTS_FULL_TITLE = 'All widget slots are in use';
+
+    function addSlotButton(container: HTMLElement): HTMLButtonElement {
+        const btn = container.querySelector<HTMLButtonElement>(`[id^="${WIDGET_ID_PREFIX}"][id$="-add"]`);
+        if (!btn) throw new Error('combined-scene add button not rendered');
+        return btn;
+    }
+
+    test('a full device explains the state and offers no way to add', async () => {
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 56 / 56');
+
+        expect(document.body.textContent).toContain(SLOTS_FULL_TITLE);
+        expect(addSlotButton(container).hasAttribute('disabled')).toBe(true);
+    });
+
+    test('a device with room left says nothing and stays addable', async () => {
+        registerMocks(pb.services.SceneManagementService, {
+            getScene: () => ({ scene, runningWidgetCount: 55, maxRunningWidgetCount: 56 }),
+        });
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 55 / 56');
+
+        expect(document.body.textContent).not.toContain(SLOTS_FULL_TITLE);
+        expect(addSlotButton(container).hasAttribute('disabled')).toBe(false);
+    });
+});
