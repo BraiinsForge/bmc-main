@@ -747,4 +747,55 @@ describe('dialog session lifecycle', () => {
         expect(removedSceneIds).toEqual([created.id]);
         expect(document.body.textContent).not.toContain('successfully added');
     });
+
+    // Nothing here passes a client abort signal, so a Canceled code is the server
+    // refusing rather than us walking away, and it has to clean up like any other.
+    test('a scene read-back cancelled by the server still leaves no orphan', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        const created = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: true,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-b',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        const removedSceneIds: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => {
+                server.push(created);
+                return { value: created.id };
+            },
+            getScene: () => {
+                throw new ConnectError('server cancelled the read-back', Code.Canceled);
+            },
+            removeScene: ({ req }) => {
+                removedSceneIds.push(req.value);
+                server = server.filter(scene => scene.id !== req.value);
+                return {};
+            },
+            previewScene: () => (async function* () {})(),
+        });
+
+        renderPage();
+        await flush();
+
+        openFullscreenPicker();
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+
+        expect(removedSceneIds).toEqual([created.id]);
+        expect(document.body.textContent).toContain('server cancelled the read-back');
+    });
 });

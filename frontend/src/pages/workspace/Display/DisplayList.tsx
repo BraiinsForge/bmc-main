@@ -323,8 +323,28 @@ class View extends Component<Props, State> {
         });
     };
 
+    // A scene outlives the add that created it, holding a running
+    // widget slot, so whatever fails afterwards has to take it back down.
+    #discardOrphanScene = async (sceneID: null | string): Promise<void> => {
+        if (!sceneID) return;
+        const { formatMessage } = this.props.intl;
+
+        try {
+            await pb.rpc.scenes.removeScene({ value: sceneID });
+            this.#loadScenesDebounced();
+        } catch ($) {
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to remove scene!' });
+            toast.error(msg);
+        }
+    };
+
     #sceneAddFullscreenManifest = async (manifest: pb.WidgetManifest): Promise<void> => {
         const { formatMessage } = this.props.intl;
+
+        // The scene is created before its widget can be read back,
+        // so this handler owns it until the dialog takes over.
+        let orphanSceneID: null | string = null;
 
         try {
             const { value: sceneID } = await pb.rpc.scenes.addFullscreenScene({
@@ -333,18 +353,24 @@ class View extends Component<Props, State> {
                     params: pb.create(pb.WidgetDataStructSchema, { fields: {} }),
                 },
             });
-            this.#notifySceneAdded();
+            orphanSceneID = sceneID;
 
             const { scene } = await pb.rpc.scenes.getScene({ value: sceneID });
             const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
 
             if (!widget) {
                 this.setState({ openDialogKind: null });
+                toast.error(formatMessage({ defaultMessage: 'Failed to add manifest widget!' }));
+                await this.#discardOrphanScene(orphanSceneID);
                 return;
             }
 
+            this.#notifySceneAdded();
+
             const params = fn.widgetParamsToFormifiedState(manifest, widget.config?.params);
 
+            // Cancelling the dialog runs its own `isNewScene` cleanup from here on.
+            orphanSceneID = null;
             this.setState(
                 {
                     openDialogKind: 'manifest',
@@ -363,12 +389,15 @@ class View extends Component<Props, State> {
             );
             this.#loadScenesDebounced();
         } catch ($) {
-            if (pb.abort.is($)) return;
-
+            // Neither call above carries a client abort signal,
+            // so Canceled is a server failure to be shown and cleaned up like any other.
             let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
             msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to add manifest widget!' });
+
+            this.setState({ openDialogKind: null });
             toast.error(msg);
+            await this.#discardOrphanScene(orphanSceneID);
         }
     };
 
