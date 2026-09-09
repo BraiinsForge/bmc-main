@@ -21,7 +21,8 @@
 //! Text primitives: spans, styles, and text/paragraph builders.
 
 use bmc_wasm_protocol::{
-    AnimProperty, Color, CrossAlign, Easing, FontWeight, GRAY_10, LoopMode, PropsData, TextStyle,
+    AnimProperty, Color, CrossAlign, Easing, FontWeight, GRAY_10, LoopMode, PropsData, SpanFlags,
+    TextStyle,
 };
 
 use crate::props;
@@ -89,34 +90,27 @@ pub struct Span {
     pub text: String,
     pub weight: Option<FontWeight>,
     pub color: Option<Color>,
+    /// Font size for this span alone; it keeps the paragraph's baseline.
+    pub size: Option<u32>,
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
 }
 
 impl Span {
-    /// Serialize span style flags (u16) and optional color
-    /// flags bits:
-    ///   0-11:  weight (if has_weight)
-    ///   12:    has_weight
-    ///   13:    has_color (color u32 follows after text)
-    ///   14:    italic
-    ///   15:    underline
-    /// Note: strikethrough is in the extra byte if needed
+    /// This span's two wire flag words, packed by [`SpanFlags`]
+    /// — the one place the bit positions are defined, host side included.
     #[must_use]
-    pub fn flags(&self) -> u16 {
-        let weight_bits = self.weight.map_or(0, |w| w.0) & 0xFFF;
-        let has_weight = if self.weight.is_some() { 1 << 12 } else { 0 };
-        let has_color = if self.color.is_some() { 1 << 13 } else { 0 };
-        let italic_bit = if self.italic { 1 << 14 } else { 0 };
-        let underline_bit = if self.underline { 1 << 15 } else { 0 };
-        weight_bits | has_weight | has_color | italic_bit | underline_bit
-    }
-
-    /// Extra flags byte for strikethrough (separate to fit in u16)
-    #[must_use]
-    pub fn extra_flags(&self) -> u8 {
-        u8::from(self.strikethrough)
+    pub fn wire_flags(&self) -> (u16, u8) {
+        SpanFlags {
+            weight: self.weight,
+            has_color: self.color.is_some(),
+            has_size: self.size.is_some(),
+            italic: self.italic,
+            underline: self.underline,
+            strikethrough: self.strikethrough,
+        }
+        .pack()
     }
 }
 
@@ -138,6 +132,7 @@ impl IntoSpanStyle for StyleResult {
         if ts.color != GRAY_10 {
             span.color = Some(ts.color);
         }
+        span.size = self.2;
         span.italic = ts.italic;
         span.underline = ts.underline;
         span.strikethrough = ts.strikethrough;
@@ -157,6 +152,7 @@ pub fn span(text: impl Into<String>, style: impl IntoSpanStyle) -> Span {
         text: text.into(),
         weight: None,
         color: None,
+        size: None,
         italic: false,
         underline: false,
         strikethrough: false,
@@ -165,9 +161,11 @@ pub fn span(text: impl Into<String>, style: impl IntoSpanStyle) -> Span {
     s
 }
 
-/// Combined text style and layout props for the style!() macro
+/// Combined text style and layout props for the style!() macro,
+/// plus the size the caller wrote — `None` when none was, which the style
+/// itself cannot say, since it carries a size either way.
 #[derive(Clone, Copy, Debug)]
-pub struct StyleResult(pub TextStyle, pub PropsData);
+pub struct StyleResult(pub TextStyle, pub PropsData, pub Option<u32>);
 
 impl From<StyleResult> for TextStyle {
     fn from(sr: StyleResult) -> Self {
@@ -215,5 +213,35 @@ pub fn paragraph(style: StyleResult, spans: impl IntoIterator<Item = Span>) -> N
         props: style.1,
         base_style: style.0,
         spans: spans.into_iter().collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style;
+
+    /// The default size is a legitimate thing to ask a span for, so asking for it
+    /// has to be told from not asking at all — only the second lets the paragraph's size through.
+    #[test]
+    fn a_span_keeps_the_size_it_asked_for_even_at_the_default() {
+        let default_size = TextStyle::default().size;
+
+        assert_eq!(
+            span("x", style!(size: default_size)).size,
+            Some(default_size),
+            "an explicit default size is still a request"
+        );
+        assert_eq!(span("x", style!(size: 32)).size, Some(32));
+    }
+
+    #[test]
+    fn a_span_asking_for_no_size_inherits_the_paragraph() {
+        assert_eq!(span("x", ()).size, None);
+        assert_eq!(
+            span("x", style!(weight: FontWeight::BOLD)).size,
+            None,
+            "styling something else must not pin a size"
+        );
     }
 }

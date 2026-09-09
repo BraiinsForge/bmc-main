@@ -3161,6 +3161,7 @@ pub mod alloc_gate_support {
                 text: MULTI_SCRIPT.to_owned(),
                 weight: None,
                 color: Some(white),
+                size: None,
                 italic: false,
                 underline: false,
                 strikethrough: false,

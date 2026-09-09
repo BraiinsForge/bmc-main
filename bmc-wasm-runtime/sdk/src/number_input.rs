@@ -80,6 +80,7 @@ pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
                     ..Default::default()
                 },
                 PropsData::default(),
+                None,
             ),
         ));
     }
@@ -121,6 +122,7 @@ pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
                     inset_left: 12.0,
                     ..Default::default()
                 },
+                None,
             ),
         ),
         spacer(1.0),
@@ -185,6 +187,7 @@ pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
                     ..Default::default()
                 },
                 PropsData::default(),
+                None,
             ),
         ));
     }

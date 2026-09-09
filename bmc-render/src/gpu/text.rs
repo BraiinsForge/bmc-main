@@ -649,6 +649,14 @@ fn layout_cache_hasher(domain: LayoutDomain) -> std::collections::hash_map::Defa
 }
 
 /// Compute cache key from style + spans + max_width.
+///
+/// The style half is written out, since `TextStyle` carries floats
+/// and cannot derive `Hash`. Naming its fields also keeps the key
+/// to what `shape_paragraph` reads, so a paint-only change
+/// (an outline colour, say) must not re-shape.
+///
+/// The spans hash themselves, which is what keeps a field added
+/// to `SpanData` from going missing here.
 fn cache_key(base_style: &TextStyle, spans: &[SpanData], max_width: Option<f32>) -> u64 {
     let mut hasher = layout_cache_hasher(LayoutDomain::Paragraph);
 
@@ -661,15 +669,7 @@ fn cache_key(base_style: &TextStyle, spans: &[SpanData], max_width: Option<f32>)
     base_style.max_width.hash(&mut hasher);
     base_style.color.hash(&mut hasher);
 
-    spans.len().hash(&mut hasher);
-    for span in spans {
-        span.text.hash(&mut hasher);
-        span.weight.hash(&mut hasher);
-        span.color.hash(&mut hasher);
-        span.italic.hash(&mut hasher);
-        span.underline.hash(&mut hasher);
-        span.strikethrough.hash(&mut hasher);
-    }
+    spans.hash(&mut hasher);
 
     max_width.map(f32::to_bits).hash(&mut hasher);
     hasher.finish()
@@ -712,7 +712,15 @@ fn shape_paragraph(
         .enumerate()
         .map(|(i, span)| {
             let resolved = span.resolve_style(base_style);
-            (span.text.as_str(), build_attrs(&resolved).metadata(i))
+            // Every span carries metrics, not just one that asked for its own size.
+            // cosmic-text takes a line's height from the glyphs announcing one,
+            // so a span left silent hands the whole line to a smaller sibling,
+            // which centres the tall run against a box too short for it.
+            let size = resolved.size as f32;
+            let attrs = build_attrs(&resolved)
+                .metadata(i)
+                .metrics(Metrics::new(size, size * base_style.line_height));
+            (span.text.as_str(), attrs)
         })
         .collect();
 
@@ -741,8 +749,28 @@ fn shape_paragraph(
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap_or(0.0)
         .ceil();
-    let line_count = buffer.layout_runs().count().max(1);
-    let height = line_count as f32 * line_height;
+
+    // A span carrying its own metrics makes its line taller
+    // or shorter than the paragraph's, so the block is the sum
+    // of the lines rather than a count times one height.
+    // `extract_lines` places them by the same rule.
+    let mut block_height = 0.0_f32;
+    for buffer_line in &buffer.lines {
+        let Some(layout) = buffer_line.layout_opt() else {
+            break;
+        };
+        for layout_line in layout {
+            block_height += layout_line.line_height_opt.unwrap_or(line_height);
+        }
+    }
+
+    // Only a paragraph with no lines at all stands one base line tall;
+    // one whose lines are all short is as short as they are.
+    let height = if block_height > 0.0 {
+        block_height
+    } else {
+        line_height
+    };
 
     (buffer, width, height)
 }
@@ -1869,6 +1897,7 @@ mod span_attribution_tests {
             text: text.to_owned(),
             weight: None,
             color: None,
+            size: None,
             italic: false,
             underline: false,
             strikethrough: false,
@@ -2193,6 +2222,7 @@ mod span_group_tests {
             text: text.to_owned(),
             weight: None,
             color: None,
+            size: None,
             italic: false,
             underline,
             strikethrough: false,
@@ -2284,8 +2314,8 @@ mod line_layout_tests {
 
     use super::{
         LAYOUT_CACHE_CAPACITY, LAYOUT_CACHE_GLYPH_CAPACITY, LayoutDomain, LineStyle, LookupPhase,
-        ParagraphLayoutCache, ParagraphLayoutEntry, baseline_to_alphabetic, extract_lines,
-        layout_cache_hasher, single_line_cache_key,
+        ParagraphLayoutCache, ParagraphLayoutEntry, baseline_to_alphabetic, cache_key,
+        extract_lines, layout_cache_hasher, shape_paragraph, single_line_cache_key,
     };
     use crate::tree::{FontFamily, FontWeight, SpanData, TextStyle};
 
@@ -2313,31 +2343,127 @@ mod line_layout_tests {
         );
     }
 
-    /// Two spans of very different size, forced onto separate lines by `max_width`.
-    ///
-    /// Built as a raw buffer because `SpanData` cannot express a per-span size:
-    /// `resolve_style` overrides weight, colour, italic and decorations only.
-    fn mixed_size_buffer(font_system: &mut FontSystem) -> Buffer {
-        let mut buffer = Buffer::new(font_system, Metrics::new(40.0, 48.0));
-        buffer.set_size(font_system, Some(130.0), None);
-        let family = Family::Name("Braiins Sans");
-        let small = Attrs::new()
-            .family(family)
-            .metrics(Metrics::new(14.0, 20.0))
-            .metadata(0);
-        let large = Attrs::new()
-            .family(family)
-            .metrics(Metrics::new(40.0, 48.0))
-            .metadata(1);
-        buffer.set_rich_text(
-            font_system,
-            [("tiny ", small), ("HUGE", large)],
-            &Attrs::new().family(family),
-            Shaping::Advanced,
-            None,
+    fn sized_span(text: &str, size: Option<u32>) -> SpanData {
+        SpanData {
+            text: text.to_owned(),
+            weight: None,
+            color: None,
+            size,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }
+    }
+
+    const MIXED_BASE_SIZE: u32 = 40;
+    const MIXED_SMALL_SIZE: u32 = 14;
+    const MIXED_LEADING: f32 = 1.2;
+
+    /// Two spans of very different size, forced onto separate lines
+    /// by `max_width`, built through the same path a widget's paragraph takes.
+    /// Returns the shaped buffer with the width and height reported for it.
+    fn mixed_size_paragraph(font_system: &mut FontSystem) -> (Buffer, f32, f32) {
+        let base = TextStyle {
+            size: MIXED_BASE_SIZE,
+            line_height: MIXED_LEADING,
+            family: FontFamily::Sans,
+            ..TextStyle::default()
+        };
+        let spans = [
+            sized_span("tiny ", Some(MIXED_SMALL_SIZE)),
+            sized_span("HUGE", None),
+        ];
+        shape_paragraph(font_system, &base, &spans, Some(130.0))
+    }
+
+    /// A span's own size drives its shaping, so a unit set beside
+    /// a number renders smaller than it without leaving the number's line
+    /// — the one thing a sibling node cannot do, having no baseline to share.
+    #[test]
+    fn a_span_shapes_at_its_own_size() {
+        let mut font_system = font_system();
+        let base = TextStyle {
+            size: 40,
+            family: FontFamily::Sans,
+            ..TextStyle::default()
+        };
+        let sized = [sized_span("500,0", None), sized_span(" PH/s", Some(14))];
+        let uniform = [sized_span("500,0", None), sized_span(" PH/s", None)];
+
+        let (sized_buffer, sized_width, _) = shape_paragraph(&mut font_system, &base, &sized, None);
+        let (_, uniform_width, _) = shape_paragraph(&mut font_system, &base, &uniform, None);
+
+        assert_eq!(
+            extract_lines(&sized_buffer).len(),
+            1,
+            "the pair belongs on one line"
         );
-        buffer.shape_until_scroll(font_system, false);
-        buffer
+        assert!(
+            sized_width < uniform_width,
+            "the smaller unit must shape narrower: {sized_width} against {uniform_width}"
+        );
+    }
+
+    /// A smaller span joins a line without moving it.
+    /// cosmic-text takes a line's height from the glyphs announcing one,
+    /// so a span leaving its metrics unset hands the line to a smaller sibling
+    /// — which centres the tall run against a box too short for it.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the unit must leave the line where it found it, to the bit"
+    )]
+    fn a_smaller_span_does_not_move_the_line_it_joins() {
+        let mut font_system = font_system();
+        let base = TextStyle {
+            size: 64,
+            line_height: 1.0,
+            family: FontFamily::Sans,
+            ..TextStyle::default()
+        };
+        let alone = [sized_span("500,0", None)];
+        let with_unit = [sized_span("500,0", None), sized_span(" PH/s", Some(24))];
+
+        let (alone_buffer, _, alone_height) =
+            shape_paragraph(&mut font_system, &base, &alone, None);
+        let (unit_buffer, _, unit_height) =
+            shape_paragraph(&mut font_system, &base, &with_unit, None);
+        let (alone_lines, unit_lines) = (extract_lines(&alone_buffer), extract_lines(&unit_buffer));
+        let ([alone_line], [unit_line]) = (alone_lines.as_slice(), unit_lines.as_slice()) else {
+            panic!("BUG: each pair belongs on one line");
+        };
+
+        assert_eq!(
+            unit_line.baseline_y, alone_line.baseline_y,
+            "the number's baseline moved when the unit joined it"
+        );
+        assert_eq!(
+            unit_height, alone_height,
+            "the paragraph changed height when the unit joined it"
+        );
+    }
+
+    /// A span's size reaches the shaping, so it has to reach the cache key
+    /// standing in for it. Two paragraphs alike but for one span's size
+    /// share an entry otherwise, and whichever asks second gets handed
+    /// the glyphs of the first.
+    #[test]
+    fn the_cache_key_tells_two_span_sizes_apart() {
+        let base = TextStyle::default();
+        let inherited = [sized_span("500,0", None), sized_span(" PH/s", None)];
+        let small = [sized_span("500,0", None), sized_span(" PH/s", Some(24))];
+        let large = [sized_span("500,0", None), sized_span(" PH/s", Some(32))];
+
+        assert_ne!(
+            cache_key(&base, &inherited, None),
+            cache_key(&base, &small, None),
+            "a span that asked for a size collides with one that inherited it"
+        );
+        assert_ne!(
+            cache_key(&base, &small, None),
+            cache_key(&base, &large, None),
+            "two span sizes collide with each other"
+        );
     }
 
     /// A wrapped line's metrics come from the glyphs on that line,
@@ -2350,7 +2476,7 @@ mod line_layout_tests {
     )]
     fn wrapped_line_uses_its_own_metrics() {
         let mut font_system = font_system();
-        let buffer = mixed_size_buffer(&mut font_system);
+        let (buffer, _, _) = mixed_size_paragraph(&mut font_system);
         let lines = extract_lines(&buffer);
 
         assert_eq!(lines.len(), 2, "the two spans must land on separate lines");
@@ -2365,6 +2491,52 @@ mod line_layout_tests {
                 "line {i} carries glyphs from another wrap",
             );
         }
+    }
+
+    /// A paragraph's height is the sum of its lines' own heights.
+    /// Counting lines at the paragraph's height would size the small line
+    /// as the tall one, and only a wrapped mixed-size paragraph can tell.
+    #[test]
+    fn a_wrapped_mixed_size_paragraph_is_as_tall_as_its_lines_together() {
+        let mut font_system = font_system();
+        let (buffer, _, height) = mixed_size_paragraph(&mut font_system);
+        assert_eq!(extract_lines(&buffer).len(), 2, "the two spans must wrap");
+
+        let small_line = MIXED_SMALL_SIZE as f32 * MIXED_LEADING;
+        let tall_line = MIXED_BASE_SIZE as f32 * MIXED_LEADING;
+        let summed = small_line + tall_line;
+        let counted = 2.0 * tall_line;
+
+        assert!(
+            (height - summed).abs() < 0.01,
+            "height {height} is not the lines' sum {summed}"
+        );
+        assert!(
+            (height - counted).abs() > 1.0,
+            "height {height} is the line count at one height, {counted}"
+        );
+    }
+
+    /// A paragraph whose one line holds only a span smaller than itself
+    /// is as short as that span: `extract_lines` draws it so, and a height
+    /// padded up to the base line would have the parent reserve blank room.
+    #[test]
+    fn a_paragraph_of_only_a_smaller_span_is_as_short_as_that_span() {
+        let mut font_system = font_system();
+        let base = TextStyle {
+            size: MIXED_BASE_SIZE,
+            line_height: MIXED_LEADING,
+            family: FontFamily::Sans,
+            ..TextStyle::default()
+        };
+        let spans = [sized_span("tiny", Some(MIXED_SMALL_SIZE))];
+        let (_, _, height) = shape_paragraph(&mut font_system, &base, &spans, None);
+
+        let small_line = MIXED_SMALL_SIZE as f32 * MIXED_LEADING;
+        assert!(
+            (height - small_line).abs() < 0.01,
+            "height {height} is not the small span's own line, {small_line}"
+        );
     }
 
     /// Every femtovg baseline must convert to the alphabetic baseline
@@ -2626,6 +2798,7 @@ mod line_layout_tests {
             text: "paragraph".to_owned(),
             weight: None,
             color: None,
+            size: None,
             italic: false,
             underline: false,
             strikethrough: false,
@@ -3919,6 +4092,7 @@ mod retention_tests {
             text: text.to_owned(),
             weight: None,
             color: None,
+            size: None,
             italic: false,
             underline: false,
             strikethrough: false,

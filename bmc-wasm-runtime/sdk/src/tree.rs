@@ -187,7 +187,7 @@ impl TreeBuffer {
     ///
     /// ```text
     /// [NODE_PARAGRAPH][props][text_style][span_count:u16][spans...]
-    /// each span: [flags:u16][extra_flags:u8][len:u16][text bytes...][color:u32 if has_color]
+    /// each span: [flags:u16][extra_flags:u8][len:u16][text bytes...][color:u32 if has_color][size:u32 if has_size]
     /// ```
     pub fn write_paragraph(&mut self, props: &PropsData, base_style: &TextStyle, spans: &[Span]) {
         self.write_u8(NODE_PARAGRAPH);
@@ -196,8 +196,9 @@ impl TreeBuffer {
         self.write_u16(u16::try_from(spans.len()).expect("BUG: text spans exceed u16::MAX"));
 
         for span in spans {
-            self.write_u16(span.flags());
-            self.write_u8(span.extra_flags());
+            let (flags, extra_flags) = span.wire_flags();
+            self.write_u16(flags);
+            self.write_u8(extra_flags);
             let bytes = span.text.as_bytes();
             self.write_u16(
                 u16::try_from(bytes.len()).expect("BUG: span text exceeds u16::MAX bytes"),
@@ -205,6 +206,9 @@ impl TreeBuffer {
             self.write_bytes(bytes);
             if let Some(color) = span.color {
                 self.write_color(color);
+            }
+            if let Some(size) = span.size {
+                self.write_u32(size);
             }
         }
     }

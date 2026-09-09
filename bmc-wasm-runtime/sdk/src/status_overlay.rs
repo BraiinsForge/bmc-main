@@ -57,7 +57,7 @@ pub fn stale_tag(anchor: SystemTime) -> Node {
             [
                 text(
                     "Last refresh ",
-                    StyleResult(label_style(ORANGE_40), PropsData::default()),
+                    StyleResult(label_style(ORANGE_40), PropsData::default(), None),
                 ),
                 relative_time_live(
                     anchor,
@@ -82,7 +82,7 @@ pub fn error_tag(reason: &str) -> Node {
         TagIcon::Default,
         text(
             reason,
-            StyleResult(label_style(RED_50), PropsData::default()),
+            StyleResult(label_style(RED_50), PropsData::default(), None),
         ),
     )
 }

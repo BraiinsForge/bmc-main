@@ -75,6 +75,31 @@ fn examples(ctx: &mut SceneCtx, ui: &mut Ui) {
                                 span("Colored", style!(color: VIOLET_40)),
                             ],
                         ),
+                        // Sizes climbing on one baseline: the glyphs' feet line up
+                        // across every step, which a mismatch would break.
+                        // No underline — it is offset by each span's own size,
+                        // so under mixed sizes it is a staircase by construction.
+                        paragraph(
+                            style!(size: 72, weight: FontWeight::SEMIBOLD, color: WHITE, line_height: 1.0),
+                            [
+                                span("18 ", style!(size: 18)),
+                                span("28 ", style!(size: 28)),
+                                span("42 ", style!(size: 42)),
+                                span("56 ", style!(size: 56)),
+                                span("72", ()),
+                            ],
+                        ),
+                        // What the sizing is for: a value and the unit
+                        // it is scaled to, set apart without leaving its line.
+                        paragraph(
+                            style!(size: 64, weight: FontWeight::SEMIBOLD, color: WHITE, line_height: 1.0),
+                            [
+                                span("500,0", ()),
+                                span(" PH/s", style!(size: 32, color: GRAY_30)),
+                                span("  ·  ", style!(size: 32, color: GRAY_50)),
+                                span("₿0,17046800", ()),
+                            ],
+                        ),
                     ],
                 ),
             ],

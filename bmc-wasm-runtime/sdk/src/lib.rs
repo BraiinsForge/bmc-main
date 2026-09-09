@@ -800,35 +800,55 @@ macro_rules! fmt {
 #[macro_export]
 macro_rules! style {
     () => {
-        $crate::tree::StyleResult($crate::tree::TextStyle::default(), $crate::tree::PropsData::default())
+        $crate::tree::StyleResult(
+            $crate::tree::TextStyle::default(),
+            $crate::tree::PropsData::default(),
+            ::core::option::Option::None,
+        )
     };
     ($($field:ident: $value:expr),* $(,)?) => {{
         let mut ts = $crate::tree::TextStyle::default();
         let mut p = $crate::tree::PropsData::default();
-        $(style!(@route ts, p, $field: $value);)*
-        $crate::tree::StyleResult(ts, p)
+        // A span has to tell a size it was given from one it inherits, and the
+        // style cannot say which — so the `size:` arm hands the value out here.
+        // Threaded through shadowed bindings rather than assigned: an arm that
+        // never runs leaves nothing for `unused_assignments` to flag.
+        let span_size: ::core::option::Option<u32> = ::core::option::Option::None;
+        $(let span_size = style!(@route ts, p, span_size, $field: $value);)*
+        // `unused_mut` fires on whichever of the two a call leaves alone,
+        // and `#[expect]` would fire on the one it touches — neither attribute
+        // survives every expansion, so the borrow settles the lint instead.
+        let _ = (&mut ts, &mut p);
+        $crate::tree::StyleResult(ts, p, span_size)
     }};
-    // Text style fields
-    (@route $ts:expr, $p:expr, size: $v:expr) => { $ts.size = $v; };
-    (@route $ts:expr, $p:expr, weight: $v:expr) => { $ts.weight = $v; };
-    (@route $ts:expr, $p:expr, family: $v:expr) => { $ts.family = $v; };
-    (@route $ts:expr, $p:expr, italic: $v:expr) => { $ts.italic = $v; };
-    (@route $ts:expr, $p:expr, underline: $v:expr) => { $ts.underline = $v; };
-    (@route $ts:expr, $p:expr, strikethrough: $v:expr) => { $ts.strikethrough = $v; };
-    (@route $ts:expr, $p:expr, line_height: $v:expr) => { $ts.line_height = $v; };
-    (@route $ts:expr, $p:expr, align: $v:expr) => { $ts.align = $v; };
-    (@route $ts:expr, $p:expr, valign: $v:expr) => { $ts.vertical_align = $v; };
-    (@route $ts:expr, $p:expr, text_overflow: $v:expr) => { $ts.text_overflow = $v; };
-    (@route $ts:expr, $p:expr, max_width: $v:expr) => { $ts.max_width = $v; };
-    (@route $ts:expr, $p:expr, outline_color: $v:expr) => { $ts.outline_color = $v; };
-    (@route $ts:expr, $p:expr, outline_width: $v:expr) => { $ts.outline_width = $v; };
+    // Every arm yields the running span size, so the `size:` arm can replace it
+    // and every other arm passes it along. Each reads it, the replacing arm
+    // included, so no field order leaves a binding for `unused_variables`.
+    (@route $ts:expr, $p:expr, $s:expr, size: $v:expr) => {{
+        let _superseded: ::core::option::Option<u32> = $s;
+        let size = $v;
+        $ts.size = size;
+        ::core::option::Option::Some(size)
+    }};
+    (@route $ts:expr, $p:expr, $s:expr, weight: $v:expr) => {{ $ts.weight = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, family: $v:expr) => {{ $ts.family = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, italic: $v:expr) => {{ $ts.italic = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, underline: $v:expr) => {{ $ts.underline = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, strikethrough: $v:expr) => {{ $ts.strikethrough = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, line_height: $v:expr) => {{ $ts.line_height = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, align: $v:expr) => {{ $ts.align = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, valign: $v:expr) => {{ $ts.vertical_align = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, text_overflow: $v:expr) => {{ $ts.text_overflow = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, max_width: $v:expr) => {{ $ts.max_width = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, outline_color: $v:expr) => {{ $ts.outline_color = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, outline_width: $v:expr) => {{ $ts.outline_width = $v; $s }};
     // Layout fields (use coercion so integer literals work for f32 fields)
-    (@route $ts:expr, $p:expr, padding: $v:expr) => { $p.padding = $crate::PropsFieldValue::into_field($v); };
-    (@route $ts:expr, $p:expr, margin: $v:expr) => { $p.margin = $crate::PropsFieldValue::into_field($v); };
-    (@route $ts:expr, $p:expr, gap: $v:expr) => { $p.gap = $crate::PropsFieldValue::into_field($v); };
-    (@route $ts:expr, $p:expr, flex: $v:expr) => { $p.flex = $crate::PropsFieldValue::into_field($v); };
-    (@route $ts:expr, $p:expr, width: $v:expr) => { $p.width = $crate::PropsFieldValue::into_field($v); };
-    (@route $ts:expr, $p:expr, height: $v:expr) => { $p.height = $crate::PropsFieldValue::into_field($v); };
-    (@route $ts:expr, $p:expr, background: $v:expr) => { $p.background = $v; };
-    (@route $ts:expr, $p:expr, color: $v:expr) => { $ts.color = $v; };
+    (@route $ts:expr, $p:expr, $s:expr, padding: $v:expr) => {{ $p.padding = $crate::PropsFieldValue::into_field($v); $s }};
+    (@route $ts:expr, $p:expr, $s:expr, margin: $v:expr) => {{ $p.margin = $crate::PropsFieldValue::into_field($v); $s }};
+    (@route $ts:expr, $p:expr, $s:expr, gap: $v:expr) => {{ $p.gap = $crate::PropsFieldValue::into_field($v); $s }};
+    (@route $ts:expr, $p:expr, $s:expr, flex: $v:expr) => {{ $p.flex = $crate::PropsFieldValue::into_field($v); $s }};
+    (@route $ts:expr, $p:expr, $s:expr, width: $v:expr) => {{ $p.width = $crate::PropsFieldValue::into_field($v); $s }};
+    (@route $ts:expr, $p:expr, $s:expr, height: $v:expr) => {{ $p.height = $crate::PropsFieldValue::into_field($v); $s }};
+    (@route $ts:expr, $p:expr, $s:expr, background: $v:expr) => {{ $p.background = $v; $s }};
+    (@route $ts:expr, $p:expr, $s:expr, color: $v:expr) => {{ $ts.color = $v; $s }};
 }

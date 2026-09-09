@@ -330,6 +330,89 @@ pub enum FontFamily {
     DeckSans = 1,
 }
 
+/// The flag words of a text span's wire encoding, packed and unpacked
+/// in one place so the writer and the reader cannot drift apart.
+///
+/// A span's tail is variable-length — text, then whichever of colour
+/// and size the flags announce — so each side streams that itself.
+///
+/// The bit positions are the part that has to agree, and they live only here.
+///
+/// ```text
+/// flags:u16   0-11 weight (when `weight` is set)
+///             12   the weight bits are meaningful
+///             13   a colour follows the text
+///             14   italic
+///             15   underline
+/// extra:u8    0    strikethrough
+///             1    a size follows the colour
+/// ```
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one field per wire bit; folding them into enums would hide the \
+              one-to-one mapping this type exists to state"
+)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpanFlags {
+    pub weight: Option<FontWeight>,
+    pub has_color: bool,
+    pub has_size: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+}
+
+impl SpanFlags {
+    /// Bits 0-11 of the u16, so a weight past this is not representable.
+    const WEIGHT_MASK: u16 = 0x0FFF;
+    const HAS_WEIGHT: u16 = 1 << 12;
+    const HAS_COLOR: u16 = 1 << 13;
+    const ITALIC: u16 = 1 << 14;
+    const UNDERLINE: u16 = 1 << 15;
+    const STRIKETHROUGH: u8 = 1 << 0;
+    const HAS_SIZE: u8 = 1 << 1;
+
+    #[must_use]
+    pub fn pack(self) -> (u16, u8) {
+        let mut flags = self.weight.map_or(0, |w| w.0 & Self::WEIGHT_MASK);
+        if self.weight.is_some() {
+            flags |= Self::HAS_WEIGHT;
+        }
+        if self.has_color {
+            flags |= Self::HAS_COLOR;
+        }
+        if self.italic {
+            flags |= Self::ITALIC;
+        }
+        if self.underline {
+            flags |= Self::UNDERLINE;
+        }
+
+        let mut extra = 0;
+        if self.strikethrough {
+            extra |= Self::STRIKETHROUGH;
+        }
+        if self.has_size {
+            extra |= Self::HAS_SIZE;
+        }
+
+        (flags, extra)
+    }
+
+    #[must_use]
+    pub fn unpack(flags: u16, extra: u8) -> Self {
+        Self {
+            weight: (flags & Self::HAS_WEIGHT != 0)
+                .then_some(FontWeight(flags & Self::WEIGHT_MASK)),
+            has_color: flags & Self::HAS_COLOR != 0,
+            has_size: extra & Self::HAS_SIZE != 0,
+            italic: flags & Self::ITALIC != 0,
+            underline: flags & Self::UNDERLINE != 0,
+            strikethrough: extra & Self::STRIKETHROUGH != 0,
+        }
+    }
+}
+
 /// Text style for paragraphs (28 bytes serialized).
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
@@ -656,6 +739,94 @@ impl PropsData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every combination, because a writer and a reader that disagree on one bit
+    /// do not merely lose that field: `has_color` and `has_size` govern
+    /// a variable-length tail, so a wrong bit desyncs the stream
+    /// and misreads every span after it.
+    #[test]
+    fn span_flags_round_trip_through_every_combination() {
+        let weights = [None, Some(FontWeight::REGULAR), Some(FontWeight::BOLD)];
+        for weight in weights {
+            for bits in 0..(1_u8 << 5) {
+                let flags = SpanFlags {
+                    weight,
+                    has_color: bits & 1 != 0,
+                    has_size: bits & 2 != 0,
+                    italic: bits & 4 != 0,
+                    underline: bits & 8 != 0,
+                    strikethrough: bits & 16 != 0,
+                };
+                let (packed, extra) = flags.pack();
+                assert_eq!(
+                    SpanFlags::unpack(packed, extra),
+                    flags,
+                    "packed as {packed:#06x}/{extra:#04x}"
+                );
+            }
+        }
+    }
+
+    /// The round trip above cannot see a bit move, since both ends move together.
+    /// This is the layout as literal words — the one the writers shipped before
+    /// a span carried a size, plus the bit that version added so a relocated flag fails here.
+    #[test]
+    fn the_flag_words_keep_the_layout_shipped_widgets_wrote() {
+        // weight 700 in bits 0–11; has_weight 12; has_color 13; italic 14; underline 15
+        const EVERY_OLD_FLAG: u16 = 0x2BC | 0x1000 | 0x2000 | 0x4000 | 0x8000;
+        // strikethrough bit 0 was the whole extra byte; has_size is bit 1
+        const OLD_EXTRA: u8 = 0x01;
+        const EXTRA_WITH_SIZE: u8 = OLD_EXTRA | 0x02;
+
+        let every_bit = SpanFlags {
+            weight: Some(FontWeight::BOLD),
+            has_color: true,
+            has_size: true,
+            italic: true,
+            underline: true,
+            strikethrough: true,
+        };
+        assert_eq!(every_bit.pack(), (EVERY_OLD_FLAG, EXTRA_WITH_SIZE));
+        assert_eq!(
+            SpanFlags::unpack(EVERY_OLD_FLAG, OLD_EXTRA),
+            SpanFlags {
+                has_size: false,
+                ..every_bit
+            },
+            "a word from before spans carried a size must read as it always did"
+        );
+
+        // Every bit set hides a swap between two of them, so a word with
+        // each set flag beside a clear one: has_color 13, underline 15.
+        assert_eq!(
+            SpanFlags::unpack(0x2000 | 0x8000, OLD_EXTRA),
+            SpanFlags {
+                weight: None,
+                has_color: true,
+                has_size: false,
+                italic: false,
+                underline: true,
+                strikethrough: true,
+            }
+        );
+    }
+
+    /// The weight shares its word with the flag bits, so a weight
+    /// wide enough to reach them would forge the ones above it.
+    #[test]
+    fn a_weight_cannot_reach_the_flag_bits() {
+        let widest = SpanFlags {
+            weight: Some(FontWeight(u16::MAX)),
+            ..SpanFlags::default()
+        };
+        let (packed, extra) = widest.pack();
+        let back = SpanFlags::unpack(packed, extra);
+
+        assert_eq!(back.weight, Some(FontWeight(SpanFlags::WEIGHT_MASK)));
+        assert!(!back.has_color, "a wide weight must not forge has_color");
+        assert!(!back.italic && !back.underline, "nor the style bits");
+        assert_eq!(extra, 0, "nor anything in the extra byte");
+    }
 
     #[test]
     fn arc_anchor_decodes_known_wire_values() {

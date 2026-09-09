@@ -90,12 +90,18 @@ pub use bmc_wasm_protocol::{
     TextStyle, VerticalAlign,
 };
 
-/// A text span with style overrides
-#[derive(Clone, Debug)]
+/// A text span with style overrides.
+///
+/// `Hash` is derived rather than written out, so a field
+/// added here reaches the paragraph layout cache's key on its own.
+#[derive(Clone, Debug, Hash)]
 pub struct SpanData {
     pub text: String,
     pub weight: Option<FontWeight>,
     pub color: Option<Color>,
+    /// Font size for this span alone. How it keeps the paragraph's baseline
+    /// is `shape_paragraph`'s business, and written up there.
+    pub size: Option<u32>,
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
@@ -108,6 +114,7 @@ impl SpanData {
         TextStyle {
             weight: self.weight.unwrap_or(base.weight),
             color: self.color.unwrap_or(base.color),
+            size: self.size.unwrap_or(base.size),
             italic: self.italic || base.italic,
             underline: self.underline || base.underline,
             strikethrough: self.strikethrough || base.strikethrough,
@@ -444,6 +451,7 @@ pub fn text(content: impl Into<String>, style: TextStyle) -> TreeNode {
             text: content.into(),
             weight: None,
             color: None,
+            size: None,
             italic: false,
             underline: false,
             strikethrough: false,
@@ -664,37 +672,24 @@ impl<'a> TreeReader<'a> {
     }
 
     fn read_span(&mut self) -> Result<SpanData> {
-        let flags = self.read_u16()?;
-        let extra_flags = self.read_u8()?;
+        let flags = SpanFlags::unpack(self.read_u16()?, self.read_u8()?);
         let len = self.read_u16()?;
         let text = self.read_string(len)?;
 
-        let has_weight = (flags >> 12) & 1 != 0;
-        let has_color = (flags >> 13) & 1 != 0;
-
-        let weight = if has_weight {
-            Some(FontWeight(flags & 0xFFF))
-        } else {
-            None
-        };
-
-        let color = if has_color {
-            Some(Color::from_raw(self.read_u32()?))
-        } else {
-            None
-        };
-
-        let italic = (flags >> 14) & 1 != 0;
-        let underline = (flags >> 15) & 1 != 0;
-        let strikethrough = extra_flags & 1 != 0;
+        let color = flags
+            .has_color
+            .then(|| self.read_u32().map(Color::from_raw))
+            .transpose()?;
+        let size = flags.has_size.then(|| self.read_u32()).transpose()?;
 
         Ok(SpanData {
             text,
-            weight,
+            weight: flags.weight,
             color,
-            italic,
-            underline,
-            strikethrough,
+            size,
+            italic: flags.italic,
+            underline: flags.underline,
+            strikethrough: flags.strikethrough,
         })
     }
 
@@ -2547,6 +2542,7 @@ fn build_taffy_node_inner(
                             text,
                             weight: None,
                             color: None,
+                            size: None,
                             italic: false,
                             underline: false,
                             strikethrough: false,
@@ -3607,6 +3603,7 @@ mod tests {
             text: text.to_owned(),
             weight: None,
             color: None,
+            size: None,
             italic: false,
             underline: false,
             strikethrough: false,
@@ -3727,6 +3724,110 @@ mod tests {
         assert_eq!(fill, expected_fill);
         assert_eq!(segments, expected_segments);
         assert_eq!(cap, ArcCap::Butt);
+    }
+
+    /// A span's colour and size are both an optional `u32`.
+    ///
+    /// Only their order on the wire tells them apart, so what pins
+    /// that order down is decoding a span that carries both.
+    #[test]
+    fn a_span_decodes_its_colour_beside_its_size() {
+        const COLOR_RAW: u32 = 0x08BD_BAFF;
+        const SIZE: u32 = 24;
+        // Literal words, not the packer's: weight 700 in bits 0–11,
+        // has_weight 12, has_color 13, underline 15; has_size is extra bit 1.
+        const FLAGS: u16 = 0x2BC | 0x1000 | 0x2000 | 0x8000;
+        const EXTRA: u8 = 0x02;
+        let text = "PH/s";
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&FLAGS.to_le_bytes());
+        data.push(EXTRA);
+        data.extend_from_slice(
+            &u16::try_from(text.len())
+                .expect("BUG: fits u16")
+                .to_le_bytes(),
+        );
+        data.extend_from_slice(text.as_bytes());
+        data.extend_from_slice(&COLOR_RAW.to_le_bytes());
+        data.extend_from_slice(&SIZE.to_le_bytes());
+
+        let mut reader = TreeReader::new(&data);
+        let span = reader
+            .read_span()
+            .expect("BUG: test buffer encodes a valid span");
+
+        assert_eq!(span.text, text);
+        assert_eq!(span.weight, Some(FontWeight::BOLD));
+        assert_eq!(
+            span.color,
+            Some(Color::from_raw(COLOR_RAW)),
+            "the colour read back as something else — the two u32s swapped"
+        );
+        assert_eq!(
+            span.size,
+            Some(SIZE),
+            "the size read back as something else — the two u32s swapped"
+        );
+        assert!(span.underline);
+        assert!(!span.italic);
+        assert!(!span.strikethrough);
+    }
+
+    /// A span written before spans carried a size decodes as it always did:
+    /// no size bit, so nothing is read past its own record.
+    ///
+    /// That is the compatibility the SDK version promises
+    /// — a new host reads every old widget; the reverse is not owed.
+    /// The bytes are literal, as that writer emitted them, with every flag
+    /// it knew set: a packer that moved a bit would still round-trip itself.
+    #[test]
+    fn an_old_widgets_span_decodes_unchanged_on_a_new_host() {
+        const NEXT_RECORD: u32 = 0xDEAD_BEEF;
+        const COLOR_RAW: u32 = 0x1234_5678;
+        // weight 700 in bits 0–11, has_weight 12, has_color 13; italic 14 and
+        // underline 15 left clear, so a flag that strays onto them is seen.
+        // The extra byte was strikethrough alone, in bit 0.
+        const OLD_FLAGS: u16 = 0x2BC | 0x1000 | 0x2000;
+        const OLD_EXTRA: u8 = 0x01;
+        let text = "500,0";
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&OLD_FLAGS.to_le_bytes());
+        data.push(OLD_EXTRA);
+        data.extend_from_slice(
+            &u16::try_from(text.len())
+                .expect("BUG: fits u16")
+                .to_le_bytes(),
+        );
+        data.extend_from_slice(text.as_bytes());
+        data.extend_from_slice(&COLOR_RAW.to_le_bytes());
+        data.extend_from_slice(&NEXT_RECORD.to_le_bytes());
+
+        let mut reader = TreeReader::new(&data);
+        let span = reader
+            .read_span()
+            .expect("BUG: test buffer encodes a valid span");
+
+        assert_eq!(span.text, text);
+        assert_eq!(span.weight, Some(FontWeight::BOLD));
+        assert_eq!(span.color, Some(Color::from_raw(COLOR_RAW)));
+        assert!(span.strikethrough);
+        assert!(
+            !span.italic && !span.underline,
+            "a flag read from a bit it was never on"
+        );
+        assert_eq!(
+            span.size, None,
+            "a span that never announced a size must not be handed one"
+        );
+        assert_eq!(
+            reader
+                .read_u32()
+                .expect("BUG: the next record follows the span"),
+            NEXT_RECORD,
+            "the reader ran past the span's record into the next one"
+        );
     }
 
     #[test]
@@ -4239,6 +4340,7 @@ mod frame_pass_tests {
                     text: text.to_owned(),
                     weight: None,
                     color: None,
+                    size: None,
                     italic: false,
                     underline: false,
                     strikethrough: false,

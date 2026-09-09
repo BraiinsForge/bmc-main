@@ -83,6 +83,7 @@ fn plain_spans(text: &str) -> [SpanData; 1] {
         text: text.to_owned(),
         weight: None,
         color: None,
+        size: None,
         italic: false,
         underline: false,
         strikethrough: false,
