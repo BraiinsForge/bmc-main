@@ -363,6 +363,13 @@ class View extends Component<Props, State> {
         this.#loadSceneDebounced();
     };
 
+    // Unknown capacity is not a full one: until the first load answers, adding stays open.
+    get #atCapacity(): boolean {
+        const { runningWidgets } = this.state;
+        if (runningWidgets === null || runningWidgets.max <= 0) return false;
+        return runningWidgets.count >= runningWidgets.max;
+    }
+
     #handleAdd = (position: pb.WidgetPosition): void => {
         this.setState({ openDialogKind: 'scene-select', addPosition: position }, () => {
             this.#loadManifestWidgets();
@@ -806,6 +813,10 @@ class View extends Component<Props, State> {
                         ) : null}
                     </header>
 
+                    {runningWidgets ? (
+                        <Comp.CapacityWarning className={css.capacityWarning} {...runningWidgets} />
+                    ) : null}
+
                     <main className={css.main}>
                         <p
                             className={css.explainer}
@@ -822,6 +833,7 @@ class View extends Component<Props, State> {
                             onWidgetAdd={this.#handleAdd}
                             onWidgetEdit={this.#handleEdit}
                             onWidgetRemove={this.#handleRemove}
+                            addDisabled={this.#atCapacity}
                         />
                         <ButtonGroup spaced className={css.footer}>
                             <Button

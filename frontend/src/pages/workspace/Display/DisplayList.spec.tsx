@@ -834,4 +834,15 @@ describe('the add control at capacity', () => {
         expect(document.body.textContent).not.toContain(SLOTS_FULL_TITLE);
         expect(addNewButton().hasAttribute('disabled')).toBe(false);
     });
+
+    // Zero is what a missing `max_running_widget_count` decodes to,
+    // and an unknown limit must not read as a reached one.
+    test('an absent limit leaves the page usable', async () => {
+        atCapacity(0, 0);
+        renderPage();
+        await flush();
+
+        expect(document.body.textContent).not.toContain(SLOTS_FULL_TITLE);
+        expect(addNewButton().hasAttribute('disabled')).toBe(false);
+    });
 });

@@ -319,6 +319,13 @@ class View extends Component<Props, State> {
         };
     }
 
+    // Unknown capacity is not a full one: until the first load answers, adding stays open.
+    get #atCapacity(): boolean {
+        const { runningWidgets } = this.state;
+        if (runningWidgets === null || runningWidgets.max <= 0) return false;
+        return runningWidgets.count >= runningWidgets.max;
+    }
+
     #sceneAddChooseKind = (): void => {
         this.setState({ openDialogKind: 'scene-select' }, () => {
             this.#loadManifestWidgets();
@@ -999,7 +1006,12 @@ class View extends Component<Props, State> {
                                 }}
                             />
 
-                            <MenuButton label={txt.addNew} kind="primary" id={$('add-scene')}>
+                            <MenuButton
+                                label={txt.addNew}
+                                kind="primary"
+                                id={$('add-scene')}
+                                disabled={this.#atCapacity}
+                            >
                                 <MenuItem
                                     label={formatMessage({ defaultMessage: 'Full Screen' })}
                                     className={css.addMenuButton}
@@ -1048,6 +1060,8 @@ class View extends Component<Props, State> {
 
                     {this.#headerRender()}
                 </header>
+
+                {runningWidgets ? <Comp.CapacityWarning className={css.capacityWarning} {...runningWidgets} /> : null}
 
                 <main>
                     <Comp.SceneOverviewList

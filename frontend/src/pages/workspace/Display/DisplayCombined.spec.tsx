@@ -209,13 +209,16 @@ describe('running widget limit', () => {
         expect(screen.getByText('Edit Combined Scene')).toBeTruthy();
     });
 
+    // Adding is offered while a slot still looks free, so the server can still refuse:
+    // the count moves between load and click, or another client takes the last slot.
     test('a rejected combined add does not open the widget editor and explains the running widget limit', async () => {
+        registerMocks(pb.services.SceneManagementService, {
+            getScene: () => ({ scene, runningWidgetCount: 55, maxRunningWidgetCount: 56 }),
+        });
         const { container } = renderPage();
 
-        await screen.findByText('Running widgets: 56 / 56');
-        const addButton = container.querySelector<HTMLButtonElement>('main button:not([title])');
-        if (!addButton) throw new Error('combined-scene add button not rendered');
-        fireEvent.click(addButton);
+        await screen.findByText('Running widgets: 55 / 56');
+        clickAddSlot(container);
         fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
 
         await waitFor(() => expect(document.body.textContent).toContain(LIMIT_MESSAGE));
@@ -420,6 +423,20 @@ describe('the add control at capacity', () => {
         const { container } = renderPage();
 
         await screen.findByText('Running widgets: 55 / 56');
+
+        expect(document.body.textContent).not.toContain(SLOTS_FULL_TITLE);
+        expect(addSlotButton(container).hasAttribute('disabled')).toBe(false);
+    });
+
+    // Zero is what a missing `max_running_widget_count` decodes to,
+    // and an unknown limit must not read as a reached one.
+    test('an absent limit leaves the editor usable', async () => {
+        registerMocks(pb.services.SceneManagementService, {
+            getScene: () => ({ scene, runningWidgetCount: 0, maxRunningWidgetCount: 0 }),
+        });
+        const { container } = renderPage();
+
+        await screen.findByText('Edit Combined Scene');
 
         expect(document.body.textContent).not.toContain(SLOTS_FULL_TITLE);
         expect(addSlotButton(container).hasAttribute('disabled')).toBe(false);

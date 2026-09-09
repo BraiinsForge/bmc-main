@@ -75,6 +75,8 @@ export interface CombinedSceneViewProps {
     onWidgetEdit(id: string): void;
     onWidgetRemove(id: string): void;
 
+    addDisabled?: boolean;
+
     style?: CSSProperties;
     className?: string;
 }
@@ -97,6 +99,7 @@ function View(props: ViewProps) {
         onWidgetAdd,
         onWidgetEdit,
         onWidgetRemove,
+        addDisabled,
 
         // Pass-through
         className,
@@ -123,6 +126,7 @@ function View(props: ViewProps) {
                                 position={pos}
                                 size={size}
                                 onAdd={() => onWidgetAdd(pos)}
+                                addDisabled={addDisabled}
                                 validDropSlots={validDropSlots}
                             />
                         );
@@ -169,6 +173,7 @@ interface WidgetProps {
 
     // Placeholder cell attributes
     onAdd?(position: pb.WidgetPosition): void;
+    addDisabled?: boolean;
     title?: null | string;
     subtitle?: null | string;
 }
@@ -187,6 +192,7 @@ function Widget(props: WidgetProps) {
 
         // Content
         onAdd,
+        addDisabled,
         title,
         subtitle,
     } = props;
@@ -237,6 +243,7 @@ function Widget(props: WidgetProps) {
                     position={x.position}
                     size={x.size}
                     onAdd={onAdd}
+                    addDisabled={addDisabled}
                     validDropSlots={validDropSlots}
                 />
             );
@@ -333,8 +340,9 @@ function Widget(props: WidgetProps) {
                     <button
                         id={$('add')}
                         type="button"
-                        className={css.widgetAddButtom}
+                        className={css.widgetAddButton}
                         onClick={handleAdd}
+                        disabled={addDisabled}
                         children={<IconWidgetAdd size={16} />}
                     />
                 ) : (
