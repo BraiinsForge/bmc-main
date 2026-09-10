@@ -281,6 +281,28 @@ async fn run_sourced(snippet: &str) -> Result<()> {
     Ok(())
 }
 
+/// Swap the module to the setup ("FG") firmware and wait for its control node.
+///
+/// `esp32-init reload_await` takes the FG branch only while the factory-default
+/// flag is set, so the service's steps are replayed here with that branch
+/// forced.
+async fn reflash_to_setup_firmware() -> Result<()> {
+    info!("Flashing the setup (FG) firmware to bring the softAP back");
+    run_service_cmd(ESP32_SERVICE, &["stop"]).await?;
+    run_sourced(
+        "rmmod esp32-sdio 2>/dev/null || true; flash_fg_firmware && modprobe esp32-sdio-fg",
+    )
+    .await?;
+    run_service_cmd(ESP32_SERVICE, &["start"]).await?;
+    for _ in 0..ATTEMPTS_TO_ACTIVATE_AP {
+        if tokio::fs::metadata(ESP_CONTROL_NODE).await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    bail!("{ESP_CONTROL_NODE} did not appear after flashing the setup firmware")
+}
+
 async fn run_service_cmd(path: &str, args: &[&str]) -> Result<()> {
     let status = Command::new(path)
         .args(args)
@@ -446,15 +468,11 @@ impl WifiDriver for Esp32WifiManager {
         // interface is up: `wait_for_ap_active` covers that.
         //
         // The softAP lives behind the hosted-control node, which only the "FG"
-        // firmware exposes; a board that has left factory default runs "NG" and
-        // has none. `esp32-init` writes the right firmware at boot, and that is
-        // a minutes-long UART transfer needing the port's service stopped
-        // first, so report the state rather than reflashing from in here.
+        // firmware exposes; a board that has joined a network runs "NG" and has
+        // none. A failed join (a wrong password, most often) has to bring the
+        // setup AP back without a reboot, so the swap happens right here.
         if !esp32_on_setup_firmware("configure_ap_mode").await {
-            bail!(
-                "{ESP_CONTROL_NODE} is missing: the ESP32 is running station firmware, so no \
-                 setup AP can be started until the board boots in factory-default mode"
-            );
+            reflash_to_setup_firmware().await?;
         }
 
         info!("Starting ESP32 setup AP (requested ssid ignored: {ssid})");
