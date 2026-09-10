@@ -153,8 +153,13 @@ async fn main() -> Result<()> {
             HardwareProfile::for_product(platform.product()).locate_wifi_chip(board_serial.as_ref())
         {
             info!(?chip, "located WiFi chip");
-            WifiChip::Nl80211 {
-                syspath: chip.syspath().to_string_lossy().into_owned(),
+            // The ESP32 companion radio needs its own driver: only that one
+            // knows the setup AP and the firmware swap it needs.
+            match chip {
+                bmc_platform::WifiChip::SdioEsp32 { .. } => WifiChip::Esp32,
+                bmc_platform::WifiChip::UsbNl80211 { syspath } => WifiChip::Nl80211 {
+                    syspath: syspath.to_string_lossy().into_owned(),
+                },
             }
         } else {
             info!(?platform, "board carries no WiFi radio");
