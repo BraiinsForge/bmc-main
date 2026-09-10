@@ -44,6 +44,9 @@ pub struct Config {
     /// Set server address
     #[clap(long, default_value = "0.0.0.0:6060")]
     pub address: std::net::SocketAddr,
+    /// Forward unhandled HTTP requests to this boser address.
+    #[clap(long)]
+    pub boser_address: Option<std::net::SocketAddr>,
     /// Set path to a web content directory
     #[clap(long, default_value = data_dir("www"))]
     pub www_path: PathBuf,
@@ -122,6 +125,7 @@ impl Config {
 impl From<Config> for Configuration {
     fn from(value: Config) -> Self {
         let server_config = ServerConfig::default()
+            .set_boser(value.boser_address)
             .set_www_root_path(value.www_path.clone())
             .set_www_assets_path(value.www_path.join("assets"))
             .set_www_var_path(
