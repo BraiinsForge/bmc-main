@@ -384,7 +384,9 @@ pub fn card(spec: CardSpec, child: Node) -> Node {
             props!(),
             [
                 col(props!(width: inset), []),
-                child,
+                // Grown rather than content-sized: a content-sized body sizes
+                // the payout meter to its widest text line, not to the card.
+                col(props!(flex: 1.0), [child]),
                 col(props!(width: inset), []),
             ],
         )

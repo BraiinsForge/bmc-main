@@ -161,3 +161,78 @@ frames = 8
 
 [shot.knobs]
 Size = "Deck medium"
+
+# The Overview's source states on the two Deck frames whose cards
+# carry the wider horizontal padding. A slot that fills its card
+# — the payout meter — can disagree with the text above it there,
+# so every state sits on one sheet, judged against the others.
+
+# Nothing answered yet: every slot holds a skeleton sized to the run
+# it stands in for, which is what the frame must not reflow away from.
+
+[[shot]]
+name = "overview-loading-deck-full"
+scene = "bmc_gallery::pool::Overview Loading"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "overview-loading-deck-large"
+scene = "bmc_gallery::pool::Overview Loading"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+# Answered with nothing to report: the meter slot carries words
+# rather than an empty track, which would read as a skeleton that never resolves.
+
+[[shot]]
+name = "overview-empty-deck-full"
+scene = "bmc_gallery::pool::Overview Empty"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "overview-empty-deck-large"
+scene = "bmc_gallery::pool::Overview Empty"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "overview-failed-deck-full"
+scene = "bmc_gallery::pool::Overview Failed"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "overview-failed-deck-large"
+scene = "bmc_gallery::pool::Overview Failed"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "overview-unbound-deck-large"
+scene = "bmc_gallery::pool::Overview Unbound"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "overview-denied-deck-large"
+scene = "bmc_gallery::pool::Overview Denied"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"

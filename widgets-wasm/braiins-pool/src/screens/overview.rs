@@ -69,8 +69,11 @@ mod budget {
     /// The header line: with the frame padding and gap it puts content at
     /// y = 64, as designed.
     pub const HEADER: f32 = 40.0;
-    /// The Fullscreen chart section and the workers card beside it.
-    pub const FULL_CHART: f32 = 214.0;
+    /// The Fullscreen tiles row: a `STAT_ROOMY` stack and the card's pads,
+    /// the sum [`L_TILES`] is for the Large frame's tighter gaps.
+    /// Fixed, so the slack lands in the chart rather than under stacks
+    /// with nothing to put there.
+    pub const FULL_TILES: f32 = 132.0;
     pub const FULL_WORKERS_W: f32 = 193.0;
     /// The Large frame's payout card (two body lines and the meter, with
     /// pads and gaps) and its tiles row (label/value/sub with theirs).
@@ -276,7 +279,8 @@ fn full(view: &OverviewViewData) -> Node {
     } else {
         content_w
     };
-    let tiles_h = content_h - budget::FULL_CHART - space::GAP;
+    let tiles_h = budget::FULL_TILES;
+    let chart_h = content_h - tiles_h - space::GAP;
 
     let tiles = row(
         props!(gap: space::GAP, height: tiles_h, cross_align: CrossAlign::Stretch),
@@ -326,7 +330,7 @@ fn full(view: &OverviewViewData) -> Node {
             history,
             workers_history,
             main_w,
-            budget::FULL_CHART,
+            chart_h,
             &spec,
             &[],
             &[],
@@ -334,8 +338,8 @@ fn full(view: &OverviewViewData) -> Node {
     } else {
         main.push(parts::placeholder(
             &view.data.hashrate_history,
-            parts::absent_block(main_w, budget::FULL_CHART, parts::callout::HISTORY),
-            parts::skeleton_block(main_w, budget::FULL_CHART),
+            parts::absent_block(main_w, chart_h, parts::callout::HISTORY),
+            parts::skeleton_block(main_w, chart_h),
         ));
     }
 
