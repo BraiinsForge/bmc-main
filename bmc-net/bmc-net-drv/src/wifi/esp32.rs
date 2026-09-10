@@ -59,10 +59,6 @@ const ESP32_SERVICE: &str = "/etc/init.d/esp32-init";
 const ESP32_WIFI_LIB: &str = "/lib/functions/esp32-wifi.sh";
 /// Provides `default_ssid`, the branded name the platform advertises.
 const BOS_DEFAULTS_LIB: &str = "/lib/functions/bos-defaults.sh";
-/// Hosted-control node exposed only by the ESP32 "FG" firmware. `esp32-sdio-cli`
-/// talks to the module through it, so without it there is no setup AP: the "NG"
-/// firmware a provisioned board runs presents a plain station instead.
-const ESP_CONTROL_NODE: &str = "/dev/esps0";
 const FACTORY_DEFAULT_WIFI_SERVICE: &str = "/etc/init.d/factory-default-wifi";
 
 const WIFI_INTERACTION_DELAY: Duration = Duration::from_secs(5);
@@ -197,15 +193,13 @@ async fn discover_wlan_syspath() -> Option<String> {
     None
 }
 
-/// Whether the ESP32 runs the setup ("FG") firmware, probed by the presence of
-/// its hosted-control node. The decision is logged with the caller's name so a
-/// wrong branch (e.g. the node transiently absent while the module resets,
-/// which later surfaces as "No wireless interface found") is diagnosable from
-/// the log alone.
+/// Whether the ESP32 runs the setup ("FG") firmware, decided by the netdev the
+/// module registers: "FG" brings up [`AP_INTERFACE_NAME`], "NG" a `wlan`
+/// device. That is what UCI and netifd bind to.
 async fn esp32_on_setup_firmware(caller: &str) -> bool {
-    let on_fg = tokio::fs::metadata(ESP_CONTROL_NODE).await.is_ok();
+    let on_fg = Esp32WifiManager::is_ap_mode().await;
     info!(
-        "{caller}: {ESP_CONTROL_NODE} {}, ESP32 is on {} firmware",
+        "{caller}: {AP_INTERFACE_NAME} {}, ESP32 is on {} firmware",
         if on_fg { "present" } else { "absent" },
         if on_fg { "setup (FG)" } else { "station (NG)" }
     );
@@ -281,11 +275,11 @@ async fn run_sourced(snippet: &str) -> Result<()> {
     Ok(())
 }
 
-/// Swap the module to the setup ("FG") firmware and wait for its control node.
+/// Swap the module to the setup ("FG") firmware and wait for its AP interface.
 ///
 /// `esp32-init reload_await` takes the FG branch only while the factory-default
 /// flag is set, so the service's steps are replayed here with that branch
-/// forced.
+/// forced. Takes about 20 s on a BMM101.
 async fn reflash_to_setup_firmware() -> Result<()> {
     info!("Flashing the setup (FG) firmware to bring the softAP back");
     run_service_cmd(ESP32_SERVICE, &["stop"]).await?;
@@ -295,12 +289,12 @@ async fn reflash_to_setup_firmware() -> Result<()> {
     .await?;
     run_service_cmd(ESP32_SERVICE, &["start"]).await?;
     for _ in 0..ATTEMPTS_TO_ACTIVATE_AP {
-        if tokio::fs::metadata(ESP_CONTROL_NODE).await.is_ok() {
+        if Esp32WifiManager::is_ap_mode().await {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    bail!("{ESP_CONTROL_NODE} did not appear after flashing the setup firmware")
+    bail!("{AP_INTERFACE_NAME} did not appear after flashing the setup firmware")
 }
 
 async fn run_service_cmd(path: &str, args: &[&str]) -> Result<()> {
@@ -467,10 +461,10 @@ impl WifiDriver for Esp32WifiManager {
         // `start_wifi_ap` returns once `ifup wifi_ap` is queued, not once the
         // interface is up: `wait_for_ap_active` covers that.
         //
-        // The softAP lives behind the hosted-control node, which only the "FG"
-        // firmware exposes; a board that has joined a network runs "NG" and has
-        // none. A failed join (a wrong password, most often) has to bring the
-        // setup AP back without a reboot, so the swap happens right here.
+        // The softAP exists only on the "FG" firmware; a board that has joined
+        // a network runs "NG" and has no AP interface at all. A failed join (a
+        // wrong password, most often) has to bring the setup AP back without a
+        // reboot, so the swap happens right here.
         if !esp32_on_setup_firmware("configure_ap_mode").await {
             reflash_to_setup_firmware().await?;
         }
