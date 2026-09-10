@@ -20,6 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Error, Result, anyhow, bail};
@@ -102,6 +103,71 @@ pub(crate) async fn wait_for_network_ip_address(device: &str, attempts: u8) -> R
         }
     }
     Err(anyhow!("IP cannot be assigned. Failed to setup wifi"))
+}
+
+/// Wait until the station named by `resolve_device` is associated with `ssid`
+/// and holds an IPv4 address, resolving the netdev name on every poll.
+///
+/// A module that re-registers its netdev while joining would otherwise be
+/// watched under a name that no longer exists, reporting a successful join as a
+/// failure. Each phase keeps the same `attempts` budget as its fixed-name
+/// counterpart.
+pub(crate) async fn wait_for_station_ready<F, Fut>(
+    resolve_device: F,
+    ssid: &str,
+    attempts: u8,
+) -> Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<String>>,
+{
+    let mut interval = time::interval(IP_CHECK_INTERVAL);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut associated = false;
+    for i in 0..attempts {
+        interval.tick().await;
+        let device = match resolve_device().await {
+            Ok(device) => device,
+            Err(e) => {
+                debug!("{i}/{attempts}: no station netdev to watch yet: {e}");
+                continue;
+            }
+        };
+        debug!("{i}/{attempts} attempt to see {device} associated with {ssid}");
+        match CommandUtils::call_iw_cmd(&["dev", &device, "link"]).await {
+            Ok(output) if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid) => {
+                debug!("{device} is associated with {ssid}");
+                associated = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => debug!("Unable to query the {device} link: {e}"),
+        }
+    }
+    if !associated {
+        bail!("the station did not associate with {ssid}");
+    }
+    for i in 0..attempts {
+        interval.tick().await;
+        let device = match resolve_device().await {
+            Ok(device) => device,
+            Err(e) => {
+                debug!("{i}/{attempts}: no station netdev to watch yet: {e}");
+                continue;
+            }
+        };
+        debug!("{i}/{attempts} attempt to get IP address from {device}");
+        let ip = tokio::task::spawn_blocking(move || {
+            NetworkInterface::get_by_substr(&device).and_then(|network| network.ipv4_address())
+        })
+        .await
+        .map_err(|e| anyhow!("interface walk task panicked: {e}"))?;
+        if let Some(ip) = ip {
+            debug!("IP is assigned: {ip}, connection is complete");
+            return Ok(());
+        }
+    }
+    bail!("the station joined {ssid} but got no IPv4 address")
 }
 
 /// SSID of the association `iw dev <device> link` reports, `None` while the

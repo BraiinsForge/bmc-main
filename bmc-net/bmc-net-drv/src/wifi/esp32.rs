@@ -36,8 +36,7 @@ use super::uci::{UciHelper, map_uci_iface_to_wifi_status, pick_reported_status};
 use super::utils::{
     ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
     filter_empty_ssid, filter_sort_by_strongest_signal, filter_unsupported_enc, mark_connected,
-    wait_for_interface_up, wait_for_network_ip_address, wait_for_station_joined,
-    wait_for_wireless_config,
+    wait_for_interface_up, wait_for_station_ready, wait_for_wireless_config,
 };
 use super::{SharedCache, WifiDriver};
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
@@ -401,7 +400,6 @@ impl WifiDriver for Esp32WifiManager {
             wait_for_wireless_config().await?;
         }
 
-        let device = self.get_device().await?;
         let uci = self.uci().await?;
         // Remember the station we are leaving so a failed join can put it back.
         let previous = uci
@@ -419,11 +417,9 @@ impl WifiDriver for Esp32WifiManager {
         uci.save_changes().await?;
 
         self.enable_radio(true).await?;
-        let joined = async {
-            wait_for_station_joined(&device, &ssid, ATTEMPTS_TO_GET_IP).await?;
-            wait_for_network_ip_address(&device, ATTEMPTS_TO_GET_IP).await
-        }
-        .await;
+        // Applying the station config resets the module, which re-registers
+        // its netdev under the next free name, so resolve it on every poll.
+        let joined = wait_for_station_ready(|| self.get_device(), &ssid, ATTEMPTS_TO_GET_IP).await;
         if let Err(e) = joined {
             self.restore_station(previous, &ssid).await;
             return Err(e);
