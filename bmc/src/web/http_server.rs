@@ -170,6 +170,11 @@ impl BoserProxy {
     /// Bound on connecting to boser. It is on loopback, so anything longer is
     /// boser not accepting, not the network.
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Bound the entire branding fetch so optional branding cannot stall page startup.
+    const BRAND_TIMEOUT: Duration = Duration::from_secs(5);
+    /// 256 KiB leaves ample headroom over bos-main's shipped 1.4 KiB scripts
+    /// while bounding memory independently of loopback throughput.
+    const BRAND_SCRIPT_MAX_BYTES: usize = 256 * 1_024;
     /// Bound on boser's response head. Deliberately not a total timeout: the
     /// gRPC-web subscription bodies boser streams stay open for their lifetime.
     /// Generous because boser answers some mutations only once they are done:
@@ -193,6 +198,57 @@ impl BoserProxy {
             .build()
             .expect("BUG: the boser client configuration is static");
         Self { addr, client }
+    }
+
+    async fn brand_script(&self) -> Result<Option<String>, reqwest::Error> {
+        let response = self
+            .client
+            .get(format!("http://{}/var/brand.js", self.addr))
+            .timeout(Self::BRAND_TIMEOUT)
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let mut response = response.error_for_status()?;
+        let content_type = response.headers().get(reqwest::header::CONTENT_TYPE);
+        let is_javascript = content_type
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<mime_guess::mime::Mime>().ok())
+            .is_some_and(|mime| {
+                matches!(
+                    mime.essence_str(),
+                    "text/javascript" | "application/javascript"
+                )
+            });
+        // boser serves missing assets as 200/index.html; do not evaluate that fallback as branding.
+        if response.status() != reqwest::StatusCode::OK || !is_javascript {
+            debug!(
+                status = %response.status(),
+                ?content_type,
+                "Ignoring unusable boser branding response"
+            );
+            return Ok(None);
+        }
+        let mut script = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > Self::BRAND_SCRIPT_MAX_BYTES - script.len() {
+                warn!(
+                    received = script.len().saturating_add(chunk.len()),
+                    limit = Self::BRAND_SCRIPT_MAX_BYTES,
+                    "Ignoring oversized boser branding"
+                );
+                return Ok(None);
+            }
+            script.extend_from_slice(&chunk);
+        }
+        match String::from_utf8(script) {
+            Ok(script) => Ok(Some(script)),
+            Err(err) => {
+                warn!(%err, "Ignoring non-UTF-8 boser branding");
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -234,7 +290,7 @@ impl<T: BmcManager> HttpServer<T> {
     fn routes(&self) -> Router {
         let boser = self.config.boser.map(BoserProxy::new);
         let router = Router::new()
-            .merge(self.system_router())
+            .merge(self.system_router(boser.clone()))
             .merge(self.static_file_router(boser.clone()))
             .merge(self.general_api_router())
             .merge(self.widget_icon_router());
@@ -333,24 +389,41 @@ impl<T: BmcManager> HttpServer<T> {
             .merge(assets_router)
     }
 
-    fn system_router(&self) -> Router {
+    fn system_router(&self, boser: Option<BoserProxy>) -> Router {
         Router::new()
-            .route(
-                Self::SYSTEM_SCRIPT,
-                get(|state| async move { Self::handle_system(state) }),
-            )
-            .with_state(self.hardware_capabilities)
+            .route(Self::SYSTEM_SCRIPT, get(Self::handle_system))
+            .with_state((self.hardware_capabilities, boser))
     }
 
-    fn handle_system(State(caps): State<HardwareCapabilities>) -> impl IntoResponse {
+    async fn handle_system(
+        State((caps, boser)): State<(HardwareCapabilities, Option<BoserProxy>)>,
+    ) -> impl IntoResponse {
         let json = serde_json::to_string(&SystemInfo { capabilities: caps })
             .expect("BUG: hardware capabilities contain only JSON-serializable values");
+        let mut script = format!("window.SYSTEM = {json};\n");
+        if let Some(boser) = boser {
+            match boser.brand_script().await {
+                Ok(Some(brand)) => {
+                    let brand = serde_json::to_string(&brand)
+                        .expect("BUG: a string always serializes to JSON")
+                        .replace('\u{2028}', "\\u2028")
+                        .replace('\u{2029}', "\\u2029");
+                    script.push_str("try { (0, eval)(");
+                    script.push_str(&brand);
+                    script.push_str(
+                        ") } catch (err) { console.error(\"boser branding failed\", err) }\n",
+                    );
+                }
+                Ok(None) => {}
+                Err(err) => warn!(%err, "Fetching optional boser branding failed"),
+            }
+        }
         (
             [
                 (CONTENT_TYPE, "text/javascript; charset=utf-8"),
                 (header::CACHE_CONTROL, "no-store"),
             ],
-            format!("window.SYSTEM = {json};\n"),
+            script,
         )
     }
 
@@ -1024,6 +1097,8 @@ impl<T: BmcManager> Clone for IndexState<T> {
 mod tests {
     use std::str::FromStr as _;
 
+    use axum::body::Bytes;
+
     use super::*;
     use crate::widget::{WidgetInfo, WidgetRegistry};
     use tower::ServiceExt as _;
@@ -1412,6 +1487,153 @@ mod tests {
                 .uri(uri)
                 .body(Body::from(body.to_owned()))
                 .expect("BUG: build the request")
+        }
+
+        async fn system_router_with_boser(app: Router) -> Router {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("BUG: bind the branding server");
+            let address = listener
+                .local_addr()
+                .expect("BUG: bound listener has an address");
+            tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("BUG: branding server stopped serving");
+            });
+            HttpServer::new(
+                ServerConfig::default().set_boser(Some(address)),
+                Arc::new(StubManager),
+                Arc::new(WidgetRegistry::new(Vec::new())),
+                bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
+                    .capabilities(),
+            )
+            .routes()
+        }
+
+        fn assert_capabilities_script(body: &[u8]) -> &str {
+            let script = std::str::from_utf8(body).expect("BUG: script is UTF-8");
+            let (json, suffix) = script
+                .strip_prefix("window.SYSTEM = ")
+                .and_then(|value| value.split_once(";\n"))
+                .expect("capabilities must remain a complete assignment before branding");
+            let value: serde_json::Value =
+                serde_json::from_str(json).expect("capabilities must remain valid JSON");
+            assert_eq!(value["capabilities"]["product_name"], "Braiins Deck");
+            suffix
+        }
+
+        #[tokio::test]
+        async fn system_script_isolates_boser_javascript_after_capabilities() {
+            const BRAND: &str = "window.BRAND = ;\u{2028}\u{2029}";
+            for content_type in [
+                "text/javascript",
+                "application/javascript",
+                "Text/JavaScript; charset=utf-8",
+            ] {
+                let app = Router::new().route(
+                    "/var/brand.js",
+                    get(move || async move { ([(CONTENT_TYPE, content_type)], BRAND) }),
+                );
+                let router = system_router_with_boser(app).await;
+                let (status, headers, body) = send(&router, request("GET", "/system.js", "")).await;
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(headers[CONTENT_TYPE], "text/javascript; charset=utf-8");
+                assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+                let encoded_brand = assert_capabilities_script(&body)
+                    .strip_prefix("try { (0, eval)(")
+                    .and_then(|value| {
+                        value.strip_suffix(
+                            ") } catch (err) { console.error(\"boser branding failed\", err) }\n",
+                        )
+                    })
+                    .expect("branding must run behind an isolated indirect eval");
+                assert_eq!(
+                    serde_json::from_str::<String>(encoded_brand)
+                        .expect("branding must be a JSON string literal"),
+                    BRAND
+                );
+                assert!(!encoded_brand.contains(['\u{2028}', '\u{2029}']));
+            }
+        }
+
+        #[tokio::test]
+        async fn system_script_ignores_missing_or_non_javascript_branding() {
+            for (status, content_type) in [
+                (StatusCode::NOT_FOUND, "text/javascript"),
+                (StatusCode::INTERNAL_SERVER_ERROR, "text/javascript"),
+                (StatusCode::OK, "text/html; charset=utf-8"),
+                (StatusCode::OK, "application/json"),
+                (StatusCode::OK, "invalid"),
+                (StatusCode::FOUND, "text/javascript"),
+            ] {
+                let app = Router::new().route(
+                    "/var/brand.js",
+                    get(move || async move {
+                        (status, [(CONTENT_TYPE, content_type)], "unusable branding")
+                    }),
+                );
+                let router = system_router_with_boser(app).await;
+                let (status, _, body) = send(&router, request("GET", "/system.js", "")).await;
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(assert_capabilities_script(&body), "");
+            }
+        }
+
+        #[tokio::test]
+        async fn system_script_ignores_oversized_branding() {
+            let brand = "x".repeat(BoserProxy::BRAND_SCRIPT_MAX_BYTES + 1);
+            let app = Router::new().route(
+                "/var/brand.js",
+                get(move || {
+                    let brand = brand.clone();
+                    async move { ([(CONTENT_TYPE, "text/javascript")], brand) }
+                }),
+            );
+            let router = system_router_with_boser(app).await;
+            let (status, _, body) = send(&router, request("GET", "/system.js", "")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(assert_capabilities_script(&body), "");
+        }
+
+        #[tokio::test]
+        async fn system_script_ignores_non_utf8_branding() {
+            let app = Router::new().route(
+                "/var/brand.js",
+                get(|| async {
+                    (
+                        [(CONTENT_TYPE, "text/javascript")],
+                        Bytes::from_static(b"\xff"),
+                    )
+                }),
+            );
+            let router = system_router_with_boser(app).await;
+            let (status, _, body) = send(&router, request("GET", "/system.js", "")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(assert_capabilities_script(&body), "");
+        }
+
+        #[tokio::test]
+        async fn system_script_keeps_capabilities_when_branding_body_stalls() {
+            let app = Router::new().route(
+                "/var/brand.js",
+                get(|| async {
+                    let body = async_stream::stream! {
+                        yield Ok::<_, std::io::Error>(Bytes::from_static(b"window.BRAND = "));
+                        std::future::pending::<()>().await;
+                    };
+                    ([(CONTENT_TYPE, "text/javascript")], Body::from_stream(body))
+                }),
+            );
+            let router = system_router_with_boser(app).await;
+            let (status, _, body) = tokio::time::timeout(
+                BoserProxy::BRAND_TIMEOUT * 2,
+                send(&router, request("GET", "/system.js", "")),
+            )
+            .await
+            .expect("optional branding must not block startup indefinitely");
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(assert_capabilities_script(&body), "");
         }
 
         #[tokio::test]

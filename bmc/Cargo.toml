@@ -97,6 +97,7 @@ uuid.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+async-stream.workspace = true
 proptest.workspace = true
 similar-asserts.workspace = true
 tempfile.workspace = true
