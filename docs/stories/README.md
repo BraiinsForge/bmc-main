@@ -128,6 +128,13 @@ What the Deck's physical buttons do. A short press of the IP-report button bring
 on screen, waking a dark display first; the reset button restarts the device on a short press and factory-resets it on a
 long hold. Also covers which product answers to which button and the split with Boser, which reads the same buttons.
 
+### [Mining Status Indicator](mining-status.md)
+
+A pickaxe the BMC application draws in the bottom-right corner of a miner's display: violet while the miner tunes, red
+while it underperforms, is stopped or cannot be reached, and nothing at all while it mines normally. The OFFLINE chip
+takes the corner while the device has no network, and the pickaxe returns in its current state once connectivity is
+back.
+
 ### Audio & Alarms
 
 See [Clock Alarm](alarm.md) for the whole alarm feature — configuring alarms from the web app (time, repeat days, label,
