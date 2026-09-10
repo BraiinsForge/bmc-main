@@ -15,3 +15,14 @@ target = "bmc100:medium"
 [fixtures.bmc100-small]
 path = "fixtures/bmc100-small.jsonl.gz"
 target = "bmc100:small"
+
+# A fixture carries no geometry, so one recording serves every viewport. All
+# four takes above request the same single URL, so replaying one covers the
+# remaining platforms without recording anything new.
+[fixtures.bmm100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmm101:full"

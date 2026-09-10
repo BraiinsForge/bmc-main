@@ -24,3 +24,7 @@ target = "bmc100:small"
 [fixtures.bmm101-full]
 path = "fixtures/common.jsonl.gz"
 target = "bmm101:full"
+
+[fixtures.bmm100-full]
+path = "fixtures/common.jsonl.gz"
+target = "bmm100:full"

@@ -5,3 +5,30 @@ target = "bmc100:full"
 [fixtures.bmc100-full-long-month]
 path = "fixtures/bmc100-full-long-month.jsonl.gz"
 target = "bmc100:full"
+
+# A fixture carries no geometry, so one recording serves every viewport. The
+# clock fetches nothing at all, so there is no recorded response for a replay
+# to miss — only the face style and readouts come from the take's params.
+[fixtures.bmc100-large]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmm100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmm101:full"
+
+[fixtures.bfm100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bfm100:full"

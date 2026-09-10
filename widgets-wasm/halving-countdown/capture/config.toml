@@ -1,3 +1,29 @@
 [fixtures.bmc100-full]
 path = "fixtures/bmc100-full.jsonl.gz"
 target = "bmc100:full"
+
+# A fixture carries no geometry, so one recording serves every viewport. The
+# single take requests one URL, which the widget asks for at any size.
+[fixtures.bmc100-large]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmm100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmm101:full"
+
+[fixtures.bfm100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+target = "bfm100:full"
