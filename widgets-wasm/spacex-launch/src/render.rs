@@ -48,8 +48,18 @@ pub fn current_view(data: &LaunchData, size: WidgetSize) -> Node {
     };
     match size.variant {
         SizeVariant::Full => render_full(size.height, data, &countdown, status),
-        SizeVariant::Large => render_large(data, &countdown, status),
-        SizeVariant::Medium => render_medium(data, &countdown, status),
+        // The large view stacks both tables and needs the height it was drawn
+        // for. A shorter viewport still classifies as Large (BMM101 at 480x320
+        // does), and the stack then runs past the bottom edge, so anything
+        // short falls to the side-by-side view that fits a shallow frame.
+        SizeVariant::Large if size.height >= SizeVariant::Large.height() => {
+            render_large(data, &countdown, status)
+        }
+        // Narrower than the Deck slot the side-by-side view was drawn for,
+        // so its values wrap where they used to fit. Stacking each under
+        // its label spends the height this frame has spare to buy back that width.
+        SizeVariant::Large => render_medium(data, &countdown, status, ValueLayout::Stacked),
+        SizeVariant::Medium => render_medium(data, &countdown, status, ValueLayout::Inline),
         SizeVariant::Small => render_small(data, &countdown, status),
     }
 }
@@ -107,22 +117,34 @@ pub fn error_view(detail: &str) -> Node {
 // Reusable layout pieces
 // ============================================================================
 
-/// Single table row: gray label left, bold value right.
-fn table_row(label: &str, value: &str, font_size: u32) -> Node {
-    row(
-        props!(),
-        [
-            text(
-                label,
-                style!(size: font_size, color: GRAY_30, line_height: 1.2),
-            ),
-            spacer(1.0),
-            text(
-                value,
-                style!(size: font_size, weight: FontWeight::BOLD, line_height: 1.2),
-            ),
-        ],
-    )
+/// How a table row spends its space on a label and its value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ValueLayout {
+    /// Label left, value right on one line. Needs width to hold both.
+    Inline,
+    /// Value under its label. Costs a line per row and gives the value the
+    /// row's whole width, for a viewport with height to spare and none to
+    /// waste sideways.
+    Stacked,
+}
+
+/// Single table row: gray label, bold value.
+fn table_row(label: &str, value: &str, font_size: u32, layout: ValueLayout) -> Node {
+    let label = text(
+        label,
+        style!(size: font_size, color: GRAY_30, line_height: 1.2),
+    );
+    let value = text(
+        value,
+        style!(size: font_size, weight: FontWeight::BOLD, line_height: 1.2),
+    );
+    match layout {
+        // The gap is what keeps the two apart once the value grows enough to
+        // wrap: the spacer collapses to nothing at that point, and without it
+        // the label and the value touch.
+        ValueLayout::Inline => row(props!(gap: 8.0), [label, spacer(1.0), value]),
+        ValueLayout::Stacked => col(props!(gap: 2.0), [label, value]),
+    }
 }
 
 /// Thin horizontal separator line.
@@ -137,33 +159,34 @@ fn launch_info_table(
     data: &LaunchData,
     countdown: &str,
     status: &str,
+    layout: ValueLayout,
 ) -> Node {
     col(
         props!(gap: gap, flex: 1.0),
         [
-            table_row("Scheduled", countdown, font_size),
+            table_row("Scheduled", countdown, font_size, layout),
             divider(),
-            table_row("Status", status, font_size),
+            table_row("Status", status, font_size, layout),
             divider(),
-            table_row("Rocket", &data.rocket, font_size),
+            table_row("Rocket", &data.rocket, font_size, layout),
             divider(),
-            table_row("Place", &data.place, font_size),
+            table_row("Place", &data.place, font_size, layout),
         ],
     )
 }
 
 /// Right table: Landing, Booster, Payload, Spacecraft.
-fn detail_table(font_size: u32, gap: f32, data: &LaunchData) -> Node {
+fn detail_table(font_size: u32, gap: f32, data: &LaunchData, layout: ValueLayout) -> Node {
     col(
         props!(gap: gap, flex: 1.0),
         [
-            table_row("Landing", &data.landing, font_size),
+            table_row("Landing", &data.landing, font_size, layout),
             divider(),
-            table_row("Booster", &data.booster, font_size),
+            table_row("Booster", &data.booster, font_size, layout),
             divider(),
-            table_row("Payload", &data.payload, font_size),
+            table_row("Payload", &data.payload, font_size, layout),
             divider(),
-            table_row("Spacecraft", &data.spacecraft, font_size),
+            table_row("Spacecraft", &data.spacecraft, font_size, layout),
         ],
     )
 }
@@ -225,8 +248,15 @@ fn render_full(height: u32, data: &LaunchData, countdown: &str, status: &str) ->
                     row(
                         props!(gap: 40.0),
                         [
-                            launch_info_table(24, 10.0, data, countdown, status),
-                            detail_table(24, 10.0, data),
+                            launch_info_table(
+                                24,
+                                10.0,
+                                data,
+                                countdown,
+                                status,
+                                ValueLayout::Inline,
+                            ),
+                            detail_table(24, 10.0, data, ValueLayout::Inline),
                         ],
                     ),
                     spacer(0.3),
@@ -265,8 +295,8 @@ fn render_large(data: &LaunchData, countdown: &str, status: &str) -> Node {
             col(
                 props!(gap: 32.0),
                 [
-                    launch_info_table(18, 6.0, data, countdown, status),
-                    detail_table(18, 6.0, data),
+                    launch_info_table(18, 6.0, data, countdown, status, ValueLayout::Inline),
+                    detail_table(18, 6.0, data, ValueLayout::Inline),
                 ],
             ),
         ],
@@ -274,7 +304,7 @@ fn render_large(data: &LaunchData, countdown: &str, status: &str) -> Node {
 }
 
 /// Medium (638×238): mission in header, two tables side by side.
-fn render_medium(data: &LaunchData, countdown: &str, status: &str) -> Node {
+fn render_medium(data: &LaunchData, countdown: &str, status: &str, layout: ValueLayout) -> Node {
     col(
         props!(padding: 24.0, gap: 8.0, background: BLACK),
         [
@@ -293,8 +323,8 @@ fn render_medium(data: &LaunchData, countdown: &str, status: &str) -> Node {
             row(
                 props!(gap: 20.0),
                 [
-                    launch_info_table(16, 6.0, data, countdown, status),
-                    detail_table(16, 6.0, data),
+                    launch_info_table(16, 6.0, data, countdown, status, layout),
+                    detail_table(16, 6.0, data, layout),
                 ],
             ),
         ],
@@ -311,7 +341,7 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
                 style!(size: 20, weight: FontWeight::BOLD),
             ),
             spacer(1.0),
-            launch_info_table(20, 8.0, data, countdown, status),
+            launch_info_table(20, 8.0, data, countdown, status, ValueLayout::Inline),
         ],
     )
 }
