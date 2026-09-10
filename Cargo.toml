@@ -34,6 +34,7 @@ members = [
     "bmc-support",
     "bmc-support-openwrt",
     "bmc-upgrade",
+    "bmc-upgrade/types",
     "bmc-virt/console",
     "bmc-virt/ipc",
     "bmc-virt/leds",
@@ -223,6 +224,7 @@ bmc-support-openwrt = { path = "bmc-support-openwrt" }
 bmc-svg-compiler = { path = "bmc-wasm-runtime/svg-compiler" }
 bmc-system-overlay = { path = "system-overlays/bmc-system-overlay" }
 bmc-upgrade = { path = "bmc-upgrade" }
+bmc-upgrade-types = { path = "bmc-upgrade/types" }
 bmc-virt-ipc = { path = "bmc-virt/ipc" }
 bmc-virt-leds = { path = "bmc-virt/leds" }
 bmc-wasm-assets = { path = "bmc-wasm-assets" }

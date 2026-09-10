@@ -1,0 +1,12 @@
+[package]
+name = "bmc-upgrade-types"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["Braiins <braiins@braiins.com>"]
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

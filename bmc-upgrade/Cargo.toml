@@ -11,6 +11,7 @@ async-trait.workspace = true
 bmc-nix.workspace = true
 bmc-platform.workspace = true
 bmc-scheduler.workspace = true
+bmc-upgrade-types.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 data-encoding.workspace = true

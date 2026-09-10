@@ -1378,6 +1378,7 @@ dependencies = [
  "bmc-nix",
  "bmc-platform",
  "bmc-scheduler",
+ "bmc-upgrade-types",
  "bytes",
  "chrono",
  "data-encoding",
@@ -1395,6 +1396,13 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "bmc-upgrade-types"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
