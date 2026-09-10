@@ -476,8 +476,10 @@ class View extends Component<Props, State> {
         const widgets = this.state.scene?.kind.case === 'combined' ? this.state.scene.kind.value.widgets : [];
         const canonicalPosition = fn.getWidgetInsertionSlot(widgets, { id: '', size, position }) ?? position;
 
+        let newWidgetId: string;
         try {
-            const { value: newWidgetId } = await pb.rpc.scenes.addWidget({
+            // No client abort signal here, so Canceled is the server refusing like any other code.
+            ({ value: newWidgetId } = await pb.rpc.scenes.addWidget({
                 sceneId,
                 position: canonicalPosition,
                 size,
@@ -485,41 +487,46 @@ class View extends Component<Props, State> {
                     widgetUid: manifest.uid,
                     params: pb.create(pb.WidgetDataStructSchema, { fields: {} }),
                 },
-            });
-
-            const { scene } = await pb.rpc.scenes.getScene({ value: sceneId });
-            const widget =
-                scene?.kind.case === 'combined' ? scene.kind.value.widgets.find(w => w.id === newWidgetId) : undefined;
-
-            const resolvedParams = fn.widgetParamsToFormifiedState(manifest, widget?.config?.params);
-            const resolvedPosition = widget?.position ?? canonicalPosition;
-            const resolvedSize = widget?.size ?? size;
-
-            this.setState({
-                openDialogKind: 'manifest',
-                manifestForm: {
-                    manifest,
-                    widgetID: newWidgetId,
-                    params: resolvedParams,
-                    errors: null,
-                    size: resolvedSize,
-                    sizeOptions,
-                    position: resolvedPosition,
-                    // Nothing to restore on a widget that did not exist a moment ago;
-                    // only the slot it went into, for a resize to fit around.
-                    undo: { ...noUndo(), position: resolvedPosition },
-                    isNewWidget: true,
-                    credentialBindings: {},
-                },
-            });
-            this.#loadSceneDebounced();
+            }));
         } catch ($) {
-            if (pb.abort.is($)) return;
-            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            let msg = fn.runningWidgetLimitErrorMessage($, intl);
             msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to add widget!' });
             toast.error(msg);
+            return;
         }
+
+        // The widget exists from here, so the editor has to open against the placement
+        // the server actually chose — a guess would only earn a refusal from the next update.
+        // A missing scene means the load already reported itself, or a newer one replaced it.
+        const scene = await this.#loadScene();
+        if (!scene) return;
+
+        const widget =
+            scene.kind.case === 'combined' ? scene.kind.value.widgets.find(w => w.id === newWidgetId) : undefined;
+        if (!widget) {
+            toast.error(formatMessage({ defaultMessage: 'Widget added, but its settings could not be opened.' }));
+            return;
+        }
+
+        const resolvedPosition = widget.position ?? canonicalPosition;
+        this.setState({
+            openDialogKind: 'manifest',
+            manifestForm: {
+                manifest,
+                widgetID: newWidgetId,
+                params: fn.widgetParamsToFormifiedState(manifest, widget.config?.params),
+                errors: null,
+                size: widget.size,
+                sizeOptions,
+                position: resolvedPosition,
+                // Nothing to restore on a widget that did not exist a moment ago;
+                // only the slot it went into, for a resize to fit around.
+                undo: { ...noUndo(), position: resolvedPosition },
+                isNewWidget: true,
+                credentialBindings: {},
+            },
+        });
     };
 
     #livePreviewWidget = debounce(async (): Promise<void> => {

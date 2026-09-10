@@ -260,6 +260,24 @@ describe('dialog session lifecycle', () => {
         });
     });
 
+    // The editor opens against the placement the server chose, so a widget the read-back
+    // does not carry cannot be configured against a guess — it would only be refused later.
+    test('a widget missing from the read-back reports itself instead of opening the editor', async () => {
+        registerMocks(pb.services.SceneManagementService, {
+            addWidget: () => ({ value: 'never-stored' }),
+        });
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 0 / 56');
+        clickAddSlot(container);
+        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+
+        await waitFor(() =>
+            expect(document.body.textContent).toContain('Widget added, but its settings could not be opened.'),
+        );
+        expect(screen.queryByRole('dialog', { name: 'Configure Widget' })).toBeNull();
+    });
+
     test('closing the picker after saving a widget leaves that widget in place', async () => {
         const { container } = renderPage();
 
