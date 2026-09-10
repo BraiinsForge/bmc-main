@@ -23,6 +23,11 @@ declare module '*.svg' {
     const Component: FunctionComponent<SVGProps<SVGSVGElement>>;
     export default Component;
 }
+// The `?url` query skips svgr and yields the emitted asset's URL instead.
+declare module '*.svg?url' {
+    const src: string;
+    export default src;
+}
 
 // The asset module declarations below come from @rsbuild/core/types.
 // Copyright (c) 2023-present ByteDance, Inc. and its affiliates, licensed under MIT.

@@ -20,7 +20,7 @@
 
 import { describe, expect, test } from '@rstest/core';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
-import { ethernetConfigurable, networkConfigurable, wifiConfigurable } from './capabilities';
+import { boserChrome, ethernetConfigurable, networkConfigurable, wifiConfigurable } from './capabilities';
 
 describe('capability predicates', () => {
     test('a standalone Deck configures the interfaces it has', () => {
@@ -35,5 +35,6 @@ describe('capability predicates', () => {
         const caps = deckCapabilities({ wifiSupported: true, ethernetSupported: true, boserManaged: true });
 
         expect(networkConfigurable(caps)).toBe(false);
+        expect(boserChrome(caps)).toBe(true);
     });
 });

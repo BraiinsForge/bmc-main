@@ -20,6 +20,8 @@
 
 import { useState, useEffect } from 'react';
 import * as pb from '@/proto';
+import { boserChrome } from '@/lib/capabilities';
+import { readBrand, type Brand } from '@/lib/brand';
 import { readSystem, type Capabilities } from '@/lib/system';
 
 export type Listener<R> = (store: Store) => R;
@@ -34,6 +36,7 @@ interface SessionInfo {
 interface State {
     sessionInfo: SessionInfo;
     hardwareCapabilities: Capabilities;
+    brand: null | Brand;
 }
 // Capabilities exist only after `boot()`; the public `state` hides that gap.
 type StoreState = Omit<State, 'hardwareCapabilities'> & { hardwareCapabilities: null | State['hardwareCapabilities'] };
@@ -45,6 +48,7 @@ class Store {
             hasPassword: null,
         },
         hardwareCapabilities: null,
+        brand: null,
     });
     #setState<Key extends keyof StoreState>(
         key: Key,
@@ -124,10 +128,16 @@ class Store {
     setHardwareCapabilities = (caps: null | Capabilities): void => {
         this.#setState('hardwareCapabilities', caps);
     };
+    setBrand = (brand: null | Brand): void => {
+        this.#setState('brand', brand);
+    };
 
     /** Reads what the whole UI is keyed on; throws when the device cannot be described. */
     boot = (): void => {
-        this.setHardwareCapabilities(readSystem().capabilities);
+        const { capabilities: caps } = readSystem();
+        this.setHardwareCapabilities(caps);
+        // system.js carries the brand script only where boser manages the device.
+        this.setBrand(boserChrome(caps) ? readBrand() : null);
     };
 }
 

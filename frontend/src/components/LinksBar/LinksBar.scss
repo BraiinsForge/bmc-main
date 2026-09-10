@@ -1,0 +1,79 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
+
+@use 'styles/carbon' as *;
+
+// Matches boser's LinksBar so the bar does not jump when switching tabs.
+$links-gutter: mini-units(2);
+
+.root {
+    composes: horizontal from 'styles/layout.scss';
+    position: fixed;
+    inset-block-start: 0;
+    inset-inline: 0;
+    z-index: z('header') + 1;
+    height: to-rem(36px);
+    white-space: nowrap;
+
+    background-color: #000;
+    color: #fff;
+}
+
+.links {
+    composes: horizontal center startJustified from 'styles/layout.scss';
+    composes: scrollbar from 'styles/interaction.scss';
+
+    position: relative;
+    max-width: 100%;
+    height: 100%;
+    overflow: auto;
+
+    // Only as wide as the scrolled parent otherwise,
+    // which clips the last item's margin out of the viewport.
+    width: max-content;
+    padding: 0 to-rem(20px);
+    margin-inline: $links-gutter * -1;
+
+    a {
+        font-size: to-rem(14px);
+        color: $braiins-gray-60;
+        text-decoration: none;
+        margin: 0 $links-gutter;
+
+        &.activeLink {
+            color: $braiins-gray-20 !important;
+        }
+
+        &:hover,
+        &:focus {
+            color: $braiins-violet-50;
+            text-decoration: none;
+        }
+    }
+
+    // Keeps the last link's margin inside the viewport.
+    &::after {
+        content: ' ';
+        white-space: pre;
+        display: inline-block;
+        width: 1px;
+        height: 100%;
+    }
+}

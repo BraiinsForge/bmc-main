@@ -18,24 +18,21 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import type { Capabilities } from '@/lib/system';
+import { afterEach, describe, expect, test } from '@rstest/core';
+import { cleanup, render } from '@testing-library/react/pure';
+import { LinksBar } from './LinksBar';
 
-export function ethernetConfigurable(caps: Capabilities): boolean {
-    return caps.ethernetSupported && !caps.boserManaged;
-}
+afterEach(cleanup);
 
-export function wifiConfigurable(caps: Capabilities): boolean {
-    return caps.wifiSupported && !caps.boserManaged;
-}
+describe('LinksBar', () => {
+    test('renders the links a brand file provides', () => {
+        const view = render(<LinksBar links={[{ href: 'https://acme.example', text: 'Acme', isActive: true }]} />);
+        const link = view.getByText('Acme');
 
-export function networkConfigurable(caps: Capabilities): boolean {
-    return ethernetConfigurable(caps) || wifiConfigurable(caps);
-}
+        expect(link.getAttribute('href')).toBe('https://acme.example');
+    });
 
-function boserManaged(caps: Capabilities): boolean {
-    return caps.boserManaged;
-}
-
-export function boserChrome(caps: Capabilities): boolean {
-    return boserManaged(caps);
-}
+    test('renders nothing without links', () => {
+        expect(render(<LinksBar links={[]} />).container.textContent).toBe('');
+    });
+});

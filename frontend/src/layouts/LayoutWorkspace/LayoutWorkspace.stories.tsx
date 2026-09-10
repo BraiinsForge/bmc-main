@@ -19,19 +19,55 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import type { ReactNode } from 'react';
+import type { Meta, StoryObj } from '@storybook/react';
+import { store } from '@/store';
+import type { Brand } from '@/lib/brand';
+import type { Capabilities } from '@/lib/system';
+import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
+import headerLogoUrl from '@/components/images/logos/header.svg?url';
 import { LayoutWorkspace as Component } from './LayoutWorkspace';
+
+// Mirrors boser's shipped `/var/brand.js`, which the header consumes on a managed device.
+const BRAND: Brand = {
+    name: 'Braiins OS',
+    logo: { header: { src: headerLogoUrl, style: { padding: 14 } } },
+    links: {
+        products: [
+            { href: 'https://braiins.com', text: 'Braiins.com' },
+            { href: 'https://braiins.com/pool', text: 'Braiins Pool' },
+            { href: 'https://braiins.com/os-firmware', text: 'Braiins\xa0OS', isActive: true },
+            { href: 'https://braiins.com/toolbox', text: 'Braiins Toolbox' },
+        ],
+    },
+};
+
+// The layout reads the store the app seeds from `system.js` at boot; Storybook has no such script.
+function onDevice(capabilities: Capabilities, brand: null | Brand) {
+    return (Story: () => ReactNode) => {
+        store.setHardwareCapabilities(capabilities);
+        store.setBrand(brand);
+        return <Story />;
+    };
+}
+
+const children =
+    'Lorem ipsum dolor sit amet, consectetur adipisicing elit. Assumenda atque, consequatur cumque dolores ' +
+    'dolorum in minima molestiae natus, officiis, omnis pariatur quisquam tempore ullam voluptate voluptatem.';
 
 export default {
     title: 'layouts/LayoutWorkspace',
     component: Component,
+    parameters: { layout: 'fullscreen' },
+    args: { children },
+} satisfies Meta<typeof Component>;
+
+type Story = StoryObj<typeof Component>;
+
+export const Deck: Story = {
+    decorators: [onDevice(deckCapabilities(), null)],
 };
 
-export function LayoutWorkspace() {
-    return (
-        <Component>
-            Lorem ipsum dolor sit amet, consectetur adipisicing elit. Assumenda atque, consequatur cumque dolores
-            dolorum in minima molestiae natus, officiis, omnis pariatur quisquam tempore ullam voluptate voluptatem.
-            Aliquid dignissimos eaque eveniet?
-        </Component>
-    );
-}
+export const BoserManaged: Story = {
+    decorators: [onDevice(deckCapabilities({ boserManaged: true, ethernetSupported: true }), BRAND)],
+};

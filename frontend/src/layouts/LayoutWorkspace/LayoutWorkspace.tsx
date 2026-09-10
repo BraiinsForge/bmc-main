@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Fragment, Component, useCallback, type UIEvent, type KeyboardEvent } from 'react';
+import { Fragment, Component, useCallback, type UIEvent, type KeyboardEvent, type MouseEvent } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { useLocation, useNavigate, type NavigateFunction } from 'react-router';
 import { Key } from 'ts-key-enum';
@@ -26,8 +26,10 @@ import { Key } from 'ts-key-enum';
 import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
 import type { Capabilities } from '@/lib/system';
-import { networkConfigurable } from '@/lib/capabilities';
-import { LogoHeader } from '@/components';
+import { boserChrome, networkConfigurable } from '@/lib/capabilities';
+import type { Brand } from '@/lib/brand';
+import { ARIA, LogoHeader, LinksBar } from '@/components';
+import cn from 'clsx';
 
 import {
     Content,
@@ -37,6 +39,8 @@ import {
     HeaderMenuButton,
     HeaderGlobalBar,
     HeaderGlobalAction,
+    HeaderNavigation,
+    HeaderMenuItem,
     SkipToContent,
     SideNav,
     SideNavItems,
@@ -65,6 +69,7 @@ interface Props extends LayoutWorkspaceProps {
     navigate: NavigateFunction;
     hasPassword: null | boolean;
     capabilities: Capabilities;
+    brand: null | Brand;
 }
 
 interface State {}
@@ -76,6 +81,11 @@ class Base extends Component<Props, State> {
         name: this.props.intl.formatMessage({ defaultMessage: 'Braiins DECK' }),
         sidenav: this.props.intl.formatMessage({ defaultMessage: 'Side navigation' }),
 
+        topnav: this.props.intl.formatMessage({ defaultMessage: 'Top level navigation' }),
+        dashboard: this.props.intl.formatMessage({ defaultMessage: 'Dashboard' }),
+        configuration: this.props.intl.formatMessage({ defaultMessage: 'Configuration' }),
+        system: this.props.intl.formatMessage({ defaultMessage: 'System' }),
+        display: this.props.intl.formatMessage({ defaultMessage: 'Display' }),
         documentation: this.props.intl.formatMessage({ defaultMessage: 'Documentation' }),
         logout: this.props.intl.formatMessage({ defaultMessage: 'Logout' }),
     };
@@ -83,11 +93,29 @@ class Base extends Component<Props, State> {
     #gotHome = (): void => {
         this.props.navigate(URLS.pages.display.list);
     };
+    #gotoDisplay = (event: MouseEvent<HTMLAnchorElement>): void => {
+        event.preventDefault();
+        this.#gotHome();
+    };
+    // Below Carbon's lg breakpoint the header tabs are gone,
+    // so like boser the drawer carries them as one section per tab; CSS hides them above it.
+    #renderBoserSections = (): ReactNode => (
+        <div className={css.boserSections}>
+            <SideSection title={this.#txt.dashboard} />
+            <SideNavLink href={URLS.boser.dashboard} className={css.sideLink} children={this.#txt.dashboard} />
+            <SideSection title={this.#txt.configuration} />
+            <SideNavLink href={URLS.boser.configuration} className={css.sideLink} children={this.#txt.configuration} />
+            <SideSection title={this.#txt.system} />
+            <SideNavLink href={URLS.boser.system} className={css.sideLink} children={this.#txt.system} />
+            <SideSection title={this.#txt.display} />
+        </div>
+    );
     #renderSidenavItems = (): ReactNode => {
         const { formatMessage } = this.props.intl;
 
         return (
             <Fragment>
+                {boserChrome(this.props.capabilities) && this.#renderBoserSections()}
                 <SideLink
                     icon={IconScreen}
                     url={URLS.pages.display.list}
@@ -125,10 +153,16 @@ class Base extends Component<Props, State> {
 
     #renderContent = (x: { isSideNavExpanded: boolean; onClickSideNavExpand(): void }): ReactNode => {
         const { isSideNavExpanded, onClickSideNavExpand } = x;
-        const { children, hasPassword } = this.props;
+        const { children, hasPassword, capabilities, brand } = this.props;
+        const boserUi = boserChrome(capabilities);
+        const links = brand?.links.products ?? [];
+        const logo = brand?.logo.header ?? null;
 
+        // The boser classes need a carrier and a Fragment cannot take one;
+        // Carbon positions the header and side nav `fixed`, so the div itself has no layout effect.
         return (
-            <Fragment>
+            <div className={cn(boserUi && css.boserLayout, boserUi && links.length > 0 && css.withLinksBar)}>
+                {boserUi && <LinksBar links={links} className={css.linksBar} />}
                 <Header aria-label={this.#txt.name}>
                     <SkipToContent />
 
@@ -139,9 +173,34 @@ class Base extends Component<Props, State> {
                         aria-expanded={isSideNavExpanded}
                     />
 
-                    <HeaderName prefix="" onClick={this.#gotHome} className={css.headerName}>
-                        <LogoHeader style={{ width: 'auto', height: 18 }} />
-                    </HeaderName>
+                    {boserUi && logo ? (
+                        <div className={css.headerNameBoser} {...ARIA.button(this.#gotHome)}>
+                            <img
+                                src={logo.src}
+                                style={logo.style}
+                                alt={`${brand?.name ?? 'Braiins OS'} logo`}
+                                className={css.brandLogo}
+                            />
+                        </div>
+                    ) : (
+                        <HeaderName prefix="" onClick={this.#gotHome} className={css.headerName}>
+                            <LogoHeader style={{ width: 'auto', height: 18 }} />
+                        </HeaderName>
+                    )}
+
+                    {boserUi && (
+                        <HeaderNavigation aria-label={this.#txt.topnav}>
+                            <HeaderMenuItem href={URLS.boser.dashboard} children={this.#txt.dashboard} />
+                            <HeaderMenuItem href={URLS.boser.configuration} children={this.#txt.configuration} />
+                            <HeaderMenuItem href={URLS.boser.system} children={this.#txt.system} />
+                            <HeaderMenuItem
+                                href={URLS.pages.display.list}
+                                onClick={this.#gotoDisplay}
+                                aria-current="page"
+                                children={this.#txt.display}
+                            />
+                        </HeaderNavigation>
+                    )}
 
                     <HeaderGlobalBar>
                         <HeaderActionButton
@@ -166,7 +225,7 @@ class Base extends Component<Props, State> {
                 </SideNav>
 
                 <Content id="main-content" className={css.main} children={children} />
-            </Fragment>
+            </div>
         );
     };
 
@@ -179,8 +238,22 @@ export function LayoutWorkspace(props: LayoutWorkspaceProps) {
     const intl = useIntl();
     const hasPassword: null | boolean = useStore(x => x.state.sessionInfo.hasPassword);
     const capabilities = useStore(x => x.state.hardwareCapabilities);
+    const brand = useStore(x => x.state.brand);
     const navigate = useNavigate();
-    return <Base {...props} intl={intl} navigate={navigate} hasPassword={hasPassword} capabilities={capabilities} />;
+    return (
+        <Base
+            {...props}
+            intl={intl}
+            navigate={navigate}
+            hasPassword={hasPassword}
+            capabilities={capabilities}
+            brand={brand}
+        />
+    );
+}
+
+function SideSection(props: { title: string }) {
+    return <div className={css.sideSection} role="heading" aria-level={2} children={props.title} />;
 }
 
 interface HeaderActionButtonProps {

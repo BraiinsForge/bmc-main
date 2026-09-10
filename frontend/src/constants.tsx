@@ -52,4 +52,9 @@ export const URLS = {
         pool: { accessProfiles: 'https://pool.braiins.com/settings/access' },
         widgetsDirectory: 'https://braiins.com/hardware/braiins-deck-widgets',
     },
+    boser: {
+        dashboard: '/bos',
+        configuration: '/bos/settings',
+        system: '/bos/system',
+    },
 } as const;

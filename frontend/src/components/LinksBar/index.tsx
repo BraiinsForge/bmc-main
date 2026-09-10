@@ -18,24 +18,4 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import type { Capabilities } from '@/lib/system';
-
-export function ethernetConfigurable(caps: Capabilities): boolean {
-    return caps.ethernetSupported && !caps.boserManaged;
-}
-
-export function wifiConfigurable(caps: Capabilities): boolean {
-    return caps.wifiSupported && !caps.boserManaged;
-}
-
-export function networkConfigurable(caps: Capabilities): boolean {
-    return ethernetConfigurable(caps) || wifiConfigurable(caps);
-}
-
-function boserManaged(caps: Capabilities): boolean {
-    return caps.boserManaged;
-}
-
-export function boserChrome(caps: Capabilities): boolean {
-    return boserManaged(caps);
-}
+export * from './LinksBar';

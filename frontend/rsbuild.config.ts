@@ -152,6 +152,8 @@ export default defineConfig({
             '/api': proxyConf,
             // Widget icons served by the BMC HTTP server
             '/widgets': proxyConf,
+            // Boser's logo assets that brand.js points at, relayed by the BMC server
+            '/var': proxyConf,
         },
     },
 });

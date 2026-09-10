@@ -20,6 +20,12 @@
 
 @use 'styles/carbon' as *;
 
+// Carbon's expanded SideNav width; the header and content align to it.
+$sidenav-width: mini-units(32);
+$header-height: mini-units(6);
+// boser's links bar height, so the two UIs line up across the top tabs.
+$links-bar-height: to-rem(36px);
+
 //
 // Header
 //
@@ -27,6 +33,11 @@
 .headerName {
     composes: horizontal from 'styles/layout.scss';
     gap: mini-units(3);
+    min-width: $sidenav-width;
+
+    @include breakpoint-down(lg) {
+        min-width: unset;
+    }
 
     > * {
         color: $text-primary;
@@ -34,6 +45,60 @@
         font-weight: normal;
         cursor: pointer;
     }
+}
+
+.headerNameBoser {
+    display: block;
+    box-sizing: border-box;
+    height: $header-height;
+    min-width: $sidenav-width;
+    margin-inline-end: mini-units(2);
+    line-height: 0;
+    cursor: pointer;
+
+    // Like boser, the image spans the bar height and the brand file supplies its padding.
+    .brandLogo {
+        display: inline-block;
+        box-sizing: border-box;
+        height: $header-height;
+        white-space: pre;
+    }
+
+    @include breakpoint-down(lg) {
+        min-width: unset;
+    }
+
+    @media (width <= 400px) {
+        display: none;
+    }
+}
+
+// Like boser, the links bar leaves the header in compact mode.
+.withLinksBar {
+    @include breakpoint-up(lg) {
+        :global(.cds--header) {
+            inset-block-start: $links-bar-height;
+        }
+
+        :global(.cds--side-nav) {
+            inset-block-start: calc(#{$header-height} + #{$links-bar-height});
+        }
+
+        .main {
+            margin-block-start: calc(#{$header-height} + #{$links-bar-height}) !important;
+        }
+    }
+
+    @include breakpoint-down(lg) {
+        .linksBar {
+            display: none;
+        }
+    }
+}
+
+// Boser's side navigation links are 40px tall; match them beside its tabs.
+.boserLayout .sidenav a:global(.cds--side-nav__link) {
+    height: mini-units(5) !important;
 }
 
 .headerAction {
@@ -52,6 +117,26 @@
 .sidenav {
     background-color: $layer-01 !important;
     border-inline-end: 1px solid $shell-border-color !important;
+}
+
+.boserSections {
+    @include breakpoint-up(lg) {
+        display: none;
+    }
+}
+
+// boser's drawer section title.
+.sideSection {
+    padding: mini-units(4) mini-units(2) mini-units(2);
+    font-weight: 600;
+    font-size: to-rem(11px);
+    line-height: to-rem(14px);
+    text-transform: uppercase;
+    color: $text-secondary;
+
+    &:first-child {
+        padding-top: mini-units(1);
+    }
 }
 
 .sideLink {
@@ -74,7 +159,7 @@
 //
 
 .main {
-    margin-inline-start: 16rem !important;
+    margin-inline-start: $sidenav-width !important;
     padding-inline: mini-units(3);
 
     @include breakpoint-down(lg) {

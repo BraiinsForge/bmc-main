@@ -18,24 +18,22 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import type { Capabilities } from '@/lib/system';
+import type { Meta, StoryObj } from '@storybook/react';
+import { LinksBar } from './LinksBar';
 
-export function ethernetConfigurable(caps: Capabilities): boolean {
-    return caps.ethernetSupported && !caps.boserManaged;
-}
+export default {
+    title: 'components/LinksBar',
+    component: LinksBar,
+    parameters: { layout: 'fullscreen' },
+} satisfies Meta<typeof LinksBar>;
 
-export function wifiConfigurable(caps: Capabilities): boolean {
-    return caps.wifiSupported && !caps.boserManaged;
-}
+type Story = StoryObj<typeof LinksBar>;
 
-export function networkConfigurable(caps: Capabilities): boolean {
-    return ethernetConfigurable(caps) || wifiConfigurable(caps);
-}
-
-function boserManaged(caps: Capabilities): boolean {
-    return caps.boserManaged;
-}
-
-export function boserChrome(caps: Capabilities): boolean {
-    return boserManaged(caps);
-}
+export const FromBrandFile: Story = {
+    args: {
+        links: [
+            { href: 'https://acme.example', text: 'Acme', isActive: true },
+            { href: 'https://acme.example/pool', text: 'Acme Pool' },
+        ],
+    },
+};

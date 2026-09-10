@@ -33,6 +33,7 @@ export * from './InlineLoading';
 export * from './InlineNotification';
 export * from './InlineNotificationsGroup';
 export * from './Link';
+export * from './LinksBar';
 export * from './Loading';
 export * from './Modal';
 export * from './ModalCustom';

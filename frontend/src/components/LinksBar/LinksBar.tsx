@@ -18,24 +18,33 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import type { Capabilities } from '@/lib/system';
+import cn from 'clsx';
+import THEME from '@/styles/theme';
+import type { BrandLink } from '@/lib/brand';
+import css from './LinksBar.scss';
 
-export function ethernetConfigurable(caps: Capabilities): boolean {
-    return caps.ethernetSupported && !caps.boserManaged;
+export interface LinksBarProps {
+    links: ReadonlyArray<BrandLink>;
+    className?: string;
 }
 
-export function wifiConfigurable(caps: Capabilities): boolean {
-    return caps.wifiSupported && !caps.boserManaged;
-}
+export function LinksBar({ links, className }: LinksBarProps) {
+    if (links.length === 0) return null;
 
-export function networkConfigurable(caps: Capabilities): boolean {
-    return ethernetConfigurable(caps) || wifiConfigurable(caps);
-}
-
-function boserManaged(caps: Capabilities): boolean {
-    return caps.boserManaged;
-}
-
-export function boserChrome(caps: Capabilities): boolean {
-    return boserManaged(caps);
+    return (
+        <nav className={cn(css.root, THEME.dark, className)}>
+            <div className={css.links}>
+                {links.map(({ href, text, isActive }, i) => (
+                    <a
+                        key={i}
+                        href={href}
+                        target="_self"
+                        dir="ltr"
+                        className={isActive === true ? css.activeLink : undefined}
+                        children={text}
+                    />
+                ))}
+            </div>
+        </nav>
+    );
 }
