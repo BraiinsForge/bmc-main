@@ -36,6 +36,24 @@ function boserManaged(caps: Capabilities): boolean {
     return caps.boserManaged;
 }
 
+// What boser's own UI covers on a managed device. All track `boserManaged` today;
+// BMC and boser upgrade independently, so the split is kept per feature.
+export function securityManaged(caps: Capabilities): boolean {
+    return boserManaged(caps);
+}
+
+export function upgradesManaged(caps: Capabilities): boolean {
+    return boserManaged(caps);
+}
+
+export function timezoneConfigurable(caps: Capabilities): boolean {
+    return !boserManaged(caps);
+}
+
+export function systemActionsOwned(caps: Capabilities): boolean {
+    return boserManaged(caps);
+}
+
 export function boserChrome(caps: Capabilities): boolean {
     return boserManaged(caps);
 }

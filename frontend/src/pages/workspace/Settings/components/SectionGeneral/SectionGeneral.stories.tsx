@@ -52,6 +52,8 @@ export default {
         unitSystem: getArg('unitSystem', pb.UnitSystem.METRIC),
         numberFormat: getArg('dateFormat', pb.NumberFormat.SPACE_GROUP_DOT_DECIMAL),
 
+        timezoneConfigurable: true,
+        systemActionsOwned: false,
         onFactoryReset: action('onFactoryReset'),
         onSystemReboot: action('onSystemReboot'),
         onDownloadSupportArchive: action('onDownloadSupportArchive'),

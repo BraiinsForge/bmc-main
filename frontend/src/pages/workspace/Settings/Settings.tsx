@@ -36,6 +36,8 @@ import { delay } from '@/lib/async';
 
 // App
 import * as pb from '@/proto';
+import type { Capabilities } from '@/lib/system';
+import { securityManaged, systemActionsOwned, timezoneConfigurable, upgradesManaged } from '@/lib/capabilities';
 import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
 import AppContext, { type AppContextType } from '@/context';
@@ -59,6 +61,7 @@ interface Props {
     intl: IntlShape;
     location: Location;
     hasPassword: null | boolean;
+    capabilities: Capabilities;
 }
 
 // The value is used in location hash, so be mindfull of that.
@@ -69,7 +72,16 @@ enum Tab {
     security = 'security',
     updates = 'updates',
 }
-const validTabs: string[] = Object.values(Tab);
+const isTabAvailable = (tab: Tab, caps: Capabilities): boolean => {
+    switch (tab) {
+        case Tab.security:
+            return !securityManaged(caps);
+        case Tab.updates:
+            return !upgradesManaged(caps);
+        default:
+            return true;
+    }
+};
 
 interface FieldState<T> {
     value: null | T;
@@ -238,6 +250,7 @@ class View extends Component<Props, State> {
 
     componentDidMount = () => this.#mount();
     componentWillUnmount = () => pb.abort.all(this);
+    #isTabAvailable = (tab: Tab): boolean => isTabAvailable(tab, this.props.capabilities);
 
     #mount = debounce(() => {
         this.#syncTabs();
@@ -246,17 +259,18 @@ class View extends Component<Props, State> {
     #syncTabs = () => {
         const { location } = this.props;
         const maybeTabHash = location.hash.slice(1);
-        if (!maybeTabHash) this.#tabChange(Tab.general);
-        else if (validTabs.includes(maybeTabHash)) this.#tabChange(maybeTabHash as Tab);
+        const tab = Object.values(Tab).find(x => x === maybeTabHash);
+        if (tab !== undefined && this.#isTabAvailable(tab)) {
+            this.#tabChange(tab);
+            return;
+        }
+        this.#tabChange(Tab.general);
+        // General is already active, so #tabChange leaves the URL alone and the rejected hash would outlive it.
+        if (maybeTabHash) window.history.replaceState(null, '', `#${Tab.general}`);
     };
     #fetchData = async (): Promise<void> => {
-        const q = [
-            this.#generalFetch(),
-            this.#fetchSystemInfo(),
-            this.#upgradesFeedCheck(),
-            this.#displayFetch(),
-            this.#soundLightFetch(),
-        ];
+        const q = [this.#generalFetch(), this.#fetchSystemInfo(), this.#displayFetch(), this.#soundLightFetch()];
+        if (!upgradesManaged(this.props.capabilities)) q.push(this.#upgradesFeedCheck());
         await Promise.allSettled(q);
     };
 
@@ -294,7 +308,7 @@ class View extends Component<Props, State> {
 
     get #tabs(): TabsProps<Tab>['tabs'] {
         const { formatMessage } = this.props.intl;
-        return [
+        const tabs: TabsProps<Tab>['tabs'] = [
             {
                 key: Tab.general,
                 label: formatMessage({ defaultMessage: 'General' }),
@@ -316,6 +330,7 @@ class View extends Component<Props, State> {
                 label: formatMessage({ defaultMessage: 'Upgrades' }),
             },
         ];
+        return tabs.filter(x => this.#isTabAvailable(x.key));
     }
     #tabChange = (tab: Tab): void => {
         if (this.state.activeTab === tab) return;
@@ -709,7 +724,9 @@ class View extends Component<Props, State> {
                 temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
                 unitSystem={this.#getFieldStruct(unitSystem, this.#generalSetUnitSystem)}
                 numberFormat={this.#getFieldStruct(numberFormat, this.#generalSetNumberFormat)}
+                timezoneConfigurable={timezoneConfigurable(this.props.capabilities)}
                 // System actions
+                systemActionsOwned={systemActionsOwned(this.props.capabilities)}
                 onFactoryReset={this.#generalFactoryReset}
                 onSystemReboot={this.#generalSystemReboot}
                 onDownloadSupportArchive={this.#generalDownloadSupportArchive}
@@ -1596,5 +1613,6 @@ export default function Settings() {
     const intl = useIntl();
     const location = useLocation();
     const hasPassword = useStore(x => x.state.sessionInfo.hasPassword);
-    return <View intl={intl} location={location} hasPassword={hasPassword} />;
+    const capabilities = useStore(x => x.state.hardwareCapabilities);
+    return <View intl={intl} location={location} hasPassword={hasPassword} capabilities={capabilities} />;
 }

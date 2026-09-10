@@ -124,12 +124,12 @@ function installMocks(startUpgrade: StartUpgradeMock): void {
     });
 }
 
-function renderPage() {
+function renderPage(hash = '#updates') {
     return render(
         <HelmetProvider>
             <IntlProvider locale="en">
                 <AppContext.Provider value={appContext}>
-                    <MemoryRouter initialEntries={['/#updates']}>
+                    <MemoryRouter initialEntries={[`/${hash}`]}>
                         <Settings />
                         <Toaster />
                     </MemoryRouter>
@@ -152,6 +152,7 @@ afterEach(() => {
     confirmSpy.mockClear();
     rstest.useRealTimers();
     store.setHardwareCapabilities(null);
+    window.history.replaceState(null, '', window.location.pathname);
     baselineInstanceId = 'instance-pre';
     polledInstanceId = 'instance-pre';
     instanceReads = 0;
@@ -295,5 +296,41 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
 
         await waitFor(() => expect(startUpgrade).toHaveBeenCalledTimes(1));
         expect(confirmSpy).toHaveBeenCalledTimes(1);
+    });
+});
+
+// The tab strip marks the active tab only through a CSS-module class,
+// which jsdom renders empty, so an open General tab is told by its first field set instead.
+const TAB_LABELS = ['General', 'Display', 'Sound & Light', 'Security', 'Upgrades'];
+const tabLabels = (): string[] =>
+    screen
+        .getAllByRole('button')
+        .map(x => x.textContent ?? '')
+        .filter(x => TAB_LABELS.includes(x));
+const generalTabOpen = (): boolean => screen.queryByText('Time & Date') !== null;
+
+describe('Settings tabs on a boser-managed device (BOS-3948)', () => {
+    test('a standalone Deck shows every tab and follows the hash', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+
+        renderPage('#updates');
+        await advance(300);
+
+        expect(tabLabels()).toEqual(TAB_LABELS);
+        expect(generalTabOpen()).toBe(false);
+        expect(window.location.hash).toBe('#updates');
+    });
+
+    test('a managed device hides Security and Upgrades and falls back to General', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: true }));
+
+        renderPage('#updates');
+        await advance(300);
+
+        expect(tabLabels()).toEqual(['General', 'Display', 'Sound & Light']);
+        expect(generalTabOpen()).toBe(true);
+        expect(window.location.hash).toBe('#general');
     });
 });

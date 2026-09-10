@@ -19,9 +19,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component } from 'react';
+import { Component, Fragment } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
+import { URLS } from '@/constants';
 import * as pb from '@/proto';
 import { getID } from '../../const';
 import { Form, type iField } from '@/lib/form';
@@ -42,7 +43,7 @@ import {
     ComboBox,
     type ComboBoxProps,
 } from '@carbon/react';
-import { Download as IconDownload, Restart as IconRestart } from '@carbon/react/icons';
+import { Download as IconDownload, Launch as IconLaunch, Restart as IconRestart } from '@carbon/react/icons';
 
 // Styles
 import css from './SectionGeneral.scss';
@@ -59,7 +60,10 @@ export interface SectionGeneralProps {
     unitSystem: iField<pb.UnitSystem>;
     numberFormat: iField<pb.NumberFormat>;
 
+    timezoneConfigurable: boolean;
+
     // System actions
+    systemActionsOwned: boolean;
     onFactoryReset(): void;
     onSystemReboot(): void;
     onDownloadSupportArchive(): void;
@@ -165,7 +169,10 @@ class View extends Component<Props> {
             numberFormat,
             // usageData,
 
+            timezoneConfigurable,
+
             // System actions
+            systemActionsOwned,
             onDownloadSupportArchive,
 
             // HOC
@@ -217,26 +224,28 @@ class View extends Component<Props> {
                         </CarbonFormField>
                     </Field> */}
 
-                    <Field
-                        variant="dark"
-                        title={formatMessage({ defaultMessage: 'Timezone' })}
-                        disabled={timezone.disabled}
-                    >
-                        <ComboBox<pb.Timezone>
-                            id={$('timezone')}
-                            titleText=""
+                    {timezoneConfigurable && (
+                        <Field
+                            variant="dark"
+                            title={formatMessage({ defaultMessage: 'Timezone' })}
                             disabled={timezone.disabled}
-                            direction="bottom"
-                            items={Array.from(timezone.items)}
-                            onChange={this.#timezoneChange}
-                            itemToString={pb.renderTimezone}
-                            itemToElement={this.#timezoneRenderElement}
-                            selectedItem={timezone.value}
-                            invalid={!!timezone.error}
-                            invalidText={timezone.error}
-                            className={css.timezoneComboBox}
-                        />
-                    </Field>
+                        >
+                            <ComboBox<pb.Timezone>
+                                id={$('timezone')}
+                                titleText=""
+                                disabled={timezone.disabled}
+                                direction="bottom"
+                                items={Array.from(timezone.items)}
+                                onChange={this.#timezoneChange}
+                                itemToString={pb.renderTimezone}
+                                itemToElement={this.#timezoneRenderElement}
+                                selectedItem={timezone.value}
+                                invalid={!!timezone.error}
+                                invalidText={timezone.error}
+                                className={css.timezoneComboBox}
+                            />
+                        </Field>
+                    )}
 
                     <Field
                         variant="dark"
@@ -341,45 +350,67 @@ class View extends Component<Props> {
                 </FieldSet>
 
                 <FieldSet title={formatMessage({ defaultMessage: 'System Actions' })}>
-                    <Field title={formatMessage({ defaultMessage: 'Reboot Device' })}>
-                        <Button
-                            id={$('system-reboot')}
-                            kind="tertiary"
-                            icon={IconRestart}
-                            children={formatMessage({ defaultMessage: 'Reboot' })}
-                            onClick={this.#reboot}
-                        />
-                    </Field>
+                    {/* boser's UI is mounted beside ours by the display proxy.
+                        Opening it from here carries the session cookie, so no second login is needed.
+                        Its System tab owns reboot, support archive and factory reset on such a device. */}
+                    {systemActionsOwned ? (
+                        <Field
+                            title={formatMessage({ defaultMessage: 'Braiins OS Interface' })}
+                            description={formatMessage({
+                                defaultMessage: 'Open the miner interface served alongside this one.',
+                            })}
+                        >
+                            <Button
+                                id={$('open-boser-frontend')}
+                                kind="tertiary"
+                                icon={IconLaunch}
+                                children={formatMessage({ defaultMessage: 'Open' })}
+                                href={URLS.boser.system}
+                            />
+                        </Field>
+                    ) : (
+                        <Fragment>
+                            <Field title={formatMessage({ defaultMessage: 'Reboot Device' })}>
+                                <Button
+                                    id={$('system-reboot')}
+                                    kind="tertiary"
+                                    icon={IconRestart}
+                                    children={formatMessage({ defaultMessage: 'Reboot' })}
+                                    onClick={this.#reboot}
+                                />
+                            </Field>
 
-                    <Field
-                        title={formatMessage({ defaultMessage: 'Download Support Archive' })}
-                        description={formatMessage({
-                            defaultMessage: 'Download system diagnostics and logs for troubleshooting.',
-                        })}
-                    >
-                        <Button
-                            id={$('download-support-archive')}
-                            kind="tertiary"
-                            icon={IconDownload}
-                            children={formatMessage({ defaultMessage: 'Download' })}
-                            onClick={onDownloadSupportArchive}
-                        />
-                    </Field>
+                            <Field
+                                title={formatMessage({ defaultMessage: 'Download Support Archive' })}
+                                description={formatMessage({
+                                    defaultMessage: 'Download system diagnostics and logs for troubleshooting.',
+                                })}
+                            >
+                                <Button
+                                    id={$('download-support-archive')}
+                                    kind="tertiary"
+                                    icon={IconDownload}
+                                    children={formatMessage({ defaultMessage: 'Download' })}
+                                    onClick={onDownloadSupportArchive}
+                                />
+                            </Field>
 
-                    <Field
-                        title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
-                        description={formatMessage({
-                            defaultMessage:
-                                'Warning: This will delete all your custom configurations and display widgets.',
-                        })}
-                    >
-                        <Button
-                            id={$('factory-reset')}
-                            kind="danger--tertiary"
-                            children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
-                            onClick={this.#reset}
-                        />
-                    </Field>
+                            <Field
+                                title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
+                                description={formatMessage({
+                                    defaultMessage:
+                                        'Warning: This will delete all your custom configurations and display widgets.',
+                                })}
+                            >
+                                <Button
+                                    id={$('factory-reset')}
+                                    kind="danger--tertiary"
+                                    children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
+                                    onClick={this.#reset}
+                                />
+                            </Field>
+                        </Fragment>
+                    )}
                 </FieldSet>
 
                 {/*}
