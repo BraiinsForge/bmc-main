@@ -144,6 +144,8 @@ export default defineConfig({
         compress: true,
         printUrls: true,
         proxy: {
+            // Capabilities depend on the backend's selected hardware profile.
+            '/system.js': proxyConf,
             // gRPC-web api endpoints
             '/braiins.bmc': proxyConf,
             // REST API endpoints

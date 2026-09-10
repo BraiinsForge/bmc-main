@@ -123,6 +123,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.config,
             self.manager.clone(),
             self.widget_registry.clone(),
+            self.hardware_capabilities,
         )
         .build();
         let grpc_router = grpc::GrpcWeb::new(

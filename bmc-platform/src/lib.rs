@@ -28,6 +28,7 @@ pub mod linux_input;
 pub mod serial_number;
 
 use index_bmc::BmcPlatform as IndexBmcPlatform;
+use serde::Serialize;
 use serial_number::{BoardSerial, PcbVersion};
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
@@ -154,7 +155,7 @@ impl From<HardwareProfileSelection> for Option<BosPlatform> {
 #[error("unknown hardware profile: {0}")]
 pub struct UnknownProfile(String);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum DisplayShape {
     Rectangular,
     Round,
@@ -195,7 +196,7 @@ pub struct VisibleArea {
 
 /// Panel-only display snapshot delivered to widgets via the Wayland
 /// `display_info` event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DisplayInfo {
     pub width: u32,
     pub height: u32,
@@ -219,7 +220,7 @@ pub struct DisplayProfile {
     pub pixel_format: DisplayPixelFormat,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SlotGrid {
     pub columns: usize,
     pub rows: usize,
@@ -237,7 +238,7 @@ pub struct LedStripProfile {
     pub led_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent per-product hardware capability flags, not a state machine"

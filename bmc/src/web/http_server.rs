@@ -35,12 +35,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get},
 };
+use bmc_platform::HardwareCapabilities;
 use http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use hyper::{
     HeaderMap, StatusCode,
     header::{self, CONTENT_LENGTH},
 };
 use mime_guess::from_path;
+use serde::Serialize;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 use tower_http::compression::CompressionLayer;
@@ -73,6 +75,12 @@ pub(crate) struct HttpServer<T: BmcManager> {
     config: ServerConfig,
     manager: Arc<T>,
     widget_registry: Arc<WidgetRegistry>,
+    hardware_capabilities: HardwareCapabilities,
+}
+
+#[derive(Serialize)]
+struct SystemInfo {
+    capabilities: HardwareCapabilities,
 }
 
 pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
@@ -198,16 +206,19 @@ impl<T: BmcManager> HttpServer<T> {
     const INITIAL_SETUP_INDEX_FILENAME: &str = "index-connect.html";
     const SUPPORT_ARCHIVE: &str = "/api/get_support_archive";
     const WIDGET_ICON: &str = "/widgets/{uid}/icon";
+    const SYSTEM_SCRIPT: &str = "/system.js";
 
     pub(crate) fn new(
         config: ServerConfig,
         manager: Arc<T>,
         widget_registry: Arc<WidgetRegistry>,
+        hardware_capabilities: HardwareCapabilities,
     ) -> Self {
         Self {
             config,
             manager,
             widget_registry,
+            hardware_capabilities,
         }
     }
 
@@ -223,6 +234,7 @@ impl<T: BmcManager> HttpServer<T> {
     fn routes(&self) -> Router {
         let boser = self.config.boser.map(BoserProxy::new);
         let router = Router::new()
+            .merge(self.system_router())
             .merge(self.static_file_router(boser.clone()))
             .merge(self.general_api_router())
             .merge(self.widget_icon_router());
@@ -319,6 +331,27 @@ impl<T: BmcManager> HttpServer<T> {
             .with_state(index_state)
             .merge(var_router)
             .merge(assets_router)
+    }
+
+    fn system_router(&self) -> Router {
+        Router::new()
+            .route(
+                Self::SYSTEM_SCRIPT,
+                get(|state| async move { Self::handle_system(state) }),
+            )
+            .with_state(self.hardware_capabilities)
+    }
+
+    fn handle_system(State(caps): State<HardwareCapabilities>) -> impl IntoResponse {
+        let json = serde_json::to_string(&SystemInfo { capabilities: caps })
+            .expect("BUG: hardware capabilities contain only JSON-serializable values");
+        (
+            [
+                (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            format!("window.SYSTEM = {json};\n"),
+        )
     }
 
     fn general_api_router(&self) -> Router {
@@ -1354,6 +1387,8 @@ mod tests {
                 config,
                 Arc::new(StubManager),
                 Arc::new(WidgetRegistry::new(Vec::new())),
+                bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
+                    .capabilities(),
             );
             (server.routes(), www)
         }
@@ -1377,6 +1412,91 @@ mod tests {
                 .uri(uri)
                 .body(Body::from(body.to_owned()))
                 .expect("BUG: build the request")
+        }
+
+        #[tokio::test]
+        async fn system_script_exposes_the_platform_capabilities_locally() {
+            use bmc_platform::{HardwareProfile, Product};
+
+            let unavailable_boser = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("BUG: reserve a local port");
+            let address = unavailable_boser
+                .local_addr()
+                .expect("BUG: bound listener has an address");
+            drop(unavailable_boser);
+            let www = tempfile::tempdir().expect("BUG: create www root");
+            std::fs::write(www.path().join("system.js"), "stale asset")
+                .expect("BUG: write shadowing asset");
+
+            for (product, managed, has_slot_grid) in [
+                (Product::Bmc100, false, true),
+                (Product::Bmm100, true, false),
+                (Product::Bmm101, true, false),
+                (Product::Bfm100, true, false),
+            ] {
+                for boser in [None, Some(address)] {
+                    let caps = HardwareProfile::for_product(product).capabilities();
+                    let server = HttpServer::new(
+                        ServerConfig {
+                            www_root_path: www.path().to_path_buf(),
+                            www_assets_path: www.path().join("assets"),
+                            www_var_path: www.path().join("var"),
+                            boser,
+                        },
+                        Arc::new(StubManager),
+                        Arc::new(WidgetRegistry::new(Vec::new())),
+                        caps,
+                    );
+                    let (status, headers, body) =
+                        send(&server.routes(), request("GET", "/system.js", "")).await;
+                    assert_eq!(status, StatusCode::OK);
+                    assert_eq!(headers[CONTENT_TYPE], "text/javascript; charset=utf-8");
+                    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+                    let script = std::str::from_utf8(&body).expect("BUG: script is UTF-8");
+                    let json = script
+                        .strip_prefix("window.SYSTEM = ")
+                        .and_then(|value| value.strip_suffix(";\n"))
+                        .expect("script must assign the browser global");
+                    let value: serde_json::Value =
+                        serde_json::from_str(json).expect("script payload must be valid JSON");
+                    assert_eq!(
+                        value,
+                        serde_json::json!({"capabilities": caps}),
+                        "{product:?}, proxy={boser:?}"
+                    );
+                    assert_eq!(value["capabilities"]["boser_managed"], managed);
+                    assert_eq!(!value["capabilities"]["slot_grid"].is_null(), has_slot_grid);
+                    assert_eq!(
+                        value["capabilities"]["display"]["shape"],
+                        if product == Product::Bfm100 {
+                            "Round"
+                        } else {
+                            "Rectangular"
+                        }
+                    );
+                    if product == Product::Bmc100 {
+                        assert_eq!(
+                            value,
+                            serde_json::json!({"capabilities": {
+                                "display": {
+                                    "width": 1_280,
+                                    "height": 480,
+                                    "shape": "Rectangular",
+                                    "dpi": 217,
+                                },
+                                "slot_grid": {"columns": 4, "rows": 2},
+                                "wifi_supported": true,
+                                "ethernet_supported": false,
+                                "mining_supported": false,
+                                "boser_managed": false,
+                                "product_name": "Braiins Deck",
+                            }}),
+                            "browser clients rely on the platform JSON field names and values"
+                        );
+                    }
+                }
+            }
         }
 
         #[tokio::test]
