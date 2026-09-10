@@ -53,58 +53,59 @@ export default {
         // staticDns: getArg('staticDnsServers', '8.8.8.8, 8.8.4.4'),
 
         // Wifi
-        showWifi: true,
-        wifiActiveNetwork: {
-            ...getArg('wifiActiveNetwork', {
-                $typeName: 'braiins.bmc.web.WifiNetwork',
-                signalStrength: pb.SignalStrength.MODERATE,
-                connected: true,
-                encryptionType: pb.EncryptionType.WPA2,
-                ssid: 'MyWifi',
-            }),
-            async onConnectionRequest(...args: any[]) {
-                action('wifiActiveNetwork.onConnectionRequest')(...args);
-                return false;
+        wifi: {
+            strings: { connect: 'Connect' },
+            activeNetwork: {
+                ...getArg('wifiActiveNetwork', {
+                    $typeName: 'braiins.bmc.web.WifiNetwork',
+                    signalStrength: pb.SignalStrength.MODERATE,
+                    connected: true,
+                    encryptionType: pb.EncryptionType.WPA2,
+                    ssid: 'MyWifi',
+                }),
+                async onConnectionRequest(...args: any[]) {
+                    action('wifi.activeNetwork.onConnectionRequest')(...args);
+                    return false;
+                },
+                onConnectionRequestCancel: action('wifi.activeNetwork.onConnectionRequestCancel'),
             },
-            onConnectionRequestCancel: action('wifiActiveNetwork.onConnectionRequestCancel'),
+            availableNetworks: {
+                isLoading: false,
+                options: [
+                    {
+                        $typeName: 'braiins.bmc.web.WifiNetwork',
+                        signalStrength: pb.SignalStrength.STRONG,
+                        encryptionType: pb.EncryptionType.WPA2,
+                        ssid: 'Home_Network_5G',
+                    },
+                    {
+                        $typeName: 'braiins.bmc.web.WifiNetwork',
+                        signalStrength: pb.SignalStrength.STRONG,
+                        encryptionType: pb.EncryptionType.WPA2,
+                        ssid: 'IoT_Network',
+                    },
+                    {
+                        $typeName: 'braiins.bmc.web.WifiNetwork',
+                        signalStrength: pb.SignalStrength.MODERATE,
+                        encryptionType: pb.EncryptionType.WPA2,
+                        ssid: 'Neighbor_WiFi',
+                    },
+                    {
+                        $typeName: 'braiins.bmc.web.WifiNetwork',
+                        signalStrength: pb.SignalStrength.MODERATE,
+                        encryptionType: pb.EncryptionType.WPA2_3,
+                        ssid: 'Smart_Home_Net',
+                    },
+                    {
+                        $typeName: 'braiins.bmc.web.WifiNetwork',
+                        signalStrength: pb.SignalStrength.WEAK,
+                        encryptionType: pb.EncryptionType.NONE,
+                        ssid: 'Free_WiFi',
+                    },
+                ],
+                onRefresh: action('wifi.availableNetworks.onRefresh'),
+            },
         },
-        wifiAvailableNetworks: {
-            isLoading: false,
-            options: [
-                {
-                    $typeName: 'braiins.bmc.web.WifiNetwork',
-                    signalStrength: pb.SignalStrength.STRONG,
-                    encryptionType: pb.EncryptionType.WPA2,
-                    ssid: 'Home_Network_5G',
-                },
-                {
-                    $typeName: 'braiins.bmc.web.WifiNetwork',
-                    signalStrength: pb.SignalStrength.STRONG,
-                    encryptionType: pb.EncryptionType.WPA2,
-                    ssid: 'IoT_Network',
-                },
-                {
-                    $typeName: 'braiins.bmc.web.WifiNetwork',
-                    signalStrength: pb.SignalStrength.MODERATE,
-                    encryptionType: pb.EncryptionType.WPA2,
-                    ssid: 'Neighbor_WiFi',
-                },
-                {
-                    $typeName: 'braiins.bmc.web.WifiNetwork',
-                    signalStrength: pb.SignalStrength.MODERATE,
-                    encryptionType: pb.EncryptionType.WPA2_3,
-                    ssid: 'Smart_Home_Net',
-                },
-                {
-                    $typeName: 'braiins.bmc.web.WifiNetwork',
-                    signalStrength: pb.SignalStrength.WEAK,
-                    encryptionType: pb.EncryptionType.NONE,
-                    ssid: 'Free_WiFi',
-                },
-            ],
-            onRefresh: action('wifiAvailableNetworks.onRefresh'),
-        },
-        strings: { wifiConnect: 'Connect' },
 
         hasUnsavedChanges: true,
         onSave: action('onSave'),

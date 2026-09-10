@@ -51,7 +51,7 @@ import css from './SectionGeneral.scss';
 export interface SectionGeneralProps {
     timeFormat: iField<pb.TimeFormat>;
     // secondsInStatusbar: iField<boolean>;
-    timezone: iField<pb.Timezone> & { items: ReadonlyArray<pb.Timezone> };
+    timezone: null | (iField<pb.Timezone> & { items: ReadonlyArray<pb.Timezone> });
     dateFormat: iField<pb.DateFormat>;
     firstWeekDay: iField<pb.Weekday>;
 
@@ -59,8 +59,6 @@ export interface SectionGeneralProps {
     temperatureUnits: iField<pb.TemperatureUnit>;
     unitSystem: iField<pb.UnitSystem>;
     numberFormat: iField<pb.NumberFormat>;
-
-    timezoneConfigurable: boolean;
 
     // System actions
     systemActionsOwned: boolean;
@@ -124,8 +122,7 @@ class View extends Component<Props> {
         );
     };
     #timezoneChange: ComboBoxProps<pb.Timezone>['onChange'] = x => {
-        const { onChange } = this.props.timezone;
-        if (x.selectedItem) onChange?.(x.selectedItem);
+        if (x.selectedItem) this.props.timezone?.onChange?.(x.selectedItem);
     };
 
     #reset = async (): Promise<void> => {
@@ -168,8 +165,6 @@ class View extends Component<Props> {
             unitSystem,
             numberFormat,
             // usageData,
-
-            timezoneConfigurable,
 
             // System actions
             systemActionsOwned,
@@ -224,7 +219,7 @@ class View extends Component<Props> {
                         </CarbonFormField>
                     </Field> */}
 
-                    {timezoneConfigurable && (
+                    {timezone != null ? (
                         <Field
                             variant="dark"
                             title={formatMessage({ defaultMessage: 'Timezone' })}
@@ -245,7 +240,7 @@ class View extends Component<Props> {
                                 className={css.timezoneComboBox}
                             />
                         </Field>
-                    )}
+                    ) : null}
 
                     <Field
                         variant="dark"

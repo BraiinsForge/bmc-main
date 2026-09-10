@@ -428,7 +428,6 @@ class View extends Component<Props, State> {
                 />
 
                 <SectionSettings
-                    showWifi={wifiConfigurable(this.props.capabilities)}
                     status={[
                         ['IPv4', netInfo.ipAddress],
                         ['Hostname', netInfo.hostname],
@@ -470,21 +469,26 @@ class View extends Component<Props, State> {
                     hasUnsavedChanges={hasUnsavedChanges}
                     onReset={this.#load}
                     onSave={this.#save}
-                    // Wifi
-                    strings={{ wifiConnect: formatMessage({ defaultMessage: 'Connect' }) }}
-                    wifiActiveNetwork={{
-                        value: wifi.selection,
-                        disabled: wifi.isScanning,
-                        error: wifi.error,
-                        onChange: this.#wifiChange,
-                        onConnectionRequest: this.#wifiConnect,
-                        onConnectionRequestCancel: this.#wifiConnectCancel,
-                    }}
-                    wifiAvailableNetworks={{
-                        isLoading: wifi.isScanning,
-                        onRefresh: this.#wifiScan,
-                        options: Array.from(wifiNetworks.values()),
-                    }}
+                    wifi={
+                        wifiConfigurable(this.props.capabilities)
+                            ? {
+                                  strings: { connect: formatMessage({ defaultMessage: 'Connect' }) },
+                                  activeNetwork: {
+                                      value: wifi.selection,
+                                      disabled: wifi.isScanning,
+                                      error: wifi.error,
+                                      onChange: this.#wifiChange,
+                                      onConnectionRequest: this.#wifiConnect,
+                                      onConnectionRequestCancel: this.#wifiConnectCancel,
+                                  },
+                                  availableNetworks: {
+                                      isLoading: wifi.isScanning,
+                                      onRefresh: this.#wifiScan,
+                                      options: Array.from(wifiNetworks.values()),
+                                  },
+                              }
+                            : null
+                    }
                 />
             </Fragment>
         );

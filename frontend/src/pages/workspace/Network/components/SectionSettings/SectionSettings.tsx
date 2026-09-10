@@ -47,6 +47,19 @@ import css from './SectionSettings.scss';
 
 // type NetProto = NonNullable<pb.NetworkConfig['protocol']['case']>;
 
+export interface WifiProps {
+    strings: { connect: string };
+    // The connected bool attribute is remapped to nullability
+    activeNetwork: iField<Maybe<pb.WifiNetwork>> & {
+        onConnectionRequest(ssid: string, security: pb.EncryptionType, password: string): Promise<boolean>;
+        onConnectionRequestCancel?(): void;
+    };
+    availableNetworks: {
+        isLoading: boolean;
+        options: pb.WifiNetwork[];
+        onRefresh(): void;
+    };
+}
 export interface SectionSettingsProps {
     status: Array<[label: ReactNode, value: ReactNode]>;
 
@@ -57,19 +70,7 @@ export interface SectionSettingsProps {
     // staticGateway: iField<string>;
     // staticDns: iField<string>;
 
-    // Wifi
-    showWifi: boolean;
-    // The connected bool attribute is remapped to nullability
-    strings: { wifiConnect: string };
-    wifiActiveNetwork: iField<Maybe<pb.WifiNetwork>> & {
-        onConnectionRequest(ssid: string, security: pb.EncryptionType, password: string): Promise<boolean>;
-        onConnectionRequestCancel?(): void;
-    };
-    wifiAvailableNetworks: {
-        isLoading: boolean;
-        options: pb.WifiNetwork[];
-        onRefresh(): void;
-    };
+    wifi: null | WifiProps;
 
     hasUnsavedChanges: boolean;
     onSave(): void;
@@ -145,6 +146,12 @@ class View extends Component<Props, State> {
     readonly state = getInitialState();
     static contextType = AppContext;
     declare context: AppContextType;
+
+    get #wifi(): WifiProps {
+        const { wifi } = this.props;
+        if (wifi == null) throw new Error('BUG: Wi-Fi handler reached without the Wi-Fi field');
+        return wifi;
+    }
 
     get #txt() {
         const { formatMessage } = this.props.intl;
@@ -270,10 +277,8 @@ class View extends Component<Props, State> {
         this.setState({ openDialog });
     };
     #wifiManualEntryDialogSubmit = async (): Promise<void> => {
-        const {
-            wifiActiveNetwork: { onConnectionRequest },
-            intl: { formatMessage },
-        } = this.props;
+        const { formatMessage } = this.props.intl;
+        const { onConnectionRequest } = this.#wifi.activeNetwork;
         const { openDialog, wifiManualConnect } = this.state;
         const { ssid, password, security } = wifiManualConnect.data;
 
@@ -416,7 +421,7 @@ class View extends Component<Props, State> {
 
     #wifiPasswordDialogToggle = (ap: null | pb.WifiNetwork): void => {
         if (!ap) {
-            this.props.wifiActiveNetwork.onConnectionRequestCancel?.();
+            this.#wifi.activeNetwork.onConnectionRequestCancel?.();
             this.setState({
                 wifiConnectionError: null,
                 openDialog: null,
@@ -432,7 +437,7 @@ class View extends Component<Props, State> {
         });
     };
     #wifiPassowrdDialogSubmit = async (): Promise<void> => {
-        const { onConnectionRequest } = this.props.wifiActiveNetwork;
+        const { onConnectionRequest } = this.#wifi.activeNetwork;
         const { openDialog, wifiPasswordEntry } = this.state;
         const { password, wifiCell } = wifiPasswordEntry;
 
@@ -467,7 +472,8 @@ class View extends Component<Props, State> {
         }
     };
     #wifiPasswordDialogRender = (): ReactElement => {
-        const { intl, strings } = this.props;
+        const { intl } = this.props;
+        const { strings } = this.#wifi;
         const {
             openDialog,
             wifiIsConnecting,
@@ -497,7 +503,7 @@ class View extends Component<Props, State> {
                 // Submit
                 primaryButtonDisabled={wifiIsConnecting}
                 onRequestSubmit={this.#wifiPassowrdDialogSubmit}
-                primaryButtonText={wifiIsConnecting ? this.#txt.connectingElement : strings.wifiConnect}
+                primaryButtonText={wifiIsConnecting ? this.#txt.connectingElement : strings.connect}
                 className={css.wifiDialogPassword}
             >
                 <Form className={css.wifiDialogForm}>
@@ -531,7 +537,7 @@ class View extends Component<Props, State> {
     };
 
     #handleWifiNetworkChange = async (ap: null | pb.WifiNetwork): Promise<void> => {
-        const { onConnectionRequest, onChange } = this.props.wifiActiveNetwork;
+        const { onConnectionRequest, onChange } = this.#wifi.activeNetwork;
         const { wifiManualConnect, wifiPasswordEntry } = getInitialState();
         await setState(this, { wifiConnectionError: null, wifiManualConnect, wifiPasswordEntry });
 
@@ -564,7 +570,7 @@ class View extends Component<Props, State> {
         }
     };
     #renderWifi = (): ReactNode => {
-        const { wifiAvailableNetworks, wifiActiveNetwork } = this.props;
+        const { availableNetworks, activeNetwork } = this.#wifi;
         const { wifiNetworkDropdownKey } = this.state;
 
         // const globalManualConnectError = this.state.wifiManualConnect.errors?.form;
@@ -575,7 +581,7 @@ class View extends Component<Props, State> {
                 <Dropdown<pb.WifiNetwork>
                     // downshiftProps={{ isOpen: true }}
                     id="wifi-network"
-                    key={[wifiNetworkDropdownKey, wifiActiveNetwork.value?.ssid ?? ''].join('-')}
+                    key={[wifiNetworkDropdownKey, activeNetwork.value?.ssid ?? ''].join('-')}
                     type="default"
                     direction="bottom"
                     // Labeling / visuals
@@ -587,13 +593,13 @@ class View extends Component<Props, State> {
                     // The positioning gets tripped up
                     // with autoAlign algo active
                     autoAlign={false}
-                    disabled={wifiAvailableNetworks.isLoading}
-                    invalid={!!wifiActiveNetwork.error}
-                    invalidText={wifiActiveNetwork.error}
-                    helperText={wifiAvailableNetworks.isLoading ? txt.scanningElement : null}
+                    disabled={availableNetworks.isLoading}
+                    invalid={!!activeNetwork.error}
+                    invalidText={activeNetwork.error}
+                    helperText={availableNetworks.isLoading ? txt.scanningElement : null}
                     // Value
-                    items={[...wifiAvailableNetworks.options, WIFI_AP_OTHER_PLACEHOLDER]}
-                    selectedItem={wifiActiveNetwork.value ?? undefined}
+                    items={[...availableNetworks.options, WIFI_AP_OTHER_PLACEHOLDER]}
+                    selectedItem={activeNetwork.value ?? undefined}
                     onChange={x => this.#handleWifiNetworkChange(x.selectedItem)}
                     // Item rendering
                     itemToString={this.#wifiNetToString}
@@ -613,9 +619,9 @@ class View extends Component<Props, State> {
                         hasIconOnly
                         renderIcon={IconRefresh}
                         title={this.#txt.refresh}
-                        onClick={wifiAvailableNetworks.onRefresh}
-                        disabled={wifiAvailableNetworks.isLoading}
-                        loading={wifiAvailableNetworks.isLoading}
+                        onClick={availableNetworks.onRefresh}
+                        disabled={availableNetworks.isLoading}
+                        loading={availableNetworks.isLoading}
                     />
                 </div>
 
@@ -664,9 +670,9 @@ class View extends Component<Props, State> {
                         </Field>
                     ) : null}
 
-                    {this.props.showWifi && (
+                    {this.props.wifi != null ? (
                         <Field title={formatMessage({ defaultMessage: 'Network' })} children={this.#renderWifi()} />
-                    )}
+                    ) : null}
 
                     {/*
                     <Field

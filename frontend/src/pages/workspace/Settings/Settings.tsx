@@ -718,13 +718,16 @@ class View extends Component<Props, State> {
                 // secondsInStatusbar={this.#generalGetFieldStruct(showSecondsStatusBar, this.#generalSetSecondsInStatusbar)}
 
                 // Regional
-                timezone={this.#getFieldStruct(timezone, this.#generalSetTimezone, { items: data.timezones })}
+                timezone={
+                    timezoneConfigurable(this.props.capabilities)
+                        ? this.#getFieldStruct(timezone, this.#generalSetTimezone, { items: data.timezones })
+                        : null
+                }
                 dateFormat={this.#getFieldStruct(dateFormat, this.#generalSetDateFormat)}
                 firstWeekDay={this.#getFieldStruct(firstDayOfWeek, this.#generalSetFirsWeekDay)}
                 temperatureUnits={this.#getFieldStruct(temperatureUnit, this.#generalSetTemperatureUnits)}
                 unitSystem={this.#getFieldStruct(unitSystem, this.#generalSetUnitSystem)}
                 numberFormat={this.#getFieldStruct(numberFormat, this.#generalSetNumberFormat)}
-                timezoneConfigurable={timezoneConfigurable(this.props.capabilities)}
                 // System actions
                 systemActionsOwned={systemActionsOwned(this.props.capabilities)}
                 onFactoryReset={this.#generalFactoryReset}
