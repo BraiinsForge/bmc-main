@@ -13,8 +13,10 @@ four widget sizes, each size showing as much of the picture as its frame holds.
 > logging into the pool.
 
 - The Overview leads with the account's current hashrate — a 5-minute average from the pool, scaled to its own unit
-  (TH/s, PH/s, EH/s), with the unit named in the label so the value and its unit never drift apart.
-- *Todays Reward* shows today's estimated reward in BTC with an approximate fiat value beneath it.
+  (TH/s, PH/s, EH/s). The unit trails the number on the same baseline, smaller, so the value and its unit never drift
+  apart and the title stays *Hashrate* whatever the scale.
+- *Today’s Reward* shows today's estimated reward to the satoshi, led by the bitcoin sign — `₿0,17046800`, eight
+  decimals, never rounded coarser — with an approximate fiat value beneath it.
 - The workers panel counts the account's workers by state — active, low, and offline — each on its own colour-coded row.
   The larger frames lead with an all-workers total.
 - Each size shows what its frame holds: the smallest is the hashrate alone, centered; the medium pairs hashrate and

@@ -11,3 +11,7 @@ target = "bmc100:large"
 [fixtures.bmc100-full-healthy]
 path = "fixtures/bmc100-full-healthy.jsonl.gz"
 target = "bmc100:full"
+
+[fixtures.bmc100-small-healthy]
+path = "fixtures/bmc100-small-healthy.jsonl.gz"
+target = "bmc100:small"

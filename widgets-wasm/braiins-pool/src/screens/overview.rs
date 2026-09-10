@@ -400,7 +400,7 @@ fn reward_block(data: &PoolData, gaps: parts::StatGaps) -> Node {
             let usd = format_number!(rewards.today_usd, 2);
             parts::stat_block(
                 None,
-                "Todays Reward",
+                "Today’s Reward",
                 parts::Slot::Value {
                     value: &btc,
                     unit: None,
@@ -412,7 +412,7 @@ fn reward_block(data: &PoolData, gaps: parts::StatGaps) -> Node {
         }
         None => parts::stat_block(
             None,
-            "Todays Reward",
+            "Today’s Reward",
             parts::Slot::new(None, &data.rewards),
             None,
             gaps,
