@@ -97,7 +97,6 @@ minify-svg:
 
 # === Nix integration ===
 
-# Refresh yarn-files hash (current platform; also darwin if building elsewhere).
+# Refresh yarn-files hash.
 nix-update-hash:
     ./bin/nix-update-hash.ts
-    @if [ "$(uname -s)" != "Darwin" ]; then ./bin/nix-update-hash.ts --darwin; fi

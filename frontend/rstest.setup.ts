@@ -18,6 +18,24 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { afterEach } from '@rstest/core';
+import { cleanup } from '@testing-library/react/pure';
+
+import { toast } from '@/lib/toast';
+
+// The `/pure` entry registers no cleanup of its own, and a tree left mounted
+// after a file's last test can still commit: floating-ui resolves `computePosition()`
+// late and React flushes the passive effects through a real `setImmediate`, which lands
+// after rstest 0.11.12 has torn jsdom down and so fails the run.
+//
+// sonner 2.0.8 replays active toasts into a newly mounted Toaster: its `subscribe`
+// now calls `getActiveToasts().forEach(subscriber)`. `cleanup()` unmounts the Toaster
+// but leaves the queue, so the next test would render the whole backlog.
+afterEach(() => {
+    cleanup();
+    toast.dismiss(null);
+});
+
 // jsdom has no ResizeObserver (no layout engine). `useSize` only needs the
 // constructor to exist, not to report sizes — a no-op stub is enough.
 
