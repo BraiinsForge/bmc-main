@@ -31,6 +31,7 @@ import { Toaster } from '@/lib/toast';
 import * as pb from '@/proto';
 import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
+import { paramDef } from './fn/test-helpers';
 
 type AnyService = Parameters<typeof mocks.service>[0];
 function registerMocks<S extends AnyService>(service: S, methods: Partial<ServiceMocks<S>>): void {
@@ -76,6 +77,7 @@ function installMocks(): void {
 const WIDGET_ID_PREFIX = 'bmc-display-comp-combined-scene-widget-';
 const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
 const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
+const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
 const WIDGET_1_EDIT_ID = `${WIDGET_ID_PREFIX}widget-1-edit`;
 
 function elementById(id: string): HTMLElement {
@@ -121,6 +123,10 @@ function closePicker(): void {
     const modal = document.getElementById(PICKER_MODAL_ID);
     if (!modal) throw new Error('widget picker not rendered');
     fireEvent.click(within(modal).getByRole('button', { name: /close/i }));
+}
+
+function closeManifestEditor(): void {
+    fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('button', { name: /close/i }));
 }
 
 function renderPage() {
@@ -278,6 +284,20 @@ describe('dialog session lifecycle', () => {
         expect(screen.queryByRole('dialog', { name: 'Configure Widget' })).toBeNull();
     });
 
+    test('cancelling a newly added widget removes it again', async () => {
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 0 / 56');
+        clickAddSlot(container);
+        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        await waitFor(() => expect(modalIsOpen(MANIFEST_MODAL_ID)).toBe(true));
+        closeManifestEditor();
+        await settle();
+
+        expect(removedWidgetIds).toEqual(['widget-1']);
+        expect(stored).toEqual([]);
+    });
+
     test('closing the picker after saving a widget leaves that widget in place', async () => {
         const { container } = renderPage();
 
@@ -297,12 +317,12 @@ describe('dialog session lifecycle', () => {
         expect(stored.map(w => w.id)).toEqual(['widget-1']);
     });
 
-    test('closing the picker after a refused second add leaves the saved widget in place', async () => {
+    function refuseSecondAdd(refusal: ConnectError): void {
         let addCalls = 0;
         registerMocks(pb.services.SceneManagementService, {
             addWidget: ({ req }) => {
                 addCalls += 1;
-                if (addCalls > 1) throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+                if (addCalls > 1) throw refusal;
                 const widget = pb.create(pb.WidgetSchema, {
                     id: 'widget-1',
                     position: req.position,
@@ -313,9 +333,9 @@ describe('dialog session lifecycle', () => {
                 return { value: widget.id };
             },
         });
+    }
 
-        const { container } = renderPage();
-
+    async function addSaveThenRefuse(container: HTMLElement, refusalText: string): Promise<void> {
         await screen.findByText('Running widgets: 0 / 56');
         clickAddSlot(container);
         fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
@@ -324,11 +344,30 @@ describe('dialog session lifecycle', () => {
 
         clickAddSlot(container);
         fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
-        await waitFor(() => expect(document.body.textContent).toContain(LIMIT_MESSAGE));
+        await waitFor(() => expect(document.body.textContent).toContain(refusalText));
 
         closePicker();
         await waitFor(() => expect(modalIsOpen(PICKER_MODAL_ID)).toBe(false));
         await settle();
+    }
+
+    test('closing the picker after a refused second add leaves the saved widget in place', async () => {
+        refuseSecondAdd(new ConnectError(LIMIT_ERROR, Code.ResourceExhausted));
+        const { container } = renderPage();
+
+        await addSaveThenRefuse(container, LIMIT_MESSAGE);
+
+        expect(removedWidgetIds).toEqual([]);
+        expect(stored.map(w => w.id)).toEqual(['widget-1']);
+    });
+
+    // The cleanup path never reads the error code,
+    // so one refusal other than the capacity limit stands in for all of them.
+    test('closing the picker after a refusal that is not the capacity limit keeps the widget', async () => {
+        refuseSecondAdd(new ConnectError('size is not supported', Code.FailedPrecondition));
+        const { container } = renderPage();
+
+        await addSaveThenRefuse(container, 'size is not supported');
 
         expect(removedWidgetIds).toEqual([]);
         expect(stored.map(w => w.id)).toEqual(['widget-1']);
@@ -370,12 +409,6 @@ describe('dialog session lifecycle', () => {
 });
 
 describe('cancelling an edit', () => {
-    const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
-
-    function closeManifestEditor(): void {
-        fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('button', { name: /close/i }));
-    }
-
     // A size change relocates the widget when the new span will not fit in place:
     // MEDIUM spans two columns, so one parked in the last column shifts left.
     test('restores the position that a cancelled size change moved the widget from', async () => {
@@ -383,12 +416,20 @@ describe('cancelling an edit', () => {
             uid: 'clock',
             name: 'Clock',
             supportedSizes: [pb.WidgetSize.SMALL, pb.WidgetSize.MEDIUM],
+            params: [paramDef('paramInteger', 'count')],
         });
         const widget = pb.create(pb.WidgetSchema, {
             id: 'widget-1',
             position: pb.create(pb.WidgetPositionSchema, { row: 0, col: 3 }),
             size: pb.WidgetSize.SMALL,
-            config: pb.create(pb.WidgetConfigSchema, { widgetUid: resizable.uid }),
+            config: pb.create(pb.WidgetConfigSchema, {
+                widgetUid: resizable.uid,
+                params: pb.create(pb.WidgetDataStructSchema, {
+                    fields: {
+                        count: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: 7 } }),
+                    },
+                }),
+            }),
         });
         const updates: pb.UpdateWidgetRequest[] = [];
         registerMocks(pb.services.SceneManagementService, {
@@ -413,6 +454,7 @@ describe('cancelling an edit', () => {
         const [revert] = updates;
         expect(revert.size).toBe(pb.WidgetSize.SMALL);
         expect(revert.position?.col).toBe(3);
+        expect(revert.params?.fields.count?.kind).toEqual({ case: 'integerValue', value: 7 });
     });
 });
 

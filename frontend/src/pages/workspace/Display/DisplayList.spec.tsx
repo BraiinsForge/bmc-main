@@ -583,6 +583,7 @@ describe('dialog session lifecycle', () => {
     // to the id scheme fails here instead of being silently followed.
     const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
     const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
+    const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
 
     // Carbon keeps both dialogs mounted and toggles `is-visible`,
     // so presence in the DOM says nothing about which one is open.
@@ -600,6 +601,59 @@ describe('dialog session lifecycle', () => {
         if (!modal) throw new Error('widget picker not rendered');
         fireEvent.click(within(modal).getByRole('button', { name: /close/i }));
     }
+
+    function closeManifestEditor(): void {
+        fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('button', { name: /close/i }));
+    }
+
+    test('cancelling a newly added fullscreen scene removes it again', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        const created = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: true,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-b',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        const removedSceneIds: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => {
+                server.push(created);
+                return { value: created.id };
+            },
+            getScene: () => ({ scene: created, runningWidgetCount: 2, maxRunningWidgetCount: 56 }),
+            removeScene: ({ req }) => {
+                removedSceneIds.push(req.value);
+                server = server.filter(scene => scene.id !== req.value);
+                return {};
+            },
+            previewScene: () => (async function* () {})(),
+        });
+
+        renderPage();
+        await flush();
+
+        openFullscreenPicker();
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+        closeManifestEditor();
+        await flush();
+
+        expect(removedSceneIds).toEqual([created.id]);
+        expect(server.some(scene => scene.id === created.id)).toBe(false);
+    });
 
     test('closing the picker after saving a fullscreen scene leaves that scene in place', async () => {
         const manifest = pb.create(pb.WidgetManifestSchema, {
