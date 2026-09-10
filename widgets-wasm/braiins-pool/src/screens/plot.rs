@@ -35,7 +35,7 @@ use bmc_wasm_sdk::*;
 use crate::chart;
 use crate::model::{PayoutKind, Series};
 use crate::screens::icons;
-use crate::screens::parts::{color, font, space};
+use crate::screens::parts::{self, color, font, space};
 
 /// The chart lines' stroke width, and the plot's vertical inset when no
 /// y labels claim one.
@@ -274,13 +274,9 @@ fn axis_levels(top: f64) -> [(f32, f64); 4] {
     ]
 }
 
-/// Worker counts label: plain up to a thousand, "2.5k" above, per the design.
+/// Worker counts label: plain up to a thousand, "2,5k" above, per the design.
 fn workers_count_label(value: f64) -> String {
-    if value >= 1_000.0 {
-        fmt!("{}k", format_number!(value / 1_000.0, 1))
-    } else {
-        format_number!(value, 0)
-    }
+    parts::condensed_count(value, 1_000.0)
 }
 
 #[cfg(test)]

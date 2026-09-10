@@ -176,7 +176,11 @@ pub fn placeholder<T>(source: &Availability<T>, unavailable: Node, loading: Node
 /// `Unavailable` will not.
 #[derive(Clone, Copy, Debug)]
 pub enum Slot<'a> {
-    Value(&'a str),
+    /// A rendered value, carrying the unit it was scaled to where the quantity has one.
+    Value {
+        value: &'a str,
+        unit: Option<&'a str>,
+    },
     Loading,
     Unavailable,
 }
@@ -185,8 +189,19 @@ impl<'a> Slot<'a> {
     /// The slot for a `value` its caller rendered from `source`.
     #[must_use]
     pub fn new<T>(value: Option<&'a str>, source: &Availability<T>) -> Self {
-        match value {
-            Some(value) => Self::Value(value),
+        Self::from_parts(value.map(|value| (value, None)), source)
+    }
+
+    /// [`Self::new`] for a quantity rendered as (value, SI unit), so the unit
+    /// travels with the number instead of with the title.
+    #[must_use]
+    pub fn scaled<T>(scaled: Option<(&'a str, &'a str)>, source: &Availability<T>) -> Self {
+        Self::from_parts(scaled.map(|(value, unit)| (value, Some(unit))), source)
+    }
+
+    fn from_parts<T>(parts: Option<(&'a str, Option<&'a str>)>, source: &Availability<T>) -> Self {
+        match parts {
+            Some((value, unit)) => Self::Value { value, unit },
             None if source.failed() => Self::Unavailable,
             None => Self::Loading,
         }
@@ -288,6 +303,27 @@ pub fn text_run(spans: Vec<Span>) -> Node {
 #[must_use]
 pub fn value_span(value: &str, value_color: Color) -> Span {
     span(value, style!(weight: FontWeight::BOLD, color: value_color))
+}
+
+/// A number in the value voice, trailed by the unit it was scaled to
+/// — "500,0 PH/s". The unit takes the label's size and colour
+/// but keeps the number's weight.
+fn quantity_line(value: &str, unit: Option<&str>, size: u32, weight: FontWeight) -> Node {
+    let mut spans = vec![span(value, ())];
+    if let Some(unit) = unit {
+        // One paragraph, so the unit sits on the number's own baseline.
+        // Two nodes could not: `CrossAlign` offers no baseline option,
+        // and `VerticalAlign::Baseline` is accepted but drawn as `Center`
+        // (`bmc-render/src/gpu/renderer.rs`).
+        spans.push(span(
+            fmt!(" {unit}"),
+            style!(size: font::BODY, color: color::TEXT_MUTED),
+        ));
+    }
+    paragraph(
+        style!(size: size, weight: weight, color: color::TEXT, family: FontFamily::DeckSans, line_height: 1.0),
+        spans,
+    )
 }
 
 /// A hero stat: grey label run into a Bold value in the series' colour.
@@ -426,10 +462,9 @@ pub fn stat_block(
         None => label(block_label),
     };
     let value_line: Node = match value {
-        Slot::Value(value) => text(
-            value,
-            style!(size: font::VALUE, weight: FontWeight::SEMIBOLD, color: color::TEXT, family: FontFamily::DeckSans, line_height: 1.0),
-        ),
+        Slot::Value { value, unit } => {
+            quantity_line(value, unit, font::VALUE, FontWeight::SEMIBOLD)
+        }
         Slot::Loading => skeleton_value(value_chars, font::VALUE),
         Slot::Unavailable => absent_value(callout::UNAVAILABLE, font::VALUE),
     };
@@ -458,11 +493,8 @@ pub fn stat_stack(title: Node, middle: Node, footer: Node, gaps: StatGaps) -> No
 
 /// The Small overview's single centered hashrate value.
 #[must_use]
-pub fn hero_value(value: &str) -> Node {
-    text(
-        value,
-        style!(size: font::HERO, weight: FontWeight::BOLD, color: color::TEXT, family: FontFamily::DeckSans, line_height: 1.0),
-    )
+pub fn hero_value(value: &str, unit: Option<&str>) -> Node {
+    quantity_line(value, unit, font::HERO, FontWeight::BOLD)
 }
 
 /// The payout meter's track thickness — heavier than the design's 8 px,
@@ -547,6 +579,33 @@ pub const WORKERS_ROOMY: WorkersSpec = WorkersSpec {
     rows_gap: 32.0,
 };
 
+/// A count in `k` form from `plain_below` up — "2 495", then "10,3k" —
+/// the one form the design's chart ticks and the workers panel share;
+/// they differ only in where they switch.
+#[must_use]
+pub fn condensed_count(value: f64, plain_below: f64) -> String {
+    if value >= plain_below {
+        fmt!("{}k", format_number!(value / 1_000.0, 1))
+    } else {
+        format_number!(value, 0)
+    }
+}
+
+/// The panel keeps every digit up to here: "9 999" is the widest run
+/// its Medium column seats, and `k` form holds that width to 99 949.
+const COUNT_PLAIN_BELOW: f64 = 10_000.0;
+
+/// A worker count for the panel's column.
+#[must_use]
+pub fn worker_count(count: usize) -> String {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a count past 2^53 has no digit left that condensing would keep"
+    )]
+    let value = count as f64;
+    condensed_count(value, COUNT_PLAIN_BELOW)
+}
+
 /// Workers-by-state panel: a "Workers" title over one icon + count line
 /// per state.
 #[must_use]
@@ -554,11 +613,11 @@ pub fn workers_panel(workers: &Availability<WorkerCounts>, spec: &WorkersSpec) -
     let line = |state: WorkerState, count: Option<usize>| {
         let count_line = match count {
             Some(count) => text(
-                format_number!(count, 0),
+                worker_count(count),
                 style!(size: font::VALUE, weight: FontWeight::SEMIBOLD, color: color::TEXT, family: FontFamily::DeckSans, line_height: spec.count_line_height),
             ),
-            // Counts run to "2 395"; the bar squares off against the icon
-            // beside it, which the frames size differently.
+            // The bar squares off against the icon beside it,
+            // which the frames size differently.
             None => skeleton::placeholder(spec.icon * 2.5, spec.icon, color::SKELETON),
         };
         let (svg, glyph_color) = worker_state_glyph(state);
@@ -814,6 +873,23 @@ pub fn denied_body(bucket: SizeBucket) -> Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_count_the_column_seats_keeps_every_digit() {
+        assert_eq!(worker_count(0), "0");
+        assert_eq!(worker_count(1_628), "1\u{a0}628");
+        assert_eq!(worker_count(9_999), "9\u{a0}999");
+    }
+
+    /// Past the column's widest whole number the count takes `k` form,
+    /// which holds the same five glyphs through the highest count
+    /// the design's Medium column is sized for.
+    #[test]
+    fn a_count_past_the_column_condenses() {
+        assert_eq!(worker_count(10_000), "10,0k");
+        assert_eq!(worker_count(10_345), "10,3k");
+        assert_eq!(worker_count(99_949), "99,9k");
+    }
 
     #[test]
     fn header_shows_account_when_bound() {

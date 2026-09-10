@@ -180,6 +180,33 @@ capture-all ARGS="":
         --workspace {{ dir }}/../widgets-wasm \
         --output-dir {{ output_dir }} {{ ARGS }}
 
+# Render WIDGET's gallery recipes headlessly into `.tmp/WIDGET-NAME`; NAME picks one, default all.
+scenes WIDGET NAME="*":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Software GL by default, unlike the gallery's window: llvmpipe and a GPU
+    # rasterise differently, so two machines' shots compare only when both
+    # pin the same rasteriser. Set it to 0 for the machine's own driver.
+    export GALLERY_SOFTWARE_GL="${GALLERY_SOFTWARE_GL:-1}"
+
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
+    gallery="$root/$name/gallery"
+
+    # Absolute paths: a relative `--capture` resolves against the gallery's own directory.
+    shopt -s nullglob
+    recipes=("$gallery"/{{ NAME }}.capture.toml)
+    if [ ${#recipes[@]} -eq 0 ]; then
+        echo "no capture recipe '{{ NAME }}' in $gallery" >&2
+        exit 1
+    fi
+
+    for recipe in "${recipes[@]}"; do
+        stem=$(basename "$recipe" .capture.toml)
+        just --justfile {{ justfile_directory() }}/justfile gallery::capture "$recipe" "{{ WIDGET }}-$stem"
+    done
+
 # Re-capture then update baselines for a widget.
 update-baselines WIDGET: (capture WIDGET)
     #!/usr/bin/env bash

@@ -28,6 +28,10 @@ profile SCENARIO="healthy":
 run-netsim:
     @just --justfile {{ root_justfile }} netsim::run {{ dir }}/sim-blueprint.json5
 
+# Render the gallery scenes headlessly; NAME picks one recipe, default all.
+capture NAME="*":
+    @just --justfile {{ root_justfile }} wasm::scenes braiins-pool "{{ NAME }}"
+
 # The testbed flags aiming a run at SCENARIO's simulated account.
 [private]
 sim-args SCENARIO:

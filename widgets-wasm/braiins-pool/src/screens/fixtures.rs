@@ -21,7 +21,7 @@
 //! Fixture pool data for the storybook screens, shaped after the design's
 //! sample values (349.8 PH/s fleet, ~2400 workers).
 
-use bmc_wasm_sdk::types::Hashrate;
+use bmc_wasm_sdk::types::{BitcoinAmount, Hashrate};
 use units::availability::Availability;
 
 use crate::model::{
@@ -98,7 +98,7 @@ pub fn sample_data(spread_decades: f64) -> PoolData {
     PoolData {
         hashrate_5m: Availability::Available(Hashrate::from_terahashes_per_second(latest)),
         rewards: Availability::Available(Rewards {
-            today_btc: 0.170_468,
+            today_btc: BitcoinAmount::from_bitcoin(0.170_468),
             today_usd: 10.038,
         }),
         hashrate_history: Availability::Available(series(BASE_TH, BASE_TH * 0.17, spread_decades)),
@@ -133,7 +133,7 @@ pub fn sample_data(spread_decades: f64) -> PoolData {
             .into_iter()
             .map(|(at, kind)| crate::model::Payout {
                 at,
-                amount_btc: 0.000_380,
+                amount_btc: BitcoinAmount::from_bitcoin(0.000_380),
                 kind: Some(kind),
             })
             .collect(),
@@ -168,7 +168,7 @@ pub fn empty_data() -> PoolData {
     PoolData {
         hashrate_5m: Availability::Available(Hashrate::from_terahashes_per_second(0.0)),
         rewards: Availability::Available(Rewards {
-            today_btc: 0.0,
+            today_btc: BitcoinAmount::from_bitcoin(0.0),
             today_usd: 0.0,
         }),
         hashrate_history: Availability::Available(series(0.0, 0.0, 0.0)),

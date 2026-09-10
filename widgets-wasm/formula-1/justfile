@@ -59,29 +59,7 @@ run-testbed SCENARIO:
 
 # Render the gallery scenes headlessly; NAME picks one recipe, default all.
 capture NAME="*":
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # A relative `--capture` resolves against the gallery's own directory
-    # rather than this one, so the path goes in absolute.
-    #
-    # Software GL by default, unlike the gallery's window:
-    # llvmpipe and a GPU rasterise differently,
-    # so two machines' shots compare only when both pin the same rasteriser.
-    # Set it to 0 for the machine's own driver.
-    export GALLERY_SOFTWARE_GL="${GALLERY_SOFTWARE_GL:-1}"
-
-    shopt -s nullglob
-    recipes=({{ dir }}/gallery/{{ NAME }}.capture.toml)
-    if [ ${#recipes[@]} -eq 0 ]; then
-        echo "no capture recipe '{{ NAME }}' in {{ dir }}/gallery" >&2
-        exit 1
-    fi
-
-    for recipe in "${recipes[@]}"; do
-        name=$(basename "$recipe" .capture.toml)
-        just --justfile {{ root_justfile }} gallery::capture "$recipe" "f1-$name"
-    done
+    @just --justfile {{ root_justfile }} wasm::scenes formula-1 "{{ NAME }}"
 
 # Testbed on SCENARIO (see `dev`), ready to record; needs `run-netsim` serving.
 record SCENARIO:

@@ -20,7 +20,7 @@
 
 //! Widget state: what the API replies fill in and what the render path reads.
 
-use bmc_wasm_sdk::types::Hashrate;
+use bmc_wasm_sdk::types::{BitcoinAmount, Hashrate};
 use units::availability::Availability;
 
 use crate::manifest_params::{ChartFrame, Style};
@@ -193,7 +193,7 @@ pub struct WorkerCounts {
 /// Today's reward estimate from `/user/rewards/latest`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rewards {
-    pub today_btc: f64,
+    pub today_btc: BitcoinAmount,
     pub today_usd: f64,
 }
 
@@ -215,7 +215,7 @@ pub enum PayoutKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Payout {
     pub at: i64,
-    pub amount_btc: f64,
+    pub amount_btc: BitcoinAmount,
     /// `None` for a rail the reply did not name in terms this widget knows.
     /// A payout is its amount and its time; the rail only picks a chart
     /// marker, so an unrecognised one costs the marker, not the payout.

@@ -24,6 +24,7 @@
 //! ([`JsonLookup`]); timestamp strings resolve through an injected parser so
 //! tests run without the host's date support.
 
+use bmc_wasm_sdk::types::BitcoinAmount;
 #[cfg_attr(
     not(test),
     expect(
@@ -174,7 +175,7 @@ pub fn parse_hashrate_current(json: &impl JsonLookup) -> Option<f64> {
 #[must_use]
 pub fn parse_rewards(json: &impl JsonLookup) -> Option<Rewards> {
     Some(Rewards {
-        today_btc: json.f64("/todays_reward_estimate_btc")?,
+        today_btc: BitcoinAmount::from_bitcoin(json.f64("/todays_reward_estimate_btc")?),
         today_usd: json.f64("/todays_reward_estimate_usd")?,
     })
 }
@@ -273,7 +274,7 @@ pub fn parse_payouts_page(json: &impl JsonLookup, date: ParseDate<'_>) -> Option
         let at = json
             .str(&fmt!("/payouts/{i}/occurred_at"))
             .and_then(|s| date(&s))?;
-        let amount_btc = json.f64(&fmt!("/payouts/{i}/amount_btc"))?;
+        let amount_btc = BitcoinAmount::from_bitcoin(json.f64(&fmt!("/payouts/{i}/amount_btc"))?);
         payouts.push(Payout {
             at,
             amount_btc,
@@ -477,6 +478,23 @@ mod tests {
         let payouts = parse_payouts_page(&json, &fixture_date)
             .expect("BUG: a skipped status must not void the page");
         assert_eq!(payouts.len(), 1);
+    }
+
+    /// A reply missing the estimate parses to nothing, never to zero: the
+    /// source is marked failed and the slot reads *Unavailable*, rather than
+    /// telling an earning account it earned nothing.
+    #[test]
+    fn rewards_without_a_readable_estimate_are_absent_not_zero() {
+        let mut json = MapJson::default();
+        assert_eq!(parse_rewards(&json), None);
+        json.strings
+            .insert("/todays_reward_estimate_btc", "0.00017");
+        json.floats.insert("/todays_reward_estimate_usd", 10.04);
+        assert_eq!(
+            parse_rewards(&json),
+            None,
+            "an estimate quoted as a string is not a reading of zero"
+        );
     }
 
     #[test]

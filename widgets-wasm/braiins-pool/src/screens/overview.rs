@@ -52,14 +52,15 @@ pub struct OverviewViewData {
     pub data: PoolData,
 }
 
-/// Glyph counts the loading bars stand in for, one per slot's own strings.
+/// How wide each loading bar runs, in average glyphs — tuned to the run
+/// it stands in for, not that run's character count.
 mod chars {
-    /// "500,0"
-    pub const HASHRATE: f32 = 5.0;
-    /// "0,170468 BTC"
-    pub const REWARD: f32 = 12.0;
-    /// "Last payout: 0,000380 BTC"
-    pub const LAST_PAYOUT: f32 = 18.0;
+    /// Stands in for "500,0 PH/s".
+    pub const HASHRATE: f32 = 8.0;
+    /// Stands in for "₿0,17046800".
+    pub const REWARD: f32 = 11.0;
+    /// Stands in for "Last payout: ₿0,00038000".
+    pub const LAST_PAYOUT: f32 = 17.0;
 }
 
 /// The fixed blocks in the frames' budgets; whatever is left over goes
@@ -75,6 +76,17 @@ mod budget {
     /// pads and gaps) and its tiles row (label/value/sub with theirs).
     pub const L_PAYOUT: f32 = 104.0;
     pub const L_TILES: f32 = 124.0;
+    /// The Medium frame's three columns, sized to their runs, not their
+    /// content. Each run has a bound — an SI-scaled mantissa beside its unit;
+    /// a sign and eight decimals of bitcoin; a count that condenses past four
+    /// digits — so no column can borrow width off its neighbour and wrap it,
+    /// which is what a longer reward did to the hashrate label.
+    ///
+    /// The hashrate width is a cap, not a fixed size: the column flexes up
+    /// to it, and gives back the 2 px the band's 620 px design width lacks.
+    pub const M_HASHRATE_W: f32 = 190.0;
+    pub const M_REWARD_W: f32 = 208.0;
+    pub const M_WORKERS_W: f32 = 160.0;
 }
 
 const SPARKLINE: ChartSpec = ChartSpec {
@@ -137,14 +149,19 @@ fn header(account: Option<&str>) -> Node {
 
 /// A single centered hashrate hero, no card.
 fn small(view: &OverviewViewData) -> Node {
-    let (value, label) = hashrate_strings(&view.data);
-    let slot = parts::Slot::new(value.as_deref(), &view.data.hashrate_5m);
+    let scaled = hashrate_strings(&view.data);
+    let slot = parts::Slot::scaled(
+        scaled
+            .as_ref()
+            .map(|(value, unit)| (value.as_str(), unit.as_str())),
+        &view.data.hashrate_5m,
+    );
     let hero = match slot {
-        parts::Slot::Value(value) => parts::hero_value(value),
+        parts::Slot::Value { value, unit } => parts::hero_value(value, unit),
         parts::Slot::Loading => parts::skeleton_value(chars::HASHRATE, font::HERO),
         parts::Slot::Unavailable => parts::absent_value(parts::callout::UNAVAILABLE, font::HERO),
     };
-    let mut lines = vec![parts::label(&label), hero];
+    let mut lines = vec![parts::label(HASHRATE_LABEL), hero];
     // The sub qualifies a value, so it goes where there is one to qualify.
     if !matches!(slot, parts::Slot::Unavailable) {
         lines.push(parts::label("5m Average"));
@@ -173,10 +190,16 @@ fn medium(view: &OverviewViewData) -> Node {
             col(
                 props!(flex: 1.0, justify_content: Justify::Center),
                 [row(
-                    props!(gap: 32.0),
+                    props!(gap: space::PADDING),
                     [
-                        hashrate_block(&view.data, None, parts::STAT_OPEN),
-                        reward_block(&view.data, parts::STAT_OPEN),
+                        col(
+                            props!(flex: 1.0, max_width: budget::M_HASHRATE_W),
+                            [hashrate_block(&view.data, None, parts::STAT_OPEN)],
+                        ),
+                        col(
+                            props!(width: budget::M_REWARD_W),
+                            [reward_block(&view.data, parts::STAT_OPEN)],
+                        ),
                     ],
                 )],
             ),
@@ -185,7 +208,7 @@ fn medium(view: &OverviewViewData) -> Node {
     let mut cells = vec![left];
     if view.worker_states {
         cells.push(col(
-            props!(justify_content: Justify::Center),
+            props!(width: budget::M_WORKERS_W, justify_content: Justify::Center),
             [parts::card(
                 parts::CARD_M,
                 parts::workers_panel(&view.data.workers, &parts::WORKERS_COMPACT),
@@ -336,27 +359,30 @@ fn full(view: &OverviewViewData) -> Node {
     ])
 }
 
-/// The hashrate hero as (value, label): the label names the SI unit the
-/// value is scaled to, so the pair never drifts apart. A `None` value
-/// renders as a skeleton, with the unit-less label above it.
-fn hashrate_strings(data: &PoolData) -> (Option<String>, String) {
-    match data.hashrate_5m.as_option() {
-        Some(hashrate) => {
-            let (value, unit) = hashrate.format_si_parts(4);
-            (Some(value), fmt!("Hashrate ({unit})"))
-        }
-        None => (None, "Hashrate".to_owned()),
-    }
+/// The title over every hashrate slot.
+/// The SI unit rides with the value, so the title holds still as the scale moves.
+const HASHRATE_LABEL: &str = "Hashrate";
+
+/// The hashrate as (value, SI unit), absent until the source answers.
+fn hashrate_strings(data: &PoolData) -> Option<(String, String)> {
+    data.hashrate_5m
+        .as_option()
+        .map(|hashrate| hashrate.format_si_parts(4))
 }
 
 /// The hashrate stat block, dot-led in the layouts that pair it with the
 /// chart's own legend colour.
 fn hashrate_block(data: &PoolData, dot: Option<Color>, gaps: parts::StatGaps) -> Node {
-    let (value, block_label) = hashrate_strings(data);
+    let scaled = hashrate_strings(data);
     parts::stat_block(
         dot,
-        &block_label,
-        parts::Slot::new(value.as_deref(), &data.hashrate_5m),
+        HASHRATE_LABEL,
+        parts::Slot::scaled(
+            scaled
+                .as_ref()
+                .map(|(value, unit)| (value.as_str(), unit.as_str())),
+            &data.hashrate_5m,
+        ),
         Some("5m Average"),
         gaps,
         chars::HASHRATE,
@@ -366,12 +392,15 @@ fn hashrate_block(data: &PoolData, dot: Option<Color>, gaps: parts::StatGaps) ->
 fn reward_block(data: &PoolData, gaps: parts::StatGaps) -> Node {
     match data.rewards.as_option() {
         Some(rewards) => {
-            let btc = format_number!(rewards.today_btc, 6);
+            let btc = rewards.today_btc.format_with_sign();
             let usd = format_number!(rewards.today_usd, 2);
             parts::stat_block(
                 None,
                 "Todays Reward",
-                parts::Slot::Value(&fmt!("{btc} BTC")),
+                parts::Slot::Value {
+                    value: &btc,
+                    unit: None,
+                },
                 Some(&fmt!("≈ {usd} USD")),
                 gaps,
                 chars::REWARD,
@@ -443,16 +472,13 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
     };
     let last_line = match data.payouts.as_option() {
         Some(payouts) => match payouts.last() {
-            Some(payout) => {
-                let amount = format_number!(payout.amount_btc, 6);
-                parts::text_run(vec![
-                    span("Last payout: ", ()),
-                    span(
-                        fmt!("{amount} BTC"),
-                        style!(weight: FontWeight::SEMIBOLD, color: color::TEXT),
-                    ),
-                ])
-            }
+            Some(payout) => parts::text_run(vec![
+                span("Last payout: ", ()),
+                span(
+                    payout.amount_btc.format_with_sign(),
+                    style!(weight: FontWeight::SEMIBOLD, color: color::TEXT),
+                ),
+            ]),
             None => parts::absent("No payouts yet"),
         },
         None => parts::placeholder(
