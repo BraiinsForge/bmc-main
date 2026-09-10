@@ -28,7 +28,7 @@ import minerImage from './hero-image-miner.png';
 import css from './Welcome.scss';
 
 export interface WelcomeProps {
-    /// Product display name from HardwareCapabilities ("Braiins Deck", "Mini Miner").
+    /// Product display name from the device capabilities ("Braiins Deck", "Mini Miner").
     productName?: string;
     /// Miner devices get their own hero image and the plain Braiins logo.
     miner?: boolean;

@@ -25,6 +25,7 @@ import { Code, ConnectError } from '@connectrpc/connect';
 import type { IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
+import type { Capabilities } from '@/lib/system';
 import { URLS } from '@/constants';
 import { assertUnreachable } from '@/lib/ts';
 
@@ -496,11 +497,10 @@ export function getValidWidgetSizes(pool: C.Located[], slot: Pick<C.Located, 'id
     return res;
 }
 
-export function combinedSceneAvailable(caps: null | pb.HardwareCapabilities): boolean {
-    return caps?.combinedScenesSupported ?? false;
+export function combinedSceneAvailable(caps: Capabilities): boolean {
+    return caps.combinedScenesSupported;
 }
 
-export function combinedEditorRedirectTarget(caps: null | pb.HardwareCapabilities): null | string {
-    if (caps === null) return null;
+export function combinedEditorRedirectTarget(caps: Capabilities): null | string {
     return caps.combinedScenesSupported ? null : URLS.pages.display.list;
 }

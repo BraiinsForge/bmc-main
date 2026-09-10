@@ -36,6 +36,8 @@ import { Form, type iField } from '@/lib/form';
 
 // App
 import * as pb from '@/proto';
+import type { Capabilities } from '@/lib/system';
+import { useStore } from '@/store';
 import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
@@ -78,6 +80,7 @@ interface ManifestFormState {
 interface Props {
     intl: IntlShape;
     navigate: NavigateFunction;
+    hardwareCapabilities: Capabilities;
 }
 
 interface State {
@@ -89,7 +92,6 @@ interface State {
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
     timezones: pb.Timezone[];
-    hardwareCapabilities: null | pb.HardwareCapabilities;
     accounts: pb.Account[];
     credentialTypes: pb.CredentialTypeLookup;
 
@@ -113,7 +115,6 @@ const getInitialState = (): State => ({
     manifestLookup: new Map(),
     manifestsLoading: false,
     timezones: [],
-    hardwareCapabilities: null,
     accounts: [],
     credentialTypes: new Map(),
 
@@ -171,7 +172,6 @@ class View extends Component<Props, State> {
         this.#loadScenes();
         this.#loadManifestWidgets();
         this.#loadTimezones();
-        this.#loadHardwareCapabilities();
         this.#loadAccounts();
         this.#loadCredentialTypes();
     }
@@ -246,22 +246,6 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load credential types!' });
-            toast.error(msg);
-        }
-    };
-
-    private abortLoadHardwareCapabilities = pb.abort.get();
-    #loadHardwareCapabilities = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-
-        try {
-            const { signal } = this.abortLoadHardwareCapabilities.replace();
-            const hardwareCapabilities = await pb.rpc.hardware.getHardwareCapabilities({}, { signal });
-            this.setState({ hardwareCapabilities });
-        } catch ($) {
-            if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load hardware capabilities!' });
             toast.error(msg);
         }
     };
@@ -1024,7 +1008,7 @@ class View extends Component<Props, State> {
                                     onClick={this.#sceneAddChooseKind}
                                 />
                                 <CombinedSceneMenuAction
-                                    capabilities={this.state.hardwareCapabilities}
+                                    capabilities={this.props.hardwareCapabilities}
                                     label={formatMessage({ defaultMessage: 'Combined Scene' })}
                                     onClick={this.#sceneAddCombined}
                                 />
@@ -1091,7 +1075,7 @@ class View extends Component<Props, State> {
 }
 
 export function CombinedSceneMenuAction(props: {
-    capabilities: null | pb.HardwareCapabilities;
+    capabilities: Capabilities;
     label: string;
     onClick: () => void;
 }): null | ReactElement {
@@ -1164,5 +1148,6 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
 export default function DisplayList() {
     const intl = useIntl();
     const navigate = useNavigate();
-    return <View intl={intl} navigate={navigate} />;
+    const hardwareCapabilities = useStore(x => x.state.hardwareCapabilities);
+    return <View intl={intl} navigate={navigate} hardwareCapabilities={hardwareCapabilities} />;
 }

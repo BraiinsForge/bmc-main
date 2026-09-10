@@ -35,6 +35,8 @@ import { setState } from '@/lib/react';
 
 // App
 import * as pb from '@/proto';
+import type { Capabilities } from '@/lib/system';
+import { useStore } from '@/store';
 import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
@@ -79,6 +81,7 @@ interface Props {
     navigate: NavigateFunction;
     intl: IntlShape;
     sceneId: string;
+    hardwareCapabilities: Capabilities;
 }
 
 interface State {
@@ -91,7 +94,6 @@ interface State {
     scene: null | pb.Scene;
     runningWidgets: null | { count: number; max: number };
     timezones: pb.Timezone[];
-    hardwareCapabilities: null | pb.HardwareCapabilities;
     accounts: pb.Account[];
     credentialTypes: pb.CredentialTypeLookup;
 
@@ -109,7 +111,6 @@ const getInitialState = (): State => ({
     scene: null,
     runningWidgets: null,
     timezones: [],
-    hardwareCapabilities: null,
     accounts: [],
     credentialTypes: new Map(),
     openDialogKind: null,
@@ -154,7 +155,6 @@ class View extends Component<Props, State> {
         this.#previewOpen();
         this.#loadManifestWidgets();
         this.#loadTimezones();
-        this.#loadHardwareCapabilities();
         this.#loadAccounts();
         this.#loadCredentialTypes();
     }
@@ -176,22 +176,6 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             // Silently ignore — manifest widgets are optional
             this.setState({ manifestsLoading: false });
-        }
-    };
-
-    private abortLoadHardwareCapabilities = pb.abort.get();
-    #loadHardwareCapabilities = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-
-        try {
-            const { signal } = this.abortLoadHardwareCapabilities.replace();
-            const hardwareCapabilities = await pb.rpc.hardware.getHardwareCapabilities({}, { signal });
-            this.setState({ hardwareCapabilities });
-        } catch ($) {
-            if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load hardware capabilities!' });
-            toast.error(msg);
         }
     };
 
@@ -772,15 +756,7 @@ class View extends Component<Props, State> {
         if (this.state.previewRejected) return null;
 
         const { intl } = this.props;
-        const {
-            scene,
-            openDialogKind,
-            manifestForm,
-            manifestWidgets,
-            addPosition,
-            hardwareCapabilities,
-            runningWidgets,
-        } = this.state;
+        const { scene, openDialogKind, manifestForm, manifestWidgets, addPosition, runningWidgets } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
         const manifests = this.state.manifestLookup;
@@ -791,7 +767,7 @@ class View extends Component<Props, State> {
             : manifestWidgets;
 
         return (
-            <CombinedEditorCapabilityGate capabilities={hardwareCapabilities}>
+            <CombinedEditorCapabilityGate capabilities={this.props.hardwareCapabilities}>
                 <div className={css.root}>
                     <Helmet title={this.#txt.title} />
                     <header className={css.header}>
@@ -889,7 +865,7 @@ class View extends Component<Props, State> {
 }
 
 export function CombinedEditorCapabilityGate(props: {
-    capabilities: null | pb.HardwareCapabilities;
+    capabilities: Capabilities;
     children: ReactElement;
 }): null | ReactElement {
     const navigate = useNavigate();
@@ -899,7 +875,7 @@ export function CombinedEditorCapabilityGate(props: {
         if (target !== null) navigate(target, { replace: true });
     }, [navigate, target]);
 
-    if (props.capabilities === null || target !== null) return null;
+    if (target !== null) return null;
     return props.children;
 }
 
@@ -907,5 +883,6 @@ export default function DisplayCombined() {
     const intl = useIntl();
     const { id } = useParams();
     const navigate = useNavigate();
-    return <View intl={intl} sceneId={id ?? ''} navigate={navigate} />;
+    const hardwareCapabilities = useStore(x => x.state.hardwareCapabilities);
+    return <View intl={intl} sceneId={id ?? ''} navigate={navigate} hardwareCapabilities={hardwareCapabilities} />;
 }

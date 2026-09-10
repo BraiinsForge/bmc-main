@@ -19,6 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+export * from './BootError';
 export * from './Button';
 export * from './ButtonGroup';
 export * from './ButtonSwitch';

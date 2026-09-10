@@ -18,25 +18,37 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { StrictMode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { IntlProvider } from 'react-intl';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router';
 import { HelmetProvider, Helmet } from '@dr.pogodin/react-helmet';
 
 import router from '@/routes';
+import { store } from '@/store';
+import { BootError } from '@/components';
+import '@/styles/carbon/carbon.global.scss';
 
-const rootEl = document.getElementById('root');
-if (rootEl) {
+function boot(rootEl: HTMLElement): void {
     const root = createRoot(rootEl);
-    root.render(
-        <StrictMode>
+    let tree: ReactNode;
+    try {
+        store.boot();
+        tree = (
             <HelmetProvider>
                 <Helmet defaultTitle="Braiins DECK" titleTemplate="%s | Braiins DECK" />
-                <IntlProvider locale="en">
-                    <RouterProvider router={router} />
-                </IntlProvider>
+                <RouterProvider router={router} />
             </HelmetProvider>
+        );
+    } catch (error) {
+        tree = <BootError error={error} />;
+    }
+    root.render(
+        <StrictMode>
+            <IntlProvider locale="en">{tree}</IntlProvider>
         </StrictMode>,
     );
 }
+
+const rootEl = document.getElementById('root');
+if (rootEl) boot(rootEl);

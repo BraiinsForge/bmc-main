@@ -29,6 +29,7 @@ import DisplayCombined from './DisplayCombined';
 import type { ServiceMocks } from '@/lib/proto';
 import { Toaster } from '@/lib/toast';
 import * as pb from '@/proto';
+import { store } from '@/store';
 import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
 import { paramDef } from './fn/test-helpers';
@@ -64,9 +65,7 @@ function installMocks(): void {
             throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
         },
     });
-    registerMocks(pb.services.HardwareService, {
-        getHardwareCapabilities: () => deckCapabilities({ combinedScenesSupported: true }),
-    });
+    store.setHardwareCapabilities(deckCapabilities({ combinedScenesSupported: true }));
     registerMocks(pb.services.AccountManagementService, { getAllAccounts: () => ({ accounts: [] }) });
     registerMocks(pb.services.CredentialManagementService, { getCredentialTypes: () => ({ credentialTypes: [] }) });
     registerMocks(pb.services.SystemService, { getTimezoneList: () => ({ timezones: [] }) });
@@ -150,6 +149,7 @@ afterEach(() => {
     cleanup();
     mocks.clear();
     rstest.useRealTimers();
+    store.setHardwareCapabilities(null);
 });
 
 describe('running widget limit', () => {

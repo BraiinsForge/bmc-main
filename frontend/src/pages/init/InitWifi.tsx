@@ -25,6 +25,7 @@ import * as pb from '@/proto';
 import { URLS } from '@/constants';
 import { delay } from '@/lib/async';
 import { setState } from '@/lib/react';
+import type { Capabilities } from '@/lib/system';
 
 // Components
 import { InlineNotificationsGroup } from '@/components';
@@ -42,9 +43,12 @@ enum Stage {
     done = 'done',
 }
 
+interface Props {
+    capabilities: Capabilities;
+}
+
 interface State {
     stage: Stage;
-    capabilities: null | pb.HardwareCapabilities;
     wifi: {
         isLoading: boolean;
         networks: pb.WifiNetwork[];
@@ -53,7 +57,6 @@ interface State {
 }
 const getInitialState = (): State => ({
     stage: Stage.welcome,
-    capabilities: null,
     wifi: {
         isLoading: false,
         networks: [],
@@ -61,25 +64,10 @@ const getInitialState = (): State => ({
     errors: null,
 });
 
-export default class InitWifi extends Component<any, State> {
+export default class InitWifi extends Component<Props, State> {
     readonly state = getInitialState();
 
-    componentDidMount = () => {
-        this.#loadCapabilities();
-    };
     componentWillUnmount = () => pb.abort.all(this);
-
-    private abortCapabilities = pb.abort.get();
-    #loadCapabilities = async (): Promise<void> => {
-        const { signal } = this.abortCapabilities.replace();
-        try {
-            const capabilities = await pb.rpc.hardware.getHardwareCapabilities({}, { signal });
-            this.setState({ capabilities, errors: null });
-        } catch ($) {
-            if (pb.abort.is($)) return;
-            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to load hardware capabilities!'] });
-        }
-    };
 
     private abortScanWifi = pb.abort.get();
     #scanWifi = async (): Promise<void> => {
@@ -106,7 +94,7 @@ export default class InitWifi extends Component<any, State> {
     // The scan starts only here: on an ethernet-connected device the welcome
     // screen must not trigger (and surface errors from) a WiFi scan.
     #gotoWifiOrDone = (): void => {
-        if (this.state.capabilities?.wifiSupported === false) {
+        if (!this.props.capabilities.wifiSupported) {
             this.setState({ stage: Stage.done });
             return;
         }
@@ -158,18 +146,16 @@ export default class InitWifi extends Component<any, State> {
     };
 
     render() {
-        const { stage, capabilities, wifi, errors } = this.state;
+        const { capabilities } = this.props;
+        const { stage, wifi, errors } = this.state;
 
         let content: ReactNode = null;
         switch (stage) {
             case Stage.welcome:
-                // Hold rendering until capabilities decide the branding;
-                // rendering the default first flashes the wrong device.
-                if (!capabilities) break;
                 content = (
                     <Welcome
-                        productName={capabilities?.productName}
-                        miner={capabilities?.miningSupported}
+                        productName={capabilities.productName}
+                        miner={capabilities.miningSupported}
                         onNext={this.#gotoWifiOrDone}
                     />
                 );
@@ -186,32 +172,21 @@ export default class InitWifi extends Component<any, State> {
                         onSubmit={this.#wifiSubmit}
                         // Skipping WiFi is only offered when the device has a
                         // wired uplink to fall back on.
-                        onSkip={capabilities?.ethernetSupported ? this.#wifiSkip : undefined}
-                        miner={capabilities?.miningSupported}
+                        onSkip={capabilities.ethernetSupported ? this.#wifiSkip : undefined}
+                        miner={capabilities.miningSupported}
                     />
                 );
                 break;
 
             case Stage.done:
-                content = <DoneScene miner={capabilities?.miningSupported} />;
+                content = <DoneScene miner={capabilities.miningSupported} />;
                 break;
         }
 
         return (
             <div className={css.root}>
                 <div className={css.inner}>
-                    <InlineNotificationsGroup
-                        kind="error"
-                        theme="inverse"
-                        // NOTE: without capabilities nothing else renders, so the
-                        // banner carries the only way forward.
-                        items={errors?.map(text =>
-                            capabilities
-                                ? text
-                                : { children: text, action: { label: 'Retry', onClick: this.#loadCapabilities } },
-                        )}
-                        stretch
-                    />
+                    <InlineNotificationsGroup kind="error" theme="inverse" items={errors} stretch />
                     {content}
                 </div>
             </div>

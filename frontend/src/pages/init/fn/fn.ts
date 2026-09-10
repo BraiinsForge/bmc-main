@@ -24,11 +24,12 @@ import { Code, ConnectError } from '@connectrpc/connect';
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
 import { delay } from '@/lib/async';
+import type { Capabilities } from '@/lib/system';
 import type { NetworkProtocol } from '../components/Setup';
 
 /** A miner runs the pool + network form; every other device the localization one. */
-export function isMiningSetup(capabilities: null | pb.HardwareCapabilities): boolean {
-    return capabilities?.miningSupported === true;
+export function isMiningSetup(capabilities: Capabilities): boolean {
+    return capabilities.miningSupported;
 }
 
 export type PostSetupDestination = { route: string } | { url: string };
@@ -39,7 +40,7 @@ export type PostSetupDestination = { route: string } | { url: string };
  * static address it was just given when there is one.
  */
 export function postSetupDestination(
-    capabilities: null | pb.HardwareCapabilities,
+    capabilities: Capabilities,
     network: { protocol?: NetworkProtocol; staticAddress?: string },
     location: { protocol: string },
 ): PostSetupDestination {

@@ -25,7 +25,7 @@ import { combinedEditorRedirectTarget, combinedSceneAvailable } from './fn';
 import { CombinedSceneMenuAction } from './DisplayList';
 import { CombinedEditorCapabilityGate } from './DisplayCombined';
 import { URLS } from '@/constants';
-import type * as pb from '@/proto';
+import type { Capabilities } from '@/lib/system';
 import { deckCapabilities } from './capabilities.fixture';
 
 afterEach(cleanup);
@@ -39,10 +39,6 @@ describe('combinedSceneAvailable', () => {
     test('false when backend reports combined scenes unsupported', () => {
         const caps = deckCapabilities({ combinedScenesSupported: false });
         expect(combinedSceneAvailable(caps)).toBe(false);
-    });
-
-    test('false when capabilities not yet loaded', () => {
-        expect(combinedSceneAvailable(null)).toBe(false);
     });
 });
 
@@ -72,7 +68,7 @@ describe('CombinedSceneMenuAction', () => {
     });
 });
 
-function renderCombinedGate(caps: null | pb.HardwareCapabilities) {
+function renderCombinedGate(caps: Capabilities) {
     return render(
         <MemoryRouter initialEntries={[URLS.pages.display.combined.getHref('scene-1')]}>
             <Routes>
@@ -99,10 +95,6 @@ describe('combinedEditorRedirectTarget', () => {
     test('redirects to display list when combined scenes are unsupported', () => {
         const caps = deckCapabilities({ combinedScenesSupported: false });
         expect(combinedEditorRedirectTarget(caps)).toBe(URLS.pages.display.list);
-    });
-
-    test('no redirect while capabilities load (null)', () => {
-        expect(combinedEditorRedirectTarget(null)).toBeNull();
     });
 });
 

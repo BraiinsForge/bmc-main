@@ -20,6 +20,7 @@
 
 import { useState, useEffect } from 'react';
 import * as pb from '@/proto';
+import { readSystem, type Capabilities } from '@/lib/system';
 
 export type Listener<R> = (store: Store) => R;
 export type SubscribeResult = {
@@ -32,23 +33,32 @@ interface SessionInfo {
 }
 interface State {
     sessionInfo: SessionInfo;
+    hardwareCapabilities: Capabilities;
 }
+// Capabilities exist only after `boot()`; the public `state` hides that gap.
+type StoreState = Omit<State, 'hardwareCapabilities'> & { hardwareCapabilities: null | State['hardwareCapabilities'] };
 
 class Store {
-    #state: Readonly<State> = {
+    #state: Readonly<StoreState> = Object.freeze({
         sessionInfo: {
             isAuthenticated: null,
             hasPassword: null,
         },
-    };
-    #setState<Key extends keyof State>(key: Key, value: State[Key] | ((currentState: State[Key]) => State[Key])): void {
-        // @ts-expect-error: Only a type-guard
-        // to prevent direct writes internally
-        this.#state[key] = typeof value === 'function' ? value(this.#state[key]) : value;
+        hardwareCapabilities: null,
+    });
+    #setState<Key extends keyof StoreState>(
+        key: Key,
+        value: StoreState[Key] | ((currentState: StoreState[Key]) => StoreState[Key]),
+    ): void {
+        const next = typeof value === 'function' ? value(this.#state[key]) : value;
+        this.#state = Object.freeze({ ...this.#state, [key]: next });
         this.#notifyAllListeners();
     }
     get state(): Readonly<State> {
-        return Object.freeze({ ...this.#state });
+        if (this.#state.hardwareCapabilities === null) {
+            throw new Error('BUG: store read before boot() loaded the capabilities');
+        }
+        return this.#state as Readonly<State>;
     }
 
     #listeners = new Set<Listener<any>>();
@@ -109,6 +119,15 @@ class Store {
         }
 
         this.#setState('sessionInfo', res);
+    };
+
+    setHardwareCapabilities = (caps: null | Capabilities): void => {
+        this.#setState('hardwareCapabilities', caps);
+    };
+
+    /** Reads what the whole UI is keyed on; throws when the device cannot be described. */
+    boot = (): void => {
+        this.setHardwareCapabilities(readSystem().capabilities);
     };
 }
 

@@ -58,6 +58,7 @@ export interface SectionSettingsProps {
     // staticDns: iField<string>;
 
     // Wifi
+    showWifi: boolean;
     // The connected bool attribute is remapped to nullability
     strings: { wifiConnect: string };
     wifiActiveNetwork: iField<Maybe<pb.WifiNetwork>> & {
@@ -663,7 +664,9 @@ class View extends Component<Props, State> {
                         </Field>
                     ) : null}
 
-                    <Field title={formatMessage({ defaultMessage: 'Network' })} children={this.#renderWifi()} />
+                    {this.props.showWifi && (
+                        <Field title={formatMessage({ defaultMessage: 'Network' })} children={this.#renderWifi()} />
+                    )}
 
                     {/*
                     <Field

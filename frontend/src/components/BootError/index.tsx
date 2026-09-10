@@ -1,4 +1,4 @@
-// Copyright (C) 2026  Braiins Forge s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,17 +18,4 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import type { Capabilities } from '@/lib/system';
-
-/** Deck hardware capabilities for specs; override only what the test is about. */
-export function deckCapabilities(overrides: Partial<Capabilities> = {}): Capabilities {
-    return {
-        combinedScenesSupported: true,
-        wifiSupported: true,
-        ethernetSupported: false,
-        miningSupported: false,
-        boserManaged: false,
-        productName: 'Braiins Deck',
-        ...overrides,
-    };
-}
+export * from './BootError';

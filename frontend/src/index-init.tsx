@@ -24,6 +24,8 @@ import { StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createIntl, createIntlCache, RawIntlProvider } from 'react-intl';
 
+import { readSystem } from '@/lib/system';
+import { BootError } from '@/components';
 import App from './pages/init/InitWifi';
 
 const noop = () => {};
@@ -37,14 +39,19 @@ export function IntlProvider(props: { children: ReactNode }) {
     return <RawIntlProvider value={intlObject} children={props.children} />;
 }
 
-const rootEl = document.getElementById('root');
-if (rootEl) {
-    const root = createRoot(rootEl);
-    root.render(
+function boot(rootEl: HTMLElement): void {
+    let tree: ReactNode;
+    try {
+        tree = <App capabilities={readSystem().capabilities} />;
+    } catch (error) {
+        tree = <BootError error={error} />;
+    }
+    createRoot(rootEl).render(
         <StrictMode>
-            <IntlProvider>
-                <App />
-            </IntlProvider>
+            <IntlProvider>{tree}</IntlProvider>
         </StrictMode>,
     );
 }
+
+const rootEl = document.getElementById('root');
+if (rootEl) boot(rootEl);

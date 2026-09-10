@@ -25,6 +25,8 @@ import { Key } from 'ts-key-enum';
 
 import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
+import type { Capabilities } from '@/lib/system';
+import { networkConfigurable } from '@/lib/capabilities';
 import { LogoHeader } from '@/components';
 
 import {
@@ -62,6 +64,7 @@ interface Props extends LayoutWorkspaceProps {
     intl: IntlShape;
     navigate: NavigateFunction;
     hasPassword: null | boolean;
+    capabilities: Capabilities;
 }
 
 interface State {}
@@ -95,11 +98,13 @@ class Base extends Component<Props, State> {
                     url={URLS.pages.settings}
                     label={formatMessage({ defaultMessage: 'System Settings' })}
                 />
-                <SideLink
-                    icon={IconNetwork}
-                    url={URLS.pages.network}
-                    label={formatMessage({ defaultMessage: 'Network Configuration' })}
-                />
+                {networkConfigurable(this.props.capabilities) && (
+                    <SideLink
+                        icon={IconNetwork}
+                        url={URLS.pages.network}
+                        label={formatMessage({ defaultMessage: 'Network Configuration' })}
+                    />
+                )}
                 <SideLink
                     icon={IconApi}
                     url={URLS.pages.accounts}
@@ -173,8 +178,9 @@ class Base extends Component<Props, State> {
 export function LayoutWorkspace(props: LayoutWorkspaceProps) {
     const intl = useIntl();
     const hasPassword: null | boolean = useStore(x => x.state.sessionInfo.hasPassword);
+    const capabilities = useStore(x => x.state.hardwareCapabilities);
     const navigate = useNavigate();
-    return <Base {...props} intl={intl} navigate={navigate} hasPassword={hasPassword} />;
+    return <Base {...props} intl={intl} navigate={navigate} hasPassword={hasPassword} capabilities={capabilities} />;
 }
 
 interface HeaderActionButtonProps {

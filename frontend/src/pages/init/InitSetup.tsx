@@ -28,7 +28,9 @@ import { Code, ConnectError } from '@connectrpc/connect';
 import * as pb from '@/proto';
 import { dnsJoin, dnsSplit } from '@/lib/format';
 import { setState } from '@/lib/react';
+import type { Capabilities } from '@/lib/system';
 import { assertUnreachable } from '@/lib/ts';
+import { useStore } from '@/store';
 
 // Components
 import { InlineNotificationsGroup } from '@/components';
@@ -42,6 +44,7 @@ import css from './Init.scss';
 interface Props {
     intl: IntlShape;
     navigate: NavigateFunction;
+    capabilities: Capabilities;
 }
 
 // NOTE: a failure to reach the server at all, as opposed to a status it sent.
@@ -54,7 +57,8 @@ interface State {
     isLoading: boolean;
     isSaving: boolean;
 
-    capabilities: null | pb.HardwareCapabilities;
+    // Kept apart from the form errors: the form itself is held back until these clear.
+    loadError: null | string[];
     data: FormState;
     timezones: Array<pb.Timezone>;
 }
@@ -62,7 +66,7 @@ const getInitialState = (): State => ({
     isLoading: false,
     isSaving: false,
 
-    capabilities: null,
+    loadError: null,
     data: {
         values: { protocol: 'dhcp' },
         errors: null,
@@ -81,21 +85,17 @@ class View extends Component<Props, State> {
         const { formatMessage, timeZone } = this.props.intl;
         const { signal } = this.abortLoadConfig.replace();
 
-        await setState(this, { isLoading: true });
+        await setState(this, { isLoading: true, loadError: null });
         let timezones: Array<pb.Timezone> = [];
-        let capabilities: null | pb.HardwareCapabilities = null;
+        let loadError: null | string[] = null;
         const res: FormState = {
             values: { protocol: 'dhcp' },
             errors: null,
         };
 
         try {
-            const [v, caps] = await Promise.all([
-                pb.rpc.init.getSettingsData({}, { signal }),
-                pb.rpc.hardware.getHardwareCapabilities({}, { signal }),
-            ]);
+            const v = await pb.rpc.init.getSettingsData({}, { signal });
             timezones = v.timezones;
-            capabilities = caps;
 
             // Try to detect browser timezone from react-intl first, fallback to Intl API, then server default
             const browserTimezone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -130,12 +130,10 @@ class View extends Component<Props, State> {
             };
         } catch ($) {
             if (pb.abort.is($)) return;
-            res.errors = {
-                global: pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to load initial values!' })],
-            };
+            loadError = pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to load initial values!' })];
         }
 
-        this.setState({ isLoading: false, timezones, capabilities, data: res });
+        this.setState({ isLoading: false, loadError, timezones, data: res });
     };
 
     #handleChange = <Key extends keyof FormState['values']>(key: Key) => {
@@ -159,12 +157,12 @@ class View extends Component<Props, State> {
     // A miner requires the pool + network form; every other device uses the
     // localization form.
     get #isMiningSetup(): boolean {
-        return isMiningSetup(this.state.capabilities);
+        return isMiningSetup(this.props.capabilities);
     }
 
     #leaveSetup = (): void => {
         const { protocol, staticAddress } = this.state.data.values;
-        const destination = postSetupDestination(this.state.capabilities, { protocol, staticAddress }, window.location);
+        const destination = postSetupDestination(this.props.capabilities, { protocol, staticAddress }, window.location);
         if ('url' in destination) window.location.replace(destination.url);
         else this.props.navigate(destination.route, { replace: true });
     };
@@ -296,12 +294,14 @@ class View extends Component<Props, State> {
         const {
             isLoading,
             isSaving,
+            loadError,
             timezones,
-            capabilities,
             data: { values, errors },
         } = this.state;
+        const { formatMessage } = this.props.intl;
 
         const disabled: boolean = isLoading || isSaving;
+        const retry = { label: formatMessage({ defaultMessage: 'Retry' }), onClick: this.#loadConfig };
 
         return (
             <div className={css.root}>
@@ -309,18 +309,10 @@ class View extends Component<Props, State> {
                     <InlineNotificationsGroup
                         kind="error"
                         theme="inverse"
-                        // NOTE: without capabilities nothing else renders, so the
-                        // banner carries the only way forward.
-                        items={errors?.global?.map(text =>
-                            capabilities
-                                ? text
-                                : { children: text, action: { label: 'Retry', onClick: this.#loadConfig } },
-                        )}
+                        items={loadError?.map(text => ({ children: text, action: retry })) ?? errors?.global}
                         stretch
                     />
-                    {/* Hold the form until capabilities decide the variant;
-                        rendering the default first flashes the wrong device. */}
-                    {!capabilities ? null : this.#isMiningSetup ? (
+                    {loadError !== null ? null : this.#isMiningSetup ? (
                         <MiningSetup
                             timeFormat={{
                                 disabled,
@@ -503,5 +495,6 @@ class View extends Component<Props, State> {
 export default function InitSetup() {
     const intl = useIntl();
     const navigate = useNavigate();
-    return <View intl={intl} navigate={navigate} />;
+    const capabilities = useStore(x => x.state.hardwareCapabilities);
+    return <View intl={intl} navigate={navigate} capabilities={capabilities} />;
 }

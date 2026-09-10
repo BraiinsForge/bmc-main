@@ -53,6 +53,7 @@ export default {
         // staticDns: getArg('staticDnsServers', '8.8.8.8, 8.8.4.4'),
 
         // Wifi
+        showWifi: true,
         wifiActiveNetwork: {
             ...getArg('wifiActiveNetwork', {
                 $typeName: 'braiins.bmc.web.WifiNetwork',

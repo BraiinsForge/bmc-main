@@ -23,13 +23,16 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router';
 import { IntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
+import { Code, ConnectError } from '@connectrpc/connect';
 
 import InitSetup from './InitSetup';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
+import { store } from '@/store';
 import type { ServiceMocks } from '@/lib/proto';
 import { timezones } from '@/mocks';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
+import type { Capabilities } from '@/lib/system';
 
 // `mocks.service` wants every method typed; at runtime it only registers what we
 // pass. This lets us register a typed subset.
@@ -58,9 +61,9 @@ const settingsData = pb.create(pb.SettingsDataResponseSchema, {
 
 type SetupDeviceMock = ServiceMocks<typeof pb.services.InitialSetupService>['setupDevice'];
 
-function installMocks(capabilities: pb.HardwareCapabilities, setupDevice: SetupDeviceMock): void {
+function installMocks(capabilities: Capabilities, setupDevice: SetupDeviceMock): void {
     mocks.clear();
-    registerMocks(pb.services.HardwareService, { getHardwareCapabilities: () => capabilities });
+    store.setHardwareCapabilities(capabilities);
     registerMocks(pb.services.InitialSetupService, {
         getSettingsData: () => settingsData,
         setupDevice,
@@ -104,9 +107,9 @@ describe('InitSetup', () => {
         );
         renderPage();
 
-        await screen.findByText('Mining Pool');
+        await screen.findByDisplayValue(POOL_URL);
+        expect(screen.getByText('Mining Pool')).toBeTruthy();
         expect(screen.getByText('Ethernet Network')).toBeTruthy();
-        expect(screen.getByDisplayValue(POOL_URL)).toBeTruthy();
         expect(screen.getByDisplayValue(HOSTNAME)).toBeTruthy();
     });
 
@@ -131,7 +134,7 @@ describe('InitSetup', () => {
         const replace = stubReplace();
         renderPage();
 
-        await screen.findByText('Mining Pool');
+        await screen.findByDisplayValue(POOL_URL);
         fireEvent.click(screen.getByRole('button', { name: 'Save and Continue' }));
 
         await waitFor(() => expect(received).toBeDefined());
@@ -139,5 +142,30 @@ describe('InitSetup', () => {
         expect(received?.hostname).toBe(HOSTNAME);
         expect(received?.network?.protocol.case).toBe('dhcp');
         await waitFor(() => expect(replace).toHaveBeenCalledWith('/'));
+    });
+
+    test('a failed settings load holds the form behind a Retry that reloads it', async () => {
+        let attempts = 0;
+        installMocks(
+            miner,
+            rstest.fn(() => ({})),
+        );
+        registerMocks(pb.services.InitialSetupService, {
+            getSettingsData: () => {
+                attempts += 1;
+                if (attempts === 1) throw new ConnectError('boom', Code.Unavailable);
+                return settingsData;
+            },
+            setupDevice: rstest.fn(() => ({})),
+        });
+        renderPage();
+
+        const retry = await screen.findByRole('button', { name: 'Retry' });
+        expect(screen.queryByText('Mining Pool')).toBeNull();
+
+        fireEvent.click(retry);
+
+        await screen.findByDisplayValue(POOL_URL);
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     });
 });

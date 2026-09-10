@@ -27,6 +27,7 @@ import { HelmetProvider } from '@dr.pogodin/react-helmet';
 
 import DisplayList from './DisplayList';
 import * as pb from '@/proto';
+import { store } from '@/store';
 import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
@@ -92,9 +93,7 @@ function installMocks(): void {
         getAvailableWidgets: () => ({ widgets: [] }),
     });
 
-    registerMocks(pb.services.HardwareService, {
-        getHardwareCapabilities: () => deckCapabilities({ combinedScenesSupported: false }),
-    });
+    store.setHardwareCapabilities(deckCapabilities({ combinedScenesSupported: false }));
 
     registerMocks(pb.services.SystemService, {
         getTimezoneList: () => ({ timezones: [] }),
@@ -138,6 +137,7 @@ afterEach(() => {
     cleanup();
     mocks.clear();
     rstest.useRealTimers();
+    store.setHardwareCapabilities(null);
 });
 
 describe('screen cycling transition effect', () => {

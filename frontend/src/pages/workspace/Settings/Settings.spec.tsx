@@ -28,6 +28,8 @@ import { ConnectError, Code } from '@connectrpc/connect';
 import Settings from './Settings';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
+import { store } from '@/store';
+import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
 import { Toaster } from '@/lib/toast';
 import AppContext, { getAppContextDefault } from '@/context';
 import type { ServiceMocks } from '@/lib/proto';
@@ -105,6 +107,7 @@ type StartUpgradeMock = ServiceMocks<typeof pb.services.UpgradeService>['startUp
 
 function installMocks(startUpgrade: StartUpgradeMock): void {
     mocks.clear();
+    store.setHardwareCapabilities(deckCapabilities());
     registerMocks(pb.services.UpgradeService, {
         checkForUpgrade: () => packageOffer(),
         startUpgrade,
@@ -148,6 +151,7 @@ afterEach(() => {
     confirmAnswer = true;
     confirmSpy.mockClear();
     rstest.useRealTimers();
+    store.setHardwareCapabilities(null);
     baselineInstanceId = 'instance-pre';
     polledInstanceId = 'instance-pre';
     instanceReads = 0;

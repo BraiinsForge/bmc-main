@@ -35,10 +35,6 @@ describe('isMiningSetup', () => {
         expect(isMiningSetup(miner)).toBe(true);
         expect(isMiningSetup(deck)).toBe(false);
     });
-
-    test('false while capabilities are unknown', () => {
-        expect(isMiningSetup(null)).toBe(false);
-    });
 });
 
 describe('postSetupDestination', () => {

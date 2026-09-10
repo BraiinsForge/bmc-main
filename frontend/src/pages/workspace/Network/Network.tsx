@@ -18,14 +18,15 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component, Fragment } from 'react';
+import { Component, Fragment, useEffect } from 'react';
 import { debounce, cloneDeep, isEqual } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 
 import { type IntlShape, useIntl } from 'react-intl';
-import { type Location, useLocation } from 'react-router';
+import { type Location, useLocation, useNavigate } from 'react-router';
 
 // Lib
+import { URLS } from '@/constants';
 import { dnsJoin, dnsSplit } from '@/lib/format';
 import { setState } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts';
@@ -35,6 +36,8 @@ import { toast } from '@/lib/toast';
 import AppContext, { type AppContextType } from '@/context';
 import { useStore } from '@/store';
 import * as pb from '@/proto';
+import type { Capabilities } from '@/lib/system';
+import { networkConfigurable, wifiConfigurable } from '@/lib/capabilities';
 
 import { SectionSettings } from './components';
 import {
@@ -48,6 +51,7 @@ interface Props {
     intl: IntlShape;
     location: Location;
     hasPassword: null | boolean;
+    capabilities: Capabilities;
 }
 
 // The value is used in location hash, so be mindfull of that.
@@ -159,11 +163,12 @@ class View extends Component<Props, State> {
             const { signal } = this.loadAbort.replace();
             const reqOpt = { signal };
 
+            const hasWifi = wifiConfigurable(this.props.capabilities);
             const [netInfo, netConfig, wifiStatus, wifiSavedNets] = await Promise.all([
                 pb.rpc.net.getNetworkInfo({}, reqOpt),
                 pb.rpc.net.getNetworkConfig({}, reqOpt),
-                pb.rpc.net.getWifiStatus({}, reqOpt),
-                pb.rpc.net.getWifiSavedNetworks({}, reqOpt),
+                hasWifi ? pb.rpc.net.getWifiStatus({}, reqOpt) : null,
+                hasWifi ? pb.rpc.net.getWifiSavedNetworks({}, reqOpt) : null,
             ]);
 
             this.setState(s => {
@@ -180,7 +185,7 @@ class View extends Component<Props, State> {
                     savedNets: wifiSavedNets,
                     selection:
                         newState.wifi.selection == null
-                            ? (wifiStatus.status?.network ?? null)
+                            ? (wifiStatus?.status?.network ?? null)
                             : newState.wifi.selection,
                 };
 
@@ -423,6 +428,7 @@ class View extends Component<Props, State> {
                 />
 
                 <SectionSettings
+                    showWifi={wifiConfigurable(this.props.capabilities)}
                     status={[
                         ['IPv4', netInfo.ipAddress],
                         ['Hostname', netInfo.hostname],
@@ -520,5 +526,14 @@ export default function NetworkPage() {
     const intl = useIntl();
     const location = useLocation();
     const hasPassword = useStore(x => x.state.sessionInfo.hasPassword);
-    return <View intl={intl} location={location} hasPassword={hasPassword} />;
+    const capabilities = useStore(x => x.state.hardwareCapabilities);
+    const navigate = useNavigate();
+    const hidden = !networkConfigurable(capabilities);
+
+    useEffect(() => {
+        if (hidden) navigate(URLS.pages.display.list, { replace: true });
+    }, [navigate, hidden]);
+
+    if (hidden) return null;
+    return <View intl={intl} location={location} hasPassword={hasPassword} capabilities={capabilities} />;
 }

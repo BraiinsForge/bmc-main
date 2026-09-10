@@ -1,4 +1,4 @@
-// Copyright (C) 2026  Braiins Forge s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,17 +18,22 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import type { Capabilities } from '@/lib/system';
+import { useIntl } from 'react-intl';
+import * as pb from '@/proto';
+import { InlineNotification } from '@/components/InlineNotification';
 
-/** Deck hardware capabilities for specs; override only what the test is about. */
-export function deckCapabilities(overrides: Partial<Capabilities> = {}): Capabilities {
-    return {
-        combinedScenesSupported: true,
-        wifiSupported: true,
-        ethernetSupported: false,
-        miningSupported: false,
-        boserManaged: false,
-        productName: 'Braiins Deck',
-        ...overrides,
-    };
+/** Shown in place of the app when the device's `system.js` did not yield usable capabilities. */
+export function BootError(props: { error: unknown }) {
+    const { formatMessage } = useIntl();
+    const error = pb.parseError(props.error);
+    return (
+        <InlineNotification
+            kind="error"
+            lowContrast
+            hideCloseButton
+            title={formatMessage({ defaultMessage: 'The device did not describe itself' })}
+            action={{ label: formatMessage({ defaultMessage: 'Retry' }), onClick: () => window.location.reload() }}
+            children={error.message}
+        />
+    );
 }
