@@ -33,6 +33,7 @@ use crate::manager::BmcState;
 
 pub use crate::data::{SceneCycling, SceneCyclingTransition};
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
+pub use bmc_upgrade_types::{DownloadProgress, UpgradeKind};
 pub use bmc_widget_protocol::{
     ActionPayload, CredentialSecrets, LedRequestId, LedRequestStatus, SettingUpdate,
     WidgetInitialConfig, WidgetInstanceKey,
@@ -233,13 +234,6 @@ impl UpgradeGeneration {
     }
 }
 
-/// Presentation category that selects the firmware or package upgrade surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpgradeKind {
-    Firmware,
-    Packages,
-}
-
 /// Current stage of a system upgrade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpgradePhase {
@@ -250,13 +244,6 @@ pub enum UpgradePhase {
     PackageVerifying,
     PackageBuilding,
     PackageActivating,
-}
-
-/// Download bytes the on-device display can present without inferring totals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DownloadProgress {
-    pub downloaded_bytes: u64,
-    pub total_bytes: Option<u64>,
 }
 
 /// Current upgrade view projected from the internal run stream.

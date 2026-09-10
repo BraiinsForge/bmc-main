@@ -723,6 +723,7 @@ dependencies = [
  "bmc-shared-time",
  "bmc-shared-utils",
  "bmc-upgrade",
+ "bmc-upgrade-types",
  "bmc-widget",
  "bmc-widget-manifest",
  "bmc-widget-protocol",

@@ -21,10 +21,10 @@
 use std::future::Future;
 
 use bmc_nix::types::MergedIndex;
+use bmc_upgrade_types::PackagesPreview;
 use uuid::Uuid;
 
 use crate::arbitration::Disruption;
-use crate::packages::PackagesPreview;
 
 #[derive(Clone, Debug)]
 pub struct PackageOffer {

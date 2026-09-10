@@ -26,7 +26,9 @@ use std::time::Duration;
 use bmc_nix::store::ESTIMATE_TIMEOUT;
 use tracing::{info, warn};
 
-pub use bmc_upgrade_types::{InstallablePackage, PackageChange as SystemPackageChange};
+pub use bmc_upgrade_types::{
+    InstallablePackage, PackageChange as SystemPackageChange, PackagesPreview,
+};
 
 /// Package-index fetches run under the upgrade run gate: a hung index
 /// server must time out instead of wedging every check/start in
@@ -40,16 +42,6 @@ pub struct NixUpgradeConfig {
     pub profile_dir: PathBuf,
     pub hooks_dir: String,
     pub hooks_override_path: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug)]
-pub struct PackagesPreview {
-    pub changes: Vec<SystemPackageChange>,
-    pub download_size_bytes: Option<u64>,
-    /// Unpacked (NAR) size the realization would add to the store.
-    pub unpacked_size_bytes: Option<u64>,
-    pub bmc_version: Option<String>,
-    pub bmc_changelog: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]

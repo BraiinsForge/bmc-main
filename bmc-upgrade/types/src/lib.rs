@@ -18,9 +18,31 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Package metadata independent of upgrade execution and Nix.
+//! Upgrade metadata independent of execution and Nix.
 
 use std::collections::BTreeMap;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpgradeKind {
+    Firmware,
+    Packages,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DownloadProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackagesPreview {
+    pub changes: Vec<PackageChange>,
+    pub download_size_bytes: Option<u64>,
+    /// Unpacked (NAR) size the realization would add to the store.
+    pub unpacked_size_bytes: Option<u64>,
+    pub bmc_version: Option<String>,
+    pub bmc_changelog: Option<String>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackageChange {

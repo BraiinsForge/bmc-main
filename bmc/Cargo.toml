@@ -48,6 +48,7 @@ bmc-scheduler.workspace = true
 bmc-shared-time.workspace = true
 bmc-shared-utils.workspace = true
 bmc-upgrade = { workspace = true, features = ["disk-check"] }
+bmc-upgrade-types.workspace = true
 bmc-widget.workspace = true
 bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
