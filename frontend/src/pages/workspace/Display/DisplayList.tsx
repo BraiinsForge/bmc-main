@@ -178,7 +178,13 @@ class View extends Component<Props, State> {
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
         pb.abort.all(this);
+
+        // Every debounce this page owns, or it fires into a component that is gone:
+        // the scene reload is a second long and outlives a quick navigation easily.
         this.#liveUpdateWidget.cancel();
+        this.#loadScenesDebounced.cancel();
+        this.#notifySuccessDebounced.cancel();
+        this.#sceneListSetDurationSubmit.cancel();
     }
 
     #notifySuccessDebounced = debounce(toast.success, 1e3);
