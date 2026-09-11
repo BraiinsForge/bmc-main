@@ -53,15 +53,18 @@ sound volume, optionally turns the screen off after inactivity, and controls whe
 - A configured timeout of **Never** keeps the screen on during night mode.
 - Any non-zero timeout turns the screen off after the configured inactivity period.
 - When night mode ends, the screen is turned back on if auto-off had turned it off.
+- A screen the user turned off from the IP-report button stays off when night mode ends, since the user asked for that
+  blank more recently than the schedule did. See [Physical Buttons](physical-buttons.md).
 
 ### Wake the screen
 
 > As a user, I want to wake the screen with normal device interaction so I do not need a special gesture at night.
 
-- Touch activity wakes the screen when screen auto-off has turned it off.
+- Touch activity wakes the screen when screen auto-off has turned it off, and equally when the IP-report button did.
 - The touch that wakes the screen only wakes it — it does not press, swipe, or otherwise interact with the scene
   underneath.
-- Physical button activity wakes the screen when screen auto-off has turned it off.
+- Physical button activity wakes the screen when screen auto-off has turned it off, and equally when the IP-report
+  button did.
 - Waking the screen restores the correct current brightness for the active mode.
 - After waking from screen auto-off, the display shows the first visible scene.
 - Activity restarts the inactivity timeout while night mode remains active.

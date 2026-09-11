@@ -1,8 +1,8 @@
 # Physical Buttons
 
 The Deck's physical buttons let the user act on the device without its screen or the web UI: an IP-report button puts
-the device's address on screen, and a reset button restarts or factory-resets the device. Which buttons a product
-carries, and which of them the BMC application answers to, depends on the product.
+the device's address on screen or turns the display off, and a reset button restarts or factory-resets the device. Which
+buttons a product carries, and which of them the BMC application answers to, depends on the product.
 
 ## User stories
 
@@ -22,8 +22,26 @@ carries, and which of them the BMC application answers to, depends on the produc
   about to be shown anyway. During setup or Wi-Fi reconfiguration it does nothing either, since those screens must stay.
 - A failure screen the user could tap away closes on the press, and the address takes its place. On a device without a
   touch screen this is the way to clear such a screen before it times out on its own.
-- A hold of one second or longer does nothing today. Turning the display off on a hold of three seconds or longer is a
-  follow-up (BDK-816).
+
+### Turn the display off
+
+> As a user, I want a long hold of the IP-report button to turn the display off so that I can darken the device without
+> the web UI or a touch screen, and without waiting for night mode.
+
+- The display turns off the moment the hold reaches three seconds, while the button is still down, and the address is
+  not shown. Letting go afterwards changes nothing. It stays off until the next touch or press of a button the BMC
+  application answers to, or until an alarm rings; the alarm screen never sits on a dark panel.
+- A hold started on a dark display lights it on the press, as any press does, and darkens it again at the three-second
+  mark.
+- Outside night mode the display comes back on whichever scene cycling has reached meanwhile, since cycling carries on
+  behind the dark panel. During night mode, where cycling is suspended, it comes back on the first scene, as it does
+  after night mode's own auto-off.
+- While an alarm is ringing the hold does nothing at all, so the screen the user needs to silence the alarm cannot be
+  turned off from under them. The hold is refused outright rather than deferred: it does not blank the display once the
+  alarm stops.
+- A screen turned off this way stays off across the end of night mode, unlike one night mode's own auto-off turned off.
+  Night mode's auto-off is otherwise unaffected, and resumes its timeout once the screen is woken.
+- A release between one and three seconds does nothing, so a hesitant hold cannot pick either action by accident.
 
 ### Restart or factory-reset the device
 
