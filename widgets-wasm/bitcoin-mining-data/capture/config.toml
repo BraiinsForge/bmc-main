@@ -1,0 +1,5 @@
+# Capture configuration for visual regression testing.
+
+# Settle a few frames after the fetch stubs fire so the widget leaves Loading
+# and draws the year chart before the first capture.
+settle_delay = 5

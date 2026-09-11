@@ -111,28 +111,100 @@ fn stat_row<T>(
 fn chart_or_status<'a, T>(
     source: &'a Availability<T>,
     select_series: impl FnOnce(&'a T) -> &'a Series,
-    width: f32,
-    height: f32,
+    chart: parts::ChartBox,
     force_color: Option<Color>,
 ) -> Node {
     match source {
         Availability::Available(value) => {
-            parts::sparkline(select_series(value), width, height, force_color)
+            parts::sparkline(select_series(value), chart, force_color)
         }
         Availability::Unavailable => col(
-            props!(width: width, height: height),
+            props!(width: chart.width, height: chart.height),
             [parts::muted("Loading history…", 16)],
         ),
-        Availability::Failed => parts::unavailable_chart(width, height),
+        Availability::Failed => parts::unavailable_chart(chart.width, chart.height),
     }
 }
 
-fn adjustment_sizes(bucket: SizeBucket) -> (u32, u32, u32) {
+const DECK_GRIDLINES: usize = 4;
+
+const fn deck_chart(width: f32, height: f32) -> parts::ChartBox {
+    parts::ChartBox {
+        width,
+        height,
+        gridlines: DECK_GRIDLINES,
+        corner_label: None,
+    }
+}
+
+fn title_size(bucket: SizeBucket) -> parts::TitleSize {
+    match bucket {
+        SizeBucket::Bmm101 => parts::TitleSize {
+            icon: 16.0,
+            label: 14,
+        },
+        SizeBucket::Small | SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => {
+            parts::TitleSize {
+                icon: 24.0,
+                label: 24,
+            }
+        }
+    }
+}
+
+/// Label, time and badge font sizes of an adjustment row.
+type AdjustmentSizes = (u32, u32, u32);
+
+fn adjustment_sizes(bucket: SizeBucket) -> AdjustmentSizes {
     match bucket {
         SizeBucket::Full => (24, 16, 24),
         SizeBucket::Large | SizeBucket::Medium => (20, 16, 20),
+        SizeBucket::Bmm101 => (20, 20, 20),
         SizeBucket::Small => (16, 12, 16),
     }
+}
+
+fn previous_adjustment_row(view: &ViewData, sizes: AdjustmentSizes) -> Node {
+    let (label_size, time_size, badge_size) = sizes;
+    let stats = view.data.difficulty_stats.as_option().copied();
+    let (when, when_color) = availability_value(&view.data.difficulty_stats, |stats| {
+        match (stats.epoch_block, stats.epoch_block_time_secs) {
+            (Some(block), Some(block_time_secs)) => {
+                Some(parts::previous_adjustment_days(block, block_time_secs))
+            }
+            _ => None,
+        }
+    })
+    .into_text_and_color();
+    parts::adjustment_row(
+        "Prev Adjust",
+        when,
+        stats.and_then(|stats| stats.previous_adjustment_percent),
+        label_size,
+        time_size,
+        badge_size,
+        when_color,
+    )
+}
+
+fn next_adjustment_row(view: &ViewData, sizes: AdjustmentSizes) -> Node {
+    let (label_size, time_size, badge_size) = sizes;
+    let stats = view.data.difficulty_stats.as_option().copied();
+    let (when, when_color) = availability_value(&view.data.difficulty_stats, |stats| {
+        stats
+            .estimated_adjustment_at
+            .map(|at| parts::relative_days(at, view.now_secs))
+    })
+    .into_text_and_color();
+    parts::adjustment_row(
+        "Next Adjust",
+        when,
+        stats.and_then(|stats| stats.estimated_adjustment_percent),
+        label_size,
+        time_size,
+        badge_size,
+        when_color,
+    )
 }
 
 /// A primary value's sizes: the unit takes the bucket's label size.
@@ -149,77 +221,65 @@ fn deck_value_sizes(bucket: SizeBucket) -> parts::ValueSizes {
     value_sizes(bucket, number)
 }
 
-fn difficulty_panel(view: &ViewData, chart: Option<(f32, f32)>, show_previous: bool) -> Node {
-    let stats = view.data.difficulty_stats.as_option().copied();
-    let (label_size, time_size, badge_size) = adjustment_sizes(view.bucket);
-    let (previous_adjustment, previous_adjustment_color) =
-        availability_value(&view.data.difficulty_stats, |stats| {
-            match (stats.epoch_block, stats.epoch_block_time_secs) {
-                (Some(block), Some(block_time_secs)) => {
-                    Some(parts::previous_adjustment_days(block, block_time_secs))
-                }
-                _ => None,
-            }
-        })
-        .into_text_and_color();
-    let (next_adjustment, next_adjustment_color) =
-        availability_value(&view.data.difficulty_stats, |stats| {
-            stats
-                .estimated_adjustment_at
-                .map(|at| parts::relative_days(at, view.now_secs))
-        })
-        .into_text_and_color();
+fn difficulty_value(view: &ViewData, sizes: parts::ValueSizes) -> Node {
+    primary_value(
+        &view.data.difficulty_stats,
+        |stats| {
+            stats.difficulty.map(|difficulty| Quantity {
+                number: format_number!(difficulty / 1e12, 1),
+                unit: "T".to_owned(),
+            })
+        },
+        sizes,
+    )
+}
+
+fn hashprice_value(view: &ViewData, sizes: parts::ValueSizes) -> Node {
+    primary_value(
+        &view.data.hashrate_stats,
+        |stats| {
+            stats.hashprice_per_th_day.map(|value| Quantity {
+                number: parts::compact_number(value * TERAHASHES_PER_PETAHASH, 2),
+                unit: "USD/PH/Day".to_owned(),
+            })
+        },
+        sizes,
+    )
+}
+
+fn difficulty_panel(view: &ViewData, chart: Option<parts::ChartBox>, show_previous: bool) -> Node {
+    let sizes = adjustment_sizes(view.bucket);
     let mut upper = vec![
-        parts::title(&icons::PICKAXE, WHITE, "Bitcoin Difficulty", None),
+        parts::title(
+            &icons::PICKAXE,
+            WHITE,
+            "Bitcoin Difficulty",
+            None,
+            title_size(view.bucket),
+        ),
         row(
             props!(cross_align: CrossAlign::Center),
             [
-                primary_value(
-                    &view.data.difficulty_stats,
-                    |stats| {
-                        stats.difficulty.map(|difficulty| Quantity {
-                            number: format_number!(difficulty / 1e12, 1),
-                            unit: "T".to_owned(),
-                        })
-                    },
-                    deck_value_sizes(view.bucket),
-                ),
+                difficulty_value(view, deck_value_sizes(view.bucket)),
                 spacer(1.0),
                 parts::muted(if chart.is_some() { "1 year" } else { "" }, 24),
             ],
         ),
     ];
-    if let Some((width, height)) = chart {
+    if let Some(chart) = chart {
         upper.push(chart_or_status(
             &view.data.year_history,
             |series| series,
-            width,
-            height,
+            chart,
             Some(color::DOWN),
         ));
     }
     let mut adjustments = Vec::new();
     if show_previous {
-        adjustments.push(parts::adjustment_row(
-            "Prev Adjust",
-            previous_adjustment,
-            stats.and_then(|stats| stats.previous_adjustment_percent),
-            label_size,
-            time_size,
-            badge_size,
-            previous_adjustment_color,
-        ));
+        adjustments.push(previous_adjustment_row(view, sizes));
         adjustments.push(parts::divider());
     }
-    adjustments.push(parts::adjustment_row(
-        "Next Adjust",
-        next_adjustment,
-        stats.and_then(|stats| stats.estimated_adjustment_percent),
-        label_size,
-        time_size,
-        badge_size,
-        next_adjustment_color,
-    ));
+    adjustments.push(next_adjustment_row(view, sizes));
     col(
         props!(
             background: TRANSPARENT,
@@ -235,16 +295,6 @@ fn difficulty_panel(view: &ViewData, chart: Option<(f32, f32)>, show_previous: b
 }
 
 fn hashprice_panel(view: &ViewData) -> Node {
-    let value = primary_value(
-        &view.data.hashrate_stats,
-        |stats| {
-            stats.hashprice_per_th_day.map(|value| Quantity {
-                number: parts::compact_number(value * TERAHASHES_PER_PETAHASH, 2),
-                unit: "USD/PH/Day".to_owned(),
-            })
-        },
-        deck_value_sizes(view.bucket),
-    );
     col(
         props!(
             background: TRANSPARENT,
@@ -253,13 +303,19 @@ fn hashprice_panel(view: &ViewData) -> Node {
             flex: 1.0
         ),
         [
-            parts::title(&icons::CHART, WHITE, "Hash Price", None),
-            value,
+            parts::title(
+                &icons::CHART,
+                WHITE,
+                "Hash Price",
+                None,
+                title_size(view.bucket),
+            ),
+            hashprice_value(view, deck_value_sizes(view.bucket)),
         ],
     )
 }
 
-fn price_panel(view: &ViewData, chart: Option<(f32, f32)>) -> Node {
+fn price_panel(view: &ViewData, chart: Option<parts::ChartBox>) -> Node {
     let stats = view.data.price_stats.as_option().copied();
     let summary = col(
         props!(gap: parts::GAP),
@@ -277,6 +333,7 @@ fn price_panel(view: &ViewData, chart: Option<(f32, f32)>) -> Node {
                         20
                     },
                 )),
+                title_size(view.bucket),
             ),
             primary_value(
                 &view.data.price_stats,
@@ -291,12 +348,11 @@ fn price_panel(view: &ViewData, chart: Option<(f32, f32)>) -> Node {
         ],
     );
     let mut children = vec![summary];
-    if let Some((width, height)) = chart {
+    if let Some(chart) = chart {
         children.push(chart_or_status(
             &view.data.day_history,
             |history| &history.price,
-            width,
-            height,
+            chart,
             None,
         ));
     }
@@ -320,8 +376,7 @@ fn hashrate_panel(view: &ViewData) -> Node {
     let chart = chart_or_status(
         &view.data.day_history,
         |history| &history.hashrate,
-        FULL_CHART_WIDTH,
-        98.0,
+        deck_chart(FULL_CHART_WIDTH, 98.0),
         None,
     );
     let summary = col(
@@ -332,6 +387,7 @@ fn hashrate_panel(view: &ViewData) -> Node {
                 WHITE,
                 "Hashrate",
                 Some(parts::trend(change, true, 24)),
+                title_size(view.bucket),
             ),
             primary_value(
                 &view.data.hashrate_stats,
@@ -404,6 +460,70 @@ fn small(view: &ViewData) -> Node {
     )
 }
 
+const BMM101_SPACING: f32 = 16.0;
+const BMM101_VALUE_SIZE: u32 = 40;
+/// Three gridlines, as the frame draws: a box this short would crowd the Deck's four.
+/// The span label sits in the chart's corner: the value row that holds it on the Deck
+/// is the row the chart itself occupies here.
+const BMM101_CHART: parts::ChartBox = parts::ChartBox {
+    width: 253.0,
+    height: 78.0,
+    gridlines: 3,
+    corner_label: Some("1 year"),
+};
+
+/// The year chart runs beside the difficulty value here, not under it as on the Deck.
+fn bmm101(view: &ViewData) -> Node {
+    let title_size = title_size(view.bucket);
+    let sizes = adjustment_sizes(view.bucket);
+    let value_sizes = value_sizes(view.bucket, BMM101_VALUE_SIZE);
+    let chart = chart_or_status(
+        &view.data.year_history,
+        |series| series,
+        BMM101_CHART,
+        Some(color::DOWN),
+    );
+    col(
+        props!(
+            background: color::BACKGROUND,
+            padding: BMM101_SPACING,
+            gap: BMM101_SPACING,
+            flex: 1.0
+        ),
+        [
+            row(
+                props!(cross_align: CrossAlign::Start, gap: parts::GAP),
+                [
+                    col(
+                        props!(gap: parts::GAP, flex: 1.0),
+                        [
+                            parts::title(
+                                &icons::PICKAXE,
+                                WHITE,
+                                "Bitcoin Difficulty",
+                                None,
+                                title_size,
+                            ),
+                            difficulty_value(view, value_sizes),
+                        ],
+                    ),
+                    chart,
+                ],
+            ),
+            previous_adjustment_row(view, sizes),
+            next_adjustment_row(view, sizes),
+            parts::divider(),
+            col(
+                props!(gap: parts::GAP),
+                [
+                    parts::title(&icons::CHART, WHITE, "Hash Price", None, title_size),
+                    hashprice_value(view, value_sizes),
+                ],
+            ),
+        ],
+    )
+}
+
 fn medium(view: &ViewData) -> Node {
     row(
         props!(
@@ -414,7 +534,7 @@ fn medium(view: &ViewData) -> Node {
         [
             col(
                 props!(width: 319.0, height: 238.0),
-                [difficulty_panel(view, Some((287.0, 42.0)), true)],
+                [difficulty_panel(view, Some(deck_chart(287.0, 42.0)), true)],
             ),
             col(
                 props!(width: 1.0, height: 224.0, background: color::BORDER),
@@ -438,7 +558,7 @@ fn large(view: &ViewData) -> Node {
         [
             col(
                 props!(height: 326.0),
-                [difficulty_panel(view, Some((606.0, 76.0)), true)],
+                [difficulty_panel(view, Some(deck_chart(606.0, 76.0)), true)],
             ),
             parts::divider(),
             hashprice_panel(view),
@@ -462,7 +582,7 @@ fn full(view: &ViewData) -> Node {
                         props!(height: 312.0),
                         [parts::bordered([difficulty_panel(
                             view,
-                            Some((FULL_CHART_WIDTH, 76.0)),
+                            Some(deck_chart(FULL_CHART_WIDTH, 76.0)),
                             true,
                         )])],
                     ),
@@ -473,7 +593,7 @@ fn full(view: &ViewData) -> Node {
             col(
                 props!(width: FULL_COLUMN_WIDTH, gap: parts::GAP),
                 [
-                    parts::bordered([price_panel(view, Some((FULL_CHART_WIDTH, 98.0)))]),
+                    parts::bordered([price_panel(view, Some(deck_chart(FULL_CHART_WIDTH, 98.0)))]),
                     parts::bordered([hashrate_panel(view)]),
                 ],
             ),
@@ -485,6 +605,7 @@ fn full(view: &ViewData) -> Node {
 pub fn bitcoin_mining_view(view: &ViewData) -> Node {
     let root = match view.bucket {
         SizeBucket::Small => small(view),
+        SizeBucket::Bmm101 => bmm101(view),
         SizeBucket::Medium => medium(view),
         SizeBucket::Large => large(view),
         SizeBucket::Full => full(view),
@@ -521,6 +642,7 @@ pub fn bitcoin_mining_view(view: &ViewData) -> Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::screens::fixtures;
 
     #[test]
     fn loading_value_keeps_muted_presentation() {
@@ -575,5 +697,89 @@ mod tests {
             (spans[1].text.as_str(), spans[1].size, spans[1].color),
             (" USD/PH/Day", Some(20), Some(color::LABEL))
         );
+    }
+
+    /// The top row of the BMM101 layout: the title-and-value column and the chart beside it.
+    fn bmm101_top_row(view: &ViewData) -> (Vec<Node>, Node) {
+        bmc_wasm_sdk::assets::init_test_registrars();
+        let Node::Column(_, blocks) = bitcoin_mining_view(view) else {
+            panic!("BUG: the BMM101 root must be a column");
+        };
+        let Some(Node::Row(_, top)) = blocks.first() else {
+            panic!("BUG: the BMM101 layout must open with the difficulty row");
+        };
+        let (Some(Node::Column(_, left)), Some(chart)) = (top.first(), top.get(1)) else {
+            panic!("BUG: the difficulty row must hold the value column and the chart");
+        };
+        (left.clone(), chart.clone())
+    }
+
+    #[test]
+    fn bmm101_runs_the_chart_beside_the_value_with_its_span_drawn_in_its_corner() {
+        let (left, chart) = bmm101_top_row(&fixtures::healthy(SizeBucket::Bmm101));
+
+        let Some(Node::Row(_, title)) = left.first() else {
+            panic!("BUG: the value column must open with the title");
+        };
+        let Some(Node::Canvas { props, .. }) = title.first() else {
+            panic!("BUG: the title must lead with its icon");
+        };
+        assert_eq!(props.width, 16.0);
+        let Node::Canvas { props, draws, .. } = chart else {
+            panic!("BUG: a drawn history is a canvas");
+        };
+        assert_eq!((props.width, props.height), (253.0, 78.0));
+        // The label is the canvas's last draw: over the line, and on the one text path
+        // the host outlines, so the outline it asks for is the outline it gets.
+        let Some(Draw::Text { x, y, text, style }) = draws.last() else {
+            panic!("BUG: the span label must be drawn last, over the line");
+        };
+        assert_eq!((text.as_str(), *x, *y), ("1 year", 253.0 - 4.0, 5.0));
+        assert_eq!(style.align, TextAlign::Right);
+        assert!(
+            style.outline_width > 0.0 && style.outline_color != TRANSPARENT,
+            "the label is outlined to read where the line peaks under it"
+        );
+    }
+
+    #[test]
+    fn bmm101_stacks_both_adjustments_then_the_hash_price() {
+        bmc_wasm_sdk::assets::init_test_registrars();
+        let Node::Column(_, blocks) = bitcoin_mining_view(&fixtures::healthy(SizeBucket::Bmm101))
+        else {
+            panic!("BUG: the BMM101 root must be a column");
+        };
+
+        let labels: Vec<String> = blocks.iter().filter_map(first_text).collect();
+        assert_eq!(
+            labels,
+            [
+                "Bitcoin Difficulty",
+                "Prev Adjust",
+                "Next Adjust",
+                "Hash Price"
+            ]
+        );
+    }
+
+    /// The first run of text under `node`, in tree order — a block's label.
+    fn first_text(node: &Node) -> Option<String> {
+        match node {
+            Node::Paragraph { spans, .. } => spans.first().map(|span| span.text.clone()),
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                children.iter().find_map(first_text)
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn bmm101_keeps_the_chart_box_while_history_loads() {
+        let (_, chart) = bmm101_top_row(&fixtures::loading(SizeBucket::Bmm101));
+
+        let Node::Column(props, _) = chart else {
+            panic!("BUG: a loading history must keep its box");
+        };
+        assert_eq!((props.width, props.height), (253.0, 78.0));
     }
 }

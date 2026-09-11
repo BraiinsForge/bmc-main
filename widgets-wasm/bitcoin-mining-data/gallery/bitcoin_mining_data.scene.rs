@@ -24,25 +24,27 @@ use bmc_gallery::prelude::*;
 
 scene_meta! { title: "Widgets / Bitcoin Mining Data" }
 
-const BUCKETS: [(SizeBucket, &str); 4] = [
+const BUCKETS: [(SizeBucket, &str); 5] = [
     (SizeBucket::Full, "Fullscreen"),
     (SizeBucket::Large, "Large"),
     (SizeBucket::Medium, "Medium"),
     (SizeBucket::Small, "Small"),
+    (SizeBucket::Bmm101, "BMM101"),
 ];
 
-const DEVICE_VIEWPORTS: [(u32, u32, &str); 2] = [(320, 240, "BMM100"), (480, 320, "BMM101")];
+const BMM100_VIEWPORT: (u32, u32) = (320, 240);
 
 fn only_size(ctx: &mut SceneCtx) -> Option<SizeBucket> {
     match ctx.select(
         "Size",
-        &["All", "Fullscreen", "Large", "Medium", "Small"],
+        &["All", "Fullscreen", "Large", "Medium", "Small", "BMM101"],
         0,
     ) {
         1 => Some(SizeBucket::Full),
         2 => Some(SizeBucket::Large),
         3 => Some(SizeBucket::Medium),
         4 => Some(SizeBucket::Small),
+        5 => Some(SizeBucket::Bmm101),
         _ => None,
     }
 }
@@ -67,10 +69,9 @@ fn size_stages<Build: FnOnce() -> Node>(
 /// One state's fixture, built for whichever bucket the viewport snaps to.
 type StateFixture = fn(SizeBucket) -> ViewData;
 
-/// Every state, for the one scene that reaches a device viewport.
-/// [`size_stages`] offers Deck buckets only, so without this knob
-/// no state but healthy can be seen at 320x240 or 480x320.
-const DEVICE_STATES: [(&str, StateFixture); 8] = [
+/// Every state at 320x240, which [`size_stages`] cannot reach:
+/// it stages each bucket at its design size, and BMM100 has no bucket of its own.
+const BMM100_STATES: [(&str, StateFixture); 8] = [
     ("Healthy", fixtures::healthy),
     ("Loading", fixtures::loading),
     ("Failed", fixtures::failed),
@@ -81,23 +82,17 @@ const DEVICE_STATES: [(&str, StateFixture); 8] = [
     ("Flat History", fixtures::flat_history),
 ];
 
-#[scene]
-fn supported_devices(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let selected = ctx.select("Viewport", &["All", "BMM100", "BMM101"], 0);
-    let state_labels: Vec<&str> = DEVICE_STATES.iter().map(|(label, _)| *label).collect();
+#[scene("BMM100")]
+fn bmm100(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let state_labels: Vec<&str> = BMM100_STATES.iter().map(|(label, _)| *label).collect();
     let state = ctx.select("State", &state_labels, 0);
-    let build_state = DEVICE_STATES[state].1;
+    let build_state = BMM100_STATES[state].1;
     system_settings(ctx);
-    for (index, (width, height, label)) in DEVICE_VIEWPORTS.into_iter().enumerate() {
-        if selected != 0 && selected != index + 1 {
-            continue;
-        }
-        ui.heading(label);
-        let bucket = size_bucket(width, height);
-        ctx.node_stage(ui, (width, height), move || {
-            bitcoin_mining_view(&build_state(bucket))
-        });
-    }
+    let (width, height) = BMM100_VIEWPORT;
+    let bucket = size_bucket(width, height);
+    ctx.node_stage(ui, BMM100_VIEWPORT, move || {
+        bitcoin_mining_view(&build_state(bucket))
+    });
 }
 
 #[scene(default)]

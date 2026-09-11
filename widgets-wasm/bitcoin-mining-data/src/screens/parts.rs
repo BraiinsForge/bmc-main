@@ -67,16 +67,28 @@ pub fn bordered(children: impl IntoIterator<Item = Node>) -> Node {
     )
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct TitleSize {
+    pub icon: f32,
+    pub label: u32,
+}
+
 #[must_use]
-pub fn title(icon: &Svg, icon_color: Color, label: &str, trailing: Option<Node>) -> Node {
+pub fn title(
+    icon: &Svg,
+    icon_color: Color,
+    label: &str,
+    trailing: Option<Node>,
+    size: TitleSize,
+) -> Node {
     let mut children = vec![
         canvas(
-            props!(width: 24.0, height: 24.0),
-            [Draw::svg_contain(icon, 24.0, icon_color).with_anti_alias()],
+            props!(width: size.icon, height: size.icon),
+            [Draw::svg_contain(icon, size.icon, icon_color).with_anti_alias()],
         ),
         text(
             label,
-            style!(size: 24, weight: FontWeight::SEMIBOLD, color: color::LABEL, line_height: 1.0, text_overflow: TextOverflow::Clip),
+            style!(size: size.label, weight: FontWeight::SEMIBOLD, color: color::LABEL, line_height: 1.0, text_overflow: TextOverflow::Clip),
         ),
     ];
     children.push(spacer(1.0));
@@ -236,8 +248,30 @@ pub fn adjustment_row(
     )
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ChartBox {
+    pub width: f32,
+    pub height: f32,
+    pub gridlines: usize,
+    pub corner_label: Option<&'static str>,
+}
+
+const CORNER_LABEL_SIZE: u32 = 14;
+const CORNER_LABEL_INSET_TOP: f32 = 5.0;
+const CORNER_LABEL_INSET_RIGHT: f32 = 4.0;
+/// The label sits on the line where the series peaks, so it carries a dark outline.
+/// Only canvas text has one: the host paints a paragraph's colour and nothing around it.
+const CORNER_LABEL_OUTLINE_ALPHA: f32 = 0.75;
+const CORNER_LABEL_OUTLINE_WIDTH: f32 = 2.0;
+
 #[must_use]
-pub fn sparkline(series: &Series, width: f32, height: f32, force_color: Option<Color>) -> Node {
+pub fn sparkline(series: &Series, chart: ChartBox, force_color: Option<Color>) -> Node {
+    let ChartBox {
+        width,
+        height,
+        gridlines,
+        corner_label,
+    } = chart;
     let line = chart::series_points(&series.values, width, height, 2.0);
     if line.len() < 2 {
         return col(props!(width: width, height: height), []);
@@ -252,17 +286,33 @@ pub fn sparkline(series: &Series, width: f32, height: f32, force_color: Option<C
     let mut area = line.clone();
     area.push((width, height));
     area.push((0.0, height));
-    canvas(
-        props!(width: width, height: height),
-        [
-            path!(vec![(0.0, height * 0.2), (width, height * 0.2)], stroke: 1.0, color: color::GRID, dashed: (3.0, 3.0)),
-            path!(vec![(0.0, height * 0.4), (width, height * 0.4)], stroke: 1.0, color: color::GRID, dashed: (3.0, 3.0)),
-            path!(vec![(0.0, height * 0.6), (width, height * 0.6)], stroke: 1.0, color: color::GRID, dashed: (3.0, 3.0)),
-            path!(vec![(0.0, height * 0.8), (width, height * 0.8)], stroke: 1.0, color: color::GRID, dashed: (3.0, 3.0)),
-            fill!(area, linear: (color.with_alpha(0.22), color.with_alpha(0.0)), smooth),
-            path!(line, stroke: 2.0, color: color, smooth),
-        ],
-    )
+    let mut draws: Vec<Draw> = (1..=gridlines)
+        .map(|index| {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a handful of gridlines is exact in f32"
+            )]
+            let y = height * index as f32 / (gridlines + 1) as f32;
+            path!(vec![(0.0, y), (width, y)], stroke: 1.0, color: color::GRID, dashed: (3.0, 3.0))
+        })
+        .collect();
+    draws.push(fill!(area, linear: (color.with_alpha(0.22), color.with_alpha(0.0)), smooth));
+    draws.push(path!(line, stroke: 2.0, color: color, smooth));
+    if let Some(label) = corner_label {
+        draws.push(Draw::text(
+            width - CORNER_LABEL_INSET_RIGHT,
+            CORNER_LABEL_INSET_TOP,
+            label,
+            style!(
+                size: CORNER_LABEL_SIZE,
+                color: color::LABEL,
+                align: TextAlign::Right,
+                outline_color: color::BACKGROUND.with_alpha(CORNER_LABEL_OUTLINE_ALPHA),
+                outline_width: CORNER_LABEL_OUTLINE_WIDTH
+            ),
+        ));
+    }
+    canvas(props!(width: width, height: height), draws)
 }
 
 #[must_use]
@@ -364,6 +414,78 @@ pub fn duration_minutes(seconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The draw kind and colour of each canvas entry, in paint order.
+    fn paint_order(draws: &[Draw]) -> Vec<(&'static str, Color)> {
+        draws
+            .iter()
+            .map(|draw| match draw {
+                Draw::Path {
+                    paint: PathPaint::Stroke { color, dash, .. },
+                    ..
+                } => (if dash.is_some() { "dashed" } else { "solid" }, *color),
+                Draw::Path {
+                    paint: PathPaint::Fill(fill),
+                    ..
+                } => ("fill", fill.primary_color()),
+                Draw::Text { style, .. } => ("text", style.color),
+                other => panic!("BUG: a sparkline draws paths and text only, not {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_sparkline_draws_its_gridlines_under_the_area_and_line() {
+        let series = Series {
+            values: vec![1.0, 2.0, 3.0],
+        };
+        let chart = ChartBox {
+            width: 100.0,
+            height: 50.0,
+            gridlines: 3,
+            corner_label: None,
+        };
+
+        let Node::Canvas { draws, .. } = sparkline(&series, chart, None) else {
+            panic!("BUG: a sparkline is drawn on a canvas");
+        };
+        assert_eq!(
+            paint_order(&draws),
+            vec![
+                ("dashed", color::GRID),
+                ("dashed", color::GRID),
+                ("dashed", color::GRID),
+                ("fill", color::UP.with_alpha(0.22)),
+                ("solid", color::UP),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_corner_label_is_the_last_thing_a_sparkline_draws() {
+        let series = Series {
+            values: vec![3.0, 2.0, 1.0],
+        };
+        let chart = ChartBox {
+            width: 100.0,
+            height: 50.0,
+            gridlines: 1,
+            corner_label: Some("1 year"),
+        };
+
+        let Node::Canvas { draws, .. } = sparkline(&series, chart, None) else {
+            panic!("BUG: a sparkline is drawn on a canvas");
+        };
+        assert_eq!(
+            paint_order(&draws),
+            vec![
+                ("dashed", color::GRID),
+                ("fill", color::DOWN.with_alpha(0.22)),
+                ("solid", color::DOWN),
+                ("text", color::LABEL),
+            ]
+        );
+    }
 
     #[test]
     fn series_change_uses_first_and_last_samples() {

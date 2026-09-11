@@ -9,8 +9,8 @@ for a single widget.
 
 A dashboard for current Bitcoin difficulty, adjustment timing, hashprice, BTC-USD price, mining economics, block
 production, and network hashrate. It expands from a compact mining overview into historical charts and a full network
-dashboard across the four rectangular widget sizes, follows the Braiins Forge Nexus refresh lifetime, and distinguishes
-loading, stale, unavailable, and rate-limited data.
+dashboard across the four rectangular Deck sizes and the BMM displays, follows the Braiins Forge Nexus refresh lifetime,
+and distinguishes loading, stale, unavailable, and rate-limited data.
 
 ### [Block Height Widget](blockheight.md)
 

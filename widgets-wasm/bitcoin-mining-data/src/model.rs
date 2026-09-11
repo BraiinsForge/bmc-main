@@ -28,6 +28,9 @@ pub(crate) const TERAHASHES_PER_PETAHASH: f64 = 1_000.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SizeBucket {
     Small,
+    /// BMM101's 480x320 frame, drawn as its own layout rather than a Small
+    /// stretched taller: the frame fits the year chart and both adjustments.
+    Bmm101,
     Medium,
     Large,
     Full,
@@ -38,6 +41,7 @@ impl SizeBucket {
     pub const fn design_size(self) -> (f32, f32) {
         match self {
             Self::Small => (317.0, 238.0),
+            Self::Bmm101 => (480.0, 320.0),
             Self::Medium => (638.0, 238.0),
             Self::Large => (638.0, 480.0),
             Self::Full => (1_280.0, 480.0),
@@ -45,12 +49,22 @@ impl SizeBucket {
     }
 }
 
+/// The two frames the narrow bucket has to tell apart.
+const BMM100_HEIGHT: u32 = 240;
+const BMM101_HEIGHT: u32 = 320;
+/// Split at their midpoint, so either frame keeps its bucket a few pixels either way.
+const BMM101_MIN_HEIGHT: u32 = u32::midpoint(BMM100_HEIGHT, BMM101_HEIGHT);
+
 #[must_use]
 pub const fn size_bucket(width: u32, height: u32) -> SizeBucket {
     if width >= 900 && height > 330 {
         SizeBucket::Full
     } else if width <= 480 {
-        SizeBucket::Small
+        if height >= BMM101_MIN_HEIGHT {
+            SizeBucket::Bmm101
+        } else {
+            SizeBucket::Small
+        }
     } else if height <= 330 {
         SizeBucket::Medium
     } else {
@@ -210,18 +224,31 @@ mod tests {
         assert_eq!(size_bucket(638, 480), SizeBucket::Large);
         assert_eq!(size_bucket(1_280, 480), SizeBucket::Full);
         assert_eq!(size_bucket(320, 240), SizeBucket::Small);
-        assert_eq!(size_bucket(480, 320), SizeBucket::Small);
+        assert_eq!(size_bucket(480, 320), SizeBucket::Bmm101);
         assert_eq!(size_bucket(1_280, 238), SizeBucket::Medium);
+    }
+
+    #[test]
+    fn the_narrow_buckets_split_at_the_midpoint_of_the_bmm_heights() {
+        assert_eq!(size_bucket(480, 279), SizeBucket::Small);
+        assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
+        assert_eq!(size_bucket(481, 280), SizeBucket::Medium);
     }
 
     #[test]
     fn history_is_skipped_only_for_small() {
         assert!(!resource_needed(Resource::History, SizeBucket::Small));
-        for bucket in [SizeBucket::Medium, SizeBucket::Large, SizeBucket::Full] {
+        for bucket in [
+            SizeBucket::Bmm101,
+            SizeBucket::Medium,
+            SizeBucket::Large,
+            SizeBucket::Full,
+        ] {
             assert!(resource_needed(Resource::History, bucket));
         }
         for bucket in [
             SizeBucket::Small,
+            SizeBucket::Bmm101,
             SizeBucket::Medium,
             SizeBucket::Large,
             SizeBucket::Full,

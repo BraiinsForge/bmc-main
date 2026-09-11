@@ -1,8 +1,8 @@
 # Bitcoin Mining Data Widget
 
-The Bitcoin Mining Data widget puts current network, market, and mining-economics data on the Deck. It presents a
-compact mining overview at smaller sizes and expands into charts and block-production statistics as more space becomes
-available. All four rectangular widget sizes are supported.
+The Bitcoin Mining Data widget puts current network, market, and mining-economics data on the Deck and the Braiins Mini
+Miner. It presents a compact mining overview at smaller sizes and expands into charts and block-production statistics as
+more space becomes available. All four rectangular Deck sizes are supported, as are the BMM100 and BMM101 displays.
 
 ## User stories
 
@@ -16,6 +16,8 @@ available. All four rectangular widget sizes are supported.
 - Medium, Large, and Fullscreen also show the previous adjustment. Medium adds the BTC-USD price and its 24-hour change.
   Large concentrates on difficulty and hashprice, while Fullscreen brings the market and network panels together with
   the mining-economics figures.
+- BMM101 shows what Large does — the difficulty with its year chart beside it, both adjustments, and hashprice — laid
+  out for its 480×320 frame. BMM100 renders the Small layout.
 - Values use compact units that remain readable as the network grows, including automatic SI scaling for network
   hashrate.
 
@@ -24,7 +26,7 @@ available. All four rectangular widget sizes are supported.
 > As a miner, I want historical charts beside the current values so I can see whether conditions are moving rather than
 > judging one number in isolation.
 
-- Medium, Large, and Fullscreen show one year of Bitcoin difficulty history.
+- Medium, Large, Fullscreen, and BMM101 show one year of Bitcoin difficulty history.
 - Fullscreen adds trailing-day charts for the BTC-USD price and network hashrate, together with their 24-hour changes.
 - A history containing only one value is drawn as a flat line, without inventing a change from data that does not exist.
 
@@ -64,10 +66,10 @@ available. All four rectangular widget sizes are supported.
 The widget reads two Bitcoin resources from the Braiins Forge Nexus rather than contacting the upstream mining-data
 providers directly.
 
-| Resource         | Feeds                                                                    | Used by                            |
-| ---------------- | ------------------------------------------------------------------------ | ---------------------------------- |
-| `mining-info`    | current difficulty, prices, rewards, block production, and epoch figures | Small, Medium, Large, Fullscreen   |
-| `mining-history` | difficulty, BTC price, and network hashrate histories                    | Medium, Large, and Fullscreen only |
+| Resource         | Feeds                                                                    | Used by                                    |
+| ---------------- | ------------------------------------------------------------------------ | ------------------------------------------ |
+| `mining-info`    | current difficulty, prices, rewards, block production, and epoch figures | every size                                 |
+| `mining-history` | difficulty, BTC price, and network hashrate histories                    | Medium, Large, Fullscreen, and BMM101 only |
 
 - Each resource is requested when the widget starts and then follows the refresh lifetime advertised by Nexus.
 - The current-data resource normally refreshes every 60 seconds; history normally refreshes every 10 minutes.
@@ -80,7 +82,8 @@ The widget has no configurable parameters.
 
 ## Constraints
 
-- Rectangular viewports only: Small 317×238, Medium 638×238, Large 638×480, and Fullscreen 1280×480.
+- Rectangular viewports only: Small 317×238, Medium 638×238, Large 638×480, and Fullscreen 1280×480 on the Deck; 320×240
+  on BMM100 and 480×320 on BMM101.
 - Values are USD-only, matching both the released widget and the current Nexus contract.
 - Alert configuration is not available until the WASM widget stack provides the required alert integration.
 - Hashprice has no 24-hour change badge because neither the released widget nor Nexus provides that value.

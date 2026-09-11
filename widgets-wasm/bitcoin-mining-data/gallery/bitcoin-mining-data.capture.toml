@@ -41,20 +41,19 @@ Numbers = "1 234.5"
 
 [[shot]]
 name = "healthy-bmm100-usd"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::BMM100"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM100"
 Numbers = "1 234.5"
 
 [[shot]]
 name = "healthy-bmm101-usd"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Healthy"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
+Size = "BMM101"
 Numbers = "1 234.5"
 
 [[shot]]
@@ -138,75 +137,65 @@ frames = 24
 Size = "Fullscreen"
 Numbers = "1 234.5"
 
-# BMM101 states come from Supported Devices: the state scenes
-# above go through `size_stages`, which knows Deck buckets only.
-
 [[shot]]
 name = "loading-bmm101"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Loading"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
-State = "Loading"
+Size = "BMM101"
 Numbers = "1 234.5"
 
 [[shot]]
 name = "failed-bmm101"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Failed"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
-State = "Failed"
+Size = "BMM101"
 Numbers = "1 234.5"
 
 [[shot]]
 name = "stale-bmm101"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Stale"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
-State = "Stale"
+Size = "BMM101"
 Numbers = "1 234.5"
 
 [[shot]]
 name = "rate-limited-bmm101"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Rate Limited"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
-State = "Rate Limited"
+Size = "BMM101"
 Numbers = "1 234.5"
 
 [[shot]]
 name = "extremes-bmm101"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Extremes"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
-State = "Extremes"
+Size = "BMM101"
 Numbers = "1 234.5"
 
 [[shot]]
 name = "unit-rollover-bmm101"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Unit Rollover"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
-State = "Unit Rollover"
+Size = "BMM101"
 Numbers = "1 234.5"
 
 [[shot]]
 name = "flat-history-bmm101"
-scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+scene = "bmc_gallery::bitcoin_mining_data::Flat History"
 frames = 24
 
 [shot.knobs]
-Viewport = "BMM101"
-State = "Flat History"
+Size = "BMM101"
 Numbers = "1 234.5"
