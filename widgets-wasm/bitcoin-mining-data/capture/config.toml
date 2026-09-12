@@ -1,5 +1,29 @@
-# Capture configuration for visual regression testing.
-
 # Settle a few frames after the fetch stubs fire so the widget leaves Loading
 # and draws the year chart before the first capture.
 settle_delay = 5
+
+[fixtures.bmm101-full-healthy]
+path = "fixtures/bmm101-full-healthy.jsonl.gz"
+target = "bmm101:full"
+
+# A fixture carries no geometry, so the one take serves every viewport:
+# each size requests a subset of the two resources it recorded.
+[fixtures.bmc100-small]
+path = "fixtures/bmm101-full-healthy.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmc100-medium]
+path = "fixtures/bmm101-full-healthy.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-large]
+path = "fixtures/bmm101-full-healthy.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-full]
+path = "fixtures/bmm101-full-healthy.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmm100-full]
+path = "fixtures/bmm101-full-healthy.jsonl.gz"
+target = "bmm100:full"
