@@ -2,58 +2,32 @@
 
 ## Getting started
 
-Software in this repository can be used on the [Braiins Deck](https://braiinsforge.com/hardware/braiins-deck). It will
-be used on all Decks starting from the upcoming release. The latest released firmware (26.02.1) can't run this software;
-the manual firmware upgrade described below is required.
+Software in this repository runs on the [Braiins Deck](https://braiinsforge.com/hardware/braiins-deck) with firmware
+26.09. Update your Deck through its normal software upgrade flow before deploying a development build.
 
-### Current status
+### Official widgets
 
-This project is still being prepared for external use. Some features and supporting components are not yet available or
-complete, and the setup may change as the public release matures.
+The following official widgets are available:
 
-The following widgets are currently supported:
-
-- Image
-- Block Height
-- Halving Countdown
-- Clock
-- Weather
-- Random Facts
-- Nameday
-- ISS Position
-- SpaceX Launch
-- Financial Ticker — single (including old BTC Ticker widget)
-- Financial Ticker — list
-- Formula 1
-
-Not yet supported widgets:
-
-- NASA Picture of the Day
-- Braiins Pool
 - Bitcoin Mining Data
+- Block Height
+- Braiins Pool
+- Clock
+- Financial Ticker List
+- Fleet Management
+- Formula 1
+- Halving Countdown
+- Image
+- ISS Position
+- Mining Info (Mining, Geek, Network, and Info Overload views)
+- Nameday
+- Picture of the Day (NASA Astronomy Picture of the Day)
+- Random Facts
+- SpaceX Launch
+- Ticker - Single
+- Weather
 
-Major user-facing gaps also remain:
-
-- The first-boot and device initialization flow is not yet presented on the device display.
-- Firmware upgrade progress and completion are not yet shown on the device display.
-- Centralized account management is not yet available.
-- Configuration forms do not yet support all controls needed by widgets with complex settings.
-
-#### Runtime limitations
-
-Current memory constraints mean that fewer widgets can remain active simultaneously than on release 26.02.1. This does
-not change which widget types are supported. The rendering pipeline has improved since 26.02.1, but it is still being
-optimized to reach higher frame rates.
-
-Running the software on a physical Braiins Deck currently requires a compatible custom firmware image. The current
-firmware image is available here:
-
-```text
-https://feeds.braiins-os.com/stm32mp157c-ii3-bmc1/firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
-```
-
-Only manual upgrades to this firmware are possible at the moment. See [Deploy to a Deck](#deploy-to-a-deck) for the
-upgrade instructions.
+See the [widget documentation](docs/stories/widgets/README.md) for features, configuration, and supported display sizes.
 
 ### Architecture
 
@@ -75,7 +49,7 @@ system package manager: Fontconfig, FreeType, Wayland, libxkbcommon, Mesa/OpenGL
 Package names differ between distributions. Building for and deploying to the device via `nix run .#deck -- deploy` does
 not need these libraries.
 
-Deploying to a physical device additionally requires root SSH access and a `/mnt/data` partition on the device.
+Root SSH access is available by default. Log in as `root` using the password you configured in the Deck's web UI.
 
 ### Set up the repository
 
@@ -87,54 +61,111 @@ git lfs pull
 nix develop
 ```
 
-Run commands in the remaining sections from this shell unless they invoke Nix directly.
+Run the remaining commands from this development shell.
 
-### Run a widget in the testbed
-
-The WASM widget testbed provides a device-free development loop. Start a hot-reloading preview of an example widget:
+For deployment, set `DEVICE_IP` in this shell to your Deck's actual IP address. Find the address in the settings tray by
+swiping down from the top of the Deck's screen, then replace `<your-deck-ip-address>` below with that address:
 
 ```shell
-just wasm::dev hello-widget
+DEVICE_IP="<your-deck-ip-address>"
+```
+
+If your Deck has a password set, you can install your SSH public key to avoid repeated password prompts during
+deployment:
+
+```shell
+ssh-copy-id root@"$DEVICE_IP"
+```
+
+### Widget development
+
+Widgets are written in Rust with [`bmc-wasm-sdk`](bmc-wasm-runtime/sdk/README.md) and compiled for
+`wasm32-unknown-unknown`. A widget builds a declarative UI tree; the host handles layout, text shaping, rendering, and
+animations. The SDK also provides host services for fetching data, storing state, handling touch input, and controlling
+LEDs.
+
+Start with the [widget developer guide](docs/devel/wasm-widgets/README.md) and
+[best practices](docs/devel/wasm-widgets/best-practices.md). Browse the SDK API and lifecycle documentation locally:
+
+```shell
+just wasm::docs
+```
+
+#### Create and configure a widget
+
+Use the [production widgets](widgets-wasm/) as references: [Clock](widgets-wasm/clock/) for layout and settings,
+[Weather](widgets-wasm/weather/) for fetching and displaying data, and [Braiins Pool](widgets-wasm/braiins-pool/) for
+credentials. Add a Rust `cdylib` crate to the widget workspace and its `Cargo.toml` member list. Use the SDK path
+dependency and build configuration from an existing production widget.
+
+Each widget has a `manifest.json` declaring its unique identity, name, icon, supported viewports, and configuration. The
+[manifest schema](bmc-widget-manifest/manifest.schema.json) provides the field reference and editor validation. Declare
+widget-specific choices as [params](docs/devel/wasm-widgets/params.md), use
+[credential slots](docs/devel/wasm-widgets/credentials.md) for secrets, and read device-wide values such as timezone and
+night mode from [system settings](docs/devel/wasm-widgets/system-settings.md). After changing params or credential
+declarations, regenerate the typed accessors:
+
+```shell
+just wasm::gen my-widget
+```
+
+Replace `my-widget` with your widget's directory name. Design and check each viewport declared in the manifest; the
+[display geometry guide](docs/devel/wasm-widgets/display-geometry.md) covers sizes and rectangular or round displays.
+
+#### Preview and iterate
+
+The WASM widget testbed provides a device-free development loop. Start a hot-reloading preview of Clock:
+
+```shell
+just wasm::dev clock
 ```
 
 To build the widget in release mode and preview it once:
 
 ```shell
-just wasm::run hello-widget
+just wasm::run clock
 ```
 
-Both commands build the widget for `wasm32-unknown-unknown` and launch the desktop testbed. See the
-[`bmc-wasm-runtime` README](bmc-wasm-runtime/README.md) for the other widget development and regression-testing
-commands.
+Both commands build the widget and launch the desktop testbed. Replace `clock` with your widget's directory name to
+preview it. Use the testbed's viewport selection, Params panel, and System panel to exercise layout and settings.
+
+#### Test and deploy
+
+Keep pure logic testable on the host and check rendering across the supported viewports. Run the repository checks with
+`just validate`. For widgets with recorded fixtures and baselines, run the visual regression check:
+
+```shell
+just wasm::verify my-widget
+```
+
+The [regression testing guide](docs/devel/wasm-widgets/regression-testing.md) explains how to add capture configuration,
+record fixtures, and review or update baselines. Visual capture requires a working EGL/GPU environment. Use
+`just wasm::size my-widget` to inspect the binary size and `just wasm::profile my-widget` to investigate performance.
+
+Nix discovers widget crates with manifests in the widget workspaces and exposes them as
+`deck-packages.widget-<directory-name>`. Ensure new files are tracked by Git so Nix includes them. After the
+[initial deployment](#deploy-to-a-deck), deploy an individual widget with:
+
+```shell
+nix run .#deck -- deploy --device "$DEVICE_IP" --packages widget-my-widget
+```
+
+Replace `my-widget` with your widget's directory name. Verify the result on the device as well as in the testbed. See
+the [`bmc-wasm-runtime` README](bmc-wasm-runtime/README.md) for the full tooling reference.
 
 ### Deploy to a Deck
 
-Flash the custom firmware image from the URL above to the device. Without Nix, SSH into the device and run the upgrade
-there directly. To find the IP address of the Deck, open the settings tray. On 26.02 firmware, swipe up from the bottom
-of the screen; on the newer firmware offered here, swipe down from the top instead.
+On a Deck running firmware 26.09, deploy the packages built from your checkout to the address set in `DEVICE_IP`:
 
 ```shell
-ssh root@192.168.1.2
-cd /tmp
-wget https://feeds.braiins-os.com/stm32mp157c-ii3-bmc1/firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
-sysupgrade ./firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
+nix run .#deck -- deploy --device "$DEVICE_IP"
 ```
 
-With Nix, download the image to your host and flash it with the `deck` harness, which validates the image and asks for
-confirmation before flashing:
+**Current limitation:** `deck deploy` clears the Deck's upgrade servers, so the device no longer upgrades automatically
+after deployment. To restore the default upgrade servers and allow automatic upgrades again, run:
 
 ```shell
-nix run .#deck -- sysupgrade \
-  --device 192.168.1.2 \
-  --image './firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar'
-```
-
-Either way, allow approximately 10 minutes for the upgrade: during `sysupgrade`, the firmware downloads an
-initialization tarball and uses it to populate `/nix/store` on the device. Do not interrupt the upgrade while this is in
-progress. Once the device is back online, deploy the packages built from your checkout:
-
-```shell
-nix run .#deck -- deploy --device 192.168.1.2
+nix run .#deck -- register-server --device "$DEVICE_IP"
 ```
 
 Subsequent iterations also use `deck deploy`; see [`docs/deployment.md`](docs/deployment.md) for package selection,
@@ -276,17 +307,6 @@ Build ARM widgets (glibc, dynamically linked):
 
 ```
 nix build .#widgets-armv7-glibc-release -o result-widgets-arm
-```
-
-## Run bmc-openwrt on control board
-
-```shell
-cd bmc-openwrt/
-nix develop .#armv7-glibc-release
-
-export MINER_IP=192.168.1.2
-cargo run # or 'cargo run -- <ARGS>'
-# terminate it by Ctrl+C
 ```
 
 ## Deployment during development
