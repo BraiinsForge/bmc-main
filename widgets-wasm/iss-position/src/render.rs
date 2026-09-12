@@ -33,15 +33,18 @@ use crate::model::IssData;
 
 pub(crate) const TITLE: &str = "ISS Position";
 
-/// Dispatch the loaded view by size. `delta_ms` feeds the globe's smoothing on
-/// the full variant; the smaller variants ignore it.
 #[must_use]
-pub fn current_view(data: &IssData, size: WidgetSize, delta_ms: u32) -> Node {
+pub fn current_view(
+    data: &IssData,
+    size: WidgetSize,
+    now_unix_secs: f64,
+    transition_ms: u32,
+) -> Node {
     match size.variant {
         // The globe needs a TLE to draw the orbital track and propagate the
         // live subpoint; without one, fall back to the table-only large view
         // rather than show a bare, drifting globe.
-        SizeVariant::Full if data.tle.is_some() => panels::full(data, delta_ms),
+        SizeVariant::Full if data.tle.is_some() => panels::full(data, now_unix_secs, transition_ms),
         SizeVariant::Full | SizeVariant::Large => panels::large(data),
         SizeVariant::Medium => panels::medium(data),
         SizeVariant::Small => panels::small(data),

@@ -71,77 +71,76 @@ pub fn eci_to_geodetic(pos: &[f64; 3], gmst: f64) -> (f64, f64) {
     (lat, lon)
 }
 
-/// Propagate the ISS position at `now_unix` from a TLE via SGP4.
-///
-/// `None` if the TLE fails to parse or propagation fails.
-#[must_use]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "unix-second timestamps are exact in f64 (well below 2^53)"
-)]
-pub fn propagate_at(tle: &Tle, now_unix: f64) -> Option<(f64, f64)> {
-    let elements =
-        sgp4::Elements::from_tle(None, tle.line1.as_bytes(), tle.line2.as_bytes()).ok()?;
-    let constants = sgp4::Constants::from_elements(&elements).ok()?;
-    let epoch_unix = elements.datetime.and_utc().timestamp() as f64;
-    let minutes_since_epoch = (now_unix - epoch_unix) / 60.0;
-    let prediction = constants
-        .propagate(sgp4::MinutesSinceEpoch(minutes_since_epoch))
-        .ok()?;
-    Some(eci_to_geodetic(
-        &prediction.position,
-        gmst_radians(now_unix),
-    ))
+pub struct OrbitModel {
+    constants: sgp4::Constants,
+    epoch_unix: f64,
 }
 
-/// Compute the ground track as geographic coordinates from a TLE via SGP4.
-///
-/// Returns `(lat_deg, lon_deg)` pairs for one full orbit centered on
-/// `now_unix`. `anchor_center_lon` shifts the whole track so its "now" point
-/// lines up with a provided longitude — used to align with the API-reported
-/// position when the TLE is stale; pass `None` for unshifted SGP4 motion.
-#[must_use]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "unix-second timestamps and orbit-point indices are exact in f64 (well below 2^53)"
-)]
-pub fn ground_track(tle: &Tle, now_unix: f64, anchor_center_lon: Option<f64>) -> Vec<(f64, f64)> {
-    let Ok(elements) = sgp4::Elements::from_tle(None, tle.line1.as_bytes(), tle.line2.as_bytes())
-    else {
-        return Vec::new();
-    };
-    let Ok(constants) = sgp4::Constants::from_elements(&elements) else {
-        return Vec::new();
-    };
-
-    let epoch_unix = elements.datetime.and_utc().timestamp() as f64;
-    let minutes_since_epoch = (now_unix - epoch_unix) / 60.0;
-
-    let anchor = anchor_center_lon
-        .and_then(|center_lon| {
-            let t0 = sgp4::MinutesSinceEpoch(minutes_since_epoch);
-            let p0 = constants.propagate(t0).ok()?;
-            let (_, sgp4_lon) = eci_to_geodetic(&p0.position, gmst_radians(now_unix));
-            Some(normalize_180(center_lon - sgp4_lon))
+impl OrbitModel {
+    #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "unix-second timestamps are exact in f64 (well below 2^53)"
+    )]
+    pub fn from_tle(tle: &Tle) -> Option<Self> {
+        let elements =
+            sgp4::Elements::from_tle(None, tle.line1.as_bytes(), tle.line2.as_bytes()).ok()?;
+        let constants = sgp4::Constants::from_elements(&elements).ok()?;
+        let epoch_unix = elements.datetime.and_utc().timestamp() as f64;
+        Some(Self {
+            constants,
+            epoch_unix,
         })
-        .unwrap_or(0.0);
-
-    let duration_min = f64::from(ORBIT_PERIOD_MIN);
-    let half = duration_min / 2.0;
-    let interval = duration_min / ORBIT_POINTS as f64;
-
-    let mut points: Vec<(f64, f64)> = Vec::with_capacity(ORBIT_POINTS);
-    for i in 0..ORBIT_POINTS {
-        let offset = -half + i as f64 * interval;
-        let t = sgp4::MinutesSinceEpoch(minutes_since_epoch + offset);
-        let Ok(prediction) = constants.propagate(t) else {
-            continue;
-        };
-        let gmst = gmst_radians(now_unix + offset * 60.0);
-        let (lat, lon) = eci_to_geodetic(&prediction.position, gmst);
-        points.push((lat, normalize_180(lon + anchor)));
     }
-    points
+
+    /// Propagate the ISS position at `now_unix` via SGP4.
+    #[must_use]
+    pub fn propagate_at(&self, now_unix: f64) -> Option<(f64, f64)> {
+        let minutes_since_epoch = (now_unix - self.epoch_unix) / 60.0;
+        let prediction = self
+            .constants
+            .propagate(sgp4::MinutesSinceEpoch(minutes_since_epoch))
+            .ok()?;
+        Some(eci_to_geodetic(
+            &prediction.position,
+            gmst_radians(now_unix),
+        ))
+    }
+
+    /// Compute a full-orbit ground track centered on `now_unix`.
+    #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "orbit-point indices are exact in f64 at this scale"
+    )]
+    pub fn ground_track(&self, now_unix: f64, anchor_center_lon: Option<f64>) -> Vec<(f64, f64)> {
+        let minutes_since_epoch = (now_unix - self.epoch_unix) / 60.0;
+        let anchor = anchor_center_lon
+            .and_then(|center_lon| {
+                let t0 = sgp4::MinutesSinceEpoch(minutes_since_epoch);
+                let p0 = self.constants.propagate(t0).ok()?;
+                let (_, sgp4_lon) = eci_to_geodetic(&p0.position, gmst_radians(now_unix));
+                Some(normalize_180(center_lon - sgp4_lon))
+            })
+            .unwrap_or(0.0);
+
+        let duration_min = f64::from(ORBIT_PERIOD_MIN);
+        let half = duration_min / 2.0;
+        let interval = duration_min / ORBIT_POINTS as f64;
+
+        let mut points: Vec<(f64, f64)> = Vec::with_capacity(ORBIT_POINTS);
+        for i in 0..ORBIT_POINTS {
+            let offset = -half + i as f64 * interval;
+            let t = sgp4::MinutesSinceEpoch(minutes_since_epoch + offset);
+            let Ok(prediction) = self.constants.propagate(t) else {
+                continue;
+            };
+            let gmst = gmst_radians(now_unix + offset * 60.0);
+            let (lat, lon) = eci_to_geodetic(&prediction.position, gmst);
+            points.push((lat, normalize_180(lon + anchor)));
+        }
+        points
+    }
 }
 
 /// Project geographic orbit points onto the 3D globe view.
@@ -301,7 +300,10 @@ mod tests {
 
     #[test]
     fn propagation_yields_a_plausible_subpoint() {
-        let (lat, lon) = propagate_at(&tle(), NOW_UNIX).expect("BUG: real TLE propagates");
+        let model = OrbitModel::from_tle(&tle()).expect("BUG: real TLE parses");
+        let (lat, lon) = model
+            .propagate_at(NOW_UNIX)
+            .expect("BUG: real TLE propagates");
         // ISS inclination is ~51.6°, so the subpoint latitude must stay within
         // that band; longitude must be a valid wrapped value.
         assert!(lat.abs() <= 52.0, "lat {lat} exceeds ISS inclination band");
@@ -310,7 +312,8 @@ mod tests {
 
     #[test]
     fn ground_track_spans_one_orbit_within_the_inclination_band() {
-        let track = ground_track(&tle(), NOW_UNIX, None);
+        let model = OrbitModel::from_tle(&tle()).expect("BUG: real TLE parses");
+        let track = model.ground_track(NOW_UNIX, None);
         assert_eq!(track.len(), ORBIT_POINTS);
         for (lat, lon) in track {
             assert!(lat.abs() <= 52.0, "track lat {lat} exceeds band");

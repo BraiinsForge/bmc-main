@@ -43,7 +43,7 @@ impl Visibility {
 }
 
 /// Two-line orbital elements for SGP4 propagation.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Tle {
     pub line1: String,
     pub line2: String,

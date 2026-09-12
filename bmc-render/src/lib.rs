@@ -95,7 +95,7 @@ pub use tree::{
 
 pub use glam::{Quat, Vec3};
 
-use bmc_wasm_protocol::colors::Color;
+use bmc_wasm_protocol::{Easing, colors::Color};
 
 /// State for a single running animation instance.
 #[derive(Debug, Clone)]
@@ -162,6 +162,10 @@ pub struct TransitionState {
     pub from: PrevDrawValues,
     /// Previous target values (to detect changes).
     pub target: PrevDrawValues,
+    /// Duration selected when the current target was received.
+    pub duration_ms: u32,
+    /// Easing selected when the current target was received.
+    pub easing: Easing,
     pub elapsed_ms: u32,
     pub last_seen_frame: u64,
 }

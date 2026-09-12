@@ -29,8 +29,8 @@ use std::cell::RefCell;
 )]
 use bmc_wasm_sdk::*;
 
-use crate::model::IssData;
-use crate::orbit;
+use crate::model::{IssData, Tle};
+use crate::{orbit, orbit_cache};
 
 /// Map canvas dimensions for the full-size variant.
 const MAP_W: f32 = 560.0;
@@ -43,9 +43,6 @@ const ISS_ICON: Svg = include_svg!("assets/icon-iss.svg");
 
 /// Globe zoom (`1.0` = default full-globe view; `>1.0` zooms in).
 const GLOBE_ZOOM: f32 = 1.0;
-/// Smoothing time constant for the globe center: lower snappier, higher smoother.
-const GLOBE_SMOOTH_MS: f64 = 300.0;
-
 const MARKER_COLOR: Color = BLUE_70;
 const ORBIT_COLOR: Color = MARKER_COLOR.with_alpha(0.8);
 const MARKER_GLOW_COLOR: Color = MARKER_COLOR.with_alpha(0.2);
@@ -54,9 +51,9 @@ const MARKER_SOLID_R: f32 = 24.0;
 const MARKER_SIZE: f32 = 56.0;
 
 /// Cached ground track: its 60 SGP4 propagations are recomputed only when older
-/// than [`TRACK_MAX_AGE_SECS`] (the orbit shifts only over minutes), never every frame.
-/// Projection onto the moving globe stays per-frame — that's cheap trig.
+/// than [`TRACK_MAX_AGE_SECS`] (the orbit shifts only over minutes).
 struct CachedTrack {
+    tle: Tle,
     computed_at: f64,
     anchor: Option<f64>,
     geo: Vec<(f64, f64)>,
@@ -67,22 +64,18 @@ struct CachedTrack {
 const TRACK_MAX_AGE_SECS: f64 = 10.0;
 
 thread_local! {
-    /// Smoothed globe center (lat, lon) in degrees, eased toward the live subpoint.
-    static SMOOTHED_CENTER: RefCell<Option<(f64, f64)>> = const { RefCell::new(None) };
     static TRACK_CACHE: RefCell<Option<CachedTrack>> = const { RefCell::new(None) };
 }
 
 /// Render the globe canvas with the orbital track and centered ISS marker.
 #[must_use]
 #[expect(
-    clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    reason = "unix-second time math is exact in f64; the f32 canvas-geometry downcasts are intended"
+    reason = "the f32 canvas-geometry downcasts are intended"
 )]
-pub fn map_panel(data: &IssData, delta_ms: u32) -> Node {
+pub fn map_panel(data: &IssData, now_unix: f64, transition_ms: u32) -> Node {
     let mut draws: Vec<Draw> = Vec::with_capacity(16);
     let globe_zoom = orbit::globe_zoom_to_camera(GLOBE_ZOOM);
-    let now_unix = SystemTime::now().unix_secs as f64;
 
     // Prefer the live SGP4 subpoint so the globe rotates smoothly between
     // refreshes; fall back to the reported position if propagation fails.
@@ -91,50 +84,55 @@ pub fn map_panel(data: &IssData, delta_ms: u32) -> Node {
         let _s = profile::span("propagate");
         data.tle
             .as_ref()
-            .and_then(|tle| orbit::propagate_at(tle, now_unix))
+            .and_then(|tle| {
+                orbit_cache::with_orbit_model(tle, |model| model.propagate_at(now_unix)).flatten()
+            })
             .unwrap_or_else(|| {
                 use_anchor = true;
                 (data.latitude, data.longitude)
             })
     };
-    let smoothed = smooth_globe_center(globe_lat, globe_lon, delta_ms);
-
     // Layer 0: textured sphere — the shader handles rotation, light shading and
-    // the terminator. Wrapped in a transition so the host interpolates the
-    // sphere params; on the first frame target == smoothed so nothing animates.
+    // the terminator. The host interpolates position updates between frames.
     draws.push(
         sphere!(
             &EARTH_TEXTURE,
             at: (0.0, 0.0, MAP_W, MAP_H),
-            center: (smoothed.lat as f32, smoothed.lon as f32),
+            center: (globe_lat as f32, globe_lon as f32),
             zoom: globe_zoom,
             light: (data.solar_lat as f32, data.solar_lon as f32),
             atmosphere
         )
-        .transition("earth-sphere", 250, Easing::EaseOut),
+        .transition("earth-sphere", transition_ms, Easing::Linear),
     );
 
-    // Layer 1: orbital ground track (SGP4 cached; only projection runs per frame).
+    // Layer 1: orbital ground track (SGP4 cached; projection follows position updates).
     if let Some(tle) = &data.tle {
         let anchor = use_anchor.then_some(data.longitude);
         let _s = profile::span("track");
         let segments = TRACK_CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
             let stale = cache.as_ref().is_none_or(|c| {
-                c.anchor != anchor || (now_unix - c.computed_at).abs() > TRACK_MAX_AGE_SECS
+                c.tle != *tle
+                    || c.anchor != anchor
+                    || (now_unix - c.computed_at).abs() > TRACK_MAX_AGE_SECS
             });
             if stale {
                 *cache = Some(CachedTrack {
+                    tle: tle.clone(),
                     computed_at: now_unix,
                     anchor,
-                    geo: orbit::ground_track(tle, now_unix, anchor),
+                    geo: orbit_cache::with_orbit_model(tle, |model| {
+                        model.ground_track(now_unix, anchor)
+                    })
+                    .unwrap_or_default(),
                 });
             }
             let geo = &cache.as_ref().expect("BUG: populated when stale").geo;
             orbit::project_orbit_to_globe(
                 geo,
-                smoothed.lat,
-                smoothed.lon,
+                globe_lat,
+                globe_lon,
                 f64::from(globe_zoom),
                 MAP_W,
                 MAP_H,
@@ -162,37 +160,4 @@ pub fn map_panel(data: &IssData, delta_ms: u32) -> Node {
     ));
 
     canvas(props!(width: MAP_W, height: MAP_H), draws)
-}
-
-/// Smoothly approached globe center in degrees.
-struct SmoothedCenter {
-    lat: f64,
-    lon: f64,
-}
-
-/// Ease the globe center toward the target lat/lon with exponential smoothing,
-/// taking the shortest path across the antimeridian.
-fn smooth_globe_center(target_lat: f64, target_lon: f64, delta_ms: u32) -> SmoothedCenter {
-    let dt = f64::from(delta_ms).min(1000.0);
-    let alpha = 1.0 - (-dt / GLOBE_SMOOTH_MS).exp();
-
-    SMOOTHED_CENTER.with(|c| {
-        let mut c = c.borrow_mut();
-        let (mut lat, mut lon) = c.unwrap_or((target_lat, target_lon));
-
-        lat += (target_lat - lat) * alpha;
-
-        let mut dlon = target_lon - lon;
-        if dlon > 180.0 {
-            dlon -= 360.0;
-        }
-        if dlon < -180.0 {
-            dlon += 360.0;
-        }
-        lon += dlon * alpha;
-        lon = ((lon + 540.0) % 360.0) - 180.0;
-
-        *c = Some((lat, lon));
-        SmoothedCenter { lat, lon }
-    })
 }

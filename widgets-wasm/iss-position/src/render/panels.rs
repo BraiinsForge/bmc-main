@@ -48,7 +48,7 @@ use crate::orbit::ORBIT_PERIOD_MIN;
 /// The globe's terminator shows sunlit-vs-shadow, so the table drops
 /// the Visibility row.
 #[must_use]
-pub fn full(data: &IssData, delta_ms: u32) -> Node {
+pub fn full(data: &IssData, now_unix_secs: f64, transition_ms: u32) -> Node {
     row(
         props!(background: BLACK),
         [
@@ -59,7 +59,7 @@ pub fn full(data: &IssData, delta_ms: u32) -> Node {
                     data_table(24, data, false, true),
                 ],
             ),
-            globe::map_panel(data, delta_ms),
+            globe::map_panel(data, now_unix_secs, transition_ms),
         ],
     )
 }

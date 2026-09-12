@@ -489,7 +489,7 @@ fn modified_transform(
     if matches!(inner, DrawCommand::Mesh { .. } | DrawCommand::Sphere { .. }) {
         return None;
     }
-    let (near, far) = transition_factors(def.easing);
+    let (near, far) = transition_factors(state.easing);
     let delta_range = |delta: f32| {
         let (a, b) = (delta * near, delta * far);
         (a.min(b), a.max(b))
@@ -802,12 +802,10 @@ mod tests {
         );
     }
 
-    /// Transitions ease with the same functions, and the renderer
-    /// interpolates `target + delta * (1 - eased)` — so an overshooting
-    /// easing carries the draw past its target, on the far side from
-    /// where it started.
+    /// The renderer keeps the easing selected at the last retarget, so damage
+    /// must follow stored state even if the tree's current definition changes.
     #[test]
-    fn an_overshooting_transition_covers_the_far_side_of_its_target() {
+    fn damage_uses_the_active_transition_easing_after_the_definition_changes() {
         let inner = square(200.0, 20.0, 30.0);
         let mut recorded = extract_draw_values(&inner);
         recorded.x -= 40.0;
@@ -817,6 +815,8 @@ mod tests {
             TransitionState {
                 from: recorded,
                 target: extract_draw_values(&inner),
+                duration_ms: 500,
+                easing: Easing::EaseOutBack,
                 elapsed_ms: 0,
                 last_seen_frame: 0,
             },
@@ -826,7 +826,7 @@ mod tests {
             transition: Some(HostTransitionDef {
                 id_hash: 7,
                 duration_ms: 500,
-                easing: Easing::EaseOutBack,
+                easing: Easing::Linear,
             }),
             color_space: ColorSpace::default(),
             inner: Box::new(inner),
@@ -902,6 +902,8 @@ mod tests {
             TransitionState {
                 from: recorded,
                 target: extract_draw_values(&inner),
+                duration_ms: 500,
+                easing: Easing::Linear,
                 elapsed_ms: 0,
                 last_seen_frame: 0,
             },
@@ -939,6 +941,8 @@ mod tests {
             TransitionState {
                 from: recorded,
                 target: extract_draw_values(&inner),
+                duration_ms: 500,
+                easing: Easing::Linear,
                 elapsed_ms: 0,
                 last_seen_frame: 0,
             },
@@ -971,6 +975,8 @@ mod tests {
             TransitionState {
                 from,
                 target: extract_draw_values(&inner),
+                duration_ms: 500,
+                easing: Easing::Linear,
                 elapsed_ms: 0,
                 last_seen_frame: 0,
             },
@@ -1124,6 +1130,8 @@ mod tests {
             TransitionState {
                 from: recorded,
                 target: extract_draw_values(&rotated),
+                duration_ms: 200,
+                easing: Easing::Linear,
                 elapsed_ms: 0,
                 last_seen_frame: 0,
             },
