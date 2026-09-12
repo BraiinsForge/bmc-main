@@ -20,8 +20,8 @@
 
 """Shared texture catalog and paths for ISS widget texture tooling.
 
-TEXTURE MAPPING CONTRACT — the 3D globe shader samples textures using
-equirectangular UV coordinates. The convention MUST be:
+TEXTURE MAPPING CONTRACT — the 3D globe mesh maps equirectangular UV
+coordinates. The convention MUST be:
 
     u = 0.0 → lon = -180°  (left edge)
     u = 0.5 → lon =    0°  (prime meridian, center)
@@ -33,7 +33,7 @@ equirectangular UV coordinates. The convention MUST be:
 
 This matches the Cartopy PlateCarrée projection. If you change the projection
 or crop the output, the globe shader will show misplaced geography.
-See: bmc-render/src/gpu/sphere.rs (fragment shader UV sampling).
+See: bmc-render/src/gpu/sphere.rs (`sphere_mesh_data`).
 """
 
 import io

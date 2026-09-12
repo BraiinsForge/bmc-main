@@ -275,6 +275,14 @@ pub enum RenderTargetProbe {
     GlError(u32),
 }
 
+#[derive(Default)]
+enum SphereRendererState {
+    #[default]
+    Uninitialized,
+    Ready(SphereRenderer),
+    Failed,
+}
+
 /// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
 ///
 /// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
@@ -297,7 +305,7 @@ pub struct FemtoVgRenderer {
     font_table: FontTable,
     icon_registry: SvgRegistry,
     bitmap_registry: BitmapRegistry,
-    sphere: Option<SphereRenderer>,
+    sphere: SphereRendererState,
     /// `BitmapId` currently bound as the sphere's source texture. Used to
     /// detect rebind-on-change in `draw_sphere`; a mismatch (incl. the
     /// post-evict case where the registry has dropped the id) re-fetches
@@ -783,7 +791,7 @@ impl FemtoVgRenderer {
             font_table,
             icon_registry,
             bitmap_registry: BitmapRegistry::new(),
-            sphere: None,
+            sphere: SphereRendererState::Uninitialized,
             sphere_bitmap_id: None,
             mesh_renderer: None,
             pending_mesh_reservations: MeshReservations::default(),
@@ -852,7 +860,7 @@ impl FemtoVgRenderer {
 
     fn release_gpu_assets(&mut self) {
         self.sphere_bitmap_id = None;
-        if let Some(sphere) = self.sphere.take() {
+        if let SphereRendererState::Ready(sphere) = std::mem::take(&mut self.sphere) {
             sphere.destroy(&self.gl, &mut self.canvas);
         }
         if let Some(mesh) = self.mesh_renderer.take() {
@@ -1908,22 +1916,32 @@ impl Renderer for FemtoVgRenderer {
         light_lon: f32,
         atmosphere: bool,
     ) {
-        // Lazy-init sphere renderer on first call
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        if self.sphere.is_none() {
-            match SphereRenderer::new(&self.gl, &mut self.canvas, w as u32, h as u32) {
-                Ok(s) => self.sphere = Some(s),
+        let (width, height) = (w as u32, h as u32);
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        if matches!(&self.sphere, SphereRendererState::Failed) {
+            self.draw_bitmap(x, y, w, h, bitmap_id);
+            return;
+        }
+
+        // Lazy-init sphere renderer on first call
+        if matches!(&self.sphere, SphereRendererState::Uninitialized) {
+            match SphereRenderer::new(&self.gl, &mut self.canvas, width, height) {
+                Ok(sphere) => self.sphere = SphereRendererState::Ready(sphere),
                 Err(e) => {
+                    self.sphere = SphereRendererState::Failed;
                     tracing::error!("sphere init failed: {e}");
                     self.draw_bitmap(x, y, w, h, bitmap_id);
                     return;
                 }
             }
         }
-        let sphere = self
-            .sphere
-            .as_mut()
-            .expect("BUG: sphere is initialized above");
+        let SphereRendererState::Ready(sphere) = &mut self.sphere else {
+            unreachable!("BUG: sphere is initialized or returned above");
+        };
 
         // Resolve the bitmap each frame so an evict+re-register cycle is
         // observed before we touch GL. Skip the draw on registry miss so a
@@ -2699,7 +2717,7 @@ fn build_femtovg_path(points: &[(f32, f32)], closed: bool, smooth: bool) -> Path
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
-    use super::{FemtoVgRenderer, RenderTargetProbe, femtovg_baseline};
+    use super::{FemtoVgRenderer, RenderTargetProbe, SphereRendererState, femtovg_baseline};
     use crate::renderer::{AssetSuspendResult, AssetTagState, Renderer};
     use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
     use crate::tree::VerticalAlign;
@@ -2800,6 +2818,145 @@ mod tests {
                 return;
             }
         }
+    }
+
+    #[test]
+    fn zero_and_subpixel_spheres_do_not_initialize_the_cached_renderer() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+        let bitmap_id = renderer
+            .register_bitmap("widget-42:sphere", &one_px_png([255, 0, 0, 255]))
+            .expect("BUG: bitmap registration should succeed");
+
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            0.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        assert!(
+            matches!(renderer.sphere, SphereRendererState::Uninitialized),
+            "a layout placeholder must not choose the cached offscreen size"
+        );
+
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            0.5,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        assert!(
+            matches!(renderer.sphere, SphereRendererState::Uninitialized),
+            "a subpixel scale-in frame must not latch sphere initialization failure"
+        );
+
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        assert!(
+            matches!(renderer.sphere, SphereRendererState::Ready(_)),
+            "the first drawable sphere must initialize the renderer"
+        );
+    }
+
+    #[test]
+    fn failed_sphere_initialization_is_not_retried_each_frame() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let bitmap_id = renderer
+            .register_bitmap("widget-42:sphere", &one_px_png([255, 0, 0, 255]))
+            .expect("BUG: bitmap registration should succeed");
+        renderer.sphere = SphereRendererState::Failed;
+
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        renderer.flush();
+
+        assert!(matches!(renderer.sphere, SphereRendererState::Failed));
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        assert_eq!(pixels[32 * 64 + 32], [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn sphere_projection_preserves_geographic_orientation_and_silhouette() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let quadrants = [
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
+        let bitmap_id = renderer
+            .register_bitmap_rgba_nearest("widget-42:quadrants", &quadrants, 2, 2)
+            .expect("BUG: quadrant texture registration should succeed");
+
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0, 0.0, 64.0, 64.0, bitmap_id, 0.0, 0.0, 2.0, 0.0, 0.0, false,
+        );
+        renderer.flush();
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let north_west = pixels[24 * 64 + 24];
+        assert!(
+            north_west[0] > 240 && north_west[1] < 16 && north_west[2] < 16,
+            "north-west must sample the red lon<0, lat>0 quadrant, got {north_west:?}"
+        );
+        let corner = pixels[0];
+        assert!(
+            corner[..3].iter().all(|channel| *channel < 16),
+            "outside the projected sphere must remain black, got {corner:?}"
+        );
+
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0, 0.0, 64.0, 64.0, bitmap_id, 45.0, 90.0, 2.0, 45.0, 90.0, false,
+        );
+        renderer.flush();
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let center = pixels[32 * 64 + 32];
+        assert!(
+            center[1] > 240 && center[0] < 16 && center[2] < 16,
+            "45° N, 90° E must rotate the green quadrant to center, got {center:?}"
+        );
     }
 
     /// Regression for the use-after-delete documented on MR !324: when
