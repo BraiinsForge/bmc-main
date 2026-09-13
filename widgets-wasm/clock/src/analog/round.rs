@@ -31,6 +31,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::ClockHandTransition;
 use crate::manifest_params::Params;
 use crate::shared::{
     AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
@@ -119,6 +120,7 @@ pub(crate) fn render(
     ws: WidgetSize,
     tz: Option<&Tz>,
     palette: &ClockPalette,
+    hand_transition: ClockHandTransition,
 ) -> Node {
     let variant = ws.variant;
     let w = ws.width;
@@ -210,7 +212,15 @@ pub(crate) fn render(
     let s_ang = params.show_seconds.then(|| second_angle(second));
     let mut hands: Vec<Draw> = Vec::with_capacity(8);
     super::push_hands_and_centre(
-        centre_x, centre_y, scale, h_ang, m_ang, s_ang, palette, &mut hands,
+        centre_x,
+        centre_y,
+        scale,
+        h_ang,
+        m_ang,
+        s_ang,
+        palette,
+        hand_transition,
+        &mut hands,
     );
 
     super::dial_and_hands(viewport_w, viewport_h, draws, hands)
