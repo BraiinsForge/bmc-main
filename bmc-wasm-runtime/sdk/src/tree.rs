@@ -1429,6 +1429,11 @@ impl Draw {
     /// Use distinct ids per draw within the same canvas;
     /// reusing an id silently aliases two transitions
     /// to the same state slot.
+    ///
+    /// A `duration_ms` of 0 snaps: the host settles
+    /// the stored positions at the new values,
+    /// so a later non-zero duration animates from there
+    /// rather than from the pre-snap position.
     #[must_use]
     pub fn transition(self, id: &str, duration_ms: u32, easing: Easing) -> Self {
         self.transition_with_color_space(id, duration_ms, easing, ColorSpace::default())

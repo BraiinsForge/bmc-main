@@ -733,13 +733,15 @@ fn render_draw_inner(
                 // re-anchors at `t = 0` forever, and the draw holds
                 // its first-ever value for the length of the interaction.
                 state.elapsed_ms = state.elapsed_ms.saturating_add(anim_ctx.delta_ms);
-                if state.target != current_values {
+                if trans_def.duration_ms == 0 {
+                    state.from = current_values;
+                    state.target = current_values;
+                    // Finished against any duration a later frame restores;
+                    // the accumulated value only covers durations it exceeds.
+                    state.elapsed_ms = u32::MAX;
+                } else if state.target != current_values {
                     // D3-style: interpolate from current interpolated position
-                    let t = if trans_def.duration_ms > 0 {
-                        (state.elapsed_ms as f32 / trans_def.duration_ms as f32).min(1.0)
-                    } else {
-                        1.0
-                    };
+                    let t = (state.elapsed_ms as f32 / trans_def.duration_ms as f32).min(1.0);
                     let eased_t = apply_easing(trans_def.easing, t);
                     state.from =
                         interpolate_draw_values(&state.from, &state.target, eased_t, *color_space);
@@ -2206,12 +2208,12 @@ mod tests {
         );
     }
 
-    fn transition_arc(end_angle: f32) -> DrawCommand {
+    fn transition_arc(end_angle: f32, duration_ms: u32) -> DrawCommand {
         DrawCommand::Modified {
             animations: Vec::new(),
             transition: Some(crate::tree::HostTransitionDef {
                 id_hash: 42,
-                duration_ms: 1000,
+                duration_ms,
                 easing: Easing::Linear,
             }),
             color_space: ColorSpace::default(),
@@ -2229,20 +2231,20 @@ mod tests {
         }
     }
 
-    /// Draw `transition_arc(end_angle)` as one frame, advancing the context's
-    /// frame counter and clearing prior events so the caller sees this frame's.
     fn transition_arc_frame(
         renderer: &mut RecordingRenderer,
         anim_ctx: &mut AnimationContext<'_>,
         delta_ms: u32,
         end_angle: f32,
+        duration_ms: u32,
     ) {
         renderer.events.clear();
+        anim_ctx.has_active = false;
         anim_ctx.delta_ms = delta_ms;
         anim_ctx.frame_counter += 1;
         render_draw_inner_for_test(
             renderer,
-            &transition_arc(end_angle),
+            &transition_arc(end_angle, duration_ms),
             0.0,
             0.0,
             100.0,
@@ -2276,12 +2278,12 @@ mod tests {
         let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
 
         // Settles the state at 1.0, the way a first frame does.
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0, 1_000);
 
         let mut rendered = Vec::new();
         for step in 1..=6_u8 {
             let target = 1.0 + f32::from(step);
-            transition_arc_frame(&mut renderer, &mut anim_ctx, 100, target);
+            transition_arc_frame(&mut renderer, &mut anim_ctx, 100, target, 1_000);
             rendered.push(recorded_arc_end_angle(&renderer));
         }
 
@@ -2307,9 +2309,9 @@ mod tests {
         let mut transition_states = HashMap::new();
         let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
 
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0, 1_000);
         // 1500 ms against the arc's 1000 ms duration.
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 1500, 3.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 1500, 3.0, 1_000);
 
         assert_eq!(
             recorded_arc_end_angle(&renderer).to_bits(),
@@ -2325,9 +2327,9 @@ mod tests {
         let mut transition_states = HashMap::new();
         let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
 
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 16, 3.0);
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 500, 3.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0, 1_000);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 16, 3.0, 1_000);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 500, 3.0, 1_000);
 
         let [
             RenderEvent::Arc {
@@ -2362,12 +2364,12 @@ mod tests {
         let mut transition_states = HashMap::new();
         let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
 
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0, 1_000);
 
         // A widget rendering at 1 Hz: the whole 1000 ms gap elapsed before the
         // new target appeared, so the 1000 ms transition starts here rather
         // than ending here.
-        transition_arc_frame(&mut renderer, &mut anim_ctx, 1_000, 3.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 1_000, 3.0, 1_000);
         assert_eq!(
             recorded_arc_end_angle(&renderer).to_bits(),
             1.0_f32.to_bits()
@@ -2375,6 +2377,73 @@ mod tests {
         assert!(
             anim_ctx.has_active,
             "an unfinished transition must keep asking for frames"
+        );
+    }
+
+    #[test]
+    fn zero_duration_transition_stays_at_target_when_animation_resumes() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0, 1_000);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 2_001, 3.0, 0);
+        assert_eq!(
+            recorded_arc_end_angle(&renderer).to_bits(),
+            3.0_f32.to_bits()
+        );
+        assert!(
+            !anim_ctx.has_active,
+            "a snapped update needs no animation frames"
+        );
+
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 16, 3.0, 1_000);
+        assert_eq!(
+            recorded_arc_end_angle(&renderer).to_bits(),
+            3.0_f32.to_bits(),
+            "an immediate refresh must not move back toward the pre-gap position"
+        );
+
+        assert!(
+            !anim_ctx.has_active,
+            "a settled snap must not schedule redundant animation frames"
+        );
+
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 16, 5.0, 1_000);
+        assert_eq!(
+            recorded_arc_end_angle(&renderer).to_bits(),
+            3.0_f32.to_bits(),
+            "the next animation must start at the snapped position"
+        );
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 500, 5.0, 1_000);
+        assert_eq!(
+            recorded_arc_end_angle(&renderer).to_bits(),
+            4.0_f32.to_bits()
+        );
+        assert!(anim_ctx.has_active, "normal updates must animate again");
+    }
+
+    #[test]
+    fn first_frame_snap_does_not_replay_frames_once_a_duration_returns() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+        // A slot's first frame carries a zero delta
+        // even when the widget saw a long gap and asked for a snap.
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 3.0, 0);
+        assert!(!anim_ctx.has_active);
+
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 16, 3.0, 500);
+        assert_eq!(
+            recorded_arc_end_angle(&renderer).to_bits(),
+            3.0_f32.to_bits()
+        );
+        assert!(
+            !anim_ctx.has_active,
+            "a snap with no elapsed time must still count as finished"
         );
     }
 
