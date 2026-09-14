@@ -34,6 +34,8 @@ use crate::screens::parts::{self, color};
 
 const FULL_COLUMN_WIDTH: f32 = 400.0;
 const FULL_CHART_WIDTH: f32 = 368.0;
+/// Inset from the cards' top and bottom edges, as the 26.02 screen padded its stats column.
+const FULL_STATS_INSET: f32 = 16.0;
 
 #[derive(Clone, Debug)]
 pub struct ViewData {
@@ -592,7 +594,14 @@ fn full(view: &ViewData) -> Node {
                     parts::bordered([hashprice_panel(view)]),
                 ],
             ),
-            col(props!(flex: 1.0), [network_stats(view)]),
+            col(
+                props!(flex: 1.0),
+                [
+                    col(props!(height: FULL_STATS_INSET), []),
+                    network_stats(view),
+                    col(props!(height: FULL_STATS_INSET), []),
+                ],
+            ),
             col(
                 props!(width: FULL_COLUMN_WIDTH, gap: parts::GAP),
                 [
@@ -784,5 +793,28 @@ mod tests {
             panic!("BUG: a loading history must keep its box");
         };
         assert_eq!((props.width, props.height), (253.0, 78.0));
+    }
+
+    #[test]
+    fn full_insets_the_stats_column_from_the_cards_edges() {
+        bmc_wasm_sdk::assets::init_test_registrars();
+        let Node::Row(_, columns) = bitcoin_mining_view(&fixtures::healthy(SizeBucket::Full))
+        else {
+            panic!("BUG: the Full root must be a row of columns");
+        };
+        let Some(Node::Column(_, middle)) = columns.get(1) else {
+            panic!("BUG: the stats column sits between the card columns");
+        };
+
+        let (Some(Node::Column(top, _)), Some(Node::Column(bottom, _))) =
+            (middle.first(), middle.last())
+        else {
+            panic!("BUG: the stats column is bracketed by two spacers");
+        };
+        assert_eq!((top.height, bottom.height), (16.0, 16.0));
+        assert_eq!(
+            first_text(&middle[1]).as_deref(),
+            Some("Avg. Fees per Block")
+        );
     }
 }
