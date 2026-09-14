@@ -31,6 +31,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::ClockHandTransition;
 use crate::manifest_params::Params;
 use crate::miner::MinerData;
 use crate::shared::{
@@ -144,6 +145,7 @@ pub(crate) fn render(
     h: u32,
     tz: Option<&Tz>,
     palette: &ClockPalette,
+    hand_transition: ClockHandTransition,
     miner: &MinerData,
     seed_gauges: bool,
     overlay: Option<mining::overlay::OverlayKind>,
@@ -274,7 +276,16 @@ pub(crate) fn render(
     let m_ang = minute_angle(minute);
     let s_ang = params.show_seconds.then(|| second_angle(second));
     super::push_hands_and_centre(
-        centre_x, centre_y, scale, h_ang, m_ang, s_ang, palette, true, &mut draws,
+        centre_x,
+        centre_y,
+        scale,
+        h_ang,
+        m_ang,
+        s_ang,
+        palette,
+        hand_transition,
+        true,
+        &mut draws,
     );
 
     let dial = canvas(props!(width: viewport_w, height: viewport_h), draws);

@@ -30,6 +30,7 @@ pub(crate) mod round;
 )]
 use bmc_wasm_sdk::*;
 
+use crate::ClockHandTransition;
 use crate::shared::{ClockPalette, local_or_system};
 
 // ── Hand assets ────────────────────────────────────────────────────────
@@ -207,10 +208,11 @@ pub(crate) fn push_hands_and_centre(
     m_ang: f32,
     second_angle: Option<f32>,
     palette: &ClockPalette,
+    hand_transition: ClockHandTransition,
     with_shadows: bool,
     draws: &mut Vec<Draw>,
 ) {
-    draws.push(
+    draws.push(hand_transition.apply(
         Draw::rotated(
             h_ang,
             place_hand_at_pivot(
@@ -223,9 +225,10 @@ pub(crate) fn push_hands_and_centre(
                 &HAND_HOUR,
                 palette.primary,
             ),
-        )
-        .transition("hour-hand", 500, Easing::EaseOut),
-    );
+        ),
+        "hour-hand",
+        500,
+    ));
 
     let mut minute = Draw::rotated(
         m_ang,
@@ -243,7 +246,7 @@ pub(crate) fn push_hands_and_centre(
     if with_shadows {
         minute = minute.with_drop_shadow(hand_shadow(scale));
     }
-    draws.push(minute.transition("minute-hand", 500, Easing::EaseOut));
+    draws.push(hand_transition.apply(minute, "minute-hand", 500));
 
     let mut white = centre_icon(cx, cy, scale, 54.0, &CENTER_WHITE, palette.centre_white);
     if with_shadows {
@@ -252,7 +255,7 @@ pub(crate) fn push_hands_and_centre(
     draws.push(white);
 
     if let Some(angle) = second_angle {
-        draws.push(
+        draws.push(hand_transition.apply(
             Draw::rotated(
                 angle,
                 place_hand_at_pivot(
@@ -265,9 +268,10 @@ pub(crate) fn push_hands_and_centre(
                     &HAND_SECOND,
                     palette.second_hand,
                 ),
-            )
-            .transition("second-hand", 200, Easing::EaseOut),
-        );
+            ),
+            "second-hand",
+            200,
+        ));
         draws.push(centre_icon(
             cx,
             cy,
