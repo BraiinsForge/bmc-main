@@ -516,6 +516,7 @@ impl CompositorState {
 
     /// Hit-test a point against mapped layer surfaces (topmost painted first,
     /// honoring the input region) and then visible widgets in the active scene.
+    /// A revealed screen edge blocks widget input at uncovered points.
     /// Returns the surface and its origin in logical coords if one is hit.
     #[must_use]
     pub fn touch_focus_at(&self, x: f64, y: f64) -> Option<(WlSurface, Point<f64, Logical>)> {
@@ -559,6 +560,10 @@ impl CompositorState {
                 return Some((surface.clone(), Point::from((gx, gy))));
             }
             // Region rejects: continue to the next layer surface, then widgets if none match.
+        }
+
+        if self.any_screen_edge_revealed() {
+            return None;
         }
 
         let scene = self.widgets.active_scene();
@@ -1541,21 +1546,29 @@ mod tests {
 }
 
 #[cfg(test)]
-mod keyed_widget_protocol_test {
+mod compositor_protocol_test {
     use std::os::unix::net::UnixStream;
     use std::sync::Arc;
 
-    use bmc::compositor::{WidgetConnectionMode, WidgetInstanceKey, WidgetRegistration};
+    use bmc::compositor::{
+        Position, SceneLayout, Size, WidgetConnectionMode, WidgetInstanceKey, WidgetPlacement,
+        WidgetRegistration,
+    };
     use bmc_widget_protocol::client::{
         deck_widget_manager_v2::{self, DeckWidgetManagerV2},
         deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
     };
     use bmc_widget_protocol::{CredentialSecrets, ViewportShape, WidgetInitialConfig};
-    use smithay::reexports::wayland_server::{Display, backend::ClientId};
+    use smithay::reexports::wayland_server::{Display, Resource as _, backend::ClientId};
     use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
     use wayland_client::{Connection, Dispatch, EventQueue, Proxy as _, QueueHandle};
 
     use super::{ClientState, CompositorState};
+    use crate::compositor::screen_edge::{EdgeFlags, ScreenEdgeSession, ScreenEdgeUserData};
+    use deck_screen_edge_v1::server::{
+        deck_auto_hide_screen_edge_v1::DeckAutoHideScreenEdgeV1,
+        deck_screen_edge_manager_v1::Border,
+    };
 
     #[derive(Default)]
     struct TestClient {
@@ -1728,6 +1741,102 @@ mod keyed_widget_protocol_test {
             .expect("BUG: keyed manager global should be advertised");
         let surface = wl_compositor.create_surface(qh, ());
         manager.get_widget_surface(key, &surface, qh, ())
+    }
+
+    #[test]
+    fn revealed_screen_edge_blocks_widget_focus_until_unmap() {
+        let (mut display, mut compositor) = new_server();
+        let (conn, queue, client, client_id) = connect_client(&mut display, &mut compositor);
+        let wl_compositor = client
+            .compositor
+            .expect("BUG: compositor global must be bound");
+        let widget = wl_compositor.create_surface(&queue.handle(), ());
+        let tray = wl_compositor.create_surface(&queue.handle(), ());
+        conn.flush()
+            .expect("BUG: test surfaces must reach the server");
+        display
+            .dispatch_clients(&mut compositor)
+            .expect("BUG: test surfaces must be created");
+        let handle = display.handle();
+        let widget_id = handle
+            .backend_handle()
+            .object_for_protocol_id(
+                client_id,
+                super::WlSurface::interface(),
+                widget.id().protocol_id(),
+            )
+            .expect("BUG: widget must have a server object ID");
+        let server_client = handle
+            .get_client(widget_id)
+            .expect("BUG: test client must be alive");
+        let widget = server_client
+            .object_from_protocol_id::<super::WlSurface>(&handle, widget.id().protocol_id())
+            .expect("BUG: widget surface must exist");
+        let tray = server_client
+            .object_from_protocol_id::<super::WlSurface>(&handle, tray.id().protocol_id())
+            .expect("BUG: tray surface must exist");
+        let instance_id = "touch-target".to_owned();
+        compositor.widgets.set_active_scene(SceneLayout {
+            widgets: vec![WidgetPlacement {
+                instance_id: instance_id.clone(),
+                position: Position { x: 0, y: 0 },
+                size: Size {
+                    width: 480,
+                    height: 1_280,
+                },
+                visible: true,
+            }],
+            ..SceneLayout::default()
+        });
+        compositor
+            .render_surfaces
+            .insert(instance_id, widget.clone());
+        let edge = server_client
+            .create_resource::<DeckAutoHideScreenEdgeV1, _, CompositorState>(
+                &handle,
+                1,
+                ScreenEdgeUserData {
+                    surface: tray.clone(),
+                },
+            )
+            .expect("BUG: test screen-edge resource must be created");
+        compositor.screen_edge_sessions.push(ScreenEdgeSession {
+            resource: edge,
+            surface: tray.clone(),
+            flags: EdgeFlags {
+                border: Border::Top,
+                armed: true,
+                revealed: false,
+            },
+        });
+
+        assert_eq!(
+            compositor
+                .touch_focus_at(100.0, 100.0)
+                .map(|(surface, _)| surface),
+            Some(widget.clone())
+        );
+        assert!(
+            compositor.screen_edge_sessions[0]
+                .flags
+                .try_trigger(Border::Top)
+        );
+        assert!(
+            compositor.touch_focus_at(100.0, 100.0).is_none(),
+            "an uncovered point must not activate a widget while the tray is revealed"
+        );
+        compositor.rearm_screen_edge_on_unmap(&tray, false);
+        assert!(
+            compositor.touch_focus_at(100.0, 100.0).is_none(),
+            "the tray owns input until it actually unmaps"
+        );
+        compositor.rearm_screen_edge_on_unmap(&tray, true);
+        assert_eq!(
+            compositor
+                .touch_focus_at(100.0, 100.0)
+                .map(|(surface, _)| surface),
+            Some(widget)
+        );
     }
 
     fn register_keyed_widget(

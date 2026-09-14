@@ -72,7 +72,8 @@ hiding it must repaint its corner, not merely stop drawing it.
 the point to fall inside the surface's input region. The layer-shell input-region semantics are honored directly: an
 unset region accepts all input, an explicitly empty region accepts none (touches fall through to whatever is behind it —
 this is what makes the offline indicator passive). Only if no layer surface claims the point does it fall through to the
-active scene's widgets.
+active scene's widgets. While any screen edge is revealed, that widget fallback is skipped and the touch is dropped; the
+exposed strip below a sliding tray cannot activate a widget until the tray unmaps and re-arms.
 
 ## Suppressing scene navigation
 
