@@ -457,7 +457,7 @@ impl HostedOverlay {
     /// Commit changed placement without attaching or damaging a buffer.
     /// Return `false` without committing when the surface is not mapped.
     /// Return `true` for mapped surfaces, including an unchanged position.
-    pub fn move_attached_panel(&mut self, offset: i32) -> anyhow::Result<bool> {
+    pub fn commit_position_if_mapped(&mut self, offset: i32) -> anyhow::Result<bool> {
         if !self.mapped {
             return Ok(false);
         }

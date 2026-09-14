@@ -218,8 +218,12 @@ pub fn refresh_overlay_cache(
     )
 }
 
-/// Render one hosted overlay through the shared renderer, mirroring
-/// `WidgetSlot::render`: lock GPU, stage, draw, blit, fence-wait, export, attach.
+/// Commit placement for clean mapped slide frames;
+/// otherwise paint or copy content through the shared renderer.
+#[expect(
+    clippy::too_many_lines,
+    reason = "keep position-only, cached-copy, and full-paint submission paths together"
+)]
 pub fn render_hosted_overlay(
     overlay: &mut HostedOverlay,
     ptr: NonNull<dyn Renderer>,
@@ -238,14 +242,23 @@ pub fn render_hosted_overlay(
         shared.scratch.max_size(),
         size,
     );
-    // While a slide is animating with unchanged content, skip Taffy layout +
-    // femtovg repaint entirely and blit the once-painted GPU cache at the
-    // current offset. If the cache was freed (e.g. by a mapped resize),
-    // fall through to the full-paint branch so the cache is rebuilt.
-    let cached_blit = overlay
+    let cached_blit = overlay.overlay_mut().wants_cached_blit(now);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "layer-shell margins are integer pixels"
+    )]
+    let layer_offset = overlay
         .overlay_mut()
-        .wants_cached_blit(now)
-        .filter(|_| overlay.target_mut().cached_ready(size));
+        .layer_shell_offset(now)
+        .map(|y| y.round() as i32);
+    if let Some(offset) = layer_offset
+        && cached_blit.is_some()
+        && overlay.commit_position_if_mapped(offset)?
+    {
+        overlay.mark_rendered(Instant::now());
+        return Ok(());
+    }
+    let cached_blit = cached_blit.filter(|_| overlay.target_mut().cached_ready(size));
     let (dmabuf, slot) = if let Some(offset_y) = cached_blit {
         // Cached-blit branch: clear-transparent + shader-copy the cached panel
         // into the export buffer at the slide offset. No layout or paint.
@@ -265,7 +278,11 @@ pub fn render_hosted_overlay(
                 fbo,
                 size,
                 panel_h,
-                offset_y,
+                if layer_offset.is_some() {
+                    0.0
+                } else {
+                    offset_y
+                },
             )
         })();
         shared.flush_and_wait_gl();
@@ -323,7 +340,9 @@ pub fn render_hosted_overlay(
                 // the offset iff a slide is still animating.
                 let fbo = overlay.target_mut().current_fbo();
                 match overlay.overlay_mut().wants_cached_blit(now) {
-                    Some(offset_y) if overlay.target_mut().cached_ready(size) => {
+                    Some(offset_y)
+                        if layer_offset.is_none() && overlay.target_mut().cached_ready(size) =>
+                    {
                         #[expect(
                             clippy::cast_precision_loss,
                             reason = "overlay band height in pixels converts to NDC without meaningful loss"
@@ -346,8 +365,9 @@ pub fn render_hosted_overlay(
         )?;
         overlay.target_mut().export_and_swap()?
     };
-    // Mint+attach the wl_buffer and mark the slot in-flight. Done inside one
-    // HostedOverlay method so target and client are borrowed together legally.
+    if let Some(offset) = layer_offset {
+        overlay.stage_vertical_offset(offset)?;
+    }
     overlay.submit_exported(&dmabuf, slot)?;
     // Fresh timestamp: the pass-level `now` predates this pass's widget
     // renders, and anchoring a ramp that far back would replay the jitter
