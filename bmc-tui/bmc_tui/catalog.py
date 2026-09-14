@@ -2565,8 +2565,8 @@ def ensure_grpcurl() -> None:
 
 @stage("Snapshot current generation")
 def snapshot_profile(dev: Device, cycle: UpgradeCycle) -> str:
-    cycle.generation_before = _current_generation(dev)
-    cycle.installed_before = set(_read_manifest_packages(dev))
+    cycle.generation_before = current_generation(dev)
+    cycle.installed_before = set(read_manifest_packages(dev))
     return (
         f"generation {console.lit(cycle.generation_before)}, "
         f"{console.lit(len(cycle.installed_before))} installed package(s)"
@@ -3023,9 +3023,9 @@ def verify_profile_advanced(dev: Device, plan: Deployment, cycle: UpgradeCycle) 
     if before is None or installed is None:
         msg = "BUG: the profile was not snapshotted before the upgrade"
         raise RuntimeError(msg)
-    after = _current_generation(dev)
+    after = current_generation(dev)
     require(after > before, f"current generation is still {after}")
-    entries = _read_manifest_packages(dev)
+    entries = read_manifest_packages(dev)
     mismatched = []
     for b in plan.built:
         if b.name not in installed:
@@ -3043,7 +3043,7 @@ def verify_profile_advanced(dev: Device, plan: Deployment, cycle: UpgradeCycle) 
     return f"generation {console.lit(before)} → {console.lit(after)}"
 
 
-def _current_generation(dev: Device) -> int:
+def current_generation(dev: Device) -> int:
     link = dev.read(f"readlink {_PROFILE_DIR}/current")
     number = link.rsplit("/", 1)[-1].removesuffix("-link")
     require(
@@ -3053,7 +3053,7 @@ def _current_generation(dev: Device) -> int:
     return int(number)
 
 
-def _read_manifest_packages(dev: Device) -> dict[str, Any]:
+def read_manifest_packages(dev: Device) -> dict[str, Any]:
     """The `packages` object of the current generation's manifest."""
 
     raw = dev.read(f"cat {_PROFILE_DIR}/current/manifest")
@@ -4009,9 +4009,13 @@ def verify_device_identity(dev: Device, cycle: FirmwareCycle) -> str:
     return identity
 
 
+def read_boot_id(dev: Device) -> str:
+    return dev.read(f"cat {_BOOT_ID_PATH}")
+
+
 @stage("Snapshot boot id")
 def snapshot_boot_id(dev: Device, cycle: FirmwareCycle) -> str:
-    boot_id = dev.read(f"cat {_BOOT_ID_PATH}")
+    boot_id = read_boot_id(dev)
     cycle.boot_id_before = boot_id
     return console.lit(boot_id)
 
@@ -4033,7 +4037,7 @@ def poll_boot_id_change(
     while clock() < deadline:
         try:
             verify_device_identity(dev, cycle)
-            boot_id = dev.read(f"cat {_BOOT_ID_PATH}")
+            boot_id = read_boot_id(dev)
         except (subprocess.CalledProcessError, OSError):
             pass
         else:
