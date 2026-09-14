@@ -53,13 +53,15 @@ readouts, and surfaces the next scheduled alarm. It runs full-screen on every su
 > As a user, I want the clock to show my next alarm so I know it is set without opening settings.
 
 - When an alarm is scheduled, the clock shows a bell icon next to the next alarm time.
-- The alarm row is shown only at the `full` size; smaller sizes omit it to keep the clock face legible.
+- The alarm row is shown only at the `full` size; smaller sizes and the BMM101 panel omit it to keep the clock face
+  legible.
 - When no alarm is scheduled, no alarm row is shown.
 - The alarm time follows the device's 12- or 24-hour format.
 
 ## Constraints
 
-- The widget renders at the shared `small`, `medium`, `large`, and `full` sizes; layout and detail adapt per size.
+- The widget renders at the shared `small`, `medium`, `large`, and `full` sizes and in the BMM101 panel's own frame;
+  layout and detail adapt per size.
 - Clock style, date, seconds, timezone, numeral weight, and the timezone override are manifest-driven widget parameters,
   configurable from the web UI.
 - Day / night appearance follows the device-wide night mode signal — the clock recolours itself; it is not a per-widget
@@ -69,16 +71,18 @@ readouts, and surfaces the next scheduled alarm. It runs full-screen on every su
 ## Platforms
 
 The clock is supported on every current platform. The panels differ in resolution and shape, so the widget renders the
-closest BMC100 size variant and scales that layout to fit the actual viewport instead of overflowing it.
+closest BMC100 size variant and scales that layout to fit the actual viewport instead of overflowing it — except the
+digital face on BMM101, which has a layout of its own.
 
-| Platform | Display    | Shape       | Renders as                                   |
-| -------- | ---------- | ----------- | -------------------------------------------- |
-| BMC100   | `1280x480` | rectangular | native `small` / `medium` / `large` / `full` |
-| BMM100   | `320x240`  | rectangular | the `small` BMC100 variant, scaled to fit    |
-| BMM101   | `480x320`  | rectangular | the `large` BMC100 variant, scaled to fit    |
-| BFM100   | `480x480`  | round       | the analog round face, scaled to fit         |
+| Platform | Display    | Shape       | Renders as                                                         |
+| -------- | ---------- | ----------- | ------------------------------------------------------------------ |
+| BMC100   | `1280x480` | rectangular | native `small` / `medium` / `large` / `full`                       |
+| BMM100   | `320x240`  | rectangular | the `small` BMC100 variant, scaled to fit                          |
+| BMM101   | `480x320`  | rectangular | its own digital layout; the analog faces as `large`, scaled to fit |
+| BFM100   | `480x480`  | round       | the analog round face, scaled to fit                               |
 
-- On the rectangular BMM panels the configured face style is honoured; only the layout changes, scaled from the matched
-  BMC100 variant.
+- On the rectangular BMM panels the configured face style is honoured.
+- The BMM101 digital face puts the timezone above the time and the date below it, in the device's numeric date format,
+  with AM/PM beside the time in 12-hour mode.
 - On the round BFM100 the analog round face is always shown regardless of the configured style — its round dial is the
   only face that fits a round display without clipping at the corners.

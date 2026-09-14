@@ -30,10 +30,10 @@ mod digital;
 pub mod fixtures;
 mod parts;
 
-use bmc_wasm_sdk::{Node, SystemTime, Tz, WidgetSize, WidgetViewport, system};
+use bmc_wasm_sdk::{Node, SystemTime, Tz, WidgetViewport, system};
 
 use crate::manifest_params::{ClockStyle, Params};
-use crate::model::{ClockHandTransition, face};
+use crate::model::{ClockHandTransition, Frame, face};
 
 /// A moment, the viewport it is drawn into, the operator's params
 /// and whether the hands sweep to the moment or snap.
@@ -48,7 +48,7 @@ pub struct ViewData {
 /// The face `view`'s viewport draws, at `view`'s moment.
 #[must_use]
 pub fn clock_view(view: &ViewData) -> Node {
-    let size = WidgetSize::from_dimensions(view.viewport.width, view.viewport.height);
+    let frame = Frame::of(view.viewport);
     let tz = view
         .params
         .timezone_override
@@ -59,7 +59,7 @@ pub fn clock_view(view: &ViewData) -> Node {
         ClockStyle::AnalogRound => analog::round::render(
             view.now,
             &view.params,
-            size,
+            frame,
             tz.as_ref(),
             &palette,
             view.hand_transition,
@@ -67,12 +67,14 @@ pub fn clock_view(view: &ViewData) -> Node {
         ClockStyle::AnalogRect => analog::rect::render(
             view.now,
             &view.params,
-            size,
+            frame,
             tz.as_ref(),
             &palette,
             view.hand_transition,
         ),
-        ClockStyle::Digital => digital::render(view.now, &view.params, size, tz.as_ref(), &palette),
+        ClockStyle::Digital => {
+            digital::render(view.now, &view.params, frame, tz.as_ref(), &palette)
+        }
     }
 }
 
@@ -83,6 +85,7 @@ mod tests {
 
     use super::*;
     use crate::model::SizeBucket;
+    use crate::screens::digital::BMM101_CAPTION_LINE_HEIGHT;
     use crate::screens::fixtures::{self, SEPTEMBER_NOON};
 
     /// 04:30 UTC on the 15th of September 2026 — 06:30 in Prague.
@@ -166,6 +169,61 @@ mod tests {
             fixtures::default_params(),
         );
         assert!(!texts(&clock_view(&large)).contains(&"06:30".to_owned()));
+    }
+
+    /// The frame BMM101 was designed for: the zone above the digits,
+    /// the numeric date below, `AM` beside them — and no weekday, no alarm.
+    #[test]
+    fn the_bmm101_face_splits_the_captions_around_the_digits() {
+        assets::init_test_registrars();
+        system::set_current(
+            SnapshotBuilder::new()
+                .timezone("Europe/Prague")
+                .time_format(TimeFormat::Hour12)
+                .next_alarm_some(ALARM_UTC_MS, "Wake up")
+                .build(),
+        );
+        let view = fixtures::at_bucket(
+            SizeBucket::Bmm101,
+            fixtures::DESIGN_MOMENT,
+            fixtures::default_params(),
+        );
+        let root = clock_view(&view);
+        let Node::Column(_, slots) = &root else {
+            panic!("BUG: the digital face is a column of slots");
+        };
+        let caption_slot = |slot: &Node| {
+            let Node::Column(props, lines) = slot else {
+                panic!("BUG: a caption slot is a fixed-height column");
+            };
+            assert_eq!((props.height, lines.len()), (BMM101_CAPTION_LINE_HEIGHT, 1));
+            lines.iter().flat_map(texts).collect::<Vec<_>>()
+        };
+        assert_eq!(caption_slot(&slots[1]), ["Prague (+1)"]);
+        assert_eq!(caption_slot(&slots[5]), ["24.12.2025"]);
+        assert_eq!(texts(&slots[3]), ["12:39:30", "AM"]);
+        assert!(!texts(&root).contains(&"06:30".to_owned()), "no alarm row");
+    }
+
+    /// A hidden readout leaves its slot in place, so the digits do not move.
+    #[test]
+    fn a_hidden_bmm101_readout_keeps_its_slot() {
+        install_prague(false);
+        let params = Params {
+            show_timezone: false,
+            show_date: false,
+            ..fixtures::default_params()
+        };
+        let view = fixtures::at_bucket(SizeBucket::Bmm101, fixtures::DESIGN_MOMENT, params);
+        let Node::Column(_, slots) = clock_view(&view) else {
+            panic!("BUG: the digital face is a column of slots");
+        };
+        for slot in [&slots[1], &slots[5]] {
+            let Node::Column(props, lines) = slot else {
+                panic!("BUG: a caption slot is a fixed-height column");
+            };
+            assert_eq!((props.height, lines.len()), (BMM101_CAPTION_LINE_HEIGHT, 0));
+        }
     }
 
     #[test]

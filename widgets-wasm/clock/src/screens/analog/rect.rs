@@ -31,10 +31,10 @@
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
-use crate::model::ClockHandTransition;
+use crate::model::{ClockHandTransition, Frame};
 use crate::screens::parts::{
     AlarmAnchor, ClockPalette, DateOrder, TzLabel, alarm_row_draws, date_order, f32_from_u32,
-    font_weight, push_utc_offset, resolve_tz_for_label,
+    font_weight, push_utc_offset, resolve_tz_for_label, tz_offset,
 };
 
 use super::{hour_angle, local_clock_components, minute_angle, second_angle};
@@ -173,27 +173,21 @@ const HAND_SCALE_REF_HEIGHT: f32 = 480.0;
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
-    ws: WidgetSize,
+    frame: Frame,
     tz: Option<&Tz>,
     palette: &ClockPalette,
     hand_transition: ClockHandTransition,
 ) -> Node {
-    let variant = ws.variant;
-    let w = ws.width;
-    let h = ws.height;
-    let fit = ws.fit();
-    let size = pick_size(variant);
+    let w = frame.size.width;
+    let h = frame.size.height;
+    let fit = frame.size.fit();
+    let size = pick_size(frame.bucket.variant());
     let viewport_w = f32_from_u32(w);
     let viewport_h = f32_from_u32(h);
     let centre_x = viewport_w / 2.0;
     let centre_y = viewport_h / 2.0;
     let label = resolve_tz_for_label(tz, now.unix_secs);
-    let offset_secs = match &label {
-        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
-        TzLabel::Unknown {
-            system_offset_secs, ..
-        } => *system_offset_secs,
-    };
+    let offset_secs = tz_offset(&label);
     let (hour12, minute, second) = local_clock_components(now, offset_secs);
     let numerals_weight = font_weight(params.numbers_font_style);
 

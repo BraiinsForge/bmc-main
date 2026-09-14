@@ -20,6 +20,8 @@
 
 //! Digital clock render mode — big numerals with an optional header
 //! (date + timezone) and a fixed-height footer (AM/PM or alarm).
+//! BMM101's frame instead carries the timezone alone above the numerals
+//! and the numeric date alone below, with AM/PM beside them.
 
 use bmc_wasm_sdk::system::TimeFormat;
 #[cfg_attr(
@@ -32,9 +34,10 @@ use bmc_wasm_sdk::system::TimeFormat;
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
+use crate::model::{Frame, SizeBucket};
 use crate::screens::parts::{
     AlarmAnchor, ClockPalette, DateOrder, TzLabel, alarm_row_draws, date_order, font_weight,
-    local_or_system, push_utc_offset, resolve_tz_for_label, time_font_family,
+    local_or_system, push_tz_caption, resolve_tz_for_label, time_font_family, tz_offset,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -62,7 +65,6 @@ pub(crate) struct DigitalSizeParams {
     show_weekday: bool,
     show_alarm: bool,
     ampm_inline: bool,
-    show_utc_offset: bool,
 }
 
 const DIGITAL_FULL: DigitalSizeParams = DigitalSizeParams {
@@ -77,7 +79,6 @@ const DIGITAL_FULL: DigitalSizeParams = DigitalSizeParams {
     show_weekday: true,
     show_alarm: true,
     ampm_inline: true,
-    show_utc_offset: true,
 };
 
 const DIGITAL_LARGE: DigitalSizeParams = DigitalSizeParams {
@@ -92,7 +93,6 @@ const DIGITAL_LARGE: DigitalSizeParams = DigitalSizeParams {
     show_weekday: true,
     show_alarm: false,
     ampm_inline: false,
-    show_utc_offset: true,
 };
 
 const DIGITAL_MEDIUM: DigitalSizeParams = DigitalSizeParams {
@@ -107,7 +107,6 @@ const DIGITAL_MEDIUM: DigitalSizeParams = DigitalSizeParams {
     show_weekday: true,
     show_alarm: false,
     ampm_inline: false,
-    show_utc_offset: true,
 };
 
 const DIGITAL_SMALL: DigitalSizeParams = DigitalSizeParams {
@@ -122,7 +121,6 @@ const DIGITAL_SMALL: DigitalSizeParams = DigitalSizeParams {
     show_weekday: false,
     show_alarm: false,
     ampm_inline: false,
-    show_utc_offset: true,
 };
 
 /// Resolve the SDK-classified `SizeVariant` to the matching per-size `const`.
@@ -137,10 +135,8 @@ fn pick_size(variant: SizeVariant) -> &'static DigitalSizeParams {
 
 impl DigitalSizeParams {
     /// Shrink the font sizes and paddings by `fit` so an off-canonical viewport
-    /// — e.g. BMM101's 480×320 classified as Large but narrower than Large's
-    /// canonical 638 — scales down instead of overflowing. Visibility flags and
-    /// the reserved header line count are layout structure, not metrics, and
-    /// pass through unchanged.
+    /// scales down instead of overflowing. Visibility flags and the reserved header
+    /// line count are layout structure, not metrics, and pass through unchanged.
     fn scaled(self, fit: f32) -> Self {
         Self {
             time_font_size: scale_font(self.time_font_size, fit),
@@ -171,25 +167,29 @@ fn scale_font(value: u16, fit: f32) -> u16 {
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
-    ws: WidgetSize,
+    frame: Frame,
     tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> Node {
-    let variant = ws.variant;
-    let size = pick_size(variant).scaled(ws.fit());
+    if frame.bucket == SizeBucket::Bmm101 {
+        return bmm101(now, params, tz, palette);
+    }
+    let size = pick_size(frame.bucket.variant()).scaled(frame.size.fit());
     let size = &size;
     let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
 
     let label = resolve_tz_for_label(tz, now.unix_secs);
-    let offset_secs = match &label {
-        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
-        TzLabel::Unknown {
-            system_offset_secs, ..
-        } => *system_offset_secs,
-    };
+    let offset_secs = tz_offset(&label);
 
     let header_node = header(now, params, size, &label, palette);
-    let time_node = time_row(now, params, size, is_12h, tz, offset_secs, palette);
+    let metrics = TimeRow {
+        font_size: size.time_font_size,
+        inline_ampm: (size.ampm_inline && is_12h).then_some(InlineAmPm {
+            font_size: size.ampm_font_size,
+            gap: 32.0,
+        }),
+    };
+    let time_node = time_row(now, params, metrics, tz, offset_secs, palette);
     let ampm_row_node =
         (!size.ampm_inline && is_12h).then(|| ampm_line(now, size, offset_secs, palette));
     let alarm_node = size
@@ -236,6 +236,77 @@ pub(crate) fn render(
     )
 }
 
+// ── BMM101 ─────────────────────────────────────────────────────────────
+
+const BMM101_CAPTION_FONT_SIZE: u16 = 20;
+/// The line box the frame draws each caption in.
+pub(super) const BMM101_CAPTION_LINE_HEIGHT: f32 = 26.0;
+const BMM101_TIME_FONT_SIZE: u16 = 80;
+const BMM101_EDGE_PADDING: f32 = 16.0;
+const BMM101_AMPM_GAP: f32 = 8.0;
+
+fn bmm101(now: SystemTime, params: &Params, tz: Option<&Tz>, palette: &ClockPalette) -> Node {
+    let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
+    let label = resolve_tz_for_label(tz, now.unix_secs);
+    let offset_secs = tz_offset(&label);
+
+    let caption = |line: String, color: Color| {
+        text(
+            line,
+            style!(
+                size: u32::from(BMM101_CAPTION_FONT_SIZE),
+                weight: FontWeight::REGULAR,
+                color: color,
+            ),
+        )
+    };
+    let timezone = params.show_timezone.then(|| {
+        let (line, color) = compose_timezone(&label, palette);
+        caption(line, color)
+    });
+    let date = params.show_date.then(|| {
+        let line = format_date(
+            now,
+            FormatDateOpts {
+                timezone: tz.cloned(),
+                ..FormatDateOpts::default()
+            },
+        );
+        caption(line, palette.text)
+    });
+    let metrics = TimeRow {
+        font_size: BMM101_TIME_FONT_SIZE,
+        inline_ampm: is_12h.then_some(InlineAmPm {
+            font_size: BMM101_CAPTION_FONT_SIZE,
+            gap: BMM101_AMPM_GAP,
+        }),
+    };
+    let time = time_row(now, params, metrics, tz, offset_secs, palette);
+
+    // Fixed-height caption slots either side of the flex-spaced time row,
+    // so the digits stay centred as the readouts toggle.
+    let slot = |line: Option<Node>| {
+        col(
+            props!(height: BMM101_CAPTION_LINE_HEIGHT),
+            line.map(|line| center(props!(), [line]))
+                .into_iter()
+                .collect::<Vec<_>>(),
+        )
+    };
+    col(
+        props!(flex: 1.0),
+        [
+            spacer_px(BMM101_EDGE_PADDING),
+            slot(timezone),
+            spacer(1.0),
+            time,
+            spacer(1.0),
+            slot(date),
+            spacer_px(BMM101_EDGE_PADDING),
+        ],
+    )
+}
+
 // ── Header (date + timezone) ───────────────────────────────────────────
 
 fn header(
@@ -248,18 +319,13 @@ fn header(
     if !params.show_date && !params.show_timezone {
         return None;
     }
-    let offset_secs = match label {
-        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
-        TzLabel::Unknown {
-            system_offset_secs, ..
-        } => *system_offset_secs,
-    };
+    let offset_secs = tz_offset(label);
     let date_str: Option<String> = params
         .show_date
         .then(|| compose_date(now, size, offset_secs));
     let tz = params
         .show_timezone
-        .then(|| compose_timezone(label, size, palette));
+        .then(|| compose_timezone(label, palette));
     let date_style = style!(
         size: u32::from(size.header_font_size),
         weight: FontWeight::REGULAR,
@@ -310,42 +376,38 @@ fn date_pattern(format: system::DateFormat, show_weekday: bool, show_year: bool)
     }
 }
 
-fn compose_timezone(
-    label: &TzLabel,
-    size: &DigitalSizeParams,
-    palette: &ClockPalette,
-) -> (String, Color) {
-    match label {
-        TzLabel::Resolved { city, offset_secs } => {
-            if size.show_utc_offset {
-                let mut s = city.clone();
-                s.push_str(" (");
-                push_utc_offset(&mut s, *offset_secs);
-                s.push(')');
-                (s, palette.text)
-            } else {
-                (city.clone(), palette.text)
-            }
-        }
-        TzLabel::Unknown { city, .. } => {
-            if size.show_utc_offset {
-                let mut s = city.clone();
-                s.push_str(" (unknown)");
-                (s, RED_50)
-            } else {
-                (city.clone(), RED_50)
-            }
-        }
-    }
+/// `City (±H)`, or a red `City (unknown)` so an operator typo shows at a glance.
+fn compose_timezone(label: &TzLabel, palette: &ClockPalette) -> (String, Color) {
+    let mut line = String::new();
+    push_tz_caption(&mut line, label);
+    let color = match label {
+        TzLabel::Resolved { .. } => palette.text,
+        TzLabel::Unknown { .. } => RED_50,
+    };
+    (line, color)
 }
 
 // ── Time row (time text + optional inline AM/PM) ───────────────────────
 
+/// AM/PM beside the digits: its font size and its gap from them.
+#[derive(Clone, Copy)]
+struct InlineAmPm {
+    font_size: u16,
+    gap: f32,
+}
+
+/// The digits' size, and AM/PM beside them where the size draws it inline
+/// and the clock is 12-hour.
+#[derive(Clone, Copy)]
+struct TimeRow {
+    font_size: u16,
+    inline_ampm: Option<InlineAmPm>,
+}
+
 fn time_row(
     now: SystemTime,
     params: &Params,
-    size: &DigitalSizeParams,
-    is_12h: bool,
+    metrics: TimeRow,
     tz: Option<&Tz>,
     offset_secs: i32,
     palette: &ClockPalette,
@@ -362,25 +424,25 @@ fn time_row(
     let time_node = text(
         time_str,
         style!(
-            size: u32::from(size.time_font_size),
+            size: u32::from(metrics.font_size),
             weight: weight,
             color: palette.primary,
             family: time_font_family(),
         ),
     );
 
-    if size.ampm_inline && is_12h {
-        let ampm = ampm_glyph(now, offset_secs);
+    if let Some(ampm) = metrics.inline_ampm {
+        let glyph = ampm_glyph(now, offset_secs);
         // Keep the time text at the parent's horizontal centre when AM/PM
         // appears: reserve a fixed slot for AM/PM on the right and mirror
         // it with an empty slot of the same width on the left. The symmetric
         // row then centres the time at the geometric middle, so switching
         // 24h ↔ 12h doesn't shift the digits.
-        let ampm_slot_w = f32::from(size.ampm_font_size) * 1.5;
+        let ampm_slot_w = f32::from(ampm.font_size) * 1.5;
         let ampm_text = text(
-            ampm,
+            glyph,
             style!(
-                size: u32::from(size.ampm_font_size),
+                size: u32::from(ampm.font_size),
                 weight: FontWeight::REGULAR,
                 color: palette.text,
             ),
@@ -388,9 +450,9 @@ fn time_row(
         let left_reserve = col(props!(width: ampm_slot_w), Vec::<Node>::new());
         // Lift AM/PM by half its own height: cross_align: Center aligns the
         // text-box top to the row mid-line, but we want AM/PM's centre there.
-        // A bottom filler of `ampm_font_size` makes the slot taller by that
+        // A bottom filler of the font size makes the slot taller by that
         // amount, and centering shifts the (top-anchored) text up by half it.
-        let ampm_lift = f32::from(size.ampm_font_size);
+        let ampm_lift = f32::from(ampm.font_size);
         let right_slot = col(
             props!(width: ampm_slot_w, cross_align: CrossAlign::Start),
             [ampm_text, spacer_px(ampm_lift)],
@@ -398,7 +460,7 @@ fn time_row(
         center(
             props!(),
             [row(
-                props!(gap: 32.0, cross_align: CrossAlign::Center),
+                props!(gap: ampm.gap, cross_align: CrossAlign::Center),
                 [left_reserve, time_node, right_slot],
             )],
         )

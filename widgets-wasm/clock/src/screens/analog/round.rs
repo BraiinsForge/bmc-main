@@ -35,10 +35,10 @@
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
-use crate::model::ClockHandTransition;
+use crate::model::{ClockHandTransition, Frame};
 use crate::screens::parts::{
     AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
-    local_or_system, push_utc_offset, resolve_tz_for_label,
+    local_or_system, push_utc_offset, resolve_tz_for_label, tz_offset,
 };
 
 use super::{hour_angle, local_clock_components, minute_angle, second_angle};
@@ -120,21 +120,20 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
-    ws: WidgetSize,
+    frame: Frame,
     tz: Option<&Tz>,
     palette: &ClockPalette,
     hand_transition: ClockHandTransition,
 ) -> Node {
-    let variant = ws.variant;
-    let w = ws.width;
-    let h = ws.height;
-    let size = pick_size(variant);
+    let w = frame.size.width;
+    let h = frame.size.height;
+    let size = pick_size(frame.bucket.variant());
     let viewport_w = f32_from_u32(w);
     let viewport_h = f32_from_u32(h);
     // Dial side as a fraction of the shorter viewport axis, so it always fits
     // and downscales rather than overflowing. `scale` maps the dial's 390
     // native geometry (hands, date ring) onto the rendered dial. The timezone
-    // label is a per-variant text annotation and scales by `ws.fit()` instead.
+    // label is a per-variant text annotation and scales by the frame's fit instead.
     let dial = viewport_w.min(viewport_h) * DIAL_FRACTION;
     let scale = dial / NATIVE_DIAL;
     // Single canvas at the widget viewport size — the SDK's `Draw::rotated`
@@ -145,12 +144,7 @@ pub(crate) fn render(
     let centre_y = viewport_h / 2.0;
     let dial_top_y = centre_y - dial / 2.0;
     let label = resolve_tz_for_label(tz, now.unix_secs);
-    let offset_secs = match &label {
-        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
-        TzLabel::Unknown {
-            system_offset_secs, ..
-        } => *system_offset_secs,
-    };
+    let offset_secs = tz_offset(&label);
     let (hour12, minute, second) = local_clock_components(now, offset_secs);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(16);
@@ -170,7 +164,15 @@ pub(crate) fn render(
 
     if params.show_timezone {
         timezone_label(
-            centre_x, dial_top_y, dial, size, ws, params, &label, palette, &mut draws,
+            centre_x,
+            dial_top_y,
+            dial,
+            size,
+            frame.size.fit(),
+            params,
+            &label,
+            palette,
+            &mut draws,
         );
     }
 
@@ -244,7 +246,7 @@ fn timezone_label(
     dial_top_y: f32,
     dial: f32,
     size: &AnalogRoundSizeParams,
-    ws: WidgetSize,
+    fit: f32,
     params: &Params,
     label: &TzLabel,
     palette: &ClockPalette,
@@ -261,7 +263,7 @@ fn timezone_label(
     // Per-variant authored size scaled by `fit`, so the label keeps its
     // legible size at each variant's canonical viewport and only shrinks
     // when the viewport is smaller — unlike the dial geometry above.
-    let city_size = scale_font(size.timezone_font_size, ws.fit());
+    let city_size = scale_font(size.timezone_font_size, fit);
     let offset_size = city_size.saturating_mul(85) / 100;
     let line_h = f32_from_u32(city_size) * 1.05;
     let group_centre_y = dial_top_y + dial * size.timezone_y_frac;

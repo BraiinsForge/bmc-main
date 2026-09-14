@@ -20,7 +20,7 @@
 
 //! Which layout a viewport gets, which face it draws and how the hands move.
 
-use bmc_wasm_sdk::{Draw, Easing, SizeVariant, ViewportShape};
+use bmc_wasm_sdk::{Draw, Easing, SizeVariant, ViewportShape, WidgetSize, WidgetViewport};
 
 use crate::manifest_params::ClockStyle;
 
@@ -44,6 +44,35 @@ impl SizeBucket {
             Self::Medium => (638, 238),
             Self::Small => (317, 238),
             Self::Bmm101 => (480, 320),
+        }
+    }
+
+    /// The BMC100 variant a face without a layout of its own scales down from.
+    #[must_use]
+    pub const fn variant(self) -> SizeVariant {
+        match self {
+            Self::Full => SizeVariant::Full,
+            Self::Large | Self::Bmm101 => SizeVariant::Large,
+            Self::Medium => SizeVariant::Medium,
+            Self::Small => SizeVariant::Small,
+        }
+    }
+}
+
+/// A viewport classified once for every face:
+/// its pixels and the bucket that picks the layout.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    pub size: WidgetSize,
+    pub bucket: SizeBucket,
+}
+
+impl Frame {
+    #[must_use]
+    pub fn of(viewport: WidgetViewport) -> Self {
+        Self {
+            size: WidgetSize::from_dimensions(viewport.width, viewport.height),
+            bucket: size_bucket(viewport.width, viewport.height),
         }
     }
 }

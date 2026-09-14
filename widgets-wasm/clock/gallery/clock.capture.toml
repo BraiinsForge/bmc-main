@@ -76,6 +76,71 @@ Size = "BMM101"
 "Timezone override" = "Helsi (unknown)"
 
 [[shot]]
+name = "digital-bmm101-month-first"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+Moment = "Wed 24 Dec 2025, 00:39:30"
+Dates = "12/31/2026"
+
+[[shot]]
+name = "digital-bmm101-no-readouts"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+"Show date" = false
+"Show timezone" = false
+
+[[shot]]
+name = "digital-bmm101-date-only"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+"Show timezone" = false
+
+[[shot]]
+name = "digital-bmm101-timezone-only"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+"Show date" = false
+
+[[shot]]
+name = "digital-bmm101-no-seconds"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+"Show seconds" = false
+
+[[shot]]
+name = "digital-bmm101-regular"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+Numerals = "Regular"
+
+[[shot]]
+name = "digital-bmm101-bold"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+Numerals = "Bold"
+
+[[shot]]
 name = "digital-full-alarm"
 scene = "bmc_gallery::clock::Digital"
 frames = 48
@@ -94,6 +159,30 @@ Size = "Fullscreen"
 "Next alarm" = true
 
 [[shot]]
+name = "analog-rect-large"
+scene = "bmc_gallery::clock::Analog Rect"
+frames = 48
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "analog-rect-medium"
+scene = "bmc_gallery::clock::Analog Rect"
+frames = 48
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "analog-rect-small"
+scene = "bmc_gallery::clock::Analog Rect"
+frames = 48
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
 name = "analog-rect-bmm101"
 scene = "bmc_gallery::clock::Analog Rect"
 frames = 48
@@ -109,6 +198,30 @@ frames = 48
 [shot.knobs]
 Size = "Fullscreen"
 "Next alarm" = true
+
+[[shot]]
+name = "analog-round-large"
+scene = "bmc_gallery::clock::Analog Round"
+frames = 48
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "analog-round-medium"
+scene = "bmc_gallery::clock::Analog Round"
+frames = 48
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "analog-round-small"
+scene = "bmc_gallery::clock::Analog Round"
+frames = 48
+
+[shot.knobs]
+Size = "Small"
 
 [[shot]]
 name = "analog-round-bmm101"

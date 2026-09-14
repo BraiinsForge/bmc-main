@@ -21,7 +21,9 @@
 //! The parts every face shares: palette, tz helpers, the alarm row,
 //! numeric utilities and the typography-knob mapping.
 
-pub(crate) use bmc_wasm_sdk::format::{TzLabel, push_utc_offset, resolve_tz_for_label};
+pub(crate) use bmc_wasm_sdk::format::{
+    TzLabel, push_tz_caption, push_utc_offset, resolve_tz_for_label,
+};
 use bmc_wasm_sdk::system::{DateFormat, TimeFormat};
 #[cfg_attr(
     not(test),
@@ -102,22 +104,15 @@ pub(crate) fn clock_palette(night_mode: bool) -> ClockPalette {
 
 // ── Timezone helpers ───────────────────────────────────────────────────
 
-/// Resolve `tz` → system tz → Etc/GMT (UTC) into a concrete `Tz`.
-/// Projection paths (hands, digits) use this;
-/// the timezone-line code instead consults the raw Option chain
-/// so it can render a visible signal when nothing was configured.
-#[expect(
-    dead_code,
-    reason = "retained for future callers; renderers now use offset_secs"
-)]
-pub(crate) fn effective_tz(tz: Option<&Tz>) -> Tz {
-    if let Some(t) = tz {
-        return t.clone();
+/// The offset the hands and digits project through: the resolved zone's,
+/// or the system one's where the requested zone is unknown.
+pub(crate) fn tz_offset(label: &TzLabel) -> i32 {
+    match label {
+        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
+        TzLabel::Unknown {
+            system_offset_secs, ..
+        } => *system_offset_secs,
     }
-    if let Some(name) = system::current().timezone() {
-        return Tz::from_runtime(name);
-    }
-    Tz::from_runtime("Etc/GMT")
 }
 
 /// Apply a precomputed UTC offset to `now.unix_secs` and decompose
