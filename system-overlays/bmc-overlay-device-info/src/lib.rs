@@ -117,11 +117,8 @@ enum Screen {
     /// The setup AP is being torn down and the device continues over its wired uplink.
     SetupSwitching,
     SetupConnecting,
-    /// `to_scenes` distinguishes the reconfiguration success (straight back to scenes)
-    /// from first-boot success (on to the setup connect-info).
     SetupConnected {
         since: Instant,
-        to_scenes: bool,
     },
     /// Setup connect-info. Carries the address rather than reading the prober
     /// live, so losing it cannot drop the screen back to connect progress —
@@ -208,9 +205,13 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
                 screen
             }
         }
-        Screen::SetupConnected { since, to_scenes } => {
+        Screen::SetupConnected { since } => {
             if now.duration_since(since) >= HOLD {
-                if to_scenes {
+                // An operational device goes back to its scenes. A first boot
+                // still has the wizard to finish, and so has a reconfiguration
+                // begun mid-setup: its join leaves the lifecycle on SetupPending,
+                // so both go on to the connect-info.
+                if mode.has_fallback() {
                     Screen::Done
                 } else {
                     Screen::SetupConnectInfo { ip: station_ip }
@@ -303,7 +304,7 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
         Screen::SetupConnecting | Screen::SetupSwitching => {
             (mode == Mode::SetupPending).then_some(NextWake::Poll)
         }
-        Screen::SetupConnected { since, .. }
+        Screen::SetupConnected { since }
         | Screen::SetupCompleted { since }
         | Screen::OpUpgraded { since } => Some(NextWake::At(since + HOLD)),
         // The shown address may still change (late DHCP), so keep polling.
@@ -547,14 +548,9 @@ impl SystemOverlay for DeviceInfoOverlay {
                 Screen::SetupConnecting
             }
             SetupStep::SwitchingUplink => Screen::SetupSwitching,
-            SetupStep::WifiConnectionSuccess => Screen::SetupConnected {
-                since: now,
-                to_scenes: false,
-            },
-            SetupStep::WifiReconfigSuccess => Screen::SetupConnected {
-                since: now,
-                to_scenes: true,
-            },
+            SetupStep::WifiConnectionSuccess | SetupStep::WifiReconfigSuccess => {
+                Screen::SetupConnected { since: now }
+            }
             SetupStep::WifiConnectionFailed => Screen::SetupError,
             SetupStep::DeviceSetupSuccess => Screen::SetupCompleted { since: now },
             SetupStep::UnexpectedError { restarting } => Screen::SetupFatal {
@@ -991,6 +987,107 @@ mod tests {
         let tick = overlay.tick(t0() + HOLD);
         assert_eq!(overlay.screen, Screen::Done);
         assert!(!tick.visible);
+    }
+
+    #[test]
+    fn reconfig_success_mid_setup_returns_to_the_connect_info_in_either_order() {
+        // bmc reads the lifecycle through a shell script after the join,
+        // so the success event may land on either side of it.
+        for success_first in [false, true] {
+            let old_ip = Ipv4Addr::new(10, 0, 0, 5);
+            let new_ip = Ipv4Addr::new(192, 168, 1, 20);
+            let (mut overlay, prober) = overlay_with_prober(Some(old_ip));
+            overlay.on_device_state(DeviceState::SetupPending, false);
+            let _ = overlay.tick(t0());
+            assert_eq!(
+                overlay.screen,
+                Screen::SetupConnectInfo { ip: Some(old_ip) }
+            );
+
+            overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+            overlay.on_access_point(Some(&setup_ap()));
+            assert_eq!(
+                overlay.view(),
+                DeviceInfoView::SetupStart {
+                    ap: Some(setup_ap())
+                },
+                "success first: {success_first}"
+            );
+            overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+            // The join re-homes the station before either event arrives.
+            prober.publish(Some(new_ip));
+            if success_first {
+                overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+                overlay.on_device_state(DeviceState::SetupPending, false);
+            } else {
+                overlay.on_device_state(DeviceState::SetupPending, false);
+                // A poll in between self-advances the connecting screen
+                // on the station address; the success still lands over it.
+                let _ = overlay.tick(t0());
+                overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+            }
+            let start = t0();
+            let tick = overlay.tick(start);
+            assert!(tick.visible, "success first: {success_first}");
+            assert!(
+                matches!(overlay.screen, Screen::SetupConnected { .. }),
+                "success first: {success_first}"
+            );
+
+            let tick = overlay.tick(start + HOLD);
+            assert_eq!(
+                overlay.screen,
+                Screen::SetupConnectInfo { ip: Some(new_ip) },
+                "success first: {success_first}"
+            );
+            assert!(tick.visible, "the wizard is not finished");
+        }
+    }
+
+    #[test]
+    fn reconfig_resumed_from_a_reboot_mid_setup_ends_on_the_connect_info() {
+        // A reboot mid-reconfiguration keeps both flags, so the device boots
+        // straight into WifiReconfiguration with the overlay cold.
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let mut overlay = overlay_with_ip(Some(ip));
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        assert_eq!(overlay.screen, Screen::SetupStart);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+        overlay.on_device_state(DeviceState::SetupPending, false);
+
+        let start = t0();
+        let _ = overlay.tick(start);
+        let tick = overlay.tick(start + HOLD);
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo { ip: Some(ip) });
+        assert!(tick.visible);
+    }
+
+    #[test]
+    fn a_lifecycle_broadcast_after_the_hold_brings_the_wizard_back() {
+        // The hold decides on the mode it has, so a broadcast slower than
+        // the hold unmaps first; the scenes show until it lands.
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let mut overlay = overlay_with_ip(Some(ip));
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        let _ = overlay.tick(t0());
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+
+        let start = t0();
+        let tick = overlay.tick(start + HOLD);
+        assert_eq!(
+            overlay.screen,
+            Screen::Done,
+            "the hold ran out on the stale mode"
+        );
+        assert!(!tick.visible);
+
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        let tick = overlay.tick(start + HOLD);
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo { ip: Some(ip) });
+        assert!(tick.visible);
     }
 
     #[test]

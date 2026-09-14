@@ -54,9 +54,13 @@ actually coming; the same failure during WiFi reconfiguration leaves the running
   station address appears; bmc's watchdog factory-resets if none comes, but only when every poll could actually read the
   uplink — a failed read is not evidence, and the reset destroys the configuration.
 - **WiFi reconfiguration**: the same setup flow, entered when `device_state` flips to `wifi_reconfiguration`; on
-  `wifi_reconfig_success` the connected screen shows 5 s and unmaps straight to scenes (no connect-info). The
-  setup-start screen holds like a first boot's, for as long as the AP is up: the user asked for this flow from the tray,
-  and hiding it would leave the AP broadcasting behind the scenes with nothing on screen to say so.
+  `wifi_reconfig_success` the connected screen shows 5 s, and on an operational device unmaps straight to scenes (no
+  connect-info). The setup-start screen holds like a first boot's, for as long as the AP is up: the user asked for this
+  flow from the tray, and hiding it would leave the AP broadcasting behind the scenes with nothing on screen to say so.
+  Entering the flow replaces whatever setup screen was up, so a device parked on the connect-info with its setup
+  unfinished shows the AP the moment the tray starts it. Its setup is still unfinished: the join clears only the
+  reconfiguration flag and the lifecycle drops back to `setup_pending`, so the connected screen goes on to the
+  connect-info instead (`Mode::has_fallback` decides) and the wizard finishes at the new address.
 - **Unexpected error**: a full-screen failure, in two variants that differ in what happens next rather than in how bad
   the failure is. `unexpected_error_restarting` means bmc is restarting or resetting the device, so the screen says so,
   waits it out, and ignores touch — the restart is coming and there is nothing to dismiss it *to*. `unexpected_error`
