@@ -22,14 +22,17 @@
 //! (date + timezone) and a fixed-height footer (AM/PM or alarm).
 
 use bmc_wasm_sdk::system::TimeFormat;
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "widget render code uses many SDK exports and macros in one file"
+    )
 )]
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
-use crate::shared::{
+use crate::screens::parts::{
     AlarmAnchor, ClockPalette, DateOrder, TzLabel, alarm_row_draws, date_order, font_weight,
     local_or_system, push_utc_offset, resolve_tz_for_label, time_font_family,
 };
@@ -425,7 +428,7 @@ fn ampm_line(
 
 /// `"AM"` / `"PM"` for the given moment in the effective timezone.
 fn ampm_glyph(now: SystemTime, offset_secs: i32) -> &'static str {
-    if local_or_system(&now, offset_secs).hour >= 12 {
+    if local_or_system(now, offset_secs).hour >= 12 {
         "PM"
     } else {
         "AM"

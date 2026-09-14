@@ -1,0 +1,15 @@
+# Clock dev tasks: `just widgets::clock::capture`, or bare `just capture`
+# from this directory. The widget fetches nothing, so there is no simulator
+# to wire; the generic mechanics delegate to the wasm module.
+
+import '../../common.justfile'
+
+root_justfile := parent_directory(parent_directory(source_directory())) / "justfile"
+
+# Render gallery scenes headlessly; NAME picks one recipe, default all.
+capture NAME="*":
+    @just --justfile {{ root_justfile }} wasm::scenes clock "{{ NAME }}"
+
+# Testbed ready to record a session; the GUI picks the target and the name.
+record:
+    @just --justfile {{ root_justfile }} wasm::record clock

@@ -697,6 +697,7 @@ dependencies = [
  "bmc-system-overlay",
  "bmc-wasm-sdk",
  "braiins-pool",
+ "clock",
  "femtovg",
  "fleet-management",
  "formula-1",
@@ -1334,6 +1335,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
 dependencies = [
  "error-code",
+]
+
+[[package]]
+name = "clock"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
 ]
 
 [[package]]

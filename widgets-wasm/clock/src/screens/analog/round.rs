@@ -25,15 +25,18 @@
 //! pivot), so each hand image is positioned such that its SVG-coordinate
 //! pivot lands at the canvas centre — see `place_hand_at_pivot`.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "widget render code uses many SDK exports and macros in one file"
+    )
 )]
 use bmc_wasm_sdk::*;
 
-use crate::ClockHandTransition;
 use crate::manifest_params::Params;
-use crate::shared::{
+use crate::model::ClockHandTransition;
+use crate::screens::parts::{
     AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
     local_or_system, push_utc_offset, resolve_tz_for_label,
 };
@@ -148,7 +151,7 @@ pub(crate) fn render(
             system_offset_secs, ..
         } => *system_offset_secs,
     };
-    let (hour12, minute, second) = local_clock_components(&now, offset_secs);
+    let (hour12, minute, second) = local_clock_components(now, offset_secs);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(16);
 
@@ -183,7 +186,7 @@ pub(crate) fn render(
             centre_x,
             dial_top_y,
             scale,
-            &now,
+            now,
             offset_secs,
             palette,
             numbers_weight,
@@ -335,7 +338,7 @@ fn date_window(
     centre_x: f32,
     dial_top_y: f32,
     scale: f32,
-    now: &SystemTime,
+    now: SystemTime,
     offset_secs: i32,
     palette: &ClockPalette,
     weight: FontWeight,

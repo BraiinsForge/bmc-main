@@ -25,14 +25,17 @@
 pub(crate) mod rect;
 pub(crate) mod round;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "widget render code uses many SDK exports and macros in one file"
+    )
 )]
 use bmc_wasm_sdk::*;
 
-use crate::ClockHandTransition;
-use crate::shared::{ClockPalette, local_or_system};
+use super::parts::{ClockPalette, local_or_system};
+use crate::model::ClockHandTransition;
 
 // ── Hand assets ────────────────────────────────────────────────────────
 
@@ -119,7 +122,7 @@ pub(crate) fn second_angle(second: u8) -> f32 {
     SECOND_ANGLE_STATE.with(|s| unwrap_angle(s, target))
 }
 
-pub(crate) fn local_clock_components(now: &SystemTime, offset_secs: i32) -> (u8, u8, u8) {
+pub(crate) fn local_clock_components(now: SystemTime, offset_secs: i32) -> (u8, u8, u8) {
     let local = local_or_system(now, offset_secs);
     (local.hour, local.minute, local.second)
 }

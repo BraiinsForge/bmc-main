@@ -18,16 +18,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Shared infrastructure used by all three render modes
-//! (digital, analog-round, analog-rect): palette, tz helpers,
-//! the alarm-row drawer, numeric utilities,
-//! and the typography-knob mapping.
+//! The parts every face shares: palette, tz helpers, the alarm row,
+//! numeric utilities and the typography-knob mapping.
 
 pub(crate) use bmc_wasm_sdk::format::{TzLabel, push_utc_offset, resolve_tz_for_label};
 use bmc_wasm_sdk::system::{DateFormat, TimeFormat};
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "widget render code uses many SDK exports and macros in one file"
+    )
 )]
 use bmc_wasm_sdk::*;
 
@@ -122,7 +123,7 @@ pub(crate) fn effective_tz(tz: Option<&Tz>) -> Tz {
 /// Apply a precomputed UTC offset to `now.unix_secs` and decompose
 /// to wall-clock fields. The caller is responsible for resolving
 /// the offset once per `render()` (see `resolve_tz_for_label`).
-pub(crate) fn local_or_system(now: &SystemTime, offset_secs: i32) -> LocalDateTime {
+pub(crate) fn local_or_system(now: SystemTime, offset_secs: i32) -> LocalDateTime {
     SystemTime {
         unix_secs: now.unix_secs + i64::from(offset_secs),
     }

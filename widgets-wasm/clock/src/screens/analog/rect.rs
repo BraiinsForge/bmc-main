@@ -21,15 +21,18 @@
 //! Rectangular analog dial — per-resolution dial SVGs stretched to fill
 //! the widget viewport, with numerals and timezone label overlaid.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "widget render code uses many SDK exports and macros in one file"
+    )
 )]
 use bmc_wasm_sdk::*;
 
-use crate::ClockHandTransition;
 use crate::manifest_params::Params;
-use crate::shared::{
+use crate::model::ClockHandTransition;
+use crate::screens::parts::{
     AlarmAnchor, ClockPalette, DateOrder, TzLabel, alarm_row_draws, date_order, f32_from_u32,
     font_weight, push_utc_offset, resolve_tz_for_label,
 };
@@ -191,7 +194,7 @@ pub(crate) fn render(
             system_offset_secs, ..
         } => *system_offset_secs,
     };
-    let (hour12, minute, second) = local_clock_components(&now, offset_secs);
+    let (hour12, minute, second) = local_clock_components(now, offset_secs);
     let numerals_weight = font_weight(params.numbers_font_style);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(20);

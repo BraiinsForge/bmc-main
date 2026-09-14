@@ -1,0 +1,129 @@
+# Every face at every design size, the readouts and system settings that
+# change a face, and the two panels without a bucket of their own.
+# 48 frames covers the hands' 500 ms easing.
+
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "digital-full"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "digital-large"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "digital-medium"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "digital-small"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "digital-bmm101"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "digital-bmm101-12h"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+Moment = "Wed 24 Dec 2025, 00:39:30"
+Clock = "12-hour"
+
+[[shot]]
+name = "digital-bmm101-night"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+"Night mode" = true
+
+[[shot]]
+name = "digital-bmm101-unknown-tz"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+"Timezone override" = "Helsi (unknown)"
+
+[[shot]]
+name = "digital-full-alarm"
+scene = "bmc_gallery::clock::Digital"
+frames = 48
+
+[shot.knobs]
+Size = "Fullscreen"
+"Next alarm" = true
+
+[[shot]]
+name = "analog-rect-full"
+scene = "bmc_gallery::clock::Analog Rect"
+frames = 48
+
+[shot.knobs]
+Size = "Fullscreen"
+"Next alarm" = true
+
+[[shot]]
+name = "analog-rect-bmm101"
+scene = "bmc_gallery::clock::Analog Rect"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "analog-round-full"
+scene = "bmc_gallery::clock::Analog Round"
+frames = 48
+
+[shot.knobs]
+Size = "Fullscreen"
+"Next alarm" = true
+
+[[shot]]
+name = "analog-round-bmm101"
+scene = "bmc_gallery::clock::Analog Round"
+frames = 48
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "bmm100-digital"
+scene = "bmc_gallery::clock::BMM100"
+frames = 48
+
+[[shot]]
+name = "bfm100"
+scene = "bmc_gallery::clock::BFM100"
+frames = 48

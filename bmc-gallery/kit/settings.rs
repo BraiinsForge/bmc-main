@@ -31,6 +31,18 @@ use bmc_wasm_sdk::system::{
 };
 use gallery::SceneCtx;
 
+/// The zones on offer, one with a half-hour offset.
+const TIMEZONES: [(&str, &str); 4] = [
+    ("Prague", "Europe/Prague"),
+    ("Helsinki", "Europe/Helsinki"),
+    ("New York", "America/New_York"),
+    ("Kolkata", "Asia/Kolkata"),
+];
+
+/// 04:30 UTC on the 15th of September 2026, which reads 06:30 in Prague.
+/// A widget shows an alarm as a time of day, so any morning will do.
+const NEXT_ALARM_UTC_MS: i64 = 1_789_446_600_000;
+
 /// The system-wide settings, as their own group on the Controls panel.
 ///
 /// Installs the snapshot it builds, so everything staged afterwards
@@ -44,6 +56,10 @@ pub fn system_settings(ctx: &mut SceneCtx) -> Snapshot {
     let temperature = ctx.radio("Temperature", &["Celsius", "Fahrenheit"], 0);
     let numbers = ctx.select("Numbers", &["1 234,5", "1,234.5", "1.234,5", "1 234.5"], 0);
     let dates = ctx.radio("Dates", &["31.12.2026", "31/12/2026", "12/31/2026"], 0);
+    let zone_labels: Vec<&str> = TIMEZONES.iter().map(|(label, _)| *label).collect();
+    let timezone = ctx.select("Timezone", &zone_labels, 0);
+    let night_mode = ctx.toggle("Night mode", false);
+    let next_alarm = ctx.toggle("Next alarm", false);
 
     let snapshot = SnapshotBuilder::new()
         .unit_system(match units {
@@ -69,7 +85,14 @@ pub fn system_settings(ctx: &mut SceneCtx) -> Snapshot {
             2 => DateFormat::MDYyyySlash,
             _ => DateFormat::DdMmYyyyDot,
         })
-        .build();
+        .timezone(TIMEZONES[timezone].1)
+        .night_mode(night_mode);
+    let snapshot = if next_alarm {
+        snapshot.next_alarm_some(NEXT_ALARM_UTC_MS, "Wake up")
+    } else {
+        snapshot.next_alarm_none()
+    }
+    .build();
 
     system::set_current(snapshot.clone());
     snapshot
