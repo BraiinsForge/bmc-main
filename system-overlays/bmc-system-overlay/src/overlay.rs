@@ -548,14 +548,20 @@ pub trait SystemOverlay {
         Vec::new()
     }
 
-    /// While a blit-only animation is running with unchanged content, the panel
-    /// offset (px) the host should blit the cached panel at this frame; `None`
-    /// when the host must full-paint (content changed or no animation).
-    ///
-    /// Lets a screen-edge overlay slide by re-blitting a once-painted GPU cache
-    /// instead of re-laying-out and repainting every frame. Default: `None`
-    /// (every frame full-paints), so non-animating overlays are unaffected.
+    /// Vertical cached-image offset in pixels for a clean animation frame;
+    /// `None` requests a full paint. Positive offsets move down.
+    /// With [`Self::layer_shell_offset`], a hosted frame reuses its attached buffer
+    /// and that surface offset overrides this pixel-copy offset.
+    /// Standalone ignores both hooks and repaints every frame without sliding.
     fn wants_cached_blit(&self, _now: Instant) -> Option<f32> {
+        None
+    }
+
+    /// Vertical surface translation in logical pixels; positive offsets move down.
+    /// Overrides the cached-image offset for hosted frames, including fresh paints.
+    /// Return it independently of content changes; [`Self::wants_cached_blit`]
+    /// determines whether the attached content can be reused. Standalone ignores it.
+    fn layer_shell_offset(&self, _now: Instant) -> Option<f32> {
         None
     }
 

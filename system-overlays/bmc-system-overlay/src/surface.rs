@@ -241,6 +241,16 @@ impl Default for State {
 }
 
 impl State {
+    fn note_configure_size(&mut self, size: (u32, u32)) {
+        let changed = self.configured_size != size;
+        if self.configured && changed {
+            self.pending_size_change = Some(size);
+        }
+        self.needs_render |= !self.configured || changed;
+        self.configured_size = size;
+        self.configured = true;
+    }
+
     fn mark_screen_edge_revealed(&mut self) {
         self.pending_reveal = true;
         self.pending_hidden = false;
@@ -363,6 +373,7 @@ pub struct LayerSurfaceClient {
     state: State,
     config: LayerConfig,
     needs_remap_configure: bool,
+    vertical_offset: i32,
 }
 
 impl std::fmt::Debug for LayerSurfaceClient {
@@ -473,6 +484,7 @@ impl LayerSurfaceClient {
             state,
             config: config.clone(),
             needs_remap_configure: false,
+            vertical_offset: 0,
         })
     }
 
@@ -508,6 +520,44 @@ impl LayerSurfaceClient {
         let surface = self.state.surface.as_ref().context("surface not created")?;
         submit_buffer_to_surface(surface, &qh, buffer, info, false);
         Ok(())
+    }
+
+    /// Stage a vertical translation in logical pixels, preserving opposite margins' sum.
+    /// Return whether the staged placement changed.
+    pub fn stage_vertical_offset(&mut self, offset: i32) -> anyhow::Result<bool> {
+        if self.vertical_offset == offset {
+            return Ok(false);
+        }
+        let layer = self
+            .state
+            .layer_surface
+            .as_ref()
+            .context("layer surface not created")?;
+        layer.set_margin(
+            self.config.margin_top.saturating_add(offset),
+            self.config.margin_right,
+            self.config.margin_bottom.saturating_sub(offset),
+            self.config.margin_left,
+        );
+        self.vertical_offset = offset;
+        Ok(true)
+    }
+
+    /// Commit changed placement only. Fail if remap configuration has not been restored.
+    pub fn commit_position(&mut self, offset: i32) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.needs_remap_configure,
+            "BUG: cannot commit layer placement before restoring remap state"
+        );
+        if !self.stage_vertical_offset(offset)? {
+            return Ok(());
+        }
+        self.state
+            .surface
+            .as_ref()
+            .context("surface not created")?
+            .commit();
+        self.flush()
     }
 
     /// Request a `wl_surface.frame` callback as a non-blocking presentation
@@ -618,6 +668,7 @@ impl LayerSurfaceClient {
             apply_layer_config(compositor, surface, layer_surface, &self.config, &qh);
         }
         self.needs_remap_configure = false;
+        self.vertical_offset = 0;
         Ok(true)
     }
 
@@ -921,13 +972,7 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
                 height,
             } => {
                 layer_surface.ack_configure(serial);
-                let size = (width, height);
-                if state.configured && state.configured_size != size {
-                    state.pending_size_change = Some(size);
-                }
-                state.configured_size = size;
-                state.configured = true;
-                state.needs_render = true;
+                state.note_configure_size((width, height));
             }
             zwlr_layer_surface_v1::Event::Closed => {
                 state.running = false;
@@ -1346,6 +1391,50 @@ impl Dispatch<wl_touch::WlTouch, ()> for State {
 mod tests {
     use super::*;
     use ::deck_upgrade_v1::client::deck_upgrade_v1::{Event, Kind, Phase};
+
+    #[test]
+    fn unchanged_placement_needs_no_surface_commit_but_still_checks_remap() {
+        let (socket, _server) = std::os::unix::net::UnixStream::pair()
+            .expect("BUG: test Wayland socket pair must open");
+        let conn = Connection::from_socket(socket).expect("BUG: test Wayland connection must open");
+        let mut client = LayerSurfaceClient {
+            queue: conn.new_event_queue(),
+            conn,
+            state: State::default(),
+            config: LayerConfig::fullscreen("test-noop-placement"),
+            needs_remap_configure: false,
+            vertical_offset: 0,
+        };
+        assert!(
+            client.commit_position(0).is_ok(),
+            "unchanged placement must not access or commit a surface"
+        );
+        client.needs_remap_configure = true;
+        assert!(
+            client.commit_position(0).is_err(),
+            "an unchanged offset must not bypass the remap invariant"
+        );
+    }
+
+    #[test]
+    fn same_size_configure_does_not_request_pixel_rendering() {
+        let mut state = State::default();
+        state.note_configure_size((1_280, 480));
+        assert!(std::mem::take(&mut state.needs_render));
+        assert_eq!(state.pending_size_change, None);
+        state.note_configure_size((1_280, 480));
+        assert!(
+            !state.needs_render,
+            "a same-size configure is not a content change"
+        );
+        assert_eq!(state.pending_size_change, None);
+        state.note_configure_size((480, 480));
+        assert!(
+            state.needs_render,
+            "a genuine resize still needs new pixels"
+        );
+        assert_eq!(state.pending_size_change, Some((480, 480)));
+    }
 
     fn running_snapshot(
         kind: crate::overlay::UpgradeKind,

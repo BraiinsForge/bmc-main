@@ -454,6 +454,23 @@ impl HostedOverlay {
         &mut self.target
     }
 
+    /// Commit changed placement without attaching or damaging a buffer.
+    /// Return `false` without committing when the surface is not mapped.
+    /// Return `true` for mapped surfaces, including an unchanged position.
+    pub fn move_attached_panel(&mut self, offset: i32) -> anyhow::Result<bool> {
+        if !self.mapped {
+            return Ok(false);
+        }
+        self.client.commit_position(offset)?;
+        Ok(true)
+    }
+
+    /// Stage a vertical translation in logical pixels for the next surface commit.
+    pub fn stage_vertical_offset(&mut self, offset: i32) -> anyhow::Result<()> {
+        self.client.stage_vertical_offset(offset)?;
+        Ok(())
+    }
+
     /// Restore layer-shell pending state after a NULL-buffer unmap before
     /// rendering into a new frame.
     pub fn prepare_for_render(&mut self, egl: &EglContext) -> anyhow::Result<()> {

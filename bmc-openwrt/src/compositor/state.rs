@@ -1966,11 +1966,14 @@ mod keyed_widget_protocol_test {
 /// `send_layer_frame_callbacks` only ever runs after a render.
 #[cfg(test)]
 mod layer_frame_callback_damage_test {
+    use std::os::fd::AsFd;
     use std::os::unix::net::UnixStream;
     use std::sync::Arc;
 
     use smithay::reexports::wayland_server::Display;
-    use wayland_client::protocol::{wl_callback, wl_compositor, wl_registry, wl_surface};
+    use wayland_client::protocol::{
+        wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
+    };
     use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
     use wayland_protocols_wlr::layer_shell::v1::client::{
         zwlr_layer_shell_v1, zwlr_layer_surface_v1,
@@ -1981,8 +1984,9 @@ mod layer_frame_callback_damage_test {
     #[derive(Default)]
     struct TestClient {
         compositor: Option<wl_compositor::WlCompositor>,
+        shm: Option<wl_shm::WlShm>,
         layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
-        configured: bool,
+        configure_count: usize,
         frame_done: bool,
     }
 
@@ -2011,6 +2015,14 @@ mod layer_frame_callback_damage_test {
                                 (),
                             ));
                     }
+                    "wl_shm" => {
+                        state.shm = Some(registry.bind::<wl_shm::WlShm, _, _>(
+                            name,
+                            version.min(1),
+                            qh,
+                            (),
+                        ));
+                    }
                     "zwlr_layer_shell_v1" => {
                         state.layer_shell = Some(
                             registry.bind::<zwlr_layer_shell_v1::ZwlrLayerShellV1, _, _>(
@@ -2032,6 +2044,42 @@ mod layer_frame_callback_damage_test {
             _: &mut Self,
             _: &wl_compositor::WlCompositor,
             _: wl_compositor::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_shm::WlShm, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_shm::WlShm,
+            _: wl_shm::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_shm_pool::WlShmPool, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_shm_pool::WlShmPool,
+            _: wl_shm_pool::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_buffer::WlBuffer, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_buffer::WlBuffer,
+            _: wl_buffer::Event,
             (): &(),
             _: &Connection,
             _: &QueueHandle<Self>,
@@ -2074,7 +2122,7 @@ mod layer_frame_callback_damage_test {
         ) {
             if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
                 layer_surface.ack_configure(serial);
-                state.configured = true;
+                state.configure_count += 1;
             }
         }
     }
@@ -2129,6 +2177,134 @@ mod layer_frame_callback_damage_test {
         display
             .flush_clients()
             .expect("BUG: test server flush should succeed on a live socket pair");
+    }
+
+    fn create_shm_buffer(
+        client: &TestClient,
+        qh: &QueueHandle<TestClient>,
+        width: u32,
+        height: u32,
+    ) -> wl_buffer::WlBuffer {
+        let stride = width * 4;
+        let pool_size = stride * height;
+        let backing = tempfile::tempfile().expect("BUG: shm backing file should be creatable");
+        backing
+            .set_len(u64::from(pool_size))
+            .expect("BUG: shm backing file should grow to the pool size");
+        let shm = client
+            .shm
+            .as_ref()
+            .expect("BUG: wl_shm global should have been advertised");
+        let pool = shm.create_pool(
+            backing.as_fd(),
+            i32::try_from(pool_size).expect("BUG: test pool size fits i32"),
+            qh,
+            (),
+        );
+        pool.create_buffer(
+            0,
+            i32::try_from(width).expect("BUG: test width fits i32"),
+            i32::try_from(height).expect("BUG: test height fits i32"),
+            i32::try_from(stride).expect("BUG: test stride fits i32"),
+            wl_shm::Format::Argb8888,
+            qh,
+            (),
+        )
+    }
+
+    #[test]
+    fn margin_only_layer_commit_does_not_repeat_configure() {
+        let mut display: Display<CompositorState> =
+            Display::new().expect("BUG: test Wayland display should initialize");
+        let mut compositor = CompositorState::new(
+            &display,
+            480,
+            1280,
+            480,
+            1280,
+            60_000,
+            "test-seat",
+            &bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100),
+        );
+
+        let (server_stream, client_stream) =
+            UnixStream::pair().expect("BUG: unix socket pair should be creatable");
+        display
+            .handle()
+            .insert_client(server_stream, Arc::new(ClientState::default()))
+            .expect("BUG: test client stream should be insertable into a fresh display");
+
+        let conn = Connection::from_socket(client_stream)
+            .expect("BUG: test client socket should form a valid connection");
+        let mut queue: EventQueue<TestClient> = conn.new_event_queue();
+        let qh = queue.handle();
+        let mut client = TestClient::default();
+
+        conn.display().get_registry(&qh, ());
+        pump(
+            &mut display,
+            &mut compositor,
+            &conn,
+            &mut queue,
+            &mut client,
+        );
+
+        let compositor_global = client
+            .compositor
+            .clone()
+            .expect("BUG: wl_compositor global should have been advertised");
+        let layer_shell = client
+            .layer_shell
+            .clone()
+            .expect("BUG: zwlr_layer_shell_v1 global should have been advertised");
+        let surface = compositor_global.create_surface(&qh, ());
+        let layer_surface = layer_shell.get_layer_surface(
+            &surface,
+            None,
+            zwlr_layer_shell_v1::Layer::Top,
+            "bdk-849-margin-configure-test".to_owned(),
+            &qh,
+            (),
+        );
+        let (width, height) = (480, 128);
+        layer_surface.set_size(width, height);
+        surface.commit();
+        pump(
+            &mut display,
+            &mut compositor,
+            &conn,
+            &mut queue,
+            &mut client,
+        );
+        assert_eq!(client.configure_count, 1);
+
+        // Map the surface first, so the margin commit below runs against
+        // the same state as a real slide frame: a mapped tray moving margin-only.
+        let buffer = create_shm_buffer(&client, &qh, width, height);
+        surface.attach(Some(&buffer), 0, 0);
+        surface.commit();
+        pump_server_only(&mut display, &mut compositor, &conn);
+        assert!(
+            compositor.layer_surfaces[0].is_mapped(),
+            "attaching a buffer should map the layer surface"
+        );
+
+        layer_surface.set_margin(1, 0, -1, 0);
+        surface.commit();
+        // The margin commit produces no reply; the sync is what lets `pump` return.
+        let _sync = conn.display().sync(&qh, ());
+        pump(
+            &mut display,
+            &mut compositor,
+            &conn,
+            &mut queue,
+            &mut client,
+        );
+
+        assert_eq!(
+            client.configure_count, 1,
+            "a client-side margin change must not create compositor-side configure state"
+        );
     }
 
     #[test]
@@ -2199,9 +2375,9 @@ mod layer_frame_callback_damage_test {
             &mut queue,
             &mut client,
         );
-        assert!(
-            client.configured,
-            "BUG: initial commit should have produced a layer-surface configure"
+        assert_eq!(
+            client.configure_count, 1,
+            "initial commit should produce exactly one layer-surface configure"
         );
 
         pump_server_only(&mut display, &mut compositor, &conn);

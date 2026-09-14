@@ -932,6 +932,10 @@ impl SystemOverlay for SettingsTrayOverlay {
             .cached_blit_offset(now, self.content_dirty, self.panel_height)
     }
 
+    fn layer_shell_offset(&self, now: Instant) -> Option<f32> {
+        Some(self.slide.offset(now, self.panel_height))
+    }
+
     fn uses_panel_cache(&self) -> bool {
         true
     }
@@ -1659,6 +1663,33 @@ mod step_tests {
 mod slide_tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn layer_shell_slide_keeps_its_offset_when_content_changes() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.panel_height = 200.0;
+        overlay.on_reveal();
+        overlay.content_dirty = true;
+        assert_eq!(overlay.layer_shell_offset(now), Some(-200.0));
+        assert_eq!(overlay.wants_cached_blit(now), None);
+        overlay.on_frame_submitted(now);
+        let halfway = now + Duration::from_millis(SLIDE_MS) / 2;
+        assert_eq!(overlay.layer_shell_offset(halfway), Some(-25.0));
+        overlay.content_dirty = false;
+        assert_eq!(overlay.wants_cached_blit(halfway), Some(-25.0));
+        let end = now + Duration::from_millis(SLIDE_MS);
+        overlay.slide.advance(end);
+        overlay.on_frame_submitted(end);
+        assert_eq!(overlay.layer_shell_offset(end), Some(0.0));
+        assert!(overlay.slide.accepts_input());
+        overlay.begin_dismiss();
+        overlay.on_frame_submitted(end);
+        assert_eq!(
+            overlay.layer_shell_offset(end + Duration::from_millis(SLIDE_MS)),
+            Some(-200.0)
+        );
+    }
 
     #[test]
     fn reveal_holds_offscreen_until_anchored_then_eases_to_zero() {
