@@ -149,8 +149,12 @@ pub fn extremes(bucket: SizeBucket) -> ViewData {
 pub fn unit_rollover(bucket: SizeBucket) -> ViewData {
     let mut data = healthy_data();
     if let Availability::Available(stats) = &mut data.hashrate_stats {
+        stats.current_ehs = Some(999.99);
         stats.hashprice_per_th_day = Some(999.999_99);
         stats.revenue = Some(999_999_999.99);
+    }
+    if let Availability::Available(stats) = &mut data.difficulty_stats {
+        stats.difficulty = Some(999.96e12);
     }
     view(bucket, data, Status::Ready)
 }
