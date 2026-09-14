@@ -124,9 +124,7 @@ enum SlidePhase {
 }
 
 /// Pure eased vertical slide for the panel band: the panel translates from
-/// off-screen (`-height`) to settled (`0`) on reveal and back on dismiss. The
-/// offset is computed from `now`; nothing here touches the GPU, so the timing is
-/// unit-tested in isolation from the blit.
+/// off-screen (`-height`) to settled (`0`) on reveal and back on dismiss.
 #[derive(Debug, Clone, Copy, Default)]
 struct Slide {
     phase: SlidePhase,
@@ -191,12 +189,8 @@ impl Slide {
         }
     }
 
-    /// The blit-only decision the host obeys: blit the cached panel at the
-    /// current offset only while a slide is running (or for the final settle
-    /// frame) *and* the content has not changed this frame; otherwise (`None`)
-    /// the host full-paints. Keeping it a method on `Slide` lets the invariant
-    /// be unit-tested without a platform-detected `SettingsTrayOverlay`.
-    fn cached_blit_offset(&self, now: Instant, content_dirty: bool, height: f32) -> Option<f32> {
+    /// Placement for a clean slide or settle frame that can reuse attached content.
+    fn reusable_offset(&self, now: Instant, content_dirty: bool, height: f32) -> Option<f32> {
         ((self.animating(now) || self.needs_settle_frame()) && !content_dirty)
             .then(|| self.offset(now, height))
     }
@@ -423,15 +417,12 @@ pub struct SettingsTrayOverlay {
     last_interaction: Instant,
 
     dismissing: bool,
-    /// Set on any content change; drives the Task-9 panel cache.
     content_dirty: bool,
     /// State changed during a render pass's read-back. Converted into
     /// `content_dirty` at the start of the next tick — setting `content_dirty`
     /// directly would be consumed by the host right after the stale paint the
-    /// read-back came from, caching the old frame with no repaint to follow.
+    /// read-back came from, leaving the old frame with no repaint to follow.
     repaint_queued: bool,
-    /// Pure reveal/dismiss slide phase; the host reads its offset to blit the
-    /// cached panel without re-laying-out the tree.
     slide: Slide,
 
     /// Capability set from the compositor. `None` until the first (v2-only)
@@ -717,7 +708,7 @@ impl SettingsTrayOverlay {
         }
     }
 
-    /// Arm the dismiss ramp and freeze interaction state before its first blit.
+    /// Arm the dismiss ramp and freeze interaction state before its first frame.
     fn begin_dismiss(&mut self) {
         if self.slide.is_dismissing() {
             return;
@@ -768,9 +759,6 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn on_reveal(&mut self) {
         let now = Instant::now();
-        // The panel cache may still show pre-hide transient UI (hold progress,
-        // a decline message); when this reset changes content, repaint
-        // instead of blitting the stale cache through the reveal ramp.
         if self.button != ButtonState::default()
             || self.restart != RestartState::default()
             || self.declined_reason.is_some()
@@ -927,24 +915,20 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
-    fn wants_cached_blit(&self, now: Instant) -> Option<f32> {
+    fn can_reuse_content(&self, now: Instant) -> bool {
         self.slide
-            .cached_blit_offset(now, self.content_dirty, self.panel_height)
+            .reusable_offset(now, self.content_dirty, self.panel_height)
+            .is_some()
     }
 
     fn layer_shell_offset(&self, now: Instant) -> Option<f32> {
         Some(self.slide.offset(now, self.panel_height))
     }
 
-    fn uses_panel_cache(&self) -> bool {
-        true
-    }
-
     fn on_frame_submitted(&mut self, now: Instant) {
         self.slide.anchor(now);
-        // A frame submitted while settling presented the settled offset (blit
-        // or full paint), so the reveal is done. `anchor` and `mark_settled`
-        // act on disjoint phases, so their order is irrelevant.
+        // A frame submitted while settling presented the settled offset, so the reveal is done.
+        // `anchor` and `mark_settled` act on disjoint phases, so their order is irrelevant.
         self.slide.mark_settled();
     }
 
@@ -1289,7 +1273,7 @@ mod view_tests {
         assert_eq!(overlay.wifi_signal, Some(-57), "retain the latest reading");
         assert!(
             !overlay.content_dirty(),
-            "unchanged rendered signal band must keep the panel cache clean"
+            "unchanged rendered signal band must preserve the attached content"
         );
     }
 
@@ -1314,8 +1298,7 @@ mod view_tests {
 
         assert!(
             overlay.content_dirty(),
-            "the compact header is the IP, so a new lease must refresh the panel \
-             cache or the tray keeps blitting the old address"
+            "a new lease must repaint the compact header's IP address"
         );
     }
 
@@ -1338,7 +1321,7 @@ mod view_tests {
 
         assert!(
             overlay.content_dirty(),
-            "a different rendered signal band must refresh the panel cache"
+            "a different rendered signal band must invalidate the attached content"
         );
     }
 }
@@ -1665,6 +1648,18 @@ mod slide_tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn only_clean_slide_frames_reuse_attached_content() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.on_reveal();
+        overlay.content_dirty = false;
+        assert!(overlay.layer_shell_offset(now).is_some());
+        assert!(overlay.can_reuse_content(now));
+        overlay.content_dirty = true;
+        assert!(!overlay.can_reuse_content(now));
+    }
+
+    #[test]
     fn layer_shell_slide_keeps_its_offset_when_content_changes() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
@@ -1672,12 +1667,12 @@ mod slide_tests {
         overlay.on_reveal();
         overlay.content_dirty = true;
         assert_eq!(overlay.layer_shell_offset(now), Some(-200.0));
-        assert_eq!(overlay.wants_cached_blit(now), None);
+        assert!(!overlay.can_reuse_content(now));
         overlay.on_frame_submitted(now);
         let halfway = now + Duration::from_millis(SLIDE_MS) / 2;
         assert_eq!(overlay.layer_shell_offset(halfway), Some(-25.0));
         overlay.content_dirty = false;
-        assert_eq!(overlay.wants_cached_blit(halfway), Some(-25.0));
+        assert!(overlay.can_reuse_content(halfway));
         let end = now + Duration::from_millis(SLIDE_MS);
         overlay.slide.advance(end);
         overlay.on_frame_submitted(end);
@@ -1720,14 +1715,12 @@ mod slide_tests {
         // Pending: panel rests at the settled position, clock not started.
         assert!(s.offset(t0 + Duration::from_millis(500), 200.0).abs() < 1e-3);
         assert!(!s.dismiss_done(t0 + Duration::from_millis(500)));
-        // A clean pending dismiss is blit-eligible at rest — an inactivity
-        // dismiss must not force a paint; a real content change still must.
         assert_eq!(
-            s.cached_blit_offset(t0 + Duration::from_millis(10), false, 200.0),
+            s.reusable_offset(t0 + Duration::from_millis(10), false, 200.0),
             Some(0.0)
         );
         assert_eq!(
-            s.cached_blit_offset(t0 + Duration::from_millis(10), true, 200.0),
+            s.reusable_offset(t0 + Duration::from_millis(10), true, 200.0),
             None
         );
         let t1 = t0 + Duration::from_millis(60);
@@ -1779,7 +1772,7 @@ mod slide_tests {
         });
         assert!(
             !overlay.content_dirty(),
-            "reveal-pending input must not invalidate the cached panel"
+            "reveal-pending input must not invalidate the attached content"
         );
 
         overlay.slide.start_dismiss();
@@ -1790,7 +1783,7 @@ mod slide_tests {
         });
         assert!(
             !overlay.content_dirty(),
-            "dismiss-pending input must not invalidate the cached panel"
+            "dismiss-pending input must not invalidate the attached content"
         );
     }
 
@@ -1818,7 +1811,7 @@ mod slide_tests {
         assert_eq!(overlay.slide.phase, SlidePhase::DismissPending);
         assert!(
             !overlay.content_dirty(),
-            "the release that starts dismissal must preserve the cached panel"
+            "the release that starts dismissal must preserve the attached content"
         );
     }
 
@@ -1836,7 +1829,7 @@ mod slide_tests {
         // offset to distinguish the two.
         #[expect(clippy::cast_precision_loss, reason = "display height fits f32")]
         let h = overlay.view(t1).height as f32;
-        let mid = overlay.wants_cached_blit(t1 + Duration::from_millis(90));
+        let mid = overlay.layer_shell_offset(t1 + Duration::from_millis(90));
         assert!(
             mid.is_some_and(|off| off < -h / 16.0),
             "ramp must be anchored at t1, not the reveal trigger: {mid:?}"
@@ -1881,7 +1874,7 @@ mod slide_tests {
     }
 
     #[test]
-    fn settle_frame_blits_the_cache_then_a_submit_finishes_the_reveal() {
+    fn settle_frame_reuses_content_then_a_submit_finishes_the_reveal() {
         let t0 = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
         overlay.on_reveal();
@@ -1890,25 +1883,21 @@ mod slide_tests {
         // A tick after the ramp end moves the slide into the settling phase.
         let after = t0 + Duration::from_millis(400);
         assert!(overlay.tick(after).wants_render);
-        // The settle frame is a cached blit at offset 0, not a full paint.
+        assert!(overlay.can_reuse_content(after));
         assert!(
             overlay
-                .wants_cached_blit(after)
+                .layer_shell_offset(after)
                 .is_some_and(|off| off.abs() < 1e-3),
-            "settle frame must blit at offset 0"
+            "settle frame must place the surface at offset 0"
         );
         // Submitting that frame completes the reveal: no further render is due.
         overlay.on_frame_submitted(after);
         assert!(!overlay.tick(after + Duration::from_millis(50)).wants_render);
-        assert!(
-            overlay
-                .wants_cached_blit(after + Duration::from_millis(50))
-                .is_none()
-        );
+        assert!(!overlay.can_reuse_content(after + Duration::from_millis(50)));
     }
 
     #[test]
-    fn elapsed_reveal_settles_via_cached_blit() {
+    fn elapsed_reveal_settles_with_reused_content() {
         let t0 = Instant::now();
         let mut s = Slide::default();
         s.start_reveal();
@@ -1919,15 +1908,13 @@ mod slide_tests {
         let after = t0 + Duration::from_millis(300);
         s.advance(after);
         assert!(s.needs_settle_frame());
-        // The settle frame blits the warm cache at the settled offset (0)
-        // rather than full-painting.
         assert!(
-            s.cached_blit_offset(after, false, 200.0)
+            s.reusable_offset(after, false, 200.0)
                 .is_some_and(|off| off.abs() < 1e-3),
-            "settle frame must blit the cache at offset 0"
+            "settle frame must reuse content at offset 0"
         );
         // A content-dirty settle frame still full-paints.
-        assert_eq!(s.cached_blit_offset(after, true, 200.0), None);
+        assert_eq!(s.reusable_offset(after, true, 200.0), None);
         assert!(s.offset(after, 200.0).abs() < 1e-3);
 
         s.mark_settled();
@@ -1935,21 +1922,17 @@ mod slide_tests {
     }
 
     #[test]
-    fn dirty_frame_full_paints_then_clean_frame_blits_cache() {
+    fn dirty_frame_full_paints_then_clean_frame_reuses_content() {
         let t0 = Instant::now();
         let mut s = Slide::default();
         s.start_reveal();
         s.anchor(t0);
         let mid = t0 + Duration::from_millis(90);
-        // First reveal frame is content-dirty: the host must full-paint (None).
-        assert_eq!(s.cached_blit_offset(mid, true, 200.0), None);
-        // Once a frame clears the dirty flag while still animating, the host
-        // blits the cache at the eased offset (no paint).
-        let blit = s.cached_blit_offset(mid, false, 200.0);
-        assert!(blit.is_some_and(|off| (-200.0..0.0).contains(&off)));
-        // After the ramp settles, no cached blit is requested even when clean.
+        assert_eq!(s.reusable_offset(mid, true, 200.0), None);
+        let offset = s.reusable_offset(mid, false, 200.0);
+        assert!(offset.is_some_and(|off| (-200.0..0.0).contains(&off)));
         assert_eq!(
-            s.cached_blit_offset(t0 + Duration::from_millis(200), false, 200.0),
+            s.reusable_offset(t0 + Duration::from_millis(200), false, 200.0),
             None
         );
     }
@@ -1964,28 +1947,23 @@ mod slide_tests {
         assert!(!overlay.content_dirty());
     }
 
-    // The panel cache survives hides, so a reveal blits whatever was captured
-    // before the previous unmap. When the reveal's state reset changes what
-    // the panel would show (a hold was mid-progress when the tray hid), the
-    // cache is stale and must be repainted, not blitted through the ramp.
     #[test]
     fn reveal_repaints_when_reset_discards_transient_ui() {
         let t0 = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
         let _ = overlay.take_content_dirty();
 
-        // Clean hide/reveal: cache already matches the reset state, keep the blit.
         overlay.on_reveal();
         assert!(
             !overlay.content_dirty(),
-            "a reveal from a clean dismiss must not force a repaint"
+            "resetting clean state must not invent a content change"
         );
 
         overlay.button = ButtonState::Holding { since: t0 };
         overlay.on_reveal();
         assert!(
             overlay.content_dirty(),
-            "discarding mid-hold UI must repaint the stale panel cache"
+            "discarding mid-hold UI must repaint the previously rendered content"
         );
     }
 }

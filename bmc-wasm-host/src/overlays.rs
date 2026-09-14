@@ -138,10 +138,6 @@ pub fn prewarm_hosted_overlay(
     ptr: NonNull<dyn Renderer>,
     shared: &mut SharedHost,
 ) -> anyhow::Result<()> {
-    // The layer surface is already configured (connect blocks on the initial
-    // configure), so paint and capture at the real overlay size — a cache
-    // captured at any other size fails `cached_ready`'s size check and the
-    // first reveal would fall back to a full paint.
     let (w, h) = overlay.size();
     anyhow::ensure!(
         shared.scratch.supports_size(w, h),
@@ -155,7 +151,7 @@ pub fn prewarm_hosted_overlay(
         "host_overlay_prewarm",
         w,
         h,
-        |shared| {
+        |_| {
             // SAFETY: same invariants as `render_hosted_overlay` — `ptr` is non-null
             // by construction and the renderer outlives this call; the prewarm pass
             // runs before the event loop, one overlay at a time, so no other `&mut
@@ -165,12 +161,6 @@ pub fn prewarm_hosted_overlay(
             renderer.begin_frame_with_clear(w, h, 1.0, FrameClear::TransparentBlack);
             overlay.overlay_mut().prewarm(renderer);
             renderer.flush();
-            if overlay.overlay_mut().uses_panel_cache() {
-                let _ = overlay.overlay_mut().take_content_dirty();
-                overlay
-                    .target_mut()
-                    .capture_panel(&shared.egl, &shared.scratch, w, h)?;
-            }
             Ok(())
         },
         || {},
@@ -178,58 +168,16 @@ pub fn prewarm_hosted_overlay(
     Ok(())
 }
 
-/// Repaint a hidden overlay's panel cache: scratch paint + capture, no export
-/// buffer, no surface traffic. Keeps the cache fresh so the next reveal blits
-/// current content instead of full-painting.
-pub fn refresh_overlay_cache(
-    overlay: &mut HostedOverlay,
-    ptr: NonNull<dyn Renderer>,
-    shared: &mut SharedHost,
-) -> anyhow::Result<()> {
-    let size = overlay.size();
-    anyhow::ensure!(
-        shared.scratch.supports_size(size.0, size.1),
-        "host scratch FBO {:?} cannot refresh overlay cache {:?}",
-        shared.scratch.max_size(),
-        size,
-    );
-    crate::slot::stage_frame_under_gpu_lock(
-        shared,
-        crate::slot::FrameStaging::Shared,
-        "host_overlay_cache_refresh",
-        size.0,
-        size.1,
-        |shared| {
-            // SAFETY: same invariants as `render_hosted_overlay` — `ptr` is
-            // non-null by construction, the renderer outlives this call, and
-            // the host renders components one at a time so no other `&mut dyn
-            // Renderer` to this renderer is live.
-            let renderer = unsafe { ptr.as_ptr().as_mut() }
-                .expect("BUG: NonNull renderer is non-null by construction");
-            renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
-            overlay.overlay_mut().render(renderer, size);
-            renderer.flush();
-            let _ = overlay.overlay_mut().take_content_dirty();
-            overlay
-                .target_mut()
-                .capture_panel(&shared.egl, &shared.scratch, size.0, size.1)
-        },
-        || {},
-    )
-}
-
-/// Commit placement for clean mapped slide frames;
-/// otherwise paint or copy content through the shared renderer.
-#[expect(
-    clippy::too_many_lines,
-    reason = "keep position-only, cached-copy, and full-paint submission paths together"
-)]
+/// Move a clean mapped slide frame through layer-shell placement;
+/// otherwise paint and submit a fresh buffer through the shared renderer.
 pub fn render_hosted_overlay(
     overlay: &mut HostedOverlay,
     ptr: NonNull<dyn Renderer>,
     shared: &mut SharedHost,
     now: Instant,
 ) -> anyhow::Result<()> {
+    #[cfg(feature = "profiling")]
+    let frame_start = Instant::now();
     overlay.prepare_for_render_with_target_resize(|target, client, width, height| {
         shared.with_gpu_render_lock("host_overlay_resize", |shared| {
             target.resize(&shared.egl, client, width, height)
@@ -242,7 +190,6 @@ pub fn render_hosted_overlay(
         shared.scratch.max_size(),
         size,
     );
-    let cached_blit = overlay.overlay_mut().wants_cached_blit(now);
     #[expect(
         clippy::cast_possible_truncation,
         reason = "layer-shell margins are integer pixels"
@@ -252,127 +199,49 @@ pub fn render_hosted_overlay(
         .layer_shell_offset(now)
         .map(|y| y.round() as i32);
     if let Some(offset) = layer_offset
-        && cached_blit.is_some()
+        && overlay.overlay_mut().can_reuse_content(now)
         && overlay.commit_position_if_mapped(offset)?
     {
         overlay.mark_rendered(Instant::now());
         return Ok(());
     }
-    let cached_blit = cached_blit.filter(|_| overlay.target_mut().cached_ready(size));
-    let (dmabuf, slot) = if let Some(offset_y) = cached_blit {
-        // Cached-blit branch: clear-transparent + shader-copy the cached panel
-        // into the export buffer at the slide offset. No layout or paint.
-        // Lock lifetime: held across blit + fence-wait, dropped BEFORE export.
-        let gpu_render_lock = shared.acquire_gpu_render_lock("host_system_overlay")?;
-        let blit_result = (|| {
+    crate::slot::stage_frame_under_gpu_lock(
+        shared,
+        crate::slot::FrameStaging::Shared,
+        "host_system_overlay",
+        size.0,
+        size.1,
+        |shared| {
             overlay.target_mut().ensure_current(&shared.egl)?;
-            #[expect(
-                clippy::cast_precision_loss,
-                reason = "overlay band height in pixels converts to NDC without meaningful loss"
-            )]
-            let panel_h = size.1 as f32;
+            // SAFETY: the renderer outlives this call and the single-threaded host
+            // does not hold another mutable renderer reference during this pass.
+            let renderer = unsafe { ptr.as_ptr().as_mut() }
+                .expect("BUG: NonNull renderer is non-null by construction");
+            renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
+            overlay.overlay_mut().render(renderer, size);
+            renderer.flush();
+            let _ = overlay.overlay_mut().take_content_dirty();
             let fbo = overlay.target_mut().current_fbo();
-            overlay.target_mut().blit_cached_panel(
-                &shared.egl,
-                &shared.scratch,
-                fbo,
-                size,
-                panel_h,
-                if layer_offset.is_some() {
-                    0.0
-                } else {
-                    offset_y
-                },
-            )
-        })();
-        shared.flush_and_wait_gl();
-        drop(gpu_render_lock);
-        blit_result?;
-        overlay.target_mut().export_and_swap()?
-    } else {
-        // Full-paint branch: stage the frame under the GPU lock, then export.
-        crate::slot::stage_frame_under_gpu_lock(
-            shared,
-            crate::slot::FrameStaging::Shared,
-            "host_system_overlay",
-            size.0,
-            size.1,
-            |shared| {
-                overlay.target_mut().ensure_current(&shared.egl)?;
-
-                // SAFETY: two invariants hold here.
-                // (1) Non-null + outlives-call: `ptr` is `NonNull<dyn Renderer>`,
-                //     so the address is guaranteed non-null, and the renderer is
-                //     owned by `main_loop::run` for the entire program lifetime —
-                //     it outlives this call.
-                // (2) Aliasing: `SharedHost` does not own the renderer (see its
-                //     aliasing invariant in host.rs); the host renders components
-                //     strictly one at a time in its single render loop, so no
-                //     other `&mut dyn Renderer` to this renderer is live.
-                let renderer = unsafe { ptr.as_ptr().as_mut() }
-                    .expect("BUG: NonNull renderer is non-null by construction");
-                renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
-                overlay.overlay_mut().render(renderer, size);
-                renderer.flush();
-
-                // Refresh the cache from this paint if the content changed, so a
-                // later animation frame can present it without repainting.
-                // Capture on a missing/stale cache too: a clean-but-cold
-                // pending frame would otherwise fall through to the staging
-                // blit below and present the panel at the settled offset.
-                // Gated on cache use so overlays that never blit (offline,
-                // device-info) do not allocate a cache on their first paint.
-                let dirty = overlay.overlay_mut().take_content_dirty();
-                if overlay.overlay_mut().uses_panel_cache()
-                    && (dirty || !overlay.target_mut().cached_ready(size))
-                {
-                    overlay.target_mut().capture_panel(
-                        &shared.egl,
-                        &shared.scratch,
-                        size.0,
-                        size.1,
-                    )?;
-                }
-
-                // A dirty frame mid-slide must present at the offset, not the
-                // settled full-frame blit (which would snap the panel into place).
-                // After clearing the dirty flag above, `wants_cached_blit` reports
-                // the offset iff a slide is still animating.
-                let fbo = overlay.target_mut().current_fbo();
-                match overlay.overlay_mut().wants_cached_blit(now) {
-                    Some(offset_y)
-                        if layer_offset.is_none() && overlay.target_mut().cached_ready(size) =>
-                    {
-                        #[expect(
-                            clippy::cast_precision_loss,
-                            reason = "overlay band height in pixels converts to NDC without meaningful loss"
-                        )]
-                        let panel_h = size.1 as f32;
-                        overlay.target_mut().blit_cached_panel(
-                            &shared.egl,
-                            &shared.scratch,
-                            fbo,
-                            size,
-                            panel_h,
-                            offset_y,
-                        )?;
-                    }
-                    Some(_) | None => shared.blit_staging_to(fbo, size.0, size.1),
-                }
-                Ok(())
-            },
-            || {},
-        )?;
-        overlay.target_mut().export_and_swap()?
-    };
+            shared.blit_staging_to(fbo, size.0, size.1);
+            Ok(())
+        },
+        || {},
+    )?;
     if let Some(offset) = layer_offset {
         overlay.stage_vertical_offset(offset)?;
     }
+    let (dmabuf, slot) = overlay.target_mut().export_and_swap()?;
     overlay.submit_exported(&dmabuf, slot)?;
     // Fresh timestamp: the pass-level `now` predates this pass's widget
     // renders, and anchoring a ramp that far back would replay the jitter
     // this frame just paid.
     overlay.mark_rendered(Instant::now());
+    #[cfg(feature = "profiling")]
+    if let Some(offset) = layer_offset {
+        tracing::info!(target: bmc_render::profile::TARGET, offset_y = offset,
+            frame_us = frame_start.elapsed().as_micros(),
+            "system overlay buffer frame submitted");
+    }
     Ok(())
 }
 

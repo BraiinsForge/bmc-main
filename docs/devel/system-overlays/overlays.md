@@ -220,9 +220,9 @@ full-screen and blocks scene swipes while it is up). `screen_edge()` returns `Sc
 ### Reveal and dismiss
 
 The panel is armed to the top edge: hidden (no buffer) until the compositor's top-edge swipe reveals it. On reveal
-(`on_reveal`) it resets its FSM and touch tracking and starts the slide. The slide is **blit-only** — the panel is laid
-out and painted once into the GPU cache and re-blitted at the animation offset, never re-laid-out per frame (see
-[`framework.md`](framework.md)); `SLIDE_MS = 180` ms, eased.
+(`on_reveal`) it resets its FSM and touch tracking and starts the slide. The hosted slide moves the attached panel
+through layer-shell margins: paint once on opening, then reuse the content unless it changes. No separate panel-image
+cache is retained (see [`framework.md`](framework.md)); `SLIDE_MS = 180` ms, eased.
 
 It dismisses on any of:
 

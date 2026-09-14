@@ -36,7 +36,7 @@ required; the rest have defaults so a passive overlay stays small.
 | `on_report_ip`                                                                                             | no       | The user pressed the IP-report button and wants the device address on screen. Delivered last of the device-info hooks, so a press arriving alongside a lifecycle change lands on the screen that change selected. Never replayed on bind.              |
 | `uses_platform() -> bool`                                                                                  | no       | Whether to bind `deck_platform_v1`; gates the hook below.                                                                                                                                                                                              |
 | `on_platform_capabilities(caps)`                                                                           | no       | The hardware platform's capability set, delivered once before the first `tick` after the bind. An overlay gates a function on it (the corner status starts polling the miner only where `mining` is set).                                              |
-| `wants_cached_blit(now)` / `take_content_dirty` / `mark_content_dirty`                                     | no       | Hooks for the blit-only reveal animation (see below).                                                                                                                                                                                                  |
+| `can_reuse_content(now)` / `layer_shell_offset(now)` / dirty-content hooks                                 | no       | Hooks for compositor-positioned slides (see below).                                                                                                                                                                                                    |
 
 `TickOutcome` carries three fields: `visible` (want to be on-screen — when `false` the framework unmaps the surface and
 frees its buffers), `wants_render` (content changed; ignored while `!visible`), and `next_wake` (earliest instant to
@@ -133,22 +133,20 @@ a GL fence before handing a buffer to the compositor. Overlays fit the existing 
 lazily-allocated export buffers with a cache of minted `wl_buffer`s so a compositor release frees the matching slot for
 reuse. It exports `ExportFormat::Alpha` (transparent overlays composite over the live scene), with depth disabled.
 
-## Blit-only reveal animation
+## Compositor-positioned reveal animation
 
-A reveal/dismiss slide must **not** re-lay-out and re-paint the panel every animation frame — too expensive to hit frame
-rate on this GPU. The animation translates an already-rendered image instead. `OverlayRenderTarget` keeps a
-`panel_cache`: a once-painted GL texture of the panel at its final layout.
+A hosted reveal/dismiss slide moves the attached buffer through standard layer-shell margins. Opposing top/bottom margin
+changes preserve the stretched surface size; no custom placement protocol is required.
 
-- On a full paint, if `take_content_dirty()` reports the content changed, the host captures the just-painted band into
-  the cache (`capture_panel`, a GPU→GPU shader copy, no CPU read-back).
-- While `wants_cached_blit(now)` returns an offset and the cache exists, the host skips Taffy layout and femtovg paint
-  entirely: it clears the export buffer transparent and copies the cached panel in at the current Y offset
-  (`blit_cached_panel`), then fences/exports/attaches through the normal hosted path. An animation frame is *clear +
-  blit + submit*.
+- On opening or a content change, paint current content and submit an unshifted buffer at the current surface offset.
+- While `can_reuse_content(now)` is true and the surface is mapped, commit only changed placement. Skip client-side
+  layout, painting, GPU copies, fence waits, and buffer export.
+- Keep asset prewarming at startup, but no separate panel-image cache or hidden refresh work. Hiding releases the export
+  buffers; the next opening paints again.
 
-The cache is re-rendered only when content changes (brightness value, WiFi-AP state, hostname/IP refresh, button/FSM
-state) and is freed on hide so no full-screen allocation survives an unmap. Overlays that never animate leave all three
-hooks at their defaults and always full-paint.
+`layer_shell_offset(now)` reports placement independently of content changes, so a dirty frame cannot snap the slide to
+its settled position. An unchanged integer offset needs no commit. Standalone rendering ignores these hooks and
+continues to paint each frame without the slide.
 
 ## Connectivity prober
 

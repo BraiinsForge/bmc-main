@@ -151,7 +151,7 @@ configuration mechanism. Both gates live in `bmc-wasm-host/src/overlays.rs` (`bu
 
 - [Framework](framework.md) — the `bmc-system-overlay` crate: the `SystemOverlay` trait, the per-pass hosted driver and
   its render/wake gates, the layer-surface client, the double-buffered render target and GPU-fence discipline, the
-  declarative tree UI, and the blit-only reveal animation.
+  declarative tree UI, and the compositor-positioned reveal animation.
 - [Compositor integration](compositor-integration.md) — how the Smithay compositor advertises `wlr-layer-shell`,
   composites layer surfaces above the scene, tracks their buffers, evicts textures on a NULL-buffer unmap, hit-tests
   touch, suppresses scene-drag, and recognizes the edge-reveal gesture.

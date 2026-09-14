@@ -548,49 +548,32 @@ pub trait SystemOverlay {
         Vec::new()
     }
 
-    /// Vertical cached-image offset in pixels for a clean animation frame;
-    /// `None` requests a full paint. Positive offsets move down.
-    /// With [`Self::layer_shell_offset`], a hosted frame reuses its attached buffer
-    /// and that surface offset overrides this pixel-copy offset.
+    /// Whether a hosted slide frame can reuse its attached content.
+    /// Return `false` for content changes or frames that need a fresh paint.
     /// Standalone ignores both hooks and repaints every frame without sliding.
-    fn wants_cached_blit(&self, _now: Instant) -> Option<f32> {
-        None
+    fn can_reuse_content(&self, _now: Instant) -> bool {
+        false
     }
 
     /// Vertical surface translation in logical pixels; positive offsets move down.
-    /// Overrides the cached-image offset for hosted frames, including fresh paints.
-    /// Return it independently of content changes; [`Self::wants_cached_blit`]
+    /// Applies to hosted frames, including fresh paints.
+    /// Return it independently of content changes; [`Self::can_reuse_content`]
     /// determines whether the attached content can be reused. Standalone ignores it.
     fn layer_shell_offset(&self, _now: Instant) -> Option<f32> {
         None
     }
 
-    /// Whether this overlay presents slide frames through the panel cache.
-    /// Gates cache captures so overlays that never blit don't allocate one.
-    /// Default: `false`.
-    fn uses_panel_cache(&self) -> bool {
-        false
-    }
-
-    /// Take and clear the overlay's content-changed flag. The host calls this
-    /// after a full paint to learn whether the just-painted frame must refresh
-    /// the cached panel source. Default: `false` (overlays without a cache never
-    /// signal dirty, so the host always treats their paints as authoritative).
+    /// Take and clear the content-changed flag after a full paint.
     fn take_content_dirty(&mut self) -> bool {
         false
     }
 
-    /// Whether the content-changed flag is currently set, without consuming
-    /// it. The host polls this to decide background cache refreshes while
-    /// hidden; polling never consumes the flag — only `take_content_dirty`
-    /// does. Default: `false` (overlays without a cache never report dirty).
+    /// Observe the content-changed flag without consuming it.
     fn content_dirty(&self) -> bool {
         false
     }
 
-    /// Force the overlay's content-changed flag so the next full paint
-    /// refreshes the cached panel. No-op default: overlays that never cache
-    /// (offline, device-info) need not implement this.
+    /// Invalidate attached content so the next frame paints again.
     fn mark_content_dirty(&mut self) {}
 
     /// A frame of this overlay was just submitted to the compositor. Called
