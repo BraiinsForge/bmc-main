@@ -85,6 +85,17 @@ enum Mode {
     Operational,
 }
 
+impl From<DeviceState> for Mode {
+    fn from(state: DeviceState) -> Self {
+        match state {
+            DeviceState::FactoryDefault => Mode::FactoryDefault,
+            DeviceState::WifiReconfiguration => Mode::WifiReconfiguration,
+            DeviceState::SetupPending => Mode::SetupPending,
+            DeviceState::Operational => Mode::Operational,
+        }
+    }
+}
+
 impl Mode {
     /// Whether unmapping leaves the user somewhere useful.
     /// A configured device falls back to its scenes;
@@ -150,15 +161,9 @@ enum Screen {
 }
 
 impl Screen {
-    /// True while a setup flow is live on screen. `on_device_state` uses it to
-    /// leave that screen alone: the same setup state can arrive again mid-flow,
-    /// and jumping back to `SetupStart` would drop the progress on show.
-    /// False means the next setup state starts the flow over.
-    ///
-    /// A dismissible fatal is false — that flow died there, and re-entering
-    /// setup from the tray has to bring the screens back. A restarting fatal
-    /// is true: bmc is rebooting the device, and this is the last thing the
-    /// user sees before it does.
+    /// Whether a setup flow is live on screen. A restarting fatal counts:
+    /// bmc is rebooting the device, and this is the last thing the user
+    /// sees before it does. A dismissible fatal does not: that flow died there.
     fn setup_in_progress(self) -> bool {
         matches!(
             self,
@@ -486,30 +491,37 @@ impl SystemOverlay for DeviceInfoOverlay {
     }
 
     fn on_device_state(&mut self, state: DeviceState, boot_flow_delivered: bool) {
-        self.mode = match state {
-            DeviceState::FactoryDefault => Mode::FactoryDefault,
-            DeviceState::WifiReconfiguration => Mode::WifiReconfiguration,
-            DeviceState::SetupPending => Mode::SetupPending,
-            DeviceState::Operational => Mode::Operational,
-        };
+        let mode = Mode::from(state);
+        let previous = std::mem::replace(&mut self.mode, mode);
         self.dirty = true;
-        match self.mode {
+        match mode {
+            // A different state is a different flow and replaces the screen,
+            // except a restart bmc has already announced.
             Mode::FactoryDefault | Mode::WifiReconfiguration => {
-                if !self.screen.setup_in_progress() {
+                let same_flow = previous == mode && self.screen.setup_in_progress();
+                let awaiting_restart = matches!(
+                    self.screen,
+                    Screen::SetupFatal {
+                        restarting: true,
+                        ..
+                    }
+                );
+                if !same_flow && !awaiting_restart {
                     self.screen = Screen::SetupStart;
                 }
             }
+            // A wizard round lands here after its join, whatever mode it ran in,
+            // so a flow past the AP continues. The AP and switchover screens are
+            // stale once the lifecycle has advanced, so they move to the connect
+            // flow, which fills in the uplink address; so does a cold entry.
             Mode::SetupPending => {
-                // The AP and switchover screens are stale once the lifecycle
-                // has advanced, so both move to the connect flow, which fills
-                // in the uplink address.
                 if matches!(self.screen, Screen::SetupStart | Screen::SetupSwitching)
                     || !self.screen.setup_in_progress()
                 {
                     self.screen = Screen::SetupConnecting;
                 }
             }
-            // Reconfiguration exits AP mode first, so mid-setup the lifecycle
+            // Reconfiguration exits AP mode first, so mid-flow the lifecycle
             // reaches Operational before the final setup event arrives.
             // Only a cold start is therefore still `Hidden` here.
             // The session flag covers a restarted overlay, `Hidden` again,
@@ -1044,6 +1056,63 @@ mod tests {
 
         overlay.on_device_state(DeviceState::WifiReconfiguration, false);
         assert!(matches!(overlay.screen, Screen::SetupStart));
+    }
+
+    #[test]
+    fn reconfiguring_from_setup_pending_starts_the_setup_flow() {
+        // The tray button flips a SetupPending device into WifiReconfiguration.
+        // Its AP is now up, so the screen telling the user about it
+        // has to replace whatever the SetupPending flow had on show.
+        for ip in [Some(Ipv4Addr::new(10, 0, 0, 5)), None] {
+            let mut overlay = overlay_with_ip(ip);
+            overlay.on_device_state(DeviceState::SetupPending, false);
+            let _ = overlay.tick(t0());
+            let before = overlay.screen;
+            assert!(before.setup_in_progress(), "{ip:?}: {before:?}");
+
+            overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+            assert_eq!(overlay.screen, Screen::SetupStart, "from {before:?}");
+        }
+    }
+
+    #[test]
+    fn the_join_moving_the_lifecycle_to_setup_pending_leaves_the_flow_alone() {
+        // A first boot's join clears the factory flag, so SetupPending arrives
+        // around the success event; whichever comes first, the flow stays.
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::WifiConnectionSuccess, "");
+
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        assert!(matches!(overlay.screen, Screen::SetupConnected { .. }));
+    }
+
+    #[test]
+    fn a_repeated_setup_state_leaves_a_live_flow_alone() {
+        // The AP watch re-broadcasts the same state once the AP is verified up.
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        assert_eq!(overlay.screen, Screen::SetupConnecting);
+    }
+
+    #[test]
+    fn a_pending_restart_survives_a_lifecycle_change() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: true }, "");
+
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        assert!(matches!(
+            overlay.screen,
+            Screen::SetupFatal {
+                restarting: true,
+                ..
+            }
+        ));
     }
 
     #[test]
