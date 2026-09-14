@@ -24,9 +24,7 @@
 #![expect(clippy::cast_possible_truncation)]
 
 use anyhow::Result;
-use bmc_shared_time::time::Timezone;
-use chrono::{DateTime, TimeZone, Utc};
-use chrono_tz::OffsetComponents;
+use bmc_wasm_protocol::time::zone_offset_secs;
 use wasmi::{Caller, Extern, Linker};
 
 use super::super::memory::read_string;
@@ -182,10 +180,7 @@ fn register_system_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
 /// `host_resolve_tz(name_ptr: *const u8, name_len: u32, unix_secs: i64) -> i32`
 /// — look up the UTC offset (in seconds) for an IANA timezone at a moment.
 ///
-/// Validates the name against the deck's supported list (the same
-/// `bmc_shared_time::timezone_variant::TIMEZONE_VARIANTS` that backs
-/// `tz!`'s compile-time check, sourced from openwrt/LuCI's
-/// `zoneinfo.uc`). Returns `i32::MIN` when the name is unknown
+/// Returns `i32::MIN` when the name is outside the deck's supported list
 /// — real UTC offsets are bounded to ±14 hours, so the sentinel never collides.
 fn register_resolve_tz_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
@@ -195,23 +190,7 @@ fn register_resolve_tz_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(name) = read_string(&caller, name_ptr, name_len) else {
                 return i32::MIN;
             };
-            let Some(tz) = Timezone::lookup(&name) else {
-                return i32::MIN;
-            };
-            let Some(dt) = DateTime::<Utc>::from_timestamp(unix_secs, 0) else {
-                return i32::MIN;
-            };
-            // Evaluate the offset at the *requested* moment, not "now",
-            // so DST transitions are respected when the caller asks about
-            // a past/future time.
-            let offset = tz.chrono().offset_from_utc_datetime(&dt.naive_utc());
-            let total = offset.base_utc_offset() + offset.dst_offset();
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "UTC offsets are bounded to ±14h ≈ ±50400s, fits in i32 with headroom"
-            )]
-            let secs = total.num_seconds() as i32;
-            secs
+            zone_offset_secs(unix_secs, &name).unwrap_or(i32::MIN)
         },
     )?;
     Ok(())

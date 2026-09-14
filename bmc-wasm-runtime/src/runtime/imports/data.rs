@@ -22,6 +22,7 @@
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::system::{NumberFormat, TemperatureUnit, UnitSystem};
+use bmc_wasm_protocol::time::{strftime_utc, wall_clock};
 use bmc_wasm_protocol::{JsonId, XmlId};
 use chrono::{DateTime, Utc};
 use wasmi::{Caller, Extern, Linker};
@@ -31,8 +32,7 @@ use crate::xml::XmlDocumentIndex;
 
 use super::super::memory::{read_bytes, read_string, write_to_wasm};
 use super::super::time::{
-    expand_rrule_impl, format_number_with_prefs, parse_calendar_date_impl, tz_convert_impl,
-    tz_convert_legacy_wire,
+    expand_rrule_impl, format_number_with_prefs, parse_calendar_date_impl, tz_convert_legacy_wire,
 };
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
@@ -657,10 +657,9 @@ fn register_date_imports(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(fmt) = read_string(&caller, fmt_ptr, fmt_len) else {
                 return -1;
             };
-            let Some(dt) = DateTime::<Utc>::from_timestamp(timestamp, 0) else {
+            let Some(formatted) = strftime_utc(timestamp, &fmt) else {
                 return -1;
             };
-            let formatted = dt.format(&fmt).to_string();
             write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
         },
     )?;
@@ -1155,7 +1154,7 @@ fn register_timezone_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return -1;
             };
 
-            let Some(local) = tz_convert_impl(unix_secs, &tz_name) else {
+            let Some(local) = wall_clock(unix_secs, &tz_name) else {
                 return -1;
             };
             write_bytes(&mut caller, out_ptr, &local.to_wire())

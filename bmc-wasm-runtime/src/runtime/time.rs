@@ -21,8 +21,8 @@
 //! Formatting and calendar/time helpers for the WASM runtime.
 
 use bmc_wasm_protocol::system::NumberFormat;
-use bmc_wasm_protocol::time::{CalendarDate, LocalDateTime};
-use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike};
+use bmc_wasm_protocol::time::{CalendarDate, utc_offset_secs, wall_clock};
+use chrono::{DateTime, Datelike, NaiveDate};
 
 pub(super) fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u32) -> String {
     bmc_shared_utils::number_format::NumberFormat::from(nf).format_number(value, decimals as usize)
@@ -116,55 +116,12 @@ pub(super) fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
     result.dates.into_iter().map(|dt| dt.timestamp()).collect()
 }
 
-/// Convert a UTC unix timestamp to wall-clock time in a named IANA
-/// timezone, or `None` where the zone is unknown.
-pub(super) fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<LocalDateTime> {
-    use chrono::TimeZone;
-
-    let dt_utc = DateTime::from_timestamp(unix_secs, 0)?;
-
-    let (year, month, day, hour, minute, second, weekday) = if tz_name == "Local" {
-        let local = dt_utc.with_timezone(&Local);
-        (
-            local.year(),
-            local.month(),
-            local.day(),
-            local.hour(),
-            local.minute(),
-            local.second(),
-            local.weekday().num_days_from_monday(),
-        )
-    } else {
-        let tz: chrono_tz::Tz = tz_name.parse().ok()?;
-        let local = tz.from_utc_datetime(&dt_utc.naive_utc());
-        (
-            local.year(),
-            local.month(),
-            local.day(),
-            local.hour(),
-            local.minute(),
-            local.second(),
-            local.weekday().num_days_from_monday(),
-        )
-    };
-
-    Some(LocalDateTime {
-        year: u16::try_from(year).ok()?,
-        month: u8::try_from(month).ok()?,
-        day: u8::try_from(day).ok()?,
-        hour: u8::try_from(hour).ok()?,
-        minute: u8::try_from(minute).ok()?,
-        second: u8::try_from(second).ok()?,
-        weekday: u8::try_from(weekday).ok()?,
-    })
-}
-
 /// The 20-byte answer widgets built against SDK 0.5 decode.
 ///
 /// Frozen: those binaries read the fields at `[12..19]` without validating
 /// anything, so the layout has to outlive them.
 pub(super) fn tz_convert_legacy_wire(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]> {
-    let local = tz_convert_impl(unix_secs, tz_name)?;
+    let local = wall_clock(unix_secs, tz_name)?;
     let utc_offset = utc_offset_secs(unix_secs, tz_name)?;
     let mut buf = [0_u8; 20];
     buf[0..8].copy_from_slice(&unix_secs.to_le_bytes());
@@ -177,27 +134,6 @@ pub(super) fn tz_convert_legacy_wire(unix_secs: i64, tz_name: &str) -> Option<[u
     buf[18] = local.second;
     buf[19] = local.weekday;
     Some(buf)
-}
-
-/// The zone's UTC offset at the given instant, in seconds.
-fn utc_offset_secs(unix_secs: i64, tz_name: &str) -> Option<i32> {
-    use chrono::Offset;
-    use chrono::TimeZone;
-
-    let dt_utc = DateTime::from_timestamp(unix_secs, 0)?;
-    Some(if tz_name == "Local" {
-        dt_utc
-            .with_timezone(&Local)
-            .offset()
-            .fix()
-            .local_minus_utc()
-    } else {
-        let tz: chrono_tz::Tz = tz_name.parse().ok()?;
-        tz.from_utc_datetime(&dt_utc.naive_utc())
-            .offset()
-            .fix()
-            .local_minus_utc()
-    })
 }
 
 /// Read a `YYYY-MM-DD` date, which names a day rather than an instant.
@@ -219,7 +155,7 @@ pub(super) fn parse_calendar_date_impl(s: &str) -> Option<CalendarDate> {
 mod tests {
     use bmc_wasm_protocol::system::NumberFormat;
 
-    use super::{format_number_with_prefs, parse_calendar_date_impl, tz_convert_impl};
+    use super::{format_number_with_prefs, parse_calendar_date_impl};
 
     /// Friday the 21st of August 2026, weekday 4 counting Monday as 0.
     #[test]
@@ -258,10 +194,5 @@ mod tests {
             format_number_with_prefs(NumberFormat::DotGroupCommaDecimal, 12_345.5, 1),
             "12.345,5"
         );
-    }
-
-    #[test]
-    fn tz_convert_impl_rejects_unknown_timezones() {
-        assert!(tz_convert_impl(0, "Not/AZone").is_none());
     }
 }

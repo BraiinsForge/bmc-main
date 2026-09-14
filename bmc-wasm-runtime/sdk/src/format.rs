@@ -22,9 +22,9 @@
 //!
 //! Mirrors the JS SDK's `sdk.format.*` API from deckfeeder.
 //!
-//! Preference-aware formatters keyed on the deck-wide `SystemSnapshot`
-//! (`number_format`, `unit_system`, `temperature_unit`). wasm goes through the
-//! host; native through the same `bmc_shared_utils` core, matching the device.
+//! Preference-aware formatters keyed on the deck-wide `SystemSnapshot` (`number_format`,
+//! `unit_system`, `temperature_unit`, timezone, time and date formats). wasm goes through
+//! the host; native through the same `bmc_shared_utils` and calendar core, matching the device.
 //!
 //! Use the macros `format_number!`, `format_speed!`, `format_temperature!`.
 
@@ -290,6 +290,11 @@ pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> St
 /// Uses the host's `chrono` library for proper date/time formatting.
 /// See <https://docs.rs/chrono/latest/chrono/format/strftime/> for pattern syntax.
 ///
+/// On device the result crosses a 64-byte buffer and is cut there,
+/// possibly inside a multibyte character; off-device it is not.
+/// Keep patterns well short of it — the longest one shipped,
+/// `%a %-d %B %Y`, is under half.
+///
 /// # Example
 /// ```ignore
 /// let ts = parse_datetime("2026-03-04T04:19:23+00:00").unwrap();
@@ -297,19 +302,25 @@ pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> St
 /// let s = strftime(ts, "%d.%m.%Y %H:%M:%S"); // "04.03.2026 04:19:23"
 /// ```
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn strftime(timestamp: i64, format: &str) -> String {
-    let mut buf = [0_u8; 64];
-    let len = unsafe {
-        host_format_date(
-            timestamp,
-            format.as_ptr(),
-            format.len() as u32,
-            buf.as_mut_ptr(),
-            buf.len() as u32,
-        )
-    };
-    read_host_buf(&buf, len)
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut buf = [0_u8; 64];
+        let len = unsafe {
+            host_format_date(
+                timestamp,
+                format.as_ptr(),
+                format.len() as u32,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+            )
+        };
+        read_host_buf(&buf, len)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        bmc_wasm_protocol::time::strftime_utc(timestamp, format).unwrap_or_default()
+    }
 }
 
 // ── System-bound time / date formatters ───────────────────────────────
@@ -324,23 +335,19 @@ pub fn strftime(timestamp: i64, format: &str) -> String {
 // rendering an event's time in both the user's configured timezone
 // and the event's local timezone, or rendering metric and imperial side-by-side.
 
-#[cfg(target_arch = "wasm32")]
 use crate::system::{self, DateFormat, TimeFormat};
-#[cfg(target_arch = "wasm32")]
 use crate::tz::Tz;
 
 /// Overrides for [`format_time`]. Any `Some`-valued field replaces the
 /// corresponding `system::current()` preference for this call only.
 #[derive(Clone, Debug, Default)]
-#[cfg(target_arch = "wasm32")]
 pub struct FormatTimeOpts {
     /// Override the system's [`TimeFormat`].
     /// `None` uses `system::current().time_format()`.
     pub format: Option<TimeFormat>,
     /// Override the timezone the moment is rendered in.
-    /// `None` uses the host-applied system timezone already baked
-    /// into [`crate::host::SystemTime::utc_offset_secs`].
-    /// Unknown names fall back to the system timezone (see `host_resolve_tz`).
+    /// `None` uses the system timezone, as does a name the deck does not know
+    /// (see [`local_unix_secs_or_system`]).
     pub timezone: Option<Tz>,
     /// Include seconds in the output (e.g. `12:34` vs `12:34:56`).
     pub with_seconds: bool,
@@ -349,7 +356,6 @@ pub struct FormatTimeOpts {
 /// Overrides for [`format_date`]. Any `Some`-valued field replaces the
 /// corresponding `system::current()` preference for this call only.
 #[derive(Clone, Debug, Default)]
-#[cfg(target_arch = "wasm32")]
 pub struct FormatDateOpts {
     /// Override the system's [`DateFormat`].
     /// `None` uses `system::current().date_format()`.
@@ -359,10 +365,10 @@ pub struct FormatDateOpts {
     pub timezone: Option<Tz>,
 }
 
-/// Format the time component of a [`SystemTime`] per the user's
-/// preferences, with per-call overrides. AM/PM is **not** included in
-/// the output — render it as a separate element when
-/// `system::current().time_format()` is [`TimeFormat::Hour12`].
+/// Format the time component of a [`SystemTime`](crate::host::SystemTime)
+/// per the user's preferences, with per-call overrides.
+/// AM/PM is **not** included in the output — render it as a separate element
+/// when `system::current().time_format()` is [`TimeFormat::Hour12`].
 ///
 /// # Example
 /// ```ignore
@@ -371,27 +377,27 @@ pub struct FormatDateOpts {
 /// let s = format_time(now, FormatTimeOpts { with_seconds: true, ..default }); // "13:45:09"
 /// ```
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String {
-    let format = opts
-        .format
+    let FormatTimeOpts {
+        format,
+        timezone,
+        with_seconds,
+    } = opts;
+    let format = format
         .or_else(|| system::current().time_format())
         .unwrap_or_default();
-    let pattern = match (format, opts.with_seconds) {
+    let pattern = match (format, with_seconds) {
         (TimeFormat::Hour24, false) => "%H:%M",
         (TimeFormat::Hour24, true) => "%H:%M:%S",
         (TimeFormat::Hour12, false) => "%I:%M",
         (TimeFormat::Hour12, true) => "%I:%M:%S",
     };
-    strftime(
-        local_unix_secs_or_system(&now, opts.timezone.as_ref()),
-        pattern,
-    )
+    strftime(local_unix_secs_or_system(&now, timezone.as_ref()), pattern)
 }
 
-/// Format the date component of a [`SystemTime`] per the user's preferences,
-/// with per-call overrides. Output mirrors the operator's configured locale
-/// (e.g. `12.03.2026` vs `03/12/2026`).
+/// Format the date component of a [`SystemTime`](crate::host::SystemTime)
+/// per the user's preferences, with per-call overrides.
+/// Output mirrors the operator's configured locale (e.g. `12.03.2026` vs `03/12/2026`).
 ///
 /// # Example
 /// ```ignore
@@ -399,10 +405,9 @@ pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String
 /// let s = format_date(now, FormatDateOpts::default()); // "12.03.2026"
 /// ```
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String {
-    let format = opts
-        .format
+    let FormatDateOpts { format, timezone } = opts;
+    let format = format
         .or_else(|| system::current().date_format())
         .unwrap_or_default();
     let pattern = match format {
@@ -415,10 +420,7 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
         DateFormat::YyyyMmDdDot => "%Y.%m.%d",
         DateFormat::YyyyMmDdDash => "%Y-%m-%d",
     };
-    strftime(
-        local_unix_secs_or_system(&now, opts.timezone.as_ref()),
-        pattern,
-    )
+    strftime(local_unix_secs_or_system(&now, timezone.as_ref()), pattern)
 }
 
 /// Hour-only label for dense strips: `"20"` in 24-hour mode, `"8PM"` in
@@ -431,7 +433,6 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
 /// let s = format_hour(now, None); // "20" or "8PM"
 /// ```
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn format_hour(now: crate::host::SystemTime, tz: Option<&Tz>) -> String {
     let pattern = match system::current().time_format().unwrap_or_default() {
         TimeFormat::Hour24 => "%H",
@@ -444,7 +445,6 @@ pub fn format_hour(now: crate::host::SystemTime, tz: Option<&Tz>) -> String {
 /// mode. [`format_time`] deliberately omits it; render this beside the time as
 /// a separate element when a 12-hour reading would otherwise be ambiguous.
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn meridiem(now: crate::host::SystemTime, tz: Option<&Tz>) -> Option<String> {
     match system::current().time_format().unwrap_or_default() {
         TimeFormat::Hour24 => None,
@@ -457,7 +457,6 @@ pub fn meridiem(now: crate::host::SystemTime, tz: Option<&Tz>) -> Option<String>
 /// shift `now.unix_secs` into wall-clock seconds before handing to
 /// [`strftime`].
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>) -> i64 {
     if let Some(t) = tz
         && let Some(secs) = local_unix_secs(now, t)
@@ -476,7 +475,6 @@ pub fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>)
 /// Shift `now.unix_secs` by `tz`'s UTC offset for a downstream `strftime`.
 /// Returns `None` when the host doesn't recognise the tz name.
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
     let offset_secs = resolve_tz_offset(tz, now.unix_secs)?;
     Some(now.unix_secs + i64::from(offset_secs))
@@ -485,30 +483,35 @@ pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
 /// Resolve the UTC offset (in seconds) for an IANA-name timezone at a
 /// moment. Returns `None` when the host doesn't recognise the name.
 #[must_use]
-#[cfg(target_arch = "wasm32")]
 pub fn resolve_tz_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
-    let name = tz.iana().as_bytes();
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "IANA names ship well under u32 bytes; truncation would be a programmer bug"
-    )]
-    let offset = unsafe { host_resolve_tz(name.as_ptr(), name.len() as u32, unix_secs) };
-    if offset == TZ_UNKNOWN {
-        None
-    } else {
-        Some(offset)
+    #[cfg(target_arch = "wasm32")]
+    {
+        let name = tz.iana().as_bytes();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "IANA names ship well under u32 bytes; truncation would be a programmer bug"
+        )]
+        let offset = unsafe { host_resolve_tz(name.as_ptr(), name.len() as u32, unix_secs) };
+        if offset == TZ_UNKNOWN {
+            None
+        } else {
+            Some(offset)
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        bmc_wasm_protocol::time::zone_offset_secs(unix_secs, tz.iana())
     }
 }
 
 /// Append a UTC offset as `+H` for whole hours or `+H:MM` when it has minutes.
 /// Sign is always emitted; hours are unpadded, minutes zero-padded.
-#[cfg(target_arch = "wasm32")]
 pub fn push_utc_offset(s: &mut String, offset_secs: i32) {
     let sign = if offset_secs < 0 { '-' } else { '+' };
     let abs = offset_secs.unsigned_abs();
     s.push(sign);
-    push_int(s, i64::from(abs / 3_600));
-    let mins = i64::from((abs % 3_600) / 60);
+    push_int(s, i64::from(abs.div_euclid(3_600)));
+    let mins = i64::from(abs.rem_euclid(3_600).div_euclid(60));
     if mins != 0 {
         s.push(':');
         push_pad2(s, mins);
@@ -516,7 +519,6 @@ pub fn push_utc_offset(s: &mut String, offset_secs: i32) {
 }
 
 /// Outcome of resolving a timezone for a caption.
-#[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub enum TzLabel {
     /// Resolved cleanly: `city` is the display name, `offset_secs` its UTC offset.
@@ -533,7 +535,6 @@ pub enum TzLabel {
 /// Resolve `override_tz` → system timezone → UTC into a [`TzLabel`] at
 /// `now_secs` (the offset is date-dependent through DST). Pass `None` to
 /// caption the system timezone directly.
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn resolve_tz_for_label(override_tz: Option<&Tz>, now_secs: i64) -> TzLabel {
     if let Some(t) = override_tz {
@@ -571,7 +572,6 @@ pub fn resolve_tz_for_label(override_tz: Option<&Tz>, now_secs: i64) -> TzLabel 
 
 /// Append a [`TzLabel`]'s caption: `City (±H)` / `City (±H:MM)` when resolved
 /// (see [`push_utc_offset`]), `City (unknown)` otherwise.
-#[cfg(target_arch = "wasm32")]
 pub fn push_tz_caption(s: &mut String, label: &TzLabel) {
     match label {
         TzLabel::Resolved { city, offset_secs } => {
@@ -671,17 +671,16 @@ macro_rules! format_temperature {
 /// assert_eq!(format_duration(0, false), "T-0");
 /// assert_eq!(format_duration(-100, true), "T-0");
 /// ```
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn format_duration(remaining_secs: i64, show_seconds: bool) -> String {
     if remaining_secs <= 0 {
         return String::from("T-0");
     }
 
-    let d = remaining_secs / 86_400;
-    let h = (remaining_secs % 86_400) / 3_600;
-    let m = (remaining_secs % 3_600) / 60;
-    let s = remaining_secs % 60;
+    let d = remaining_secs.div_euclid(86_400);
+    let h = remaining_secs.rem_euclid(86_400).div_euclid(3_600);
+    let m = remaining_secs.rem_euclid(3_600).div_euclid(60);
+    let s = remaining_secs.rem_euclid(60);
 
     let mut out = String::with_capacity(20);
     push_int(&mut out, d);
@@ -700,16 +699,15 @@ pub fn format_duration(remaining_secs: i64, show_seconds: bool) -> String {
 }
 
 /// Append `n`'s decimal digits to `s` (smallest representation, no padding).
-#[cfg(target_arch = "wasm32")]
 pub fn push_int(s: &mut String, n: i64) {
     if n >= 10 {
-        push_int(s, n / 10);
+        push_int(s, n.div_euclid(10));
     }
-    s.push((b'0' + (n % 10) as u8) as char);
+    let digit = u8::try_from(n.rem_euclid(10)).expect("BUG: rem_euclid(10) is 0..=9");
+    s.push((b'0' + digit) as char);
 }
 
 /// Append `n`'s decimal digits to `s`, zero-padded to two characters.
-#[cfg(target_arch = "wasm32")]
 pub fn push_pad2(s: &mut String, n: i64) {
     if n < 10 {
         s.push('0');
@@ -718,7 +716,6 @@ pub fn push_pad2(s: &mut String, n: i64) {
 }
 
 /// Push a non-negative integer left-padded with `0` to `width` digits.
-#[cfg(target_arch = "wasm32")]
 fn push_padded(s: &mut String, n: i64, width: usize) {
     let digits = digit_count(n);
     for _ in digits..width {
@@ -728,7 +725,6 @@ fn push_padded(s: &mut String, n: i64, width: usize) {
 }
 
 /// Decimal digit count of a non-negative `i64`, with `0` counted as one digit.
-#[cfg(target_arch = "wasm32")]
 fn digit_count(n: i64) -> usize {
     if n < 10 {
         return 1;
@@ -761,7 +757,6 @@ fn digit_count(n: i64) -> usize {
 /// assert_eq!(format_f64_fixed(123.456, 0), "123");
 /// assert_eq!(format_f64_fixed(-1.0, 3), "-1.000");
 /// ```
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn format_f64_fixed(value: f64, decimals: u32) -> String {
     let decimals = decimals.min(9) as usize;
@@ -776,8 +771,8 @@ pub fn format_f64_fixed(value: f64, decimals: u32) -> String {
         reason = "scale stays within i64 range for finite f64 inputs at decimals <= 9"
     )]
     let scaled = (value * factor as f64).round() as i64;
-    let int_part = scaled.abs() / factor;
-    let frac_part = scaled.abs() % factor;
+    let int_part = scaled.abs().div_euclid(factor);
+    let frac_part = scaled.abs().rem_euclid(factor);
 
     let mut out = String::with_capacity(20);
     // Preserve a leading "-" for negative values that don't round to zero.
@@ -794,187 +789,5 @@ pub fn format_f64_fixed(value: f64, decimals: u32) -> String {
     out
 }
 
-// These exercise the wasm-only pure helpers (duration / f64 / host-buffer),
-// so the module is gated to wasm alongside them.
-#[cfg(all(test, target_arch = "wasm32"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn duration_zero_and_negative() {
-        assert_eq!(format_duration(0, false), "T-0");
-        assert_eq!(format_duration(-1, false), "T-0");
-        assert_eq!(format_duration(-100, true), "T-0");
-    }
-
-    #[test]
-    fn duration_seconds_only() {
-        assert_eq!(format_duration(59, false), "0d 00h 00m");
-        assert_eq!(format_duration(59, true), "0d 00h 00m 59s");
-    }
-
-    #[test]
-    fn duration_minutes() {
-        assert_eq!(format_duration(60, false), "0d 00h 01m");
-        assert_eq!(format_duration(3_599, true), "0d 00h 59m 59s");
-    }
-
-    #[test]
-    fn duration_hours() {
-        assert_eq!(format_duration(3_600, false), "0d 01h 00m");
-        assert_eq!(format_duration(3_661, false), "0d 01h 01m");
-        assert_eq!(format_duration(3_661, true), "0d 01h 01m 01s");
-    }
-
-    #[test]
-    fn duration_days() {
-        assert_eq!(format_duration(86_400, false), "1d 00h 00m");
-        assert_eq!(format_duration(2_598_840, false), "30d 01h 54m");
-        assert_eq!(format_duration(2_598_840, true), "30d 01h 54m 00s");
-    }
-
-    #[test]
-    fn duration_large() {
-        // 365 days
-        assert_eq!(format_duration(365 * 86_400, false), "365d 00h 00m");
-    }
-
-    fn caption(label: &TzLabel) -> String {
-        let mut s = String::new();
-        push_tz_caption(&mut s, label);
-        s
-    }
-
-    #[test]
-    fn tz_caption_resolved_whole_and_half_hour() {
-        let whole = TzLabel::Resolved {
-            city: "Prague".to_owned(),
-            offset_secs: 7_200,
-        };
-        assert_eq!(caption(&whole), "Prague (+2)");
-        let half = TzLabel::Resolved {
-            city: "Kolkata".to_owned(),
-            offset_secs: 19_800,
-        };
-        assert_eq!(caption(&half), "Kolkata (+5:30)");
-    }
-
-    #[test]
-    fn tz_caption_resolved_negative_offset() {
-        let label = TzLabel::Resolved {
-            city: "New York".to_owned(),
-            offset_secs: -18_000,
-        };
-        assert_eq!(caption(&label), "New York (-5)");
-    }
-
-    #[test]
-    fn tz_caption_unknown_reads_unknown() {
-        let label = TzLabel::Unknown {
-            city: "Prague".to_owned(),
-            system_offset_secs: 3_600,
-        };
-        assert_eq!(caption(&label), "Prague (unknown)");
-    }
-
-    #[test]
-    fn read_host_buf_empty() {
-        let buf = [0_u8; 64];
-        assert_eq!(read_host_buf(&buf, 0), "");
-        assert_eq!(read_host_buf(&buf, -1), "");
-    }
-
-    #[test]
-    fn read_host_buf_valid() {
-        let mut buf = [0_u8; 64];
-        buf[..5].copy_from_slice(b"hello");
-        assert_eq!(read_host_buf(&buf, 5), "hello");
-    }
-
-    #[test]
-    fn read_host_buf_clamped() {
-        let mut buf = [0_u8; 64];
-        buf.fill(b'x');
-        // len > 64 should be clamped
-        assert_eq!(read_host_buf(&buf, 100), "x".repeat(64));
-    }
-
-    #[test]
-    fn f64_fixed_positive_with_decimals() {
-        assert_eq!(format_f64_fixed(2.5, 2), "2.50");
-        assert_eq!(format_f64_fixed(2.55, 2), "2.55");
-        assert_eq!(format_f64_fixed(0.05, 2), "0.05");
-        assert_eq!(format_f64_fixed(123.456, 2), "123.46");
-        assert_eq!(format_f64_fixed(1.0, 3), "1.000");
-    }
-
-    #[test]
-    fn f64_fixed_zero_and_signed_zero() {
-        assert_eq!(format_f64_fixed(0.0, 2), "0.00");
-        assert_eq!(format_f64_fixed(-0.0, 2), "0.00");
-    }
-
-    #[test]
-    fn f64_fixed_negative() {
-        assert_eq!(format_f64_fixed(-1.0, 2), "-1.00");
-        assert_eq!(format_f64_fixed(-0.05, 2), "-0.05");
-        assert_eq!(format_f64_fixed(-123.456, 2), "-123.46");
-    }
-
-    #[test]
-    fn f64_fixed_zero_decimals() {
-        assert_eq!(format_f64_fixed(123.456, 0), "123");
-        assert_eq!(format_f64_fixed(-2.5, 0), "-3");
-        assert_eq!(format_f64_fixed(0.0, 0), "0");
-    }
-
-    #[test]
-    fn f64_fixed_clamps_excessive_decimals() {
-        assert_eq!(format_f64_fixed(1.0, 10), "1.000000000");
-        assert_eq!(format_f64_fixed(1.0, 9), "1.000000000");
-    }
-
-    #[test]
-    fn f64_fixed_does_not_emit_negative_zero() {
-        assert_eq!(format_f64_fixed(-0.001, 2), "0.00");
-    }
-}
-
 #[cfg(test)]
-mod si_carry_tests {
-    use super::{_host_format_number, _host_format_si_parts};
-
-    #[test]
-    fn a_mantissa_that_rounds_to_a_thousand_takes_the_next_prefix() {
-        assert_eq!(
-            _host_format_si_parts(999.99e18, 4, "H/s"),
-            (_host_format_number(1.0, 3), "ZH/s".to_owned())
-        );
-        assert_eq!(
-            _host_format_si_parts(999.96, 4, "W"),
-            (_host_format_number(1.0, 3), "kW".to_owned())
-        );
-    }
-
-    #[test]
-    fn a_mantissa_that_rounds_short_of_a_thousand_keeps_its_prefix() {
-        assert_eq!(
-            _host_format_si_parts(999.94e18, 4, "H/s"),
-            (_host_format_number(999.9, 1), "EH/s".to_owned())
-        );
-    }
-}
-
-#[cfg(test)]
-mod si_decimals_tests {
-    use super::si_decimals;
-
-    #[test]
-    fn targets_the_requested_significant_figures() {
-        assert_eq!(si_decimals(13.2, 3), 1); // 13.2
-        assert_eq!(si_decimals(154.0, 3), 0); // 154
-        assert_eq!(si_decimals(9.11, 3), 2); // 9.11
-        assert_eq!(si_decimals(312.5, 3), 0); // 313
-        assert_eq!(si_decimals(0.0, 3), 2); // 0.00
-    }
-}
+mod tests;

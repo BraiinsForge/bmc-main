@@ -24,10 +24,10 @@ percent-encoding.workspace = true
 ufmt = { workspace = true }
 unit-prefix = { workspace = true }
 
-# Native-only: the gallery (and any non-wasm build) formats
-# through the shared core instead of the host FFI.
-# Kept off the wasm target so `formato` never lands in a widget binary
-# — on device, formatting still goes through the host.
+# Native-only: the gallery (and any non-wasm build) formats numbers
+# and reads the calendar through the shared core instead of the host FFI.
+# Kept off the wasm target so `formato` and `chrono-tz` never land
+# in a widget binary — on device, both still go through the host.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bmc-shared-utils = { workspace = true }
 bmc-wasm-protocol = { path = "../protocol", features = ["domain"] }

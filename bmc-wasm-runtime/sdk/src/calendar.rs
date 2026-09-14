@@ -21,8 +21,9 @@
 //! Calendar host function wrappers — date parsing, RRULE expansion, and
 //! timezone conversion.
 //!
-//! These functions delegate heavy computation to the host to avoid pulling
-//! `rrule` + `chrono-tz` (~1.8 MB) into the WASM binary.
+//! These functions delegate heavy computation to the host to avoid
+//! pulling `rrule` + `chrono-tz` (~1.8 MB) into the WASM binary.
+//! Off-device the timezone conversion runs the host's own implementation instead.
 //!
 //! # Example
 //!
@@ -179,20 +180,26 @@ fn push_str(buf: &mut Vec<u8>, s: &str) {
 /// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.
 ///
 /// Returns `None` if the timezone name is unknown.
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
-    let mut buf = [0_u8; LocalDateTime::WIRE_LEN];
-    let rc = unsafe {
-        host_tz_wall_clock(
-            unix_secs,
-            timezone.as_ptr(),
-            timezone.len() as u32,
-            buf.as_mut_ptr(),
-        )
-    };
-    if rc < 0 {
-        return None;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut buf = [0_u8; LocalDateTime::WIRE_LEN];
+        let rc = unsafe {
+            host_tz_wall_clock(
+                unix_secs,
+                timezone.as_ptr(),
+                timezone.len() as u32,
+                buf.as_mut_ptr(),
+            )
+        };
+        if rc < 0 {
+            return None;
+        }
+        LocalDateTime::from_wire(buf)
     }
-    LocalDateTime::from_wire(buf)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        bmc_wasm_protocol::time::wall_clock(unix_secs, timezone)
+    }
 }

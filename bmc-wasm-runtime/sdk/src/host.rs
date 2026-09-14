@@ -27,7 +27,6 @@
 // Re-export from protocol — single source of truth for wire-format enums
 #[cfg(target_arch = "wasm32")]
 use crate::net::FetchBodyRef;
-#[cfg(target_arch = "wasm32")]
 use bmc_wasm_protocol::time::LocalDateTime;
 #[cfg(target_arch = "wasm32")]
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
@@ -907,20 +906,17 @@ impl SystemTime {
 
     /// Project into local wall-clock fields for `tz`.
     /// Returns `None` when the host doesn't recognise the tz name.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn local(&self, tz: &crate::Tz) -> Option<LocalDateTime> {
         crate::calendar::tz_convert(self.unix_secs, tz.iana())
     }
 
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn utc(&self) -> LocalDateTime {
         decompose(self.unix_secs)
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn decompose(unix_secs: i64) -> LocalDateTime {
     fn parse<T: core::str::FromStr + Default>(p: Option<&str>) -> T {
         p.and_then(|s| s.parse().ok()).unwrap_or_default()

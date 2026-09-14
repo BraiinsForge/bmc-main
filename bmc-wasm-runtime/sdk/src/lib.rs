@@ -411,7 +411,6 @@ pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;
 #[cfg(target_arch = "wasm32")]
 pub use calendar::{parse_calendar_date, parse_datetime};
-#[cfg(target_arch = "wasm32")]
 pub use format::{
     FormatDateOpts, FormatTimeOpts, format_date, format_duration, format_f64_fixed, format_time,
     local_unix_secs, resolve_tz_offset, strftime,

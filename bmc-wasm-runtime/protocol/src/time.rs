@@ -22,6 +22,9 @@
 //!
 //! Each type owns the bytes it travels as, so the host writing them and
 //! the widget reading them cannot drift apart.
+//!
+//! With `domain`, the host's calendar too: `wall_clock` and `utc_offset_secs` read
+//! any zone chrono knows and `Local`, `zone_offset_secs` only the zones the device ships.
 
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -197,6 +200,82 @@ impl LocalDateTime {
     }
 }
 
+/// A UTC instant under a chrono strftime pattern, or `None` for an instant
+/// chrono cannot represent or a pattern it cannot format.
+#[cfg(feature = "domain")]
+#[must_use]
+pub fn strftime_utc(unix_secs: i64, pattern: &str) -> Option<String> {
+    use core::fmt::Write;
+
+    let at = chrono::DateTime::<chrono::Utc>::from_timestamp(unix_secs, 0)?;
+    let mut formatted = String::new();
+    write!(formatted, "{}", at.format(pattern)).ok()?;
+    Some(formatted)
+}
+
+/// A zone chrono can read an instant in: any IANA name
+/// it knows, or `Local` for the process's own.
+#[cfg(feature = "domain")]
+enum Zone {
+    Named(chrono_tz::Tz),
+    Local,
+}
+
+#[cfg(feature = "domain")]
+impl Zone {
+    fn parse(name: &str) -> Option<Self> {
+        if name == "Local" {
+            return Some(Self::Local);
+        }
+        name.parse().ok().map(Self::Named)
+    }
+
+    /// The instant as this zone reads it, its offset fixed for that moment.
+    fn at(&self, unix_secs: i64) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+        let at_utc = chrono::DateTime::<chrono::Utc>::from_timestamp(unix_secs, 0)?;
+        Some(match self {
+            Self::Named(tz) => at_utc.with_timezone(tz).fixed_offset(),
+            Self::Local => at_utc.with_timezone(&chrono::Local).fixed_offset(),
+        })
+    }
+}
+
+/// The wall clock a UTC instant reads in any zone chrono knows, or `Local`;
+/// `None` where the zone is unknown.
+#[cfg(feature = "domain")]
+#[must_use]
+pub fn wall_clock(unix_secs: i64, zone: &str) -> Option<LocalDateTime> {
+    use chrono::{Datelike, Timelike};
+
+    let local = Zone::parse(zone)?.at(unix_secs)?;
+    Some(LocalDateTime {
+        year: u16::try_from(local.year()).ok()?,
+        month: u8::try_from(local.month()).ok()?,
+        day: u8::try_from(local.day()).ok()?,
+        hour: u8::try_from(local.hour()).ok()?,
+        minute: u8::try_from(local.minute()).ok()?,
+        second: u8::try_from(local.second()).ok()?,
+        weekday: u8::try_from(local.weekday().num_days_from_monday()).ok()?,
+    })
+}
+
+/// The UTC offset in seconds of any zone chrono knows, or `Local`,
+/// at an instant so DST is honoured; `None` where the zone is unknown.
+#[cfg(feature = "domain")]
+#[must_use]
+pub fn utc_offset_secs(unix_secs: i64, zone: &str) -> Option<i32> {
+    Some(Zone::parse(zone)?.at(unix_secs)?.offset().local_minus_utc())
+}
+
+/// [`utc_offset_secs`] for the zones the device ships — `bmc_shared_time`'s
+/// curated OpenWrt set, the one `tz!` checks against — and `None` for any other.
+#[cfg(feature = "domain")]
+#[must_use]
+pub fn zone_offset_secs(unix_secs: i64, zone: &str) -> Option<i32> {
+    bmc_shared_time::time::Timezone::lookup(zone)?;
+    utc_offset_secs(unix_secs, zone)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CalendarDate, LocalDateTime, month_short};
@@ -288,5 +367,71 @@ mod tests {
         .to_wire();
         wire[4] = 24;
         assert_eq!(LocalDateTime::from_wire(wire), None);
+    }
+}
+
+#[cfg(all(test, feature = "domain"))]
+mod calendar_tests {
+    use super::{LocalDateTime, strftime_utc, utc_offset_secs, wall_clock, zone_offset_secs};
+
+    /// Monday the 14th of September 2026, 10:30 UTC.
+    const SEPTEMBER_MORNING: i64 = 1_789_381_800;
+    /// The 15th of January 2026, noon UTC.
+    const JANUARY_NOON: i64 = 1_768_478_400;
+
+    #[test]
+    fn strftime_reads_the_instant_in_utc() {
+        assert_eq!(
+            strftime_utc(SEPTEMBER_MORNING, "%a %-d %B %Y %H:%M").as_deref(),
+            Some("Mon 14 September 2026 10:30")
+        );
+    }
+
+    /// `%Q` is no chrono specifier and a trailing `%` is cut short;
+    /// both are refused rather than aborting the caller.
+    #[test]
+    fn a_pattern_chrono_cannot_format_reads_none() {
+        assert_eq!(strftime_utc(SEPTEMBER_MORNING, "%Q"), None);
+        assert_eq!(strftime_utc(SEPTEMBER_MORNING, "100%"), None);
+    }
+
+    #[test]
+    fn a_wall_clock_shifts_by_the_zone_and_keeps_the_weekday() {
+        assert_eq!(
+            wall_clock(SEPTEMBER_MORNING, "Europe/Prague"),
+            Some(LocalDateTime {
+                year: 2026,
+                month: 9,
+                day: 14,
+                hour: 12,
+                minute: 30,
+                second: 0,
+                weekday: 0,
+            })
+        );
+        assert_eq!(wall_clock(SEPTEMBER_MORNING, "Not/AZone"), None);
+    }
+
+    /// Prague is an hour ahead in winter and two in summer.
+    #[test]
+    fn a_zone_offset_follows_daylight_saving() {
+        assert_eq!(zone_offset_secs(JANUARY_NOON, "Europe/Prague"), Some(3_600));
+        assert_eq!(
+            zone_offset_secs(SEPTEMBER_MORNING, "Europe/Prague"),
+            Some(7_200)
+        );
+        assert_eq!(zone_offset_secs(JANUARY_NOON, "Not/AZone"), None);
+    }
+
+    /// `UTC` and the `Asia/Calcutta` alias are zones chrono knows but
+    /// the device does not ship; only the curated reading refuses them.
+    #[test]
+    fn the_device_list_gates_the_offset_but_not_the_wall_clock() {
+        for zone in ["UTC", "Asia/Calcutta"] {
+            assert!(utc_offset_secs(JANUARY_NOON, zone).is_some(), "{zone}");
+            assert!(wall_clock(JANUARY_NOON, zone).is_some(), "{zone}");
+            assert_eq!(zone_offset_secs(JANUARY_NOON, zone), None, "{zone}");
+        }
+        assert_eq!(utc_offset_secs(JANUARY_NOON, "Asia/Calcutta"), Some(19_800));
     }
 }

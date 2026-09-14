@@ -31,20 +31,13 @@
 )]
 use super::*;
 
-#[cfg(target_arch = "wasm32")]
-use bmc_wasm_sdk::calendar::tz_convert as calendar_label_time;
+use bmc_wasm_sdk::calendar::tz_convert;
 
 use crate::chart_layout::{
     candle_shapes, clamp_center_y, label_indices, label_kind, label_min_px, label_text,
     max_candles, merge_bars, month_leads, nice_ticks, price_range, price_to_y, volume_heights,
 };
 use prices::period::Period;
-
-// Timezone conversion needs wasm32 host FFI, so native renders omit calendar labels.
-#[cfg(not(target_arch = "wasm32"))]
-fn calendar_label_time(_unix_secs: i64, _timezone: &str) -> Option<LocalDateTime> {
-    None
-}
 
 const DASH_ON: f32 = 4.0;
 const DASH_OFF: f32 = 4.0;
@@ -207,7 +200,7 @@ pub fn series_view(
             let texts: Vec<String> = bars
                 .iter()
                 .map(|b| {
-                    calendar_label_time(b.t_secs, &tz_name)
+                    tz_convert(b.t_secs, &tz_name)
                         .map(|ldt| label_text(kind, &ldt, time_format, month_first))
                         .unwrap_or_default()
                 })

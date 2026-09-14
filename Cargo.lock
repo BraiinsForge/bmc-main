@@ -1524,8 +1524,11 @@ dependencies = [
 name = "bmc-wasm-protocol"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-time",
  "bmc-shared-utils",
  "bmc-widget-protocol",
+ "chrono",
+ "chrono-tz",
  "egui",
  "hex",
  "palette",
