@@ -94,6 +94,31 @@ pub fn primary(value: String, size: u32, value_color: Color) -> Node {
     )
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ValueSizes {
+    pub number: u32,
+    pub unit: u32,
+}
+
+/// A number in the value voice trailed by its unit — "56.20 USD/PH/Day".
+/// The unit takes the label's size and colour but keeps the number's weight:
+/// a span inherits its paragraph's, and a regular one inside semibold cannot be asked for.
+/// One paragraph, so the unit sits on the number's baseline;
+/// two nodes could not, `CrossAlign` having no baseline option.
+#[must_use]
+pub fn quantity(number: String, unit: &str, sizes: ValueSizes, value_color: Color) -> Node {
+    paragraph(
+        style!(size: sizes.number, weight: FontWeight::SEMIBOLD, color: value_color, line_height: 1.0, text_overflow: TextOverflow::Clip),
+        [
+            span(number, ()),
+            span(
+                fmt!(" {unit}"),
+                style!(size: sizes.unit, color: color::LABEL),
+            ),
+        ],
+    )
+}
+
 #[must_use]
 pub fn unavailable(size: u32) -> Node {
     text(
@@ -264,11 +289,6 @@ pub fn series_change_percent(series: &Series) -> Option<f64> {
     }
     let percent = (last / first - 1.0) * 100.0;
     percent.is_finite().then_some(percent)
-}
-
-#[must_use]
-pub fn money(value: f64, decimals: u32) -> String {
-    fmt!("{} USD", format_number!(value, decimals))
 }
 
 const COMPACT_UNITS: [(f64, &str); 4] = [

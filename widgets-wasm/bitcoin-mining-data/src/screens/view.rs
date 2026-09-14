@@ -44,8 +44,8 @@ pub struct ViewData {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum DisplayValue {
-    Value(String),
+enum DisplayValue<V = String> {
+    Value(V),
     Loading,
     Absent,
 }
@@ -60,10 +60,10 @@ impl DisplayValue {
     }
 }
 
-fn availability_value<T>(
+fn availability_value<T, V>(
     source: &Availability<T>,
-    render: impl FnOnce(&T) -> Option<String>,
-) -> DisplayValue {
+    render: impl FnOnce(&T) -> Option<V>,
+) -> DisplayValue<V> {
     match source {
         Availability::Available(value) => {
             render(value).map_or(DisplayValue::Absent, DisplayValue::Value)
@@ -73,20 +73,28 @@ fn availability_value<T>(
     }
 }
 
+struct Quantity {
+    number: String,
+    unit: String,
+}
+
 fn primary_value<T>(
     source: &Availability<T>,
-    render: impl FnOnce(&T) -> Option<String>,
-    size: u32,
+    render: impl FnOnce(&T) -> Option<Quantity>,
+    sizes: parts::ValueSizes,
 ) -> Node {
     let content = match availability_value(source, render) {
-        DisplayValue::Absent => parts::unavailable(size),
-        value => {
-            let (value, value_color) = value.into_text_and_color();
-            parts::primary(value, size, value_color)
+        DisplayValue::Value(Quantity { number, unit }) => {
+            parts::quantity(number, &unit, sizes, color::VALUE)
         }
+        DisplayValue::Loading => {
+            let (text, color) = DisplayValue::<String>::Loading.into_text_and_color();
+            parts::primary(text, sizes.number, color)
+        }
+        DisplayValue::Absent => parts::unavailable(sizes.number),
     };
     col(
-        props!(height: parts::font_height(size), justify_content: Justify::Center),
+        props!(height: parts::font_height(sizes.number), justify_content: Justify::Center),
         [content],
     )
 }
@@ -127,13 +135,22 @@ fn adjustment_sizes(bucket: SizeBucket) -> (u32, u32, u32) {
     }
 }
 
+/// A primary value's sizes: the unit takes the bucket's label size.
+fn value_sizes(bucket: SizeBucket, number: u32) -> parts::ValueSizes {
+    let (label_size, _, _) = adjustment_sizes(bucket);
+    parts::ValueSizes {
+        number,
+        unit: label_size,
+    }
+}
+
+fn deck_value_sizes(bucket: SizeBucket) -> parts::ValueSizes {
+    let number = if bucket == SizeBucket::Large { 48 } else { 32 };
+    value_sizes(bucket, number)
+}
+
 fn difficulty_panel(view: &ViewData, chart: Option<(f32, f32)>, show_previous: bool) -> Node {
     let stats = view.data.difficulty_stats.as_option().copied();
-    let value_size = if view.bucket == SizeBucket::Large {
-        48
-    } else {
-        32
-    };
     let (label_size, time_size, badge_size) = adjustment_sizes(view.bucket);
     let (previous_adjustment, previous_adjustment_color) =
         availability_value(&view.data.difficulty_stats, |stats| {
@@ -160,11 +177,12 @@ fn difficulty_panel(view: &ViewData, chart: Option<(f32, f32)>, show_previous: b
                 primary_value(
                     &view.data.difficulty_stats,
                     |stats| {
-                        stats
-                            .difficulty
-                            .map(|difficulty| fmt!("{} T", format_number!(difficulty / 1e12, 1)))
+                        stats.difficulty.map(|difficulty| Quantity {
+                            number: format_number!(difficulty / 1e12, 1),
+                            unit: "T".to_owned(),
+                        })
                     },
-                    value_size,
+                    deck_value_sizes(view.bucket),
                 ),
                 spacer(1.0),
                 parts::muted(if chart.is_some() { "1 year" } else { "" }, 24),
@@ -217,23 +235,15 @@ fn difficulty_panel(view: &ViewData, chart: Option<(f32, f32)>, show_previous: b
 }
 
 fn hashprice_panel(view: &ViewData) -> Node {
-    let value_size = if view.bucket == SizeBucket::Large {
-        48
-    } else {
-        32
-    };
     let value = primary_value(
         &view.data.hashrate_stats,
         |stats| {
-            stats.hashprice_per_th_day.map(|value| {
-                fmt!(
-                    "{} {}/PH/Day",
-                    parts::compact_number(value * TERAHASHES_PER_PETAHASH, 2),
-                    "USD"
-                )
+            stats.hashprice_per_th_day.map(|value| Quantity {
+                number: parts::compact_number(value * TERAHASHES_PER_PETAHASH, 2),
+                unit: "USD/PH/Day".to_owned(),
             })
         },
-        value_size,
+        deck_value_sizes(view.bucket),
     );
     col(
         props!(
@@ -270,8 +280,13 @@ fn price_panel(view: &ViewData, chart: Option<(f32, f32)>) -> Node {
             ),
             primary_value(
                 &view.data.price_stats,
-                |stats| stats.price.map(|price| parts::money(price, 0)),
-                32,
+                |stats| {
+                    stats.price.map(|price| Quantity {
+                        number: format_number!(price, 0),
+                        unit: "USD".to_owned(),
+                    })
+                },
+                value_sizes(view.bucket, 32),
             ),
         ],
     );
@@ -322,11 +337,13 @@ fn hashrate_panel(view: &ViewData) -> Node {
                 &view.data.hashrate_stats,
                 |stats| {
                     stats.current_ehs.map(|ehs| {
-                        Hashrate::from_terahashes_per_second(ehs * TERAHASHES_PER_EXAHASH)
-                            .format_si(4)
+                        let (number, unit) =
+                            Hashrate::from_terahashes_per_second(ehs * TERAHASHES_PER_EXAHASH)
+                                .format_si_parts(4);
+                        Quantity { number, unit }
                     })
                 },
-                32,
+                value_sizes(view.bucket, 32),
             ),
         ],
     );
@@ -510,7 +527,7 @@ mod tests {
         let loading: Availability<()> = Availability::Unavailable;
 
         assert_eq!(
-            availability_value(&loading, |_| None),
+            availability_value(&loading, |_| None::<String>),
             DisplayValue::Loading
         );
         assert_eq!(
@@ -526,6 +543,37 @@ mod tests {
         assert_eq!(
             availability_value(&failed, |_| None).into_text_and_color(),
             (parts::NOT_AVAILABLE.to_owned(), color::ABSENT)
+        );
+    }
+
+    #[test]
+    fn a_primary_value_sets_its_unit_apart_on_the_number_line() {
+        let sizes = parts::ValueSizes {
+            number: 40,
+            unit: 20,
+        };
+        let value = primary_value(
+            &Availability::Available(()),
+            |()| {
+                Some(Quantity {
+                    number: "56.20".to_owned(),
+                    unit: "USD/PH/Day".to_owned(),
+                })
+            },
+            sizes,
+        );
+
+        let Node::Column(_, content) = value else {
+            panic!("BUG: a primary value is boxed in a column");
+        };
+        let Some(Node::Paragraph { spans, .. }) = content.first() else {
+            panic!("BUG: a present value renders as one paragraph");
+        };
+        assert_eq!(spans.len(), 2);
+        assert_eq!((spans[0].text.as_str(), spans[0].size), ("56.20", None));
+        assert_eq!(
+            (spans[1].text.as_str(), spans[1].size, spans[1].color),
+            (" USD/PH/Day", Some(20), Some(color::LABEL))
         );
     }
 }

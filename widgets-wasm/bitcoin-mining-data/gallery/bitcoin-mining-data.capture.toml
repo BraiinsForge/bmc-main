@@ -103,6 +103,24 @@ Size = "Fullscreen"
 Numbers = "1 234.5"
 
 [[shot]]
+name = "extremes-medium"
+scene = "bmc_gallery::bitcoin_mining_data::Extremes"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "extremes-small"
+scene = "bmc_gallery::bitcoin_mining_data::Extremes"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+Numbers = "1 234.5"
+
+[[shot]]
 name = "unit-rollover-full"
 scene = "bmc_gallery::bitcoin_mining_data::Unit Rollover"
 frames = 24
