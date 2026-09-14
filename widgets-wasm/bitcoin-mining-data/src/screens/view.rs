@@ -225,9 +225,12 @@ fn difficulty_value(view: &ViewData, sizes: parts::ValueSizes) -> Node {
     primary_value(
         &view.data.difficulty_stats,
         |stats| {
-            stats.difficulty.map(|difficulty| Quantity {
-                number: format_number!(difficulty / 1e12, 1),
-                unit: "T".to_owned(),
+            stats.difficulty.map(|difficulty| {
+                let (number, unit) = parts::difficulty_parts(difficulty);
+                Quantity {
+                    number,
+                    unit: unit.to_owned(),
+                }
             })
         },
         sizes,

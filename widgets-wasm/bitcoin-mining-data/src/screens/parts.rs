@@ -348,31 +348,42 @@ const COMPACT_UNITS: [(f64, &str); 4] = [
     (1_000_000_000.0, "B"),
 ];
 
-#[must_use]
-pub fn compact_number(value: f64, decimals: u32) -> String {
+/// Difficulty is read in the tera band today; the next two keep it readable as it climbs.
+const DIFFICULTY_UNITS: [(f64, &str); 3] = [(1e12, "T"), (1e15, "P"), (1e18, "E")];
+
+/// `value` under the largest unit it reaches, promoting once more
+/// when rounding to `decimals` would show a thousand of the lower one.
+fn scaled(value: f64, decimals: u32, units: &[(f64, &'static str)]) -> (String, &'static str) {
     let magnitude = value.abs();
     let mut unit_index = 0;
-    for (index, (threshold, _)) in COMPACT_UNITS.iter().enumerate().skip(1) {
+    for (index, (threshold, _)) in units.iter().enumerate().skip(1) {
         if magnitude < *threshold {
             break;
         }
         unit_index = index;
     }
 
-    let mut scaled = value / COMPACT_UNITS[unit_index].0;
+    let mut scaled = value / units[unit_index].0;
     let decimal_scale = 10_f64
-        .powi(i32::try_from(decimals).expect("BUG: compact-number decimal precision fits i32"));
+        .powi(i32::try_from(decimals).expect("BUG: scaled-number decimal precision fits i32"));
     let rounded = (scaled * decimal_scale).round() / decimal_scale;
-    if rounded.abs() >= 1_000.0 && unit_index + 1 < COMPACT_UNITS.len() {
+    if rounded.abs() >= 1_000.0 && unit_index + 1 < units.len() {
         unit_index += 1;
-        scaled = value / COMPACT_UNITS[unit_index].0;
+        scaled = value / units[unit_index].0;
     }
 
-    fmt!(
-        "{}{}",
-        format_number!(scaled, decimals),
-        COMPACT_UNITS[unit_index].1
-    )
+    (format_number!(scaled, decimals), units[unit_index].1)
+}
+
+#[must_use]
+pub fn compact_number(value: f64, decimals: u32) -> String {
+    let (number, unit) = scaled(value, decimals, &COMPACT_UNITS);
+    fmt!("{number}{unit}")
+}
+
+#[must_use]
+pub fn difficulty_parts(difficulty: f64) -> (String, &'static str) {
+    scaled(difficulty, 1, &DIFFICULTY_UNITS)
 }
 
 #[must_use]
@@ -381,10 +392,14 @@ pub fn compact_revenue(value: f64) -> String {
     fmt!("{} USD", compact_number(value, decimals))
 }
 
+fn whole_days(seconds: u64) -> u64 {
+    seconds.saturating_add(HALF_DAY_SECS) / SECS_PER_DAY
+}
+
 #[must_use]
 pub fn relative_days(at: i64, now: i64) -> String {
     let seconds = at - now;
-    let days = seconds.unsigned_abs().saturating_add(HALF_DAY_SECS - 1) / SECS_PER_DAY;
+    let days = whole_days(seconds.unsigned_abs());
     if seconds >= 0 {
         fmt!("~ in {} days", days)
     } else {
@@ -394,7 +409,7 @@ pub fn relative_days(at: i64, now: i64) -> String {
 
 #[must_use]
 pub fn previous_adjustment_days(block: u64, block_time_secs: u64) -> String {
-    let days = block.saturating_mul(block_time_secs) / SECS_PER_DAY;
+    let days = whole_days(block.saturating_mul(block_time_secs));
     fmt!("{} days ago", days)
 }
 
@@ -537,8 +552,24 @@ mod tests {
     }
 
     #[test]
+    fn both_adjustment_rows_round_to_the_nearest_day() {
+        let half_day = i64::try_from(HALF_DAY_SECS).expect("BUG: half a day fits i64");
+        assert_eq!(relative_days(half_day, 0), "~ in 1 days");
+        assert_eq!(relative_days(half_day - 1, 0), "~ in 0 days");
+        assert_eq!(previous_adjustment_days(1, HALF_DAY_SECS), "1 days ago");
+        assert_eq!(previous_adjustment_days(1, HALF_DAY_SECS - 1), "0 days ago");
+    }
+
+    #[test]
     fn block_time_pads_both_components() {
         assert_eq!(duration_minutes(9 * 60 + 9), "09:09");
+    }
+
+    #[test]
+    fn difficulty_climbs_through_tera_peta_and_exa() {
+        assert_eq!(difficulty_parts(129.7e12).1, "T");
+        assert_eq!(difficulty_parts(999.96e12).1, "P");
+        assert_eq!(difficulty_parts(2.5e18).1, "E");
     }
 
     #[test]

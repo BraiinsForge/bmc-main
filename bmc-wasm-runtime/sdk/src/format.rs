@@ -132,15 +132,47 @@ pub fn _host_format_number(value: f64, decimals: u32) -> String {
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_si_parts(value: f64, sig_figs: u32, base_unit: &str) -> (String, String) {
-    let (mantissa, prefix) = match unit_prefix::NumberPrefix::decimal(value) {
-        unit_prefix::NumberPrefix::Standalone(m) => (m, ""),
-        unit_prefix::NumberPrefix::Prefixed(p, m) => (m, p.symbol()),
-    };
-    let value_str = _host_format_number(mantissa, si_decimals(mantissa, sig_figs));
+    let (mut mantissa, mut prefix) = si_split(value);
+    let mut decimals = si_decimals(mantissa, sig_figs);
+    // Rounding to those decimals can carry the mantissa to a thousand,
+    // which belongs to the next prefix — split again from the rounded value.
+    let rounded = round_to(mantissa, decimals);
+    if rounded.abs() >= 1_000.0 {
+        (mantissa, prefix) = si_split(rounded * si_magnitude(prefix));
+        decimals = si_decimals(mantissa, sig_figs);
+    }
+    let value_str = _host_format_number(mantissa, decimals);
     let mut unit = String::with_capacity(prefix.len() + base_unit.len());
     unit.push_str(prefix);
     unit.push_str(base_unit);
     (value_str, unit)
+}
+
+fn si_split(value: f64) -> (f64, &'static str) {
+    match unit_prefix::NumberPrefix::decimal(value) {
+        unit_prefix::NumberPrefix::Standalone(m) => (m, ""),
+        unit_prefix::NumberPrefix::Prefixed(p, m) => (m, p.symbol()),
+    }
+}
+
+fn si_magnitude(prefix: &str) -> f64 {
+    match prefix {
+        "k" => 1e3,
+        "M" => 1e6,
+        "G" => 1e9,
+        "T" => 1e12,
+        "P" => 1e15,
+        "E" => 1e18,
+        "Z" => 1e21,
+        "Y" => 1e24,
+        "" => 1.0,
+        _ => unreachable!("BUG: NumberPrefix::decimal hands out only k..Y"),
+    }
+}
+
+fn round_to(value: f64, decimals: u32) -> f64 {
+    let scale = 10_f64.powi(i32::try_from(decimals).expect("BUG: SI decimals fit i32"));
+    (value * scale).round() / scale
 }
 
 /// [`_host_format_si_parts`] joined into `"value unit"`, e.g. `"13.2 kW"`.
@@ -905,6 +937,31 @@ mod tests {
     #[test]
     fn f64_fixed_does_not_emit_negative_zero() {
         assert_eq!(format_f64_fixed(-0.001, 2), "0.00");
+    }
+}
+
+#[cfg(test)]
+mod si_carry_tests {
+    use super::{_host_format_number, _host_format_si_parts};
+
+    #[test]
+    fn a_mantissa_that_rounds_to_a_thousand_takes_the_next_prefix() {
+        assert_eq!(
+            _host_format_si_parts(999.99e18, 4, "H/s"),
+            (_host_format_number(1.0, 3), "ZH/s".to_owned())
+        );
+        assert_eq!(
+            _host_format_si_parts(999.96, 4, "W"),
+            (_host_format_number(1.0, 3), "kW".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_mantissa_that_rounds_short_of_a_thousand_keeps_its_prefix() {
+        assert_eq!(
+            _host_format_si_parts(999.94e18, 4, "H/s"),
+            (_host_format_number(999.9, 1), "EH/s".to_owned())
+        );
     }
 }
 
