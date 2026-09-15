@@ -40,7 +40,7 @@ use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::{BmcManager, BmcState, UpgradeMarker};
 use crate::secret_store::SecretStoreHandle;
 use crate::sound::SoundController;
-use crate::system_manager::SystemManager;
+use crate::system_manager::{ScreenRequest, SystemManager};
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget::{Coordinator, UpgradeWidgetLifecycle, WidgetManager, WidgetRegistry};
@@ -716,11 +716,12 @@ where
         led_controller.init(led_driver.command_sender.clone(), led_coordinator.clone());
         led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
 
-        let screen_activity = Arc::new(tokio::sync::Notify::new());
+        let (screen_request, _) = tokio::sync::watch::channel(ScreenRequest::Wake);
+        let screen_request_for_touch = screen_request.clone();
         let button_manager = ButtonManager::new(
             buttons,
             manager.clone(),
-            screen_activity.clone(),
+            screen_request.clone(),
             compositor.clone(),
             hardware_capabilities,
         );
@@ -734,7 +735,7 @@ where
             sound_controller.clone(),
             led_state_sender,
             manager.clone(),
-            screen_activity,
+            screen_request,
             alarm_ringing,
         )
         .await;
@@ -751,13 +752,12 @@ where
             compositor.clone(),
         ));
 
-        let screen_activity_for_touch = button_manager.screen_activity.clone();
         tokio::spawn(async move {
             let mut event_rx = compositor_for_events.subscribe_events();
             loop {
                 match event_rx.recv().await {
                     Ok(CompositorEvent::ScreenActivity) => {
-                        screen_activity_for_touch.notify_waiters();
+                        screen_request_for_touch.send_replace(ScreenRequest::Wake);
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(skipped = n, "compositor event receiver lagged");

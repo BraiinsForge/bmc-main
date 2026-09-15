@@ -86,7 +86,22 @@ deserves an answer either way.
 bmc sends it on a short press of the IP-report button (`ButtonId::IpReport`, `bmc/src/button_manager.rs`). The button
 arrives from the kernel as `BTN_0` and is handled wherever the kernel reports it; BMM100 and BMM101 are the products
 wired with one today. A release strictly under `BOSER_REPORT_IP_MAX_HOLD_DURATION` (1 s, boser's bound for sending the
-IP-report packet) becomes `broadcast_report_ip`. A longer hold does nothing.
+IP-report packet) becomes `broadcast_report_ip`.
+
+A hold that reaches `DISPLAY_OFF_MIN_HOLD_DURATION` (3 s) turns the display off the moment it gets there, while the
+button is still down, and never raises the address. The button loop arms a deadline on the press and acts on it ahead of
+the event stream, so a release landing in the same instant loses to the blank. Boser does nothing past its own 1 s
+bound, so the 3 s bound is the BMC application's alone. A release between the two bounds does nothing.
+
+Both outcomes travel on one `watch<ScreenRequest>` that `bmc/src/system_manager.rs` defines. Every handled press and
+every touch writes `ScreenRequest::Wake`; the hold overwrites it with `ScreenRequest::Blank` at the bound. Releases
+write nothing. `run_screen_auto_off` reads the current value at the top of each iteration and reconciles the panel
+toward it, which is why a request needs no acknowledgement and why a touch landing mid-blank is not lost: it can only be
+superseded by a later writer, never miss a reader that was busy. The blank holds until the next write of `Wake` rather
+than until a timeout, so the loop sits in `AutoOffMode::HoldDark` meanwhile. A ringing alarm refuses the request and
+overwrites it back to `Wake`, so it is not replayed when the ring stops; see [Night Mode](../../stories/night-mode.md).
+The blank resets the cycler to the first scene, but only night mode suspends cycling, so outside it the compositor keeps
+rendering scene transitions to a dark panel and the wake shows whatever scene cycling has reached.
 
 The address comes from the same connectivity prober the boot screens read. Its thread keeps publishing while the overlay
 is unmapped, and a publish that changed the content moves the snapshot version, so the poll on the press picks up

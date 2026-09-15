@@ -20,6 +20,7 @@
 // the grant above.
 
 mod auto_off_decision;
+mod auto_off_loop;
 mod local_time;
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};

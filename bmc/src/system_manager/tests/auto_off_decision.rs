@@ -21,14 +21,31 @@
 
 use std::time::Duration;
 
-use crate::system_manager::{AutoOffMode, MIN_SCREEN_OFF_TIMEOUT_SECS, auto_off_decision};
+use crate::system_manager::{
+    AutoOffInputs, AutoOffMode, MIN_SCREEN_OFF_TIMEOUT_SECS, ScreenRequest, auto_off_decision,
+};
+
+/// Night mode on with a minute's timeout, the panel lit and no alarm:
+/// the state the timer arms in, and the one every test below departs from.
+fn armed_night() -> AutoOffInputs {
+    AutoOffInputs {
+        night_mode_active: true,
+        alarm_ringing: false,
+        timeout_secs: Some(60),
+        request: ScreenRequest::Wake,
+        timer_blanked: false,
+    }
+}
 
 #[test]
 fn ringing_alarm_keeps_screen_on_even_with_night_mode_timeout() {
     // The acceptance criterion: an active alarm must never let the screen
     // auto-off, regardless of night mode or a configured timeout.
     assert_eq!(
-        auto_off_decision(true, true, Some(60)),
+        auto_off_decision(AutoOffInputs {
+            alarm_ringing: true,
+            ..armed_night()
+        }),
         AutoOffMode::KeepOn,
         "ringing alarm must inhibit auto-off"
     );
@@ -37,7 +54,7 @@ fn ringing_alarm_keeps_screen_on_even_with_night_mode_timeout() {
 #[test]
 fn night_mode_with_timeout_arms_timer_when_not_ringing() {
     assert_eq!(
-        auto_off_decision(true, false, Some(60)),
+        auto_off_decision(armed_night()),
         AutoOffMode::ArmTimer(Duration::from_mins(1))
     );
 }
@@ -45,7 +62,10 @@ fn night_mode_with_timeout_arms_timer_when_not_ringing() {
 #[test]
 fn timeout_below_minimum_is_clamped() {
     assert_eq!(
-        auto_off_decision(true, false, Some(1)),
+        auto_off_decision(AutoOffInputs {
+            timeout_secs: Some(1),
+            ..armed_night()
+        }),
         AutoOffMode::ArmTimer(Duration::from_secs(u64::from(MIN_SCREEN_OFF_TIMEOUT_SECS)))
     );
 }
@@ -53,9 +73,114 @@ fn timeout_below_minimum_is_clamped() {
 #[test]
 fn no_night_mode_or_no_timeout_keeps_screen_on() {
     assert_eq!(
-        auto_off_decision(false, false, Some(60)),
+        auto_off_decision(AutoOffInputs {
+            night_mode_active: false,
+            ..armed_night()
+        }),
         AutoOffMode::KeepOn
     );
-    assert_eq!(auto_off_decision(true, false, Some(0)), AutoOffMode::KeepOn);
-    assert_eq!(auto_off_decision(true, false, None), AutoOffMode::KeepOn);
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            timeout_secs: Some(0),
+            ..armed_night()
+        }),
+        AutoOffMode::KeepOn,
+        "a zero persisted before the setter mapped it to None still means Never"
+    );
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            timeout_secs: None,
+            ..armed_night()
+        }),
+        AutoOffMode::KeepOn
+    );
+}
+
+#[test]
+fn a_user_blank_holds_dark_outside_night_mode() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            night_mode_active: false,
+            timeout_secs: None,
+            request: ScreenRequest::Blank,
+            ..armed_night()
+        }),
+        AutoOffMode::HoldDark,
+        "the KeepOn wake would undo the blank the user asked for"
+    );
+}
+
+#[test]
+fn a_user_blank_holds_dark_over_the_auto_off_timer() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            request: ScreenRequest::Blank,
+            ..armed_night()
+        }),
+        AutoOffMode::HoldDark
+    );
+}
+
+#[test]
+fn a_ringing_alarm_overrides_a_user_blank() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            night_mode_active: false,
+            alarm_ringing: true,
+            timeout_secs: None,
+            request: ScreenRequest::Blank,
+            ..armed_night()
+        }),
+        AutoOffMode::KeepOn,
+        "a firing alarm must never sit on a panel the user blanked"
+    );
+}
+
+#[test]
+fn the_timers_own_blank_holds_dark_while_night_mode_lasts() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            timer_blanked: true,
+            ..armed_night()
+        }),
+        AutoOffMode::HoldDark,
+        "re-arming the timer would blank an already dark panel every timeout"
+    );
+}
+
+#[test]
+fn the_timers_own_blank_does_not_outlive_night_mode() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            night_mode_active: false,
+            timer_blanked: true,
+            ..armed_night()
+        }),
+        AutoOffMode::KeepOn
+    );
+}
+
+#[test]
+fn a_timeout_of_never_ends_the_timers_own_blank() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            timeout_secs: None,
+            timer_blanked: true,
+            ..armed_night()
+        }),
+        AutoOffMode::KeepOn,
+        "the story promises that Never keeps the screen on during night mode"
+    );
+}
+
+#[test]
+fn a_ringing_alarm_overrides_the_timers_own_blank() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            alarm_ringing: true,
+            timer_blanked: true,
+            ..armed_night()
+        }),
+        AutoOffMode::KeepOn
+    );
 }

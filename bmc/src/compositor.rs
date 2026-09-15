@@ -573,7 +573,7 @@ pub trait Compositor: Send + Sync {
     fn shutdown(&self) -> Result<(), CompositorError>;
 }
 
-/// Reset the cycler to the first scene each time auto-off blanks the panel, so
+/// Reset the cycler to the first scene each time the panel is blanked, so
 /// the frame is already on glass when the backlight returns.
 pub(crate) async fn run_screen_blank_reset_task(
     mut screen_blanked_rx: broadcast::Receiver<()>,

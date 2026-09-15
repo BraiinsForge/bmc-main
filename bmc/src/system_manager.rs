@@ -61,30 +61,70 @@ const BOOTLOADER_SYNC_INTERVAL: Duration = Duration::from_hours(1); // 1 hour
 const BOOTLOADER_SYNC_DEBOUNCE: Duration = Duration::from_secs(5);
 const MIN_SCREEN_OFF_TIMEOUT_SECS: u32 = 5;
 
+/// What the user last asked the screen to do.
+///
+/// A level rather than an edge, carried on a `watch`:
+/// a writer can only be superseded by a later writer, never lost to a reader that was busy.
+/// The auto-off loop reconciles toward it every pass instead of consuming it,
+/// so a request needs no acknowledgement and re-applying one costs nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScreenRequest {
+    /// The user interacted with the device, or an alarm refused a `Blank`;
+    /// either way the panel belongs lit.
+    Wake,
+    /// The user asked for the panel dark, and it holds until they come back.
+    Blank,
+}
+
 /// What `run_screen_auto_off` should do for the current state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AutoOffMode {
-    /// Keep the backlight on and wait for a state change.
+    /// The backlight stays on: nothing asks for a blank,
+    /// or an alarm is ringing and refuses one so the firing-alarm UI never sits on a dark panel.
     KeepOn,
-    /// Night mode is active with a timeout and nothing is inhibiting: arm the
-    /// auto-off timer for this long.
+    /// The panel is dark and held there: the loop neither wakes it nor arms the timer.
+    HoldDark,
+    /// Night mode is active with a timeout and nothing inhibits:
+    /// arm the auto-off timer for this long.
     ArmTimer(Duration),
 }
 
-/// Decide screen auto-off behavior for one loop iteration. A ringing alarm
-/// always keeps the screen on, so the firing-alarm UI is never left on a blank
-/// display; otherwise the screen only auto-offs while night mode is active with
-/// a configured timeout.
-fn auto_off_decision(
+/// What the auto-off loop knows at the top of a pass.
+#[derive(Debug, Clone, Copy)]
+struct AutoOffInputs {
     night_mode_active: bool,
     alarm_ringing: bool,
     timeout_secs: Option<u32>,
-) -> AutoOffMode {
-    let Some(timeout_secs) = timeout_secs else {
+    request: ScreenRequest,
+    /// The loop's own blank rather than the user's,
+    /// which is why it is not a [`ScreenRequest`]: it must not outlive what armed the timer.
+    timer_blanked: bool,
+}
+
+/// Decide what the auto-off loop does this pass.
+fn auto_off_decision(inputs: AutoOffInputs) -> AutoOffMode {
+    let AutoOffInputs {
+        night_mode_active,
+        alarm_ringing,
+        timeout_secs,
+        request,
+        timer_blanked,
+    } = inputs;
+    if alarm_ringing {
+        return AutoOffMode::KeepOn;
+    }
+    if request == ScreenRequest::Blank {
+        return AutoOffMode::HoldDark;
+    }
+    // A persisted zero predates the gRPC setter mapping it to `None`.
+    let Some(timeout_secs) = timeout_secs.filter(|secs| *secs > 0) else {
         return AutoOffMode::KeepOn;
     };
-    if alarm_ringing || !night_mode_active || timeout_secs == 0 {
+    if !night_mode_active {
         return AutoOffMode::KeepOn;
+    }
+    if timer_blanked {
+        return AutoOffMode::HoldDark;
     }
     let clamped = timeout_secs.max(MIN_SCREEN_OFF_TIMEOUT_SECS);
     AutoOffMode::ArmTimer(Duration::from_secs(u64::from(clamped)))
@@ -99,7 +139,6 @@ pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     sound_volume_modified: Arc<Notify>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     led_state_modified: Arc<Notify>,
-    screen_activity: Arc<Notify>,
     screen_blanked_tx: broadcast::Sender<()>,
 }
 
@@ -113,7 +152,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         sound_controller: SoundController,
         led_state_sender: watch::Sender<LedState>,
         manager: Arc<M>,
-        screen_activity: Arc<Notify>,
+        screen_request: watch::Sender<ScreenRequest>,
         alarm_ringing: watch::Receiver<bool>,
     ) -> Self {
         let backlight_controller =
@@ -167,7 +206,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             backlight_controller.clone(),
             night_mode_controller.clone(),
             brightness_modified.clone(),
-            screen_activity.clone(),
+            screen_request,
             timeout_changed,
             screen_blanked_tx.clone(),
             alarm_ringing,
@@ -181,7 +220,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             sound_volume_modified,
             config_handle,
             led_state_modified,
-            screen_activity,
             screen_blanked_tx,
         }
     }
@@ -315,114 +353,169 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         backlight_controller: DisplayBacklightController<T>,
         night_mode_controller: NightModeController,
         brightness_modified: Arc<Notify>,
-        screen_activity: Arc<Notify>,
+        screen_request: watch::Sender<ScreenRequest>,
         mut timeout_changed: broadcast::Receiver<Option<u32>>,
         screen_blanked_tx: broadcast::Sender<()>,
         mut alarm_ringing: watch::Receiver<bool>,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
+        let mut screen_request_rx = screen_request.subscribe();
+        let mut timer_blanked = false;
 
         loop {
             let night_mode_active = *night_mode_receiver.borrow_and_update();
-            let alarm_ringing_now = *alarm_ringing.borrow_and_update();
             let timeout_secs = night_mode_controller.config().await.screen_off_timeout_secs;
+            // Sampled after the timeout read, the pass's one await, and next
+            // to the request: the refusal below judges the request against
+            // the alarm as it is now, not as it was before a config save.
+            let alarm_ringing_now = *alarm_ringing.borrow_and_update();
+            // `borrow`, not `borrow_and_update`: only the `changed()` arm
+            // below marks a request seen, so a write landing anywhere in
+            // this pass, the blank included, still gets a pass of its own.
+            let request = *screen_request_rx.borrow();
 
-            match auto_off_decision(night_mode_active, alarm_ringing_now, timeout_secs) {
-                AutoOffMode::KeepOn => {
-                    // Not in night mode, no timeout set, or an alarm is ringing —
-                    // a firing alarm must never sit on a blank screen, so wake it
-                    // if off and hold here until some state changes.
-                    if Self::is_screen_dark(&backlight_controller).await {
-                        Self::wake_screen(&backlight_controller, &brightness_modified).await;
+            let mode = auto_off_decision(AutoOffInputs {
+                night_mode_active,
+                alarm_ringing: alarm_ringing_now,
+                timeout_secs,
+                request,
+                timer_blanked,
+            });
+
+            if alarm_ringing_now && request == ScreenRequest::Blank {
+                // Overwritten rather than remembered as handled:
+                // a request left standing blanks the panel the moment the alarm stops.
+                // Only the `Blank` seen above is overwritten; a `Wake` that
+                // landed since already says what the refusal would.
+                let refused = screen_request.send_if_modified(|request| {
+                    if *request == ScreenRequest::Blank {
+                        *request = ScreenRequest::Wake;
+                        true
+                    } else {
+                        false
                     }
+                });
+                if refused {
+                    info!("Alarm ringing: dropping the display-off request, the panel stays lit");
+                }
+            }
 
-                    tokio::select! {
-                        biased;
-                        result = night_mode_receiver.changed() => {
-                            if result.is_err() { break; }
-                        },
-                        result = alarm_ringing.changed() => {
-                            if result.is_err() { break; }
-                        },
-                        Ok(_) = timeout_changed.recv() => {},
+            match mode {
+                AutoOffMode::KeepOn | AutoOffMode::ArmTimer(_) => {
+                    // Whatever lit the panel ended the timer's blank; left standing,
+                    // the flag would re-blank it the moment that cause went away.
+                    timer_blanked = false;
+                    if Self::wake_if_dark(&backlight_controller, &brightness_modified).await {
+                        info!("Screen woken");
                     }
                 }
-                AutoOffMode::ArmTimer(timeout) => {
-                    tokio::select! {
-                        biased;
-                        result = night_mode_receiver.changed() => {
-                            if result.is_err() { break; }
-                        },
-                        // A ring starting mid-countdown pre-empts the blank: the
-                        // next iteration decides `KeepOn` and wakes the screen.
-                        result = alarm_ringing.changed() => {
-                            if result.is_err() { break; }
-                        },
-                        () = screen_activity.notified() => {
-                            // User activity — wake screen if off; timer restarts
-                            // on the next loop iteration.
-                            if Self::is_screen_dark(&backlight_controller).await {
-                                Self::wake_screen(&backlight_controller, &brightness_modified).await;
-                                info!("Screen woken by user activity");
-                            }
-                        },
-                        Ok(_) = timeout_changed.recv() => {},
-                        () = tokio::time::sleep(timeout) => {
-                            // Timeout expired — turn off screen.
-                            // Sequence: brightness→0, then power off pin
-                            // to avoid a visible flash from the kernel backlight driver.
-                            if !Self::is_screen_dark(&backlight_controller).await {
-                                if let Err(err) = backlight_controller.set_display_brightness(0).await {
-                                    warn!(error = %err, "Failed to zero brightness for auto-off");
-                                }
-                                if let Err(err) = backlight_controller.turn_off().await {
-                                    warn!(error = %err, "Failed to turn off backlight for auto-off");
-                                }
+                AutoOffMode::HoldDark => {
+                    let cause = match request {
+                        ScreenRequest::Blank => "button hold",
+                        ScreenRequest::Wake => "auto-off timeout",
+                    };
+                    Self::blank_screen(&backlight_controller, &screen_blanked_tx, cause).await;
+                }
+            }
 
-                                // Announce the blank only once the panel is
-                                // confirmed dark — the scene-0 reset is a
-                                // visible jump on a screen that stayed lit.
-                                // A failed write needs no rollback: the panel
-                                // is still visible, so the next timeout tries
-                                // again and any touch meanwhile wakes it.
-                                if Self::is_screen_dark(&backlight_controller).await {
-                                    if let Err(err) = screen_blanked_tx.send(()) {
-                                        warn!(error = %err, "No screen-blanked subscriber; scene reset skipped");
-                                    }
-                                    info!(timeout_secs = timeout.as_secs(), "Screen auto-off activated");
-                                } else {
-                                    warn!("Screen auto-off left the panel visible; retrying at the next timeout");
-                                }
-                            }
-                        },
+            let auto_off_timer = async {
+                match mode {
+                    AutoOffMode::ArmTimer(timeout) => tokio::time::sleep(timeout).await,
+                    AutoOffMode::KeepOn | AutoOffMode::HoldDark => {
+                        std::future::pending::<()>().await;
                     }
                 }
+            };
+
+            tokio::select! {
+                biased;
+                result = night_mode_receiver.changed() => {
+                    if result.is_err() { break; }
+                },
+                // A ring starting mid-countdown pre-empts the blank: the next
+                // iteration decides `KeepOn` and wakes the screen.
+                result = alarm_ringing.changed() => {
+                    if result.is_err() { break; }
+                },
+                result = screen_request_rx.changed() => {
+                    result.expect("BUG: the auto-off loop owns the screen-request sender");
+                    // Every write ends the timer's blank, even `Wake` over
+                    // `Wake`. The loop's own refusal write lands here too and
+                    // costs one idle pass; a ringing alarm decides `KeepOn` anyway.
+                    timer_blanked = false;
+                },
+                Ok(_) = timeout_changed.recv() => {},
+                () = auto_off_timer => {
+                    // A panel left visible gets another try at the next timeout;
+                    // any touch meanwhile wakes it.
+                    timer_blanked = Self::blank_screen(
+                        &backlight_controller,
+                        &screen_blanked_tx,
+                        "auto-off timeout",
+                    ).await;
+                },
             }
         }
     }
 
-    /// Wake the screen from auto-off: power on the backlight and restore
-    /// brightness. Scene 0 is already on glass — a `screen_blanked` subscriber
-    /// reset to it when the screen was powered off — so the panel can light
-    /// immediately without exposing a stale scene.
+    /// Blank the panel and report whether it is dark afterwards.
+    /// An already dark panel is left alone.
     ///
-    /// Emits nothing. Cycling stays suspended until night mode ends, and the
-    /// night-mode listener owns that transition.
-    async fn wake_screen(
+    /// Brightness goes to zero before the power pin,
+    /// so the kernel backlight driver does not flash.
+    /// The blank is announced on `screen_blanked_tx` only once the panel is confirmed dark:
+    /// the scene-0 reset is a visible jump on a screen that stayed lit.
+    /// A failed write needs no rollback: the panel is still visible,
+    /// so a retry is only ever a repeat of this call.
+    async fn blank_screen(
+        backlight_controller: &DisplayBacklightController<T>,
+        screen_blanked_tx: &broadcast::Sender<()>,
+        cause: &'static str,
+    ) -> bool {
+        if Self::is_screen_dark(backlight_controller).await {
+            return true;
+        }
+        if let Err(err) = backlight_controller.set_display_brightness(0).await {
+            warn!(error = %err, cause, "Failed to zero brightness for the blank");
+        }
+        if let Err(err) = backlight_controller.turn_off().await {
+            warn!(error = %err, cause, "Failed to turn off the backlight for the blank");
+        }
+        if !Self::is_screen_dark(backlight_controller).await {
+            warn!(cause, "Screen blank left the panel visible");
+            return false;
+        }
+        if let Err(err) = screen_blanked_tx.send(()) {
+            warn!(error = %err, "No screen-blanked subscriber; scene reset skipped");
+        }
+        info!(cause, "Screen blanked");
+        true
+    }
+
+    /// Wake a dark panel and report whether it woke one, so a caller can log
+    /// the wake without claiming one that never happened. A lit panel is left
+    /// alone.
+    ///
+    /// Power comes on before brightness is restored, the reverse of the blank,
+    /// so the kernel backlight driver never flashes. Scene 0 is already on
+    /// glass, a `screen_blanked` subscriber reset to it when the panel went
+    /// dark, so the panel can light at once without exposing a stale scene.
+    ///
+    /// Emits nothing about cycling. During night mode the night-mode listener
+    /// holds it suspended and owns the transition back; outside night mode
+    /// it was never suspended and carries on from the first scene.
+    async fn wake_if_dark(
         backlight_controller: &DisplayBacklightController<T>,
         brightness_modified: &Arc<Notify>,
-    ) {
-        // Sequence: power on → restore brightness
-        // (reverse of turn-off to avoid flash)
+    ) -> bool {
+        if !Self::is_screen_dark(backlight_controller).await {
+            return false;
+        }
         if let Err(err) = backlight_controller.turn_on().await {
             warn!(error = %err, "Failed to turn on backlight on wake");
         }
         brightness_modified.notify_waiters();
-    }
-
-    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
-    pub(crate) fn notify_screen_activity(&self) {
-        self.screen_activity.notify_waiters();
+        true
     }
 
     pub(crate) async fn set_night_mode_screen_off_timeout(
