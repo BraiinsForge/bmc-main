@@ -29,7 +29,7 @@
 mod icons;
 mod ui;
 
-pub use ui::{DeviceInfoRenderState, DeviceInfoView, render_device_info};
+pub use ui::{DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info};
 
 use bmc_platform::BmcInfo;
 use std::net::Ipv4Addr;
@@ -37,8 +37,9 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DeviceState, Layer, LayerConfig, SetupStep, SnapshotVersion, SystemOverlay,
-    TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot, UpgradeState, VersionedSnapshot,
+    AccessPoint, DeviceState, Layer, LayerConfig, PlatformCaps, SetupStep, SnapshotVersion,
+    SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot, UpgradeState,
+    VersionedSnapshot,
 };
 
 /// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
@@ -344,6 +345,10 @@ pub struct DeviceInfoOverlay {
     device_name: &'static str,
     /// Whether this is a mining product; picks the device artwork.
     miner: bool,
+    /// Which uplinks the board has,
+    /// so a screen waiting on a connection can tell a Wi-Fi join from a cable,
+    /// and a board without Wi-Fi is never asked to join one.
+    uplinks: Uplinks,
     env: Box<dyn Env>,
 }
 
@@ -380,6 +385,9 @@ impl Default for DeviceInfoOverlay {
                     .capabilities()
                     .mining_supported
             }),
+            // Until the compositor says otherwise the screens read as the
+            // Deck's, which they were written for.
+            uplinks: Uplinks::WIFI_ONLY,
             env: Box::new(OsEnv),
         }
     }
@@ -397,6 +405,18 @@ impl DeviceInfoOverlay {
         self.target_ssid
             .clone()
             .or_else(|| self.station_ssid.clone())
+    }
+
+    /// What a screen waiting on a connection is waiting for.
+    /// A Wi-Fi join is under way when the board has Wi-Fi and a network to name;
+    /// otherwise a board with an ethernet port waits on its cable.
+    /// A board without one has nothing else to wait on, so it always reads as Wi-Fi.
+    fn link_for(&self, ssid: Option<String>) -> Link {
+        if self.uplinks.ethernet && !(self.uplinks.wifi && ssid.is_some()) {
+            Link::Cable
+        } else {
+            Link::Wifi { ssid }
+        }
     }
 
     /// Whether the current fatal screen can be sent away,
@@ -418,17 +438,18 @@ impl DeviceInfoOverlay {
             Screen::Hidden | Screen::Done => DeviceInfoView::Done,
             Screen::SetupStart => DeviceInfoView::SetupStart {
                 ap: self.ap.clone(),
+                uplinks: self.uplinks,
             },
             Screen::SetupSwitching => DeviceInfoView::TurningApOff,
             Screen::SetupConnecting => DeviceInfoView::SetupConnecting {
-                ssid: self.setup_ssid(),
+                link: self.link_for(self.setup_ssid()),
             },
             Screen::SetupConnected { .. } => DeviceInfoView::SetupConnected {
                 ssid: self.setup_ssid(),
             },
             Screen::SetupConnectInfo { ip } => DeviceInfoView::SetupConnectInfo {
                 ip,
-                ssid: self.setup_ssid(),
+                link: self.link_for(self.setup_ssid()),
             },
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
             Screen::SetupError => DeviceInfoView::SetupError,
@@ -438,11 +459,11 @@ impl DeviceInfoOverlay {
             },
             Screen::OpUpgraded { .. } => DeviceInfoView::UpgradeSuccess,
             Screen::OpConnecting { .. } => DeviceInfoView::Connecting {
-                ssid: self.station_ssid.clone(),
+                link: self.link_for(self.station_ssid.clone()),
             },
             Screen::OpSuccess { ip, .. } => DeviceInfoView::Success { ip },
             Screen::OpFailed { .. } => DeviceInfoView::Failed {
-                ssid: self.station_ssid.clone(),
+                link: self.link_for(self.station_ssid.clone()),
             },
         }
     }
@@ -482,6 +503,18 @@ impl SystemOverlay for DeviceInfoOverlay {
 
     fn uses_device_info(&self) -> bool {
         true
+    }
+
+    fn uses_platform(&self) -> bool {
+        true
+    }
+
+    fn on_platform_capabilities(&mut self, caps: PlatformCaps) {
+        self.uplinks = Uplinks {
+            wifi: caps.wifi,
+            ethernet: caps.ethernet,
+        };
+        self.dirty = true;
     }
 
     fn prewarm(&mut self, renderer: &mut dyn Renderer) {
@@ -755,7 +788,7 @@ mod tests {
 
     #[test]
     fn a_failed_join_leaves_no_ssid_behind() {
-        let mut overlay = overlay_with_ip(None);
+        let mut overlay = wired_board(BOTH, None);
         overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
         overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
@@ -767,9 +800,104 @@ mod tests {
         overlay.on_device_state(DeviceState::SetupPending, false);
         assert_eq!(
             overlay.view(),
-            DeviceInfoView::SetupConnecting { ssid: None },
+            DeviceInfoView::SetupConnecting { link: Link::Cable },
             "the network the join gave up on must not be named again"
         );
+    }
+
+    const BOTH: Uplinks = Uplinks {
+        wifi: true,
+        ethernet: true,
+    };
+    const CABLE_ONLY: Uplinks = Uplinks {
+        wifi: false,
+        ethernet: true,
+    };
+
+    /// The compositor's platform event for a board with these uplinks.
+    fn platform_with(uplinks: Uplinks) -> PlatformCaps {
+        PlatformCaps {
+            wifi: uplinks.wifi,
+            ethernet: uplinks.ethernet,
+            ..PlatformCaps::default()
+        }
+    }
+
+    fn wired_board(uplinks: Uplinks, ip: Option<Ipv4Addr>) -> DeviceInfoOverlay {
+        let mut overlay = overlay_with_ip(ip);
+        overlay.on_platform_capabilities(platform_with(uplinks));
+        overlay
+    }
+
+    #[test]
+    fn a_board_reads_as_the_deck_until_the_compositor_says_otherwise() {
+        let overlay = DeviceInfoOverlay::default();
+        assert_eq!(overlay.uplinks, Uplinks::WIFI_ONLY);
+    }
+
+    #[test]
+    fn the_platform_capabilities_name_the_uplinks() {
+        let mut overlay = DeviceInfoOverlay::default();
+        overlay.on_platform_capabilities(platform_with(CABLE_ONLY));
+        assert_eq!(overlay.uplinks, CABLE_ONLY);
+        assert!(overlay.dirty, "a change of wording is a change of content");
+    }
+
+    #[test]
+    fn an_ethernet_only_setup_pending_boot_waits_on_its_cable() {
+        let mut overlay = wired_board(CABLE_ONLY, None);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnecting { link: Link::Cable }
+        );
+    }
+
+    #[test]
+    fn a_wifi_less_board_asks_for_a_cable_while_the_ap_is_pending() {
+        let mut overlay = wired_board(CABLE_ONLY, None);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupStart {
+                ap: None,
+                uplinks: CABLE_ONLY,
+            }
+        );
+    }
+
+    #[test]
+    fn a_join_in_flight_keeps_the_wifi_wording_on_a_wired_board() {
+        let mut overlay = wired_board(BOTH, None);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnecting {
+                link: Link::Wifi {
+                    ssid: Some("HomeNet".to_owned())
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn a_wired_board_with_no_station_configured_waits_on_its_cable() {
+        let mut overlay = wired_board(BOTH, None);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnecting { link: Link::Cable }
+        );
+    }
+
+    #[test]
+    fn the_button_reports_no_network_on_an_unplugged_wired_board() {
+        let mut overlay = dismissed_operational(None);
+        overlay.on_platform_capabilities(platform_with(CABLE_ONLY));
+        overlay.on_report_ip();
+        let _ = overlay.tick(t0());
+        assert_eq!(overlay.view(), DeviceInfoView::Failed { link: Link::Cable });
     }
 
     #[test]
@@ -876,7 +1004,8 @@ mod tests {
         assert_eq!(
             overlay.view(),
             DeviceInfoView::SetupStart {
-                ap: Some(setup_ap())
+                ap: Some(setup_ap()),
+                uplinks: Uplinks::WIFI_ONLY,
             }
         );
 
@@ -908,7 +1037,9 @@ mod tests {
             overlay.view(),
             DeviceInfoView::SetupConnectInfo {
                 ip: Some(Ipv4Addr::new(10, 0, 0, 5)),
-                ssid: Some("HomeNet".to_owned()),
+                link: Link::Wifi {
+                    ssid: Some("HomeNet".to_owned())
+                },
             }
         );
 
@@ -927,14 +1058,18 @@ mod tests {
         assert_eq!(
             overlay.view(),
             DeviceInfoView::SetupConnecting {
-                ssid: Some("HomeNet".to_owned())
+                link: Link::Wifi {
+                    ssid: Some("HomeNet".to_owned())
+                }
             }
         );
 
         overlay.screen = Screen::OpConnecting { since: t0() };
         assert_eq!(
             overlay.view(),
-            DeviceInfoView::Connecting { ssid: None },
+            DeviceInfoView::Connecting {
+                link: Link::Wifi { ssid: None }
+            },
             "the stale target must not survive into the connect screen"
         );
     }
@@ -1060,7 +1195,8 @@ mod tests {
             assert_eq!(
                 overlay.view(),
                 DeviceInfoView::SetupStart {
-                    ap: Some(setup_ap())
+                    ap: Some(setup_ap()),
+                    uplinks: Uplinks::WIFI_ONLY,
                 },
                 "success first: {success_first}"
             );
@@ -1550,7 +1686,12 @@ mod tests {
         overlay.on_report_ip();
         let _ = overlay.tick(t0());
 
-        assert_eq!(overlay.view(), DeviceInfoView::Failed { ssid: None });
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::Failed {
+                link: Link::Wifi { ssid: None }
+            }
+        );
     }
 
     #[test]

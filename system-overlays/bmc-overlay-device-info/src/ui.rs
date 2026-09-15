@@ -36,28 +36,54 @@ use bmc_wasm_protocol::{CrossAlign, Fill, GRAY_60, Justify, PropsData, TRANSPARE
 
 use crate::icons::{DeviceInfoIcons, Icon};
 
+/// Which uplinks the board offers, as far as the screens care.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Uplinks {
+    pub wifi: bool,
+    pub ethernet: bool,
+}
+
+impl Uplinks {
+    /// The Deck: what the screens were written for,
+    /// and what a board that cannot say what it has is taken to be.
+    pub const WIFI_ONLY: Self = Self {
+        wifi: true,
+        ethernet: false,
+    };
+}
+
+/// The connection a screen waits on or reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Link {
+    /// A Wi-Fi join, in flight or configured; the SSID once it is known.
+    Wifi { ssid: Option<String> },
+    /// No Wi-Fi join is under way: the device waits on its ethernet port.
+    Cable,
+}
+
 /// What the overlay shows, derived from the FSM. Pure data so the gallery can
 /// render every screen without a compositor or prober.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceInfoView {
     /// First-boot / reconfiguration AP screen; `None` while the AP is still
-    /// coming up.
+    /// coming up, when `uplinks` decides what the user is told to do instead.
     SetupStart {
         ap: Option<AccessPoint>,
+        uplinks: Uplinks,
     },
     SetupConnecting {
-        ssid: Option<String>,
+        link: Link,
     },
     TurningApOff,
     SetupConnected {
         ssid: Option<String>,
     },
     /// Setup connect-info: the device address as text and QR. `ip` is `None`
-    /// while the station address is still being assigned, and the screen falls
-    /// back to the connect progress for `ssid`.
+    /// while the address is still being assigned, and the screen falls
+    /// back to the connect progress for `link`.
     SetupConnectInfo {
         ip: Option<Ipv4Addr>,
-        ssid: Option<String>,
+        link: Link,
     },
     SetupCompleted,
     SetupError,
@@ -74,14 +100,14 @@ pub enum DeviceInfoView {
     UpgradeSuccess,
     /// Operational-boot connect progress.
     Connecting {
-        ssid: Option<String>,
+        link: Link,
     },
     /// Operational-boot connect info.
     Success {
         ip: Ipv4Addr,
     },
     Failed {
-        ssid: Option<String>,
+        link: Link,
     },
     /// Renders nothing (unmapped).
     Done,
@@ -127,6 +153,14 @@ const SETUP_AP_PENDING_TITLE: &str = "Starting setup Wi-Fi...";
 /// Shared by the setup flow's two connect-progress screens and the operational
 /// one, so the wording cannot drift between the flows.
 const CONNECTING_TITLE: &str = "Connecting to Wi-Fi...";
+/// The same screens where no Wi-Fi join is under way.
+const CONNECTING_CABLE_TITLE: &str = "Connecting to network...";
+const WAITING_FOR_IP: &str = "Waiting for IP address";
+/// What a board with an ethernet port is told while its setup AP is not up.
+const CABLE_HINT: &str = "or connect the Ethernet cable";
+const CONNECT_CABLE_TITLE: &str = "Connect the Ethernet cable";
+const NO_NETWORK_TITLE: &str = "No network connection";
+const CHECK_CABLE: &str = "Check the Ethernet cable";
 const UPGRADE_SUCCESS_TITLE: &str = "Update Finished";
 /// Shared by both setup-failure screens, which differ only in what follows.
 const SETUP_FATAL_TITLE: &str = "Problem Occurred";
@@ -734,45 +768,78 @@ fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &st
     )
 }
 
-/// The setup flow's connect progress: shown while joining the chosen network,
-/// and again while its station address is still pending.
-fn setup_connecting_tree(tier: Tier, wifi: Icon, ssid: Option<&str>) -> TreeNode {
-    template_tree(
-        tier,
-        Justify::Start,
-        true,
-        wifi,
-        CONNECTING_TITLE,
-        ssid_lines(tier, ssid),
-    )
+/// Icon, title and detail lines of a connect-progress screen for `link`.
+fn connecting_parts(
+    tier: Tier,
+    icons: DeviceInfoIcons,
+    device_icon: Icon,
+    link: &Link,
+) -> (Icon, &'static str, Vec<TreeNode>) {
+    match link {
+        Link::Wifi { ssid } => (
+            icons.wifi,
+            CONNECTING_TITLE,
+            ssid_lines(tier, ssid.as_deref()),
+        ),
+        Link::Cable => (device_icon, CONNECTING_CABLE_TITLE, Vec::new()),
+    }
 }
 
-/// First-boot / reconfiguration AP screen; the pending variant shows while
-/// the AP is still coming up.
+/// The setup flow's connect progress: shown while joining the chosen network,
+/// and again while the uplink's address is still pending.
+fn setup_connecting_tree(
+    tier: Tier,
+    icons: DeviceInfoIcons,
+    device_icon: Icon,
+    link: &Link,
+) -> TreeNode {
+    let (icon_id, title_text, lines) = connecting_parts(tier, icons, device_icon, link);
+    template_tree(tier, Justify::Start, true, icon_id, title_text, lines)
+}
+
+/// First-boot / reconfiguration AP screen.
+/// The pending variant shows while the AP is still coming up,
+/// or asks for the cable where there is no AP to wait for.
 fn setup_start_tree(
     tier: Tier,
     icons: DeviceInfoIcons,
     device_icon: Icon,
     device_name: &str,
     ap: Option<&AccessPoint>,
+    uplinks: Uplinks,
 ) -> TreeNode {
+    let cable_hint = || content(tier, CABLE_HINT, TextAlign::Center);
     match ap {
         // Setup over a wired uplink: no AP to join, so no WiFi column -
         // only the wizard address as text and QR code.
         Some(ap) if ap.ssid.is_empty() => {
             connected_info_url_tree(tier, device_icon, "Open the web browser at", &ap.setup_url)
         }
-        Some(ap) => template_tree_with_qr(
+        Some(ap) => {
+            let mut lines = vec![ssid_line(tier, &ap.ssid)];
+            if uplinks.ethernet {
+                lines.push(cable_hint());
+            }
+            template_tree_with_qr(
+                tier,
+                Justify::Start,
+                true,
+                icons.wifi_connect,
+                &format!("Connect to {device_name} Wi-Fi"),
+                lines,
+                QrColumn {
+                    headline: ["Connected but nothing happens?", "Scan the code!"],
+                    url: &ap.setup_url,
+                },
+            )
+        }
+        None if !uplinks.wifi => template_tree(
             tier,
             Justify::Start,
             true,
-            icons.wifi_connect,
-            &format!("Connect to {device_name} Wi-Fi"),
-            vec![ssid_line(tier, &ap.ssid)],
-            QrColumn {
-                headline: ["Connected but nothing happens?", "Scan the code!"],
-                url: &ap.setup_url,
-            },
+            device_icon,
+            CONNECT_CABLE_TITLE,
+            Vec::new(),
         ),
         None => template_tree(
             tier,
@@ -780,7 +847,7 @@ fn setup_start_tree(
             true,
             icons.wifi_connect,
             SETUP_AP_PENDING_TITLE,
-            Vec::new(),
+            uplinks.ethernet.then(cable_hint).into_iter().collect(),
         ),
     }
 }
@@ -823,8 +890,8 @@ pub fn build_device_info_tree(
         icons.desktop_clock
     };
     let tree = match view {
-        DeviceInfoView::SetupStart { ap } => {
-            setup_start_tree(tier, icons, device_icon, device_name, ap.as_ref())
+        DeviceInfoView::SetupStart { ap, uplinks } => {
+            setup_start_tree(tier, icons, device_icon, device_name, ap.as_ref(), *uplinks)
         }
         DeviceInfoView::TurningApOff => template_tree(
             tier,
@@ -834,8 +901,8 @@ pub fn build_device_info_tree(
             "Your device is being set up...",
             Vec::new(),
         ),
-        DeviceInfoView::SetupConnecting { ssid } => {
-            setup_connecting_tree(tier, icons.wifi, ssid.as_deref())
+        DeviceInfoView::SetupConnecting { link } => {
+            setup_connecting_tree(tier, icons, device_icon, link)
         }
         DeviceInfoView::SetupConnected { ssid } => template_tree(
             tier,
@@ -845,11 +912,11 @@ pub fn build_device_info_tree(
             &format!("Your {device_name} is connected!"),
             ssid_lines(tier, ssid.as_deref()),
         ),
-        DeviceInfoView::SetupConnectInfo { ip, ssid } => {
+        DeviceInfoView::SetupConnectInfo { ip, link } => {
             if let Some(ip) = ip {
                 connected_info_tree(tier, device_icon, "Complete the setup\nby accessing", *ip)
             } else {
-                setup_connecting_tree(tier, icons.wifi, ssid.as_deref())
+                setup_connecting_tree(tier, icons, device_icon, link)
             }
         }
         DeviceInfoView::SetupCompleted => template_tree(
@@ -879,23 +946,18 @@ pub fn build_device_info_tree(
             UPGRADE_SUCCESS_TITLE,
             Vec::new(),
         ),
-        DeviceInfoView::Connecting { ssid } => {
-            let mut lines = ssid_lines(tier, ssid.as_deref());
-            lines.push(content(tier, "Waiting for IP address", TextAlign::Center));
-            template_tree(
-                tier,
-                Justify::Center,
-                false,
-                icons.wifi,
-                CONNECTING_TITLE,
-                lines,
-            )
+        DeviceInfoView::Connecting { link } => {
+            let (icon_id, title_text, mut lines) = connecting_parts(tier, icons, device_icon, link);
+            lines.push(content(tier, WAITING_FOR_IP, TextAlign::Center));
+            template_tree(tier, Justify::Center, false, icon_id, title_text, lines)
         }
         DeviceInfoView::Success { ip } => overlaid(
             connected_info_tree(tier, device_icon, "Access the device at", *ip),
             tray_hint(tier, icons.swipe_down),
         ),
-        DeviceInfoView::Failed { ssid } => {
+        DeviceInfoView::Failed {
+            link: Link::Wifi { ssid },
+        } => {
             let mut lines = ssid_lines(tier, ssid.as_deref());
             lines.push(content(tier, "No IP address assigned", TextAlign::Center));
             template_tree(
@@ -907,6 +969,14 @@ pub fn build_device_info_tree(
                 lines,
             )
         }
+        DeviceInfoView::Failed { link: Link::Cable } => template_tree(
+            tier,
+            Justify::Center,
+            false,
+            icons.error,
+            NO_NETWORK_TITLE,
+            vec![content(tier, CHECK_CABLE, TextAlign::Center)],
+        ),
         DeviceInfoView::Done => return None,
     };
     Some(if dismisses_on_touch(view) {
@@ -941,7 +1011,8 @@ pub fn render_device_info(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessPoint, DeviceInfoView, build_device_info_tree, dismisses_on_touch, tier_for,
+        AccessPoint, DeviceInfoView, Link, Uplinks, build_device_info_tree, dismisses_on_touch,
+        tier_for,
     };
 
     /// The name and panel the screens were authored against.
@@ -955,27 +1026,70 @@ mod tests {
     const IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 5);
     const SETUP_URL: &str = "http://10.0.0.21/";
     const SETUP_SSID: &str = "Deck setup";
+    /// The BMM101 and the BMM100.
+    const BOTH: Uplinks = Uplinks {
+        wifi: true,
+        ethernet: true,
+    };
+    const CABLE_ONLY: Uplinks = Uplinks {
+        wifi: false,
+        ethernet: true,
+    };
+
+    fn wifi(ssid: Option<&str>) -> Link {
+        Link::Wifi {
+            ssid: ssid.map(str::to_owned),
+        }
+    }
+
+    fn setup_ap() -> AccessPoint {
+        AccessPoint {
+            ssid: SETUP_SSID.to_owned(),
+            setup_url: SETUP_URL.to_owned(),
+        }
+    }
 
     /// Every view the gallery has a cell for, `Done` included.
     fn all_views() -> Vec<DeviceInfoView> {
         vec![
-            DeviceInfoView::SetupStart { ap: None },
+            DeviceInfoView::SetupStart {
+                ap: None,
+                uplinks: Uplinks::WIFI_ONLY,
+            },
+            DeviceInfoView::SetupStart {
+                ap: None,
+                uplinks: BOTH,
+            },
+            DeviceInfoView::SetupStart {
+                ap: None,
+                uplinks: CABLE_ONLY,
+            },
+            DeviceInfoView::SetupStart {
+                ap: Some(setup_ap()),
+                uplinks: Uplinks::WIFI_ONLY,
+            },
+            DeviceInfoView::SetupStart {
+                ap: Some(setup_ap()),
+                uplinks: BOTH,
+            },
             DeviceInfoView::SetupStart {
                 ap: Some(AccessPoint {
-                    ssid: "Deck setup".to_owned(),
-                    setup_url: "http://10.0.0.21/".to_owned(),
+                    ssid: String::new(),
+                    setup_url: SETUP_URL.to_owned(),
                 }),
+                uplinks: BOTH,
             },
-            DeviceInfoView::SetupConnecting { ssid: None },
+            DeviceInfoView::SetupConnecting { link: wifi(None) },
+            DeviceInfoView::SetupConnecting { link: Link::Cable },
             DeviceInfoView::TurningApOff,
             DeviceInfoView::SetupConnected { ssid: None },
             DeviceInfoView::SetupConnectInfo {
-                ip: Some(Ipv4Addr::new(10, 0, 0, 5)),
-                ssid: None,
+                ip: Some(IP),
+                link: wifi(None),
             },
             DeviceInfoView::SetupConnectInfo {
                 ip: None,
-                ssid: None,
+                link: wifi(None),
             },
             DeviceInfoView::SetupCompleted,
             DeviceInfoView::SetupError,
@@ -992,13 +1106,41 @@ mod tests {
                 dismissible: true,
             },
             DeviceInfoView::UpgradeSuccess,
-            DeviceInfoView::Connecting { ssid: None },
-            DeviceInfoView::Success {
-                ip: Ipv4Addr::new(10, 0, 0, 5),
-            },
-            DeviceInfoView::Failed { ssid: None },
+            DeviceInfoView::Connecting { link: wifi(None) },
+            DeviceInfoView::Connecting { link: Link::Cable },
+            DeviceInfoView::Success { ip: IP },
+            DeviceInfoView::Failed { link: wifi(None) },
+            DeviceInfoView::Failed { link: Link::Cable },
             DeviceInfoView::Done,
         ]
+    }
+
+    /// The views a board waiting on its cable shows.
+    fn cable_views() -> Vec<DeviceInfoView> {
+        all_views().into_iter().filter(waits_on_a_cable).collect()
+    }
+
+    /// Whether `view` is one a board waiting on its cable shows.
+    /// Every variant answers for itself rather than falling through a pattern,
+    /// so a new screen cannot join `all_views` and quietly escape the check.
+    fn waits_on_a_cable(view: &DeviceInfoView) -> bool {
+        match view {
+            DeviceInfoView::SetupStart { uplinks, .. } => !uplinks.wifi,
+            DeviceInfoView::SetupConnecting { link }
+            | DeviceInfoView::SetupConnectInfo { link, .. }
+            | DeviceInfoView::Connecting { link }
+            | DeviceInfoView::Failed { link } => *link == Link::Cable,
+            // Nothing here names how the device is reached: the screens that
+            // do name a network are reporting a Wi-Fi join that happened.
+            DeviceInfoView::TurningApOff
+            | DeviceInfoView::SetupConnected { .. }
+            | DeviceInfoView::SetupCompleted
+            | DeviceInfoView::SetupError
+            | DeviceInfoView::SetupFatal { .. }
+            | DeviceInfoView::UpgradeSuccess
+            | DeviceInfoView::Success { .. }
+            | DeviceInfoView::Done => false,
+        }
     }
 
     /// Direct children of a container node, if any.
@@ -1143,15 +1285,16 @@ mod tests {
     fn every_screen_renders_its_own_words() {
         let cases: Vec<(DeviceInfoView, &[&str])> = vec![
             (
-                DeviceInfoView::SetupStart { ap: None },
+                DeviceInfoView::SetupStart {
+                    ap: None,
+                    uplinks: Uplinks::WIFI_ONLY,
+                },
                 &["Initial Setup", "Starting setup Wi-Fi..."],
             ),
             (
                 DeviceInfoView::SetupStart {
-                    ap: Some(AccessPoint {
-                        ssid: SETUP_SSID.to_owned(),
-                        setup_url: SETUP_URL.to_owned(),
-                    }),
+                    ap: Some(setup_ap()),
+                    uplinks: Uplinks::WIFI_ONLY,
                 },
                 &[
                     "Connect to Braiins Deck Wi-Fi",
@@ -1162,7 +1305,7 @@ mod tests {
                 ],
             ),
             (
-                DeviceInfoView::SetupConnecting { ssid: None },
+                DeviceInfoView::SetupConnecting { link: wifi(None) },
                 &["Connecting to Wi-Fi...", "Waiting for Wi-Fi connection"],
             ),
             (
@@ -1174,14 +1317,14 @@ mod tests {
             (
                 DeviceInfoView::SetupConnectInfo {
                     ip: Some(IP),
-                    ssid: None,
+                    link: wifi(None),
                 },
                 &["Complete the setup", "http://10.0.0.5/", "or scan the QR"],
             ),
             (
                 DeviceInfoView::SetupConnectInfo {
                     ip: None,
-                    ssid: Some("home".to_owned()),
+                    link: wifi(Some("home")),
                 },
                 &["Connecting to Wi-Fi...", "home"],
             ),
@@ -1210,7 +1353,7 @@ mod tests {
             (DeviceInfoView::UpgradeSuccess, &["Update Finished"]),
             (
                 DeviceInfoView::Connecting {
-                    ssid: Some("home".to_owned()),
+                    link: wifi(Some("home")),
                 },
                 &["Connecting to Wi-Fi...", "Wi-Fi SSID", "home"],
             ),
@@ -1224,10 +1367,54 @@ mod tests {
                 ],
             ),
             (
-                DeviceInfoView::Failed { ssid: None },
+                DeviceInfoView::Failed { link: wifi(None) },
                 &["Problem with connection", "No IP address assigned"],
             ),
         ];
+        assert_screens_say(cases);
+    }
+
+    #[test]
+    fn every_cable_screen_renders_its_own_words() {
+        let cases: Vec<(DeviceInfoView, &[&str])> = vec![
+            (
+                DeviceInfoView::SetupStart {
+                    ap: None,
+                    uplinks: BOTH,
+                },
+                &["Starting setup Wi-Fi...", "or connect the Ethernet cable"],
+            ),
+            (
+                DeviceInfoView::SetupStart {
+                    ap: None,
+                    uplinks: CABLE_ONLY,
+                },
+                &["Initial Setup", "Connect the Ethernet cable"],
+            ),
+            (
+                DeviceInfoView::SetupStart {
+                    ap: Some(setup_ap()),
+                    uplinks: BOTH,
+                },
+                &["Wi-Fi SSID", SETUP_SSID, "or connect the Ethernet cable"],
+            ),
+            (
+                DeviceInfoView::SetupConnecting { link: Link::Cable },
+                &["Initial Setup", "Connecting to network..."],
+            ),
+            (
+                DeviceInfoView::Connecting { link: Link::Cable },
+                &["Connecting to network...", "Waiting for IP address"],
+            ),
+            (
+                DeviceInfoView::Failed { link: Link::Cable },
+                &["No network connection", "Check the Ethernet cable"],
+            ),
+        ];
+        assert_screens_say(cases);
+    }
+
+    fn assert_screens_say(cases: Vec<(DeviceInfoView, &[&str])>) {
         for (view, wanted) in cases {
             let rendered = texts(&tree_for(&view));
             for want in wanted {
@@ -1240,14 +1427,44 @@ mod tests {
     }
 
     #[test]
+    fn a_board_waiting_on_its_cable_is_never_told_about_wifi() {
+        for view in cable_views() {
+            let rendered = texts(&tree_for(&view));
+            assert!(
+                !rendered.iter().any(|line| line.contains("Wi-Fi")),
+                "{view:?} mentions Wi-Fi: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wifi_only_board_reads_as_it_always_did() {
+        // The cable hint is for boards that have a port to plug into.
+        for view in [
+            DeviceInfoView::SetupStart {
+                ap: None,
+                uplinks: Uplinks::WIFI_ONLY,
+            },
+            DeviceInfoView::SetupStart {
+                ap: Some(setup_ap()),
+                uplinks: Uplinks::WIFI_ONLY,
+            },
+        ] {
+            let rendered = texts(&tree_for(&view));
+            assert!(
+                !rendered.iter().any(|line| line.contains("Ethernet")),
+                "{view:?} mentions a cable: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_qr_codes_carry_the_address_printed_beside_them() {
         // The setup screen reads its label and its code from different fields,
         // so a swap between them is the one mismatch that is possible here.
         let tree = tree_for(&DeviceInfoView::SetupStart {
-            ap: Some(AccessPoint {
-                ssid: SETUP_SSID.to_owned(),
-                setup_url: SETUP_URL.to_owned(),
-            }),
+            ap: Some(setup_ap()),
+            uplinks: Uplinks::WIFI_ONLY,
         });
         assert_eq!(
             qr_payloads(&tree),
@@ -1271,29 +1488,33 @@ mod tests {
             "miner skip shows the switchover text"
         );
 
-        // Wired-uplink setup (empty SSID): the wizard address alone.
-        let tree = tree_for(&DeviceInfoView::SetupStart {
-            ap: Some(AccessPoint {
-                ssid: String::new(),
-                setup_url: SETUP_URL.to_owned(),
-            }),
-        });
-        assert_eq!(qr_payloads(&tree), [SETUP_URL]);
-        let rendered = texts(&tree);
-        assert!(
-            rendered.iter().any(|line| line.contains(SETUP_URL)),
-            "the wired setup screen prints the address it encodes"
-        );
-        assert!(
-            !rendered.iter().any(|line| line.contains("Wi-Fi SSID")),
-            "no AP to join, so no SSID line: {rendered:?}"
-        );
+        // Wired-uplink setup (empty SSID): the wizard address alone,
+        // whatever the board could otherwise offer.
+        for uplinks in [Uplinks::WIFI_ONLY, BOTH, CABLE_ONLY] {
+            let tree = tree_for(&DeviceInfoView::SetupStart {
+                ap: Some(AccessPoint {
+                    ssid: String::new(),
+                    setup_url: SETUP_URL.to_owned(),
+                }),
+                uplinks,
+            });
+            assert_eq!(qr_payloads(&tree), [SETUP_URL]);
+            let rendered = texts(&tree);
+            assert!(
+                rendered.iter().any(|line| line.contains(SETUP_URL)),
+                "the wired setup screen prints the address it encodes"
+            );
+            assert!(
+                !rendered.iter().any(|line| line.contains("Wi-Fi SSID")),
+                "no AP to join, so no SSID line: {rendered:?}"
+            );
+        }
 
         let url = format!("http://{IP}/");
         for view in [
             DeviceInfoView::SetupConnectInfo {
                 ip: Some(IP),
-                ssid: None,
+                link: wifi(None),
             },
             DeviceInfoView::Success { ip: IP },
         ] {
@@ -1310,14 +1531,34 @@ mod tests {
     fn each_screen_leads_with_its_own_icon() {
         let icons = distinct_icons();
         for (view, wanted) in [
-            (DeviceInfoView::SetupStart { ap: None }, icons.wifi_connect),
-            (DeviceInfoView::SetupConnecting { ssid: None }, icons.wifi),
+            (
+                DeviceInfoView::SetupStart {
+                    ap: None,
+                    uplinks: Uplinks::WIFI_ONLY,
+                },
+                icons.wifi_connect,
+            ),
+            (
+                DeviceInfoView::SetupStart {
+                    ap: None,
+                    uplinks: CABLE_ONLY,
+                },
+                icons.desktop_clock,
+            ),
+            (
+                DeviceInfoView::SetupConnecting { link: wifi(None) },
+                icons.wifi,
+            ),
+            (
+                DeviceInfoView::SetupConnecting { link: Link::Cable },
+                icons.desktop_clock,
+            ),
             (DeviceInfoView::TurningApOff, icons.desktop_clock),
             (DeviceInfoView::SetupConnected { ssid: None }, icons.wifi),
             (
                 DeviceInfoView::SetupConnectInfo {
                     ip: Some(IP),
-                    ssid: None,
+                    link: wifi(None),
                 },
                 icons.desktop_clock,
             ),
@@ -1338,8 +1579,17 @@ mod tests {
                 icons.error,
             ),
             (DeviceInfoView::UpgradeSuccess, icons.success),
+            (DeviceInfoView::Connecting { link: wifi(None) }, icons.wifi),
+            (
+                DeviceInfoView::Connecting { link: Link::Cable },
+                icons.desktop_clock,
+            ),
             (DeviceInfoView::Success { ip: IP }, icons.desktop_clock),
-            (DeviceInfoView::Failed { ssid: None }, icons.wifi_error),
+            (
+                DeviceInfoView::Failed { link: wifi(None) },
+                icons.wifi_error,
+            ),
+            (DeviceInfoView::Failed { link: Link::Cable }, icons.error),
         ] {
             let drawn = icon_ids(&tree_for(&view));
             let wanted = wanted.id.expect("BUG: fixture icons carry an ID");
@@ -1381,13 +1631,16 @@ mod tests {
         // They hold until bmc moves them on,
         // so an X would be a button that does nothing.
         for view in [
-            DeviceInfoView::SetupStart { ap: None },
-            DeviceInfoView::SetupConnecting { ssid: None },
+            DeviceInfoView::SetupStart {
+                ap: None,
+                uplinks: Uplinks::WIFI_ONLY,
+            },
+            DeviceInfoView::SetupConnecting { link: wifi(None) },
             DeviceInfoView::TurningApOff,
             DeviceInfoView::SetupConnected { ssid: None },
             DeviceInfoView::SetupConnectInfo {
                 ip: None,
-                ssid: None,
+                link: wifi(None),
             },
             DeviceInfoView::SetupCompleted,
             DeviceInfoView::SetupError,

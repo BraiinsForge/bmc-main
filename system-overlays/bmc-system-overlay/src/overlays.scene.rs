@@ -33,7 +33,9 @@ use std::time::Instant;
 use bmc_gallery::prelude::*;
 
 use bmc_overlay_alarm::{AlarmRenderState, AlarmView, render_alarm};
-use bmc_overlay_device_info::{DeviceInfoRenderState, DeviceInfoView, render_device_info};
+use bmc_overlay_device_info::{
+    DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info,
+};
 use bmc_overlay_offline::{Connectivity, OfflineView, Status, decide, render_offline};
 use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
@@ -448,7 +450,10 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         ui,
         "SetupStart",
         "first boot: AP SSID",
-        DeviceInfoView::SetupStart { ap },
+        DeviceInfoView::SetupStart {
+            ap,
+            uplinks: Uplinks::WIFI_ONLY,
+        },
         &DI_SETUP_START,
         flat,
     );
@@ -457,7 +462,10 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         ui,
         "SetupStart (AP pending)",
         "AP still coming up",
-        DeviceInfoView::SetupStart { ap: None },
+        DeviceInfoView::SetupStart {
+            ap: None,
+            uplinks: Uplinks::WIFI_ONLY,
+        },
         &DI_SETUP_START_PENDING,
         flat,
     );
@@ -467,7 +475,9 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         "SetupConnecting",
         "joining the chosen network",
         DeviceInfoView::SetupConnecting {
-            ssid: Some("Braiins-WiFi".to_owned()),
+            link: Link::Wifi {
+                ssid: Some("Braiins-WiFi".to_owned()),
+            },
         },
         &DI_SETUP_CONNECTING,
         flat,
@@ -490,7 +500,9 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         "device-setup URL + IP QR",
         DeviceInfoView::SetupConnectInfo {
             ip: Some(Ipv4Addr::new(192, 168, 1, 42)),
-            ssid: Some("Braiins-WiFi".to_owned()),
+            link: Link::Wifi {
+                ssid: Some("Braiins-WiFi".to_owned()),
+            },
         },
         &DI_SETUP_CONNECT_INFO,
         flat,
@@ -502,7 +514,9 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         "no station address yet",
         DeviceInfoView::SetupConnectInfo {
             ip: None,
-            ssid: Some("Braiins-WiFi".to_owned()),
+            link: Link::Wifi {
+                ssid: Some("Braiins-WiFi".to_owned()),
+            },
         },
         &DI_SETUP_CONNECT_INFO_PENDING,
         flat,
@@ -576,7 +590,9 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         "Connecting",
         "operational boot, waiting for IP",
         DeviceInfoView::Connecting {
-            ssid: Some("Braiins-WiFi".to_owned()),
+            link: Link::Wifi {
+                ssid: Some("Braiins-WiFi".to_owned()),
+            },
         },
         &DI_CONNECTING,
         flat,
@@ -598,7 +614,9 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         "Failed",
         "no IP before timeout",
         DeviceInfoView::Failed {
-            ssid: Some("Braiins-WiFi".to_owned()),
+            link: Link::Wifi {
+                ssid: Some("Braiins-WiFi".to_owned()),
+            },
         },
         &DI_FAILED,
         flat,
