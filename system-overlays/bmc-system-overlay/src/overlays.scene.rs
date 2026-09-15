@@ -161,11 +161,19 @@ fn device_info_cell(
     view: DeviceInfoView,
     state_key: &'static LocalKey<RefCell<DeviceInfoRenderState>>,
     flat: bool,
+    board: Board,
 ) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
         state_key.with_borrow_mut(|state| {
-            render_device_info(r, (w as u32, h as u32), state, &view, "Braiins Deck", false);
+            render_device_info(
+                r,
+                (w as u32, h as u32),
+                state,
+                &view,
+                board.name,
+                board.miner,
+            );
         });
         // Still, for the same reason as the offline card: a view and nothing else.
         false
@@ -185,8 +193,11 @@ macro_rules! device_info_render_states {
 
 device_info_render_states!(
     DI_SETUP_START,
+    DI_SETUP_START_CABLE,
     DI_SETUP_START_PENDING,
+    DI_TURNING_AP_OFF,
     DI_SETUP_CONNECTING,
+    DI_SETUP_CONNECTING_CABLE,
     DI_SETUP_CONNECTED,
     DI_SETUP_CONNECT_INFO,
     DI_SETUP_CONNECT_INFO_PENDING,
@@ -197,8 +208,10 @@ device_info_render_states!(
     DI_SETUP_FATAL_DISMISSIBLE,
     DI_UPGRADE_SUCCESS,
     DI_CONNECTING,
+    DI_CONNECTING_CABLE,
     DI_SUCCESS,
     DI_FAILED,
+    DI_FAILED_CABLE,
 );
 
 thread_local! {
@@ -412,9 +425,14 @@ fn offline(ctx: &mut SceneCtx, ui: &mut Ui) {
     ctx.custom_stage(ui, (480_u32, 320_u32), offline_cell(view, flat));
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one stage, spelled out: the heading, the caption, the view, and where it renders"
+)]
 fn device_info_stage(
     ctx: &mut SceneCtx,
     ui: &mut Ui,
+    board: Board,
     heading: &str,
     caption: &str,
     view: DeviceInfoView,
@@ -423,125 +441,203 @@ fn device_info_stage(
 ) {
     ui.heading(heading);
     ui.label(caption);
-    ctx.custom_stage(
-        ui,
-        (DISPLAY_W, DISPLAY_H),
-        device_info_cell(view, state, flat),
-    );
+    ctx.custom_stage(ui, board.size, device_info_cell(view, state, flat, board));
 }
 
-/// One card per screen of the device-info flows: the first-boot setup sequence,
-/// its error states, and the operational connect-info sequence.
-#[scene]
+/// The product a device-info stage renders for: its panel,
+/// and what the overlay reads from the hardware profile on the device.
+#[derive(Clone, Copy)]
+struct Board {
+    size: (u32, u32),
+    name: &'static str,
+    miner: bool,
+    uplinks: Uplinks,
+}
+
+fn board(product: Product) -> Board {
+    let profile = HardwareProfile::for_product(product);
+    let caps = profile.capabilities();
+    Board {
+        size: (
+            profile.display.logical_width,
+            profile.display.logical_height,
+        ),
+        name: product.display_name(),
+        miner: caps.mining_supported,
+        uplinks: Uplinks {
+            wifi: caps.wifi_supported,
+            ethernet: caps.ethernet_supported,
+        },
+    }
+}
+
+/// Every heading `device_info_screens` can stage, in flow order.
+/// The `Screen` knob picks one of them, which is how a capture gets a single card.
+const DEVICE_INFO_SCREENS: &[&str] = &[
+    "All",
+    "SetupStart",
+    "SetupStart (cable)",
+    "SetupStart (AP pending)",
+    "TurningApOff",
+    "SetupConnecting",
+    "SetupConnected",
+    "SetupConnecting (cable)",
+    "SetupConnectInfo",
+    "SetupConnectInfo (IP pending)",
+    "SetupCompleted",
+    "SetupError",
+    "SetupFatal (restarting)",
+    "SetupFatal",
+    "SetupFatal (dismissible)",
+    "UpgradeSuccess",
+    "Connecting",
+    "Connecting (cable)",
+    "Success",
+    "Failed",
+    "Failed (cable)",
+];
+
+/// One card per screen of the device-info flows a product can show:
+/// the first-boot setup sequence over its setup AP and over its cable,
+/// the error states, and the operational connect-info sequence.
 #[expect(
     clippy::too_many_lines,
     reason = "a flat catalogue: one stage per screen, which reads worse split \
               across helpers than listed in flow order"
 )]
-fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
+fn device_info_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
     let flat = ctx.toggle("Flat backdrop", false);
+    let picked = DEVICE_INFO_SCREENS[ctx.select("Screen", DEVICE_INFO_SCREENS, 0)];
+    let board = board(product);
+    let Uplinks { wifi, ethernet } = board.uplinks;
     let ap = Some(AccessPoint {
-        ssid: "Braiins Deck AP".to_owned(),
+        ssid: format!("{} AP", board.name),
         setup_url: "http://10.0.0.21/".to_owned(),
     });
+    let cable = Some(AccessPoint {
+        ssid: String::new(),
+        setup_url: "http://192.168.1.42/".to_owned(),
+    });
+    let ip = Ipv4Addr::new(192, 168, 1, 42);
+    let joined = || Link::Wifi {
+        ssid: Some("Braiins-WiFi".to_owned()),
+    };
+    // What the connect screens wait on where a product could do either.
+    let link = || if wifi { joined() } else { Link::Cable };
+    let mut stage = |heading: &str, caption, view, state| {
+        // Not a `debug_assert`: captures run a release build, which is where a
+        // heading the knob cannot pick would go unnoticed as an empty page.
+        assert!(
+            DEVICE_INFO_SCREENS.contains(&heading),
+            "{heading} is not in DEVICE_INFO_SCREENS, so no capture can pick it"
+        );
+        if picked == "All" || picked == heading {
+            device_info_stage(ctx, ui, board, heading, caption, view, state, flat);
+        }
+    };
 
-    device_info_stage(
-        ctx,
-        ui,
-        "SetupStart",
-        "first boot: AP SSID",
-        DeviceInfoView::SetupStart {
-            ap,
-            uplinks: Uplinks::WIFI_ONLY,
-        },
-        &DI_SETUP_START,
-        flat,
-    );
-    device_info_stage(
-        ctx,
-        ui,
+    if wifi {
+        stage(
+            "SetupStart",
+            "first boot: AP SSID",
+            DeviceInfoView::SetupStart {
+                ap,
+                uplinks: board.uplinks,
+            },
+            &DI_SETUP_START,
+        );
+    }
+    if ethernet {
+        stage(
+            "SetupStart (cable)",
+            "cable in before setup: the wizard address alone",
+            DeviceInfoView::SetupStart {
+                ap: cable,
+                uplinks: board.uplinks,
+            },
+            &DI_SETUP_START_CABLE,
+        );
+    }
+    stage(
         "SetupStart (AP pending)",
-        "AP still coming up",
+        match (wifi, ethernet) {
+            (true, false) => "AP still coming up",
+            (true, true) => "AP still coming up, or plug the cable in",
+            (false, _) => "no Wi-Fi to offer: waiting for the cable",
+        },
         DeviceInfoView::SetupStart {
             ap: None,
-            uplinks: Uplinks::WIFI_ONLY,
+            uplinks: board.uplinks,
         },
         &DI_SETUP_START_PENDING,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
-        "SetupConnecting",
-        "joining the chosen network",
-        DeviceInfoView::SetupConnecting {
-            link: Link::Wifi {
+    if ethernet {
+        stage(
+            "TurningApOff",
+            "Wi-Fi skipped over the cable; the AP is being torn down",
+            DeviceInfoView::TurningApOff,
+            &DI_TURNING_AP_OFF,
+        );
+    }
+    if wifi {
+        stage(
+            "SetupConnecting",
+            "joining the chosen network",
+            DeviceInfoView::SetupConnecting { link: joined() },
+            &DI_SETUP_CONNECTING,
+        );
+        stage(
+            "SetupConnected",
+            "network joined",
+            DeviceInfoView::SetupConnected {
                 ssid: Some("Braiins-WiFi".to_owned()),
             },
-        },
-        &DI_SETUP_CONNECTING,
-        flat,
-    );
-    device_info_stage(
-        ctx,
-        ui,
-        "SetupConnected",
-        "network joined",
-        DeviceInfoView::SetupConnected {
-            ssid: Some("Braiins-WiFi".to_owned()),
-        },
-        &DI_SETUP_CONNECTED,
-        flat,
-    );
-    device_info_stage(
-        ctx,
-        ui,
+            &DI_SETUP_CONNECTED,
+        );
+    }
+    if ethernet {
+        stage(
+            "SetupConnecting (cable)",
+            "no join under way: waiting for the cable's address",
+            DeviceInfoView::SetupConnecting { link: Link::Cable },
+            &DI_SETUP_CONNECTING_CABLE,
+        );
+    }
+    stage(
         "SetupConnectInfo",
         "device-setup URL + IP QR",
         DeviceInfoView::SetupConnectInfo {
-            ip: Some(Ipv4Addr::new(192, 168, 1, 42)),
-            link: Link::Wifi {
-                ssid: Some("Braiins-WiFi".to_owned()),
-            },
+            ip: Some(ip),
+            link: link(),
         },
         &DI_SETUP_CONNECT_INFO,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
-        "SetupConnectInfo (IP pending)",
-        "no station address yet",
-        DeviceInfoView::SetupConnectInfo {
-            ip: None,
-            link: Link::Wifi {
-                ssid: Some("Braiins-WiFi".to_owned()),
+    if wifi {
+        stage(
+            "SetupConnectInfo (IP pending)",
+            "no station address yet",
+            DeviceInfoView::SetupConnectInfo {
+                ip: None,
+                link: joined(),
             },
-        },
-        &DI_SETUP_CONNECT_INFO_PENDING,
-        flat,
-    );
-    device_info_stage(
-        ctx,
-        ui,
+            &DI_SETUP_CONNECT_INFO_PENDING,
+        );
+    }
+    stage(
         "SetupCompleted",
         "wizard finished",
         DeviceInfoView::SetupCompleted,
         &DI_SETUP_COMPLETED,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
-        "SetupError",
-        "join failed; the AP screen returns",
-        DeviceInfoView::SetupError,
-        &DI_SETUP_ERROR,
-        flat,
-    );
-    device_info_stage(
-        ctx,
-        ui,
+    if wifi {
+        stage(
+            "SetupError",
+            "join failed; the AP screen returns",
+            DeviceInfoView::SetupError,
+            &DI_SETUP_ERROR,
+        );
+    }
+    stage(
         "SetupFatal (restarting)",
         "bmc restarts or resets the device",
         DeviceInfoView::SetupFatal {
@@ -549,11 +645,8 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
             dismissible: false,
         },
         &DI_SETUP_FATAL_RESTARTING,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
+    stage(
         "SetupFatal",
         "mid-setup: the wizard is unfinished, so it holds",
         DeviceInfoView::SetupFatal {
@@ -561,11 +654,8 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
             dismissible: false,
         },
         &DI_SETUP_FATAL,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
+    stage(
         "SetupFatal (dismissible)",
         "setup done: closes on touch or after a minute",
         DeviceInfoView::SetupFatal {
@@ -573,54 +663,96 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
             dismissible: true,
         },
         &DI_SETUP_FATAL_DISMISSIBLE,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
+    stage(
         "UpgradeSuccess",
         "first boot after a firmware upgrade",
         DeviceInfoView::UpgradeSuccess,
         &DI_UPGRADE_SUCCESS,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
-        "Connecting",
-        "operational boot, waiting for IP",
-        DeviceInfoView::Connecting {
-            link: Link::Wifi {
-                ssid: Some("Braiins-WiFi".to_owned()),
-            },
-        },
-        &DI_CONNECTING,
-        flat,
-    );
-    device_info_stage(
-        ctx,
-        ui,
+    if wifi {
+        stage(
+            "Connecting",
+            "operational boot, waiting for IP",
+            DeviceInfoView::Connecting { link: joined() },
+            &DI_CONNECTING,
+        );
+    }
+    if ethernet {
+        stage(
+            "Connecting (cable)",
+            "operational boot with no station configured",
+            DeviceInfoView::Connecting { link: Link::Cable },
+            &DI_CONNECTING_CABLE,
+        );
+    }
+    stage(
         "Success",
         "IP acquired",
-        DeviceInfoView::Success {
-            ip: Ipv4Addr::new(192, 168, 1, 42),
-        },
+        DeviceInfoView::Success { ip },
         &DI_SUCCESS,
-        flat,
     );
-    device_info_stage(
-        ctx,
-        ui,
-        "Failed",
-        "no IP before timeout",
-        DeviceInfoView::Failed {
-            link: Link::Wifi {
-                ssid: Some("Braiins-WiFi".to_owned()),
-            },
-        },
-        &DI_FAILED,
-        flat,
-    );
+    if wifi {
+        stage(
+            "Failed",
+            "no IP before timeout",
+            DeviceInfoView::Failed { link: joined() },
+            &DI_FAILED,
+        );
+    }
+    if ethernet {
+        stage(
+            "Failed (cable)",
+            "no IP before timeout, no station to blame",
+            DeviceInfoView::Failed { link: Link::Cable },
+            &DI_FAILED_CABLE,
+        );
+    }
+}
+
+// A directory per product, each staging the screens that product can show at its own panel.
+// One module each, because a scene's place in the sidebar tree
+// comes from the `scene_meta` title of the module it lives in.
+mod device_info_bmc100 {
+    use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
+    use bmc_platform::Product;
+
+    use super::device_info_screens;
+
+    scene_meta! { title: "Overlays / Device Info / BMC100" }
+
+    #[scene("Device Info", default)]
+    fn bmc100(ctx: &mut SceneCtx, ui: &mut Ui) {
+        device_info_screens(ctx, ui, Product::Bmc100);
+    }
+}
+
+mod device_info_bmm101 {
+    use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
+    use bmc_platform::Product;
+
+    use super::device_info_screens;
+
+    scene_meta! { title: "Overlays / Device Info / BMM101" }
+
+    #[scene("Device Info", default)]
+    fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
+        device_info_screens(ctx, ui, Product::Bmm101);
+    }
+}
+
+mod device_info_bmm100 {
+    use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
+    use bmc_platform::Product;
+
+    use super::device_info_screens;
+
+    scene_meta! { title: "Overlays / Device Info / BMM100" }
+
+    #[scene("Device Info", default)]
+    fn bmm100(ctx: &mut SceneCtx, ui: &mut Ui) {
+        device_info_screens(ctx, ui, Product::Bmm100);
+    }
 }
 
 /// One tray cell per capability and per new state, in a flat run down the scene.

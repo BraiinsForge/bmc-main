@@ -147,3 +147,89 @@ frames = 2
 [shot.knobs]
 Offline = true
 Mining = "Tuning"
+
+# The device-info screens a BMM101 shows over its cable, and the setup-AP
+# screens beside them, at the product's own 480x320 panel. The `Screen` knob
+# stages one card; the size leaves room for the card's heading and caption.
+[[shot]]
+name = "device-info-bmm101-setup-start-cable"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupStart (cable)"
+
+[[shot]]
+name = "device-info-bmm101-setup-start-ap"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupStart"
+
+[[shot]]
+name = "device-info-bmm101-ap-pending"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupStart (AP pending)"
+
+[[shot]]
+name = "device-info-bmm101-turning-ap-off"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "TurningApOff"
+
+[[shot]]
+name = "device-info-bmm101-connecting-cable"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupConnecting (cable)"
+
+[[shot]]
+name = "device-info-bmm101-connect-info"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupConnectInfo"
+
+[[shot]]
+name = "device-info-bmm101-failed-cable"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "Failed (cable)"
+
+# A board with no Wi-Fi to offer asks for the cable instead of a setup network.
+[[shot]]
+name = "device-info-bmm100-cable-only"
+scene = "bmc_gallery::overlays::device_info_bmm100::Device Info"
+size = "480x400"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupStart (AP pending)"
+
+# The Deck's setup-start screen, which none of the above may change.
+[[shot]]
+name = "device-info-bmc100-setup-start"
+scene = "bmc_gallery::overlays::device_info_bmc100::Device Info"
+size = "1400x640"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupStart"
