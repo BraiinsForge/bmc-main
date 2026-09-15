@@ -146,6 +146,18 @@ pub trait NetworkConfig: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// Whether any interface holds `address`.
+/// The setup AP's address is bound only between `ifup wifi_ap` and `ifdown wifi_ap`,
+/// so where the platform's hotplug owns the AP it answers whether the AP is up
+/// without asking the radio.
+#[must_use]
+pub(crate) fn holds_address(interfaces: &[Interface], address: Ipv4Addr) -> bool {
+    interfaces.iter().any(|iface| match &iface.addr {
+        IfAddr::V4(v4) => v4.ip == address,
+        IfAddr::V6(_) => false,
+    })
+}
+
 /// The routable IPv4 on `name`, or `None` when the link is down:
 /// a static address survives an unplugged cable
 /// and must not be advertised as a way to reach the device.
@@ -214,6 +226,14 @@ pub trait WifiControl: Send + Sync + std::fmt::Debug {
     async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError>;
     /// Host that the captive portal should redirect clients to, if active.
     async fn captive_portal_redirect_host(&self) -> Option<String>;
+    /// Whether the setup AP is up right now, as judged by whatever owns the AP
+    /// on this board: the provisioning state where bmc raises it, the AP's
+    /// address being bound where the platform's hotplug does.
+    /// [`ap_ssid`] reads configuration,
+    /// which outlives an AP the platform's hotplug has taken down behind bmc's back.
+    ///
+    /// [`ap_ssid`]: WifiControl::ap_ssid
+    async fn setup_ap_up(&self) -> bool;
     /// Subscribes to WiFi lifecycle events (scan start/end).
     fn subscribe_wifi_events(&self) -> broadcast::Receiver<WifiEvent>;
 }
@@ -349,7 +369,7 @@ mod tests {
     use bmc_net_types::network::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
     use get_if_addrs::{IfAddr, Ifv4Addr};
 
-    use super::{Interface, network_config_summary, validate_hostname, wired_ipv4};
+    use super::{Interface, holds_address, network_config_summary, validate_hostname, wired_ipv4};
 
     #[test]
     fn config_summary_reads_as_the_user_configured_it() {
@@ -427,6 +447,24 @@ mod tests {
     fn another_interface_does_not_answer_for_the_port() {
         let interfaces = [v4("wlan0", Ipv4Addr::new(192, 168, 1, 20))];
         assert_eq!(wired_ipv4(&interfaces, ETH, true), None);
+    }
+
+    #[test]
+    fn the_setup_ap_is_up_while_some_interface_holds_its_address() {
+        let ap = Ipv4Addr::new(10, 0, 0, 21);
+        let interfaces = [v4(ETH, Ipv4Addr::new(10, 33, 50, 103)), v4("ethap0", ap)];
+        assert!(holds_address(&interfaces, ap));
+    }
+
+    #[test]
+    fn the_setup_ap_is_down_once_its_address_is_unbound() {
+        let ap = Ipv4Addr::new(10, 0, 0, 21);
+        let interfaces = [
+            v4(ETH, Ipv4Addr::new(10, 33, 50, 103)),
+            v4("lo", Ipv4Addr::LOCALHOST),
+        ];
+        assert!(!holds_address(&interfaces, ap));
+        assert!(!holds_address(&[], ap));
     }
 
     #[test]

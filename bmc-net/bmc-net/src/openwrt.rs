@@ -81,6 +81,28 @@ fn primary_iface(interface_name: &str) -> Option<NetworkInterface> {
         .or_else(NetworkInterface::find_default)
 }
 
+/// The setup AP's own address, in the two spellings the device keeps it in.
+#[derive(Debug, Clone, Copy)]
+struct SetupApAddress {
+    /// `FACTORY_DEFAULT_AP_IP_ADDR`: the wizard URL and the DNS hijack.
+    advertised: Ipv4Addr,
+    /// `network.wifi_ap.ipaddr`: what netifd binds when the AP comes up, so it
+    /// is the address whose presence says the AP is up. The script's value
+    /// stands in where UCI has nothing readable to offer.
+    bound: Ipv4Addr,
+}
+
+/// Who raises and parks the setup AP on this board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupApOwner {
+    /// bmc raises the AP itself at startup and takes it down when the setup
+    /// moves on; the provisioning state is the AP's state.
+    Bmc,
+    /// The platform's hotplug raises and parks the AP from the cable state,
+    /// leaving bmc no say in it.
+    Platform,
+}
+
 /// UCI (`bos-defaults.sh` + `uci`) implementation of [`NetworkManager`]:
 /// network config, the factory-default/setup state machine, the setup captive
 /// portal, and a WiFi driver for scan/connect/AP. Shared by the stm32mp15
@@ -102,10 +124,11 @@ pub struct UciNetworkManager {
     /// Signalled after every successful hostname write; see
     /// [`NetworkConfig::hostname_change_notifier`].
     hostname_changed: Arc<Notify>,
+    setup_ap_owner: SetupApOwner,
     /// The setup AP's own address, read once from the factory-default script.
     /// Cached because the captive portal asks for it per request; only a
     /// successful read is kept, so a failed one is retried on the next request.
-    setup_ap_address: tokio::sync::OnceCell<String>,
+    setup_ap_address: tokio::sync::OnceCell<SetupApAddress>,
 }
 
 impl UciNetworkManager {
@@ -114,6 +137,7 @@ impl UciNetworkManager {
         wifi: Option<Arc<dyn WifiDriver>>,
         interface_name: String,
         product_name: String,
+        setup_ap_owner: SetupApOwner,
     ) -> Self {
         let network_section = network_section.into();
         let (wifi_event_sender, _) = broadcast::channel(WIFI_EVENTS_CAPACITY);
@@ -126,6 +150,28 @@ impl UciNetworkManager {
             wifi_event_sender,
             provisioning: Arc::new(UciProvisioningState::new().await),
             hostname_changed: Arc::new(Notify::new()),
+            setup_ap_owner,
+            setup_ap_address: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    /// A manager over an injected provisioning state and no WiFi driver,
+    /// for tests that must not touch UCI.
+    #[cfg(test)]
+    fn with_provisioning(
+        provisioning: Arc<dyn ProvisioningState>,
+        setup_ap_owner: SetupApOwner,
+    ) -> Self {
+        let (wifi_event_sender, _) = broadcast::channel(WIFI_EVENTS_CAPACITY);
+        Self {
+            wifi: None,
+            network_section: "wifi_sta".to_owned(),
+            interface_name: "wlan0".to_owned(),
+            product_name: String::new(),
+            wifi_event_sender,
+            provisioning,
+            hostname_changed: Arc::new(Notify::new()),
+            setup_ap_owner,
             setup_ap_address: tokio::sync::OnceCell::new(),
         }
     }
@@ -157,33 +203,58 @@ impl UciNetworkManager {
             .and_then(|network| network.mac_address().map(|mac| mac.to_string()))
     }
 
-    /// The setup AP's address as `bos-factory-default.sh` defines it.
+    /// The setup AP's address as `bos-factory-default.sh` defines it, beside
+    /// the one `network.wifi_ap` binds.
     ///
-    /// Disagreement with `network.wifi_ap.ipaddr` is worse than it looks: the
-    /// wizard URL and the DNS hijack then point at different addresses and
-    /// setup cannot work at all. It is a packaging bug the user cannot act on,
-    /// so it is logged rather than returned as an error.
-    async fn read_setup_ap_address(&self) -> Result<String> {
+    /// Disagreement between the two is worse than it looks: the wizard URL and
+    /// the DNS hijack then point at an address netifd never binds and setup
+    /// cannot work at all. It is a packaging bug the user cannot act on, so it
+    /// is logged rather than returned as an error.
+    async fn read_setup_ap_address(&self) -> Result<SetupApAddress> {
         let raw = run_sourced_to_string(
             BOS_FACTORY_DEFAULT_LIB,
             "printf '%s' \"$FACTORY_DEFAULT_AP_IP_ADDR\"",
         )
         .await
         .map_err(|err| anyhow!("the bos-factory-default script failed: {err}"))?;
-        let address = raw
+        let advertised = raw
             .trim()
             .parse::<Ipv4Addr>()
-            .map_err(|err| anyhow!("FACTORY_DEFAULT_AP_IP_ADDR is not an IPv4 address: {err}"))?
-            .to_string();
-        match uci_get_opt(UCI_NET_WIFI_AP_IPADDR).await {
-            Some(configured) if configured != address => tracing::error!(
-                script = %address,
-                uci = %configured,
+            .map_err(|err| anyhow!("FACTORY_DEFAULT_AP_IP_ADDR is not an IPv4 address: {err}"))?;
+        let configured = uci_get_opt(UCI_NET_WIFI_AP_IPADDR).await;
+        let bound = match configured.as_deref() {
+            None => advertised,
+            Some(raw) => raw.parse::<Ipv4Addr>().unwrap_or_else(|err| {
+                tracing::error!(
+                    uci = %raw,
+                    %err,
+                    "the wifi_ap network address is not an IPv4 address"
+                );
+                advertised
+            }),
+        };
+        if bound == advertised {
+            info!(address = %advertised, "setup AP address");
+        } else {
+            tracing::error!(
+                script = %advertised,
+                uci = %bound,
                 "the setup AP address and the wifi_ap network address disagree; setup cannot work"
-            ),
-            _ => info!(address = %address, "setup AP address"),
+            );
         }
-        Ok(address)
+        Ok(SetupApAddress { advertised, bound })
+    }
+
+    /// [`read_setup_ap_address`] once, then from the `setup_ap_address` cache.
+    ///
+    /// [`read_setup_ap_address`]: Self::read_setup_ap_address
+    async fn setup_ap_address(&self) -> Option<SetupApAddress> {
+        self.setup_ap_address
+            .get_or_try_init(|| self.read_setup_ap_address())
+            .await
+            .inspect_err(|err| tracing::error!(%err, "failed to read the setup AP address"))
+            .ok()
+            .copied()
     }
 
     /// Reads a UCI network option and parses it as an IPv4 address. A
@@ -657,12 +728,26 @@ impl WifiControl for UciNetworkManager {
     /// same value bmc hands `enable_captive_portal`, so the URL and the DNS
     /// hijack cannot disagree.
     async fn captive_portal_redirect_host(&self) -> Option<String> {
-        self.setup_ap_address
-            .get_or_try_init(|| self.read_setup_ap_address())
-            .await
-            .inspect_err(|err| tracing::error!(%err, "failed to read the setup AP address"))
-            .ok()
-            .cloned()
+        Some(self.setup_ap_address().await?.advertised.to_string())
+    }
+
+    async fn setup_ap_up(&self) -> bool {
+        // Where bmc raises the AP itself, the provisioning watch is the AP's
+        // state: nothing else moves it, and it costs no device call. Only where
+        // the platform's hotplug owns the AP is that watch bmc's intent rather
+        // than an observation, so only there is the interface walked.
+        if self.setup_ap_owner == SetupApOwner::Bmc {
+            return *self.provisioning.watch_setup_ap_active().borrow();
+        }
+        let Some(address) = self.setup_ap_address().await.map(|it| it.bound) else {
+            return false;
+        };
+        tokio::task::spawn_blocking(move || {
+            get_if_addrs::get_if_addrs()
+                .is_ok_and(|interfaces| crate::holds_address(&interfaces, address))
+        })
+        .await
+        .expect("BUG: interface walk task panicked")
     }
 
     fn subscribe_wifi_events(&self) -> broadcast::Receiver<WifiEvent> {
@@ -715,4 +800,47 @@ async fn run_defaults_script_output(snippet: &str) -> Result<String> {
 
 async fn run_factory_default_script(snippet: &str) -> Result<()> {
     run_sourced(BOS_FACTORY_DEFAULT_LIB, snippet).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provisioning::MockProvisioningState;
+
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("BUG: failed to build test runtime")
+            .block_on(future)
+    }
+
+    fn manager(owner: SetupApOwner) -> (UciNetworkManager, Arc<MockProvisioningState>) {
+        let provisioning = Arc::new(MockProvisioningState::default());
+        let manager = UciNetworkManager::with_provisioning(provisioning.clone(), owner);
+        (manager, provisioning)
+    }
+
+    #[test]
+    fn where_bmc_raises_the_ap_the_provisioning_state_is_its_state() {
+        block_on(async {
+            let (manager, provisioning) = manager(SetupApOwner::Bmc);
+            provisioning.publish_setup_ap_active(true);
+            assert!(manager.setup_ap_up().await);
+            provisioning.publish_setup_ap_active(false);
+            assert!(!manager.setup_ap_up().await);
+        });
+    }
+
+    #[test]
+    fn where_the_platform_owns_the_ap_an_unreadable_address_reads_as_down() {
+        block_on(async {
+            let (manager, provisioning) = manager(SetupApOwner::Platform);
+            provisioning.publish_setup_ap_active(true);
+            assert!(
+                !manager.setup_ap_up().await,
+                "the provisioning state is bmc's intent, not the AP's state"
+            );
+        });
+    }
 }

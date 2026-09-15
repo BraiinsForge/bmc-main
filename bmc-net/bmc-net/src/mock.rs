@@ -280,6 +280,10 @@ impl WifiControl for MockNetworkManager {
         lock(&self.captive_portal_host).clone()
     }
 
+    async fn setup_ap_up(&self) -> bool {
+        *self.provisioning.watch_setup_ap_active().borrow()
+    }
+
     fn subscribe_wifi_events(&self) -> broadcast::Receiver<WifiEvent> {
         self.wifi_event_sender.subscribe()
     }
@@ -305,6 +309,16 @@ mod tests {
             .build()
             .expect("BUG: failed to build test runtime")
             .block_on(future)
+    }
+
+    #[test]
+    fn the_setup_ap_follows_the_provisioning_watch() {
+        block_on(async {
+            let mock = MockNetworkManager::with_provisioning(true, false);
+            assert!(mock.setup_ap_up().await, "factory default runs the AP");
+            mock.provisioning().publish_setup_ap_active(false);
+            assert!(!mock.setup_ap_up().await);
+        });
     }
 
     #[test]

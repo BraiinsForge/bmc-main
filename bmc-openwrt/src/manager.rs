@@ -33,7 +33,7 @@ use bmc::manager::{
     service_upgrade_marker_path,
 };
 use bmc_net::NetworkManager;
-use bmc_net::openwrt::UciNetworkManager;
+use bmc_net::openwrt::{SetupApOwner, UciNetworkManager};
 use bmc_net_drv::wifi::WifiDriver;
 use bmc_platform::serial_number::BoardSerial;
 use bmc_platform::{BmcInfo, BosPlatform, BosVersion, HardwareProfile, Product};
@@ -357,6 +357,12 @@ async fn create_network_manager(
         wifi_manager,
         interface_name,
         product.display_name().to_owned(),
+        // A board with an ethernet port leaves the setup AP to the platform's hotplug.
+        if ethernet_supported {
+            SetupApOwner::Platform
+        } else {
+            SetupApOwner::Bmc
+        },
     )
     .await
 }
