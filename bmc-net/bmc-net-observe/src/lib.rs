@@ -97,21 +97,22 @@ fn drop_unplugged_wired(
         .collect()
 }
 
-/// Link state from `/sys/class/net/<name>/carrier`: `1` with link, `0`
-/// without, and `EINVAL` while the interface is administratively down (no
-/// uplink either). Any other failure means the answer is unknown, and an
-/// unknown link is kept rather than dropped.
-fn sysfs_carrier(name: &str) -> bool {
+/// True if `ip` is usable for connectivity (not loopback, not link-local).
+#[must_use]
+pub fn is_routable(ip: Ipv4Addr) -> bool {
+    !ip.is_loopback() && !ip.is_link_local() && !ip.is_unspecified()
+}
+
+/// Link state from `/sys/class/net/<name>/carrier`: `1` with link, `0` without,
+/// and `EINVAL` while the interface is administratively down (no uplink either).
+/// Any other failure means the answer is unknown,
+/// and an unknown link is reported as up rather than dropping a working uplink.
+#[must_use]
+pub fn carrier_up(name: &str) -> bool {
     match std::fs::read_to_string(format!("/sys/class/net/{name}/carrier")) {
         Ok(carrier) => carrier.trim() == "1",
         Err(e) => e.kind() != std::io::ErrorKind::InvalidInput,
     }
-}
-
-/// True if `ip` is usable for connectivity (not loopback, not link-local).
-#[must_use]
-fn is_routable(ip: Ipv4Addr) -> bool {
-    !ip.is_loopback() && !ip.is_link_local() && !ip.is_unspecified()
 }
 
 /// Return the routable IPv4 for one interface if it has one.
@@ -409,7 +410,7 @@ pub fn probe() -> Option<Snapshot> {
         .as_deref()
         .map(modes_map_from_ubus)
         .unwrap_or_default();
-    let interfaces = drop_unplugged_wired(interfaces, &modes, sysfs_carrier);
+    let interfaces = drop_unplugged_wired(interfaces, &modes, carrier_up);
     let proc_net_wireless = std::fs::read_to_string(PROC_NET_WIRELESS_PATH).ok();
     Some(snapshot_from(
         &interfaces,
@@ -442,7 +443,7 @@ fn live_candidates() -> Option<(Vec<Interface>, HashMap<String, WifiMode>)> {
     let modes = ubus_wireless_status()
         .map(|status| modes_map_from_ubus(&status))
         .unwrap_or_default();
-    let interfaces = drop_unplugged_wired(interfaces, &modes, sysfs_carrier);
+    let interfaces = drop_unplugged_wired(interfaces, &modes, carrier_up);
     Some((interfaces, modes))
 }
 

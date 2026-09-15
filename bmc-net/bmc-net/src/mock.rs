@@ -49,6 +49,9 @@ pub struct MockNetworkManager {
     /// handler falling back to the request's own `Host` header, which does not
     /// exercise the redirect; bmc-mock sets its own `localhost:<port>`.
     captive_portal_host: Mutex<Option<String>>,
+    /// What [`NetworkConfig::ethernet_ipv4`] reports.
+    /// The trait's default reads the host's real `eth0`, which no test wants to depend on.
+    ethernet_ipv4: Mutex<Option<Ipv4Addr>>,
     /// Signalled after every successful hostname write; see
     /// [`NetworkConfig::hostname_change_notifier`].
     hostname_changed: Arc<Notify>,
@@ -68,6 +71,7 @@ impl Default for MockNetworkManager {
             wifi_event_sender: broadcast::channel(WIFI_EVENTS_CAPACITY).0,
             provisioning: MockProvisioningState::default(),
             captive_portal_host: Mutex::new(None),
+            ethernet_ipv4: Mutex::new(None),
             hostname_changed: Arc::new(Notify::new()),
         }
     }
@@ -91,6 +95,14 @@ impl MockNetworkManager {
         *lock(&self.captive_portal_host) = Some(host.into());
         self
     }
+
+    /// Plugs a cable into the mock, or pulls it out again with `None`:
+    /// [`NetworkConfig::ethernet_ipv4`] reports `ip` from now on.
+    /// Takes `&self` because a cable goes in and out while something already
+    /// holds the manager, which is the half of it a builder cannot reach.
+    pub fn publish_ethernet_ipv4(&self, ip: Option<Ipv4Addr>) {
+        *lock(&self.ethernet_ipv4) = ip;
+    }
 }
 
 fn lock<T>(guard: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -109,6 +121,10 @@ impl NetworkConfig for MockNetworkManager {
 
     async fn ip_address(&self) -> Option<IpAddr> {
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
+
+    async fn ethernet_ipv4(&self) -> Option<Ipv4Addr> {
+        *lock(&self.ethernet_ipv4)
     }
 
     async fn network_config(&self) -> Option<NetworkProtocolConfig> {

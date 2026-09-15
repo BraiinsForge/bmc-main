@@ -39,6 +39,7 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use async_trait::async_trait;
+use get_if_addrs::{IfAddr, Interface};
 use tokio::sync::Notify;
 
 pub mod buildroot;
@@ -131,19 +132,35 @@ pub trait NetworkConfig: Send + Sync + std::fmt::Debug {
     /// polling and without every caller having to remember to signal.
     fn hostname_change_notifier(&self) -> Arc<Notify>;
 
-    /// IPv4 address of the ethernet interface, `None` while it holds none.
+    /// Address the device is reachable at over its ethernet port:
+    /// a routable IPv4 while the cable is in. `None` without a link,
+    /// or while the port holds only a link-local address from a failed DHCP.
     async fn ethernet_ipv4(&self) -> Option<Ipv4Addr> {
         tokio::task::spawn_blocking(|| {
-            bmc_net_drv::NetworkInterface::get_by_name(bmc_net_drv::DEFAULT_ETH_INTERFACE)
-                .and_then(|iface| iface.ipv4_address())
+            let interfaces = get_if_addrs::get_if_addrs().ok()?;
+            let name = bmc_net_drv::DEFAULT_ETH_INTERFACE;
+            wired_ipv4(&interfaces, name, bmc_net_observe::carrier_up(name))
         })
         .await
         .expect("BUG: ethernet interface lookup task panicked")
-        .and_then(|ip| match ip {
-            IpAddr::V4(ip) => Some(ip),
-            IpAddr::V6(_) => None,
-        })
     }
+}
+
+/// The routable IPv4 on `name`, or `None` when the link is down:
+/// a static address survives an unplugged cable
+/// and must not be advertised as a way to reach the device.
+#[must_use]
+fn wired_ipv4(interfaces: &[Interface], name: &str, carrier: bool) -> Option<Ipv4Addr> {
+    if !carrier {
+        return None;
+    }
+    interfaces
+        .iter()
+        .filter(|iface| iface.name == name)
+        .find_map(|iface| match &iface.addr {
+            IfAddr::V4(v4) if bmc_net_observe::is_routable(v4.ip) => Some(v4.ip),
+            IfAddr::V4(_) | IfAddr::V6(_) => None,
+        })
 }
 
 /// Optional WiFi capability: station scan/connect, the setup access point, and
@@ -330,8 +347,9 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use bmc_net_types::network::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
+    use get_if_addrs::{IfAddr, Ifv4Addr};
 
-    use super::{network_config_summary, validate_hostname};
+    use super::{Interface, network_config_summary, validate_hostname, wired_ipv4};
 
     #[test]
     fn config_summary_reads_as_the_user_configured_it() {
@@ -357,6 +375,58 @@ mod tests {
             network_config_summary(Some(&NetworkProtocolConfig::Dhcp), None),
             "DHCP"
         );
+    }
+
+    const ETH: &str = "eth0";
+
+    fn v4(name: &str, ip: Ipv4Addr) -> Interface {
+        Interface {
+            name: name.to_owned(),
+            addr: IfAddr::V4(Ifv4Addr {
+                ip,
+                netmask: Ipv4Addr::new(255, 255, 255, 0),
+                broadcast: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_plugged_in_port_with_a_lease_is_reachable() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        assert_eq!(wired_ipv4(&[v4(ETH, ip)], ETH, true), Some(ip));
+    }
+
+    #[test]
+    fn an_unplugged_port_keeps_no_address_on_screen() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        assert_eq!(
+            wired_ipv4(&[v4(ETH, ip)], ETH, false),
+            None,
+            "a static network.lan keeps its address after the cable is pulled"
+        );
+    }
+
+    #[test]
+    fn a_link_local_lease_is_not_a_way_to_reach_the_device() {
+        let interfaces = [
+            v4(ETH, Ipv4Addr::new(169, 254, 1, 5)),
+            v4(ETH, Ipv4Addr::UNSPECIFIED),
+            v4("lo", Ipv4Addr::LOCALHOST),
+        ];
+        assert_eq!(wired_ipv4(&interfaces, ETH, true), None);
+    }
+
+    #[test]
+    fn a_routable_address_wins_over_a_link_local_one_on_the_same_port() {
+        let ip = Ipv4Addr::new(192, 168, 1, 20);
+        let interfaces = [v4(ETH, Ipv4Addr::new(169, 254, 1, 5)), v4(ETH, ip)];
+        assert_eq!(wired_ipv4(&interfaces, ETH, true), Some(ip));
+    }
+
+    #[test]
+    fn another_interface_does_not_answer_for_the_port() {
+        let interfaces = [v4("wlan0", Ipv4Addr::new(192, 168, 1, 20))];
+        assert_eq!(wired_ipv4(&interfaces, ETH, true), None);
     }
 
     #[test]
