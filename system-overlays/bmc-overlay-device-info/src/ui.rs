@@ -64,8 +64,8 @@ pub enum DeviceInfoView {
     /// Setup failure the overlay cannot clear on its own.
     /// `restarting` says whether bmc is restarting the device,
     /// i.e. whether the screen waits it out or asks the user to act.
-    /// `dismissible` says whether there are scenes behind it,
-    /// which is what decides the close glyph.
+    /// `dismissible` says whether the setup is done and the screen may close;
+    /// it decides the close glyph.
     SetupFatal {
         restarting: bool,
         dismissible: bool,
@@ -458,8 +458,8 @@ fn dismisses_on_touch(view: &DeviceInfoView) -> bool {
         DeviceInfoView::Connecting { .. }
         | DeviceInfoView::Success { .. }
         | DeviceInfoView::Failed { .. } => true,
-        // Only where the device has scenes to go back to; the FSM decides,
-        // since the answer turns on a lifecycle state no view carries.
+        // Only once the setup is done; the FSM decides, since the answer
+        // turns on a lifecycle state no view carries.
         DeviceInfoView::SetupFatal { dismissible, .. } => *dismissible,
         DeviceInfoView::SetupStart { .. }
         | DeviceInfoView::TurningApOff

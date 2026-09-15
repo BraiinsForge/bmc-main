@@ -49,7 +49,7 @@ actually coming; the same failure during WiFi reconfiguration leaves the running
 - **First boot** (`factory_default`): setup-start (AP SSID + QR of the wizard URL; a placeholder until `access_point`
   arrives) → `connecting_to_wifi` → connected (5 s) → setup connect-info (device-setup IP QR) → `device_setup_success` →
   completed (5 s) → unmap. A `wifi_connection_failed` shows the error for 5 s and returns to setup-start (the AP is
-  still up). Setup screens ignore touch — dismissing them would leave a blank screen mid-wizard.
+  still up). Setup screens ignore touch — dismissing them would hide the wizard with the AP still up.
 - **SetupPending boot** (configured but unfinished): connecting, self-advancing to the setup connect-info when the
   station address appears; bmc's watchdog factory-resets if none comes, but only when every poll could actually read the
   uplink — a failed read is not evidence, and the reset destroys the configuration.
@@ -60,16 +60,15 @@ actually coming; the same failure during WiFi reconfiguration leaves the running
   Entering the flow replaces whatever setup screen was up, so a device parked on the connect-info with its setup
   unfinished shows the AP the moment the tray starts it. Its setup is still unfinished: the join clears only the
   reconfiguration flag and the lifecycle drops back to `setup_pending`, so the connected screen goes on to the
-  connect-info instead (`Mode::has_fallback` decides) and the wizard finishes at the new address.
+  connect-info instead (`Mode::setup_done` decides) and the wizard finishes at the new address.
 - **Unexpected error**: a full-screen failure, in two variants that differ in what happens next rather than in how bad
   the failure is. `unexpected_error_restarting` means bmc is restarting or resetting the device, so the screen says so,
   waits it out, and ignores touch — the restart is coming and there is nothing to dismiss it *to*. `unexpected_error`
   means bmc takes no action, so the screen asks the user to restart it instead. That one steps aside after
-  `FATAL_SCREEN_TIMEOUT` (1 min) or on a touch, but **only where the device has scenes behind it**
-  (`Mode::has_fallback`: a reconfiguration or an operational device). Mid-setup there is nothing behind the overlay, so
-  it stays put rather than strand the user on an empty screen. Dismissing it does not hide the underlying condition: a
-  setup AP still broadcasting after a failed reconfiguration exit shows on the settings-tray button, which reads
-  `wifi_ap` from `deck_settings_v1`.
+  `FATAL_SCREEN_TIMEOUT` (1 min) or on a touch, but **only once the setup is done** (`Mode::setup_done`: a
+  reconfiguration or an operational device). Mid-setup it stays put rather than hide the unfinished wizard behind the
+  scenes. Dismissing it does not hide the underlying condition: a setup AP still broadcasting after a failed
+  reconfiguration exit shows on the settings-tray button, which reads `wifi_ap` from `deck_settings_v1`.
 
 Both connect-info screens hold the last-known address through a transient DHCP loss rather than reading the prober live.
 On the operational screen that stops a flicker; on the setup screen it matters more, since falling back to the

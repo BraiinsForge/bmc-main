@@ -50,8 +50,8 @@ const SUCCESS_VISIBLE_FOR: Duration = Duration::from_secs(10);
 const FAILURE_VISIBLE_FOR: Duration = Duration::from_secs(5);
 /// How long an operational boot waits for an IP before showing failure.
 const WAIT_FOR_IP: Duration = Duration::from_secs(20);
-/// How long an unresolved setup failure holds a device that has scenes behind
-/// it. Long enough to read and act on, and no longer:
+/// How long an unresolved setup failure holds a device whose setup is done.
+/// Long enough to read and act on, and no longer:
 /// the tray also shows a setup AP that is still up,
 /// so this screen is not the only record of the failure.
 const FATAL_SCREEN_TIMEOUT: Duration = Duration::from_mins(1);
@@ -97,11 +97,10 @@ impl From<DeviceState> for Mode {
 }
 
 impl Mode {
-    /// Whether unmapping leaves the user somewhere useful.
-    /// A configured device falls back to its scenes;
-    /// one still being set up has nothing behind the overlay,
-    /// so a screen there has to hold rather than step aside.
-    fn has_fallback(self) -> bool {
+    /// Whether the wizard has been finished on this device,
+    /// so a screen may step aside to the scenes. Mid-setup it holds instead:
+    /// the scenes are there, but stepping aside would hide the wizard.
+    fn setup_done(self) -> bool {
         match self {
             Mode::WifiReconfiguration | Mode::Operational => true,
             Mode::FactoryDefault | Mode::SetupPending | Mode::Unknown => false,
@@ -134,7 +133,7 @@ enum Screen {
     /// `restarting` says whether bmc resolves it by restarting the device.
     /// A restart is worth waiting out, so that variant holds.
     /// The other steps aside once the user has had time to read it,
-    /// but only where there are scenes to step aside to (`Mode::has_fallback`).
+    /// but only once the setup is done (`Mode::setup_done`).
     SetupFatal {
         since: Instant,
         restarting: bool,
@@ -211,7 +210,7 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
                 // still has the wizard to finish, and so has a reconfiguration
                 // begun mid-setup: its join leaves the lifecycle on SetupPending,
                 // so both go on to the connect-info.
-                if mode.has_fallback() {
+                if mode.setup_done() {
                     Screen::Done
                 } else {
                     Screen::SetupConnectInfo { ip: station_ip }
@@ -268,9 +267,7 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
         Screen::SetupFatal {
             since,
             restarting: false,
-        } if mode.has_fallback() && now.duration_since(since) >= FATAL_SCREEN_TIMEOUT => {
-            Screen::Done
-        }
+        } if mode.setup_done() && now.duration_since(since) >= FATAL_SCREEN_TIMEOUT => Screen::Done,
         Screen::Hidden
         | Screen::SetupStart
         | Screen::SetupError
@@ -316,7 +313,7 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
             since,
             restarting: false,
         } => mode
-            .has_fallback()
+            .setup_done()
             .then_some(NextWake::At(since + FATAL_SCREEN_TIMEOUT)),
         Screen::Hidden
         | Screen::SetupStart
@@ -412,7 +409,7 @@ impl DeviceInfoOverlay {
                 restarting: false,
                 ..
             }
-        ) && self.mode.has_fallback()
+        ) && self.mode.setup_done()
     }
 
     #[must_use]
@@ -653,7 +650,7 @@ impl SystemOverlay for DeviceInfoOverlay {
         // Touch acts on the operational flow,
         // and on a fatal screen the user can do nothing about.
         // The rest of the setup screens stay: dismissing SetupStart
-        // would leave a blank screen with the AP up and the user mid-wizard.
+        // would hide the wizard with the AP still up.
         if self.fatal_dismissible() {
             self.screen = Screen::Done;
         } else if matches!(self.screen, Screen::OpUpgraded { .. }) {
@@ -1109,9 +1106,9 @@ mod tests {
     }
 
     #[test]
-    fn a_fatal_screen_with_nothing_behind_it_is_sticky() {
-        // Mid-setup there are no scenes to step aside to, so both variants
-        // wait for something outside the overlay: the device restarting,
+    fn a_fatal_screen_mid_setup_is_sticky() {
+        // Neither variant steps aside from an unfinished wizard; both wait
+        // for something outside the overlay: the device restarting,
         // or the user restarting it.
         for restarting in [true, false] {
             let mut overlay = overlay_with_ip(None);
@@ -1559,7 +1556,7 @@ mod tests {
         assert_eq!(
             overlay.screen,
             Screen::SetupStart,
-            "a device mid-setup has no scenes to hand back to"
+            "a device mid-setup stays in the wizard"
         );
     }
 

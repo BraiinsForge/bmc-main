@@ -45,8 +45,7 @@ factory-reset device can be set up from a phone without knowing anything about i
 - When it cannot, the screen says the device needs to be restarted, and it waits rather than pretending to recover.
 - A device that was already set up gets its clock back: that screen closes on a tap, or on its own after a minute, since
   there is something to go back to and the settings tray still shows the setup network is up.
-- A device still being set up keeps the screen, because there is nothing behind it: it never hides a live setup network
-  or an unfinished wizard.
+- A device still being set up keeps the screen: it never hides a live setup network or an unfinished wizard.
 - A device that has Wi-Fi credentials but never obtains an address is reset back into setup, so it lands on a screen
   with a way forward instead of a blank one.
 

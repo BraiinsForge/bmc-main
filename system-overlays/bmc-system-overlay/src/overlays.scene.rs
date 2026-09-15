@@ -541,7 +541,7 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         ctx,
         ui,
         "SetupFatal",
-        "mid-setup: nothing behind it, so no way out",
+        "mid-setup: the wizard is unfinished, so it holds",
         DeviceInfoView::SetupFatal {
             restarting: false,
             dismissible: false,
@@ -553,7 +553,7 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         ctx,
         ui,
         "SetupFatal (dismissible)",
-        "scenes behind it: closes on touch or after a minute",
+        "setup done: closes on touch or after a minute",
         DeviceInfoView::SetupFatal {
             restarting: false,
             dismissible: true,
