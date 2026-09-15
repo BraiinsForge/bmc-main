@@ -42,6 +42,8 @@ pub struct MockNetworkManager {
     hostname: Mutex<Option<String>>,
     network_config: Mutex<NetworkProtocolConfig>,
     connected_wifi: Mutex<Option<WifiNetworkConfig>>,
+    /// What [`WifiControl::saved_networks`] reports; empty unless seeded.
+    saved_networks: Mutex<Vec<WifiStatus>>,
     wifi_enabled: Mutex<bool>,
     wifi_event_sender: broadcast::Sender<WifiEvent>,
     provisioning: MockProvisioningState,
@@ -67,6 +69,7 @@ impl Default for MockNetworkManager {
             hostname: Mutex::new(Some("mock".to_owned())),
             network_config: Mutex::new(NetworkProtocolConfig::Dhcp),
             connected_wifi: Mutex::new(None),
+            saved_networks: Mutex::new(Vec::new()),
             wifi_enabled: Mutex::new(true),
             wifi_event_sender: broadcast::channel(WIFI_EVENTS_CAPACITY).0,
             provisioning: MockProvisioningState::default(),
@@ -86,6 +89,22 @@ impl MockNetworkManager {
             provisioning: MockProvisioningState::new(factory_default, setup_pending),
             ..Self::default()
         }
+    }
+
+    /// Saves an enabled station network for `ssid`, as a device configured
+    /// for it reports one from [`WifiControl::saved_networks`].
+    #[must_use]
+    pub fn with_saved_station(self, ssid: impl Into<String>) -> Self {
+        lock(&self.saved_networks).push(WifiStatus {
+            enabled: true,
+            configuration: Some(WifiConfiguration {
+                mode: WifiMode::Station,
+                ssid: ssid.into(),
+                ..WifiConfiguration::default()
+            }),
+            sta_link_state: None,
+        });
+        self
     }
 
     /// Sets the host [`WifiControl::captive_portal_redirect_host`] reports, so
@@ -204,7 +223,7 @@ impl WifiControl for MockNetworkManager {
     }
 
     async fn saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
-        Ok(Vec::new())
+        Ok(lock(&self.saved_networks).clone())
     }
 
     async fn ap_ssid(&self) -> Option<String> {

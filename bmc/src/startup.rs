@@ -48,7 +48,7 @@ use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_led::led_driver::LedDriver;
 use bmc_net::NetworkManager;
-use bmc_platform::HardwareCapabilities;
+use bmc_platform::{HardwareCapabilities, HardwareProfile};
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
 use bmc_upgrade::packages::PackageBackend;
@@ -405,6 +405,50 @@ async fn publish_access_point<T: BmcManager>(
     }
 }
 
+/// What a `SetupPending` boot is waiting on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SetupPendingWait {
+    /// A WiFi join, which the watchdog judges: a station that never gets an
+    /// address is a failed join, and the factory reset brings the setup AP back.
+    WifiJoin,
+    /// A cable, on a board with a port and no enabled station saved: there is
+    /// no join to judge, and no reset would bring the cable.
+    Cable,
+}
+
+/// Decide what a `SetupPending` boot waits on from what the board has.
+/// A station list that cannot be read counts as no station: waiting on a
+/// cable that may come beats resetting the board over a read failure.
+async fn setup_pending_wait(
+    network: &dyn NetworkManager,
+    ethernet_supported: bool,
+) -> SetupPendingWait {
+    if !ethernet_supported {
+        return SetupPendingWait::WifiJoin;
+    }
+    let Some(wifi) = network.wifi() else {
+        return SetupPendingWait::Cable;
+    };
+    let station_saved = match wifi.saved_networks().await {
+        Ok(networks) => networks.iter().any(|status| {
+            status.enabled
+                && status
+                    .configuration
+                    .as_ref()
+                    .is_some_and(|conf| !conf.ssid.is_empty())
+        }),
+        Err(err) => {
+            warn!(%err, "cannot read the saved WiFi networks; waiting on the cable");
+            false
+        }
+    };
+    if station_saved {
+        SetupPendingWait::WifiJoin
+    } else {
+        SetupPendingWait::Cable
+    }
+}
+
 /// Whether `state` runs the setup AP.
 ///
 /// The watch only wakes the listener; the state read in the same pass decides.
@@ -439,10 +483,22 @@ fn spawn_device_info_listener<T: BmcManager + 'static>(
             .await
             == BmcState::SetupPending
         {
-            tokio::spawn(run_setup_pending_watchdog(
-                compositor.clone(),
-                manager.clone(),
-            ));
+            let ethernet_supported = HardwareProfile::for_product(manager.platform().product())
+                .capabilities()
+                .ethernet_supported;
+            match setup_pending_wait(manager.network_manager(), ethernet_supported).await {
+                SetupPendingWait::WifiJoin => {
+                    tokio::spawn(run_setup_pending_watchdog(
+                        compositor.clone(),
+                        manager.clone(),
+                    ));
+                }
+                SetupPendingWait::Cable => {
+                    info!(
+                        "no WiFi station saved on a wired board; skipping the setup-pending watchdog"
+                    );
+                }
+            }
         }
 
         // The seeded value is what the first pass covers: a FactoryDefault boot
@@ -1113,8 +1169,9 @@ impl Default for Configuration {
 #[cfg(test)]
 mod tests {
     use super::{
-        Destination, Publication, SETUP_AP_REFRESHES, SETUP_URL_CLEAR_AFTER, current_access_point,
-        forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap,
+        Destination, Publication, SETUP_AP_REFRESHES, SETUP_URL_CLEAR_AFTER, SetupPendingWait,
+        current_access_point, forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap,
+        setup_pending_wait,
     };
     use crate::compositor::{
         AccessPointInfo, CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState,
@@ -1172,6 +1229,39 @@ mod tests {
             ssid: "Deck setup".to_owned(),
             setup_url: format!("http://{AP_HOST}/"),
         }
+    }
+
+    /// A board booting into `SetupPending`, as the mock seeds it.
+    fn setup_pending_board() -> MockNetworkManager {
+        MockNetworkManager::with_provisioning(false, true)
+    }
+
+    #[tokio::test]
+    async fn a_board_without_a_port_waits_on_its_join_whatever_is_saved() {
+        let board = setup_pending_board();
+        assert_eq!(
+            setup_pending_wait(&board, false).await,
+            SetupPendingWait::WifiJoin,
+            "the Deck judges the join it has, saved station or not"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wired_board_with_no_station_saved_waits_on_its_cable() {
+        let board = setup_pending_board();
+        assert_eq!(
+            setup_pending_wait(&board, true).await,
+            SetupPendingWait::Cable
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wired_board_with_a_station_saved_waits_on_its_join() {
+        let board = setup_pending_board().with_saved_station("HomeNet");
+        assert_eq!(
+            setup_pending_wait(&board, true).await,
+            SetupPendingWait::WifiJoin
+        );
     }
 
     #[test]
