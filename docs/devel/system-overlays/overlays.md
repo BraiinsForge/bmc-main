@@ -7,8 +7,9 @@ from, and its platform gating.
 ## Device info (`bmc-overlay-device-info`)
 
 The full-screen transient boot and setup screens: the first-boot setup flow (AP SSID + QR, connecting, connected,
-device-setup IP QR, completed, errors), WiFi reconfiguration, and the operational-boot connect-info sequence. It is a
-port of the stable-26.02 `display_tasks` screens onto the overlay framework.
+device-setup IP QR, completed, errors), the same flow over an ethernet cable on the boards that have a port, WiFi
+reconfiguration, and the operational-boot connect-info sequence. It is a port of the stable-26.02 `display_tasks`
+screens onto the overlay framework.
 
 `LayerConfig::fullscreen` with the layer lowered to `Layer::Bottom`, full input region. It blocks scene touch while
 shown, but sits below a firing alarm (`Top`), the firmware-upgrade splash (`Top`), and the settings tray (`Overlay`).
@@ -23,6 +24,23 @@ bmc owns the lifecycle and drives the overlay over `deck_device_info_v1` (see [`
 wizard URL (so the overlay hard-codes no AP addressing). The displayed device address comes from the connectivity
 prober's `station_ipv4` — the pick that excludes AP-mode interfaces, so the setup AP's own address never counts as an
 uplink. Until the first `device_state` event the overlay stays unmapped rather than guess a flow.
+
+`access_point` says one of three things: the SSID and wizard URL while the setup AP is up, the URL alone (an empty SSID)
+where the wizard is reached over the cable, and two empty strings while neither is reachable, which is the pending
+screen. bmc refreshes it every two seconds for as long as a setup screen is up (`publish_access_point` in
+`bmc/src/startup.rs`). The cable wins while the port holds a routable address and its link is up; the SSID is advertised
+only while the AP is up, which bmc asks of whatever owns the AP on that board — its own provisioning state where it
+raises the AP itself, and whether `network.wifi_ap.ipaddr` is bound to an interface on the BMM boards, where the
+platform's hotplug parks the AP behind bmc's back once the cable holds an address and starts it again when the cable
+goes; and a destination that stays unreachable for three refreshes is cleared rather than left up as a dead URL. Nothing
+reachable for half a minute on a board with WiFi is the AP failing to come up, reported and, mid-setup, followed by a
+reboot. A board without WiFi has no AP to bring back, so it keeps waiting for the cable instead.
+
+What the board can offer at all, WiFi, an ethernet port, or both, the compositor tells the overlay over
+`deck_platform_v1` (`wifi` and `ethernet` bits of `capabilities`); the overlay opts in with `uses_platform`. The uplinks
+decide the wording of every screen that waits on a connection: a WiFi join once the board has WiFi and a network to name
+(the target from `connecting_to_wifi`, or the saved station network), else the cable. Until the compositor has said what
+the board has, it reads as the Deck.
 
 A fourth event, `report_ip`, is the IP-report button reaching the overlay: it raises the operational connect-info screen
 on demand, on the same timer a boot uses. See "IP-report button" below.
@@ -45,14 +63,27 @@ actually coming; the same failure during WiFi reconfiguration leaves the running
 - **Operational boot**: connecting (SSID, "waiting for IP") → connect-info (IP + QR, 10 s) on an address, or failure (5
   s) after 20 s without one → unmap. A touch dismisses this flow immediately; a post-upgrade boot skips it or opens on
   the upgrade-success screen (see "Opening after an upgrade" below — that applies to this flow only, never the setup
-  screens).
+  screens). A board waiting on its cable says "Connecting to network..." and "No network connection" with "Check the
+  Ethernet cable" instead, and never mentions WiFi.
 - **First boot** (`factory_default`): setup-start (AP SSID + QR of the wizard URL; a placeholder until `access_point`
   arrives) → `connecting_to_wifi` → connected (5 s) → setup connect-info (device-setup IP QR) → `device_setup_success` →
-  completed (5 s) → unmap. A `wifi_connection_failed` shows the error for 5 s and returns to setup-start (the AP is
-  still up). Setup screens ignore touch — dismissing them would hide the wizard with the AP still up.
+  completed (5 s) → unmap. A `wifi_connection_failed` shows the error until the setup AP (or the cable) is announced
+  again, then returns to setup-start, and the join target is forgotten with it. Setup screens ignore touch — dismissing
+  them would hide the wizard with the AP still up.
+- **First boot over a cable** (`factory_default` with the cable in, or plugged in during the AP screen): setup-start
+  shows the wizard address and its QR alone, since there is no AP to join, and a board with both uplinks offers the
+  cable beside the SSID while the AP is up. Skipping WiFi in the wizard raises the switchover screen ("Your device is
+  being set up...") until the lifecycle advances, which lands on the setup connect-info at once where the cable's
+  address is already known. A cable pulled during the AP-pending screen brings the SSID back once hotplug has the AP up;
+  pulled while the setup connect-info is up, it returns the screen to the connect progress after `ADDRESS_LOSS_GRACE`
+  (10 s), and the address comes back the way it first arrived. A cable pulled once the lifecycle has advanced to
+  SetupPending brings no AP back, since the platform's hotplug only acts while the board is factory-default, so the
+  connect progress is the end state until the cable returns. A board without WiFi asks for the cable in place of the AP.
 - **SetupPending boot** (configured but unfinished): connecting, self-advancing to the setup connect-info when the
   station address appears; bmc's watchdog factory-resets if none comes, but only when every poll could actually read the
-  uplink — a failed read is not evidence, and the reset destroys the configuration.
+  uplink — a failed read is not evidence, and the reset destroys the configuration. Where the board has an ethernet port
+  and no station network is configured there is no join to judge, so bmc runs no watchdog and the screen waits on the
+  cable.
 - **WiFi reconfiguration**: the same setup flow, entered when `device_state` flips to `wifi_reconfiguration`; on
   `wifi_reconfig_success` the connected screen shows 5 s, and on an operational device unmaps straight to scenes (no
   connect-info). The setup-start screen holds like a first boot's, for as long as the AP is up: the user asked for this
@@ -73,9 +104,15 @@ actually coming; the same failure during WiFi reconfiguration leaves the running
 Both connect-info screens hold the last-known address through a transient DHCP loss rather than reading the prober live.
 On the operational screen that stops a flicker; on the setup screen it matters more, since falling back to the
 connect-progress screen would be a dead end — no bmc event is coming, there is no deadline, and setup screens ignore
-touch — while the address is exactly what the user still needs to finish the wizard in a browser. The screens render
-through the `bmc-render` tree pipeline with the six legacy init-setup SVG icons embedded at build time; every screen has
-a gallery cell (`overlays.scene.rs`).
+touch — while the address is exactly what the user still needs to finish the wizard in a browser. An address reached
+over the cable is the exception on the setup screen: after `ADDRESS_LOSS_GRACE` without it the screen does fall back,
+because a pulled cable is the likely cause, the connect progress brings the address back on the next lease, and a dead
+wizard URL helps nobody. Which it is, the overlay reads off the wording the connect progress would use, so a board that
+has an ethernet port but joined Wi-Fi keeps its address like the Deck: a station that drops out comes back with the same
+one. The screens render through the `bmc-render` tree pipeline with the legacy init-setup SVG icons and the miner
+outline embedded at build time; every screen has a gallery cell, one scene per product
+(`Overlays / Device Info / BMC100 | BMM101 | BMM100` in `overlays.scene.rs`) staging the screens that product can show
+at its own panel, and the `Screen` knob picks one card for `capture.toml`.
 
 ### IP-report button
 
