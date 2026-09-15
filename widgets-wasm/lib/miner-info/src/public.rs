@@ -18,7 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::types::{Hashvalue, Ratio};
+use core::time::Duration;
+
+use bmc_wasm_sdk::types::{BitcoinAmount, Hashrate, Hashvalue, Ratio, SiPrefix};
 use bmc_wasm_sdk::ufmt;
 
 use crate::api::JsonLookup;
@@ -40,9 +42,12 @@ pub(crate) struct DifficultyStats {
     pub prev_diff_adjust: Option<Ratio>,
     pub est_diff_adjust: Option<Ratio>,
     pub epoch_progress: Option<Ratio>,
+    pub epoch_remaining: Option<Duration>,
 }
 
 pub(crate) struct HashrateStats {
+    pub network_hashrate: Option<Hashrate>,
+    pub avg_fees_per_block: Option<BitcoinAmount>,
     pub avg_fee_share: Option<Ratio>,
     pub hashvalue: Option<Hashvalue>,
 }
@@ -78,13 +83,23 @@ pub(crate) fn parse_block(json: &impl JsonLookup) -> ParseResult<Block> {
 }
 
 pub(crate) fn parse_difficulty_stats(json: &impl JsonLookup) -> ParseResult<DifficultyStats> {
+    // A count outside the epoch is no position in it, so it reads as missing
+    // rather than as progress below zero or past the end.
+    let block_epoch = json
+        .f64("/block_epoch")
+        .filter(|epoch| (0.0..=BLOCKS_PER_EPOCH).contains(epoch));
     // Both adjustments are quoted as fractions, which is what `Ratio` stores.
     let data = DifficultyStats {
         prev_diff_adjust: json.f64("/previous_adjustment").map(Ratio::from_fraction),
         est_diff_adjust: json.f64("/estimated_adjustment").map(Ratio::from_fraction),
-        epoch_progress: json
-            .f64("/block_epoch")
-            .map(|epoch| Ratio::from_fraction(epoch / BLOCKS_PER_EPOCH)),
+        epoch_progress: block_epoch.map(|epoch| Ratio::from_fraction(epoch / BLOCKS_PER_EPOCH)),
+        // `epoch_block_time` is this epoch's average seconds per block;
+        // `try_from` refuses a negative, NaN or overflowing pace rather than panicking.
+        epoch_remaining: block_epoch.zip(json.f64("/epoch_block_time")).and_then(
+            |(epoch, secs_per_block)| {
+                Duration::try_from_secs_f64((BLOCKS_PER_EPOCH - epoch) * secs_per_block).ok()
+            },
+        ),
     };
     let reported = data.prev_diff_adjust.is_some()
         || data.est_diff_adjust.is_some()
@@ -97,13 +112,22 @@ pub(crate) fn parse_difficulty_stats(json: &impl JsonLookup) -> ParseResult<Diff
 
 pub(crate) fn parse_hashrate_stats(json: &impl JsonLookup) -> ParseResult<HashrateStats> {
     let data = HashrateStats {
+        network_hashrate: json
+            .f64("/current_hashrate")
+            .map(|ehps| Hashrate::from_si(ehps, SiPrefix::Exa)),
+        avg_fees_per_block: json
+            .f64("/avg_fees_per_block")
+            .map(BitcoinAmount::from_bitcoin),
         // Quoted as a percent, unlike the adjustment fields.
         avg_fee_share: json.f64("/fees_percent").map(Ratio::from_percent),
         hashvalue: json
             .f64("/hash_value")
             .map(Hashvalue::from_bitcoin_per_terahash_day),
     };
-    let reported = data.avg_fee_share.is_some() || data.hashvalue.is_some();
+    let reported = data.network_hashrate.is_some()
+        || data.avg_fees_per_block.is_some()
+        || data.avg_fee_share.is_some()
+        || data.hashvalue.is_some();
     ParseResult {
         data,
         verdict: Verdict::from_reported(reported),
@@ -182,9 +206,12 @@ pub(crate) fn reset_difficulty_stats(data: &mut PublicData) {
     data.prev_diff_adjust = Availability::Unavailable;
     data.est_diff_adjust = Availability::Unavailable;
     data.epoch_progress = Availability::Unavailable;
+    data.epoch_remaining = Availability::Unavailable;
 }
 
 pub(crate) fn reset_hashrate_stats(data: &mut PublicData) {
+    data.network_hashrate = Availability::Unavailable;
+    data.avg_fees_per_block = Availability::Unavailable;
     data.avg_fee_share = Availability::Unavailable;
     data.hashvalue = Availability::Unavailable;
 }
@@ -248,6 +275,85 @@ mod tests {
             panic!("BUG: epoch progress should be available");
         };
         assert!(approx(progress.as_percent(), 50.0));
+    }
+
+    #[test]
+    fn epoch_remaining_is_the_blocks_left_at_the_epochs_pace() {
+        let mut json = MapJson::default();
+        json.floats.insert("/block_epoch", 1_754.0);
+        json.floats.insert("/epoch_block_time", 600.0);
+        assert_eq!(
+            parse_difficulty_stats(&json).data.epoch_remaining,
+            Some(Duration::from_mins(262 * 10))
+        );
+    }
+
+    #[test]
+    fn epoch_remaining_needs_both_the_count_and_the_pace() {
+        let mut count_only = MapJson::default();
+        count_only.floats.insert("/block_epoch", 1_754.0);
+        assert_eq!(
+            parse_difficulty_stats(&count_only).data.epoch_remaining,
+            None
+        );
+
+        let mut pace_only = MapJson::default();
+        pace_only.floats.insert("/epoch_block_time", 600.0);
+        assert_eq!(
+            parse_difficulty_stats(&pace_only).data.epoch_remaining,
+            None
+        );
+    }
+
+    #[test]
+    fn epoch_remaining_refuses_a_pace_no_duration_can_hold() {
+        for pace in [-600.0, f64::NAN, f64::INFINITY] {
+            let mut json = MapJson::default();
+            json.floats.insert("/block_epoch", 1_754.0);
+            json.floats.insert("/epoch_block_time", pace);
+            assert_eq!(
+                parse_difficulty_stats(&json).data.epoch_remaining,
+                None,
+                "pace {pace}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_last_block_of_the_epoch_leaves_nothing_remaining() {
+        let mut json = MapJson::default();
+        json.floats.insert("/block_epoch", 2_016.0);
+        json.floats.insert("/epoch_block_time", 600.0);
+        let data = parse_difficulty_stats(&json).data;
+        let Some(progress) = data.epoch_progress else {
+            panic!("BUG: the epoch's last block is a position in it");
+        };
+        assert!(approx(progress.as_percent(), 100.0));
+        assert_eq!(data.epoch_remaining, Some(Duration::ZERO));
+    }
+
+    /// A count the epoch cannot hold is refused whole, not clamped:
+    /// clamping would render it as fresh progress.
+    #[test]
+    fn a_count_outside_the_epoch_is_refused() {
+        for count in [-1.0, 2_100.0, f64::NAN] {
+            let mut json = MapJson::default();
+            json.floats.insert("/block_epoch", count);
+            json.floats.insert("/epoch_block_time", 600.0);
+            let data = parse_difficulty_stats(&json).data;
+            assert_eq!(data.epoch_progress, None, "count {count}");
+            assert_eq!(data.epoch_remaining, None, "count {count}");
+        }
+    }
+
+    #[test]
+    fn converts_network_hashrate_exahashes_to_terahashes() {
+        let mut json = MapJson::default();
+        json.floats.insert("/current_hashrate", 650.0);
+        let Some(hashrate) = parse_hashrate_stats(&json).data.network_hashrate else {
+            panic!("BUG: the network hashrate should be available");
+        };
+        assert!(approx(hashrate.as_terahashes_per_second(), 650_000_000.0));
     }
 
     #[test]
@@ -334,14 +440,30 @@ mod tests {
     #[test]
     fn reset_hashrate_stats_clears_only_its_own_fields() {
         let mut data = PublicData {
+            network_hashrate: Availability::Available(Hashrate::from_si(650.0, SiPrefix::Exa)),
+            avg_fees_per_block: Availability::Available(BitcoinAmount::from_bitcoin(0.055)),
             avg_fee_share: Availability::Available(Ratio::from_percent(1.4)),
             hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(5.02)),
             btc_price: Availability::Available(Money::new(104_250.0, Currency::Usd)),
             ..PublicData::default()
         };
         reset_hashrate_stats(&mut data);
+        assert_eq!(data.network_hashrate, Availability::Unavailable);
+        assert_eq!(data.avg_fees_per_block, Availability::Unavailable);
         assert_eq!(data.avg_fee_share, Availability::Unavailable);
         assert_eq!(data.hashvalue, Availability::Unavailable);
         assert!(matches!(data.btc_price, Availability::Available(_)));
+    }
+
+    #[test]
+    fn reset_difficulty_stats_clears_the_remaining_time_too() {
+        let mut data = PublicData {
+            epoch_progress: Availability::Available(Ratio::from_percent(87.0)),
+            epoch_remaining: Availability::Available(Duration::from_mins(2_620)),
+            ..PublicData::default()
+        };
+        reset_difficulty_stats(&mut data);
+        assert_eq!(data.epoch_progress, Availability::Unavailable);
+        assert_eq!(data.epoch_remaining, Availability::Unavailable);
     }
 }

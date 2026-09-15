@@ -72,6 +72,8 @@ pub struct Params {
     pub estimated_adjustment: f64,
     /// Blocks mined in the current 2016-block epoch.
     pub block_epoch: f64,
+    /// Average seconds per block over the current epoch.
+    pub epoch_block_time: f64,
     /// Network hashrate, in EH/s.
     pub current_hashrate: f64,
     /// Average transaction fees per block, in BTC.
@@ -101,6 +103,7 @@ impl Default for Params {
             previous_adjustment: -0.021,
             estimated_adjustment: -0.045,
             block_epoch: 1_754.0,
+            epoch_block_time: 600.0,
             current_hashrate: 650.0,
             avg_fees_per_block: 0.055,
             fees_percent: 12.1,
@@ -172,6 +175,7 @@ impl Params {
             "previous_adjustment": self.previous_adjustment,
             "estimated_adjustment": self.estimated_adjustment,
             "block_epoch": self.block_epoch,
+            "epoch_block_time": self.epoch_block_time,
         })
     }
 

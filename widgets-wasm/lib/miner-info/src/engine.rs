@@ -336,11 +336,14 @@ fn public_difficulty(json: &JsonDoc, _currency: Currency, data: &mut PublicData)
         data.prev_diff_adjust = difficulty.prev_diff_adjust.into();
         data.est_diff_adjust = difficulty.est_diff_adjust.into();
         data.epoch_progress = difficulty.epoch_progress.into();
+        data.epoch_remaining = difficulty.epoch_remaining.into();
     })
 }
 #[cfg(target_arch = "wasm32")]
 fn public_hashrate(json: &JsonDoc, _currency: Currency, data: &mut PublicData) -> Verdict {
     public_api::parse_hashrate_stats(json).stored(|hashrate| {
+        data.network_hashrate = hashrate.network_hashrate.into();
+        data.avg_fees_per_block = hashrate.avg_fees_per_block.into();
         data.avg_fee_share = hashrate.avg_fee_share.into();
         data.hashvalue = hashrate.hashvalue.into();
     })
