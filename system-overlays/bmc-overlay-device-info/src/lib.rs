@@ -58,6 +58,14 @@ const WAIT_FOR_IP: Duration = Duration::from_secs(20);
 const FATAL_SCREEN_TIMEOUT: Duration = Duration::from_mins(1);
 /// Snapshot re-read (wake) cadence while a screen depends on prober state.
 const POLL: Duration = Duration::from_secs(1);
+/// How long a board on its cable keeps a connect-info address the prober no longer sees:
+/// long enough to ride out a lease renew,
+/// short enough that a pulled cable does not leave a dead wizard URL on the screen.
+/// Longer than bmc's grace on the setup-AP screen (`SETUP_URL_CLEAR_AFTER`
+/// refreshes, in `bmc/src/startup.rs`), which covers the same pulled cable one
+/// screen earlier: that one has an AP coming up behind it, this one only the
+/// next lease.
+const ADDRESS_LOSS_GRACE: Duration = Duration::from_secs(10);
 
 /// Injected connectivity source so the state machine is unit-testable.
 trait Env {
@@ -121,8 +129,9 @@ enum Screen {
         since: Instant,
     },
     /// Setup connect-info. Carries the address rather than reading the prober
-    /// live, so losing it cannot drop the screen back to connect progress —
-    /// nothing would ever move it off there again.
+    /// live, so a momentary loss cannot drop the screen back to connect progress.
+    /// A wired SetupPending boot does drop it after `ADDRESS_LOSS_GRACE`
+    /// (see `drop_lost_address`).
     SetupConnectInfo {
         ip: Option<Ipv4Addr>,
     },
@@ -333,6 +342,9 @@ pub struct DeviceInfoOverlay {
     target_ssid: Option<String>,
     station_ip: Option<Ipv4Addr>,
     station_ssid: Option<String>,
+    /// When the prober stopped seeing the address a connect-info screen shows;
+    /// see [`Self::drop_lost_address`].
+    address_lost_since: Option<Instant>,
     /// Which upgrade this startup follows, from a terminal success snapshot;
     /// `None` for an ordinary boot.
     post_upgrade: Option<UpgradeKind>,
@@ -373,6 +385,7 @@ impl Default for DeviceInfoOverlay {
             target_ssid: None,
             station_ip: None,
             station_ssid: None,
+            address_lost_since: None,
             post_upgrade: None,
             snapshot_version: None,
             dirty: false,
@@ -466,6 +479,35 @@ impl DeviceInfoOverlay {
                 link: self.link_for(self.station_ssid.clone()),
             },
         }
+    }
+
+    /// Take a setup connect-info address off the screen
+    /// once a board running on its cable has gone [`ADDRESS_LOSS_GRACE`]
+    /// without it: that is a pulled cable, and the URL it advertised is dead.
+    /// Only a SetupPending boot drops it: that is the one flow whose connect
+    /// progress reacquires the address on its own, so anywhere else the screen
+    /// would stay on "Connecting" for good.
+    /// An address a Wi-Fi join produced is kept through a loss instead,
+    /// since a station that drops out comes back with the same one.
+    /// Which of the two it is, the overlay asks the way the screens do:
+    /// whatever the connect progress would say it is waiting on
+    /// is what the address on display came over.
+    /// Returns whether the screen changed.
+    fn drop_lost_address(&mut self, now: Instant) -> bool {
+        let shown = matches!(self.screen, Screen::SetupConnectInfo { ip: Some(_) });
+        let on_a_cable = matches!(self.link_for(self.setup_ssid()), Link::Cable);
+        let pending = self.mode == Mode::SetupPending;
+        if !(shown && pending && on_a_cable && self.station_ip.is_none()) {
+            self.address_lost_since = None;
+            return false;
+        }
+        let since = *self.address_lost_since.get_or_insert(now);
+        if now.duration_since(since) < ADDRESS_LOSS_GRACE {
+            return false;
+        }
+        self.address_lost_since = None;
+        self.screen = Screen::SetupConnecting;
+        true
     }
 
     /// Fold a changed snapshot into the displayed address/SSID; returns
@@ -659,8 +701,9 @@ impl SystemOverlay for DeviceInfoOverlay {
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
         let probe_changed = self.refresh_from_snapshot();
-        let (next, screen_changed) = step(self.screen, self.mode, now, self.station_ip);
+        let (next, stepped) = step(self.screen, self.mode, now, self.station_ip);
         self.screen = next;
+        let screen_changed = stepped | self.drop_lost_address(now);
         let visible = self.screen.visible();
         let next_wake = match next_deadline(self.screen, self.mode) {
             Some(NextWake::At(deadline)) => Some(deadline),
@@ -741,6 +784,16 @@ mod tests {
 
     impl Prober {
         fn publish(&self, ip: Option<Ipv4Addr>) {
+            self.publish_snapshot(ip, None);
+        }
+
+        /// The same on a board with a station network saved, which the prober
+        /// reports whether or not the address on `ip` came over it.
+        fn publish_joined(&self, ip: Option<Ipv4Addr>, ssid: &str) {
+            self.publish_snapshot(ip, Some(ssid.to_owned()));
+        }
+
+        fn publish_snapshot(&self, ip: Option<Ipv4Addr>, station_ssid: Option<String>) {
             let mut slot = self.0.borrow_mut();
             let version = slot
                 .as_ref()
@@ -750,7 +803,7 @@ mod tests {
                 snapshot: Snapshot {
                     ipv4: ip,
                     station_ipv4: ip,
-                    station_ssid: None,
+                    station_ssid,
                     wifi_signal_dbm: None,
                 },
             });
@@ -888,6 +941,132 @@ mod tests {
         assert_eq!(
             overlay.view(),
             DeviceInfoView::SetupConnecting { link: Link::Cable }
+        );
+    }
+
+    /// A wired board mid-setup, its connect-info address on screen.
+    fn wired_connect_info(uplinks: Uplinks, ip: Ipv4Addr) -> (DeviceInfoOverlay, Prober) {
+        let (mut overlay, prober) = overlay_with_prober(Some(ip));
+        overlay.on_platform_capabilities(platform_with(uplinks));
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        // The lifecycle only opens the connect progress; the tick that reads
+        // the address is what moves the screen on to the connect info.
+        let _ = overlay.tick(t0());
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo { ip: Some(ip) });
+        (overlay, prober)
+    }
+
+    #[test]
+    fn a_wired_board_drops_a_connect_info_address_the_cable_lost() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        let (mut overlay, prober) = wired_connect_info(BOTH, ip);
+        let start = t0();
+
+        prober.publish(None);
+        let _ = overlay.tick(start + POLL);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo { ip: Some(ip) },
+            "a blip keeps the address"
+        );
+
+        let _ = overlay.tick(start + POLL + ADDRESS_LOSS_GRACE);
+        assert_eq!(overlay.screen, Screen::SetupConnecting);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnecting { link: Link::Cable }
+        );
+
+        prober.publish(Some(ip));
+        let _ = overlay.tick(start + POLL + ADDRESS_LOSS_GRACE + POLL);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo { ip: Some(ip) },
+            "the cable going back in brings the address back"
+        );
+    }
+
+    #[test]
+    fn a_loss_before_the_lifecycle_advances_waits_for_it() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        let (mut overlay, prober) = overlay_with_prober(Some(ip));
+        overlay.on_platform_capabilities(platform_with(BOTH));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.screen = Screen::SetupConnectInfo { ip: Some(ip) };
+        let start = t0();
+
+        prober.publish(None);
+        let _ = overlay.tick(start);
+        let _ = overlay.tick(start + ADDRESS_LOSS_GRACE + POLL);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo { ip: Some(ip) },
+            "in AP mode nothing would move the screen off the connect progress"
+        );
+
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        let advanced = start + ADDRESS_LOSS_GRACE + 2 * POLL;
+        let _ = overlay.tick(advanced);
+        let _ = overlay.tick(advanced + ADDRESS_LOSS_GRACE);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnecting,
+            "the grace counts from the lifecycle advancing"
+        );
+    }
+
+    #[test]
+    fn a_loss_shorter_than_the_grace_starts_the_count_over() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        let (mut overlay, prober) = wired_connect_info(BOTH, ip);
+        let start = t0();
+        let half = ADDRESS_LOSS_GRACE / 2;
+
+        prober.publish(None);
+        let _ = overlay.tick(start);
+        prober.publish(Some(ip));
+        let _ = overlay.tick(start + half);
+        prober.publish(None);
+        let _ = overlay.tick(start + half + POLL);
+        let _ = overlay.tick(start + half + POLL + half);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo { ip: Some(ip) },
+            "two short losses do not add up to one long one"
+        );
+    }
+
+    #[test]
+    fn the_deck_keeps_its_connect_info_address_through_a_loss() {
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let (mut overlay, prober) = wired_connect_info(Uplinks::WIFI_ONLY, ip);
+        prober.publish(None);
+        // The first tick past the loss only starts the grace; the second is
+        // what would drop the address, so both are needed to prove it holds.
+        let start = t0() + POLL;
+        let _ = overlay.tick(start);
+        let _ = overlay.tick(start + ADDRESS_LOSS_GRACE);
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo { ip: Some(ip) });
+    }
+
+    #[test]
+    fn a_board_with_a_port_keeps_an_address_its_wifi_join_produced() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        let (mut overlay, prober) = overlay_with_prober(None);
+        overlay.on_platform_capabilities(platform_with(BOTH));
+        prober.publish_joined(Some(ip), "HomeNet");
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        let _ = overlay.tick(t0());
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo { ip: Some(ip) });
+
+        prober.publish_joined(None, "HomeNet");
+        let start = t0() + POLL;
+        let _ = overlay.tick(start);
+        let _ = overlay.tick(start + ADDRESS_LOSS_GRACE);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo { ip: Some(ip) },
+            "the port is not the cable: a station that drops out comes back with the same address"
         );
     }
 
