@@ -380,13 +380,16 @@ async fn publish_access_point<T: BmcManager>(
     manager: Arc<T>,
     state: BmcState,
 ) {
+    // Giving up restarts the device to bring a failed AP back. A board without
+    // WiFi has no AP to bring back, only a cable to wait for.
+    let may_give_up = manager.network_manager().wifi().is_some();
     let mut destination = Destination::default();
     let mut refresh = tokio::time::interval(SETUP_URL_REFRESH_PERIOD);
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         refresh.tick().await;
         let current = current_access_point(manager.network_manager()).await;
-        let published = match destination.observe(current, true) {
+        let published = match destination.observe(current, may_give_up) {
             Publication::Keep => continue,
             Publication::Show(ap) => compositor.broadcast_access_point(Some(ap)),
             Publication::Clear => compositor.broadcast_access_point(None),
