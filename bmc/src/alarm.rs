@@ -251,6 +251,7 @@ impl AlarmBus {
         }
     }
 
+    /// Dismiss `id` if it is the alarm currently ringing.
     pub fn stop_alarm(&self, id: &AlarmId) {
         if let Err(err) = self.tx_commands.send(AlarmCmd::Stop { id: id.clone() }) {
             warn!(alarm_id = %id, error = %err, "Failed to send Stop command, no active receivers");
@@ -508,15 +509,12 @@ impl AlarmScheduler {
                                 () = &mut deadline => {
                                     info!(alarm_id = %alarm_id, timeout_minutes = 10, "Alarm timed out, auto-stopping");
                                     token.cancel();
-                                    // Clear the slot here so repeating alarms don't leak a
-                                    // stale entry and the non-repeating set_enabled(false)
-                                    // path can't emit a duplicate Stopped via the command
-                                    // handler.
-                                    let _ = current_alarm
-                                        .lock()
-                                        .await
-                                        .take_if(|c| c.alarm.id == alarm_id);
-                                    alarm_bus.send_event(AlarmEvent::Stopped { id: alarm_id });
+                                    // A dismiss landing this same instant may already hold the alarm;
+                                    // then it owns the `Stopped`, and this branch has nothing to announce.
+                                    let mut slot = current_alarm.lock().await;
+                                    if slot.take_if(|c| c.alarm.id == alarm_id).is_some() {
+                                        alarm_bus.send_event(AlarmEvent::Stopped { id: alarm_id });
+                                    }
                                 }
                             }
                         }
@@ -576,19 +574,17 @@ impl AlarmScheduler {
                         }
                         AlarmCmd::Stop { id } => {
                             info!(alarm_id = %id, "Received Stop command");
-                            if let Some(pending) = self_.pending_snoozes.lock().await.remove(&id) {
+                            // `remove()` drops the pending snooze as well, but it may look too early:
+                            // a Snooze queued before this command registers its entry only after the join.
+                            // This arm runs after that Snooze, so it is the drop that sees the entry.
+                            let pending = self_.pending_snoozes.lock().await.remove(&id);
+                            if let Some(pending) = pending {
                                 pending.cancel.cancel();
                                 self_.recompute_next_alarm_time().await;
                             }
-                            if let Some(alarm) = self_
-                                .current_alarm
-                                .lock()
-                                .await
-                                .take_if(|current| current.alarm.id == id)
-                            {
-                                alarm.cancel().await;
-                                self_.alarm_bus.send_event(AlarmEvent::Stopped { id });
-                            }
+                            self_
+                                .stop_current_if(|current| current.alarm.id == id)
+                                .await;
                         }
                         AlarmCmd::Snooze => self_.handle_snooze_command().await,
                     }
@@ -617,14 +613,16 @@ impl AlarmScheduler {
                 return;
             }
 
-            current_alarm
+            let active_alarm = current_alarm
                 .take()
-                .expect("BUG: alarm present, checked above")
+                .expect("BUG: alarm present, checked above");
+            // Under the guard for the same reason `stop_current_if` sends `Stopped` there.
+            self.alarm_bus.send_event(AlarmEvent::Snoozed);
+            active_alarm
         };
 
         let mut alarm = active_alarm.alarm.clone();
         active_alarm.cancel().await;
-        self.alarm_bus.send_event(AlarmEvent::Snoozed);
 
         let snooze = alarm
             .snooze_options
@@ -680,19 +678,37 @@ impl AlarmScheduler {
     }
 
     async fn cancel_current_alarm(&self) {
-        if let Some(running_alarm) = self.current_alarm.lock().await.take() {
-            let alarm_data = running_alarm.alarm.data.clone();
-            let alarm_id = &alarm_data.id;
-            let alarm_name = &alarm_data.name;
-
-            running_alarm.cancel().await;
-
-            self.alarm_bus.send_event(AlarmEvent::Stopped {
-                id: alarm_data.id.clone(),
-            });
-
-            info!(alarm_id = %alarm_id, alarm_name = %alarm_name, "Cancelled active alarm");
+        if let Some(alarm) = self.stop_current_if(|_| true).await {
+            info!(alarm_id = %alarm.id, alarm_name = %alarm.name, "Cancelled active alarm");
         }
+    }
+
+    /// Stop the ringing alarm if `matches` accepts it.
+    ///
+    /// `Stopped` is sent under the guard that empties the slot,
+    /// `Started` under the one that fills it, so the lock orders them:
+    /// a firing that lands mid-stop never announces itself first.
+    /// Listeners match `Stopped` without the id,
+    /// so the reverse order would dismiss the new alarm while it rings.
+    /// The joins run with the guard gone: the timeout task's deadline branch takes this lock.
+    async fn stop_current_if(
+        &self,
+        matches: impl FnOnce(&CurrentRunningAlarm) -> bool,
+    ) -> Option<ActiveAlarm> {
+        let stopped = {
+            let mut slot = self.current_alarm.lock().await;
+            let stopped = slot.take_if(|current| matches(current));
+            if let Some(stopped) = &stopped {
+                self.alarm_bus.send_event(AlarmEvent::Stopped {
+                    id: stopped.alarm.id.clone(),
+                });
+            }
+            stopped
+        }?;
+
+        let alarm = stopped.alarm.clone();
+        stopped.cancel().await;
+        Some(alarm)
     }
 
     async fn schedule(&self, alarm_data: AlarmData) -> anyhow::Result<()> {
@@ -743,23 +759,29 @@ impl AlarmScheduler {
     }
 
     async fn remove(&self, id: &AlarmId) -> anyhow::Result<()> {
-        if let Some(scheduled) = self.active_alarms.lock().await.remove(id) {
+        // Kept out of the `if let`, whose guard would span the await below.
+        let scheduled = self.active_alarms.lock().await.remove(id);
+        let cancel_result = if let Some(scheduled) = scheduled {
             self.alarm_bus.stop_alarm(id);
 
             self.scheduler
                 .cancel(&scheduled.job_id)
                 .await
-                .map_err(|e| anyhow!("Failed to remove scheduled alarm, err: {e}"))?;
-        }
+                .map_err(|e| anyhow!("Failed to remove scheduled alarm, err: {e}"))
+        } else {
+            Ok(())
+        };
 
         // Drop any pending snooze for this alarm so a deletion-while-
         // snoozed doesn't cause the already-removed alarm to re-fire.
+        // Runs even on a failed cancel: the alarm has already left `active_alarms`,
+        // so a surviving snooze would never ring anyway.
         if let Some(pending) = self.pending_snoozes.lock().await.remove(id) {
             pending.cancel.cancel();
         }
 
         self.recompute_next_alarm_time().await;
-        Ok(())
+        cancel_result
     }
 
     async fn recompute_next_alarm_time(&self) {
@@ -1205,6 +1227,412 @@ mod tests {
         assert!(active_alarm(Some(snooze(SnoozeLimit::Three)), 2).snooze_allowed());
         assert!(!active_alarm(Some(snooze(SnoozeLimit::Three)), 3).snooze_allowed());
         assert!(!active_alarm(Some(snooze(SnoozeLimit::Three)), 4).snooze_allowed());
+    }
+
+    const SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
+    const POLL_INTERVAL: Duration = Duration::from_millis(5);
+    const BRIGHTNESS_AND_VOLUME_PCT: u8 = 50;
+
+    /// A whole `AlarmController` over a tempdir config and crontab.
+    /// Its alarms carry no sound, so nothing reaches `bmc-audio`.
+    struct AlarmHarness {
+        _tmp: tempfile::TempDir,
+        _timezone: tokio::sync::watch::Sender<Timezone>,
+        config: Arc<RwLock<ConfigHandle>>,
+        bus: AlarmBus,
+        controller: AlarmController,
+    }
+
+    impl AlarmHarness {
+        async fn new() -> Self {
+            Self::build(false).await
+        }
+
+        /// A harness whose crontab directory is a regular file,
+        /// so the scheduler cannot create its crontab and `cancel` fails.
+        /// Do not instead make the crontab path a directory:
+        /// `Crontab::read_from_stream` discards read errors,
+        /// and reading a directory yields EISDIR forever, so the scheduler spins.
+        async fn with_unwritable_crontab() -> Self {
+            Self::build(true).await
+        }
+
+        async fn build(break_crontab: bool) -> Self {
+            let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+            let (config_handle, _) = ConfigHandle::init(
+                tmp.path().join("bmc-config.json"),
+                BRIGHTNESS_AND_VOLUME_PCT,
+                BRIGHTNESS_AND_VOLUME_PCT,
+                BRIGHTNESS_AND_VOLUME_PCT,
+                BRIGHTNESS_AND_VOLUME_PCT,
+                bmc_platform::Product::Bmc100,
+            )
+            .await;
+            let config = Arc::new(RwLock::new(config_handle));
+            let (timezone, timezone_receiver) = tokio::sync::watch::channel(Timezone::default());
+            // Without a path of its own the scheduler writes /etc/crontabs/root,
+            // which a test process may not open.
+            let crontab = tmp.path().join("crontabs").join("root");
+            if break_crontab {
+                std::fs::write(
+                    crontab
+                        .parent()
+                        .expect("BUG: the crontab path must have a parent"),
+                    "",
+                )
+                .expect("BUG: writing the crontab directory stand-in must succeed in tests");
+            }
+            let scheduler = JobScheduler::init(timezone_receiver.clone(), Some(crontab)).await;
+            let sound = SoundController::new(config.clone(), tmp.path().to_path_buf());
+            let bus = AlarmBus::new();
+            let controller = AlarmController::init(
+                config.clone(),
+                scheduler,
+                sound,
+                bus.clone(),
+                timezone_receiver,
+            )
+            .await;
+
+            Self {
+                _tmp: tmp,
+                _timezone: timezone,
+                config,
+                bus,
+                controller,
+            }
+        }
+
+        /// Schedule an enabled alarm at `hour:minute`.
+        async fn add(&self, hour: u32, minute: u32) -> AlarmData {
+            self.add_with_sound(hour, minute, None).await
+        }
+
+        /// Like `add`, with a sound. The harness has no sound files and no madplay,
+        /// so the sound task fails at once and sits in `play_until_cancelled`'s retry sleep,
+        /// which a dismiss or snooze has to wait out before it can join the task.
+        async fn add_with_sound(&self, hour: u32, minute: u32, sound: Option<Sounds>) -> AlarmData {
+            let alarm = AlarmData::new(
+                true,
+                "regression".to_owned(),
+                NaiveTime::from_hms_opt(hour, minute, 0).expect("BUG: valid test time"),
+                BTreeSet::new(),
+                sound,
+                Some(SnoozeOptions {
+                    limit: SnoozeLimit::Forever,
+                    // Long enough that it cannot re-fire mid-test.
+                    duration: SnoozeDuration::ThirtyMinutes,
+                }),
+            );
+            self.controller
+                .add_alarm(alarm.clone())
+                .await
+                .expect("BUG: add_alarm must succeed");
+            alarm
+        }
+
+        /// Ring a scheduled alarm the way its cron job does, returning once it
+        /// holds the current-alarm slot.
+        async fn ring(&self, alarm: &AlarmData) {
+            self.controller
+                .scheduler
+                .alarm_sender
+                .send(alarm.clone().into())
+                .await
+                .expect("BUG: the alarm handler must be running");
+            self.settle("the alarm to ring", || async { self.ringing().await })
+                .await;
+        }
+
+        /// Snooze the ringing alarm, returning once the snooze is registered.
+        async fn snooze(&self, id: &AlarmId) {
+            self.bus.snooze();
+            self.settle("the snooze to register", || async {
+                self.controller
+                    .scheduler
+                    .pending_snoozes
+                    .lock()
+                    .await
+                    .contains_key(id)
+            })
+            .await;
+        }
+
+        /// Reads `pending_snoozes` under a timeout:
+        /// the deadlock these tests guard against parks the command handler
+        /// on that lock for good, so a bare read would hang the run
+        /// instead of failing it.
+        async fn snooze_pending(&self) -> bool {
+            tokio::time::timeout(SETTLE_TIMEOUT, async {
+                !self
+                    .controller
+                    .scheduler
+                    .pending_snoozes
+                    .lock()
+                    .await
+                    .is_empty()
+            })
+            .await
+            .expect("BUG: reading the pending snoozes must not hang")
+        }
+
+        async fn ringing(&self) -> bool {
+            self.controller
+                .scheduler
+                .current_alarm
+                .lock()
+                .await
+                .is_some()
+        }
+
+        /// Drain `events` up to and including `Started` for `id`, in arrival order.
+        async fn events_until_started(
+            &self,
+            events: &mut broadcast::Receiver<AlarmEvent>,
+            id: &AlarmId,
+        ) -> Vec<AlarmEvent> {
+            let mut seen = Vec::new();
+            let announced = tokio::time::timeout(SETTLE_TIMEOUT, async {
+                loop {
+                    let event = events
+                        .recv()
+                        .await
+                        .expect("BUG: the alarm bus must outlive the test");
+                    let is_started =
+                        matches!(&event, AlarmEvent::Started { alarm } if alarm.id == *id);
+                    seen.push(event);
+                    if is_started {
+                        break;
+                    }
+                }
+            })
+            .await;
+            assert!(announced.is_ok(), "timed out waiting for Started of {id}");
+            seen
+        }
+
+        async fn settle<F, Fut>(&self, what: &str, condition: F)
+        where
+            F: Fn() -> Fut,
+            Fut: Future<Output = bool>,
+        {
+            self.settle_within(SETTLE_TIMEOUT, what, condition).await;
+        }
+
+        async fn settle_within<F, Fut>(&self, timeout: Duration, what: &str, condition: F)
+        where
+            F: Fn() -> Fut,
+            Fut: Future<Output = bool>,
+        {
+            let settled = tokio::time::timeout(timeout, async {
+                while !condition().await {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+            })
+            .await;
+            assert!(settled.is_ok(), "timed out waiting for {what}");
+        }
+    }
+
+    /// Regression: the `Stop` arm dropped the alarm's pending snooze
+    /// and then recomputed the next alarm while still holding `pending_snoozes`.
+    /// That parked the handler on its own lock for good,
+    /// leaving nothing able to dismiss or snooze an alarm again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stop_command_leaves_the_handler_serving() {
+        let harness = AlarmHarness::new().await;
+        // Both are scheduled before the Stop below: a wedged handler also
+        // blocks `add_alarm`, which would hang this test rather than fail it.
+        let snoozed = harness.add(7, 30).await;
+        let other = harness.add(8, 30).await;
+
+        harness.ring(&snoozed).await;
+        harness.snooze(&snoozed.id).await;
+        harness.bus.stop_alarm(&snoozed.id);
+
+        harness.ring(&other).await;
+        harness.bus.stop_current();
+        harness
+            .settle("the handler to dismiss the ringing alarm", || async {
+                !harness.ringing().await
+            })
+            .await;
+    }
+
+    /// A dismiss must send `Stopped` before it joins the sound task:
+    /// sent after the join, an alarm firing meanwhile announces `Started` first
+    /// and every listener takes the late `Stopped` as its own.
+    /// The merge base kept the order only by holding the guard across the join,
+    /// which is the timeout deadlock; the guard may go, the order may not.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stopped_is_announced_before_the_next_started() {
+        let harness = AlarmHarness::new().await;
+        let dismissed = harness
+            .add_with_sound(7, 30, Some(Sounds::Confirmation))
+            .await;
+        let next = harness.add(8, 30).await;
+        let mut events = harness.bus.subscribe_events();
+
+        harness.ring(&dismissed).await;
+        harness.bus.stop_current();
+        harness
+            .settle("the dismissed alarm to leave the slot", || async {
+                !harness.ringing().await
+            })
+            .await;
+        harness.ring(&next).await;
+
+        let seen = harness.events_until_started(&mut events, &next.id).await;
+        assert!(
+            seen.iter()
+                .any(|event| matches!(event, AlarmEvent::Stopped { id } if *id == dismissed.id)),
+            "Stopped for the dismissed alarm must precede Started for the next one, saw {seen:?}"
+        );
+    }
+
+    /// Regression: a Snooze queued ahead of the `Stop` that `remove()` sends
+    /// registers its pending entry only once the ringing alarm is joined,
+    /// so `remove()`'s own drop can run first and find nothing.
+    /// The `Stop` arm runs after that Snooze and is the drop that sees the entry.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stop_drops_a_snooze_registered_after_removal() {
+        let harness = AlarmHarness::new().await;
+        let removed = harness
+            .add_with_sound(7, 30, Some(Sounds::Confirmation))
+            .await;
+        let other = harness.add(8, 30).await;
+
+        harness.ring(&removed).await;
+        harness.bus.snooze();
+        harness
+            .settle("the snooze to take the slot", || async {
+                !harness.ringing().await
+            })
+            .await;
+        harness
+            .controller
+            .remove_alarm(removed.id.clone())
+            .await
+            .expect("BUG: remove_alarm must succeed");
+
+        // Queued behind the `Stop`, so once this snooze is registered the `Stop` has run.
+        harness.ring(&other).await;
+        harness.bus.snooze();
+        harness
+            .settle_within(
+                crate::sound::SLEEP_DURATION + SETTLE_TIMEOUT,
+                "the other alarm's snooze to register",
+                || async {
+                    harness
+                        .controller
+                        .scheduler
+                        .pending_snoozes
+                        .lock()
+                        .await
+                        .contains_key(&other.id)
+                },
+            )
+            .await;
+
+        assert!(
+            !harness
+                .controller
+                .scheduler
+                .pending_snoozes
+                .lock()
+                .await
+                .contains_key(&removed.id),
+            "a snooze registered after its alarm was removed must be dropped by the Stop"
+        );
+    }
+
+    /// Regression: a snooze emitted `Snoozed` only after joining the sound task,
+    /// so an alarm firing during that join announced `Started` first
+    /// and every listener took the late `Snoozed` as its own.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn snoozed_is_announced_before_the_next_started() {
+        let harness = AlarmHarness::new().await;
+        let snoozed = harness
+            .add_with_sound(7, 30, Some(Sounds::Confirmation))
+            .await;
+        let next = harness.add(8, 30).await;
+        let mut events = harness.bus.subscribe_events();
+
+        harness.ring(&snoozed).await;
+        harness.bus.snooze();
+        harness
+            .settle("the snoozed alarm to leave the slot", || async {
+                !harness.ringing().await
+            })
+            .await;
+        harness.ring(&next).await;
+
+        let seen = harness.events_until_started(&mut events, &next.id).await;
+        assert!(
+            seen.iter()
+                .any(|event| matches!(event, AlarmEvent::Snoozed)),
+            "Snoozed must precede Started for the next alarm, saw {seen:?}"
+        );
+    }
+
+    /// Regression: deleting a snoozed alarm hung, so the alarm
+    /// stayed in the config and on the widget.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn removing_a_snoozed_alarm_leaves_nothing_behind() {
+        let harness = AlarmHarness::new().await;
+        let alarm = harness.add(7, 30).await;
+        harness.ring(&alarm).await;
+        harness.snooze(&alarm.id).await;
+        let mut next_alarm = harness.controller.subscribe_next_alarm();
+
+        let removed =
+            tokio::time::timeout(SETTLE_TIMEOUT, harness.controller.remove_alarm(alarm.id))
+                .await
+                .expect("BUG: remove_alarm must not hang");
+        removed.expect("BUG: remove_alarm must succeed");
+
+        assert!(
+            harness.config.read().await.alarms().is_empty(),
+            "a removed alarm must not survive in the config"
+        );
+        assert!(
+            !harness.snooze_pending().await,
+            "a removed alarm must not leave a snooze able to re-fire it"
+        );
+        assert!(
+            next_alarm.borrow_and_update().is_none(),
+            "a removed alarm must not stay on the widget as the next alarm"
+        );
+    }
+
+    /// A scheduler cancel that fails still leaves the alarm out of `active_alarms`,
+    /// so its snooze could only show on the widget and then find nothing to ring.
+    /// `remove` reports the failure but cleans up first.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_cancel_still_drops_the_snooze() {
+        let harness = AlarmHarness::with_unwritable_crontab().await;
+        let alarm = harness.add(7, 30).await;
+        harness.ring(&alarm).await;
+        harness.snooze(&alarm.id).await;
+        let mut next_alarm = harness.controller.subscribe_next_alarm();
+
+        let removed =
+            tokio::time::timeout(SETTLE_TIMEOUT, harness.controller.remove_alarm(alarm.id))
+                .await
+                .expect("BUG: remove_alarm must not hang");
+        assert!(
+            matches!(removed, Err(AlarmError::RemoveAlarm)),
+            "an unwritable crontab must surface as a removal failure, got {removed:?}"
+        );
+
+        assert!(
+            !harness.snooze_pending().await,
+            "a failed cancel must still drop the snooze"
+        );
+        assert!(
+            next_alarm.borrow_and_update().is_none(),
+            "a failed cancel must still clear the widget's next alarm"
+        );
     }
 
     #[test]

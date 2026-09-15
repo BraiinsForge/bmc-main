@@ -30,7 +30,7 @@ use tracing::{info, warn};
 use crate::config::ConfigHandle;
 use bmc_audio::{Audio, Volume};
 
-const SLEEP_DURATION: Duration = Duration::from_secs(5);
+pub(crate) const SLEEP_DURATION: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 pub(crate) struct SoundController {
