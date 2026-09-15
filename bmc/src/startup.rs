@@ -47,6 +47,7 @@ use crate::widget::{Coordinator, UpgradeWidgetLifecycle, WidgetManager, WidgetRe
 use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_led::led_driver::LedDriver;
+use bmc_net::NetworkManager;
 use bmc_platform::HardwareCapabilities;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
@@ -194,7 +195,7 @@ fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
 /// value tells the overlay to show only the wizard address.
 async fn resolve_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointInfo> {
     for _ in 0..SETUP_AP_POLL_ATTEMPTS {
-        if let Some(ap) = current_access_point(manager).await {
+        if let Some(ap) = current_access_point(manager.network_manager()).await {
             return Some(ap);
         }
         tokio::time::sleep(SETUP_AP_POLL_DELAY).await;
@@ -206,8 +207,7 @@ async fn resolve_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointI
 /// The access point the setup screen should advertise right now:
 /// SSID + URL while the AP broadcasts, URL alone over a wired uplink,
 /// `None` while neither is reachable (the AP may still be coming up).
-async fn current_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointInfo> {
-    let network = manager.network_manager();
+async fn current_access_point(network: &dyn NetworkManager) -> Option<AccessPointInfo> {
     // The wired uplink wins while the cable is in - the boot-time AP is about
     // to be parked by the platform's hotplug anyway, and the screen must not
     // flash an SSID that is going away.
@@ -219,6 +219,11 @@ async fn current_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointI
     }
 
     let wifi = network.wifi()?;
+    // The platform's hotplug parks the AP without telling bmc, and the SSID
+    // read below is configuration that outlives it.
+    if !wifi.setup_ap_up().await {
+        return None;
+    }
     let host = wifi.captive_portal_redirect_host().await?;
     // `ap_ssid` never falls back to the joined station network, so the screen
     // cannot advertise the station SSID while the AP is still coming up.
@@ -339,7 +344,7 @@ async fn publish_access_point<T: BmcManager>(
         refresh.tick().await;
         // `None` is a transition (AP restarting after a cable pull): keep the
         // last value on display rather than flashing the pending screen.
-        let Some(ap) = current_access_point(manager.as_ref()).await else {
+        let Some(ap) = current_access_point(manager.network_manager()).await else {
             continue;
         };
         if ap != published {
@@ -1058,15 +1063,90 @@ impl Default for Configuration {
 
 #[cfg(test)]
 mod tests {
-    use super::{forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap};
+    use super::{
+        current_access_point, forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap,
+    };
     use crate::compositor::{
-        CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration,
-        UpgradeKind,
+        AccessPointInfo, CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState,
+        UpgradeGeneration, UpgradeKind,
     };
     use crate::manager::{BmcState, UpgradeMarker};
+    use bmc_net::NetworkManager;
+    use bmc_net::mock::MockNetworkManager;
+    use std::net::Ipv4Addr;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::sync::{Notify, watch};
+
+    const AP_HOST: &str = "10.0.0.21";
+
+    /// A factory-default board with its setup AP up, as the mock seeds it.
+    fn setup_ap_board() -> MockNetworkManager {
+        MockNetworkManager::with_provisioning(true, false).with_captive_portal_host(AP_HOST)
+    }
+
+    fn wired(ip: Ipv4Addr) -> AccessPointInfo {
+        AccessPointInfo {
+            ssid: String::new(),
+            setup_url: format!("http://{ip}/"),
+        }
+    }
+
+    /// What the mock's live setup AP advertises.
+    fn mock_ap() -> AccessPointInfo {
+        AccessPointInfo {
+            ssid: "MockAP".to_owned(),
+            setup_url: format!("http://{AP_HOST}/"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_live_setup_ap_is_advertised_with_its_ssid() {
+        let network = setup_ap_board();
+        assert_eq!(current_access_point(&network).await, Some(mock_ap()));
+    }
+
+    #[tokio::test]
+    async fn an_ap_the_platform_took_down_is_not_advertised() {
+        let network = setup_ap_board();
+        network.provisioning().publish_setup_ap_active(false);
+        assert_eq!(
+            current_access_point(&network).await,
+            None,
+            "ap_ssid still answers, but nothing is bound to the AP address"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wired_address_is_advertised_whatever_the_ap_does() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        let network = setup_ap_board();
+        network.publish_ethernet_ipv4(Some(ip));
+        assert_eq!(current_access_point(&network).await, Some(wired(ip)));
+        network.provisioning().publish_setup_ap_active(false);
+        assert_eq!(current_access_point(&network).await, Some(wired(ip)));
+    }
+
+    #[tokio::test]
+    async fn a_pulled_cable_hands_the_screen_back_to_the_setup_ap() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        let network = setup_ap_board();
+        network.publish_ethernet_ipv4(Some(ip));
+        assert_eq!(current_access_point(&network).await, Some(wired(ip)));
+
+        // Hotplug takes the AP down while the cable holds the address,
+        // and raises it again once the cable is gone.
+        network.provisioning().publish_setup_ap_active(false);
+        network.publish_ethernet_ipv4(None);
+        assert_eq!(
+            current_access_point(&network).await,
+            None,
+            "between the cable going and the AP coming back there is nothing to advertise"
+        );
+
+        network.provisioning().publish_setup_ap_active(true);
+        assert_eq!(current_access_point(&network).await, Some(mock_ap()));
+    }
 
     fn snapshot(generation: usize) -> UpgradeDisplaySnapshot {
         UpgradeDisplaySnapshot {
