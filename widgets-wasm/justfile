@@ -8,7 +8,8 @@ mod bitcoin-mining-data 'bitcoin-mining-data'
 mod clock 'clock'
 # Formula 1 widget: sim-backed dev and fixture recording.
 mod formula-1 'formula-1'
-# Miner Info widgets: sim-backed dev and fixture recording.
+# Miner Info: the shared lib's gallery captures, then each widget's sim-backed dev and fixture recording.
+mod miner-info 'lib/miner-info'
 mod miner-info-geek 'miner-info-geek'
 mod miner-info-mining 'miner-info-mining'
 mod miner-info-overload 'miner-info-overload'

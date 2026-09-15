@@ -1,0 +1,14 @@
+# Miner Info dev tasks: `just widgets::miner-info::capture`, or bare `just capture`
+# from this directory. The lib holds the gallery scene the three widget crates
+# share; sim-backed dev and fixture recording stay with each crate.
+
+import '../../../common.justfile'
+
+root_justfile := parent_directory(parent_directory(parent_directory(source_directory()))) / "justfile"
+
+# Software GL by default, for the reason `wasm::scenes` gives.
+export GALLERY_SOFTWARE_GL := env('GALLERY_SOFTWARE_GL', '1')
+
+# Render the gallery recipe headlessly into `.tmp/miner-info`.
+capture:
+    @just --justfile {{ root_justfile }} gallery::capture "{{ source_directory() }}/gallery/miner-info.capture.toml" miner-info

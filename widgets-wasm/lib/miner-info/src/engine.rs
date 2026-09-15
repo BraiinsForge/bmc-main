@@ -38,6 +38,10 @@ use std::time::Duration;
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
+use crate::layout;
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::layout::Panel;
+#[cfg(target_arch = "wasm32")]
 use crate::model::{Currency, MinerData, PublicData, Verdict};
 #[cfg(target_arch = "wasm32")]
 use crate::{api as miner_api, model, public as public_api};
@@ -103,6 +107,53 @@ type PublicParser = fn(&JsonDoc, Currency, &mut PublicData) -> Verdict;
 #[cfg(target_arch = "wasm32")]
 type PublicReset = fn(&mut PublicData);
 
+/// Which faces read an endpoint.
+#[cfg(any(target_arch = "wasm32", test))]
+type Reads = fn(View, Panel) -> bool;
+
+// Host-pure, unlike the tables, so the tests can pin the matrix.
+#[cfg(any(target_arch = "wasm32", test))]
+mod reads {
+    use super::{Panel, View};
+
+    pub(super) fn details(view: View, _: Panel) -> bool {
+        matches!(view, View::Geek | View::InfoOverload)
+    }
+
+    pub(super) fn stats(_: View, _: Panel) -> bool {
+        true
+    }
+
+    pub(super) fn hashboards(view: View, _: Panel) -> bool {
+        matches!(view, View::Mining | View::Geek)
+    }
+
+    pub(super) fn cooling(view: View, _: Panel) -> bool {
+        view == View::Mining
+    }
+
+    pub(super) fn network(view: View, _: Panel) -> bool {
+        matches!(view, View::Mining | View::Geek)
+    }
+
+    // The tuner target anchors the ring, so only a gauge face reads it.
+    pub(super) fn constraints(view: View, panel: Panel) -> bool {
+        matches!(view, View::Mining | View::Geek) && panel.draws_gauge()
+    }
+
+    pub(super) fn price_stats(view: View, _: Panel) -> bool {
+        matches!(view, View::Geek | View::InfoOverload)
+    }
+
+    pub(super) fn network_figures(view: View, _: Panel) -> bool {
+        view == View::InfoOverload
+    }
+
+    pub(super) fn price_history(view: View, _: Panel) -> bool {
+        view == View::InfoOverload
+    }
+}
+
 // An authenticated GET paired with the parser folding its response
 // into `MinerData`. Endpoints are independent once a token exists,
 // so each runs its own refresh loop rather than chaining.
@@ -113,9 +164,8 @@ type PublicReset = fn(&mut PublicData);
 struct MinerEndpoint {
     path: &'static str,
     parse: MinerParser,
-    views: &'static [View],
+    needed: Reads,
     interval_ms: Option<u32>,
-    round_only: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -123,46 +173,39 @@ const MINER_ENDPOINTS: [MinerEndpoint; 6] = [
     MinerEndpoint {
         path: bos::DETAILS_PATH,
         parse: miner_details,
-        views: &[View::Geek, View::InfoOverload],
+        needed: reads::details,
         interval_ms: Some(MINER_REFRESH_MS),
-        round_only: false,
     },
     MinerEndpoint {
         path: bos::STATS_PATH,
         parse: miner_stats,
-        views: &[View::Mining, View::Geek, View::InfoOverload],
+        needed: reads::stats,
         interval_ms: Some(MINER_REFRESH_MS),
-        round_only: false,
     },
     MinerEndpoint {
         path: bos::HASHBOARDS_PATH,
         parse: miner_hashboards,
-        views: &[View::Mining, View::Geek],
+        needed: reads::hashboards,
         interval_ms: Some(MINER_REFRESH_MS),
-        round_only: false,
     },
     MinerEndpoint {
         path: bos::COOLING_PATH,
         parse: miner_cooling,
-        views: &[View::Mining],
+        needed: reads::cooling,
         interval_ms: Some(MINER_REFRESH_MS),
-        round_only: false,
     },
     MinerEndpoint {
         path: bos::NETWORK_PATH,
         parse: miner_network,
-        views: &[View::Mining, View::Geek],
+        needed: reads::network,
         interval_ms: Some(MINER_REFRESH_MS),
-        round_only: false,
     },
-    // Anchors the round gauge sweep, so only the round Mining/Geek faces read it.
     // One-shot because constraints change only on a re-tune.
     MinerEndpoint {
         path: bos::CONSTRAINTS_PATH,
         parse: miner_constraints,
-        views: &[View::Mining, View::Geek],
+        needed: reads::constraints,
         interval_ms: None,
-        round_only: true,
     },
 ];
 
@@ -175,7 +218,7 @@ struct PublicEndpoint {
     url: PublicUrl,
     parse: PublicParser,
     reset: PublicReset,
-    views: &'static [View],
+    needed: Reads,
     currency_dependent: bool,
 }
 
@@ -185,48 +228,38 @@ const PUBLIC_ENDPOINTS: [PublicEndpoint; 5] = [
         url: public_api::price_stats_url,
         parse: public_price,
         reset: public_api::reset_price_stats,
-        views: &[View::Geek, View::InfoOverload],
+        needed: reads::price_stats,
         currency_dependent: true,
     },
     PublicEndpoint {
         url: public_api::block_url,
         parse: public_block,
         reset: public_api::reset_block,
-        views: &[View::InfoOverload],
+        needed: reads::network_figures,
         currency_dependent: false,
     },
     PublicEndpoint {
         url: public_api::difficulty_url,
         parse: public_difficulty,
         reset: public_api::reset_difficulty_stats,
-        views: &[View::InfoOverload],
+        needed: reads::network_figures,
         currency_dependent: false,
     },
     PublicEndpoint {
         url: public_api::hashrate_url,
         parse: public_hashrate,
         reset: public_api::reset_hashrate_stats,
-        views: &[View::InfoOverload],
+        needed: reads::network_figures,
         currency_dependent: true,
     },
     PublicEndpoint {
         url: public_api::price_history_url,
         parse: public_history,
         reset: public_api::reset_price_history,
-        views: &[View::InfoOverload],
+        needed: reads::price_history,
         currency_dependent: false,
     },
 ];
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn endpoint_enabled(
-    views: &[View],
-    round_only: bool,
-    view: View,
-    shape: bmc_wasm_sdk::ViewportShape,
-) -> bool {
-    views.contains(&view) && (!round_only || shape == bmc_wasm_sdk::ViewportShape::Round)
-}
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn offline_label(miner: bool, public: bool) -> Option<&'static str> {
@@ -239,14 +272,18 @@ fn offline_label(miner: bool, public: bool) -> Option<&'static str> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn miner_endpoint_needed(idx: usize, view: View, shape: ViewportShape) -> bool {
-    let endpoint = &MINER_ENDPOINTS[idx];
-    endpoint_enabled(endpoint.views, endpoint.round_only, view, shape)
+fn miner_endpoint_needed(idx: usize, view: View, panel: Panel) -> bool {
+    (MINER_ENDPOINTS[idx].needed)(view, panel)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn public_endpoint_needed(idx: usize, view: View) -> bool {
-    PUBLIC_ENDPOINTS[idx].views.contains(&view)
+fn public_endpoint_needed(idx: usize, view: View, panel: Panel) -> bool {
+    (PUBLIC_ENDPOINTS[idx].needed)(view, panel)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn panel() -> Panel {
+    layout::classify(widget_viewport())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -397,12 +434,12 @@ pub fn frame() -> (MinerData, PublicData, AuthState) {
 }
 
 // The login serves every miner endpoint, so it is driven at source granularity
-// and gates the auth banner; the endpoints themselves gate per view.
+// and gates the auth banner; the endpoints themselves gate per face.
 #[cfg(target_arch = "wasm32")]
-fn view_needs_miner(view: View) -> bool {
+fn view_needs_miner(view: View, panel: Panel) -> bool {
     MINER_ENDPOINTS
         .iter()
-        .any(|endpoint| endpoint.views.contains(&view))
+        .any(|endpoint| (endpoint.needed)(view, panel))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -417,12 +454,12 @@ const fn selected_currency() -> Currency {
 pub fn init(read_config: ConfigFn) {
     CONFIG.with(|slot| slot.set(Some(read_config)));
     let view = config().view;
-    let shape = widget_viewport().shape;
+    let panel = panel();
     let login = register_poll(
         build_login,
         on_login_reply,
         PollConfig {
-            enabled: view_needs_miner(view),
+            enabled: view_needs_miner(view, panel),
             ..Default::default()
         },
     );
@@ -432,7 +469,7 @@ pub fn init(read_config: ConfigFn) {
             on_miner_reply,
             PollConfig {
                 interval_ms: MINER_ENDPOINTS[idx].interval_ms,
-                enabled: miner_endpoint_needed(idx, view, shape),
+                enabled: miner_endpoint_needed(idx, view, panel),
                 ..Default::default()
             },
         )
@@ -443,7 +480,7 @@ pub fn init(read_config: ConfigFn) {
             on_public_reply,
             PollConfig {
                 interval_ms: Some(PUBLIC_REFRESH_MS),
-                enabled: public_endpoint_needed(idx, view),
+                enabled: public_endpoint_needed(idx, view, panel),
                 ..Default::default()
             },
         )
@@ -465,14 +502,14 @@ pub fn init(read_config: ConfigFn) {
 #[cfg(target_arch = "wasm32")]
 pub fn on_params_update(changed: Changed) {
     let view = config().view;
-    let shape = widget_viewport().shape;
+    let panel = panel();
 
     HANDLES.with(|handles| {
         let handles = handles.borrow();
         let Some(handles) = handles.as_ref() else {
             return;
         };
-        if view_needs_miner(view) {
+        if view_needs_miner(view, panel) {
             handles.login.set_enabled(true);
             if changed.miner_credentials {
                 let password_empty = config().miner_password.is_empty();
@@ -496,7 +533,7 @@ pub fn on_params_update(changed: Changed) {
                 handles.login.invalidate();
             }
             for (idx, miner) in handles.miner.iter().enumerate() {
-                miner.set_enabled(miner_endpoint_needed(idx, view, shape));
+                miner.set_enabled(miner_endpoint_needed(idx, view, panel));
             }
         } else {
             STATE.with(|state| state.borrow_mut().auth = AuthState::NoToken);
@@ -506,7 +543,7 @@ pub fn on_params_update(changed: Changed) {
             }
         }
         for (idx, public) in handles.public.iter().enumerate() {
-            let needed = public_endpoint_needed(idx, view);
+            let needed = public_endpoint_needed(idx, view, panel);
             public.set_enabled(needed);
             if needed && changed.currency && PUBLIC_ENDPOINTS[idx].currency_dependent {
                 STATE.with(|state| {
@@ -525,7 +562,7 @@ pub fn on_params_update(changed: Changed) {
 #[cfg(target_arch = "wasm32")]
 fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     let params = config();
-    if !view_needs_miner(params.view) || params.miner_password.is_empty() {
+    if !view_needs_miner(params.view, panel()) || params.miner_password.is_empty() {
         return None;
     }
     let url = endpoint(&params.miner_url, bos::LOGIN_PATH)?;
@@ -708,8 +745,8 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
 /// because a disabled endpoint keeps its stale/offline history.
 #[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn overlay(view: View, auth: &AuthState) -> Option<mining::overlay::OverlayKind> {
-    let needs_miner = view_needs_miner(view);
+pub fn overlay(view: View, panel: Panel, auth: &AuthState) -> Option<mining::overlay::OverlayKind> {
+    let needs_miner = view_needs_miner(view, panel);
     if needs_miner && *auth == AuthState::Failed {
         Some(mining::overlay::OverlayKind::Auth)
     } else {
@@ -753,8 +790,7 @@ pub fn overlay(view: View, auth: &AuthState) -> Option<mining::overlay::OverlayK
 
 #[cfg(test)]
 mod tests {
-    use super::{View, endpoint_enabled, login_retry_delay, offline_label};
-    use bmc_wasm_sdk::ViewportShape;
+    use super::{Panel, Reads, View, login_retry_delay, offline_label, reads};
 
     #[test]
     fn offline_label_names_only_the_failing_groups() {
@@ -767,46 +803,59 @@ mod tests {
         );
     }
 
-    #[test]
-    fn round_only_endpoint_gated_to_round_mining_and_geek() {
-        let views = &[View::Mining, View::Geek];
-        for view in [View::Mining, View::Geek] {
-            assert!(
-                endpoint_enabled(views, true, view, ViewportShape::Round),
-                "{view:?} lists the endpoint and the viewport is round"
-            );
+    const ENDPOINTS: [(&str, Reads); 9] = [
+        ("details", reads::details),
+        ("stats", reads::stats),
+        ("hashboards", reads::hashboards),
+        ("cooling", reads::cooling),
+        ("network", reads::network),
+        ("constraints", reads::constraints),
+        ("price-stats", reads::price_stats),
+        ("network-figures", reads::network_figures),
+        ("price-history", reads::price_history),
+    ];
+
+    fn expected_reads(view: View, panel: Panel) -> &'static [&'static str] {
+        match (view, panel) {
+            (View::Mining, Panel::Small | Panel::Bmm101) => {
+                &["stats", "hashboards", "cooling", "network"]
+            }
+            (View::Mining, Panel::Round) => {
+                &["stats", "hashboards", "cooling", "network", "constraints"]
+            }
+            (View::Geek, Panel::Small | Panel::Bmm101) => {
+                &["details", "stats", "hashboards", "network", "price-stats"]
+            }
+            (View::Geek, Panel::Round) => &[
+                "details",
+                "stats",
+                "hashboards",
+                "network",
+                "constraints",
+                "price-stats",
+            ],
+            (View::InfoOverload, _) => &[
+                "details",
+                "stats",
+                "price-stats",
+                "network-figures",
+                "price-history",
+            ],
         }
-        assert!(
-            !endpoint_enabled(views, true, View::InfoOverload, ViewportShape::Round),
-            "InfoOverload does not list the endpoint"
-        );
-        assert!(
-            !endpoint_enabled(views, true, View::Mining, ViewportShape::Rectangular),
-            "a round-only endpoint stays off a rectangular viewport"
-        );
     }
 
     #[test]
-    fn non_round_only_endpoint_ignores_viewport_shape() {
-        let views = &[View::Mining, View::Geek];
-        assert!(endpoint_enabled(
-            views,
-            false,
-            View::Mining,
-            ViewportShape::Rectangular
-        ));
-        assert!(endpoint_enabled(
-            views,
-            false,
-            View::Geek,
-            ViewportShape::Round
-        ));
-        assert!(!endpoint_enabled(
-            views,
-            false,
-            View::InfoOverload,
-            ViewportShape::Rectangular
-        ));
+    fn each_face_reads_exactly_its_endpoints() {
+        for view in [View::Mining, View::Geek, View::InfoOverload] {
+            for panel in [Panel::Small, Panel::Bmm101, Panel::Round] {
+                let read: Vec<&str> = ENDPOINTS
+                    .iter()
+                    .filter(|(_, needed)| needed(view, panel))
+                    .map(|(name, _)| *name)
+                    .collect();
+                assert_eq!(read, expected_reads(view, panel), "{view:?} on {panel:?}");
+            }
+        }
     }
 
     #[test]

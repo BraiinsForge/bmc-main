@@ -25,7 +25,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::format;
-use crate::layout::{self, Viewport};
+use crate::layout::{self, Panel};
 use crate::model::{Availability, MinerData, PublicData};
 use prices::chart;
 
@@ -50,13 +50,6 @@ const CHART_INSET: f32 = 2.0;
 pub struct RenderSize {
     pub width: u32,
     pub height: u32,
-}
-
-fn viewport(size: RenderSize) -> Viewport {
-    Viewport {
-        width: size.width,
-        height: size.height,
-    }
 }
 
 fn fixed_width(width: f32) -> Node {
@@ -124,8 +117,8 @@ fn text_line(name: &'static str, value: format::Rendered, sizes: layout::TextSiz
 // Mirrors BOSer's `VerticalLayout { alignment: space-between }`: flex spacers
 // between rows distribute the rows across the full viewport height instead of
 // packing them at the top. The SDK has no main-axis justify.
-fn vertical_lines(size: RenderSize, lines: Vec<Node>) -> Node {
-    let metrics = layout::mining_layout(layout::classify(viewport(size)));
+fn vertical_lines(panel: Panel, lines: Vec<Node>) -> Node {
+    let metrics = layout::mining_layout(panel);
     let mut children = Vec::with_capacity(lines.len().saturating_mul(2));
     children.push(fixed_height(metrics.padding_top));
     for (index, line) in lines.into_iter().enumerate() {
@@ -144,10 +137,10 @@ fn vertical_lines(size: RenderSize, lines: Vec<Node>) -> Node {
 }
 
 #[must_use]
-pub fn mining(size: RenderSize, miner: &MinerData) -> Node {
-    let sizes = layout::mining_layout(layout::classify(viewport(size))).text;
+pub fn mining(panel: Panel, miner: &MinerData) -> Node {
+    let sizes = layout::mining_layout(panel).text;
     vertical_lines(
-        size,
+        panel,
         vec![
             text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
             text_line("Temperature", format::temperature(miner.temperature), sizes),
@@ -169,10 +162,10 @@ pub fn mining(size: RenderSize, miner: &MinerData) -> Node {
 }
 
 #[must_use]
-pub fn geek(size: RenderSize, miner: &MinerData, public: &PublicData) -> Node {
-    let sizes = layout::mining_layout(layout::classify(viewport(size))).text;
+pub fn geek(panel: Panel, miner: &MinerData, public: &PublicData) -> Node {
+    let sizes = layout::mining_layout(panel).text;
     vertical_lines(
-        size,
+        panel,
         vec![
             text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
             text_line("Temperature", format::temperature(miner.temperature), sizes),
@@ -399,10 +392,9 @@ fn info_overload_bottom_row(
 }
 
 #[must_use]
-pub fn info_overload(size: RenderSize, miner: &MinerData, public: &PublicData) -> Node {
-    let class = layout::classify(viewport(size));
-    let fields = layout::info_overload_fields(class);
-    let metrics = layout::info_overload_layout(class);
+pub fn info_overload(panel: Panel, miner: &MinerData, public: &PublicData) -> Node {
+    let fields = layout::info_overload_fields(panel);
+    let metrics = layout::info_overload_layout(panel);
     let mut rows = vec![info_overload_primary_row(miner, public, fields, metrics)];
     if fields.show_difficulty_row {
         rows.push(info_overload_difficulty_row(public, metrics));

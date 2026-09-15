@@ -41,6 +41,8 @@ use miner_info::engine;
 use miner_info::face;
 #[cfg(target_arch = "wasm32")]
 use miner_info::face::RenderSize;
+#[cfg(target_arch = "wasm32")]
+use miner_info::layout::{self, Panel};
 
 #[cfg(target_arch = "wasm32")]
 fn config() -> engine::Config {
@@ -94,14 +96,15 @@ pub extern "C" fn render(_delta_ms: u32) {
         height: viewport.height,
     };
     let (miner, _public, auth) = engine::frame();
-    // Only the round face draws a gauge, and it seeds from a single lit tick
+    let panel = layout::classify(viewport);
+    // A gauge seeds from a single lit tick
     // so the host animates the real fill in from an empty-ish baseline.
-    let seed_gauge = matches!(viewport.shape, ViewportShape::Round) && engine::take_first_frame();
-    let root = match viewport.shape {
-        ViewportShape::Round => face::round::mining(size, &miner, seed_gauge, &CHIP_ICON),
-        ViewportShape::Rectangular => face::mining(size, &miner),
+    let seed_gauge = panel.draws_gauge() && engine::take_first_frame();
+    let root = match panel {
+        Panel::Round => face::round::mining(size, &miner, seed_gauge, &CHIP_ICON),
+        Panel::Small | Panel::Bmm101 => face::mining(panel, &miner),
     };
-    let overlay = engine::overlay(engine::View::Mining, &auth);
+    let overlay = engine::overlay(engine::View::Mining, panel, &auth);
     let root = mining::overlay::apply_overlay(root, overlay, viewport.shape);
     let _ = render_ui(viewport.width, viewport.height, root);
     // The seeded frame is not the reading, so ask for the one that is.

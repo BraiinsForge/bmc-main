@@ -24,9 +24,10 @@ use bmc_gallery::prelude::*;
 use bmc_wasm_sdk::types::{
     Availability, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
 };
-use bmc_wasm_sdk::{Svg, include_svg};
+use bmc_wasm_sdk::{Svg, ViewportShape, WidgetViewport, include_svg};
 use miner_info::face;
 use miner_info::face::RenderSize;
+use miner_info::layout;
 use miner_info::model::{
     Constraints, Currency, MinerData, Money, PublicData, TargetRange, TemperatureRange,
 };
@@ -128,11 +129,12 @@ fn public(reported: Reported) -> PublicData {
     }
 }
 
-fn size(viewport: (u32, u32)) -> RenderSize {
-    RenderSize {
+fn rectangular_panel(viewport: (u32, u32)) -> layout::Panel {
+    layout::classify(WidgetViewport {
         width: viewport.0,
         height: viewport.1,
-    }
+        shape: ViewportShape::Rectangular,
+    })
 }
 
 #[expect(
@@ -203,11 +205,11 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
                     ctx.node_stage(ui, (width, height), move || {
                         let data = miner(shown, Some(1.02));
                         let market = public(shown);
-                        let at = size((width, height));
+                        let panel = rectangular_panel((width, height));
                         match face_pick {
-                            1 => face::geek(at, &data, &market),
-                            2 => face::info_overload(at, &data, &market),
-                            _ => face::mining(at, &data),
+                            1 => face::geek(panel, &data, &market),
+                            2 => face::info_overload(panel, &data, &market),
+                            _ => face::mining(panel, &data),
                         }
                     });
                 });

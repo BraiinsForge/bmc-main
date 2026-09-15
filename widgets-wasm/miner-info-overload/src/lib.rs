@@ -35,7 +35,7 @@ use miner_info::engine;
 #[cfg(target_arch = "wasm32")]
 use miner_info::face;
 #[cfg(target_arch = "wasm32")]
-use miner_info::face::RenderSize;
+use miner_info::layout::{self, Panel};
 
 #[cfg(target_arch = "wasm32")]
 fn config() -> engine::Config {
@@ -85,16 +85,13 @@ pub extern "C" fn on_system_update() {
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
     let viewport = widget_viewport();
-    let size = RenderSize {
-        width: viewport.width,
-        height: viewport.height,
-    };
     let (miner, public, auth) = engine::frame();
-    let root = match viewport.shape {
-        ViewportShape::Round => face::round::info_overload(&miner, &public),
-        ViewportShape::Rectangular => face::info_overload(size, &miner, &public),
+    let panel = layout::classify(viewport);
+    let root = match panel {
+        Panel::Round => face::round::info_overload(&miner, &public),
+        Panel::Small | Panel::Bmm101 => face::info_overload(panel, &miner, &public),
     };
-    let overlay = engine::overlay(engine::View::InfoOverload, &auth);
+    let overlay = engine::overlay(engine::View::InfoOverload, panel, &auth);
     let root = mining::overlay::apply_overlay(root, overlay, viewport.shape);
     let _ = render_ui(viewport.width, viewport.height, root);
 }
