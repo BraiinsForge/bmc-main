@@ -45,14 +45,17 @@ territory — resist restating each thread in full.
 
 ## 5. One item at a time
 
-For each item, in list order, with the user in the loop:
+For each item, in list order, with the user in the loop. Do the reading first — every `grep`, `git show`, `git blame`
+the verification needs — and only then write. Steps 1–4 are **one message**: a tool call between them splits the quote
+from the take, and the user reads a message that names no complaint.
 
-1. **Explain** — restate the reviewer's point plainly: what, where (`file:line`), why they flagged it.
-2. **Verify in code** — actually read the code and state your finding: confirmed / not-reproduced / partial, with the
-   evidence. Reviewers and agent-drafted notes are sometimes wrong; don't accept on faith.
+1. **Quote** — the reviewer's text verbatim, as a `>` block, with the `file:line`. Not a paraphrase: the user has to see
+   what was actually said before anything you add to it.
+2. **Verify in code** — state your finding: confirmed / not-reproduced / partial, with the evidence. Reviewers and
+   agent-drafted notes are sometimes wrong; don't accept on faith.
 3. **Your take** — recommend a direction: fix here / defer (post-milestone) / follow-up ticket / won't-fix, with a
    one-line why.
-4. **Ask** — where does the user want to take it? Don't implement until you've settled it together.
+4. **Ask** — where does the user want to take it? Then stop. Your take is not a go; the user's answer is.
 
 Once you've settled on a solution **with the user**:
 
@@ -69,11 +72,12 @@ Once you've settled on a solution **with the user**:
       conflicts, `git rebase --abort`, say so, and pivot back to a standalone commit (or ask). Never force a conflicting
       fold.
     - Every git-state change happens only on the user's explicit go for that action: offer, wait, act.
-09. **Reply** — offer to draft the thread reply. Show the draft in chat; post only when the user confirms (inline
-    replies via the `gitlab-mr-inline-comments` skill). Cite the fix commit by subject line in backticks, and append the
-    attribution footer your instructions require (`*Written by Claude, acked by <you>.*`). Never resolve the thread —
+09. **Reply** — offer to draft the thread reply: one sentence on what changed, then the attribution footer your
+    instructions require (`*Written by Claude, acked by <you>.*`). Don't restate the complaint and don't quote commit
+    subjects unless the user asks for them — the reviewer reads the thread in place. Show the draft in chat; post only
+    when the user confirms (inline replies via the `gitlab-mr-inline-comments` skill). Never resolve the thread —
     resolution is the reviewer's signal, not the author's.
-10. **Next** — only now move to the following item.
+10. **Next** — drop the item's row from the tracker, then move to the following item.
 
 ## Guardrails — never
 
