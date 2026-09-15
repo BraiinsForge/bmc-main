@@ -155,19 +155,39 @@ fn spawn_alarm_ringing_watch(alarm_bus: &AlarmBus) -> watch::Receiver<bool> {
 /// Carried over from the stable-26.02 `display_tasks`.
 const SETUP_IP_POLL_ATTEMPTS: usize = 10;
 const SETUP_IP_POLL_DELAY: Duration = Duration::from_secs(2);
-/// The same, for a setup AP coming up before bmc reboots: 30 s.
-const SETUP_AP_POLL_ATTEMPTS: usize = 15;
-const SETUP_AP_POLL_DELAY: Duration = Duration::from_secs(2);
+/// How long a setup AP gets to come up before bmc reboots, which is also
+/// how long the interface takes to finish switching out of AP mode.
+const SETUP_AP_WINDOW: Duration = Duration::from_secs(30);
 /// How often the published setup URL is rechecked against the live uplink
 /// while a setup screen is on display.
 const SETUP_URL_REFRESH_PERIOD: Duration = Duration::from_secs(2);
+/// Refreshes without any destination before a board whose AP never came up
+/// gives up: one setup-AP window, the first refresh firing at once.
+const SETUP_AP_REFRESHES: usize = periods_in(SETUP_AP_WINDOW, SETUP_URL_REFRESH_PERIOD);
+/// Refreshes without a reachable destination before the shown one leaves the screen:
+/// long enough that a DHCP renew never blanks it,
+/// short enough that a pulled cable does not leave a dead URL up while the AP restarts.
+/// Shorter than the connect-info screen's own grace (`ADDRESS_LOSS_GRACE`, in
+/// bmc-overlay-device-info), which covers the same pulled cable one screen later:
+/// this one has an AP coming up behind it, that one only the next lease.
+const SETUP_URL_CLEAR_AFTER: usize = 3;
 /// Total polls the watchdog spends before standing down without a verdict:
 /// the deadline's own, plus a setup-AP window's worth
 /// for the interface to finish switching out of AP mode.
-const SETUP_IP_POLL_CAP: usize = SETUP_IP_POLL_ATTEMPTS + SETUP_AP_POLL_ATTEMPTS;
+const SETUP_IP_POLL_CAP: usize =
+    SETUP_IP_POLL_ATTEMPTS + periods_in(SETUP_AP_WINDOW, SETUP_IP_POLL_DELAY);
 /// How long the unexpected-error screen stays visible before the recovery
 /// reboot; mirrors `initial_setup`'s own reboot delay.
 const SETUP_ERROR_REBOOT_DELAY: Duration = Duration::from_secs(10);
+
+/// How many whole `period`s fit in `window`.
+#[expect(
+    clippy::integer_division,
+    reason = "the window is a whole number of periods; the floor is intended"
+)]
+const fn periods_in(window: Duration, period: Duration) -> usize {
+    (window.as_millis() / period.as_millis()) as usize
+}
 
 fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
     match state {
@@ -186,22 +206,55 @@ fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
     }
 }
 
-/// Resolve the setup AP's SSID and wizard URL once the AP is up, or the
-/// wizard URL alone (empty SSID) where a wired uplink replaces the AP.
-///
-/// The AP is polled first: only while it is actually broadcasting does the
-/// screen advertise joining it. With the AP down and an ethernet uplink up
-/// (the miner's cable flow, where hotplug parks the AP), the empty-SSID
-/// value tells the overlay to show only the wizard address.
-async fn resolve_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointInfo> {
-    for _ in 0..SETUP_AP_POLL_ATTEMPTS {
-        if let Some(ap) = current_access_point(manager.network_manager()).await {
-            return Some(ap);
+/// What the setup screen advertises, tracked across refreshes so the overlay
+/// hears about changes only.
+#[derive(Debug, Default)]
+struct Destination {
+    shown: Option<AccessPointInfo>,
+    ever_shown: bool,
+    /// Consecutive refreshes that found nothing reachable.
+    misses: usize,
+}
+
+/// What one refresh asks of the overlay.
+#[derive(Debug, PartialEq, Eq)]
+enum Publication {
+    Keep,
+    Show(AccessPointInfo),
+    Clear,
+    /// Nothing became reachable within the setup-AP window.
+    GiveUp,
+}
+
+impl Destination {
+    /// Folds one reading in.
+    /// A miss is a transition first (an AP restarting after a cable pull, a lease being renewed),
+    /// so the shown destination survives a few of them before it is cleared.
+    /// Giving up is for a board whose AP never came up at all;
+    /// once anything was shown, misses only clear the screen.
+    fn observe(&mut self, current: Option<AccessPointInfo>, may_give_up: bool) -> Publication {
+        let Some(ap) = current else {
+            self.misses += 1;
+            if self.shown.is_some() {
+                if self.misses < SETUP_URL_CLEAR_AFTER {
+                    return Publication::Keep;
+                }
+                self.shown = None;
+                return Publication::Clear;
+            }
+            if may_give_up && !self.ever_shown && self.misses >= SETUP_AP_REFRESHES {
+                return Publication::GiveUp;
+            }
+            return Publication::Keep;
+        };
+        self.misses = 0;
+        if self.shown.as_ref() == Some(&ap) {
+            return Publication::Keep;
         }
-        tokio::time::sleep(SETUP_AP_POLL_DELAY).await;
+        self.shown = Some(ap.clone());
+        self.ever_shown = true;
+        Publication::Show(ap)
     }
-    warn!("setup AP did not come up and no wired uplink is present");
-    None
 }
 
 /// The access point the setup screen should advertise right now:
@@ -314,7 +367,10 @@ async fn fail_setup<T: BmcManager>(compositor: &dyn Compositor, manager: &T, sta
     }
 }
 
-/// Resolve the setup AP and publish it, or report the failure.
+/// Keep the setup screen's destination in step with what is reachable:
+/// the setup AP's SSID and wizard URL, the wizard URL alone over a wired uplink,
+/// nothing while neither answers, or the failure report when the AP never came up.
+/// An ethernet cable plugged or pulled swaps between these while the screen is up.
 ///
 /// Runs in its own task, not the listener's: the wait inside it runs
 /// to half a minute, while transitions must keep flowing throughout.
@@ -324,34 +380,24 @@ async fn publish_access_point<T: BmcManager>(
     manager: Arc<T>,
     state: BmcState,
 ) {
-    let Some(ap) = resolve_access_point(manager.as_ref()).await else {
-        fail_setup(compositor.as_ref(), manager.as_ref(), state).await;
-        return;
-    };
-    let mut published = ap.clone();
-    if let Err(err) = compositor.broadcast_access_point(Some(ap)) {
-        warn!(%err, "failed to signal access point to overlay");
-    }
-    // What the screen advertises can change while it is up - an ethernet
-    // cable plugged or pulled swaps between the AP and the wired address -
-    // so keep the published value in step. The caller aborts this task when
-    // the setup state moves on.
+    let mut destination = Destination::default();
     let mut refresh = tokio::time::interval(SETUP_URL_REFRESH_PERIOD);
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // The first tick fires immediately; the value was just published.
-    refresh.tick().await;
     loop {
         refresh.tick().await;
-        // `None` is a transition (AP restarting after a cable pull): keep the
-        // last value on display rather than flashing the pending screen.
-        let Some(ap) = current_access_point(manager.network_manager()).await else {
-            continue;
-        };
-        if ap != published {
-            published = ap.clone();
-            if let Err(err) = compositor.broadcast_access_point(Some(ap)) {
-                warn!(%err, "failed to signal access point to overlay");
+        let current = current_access_point(manager.network_manager()).await;
+        let published = match destination.observe(current, true) {
+            Publication::Keep => continue,
+            Publication::Show(ap) => compositor.broadcast_access_point(Some(ap)),
+            Publication::Clear => compositor.broadcast_access_point(None),
+            Publication::GiveUp => {
+                warn!("setup AP did not come up and no wired uplink is present");
+                fail_setup(compositor.as_ref(), manager.as_ref(), state).await;
+                return;
             }
+        };
+        if let Err(err) = published {
+            warn!(%err, "failed to signal access point to overlay");
         }
     }
 }
@@ -1064,7 +1110,8 @@ impl Default for Configuration {
 #[cfg(test)]
 mod tests {
     use super::{
-        current_access_point, forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap,
+        Destination, Publication, SETUP_AP_REFRESHES, SETUP_URL_CLEAR_AFTER, current_access_point,
+        forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap,
     };
     use crate::compositor::{
         AccessPointInfo, CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState,
@@ -1115,6 +1162,81 @@ mod tests {
             None,
             "ap_ssid still answers, but nothing is bound to the AP address"
         );
+    }
+
+    fn setup_ap() -> AccessPointInfo {
+        AccessPointInfo {
+            ssid: "Deck setup".to_owned(),
+            setup_url: format!("http://{AP_HOST}/"),
+        }
+    }
+
+    #[test]
+    fn the_overlay_hears_a_destination_once_and_every_change() {
+        let mut destination = Destination::default();
+        assert_eq!(
+            destination.observe(Some(setup_ap()), true),
+            Publication::Show(setup_ap())
+        );
+        assert_eq!(
+            destination.observe(Some(setup_ap()), true),
+            Publication::Keep
+        );
+        let cable = wired(Ipv4Addr::new(10, 33, 50, 103));
+        assert_eq!(
+            destination.observe(Some(cable.clone()), true),
+            Publication::Show(cable)
+        );
+    }
+
+    #[test]
+    fn a_lost_destination_is_cleared_only_once_it_stays_lost() {
+        let mut destination = Destination::default();
+        destination.observe(Some(setup_ap()), true);
+        for _ in 1..SETUP_URL_CLEAR_AFTER {
+            assert_eq!(
+                destination.observe(None, true),
+                Publication::Keep,
+                "a lease renew or an AP restart must not blank the screen"
+            );
+        }
+        assert_eq!(destination.observe(None, true), Publication::Clear);
+        assert_eq!(
+            destination.observe(None, true),
+            Publication::Keep,
+            "cleared once, not on every miss"
+        );
+        assert_eq!(
+            destination.observe(Some(setup_ap()), true),
+            Publication::Show(setup_ap()),
+            "the AP coming back is shown again"
+        );
+    }
+
+    #[test]
+    fn a_board_whose_ap_never_came_up_gives_up_after_the_ap_window() {
+        let mut destination = Destination::default();
+        for _ in 1..SETUP_AP_REFRESHES {
+            assert_eq!(destination.observe(None, true), Publication::Keep);
+        }
+        assert_eq!(destination.observe(None, true), Publication::GiveUp);
+    }
+
+    #[test]
+    fn a_board_that_may_not_give_up_keeps_waiting() {
+        let mut destination = Destination::default();
+        for _ in 0..(SETUP_AP_REFRESHES * 2) {
+            assert_eq!(destination.observe(None, false), Publication::Keep);
+        }
+    }
+
+    #[test]
+    fn a_destination_shown_once_never_turns_into_giving_up() {
+        let mut destination = Destination::default();
+        destination.observe(Some(setup_ap()), true);
+        for _ in 0..(SETUP_AP_REFRESHES * 2) {
+            assert_ne!(destination.observe(None, true), Publication::GiveUp);
+        }
     }
 
     #[tokio::test]
