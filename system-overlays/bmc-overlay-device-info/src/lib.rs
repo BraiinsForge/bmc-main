@@ -512,6 +512,9 @@ impl SystemOverlay for DeviceInfoOverlay {
             // so a flow past the AP continues. The AP and switchover screens are
             // stale once the lifecycle has advanced, so they move to the connect
             // flow, which fills in the uplink address; so does a cold entry.
+            // Over a cable that address is already there, and `step` moves the
+            // screen on to it before the first frame, so no connect progress
+            // describing a join that never happens is ever drawn.
             Mode::SetupPending => {
                 if matches!(self.screen, Screen::SetupStart | Screen::SetupSwitching)
                     || !self.screen.setup_in_progress()
@@ -544,11 +547,19 @@ impl SystemOverlay for DeviceInfoOverlay {
                 self.target_ssid = Some(wifi_ssid.to_owned());
                 Screen::SetupConnecting
             }
-            SetupStep::SwitchingUplink => Screen::SetupSwitching,
+            // Both leave the join behind: a later screen that names the network
+            // would otherwise name one the device gave up on.
+            SetupStep::SwitchingUplink => {
+                self.target_ssid = None;
+                Screen::SetupSwitching
+            }
             SetupStep::WifiConnectionSuccess | SetupStep::WifiReconfigSuccess => {
                 Screen::SetupConnected { since: now }
             }
-            SetupStep::WifiConnectionFailed => Screen::SetupError,
+            SetupStep::WifiConnectionFailed => {
+                self.target_ssid = None;
+                Screen::SetupError
+            }
             SetupStep::DeviceSetupSuccess => Screen::SetupCompleted { since: now },
             SetupStep::UnexpectedError { restarting } => Screen::SetupFatal {
                 since: now,
@@ -740,6 +751,49 @@ mod tests {
             kind,
             state: UpgradeState::Succeeded { remaining },
         }
+    }
+
+    #[test]
+    fn a_failed_join_leaves_no_ssid_behind() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
+        // The cable goes in: the wired setup screen, then the lifecycle advances.
+        overlay.on_access_point(Some(&AccessPoint {
+            ssid: String::new(),
+            setup_url: "http://10.33.50.103/".to_owned(),
+        }));
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnecting { ssid: None },
+            "the network the join gave up on must not be named again"
+        );
+    }
+
+    #[test]
+    fn skipping_wifi_forgets_a_join_that_was_tried_first() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::SwitchingUplink, "");
+        assert_eq!(overlay.target_ssid, None);
+    }
+
+    #[test]
+    fn skipping_wifi_over_a_cable_lands_on_the_connect_info() {
+        let ip = Ipv4Addr::new(10, 33, 50, 103);
+        let mut overlay = overlay_with_ip(Some(ip));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_setup_progress(SetupStep::SwitchingUplink, "");
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        let _ = overlay.tick(t0());
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo { ip: Some(ip) },
+            "the cable's address is already there, so the connect progress does not hold"
+        );
     }
 
     #[test]
