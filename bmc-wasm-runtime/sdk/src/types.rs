@@ -26,9 +26,11 @@
 //! that only the widgets wanting it depend on.
 
 mod availability;
+mod si;
 mod units;
 
 pub use availability::Availability;
+pub use si::SiPrefix;
 pub use units::{
     BitcoinAmount, ElectricPower, Hashrate, Hashvalue, Length, Mass, MiningEfficiency, Ratio,
     Speed, Temperature,

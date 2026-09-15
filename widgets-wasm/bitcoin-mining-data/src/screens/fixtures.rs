@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::types::{Hashrate, SiPrefix};
 use units::availability::Availability;
 
 use crate::model::{
@@ -74,7 +75,7 @@ pub fn healthy_data() -> BitcoinData {
             epoch_block_time_secs: Some(9 * 60 + 19),
         }),
         hashrate_stats: Availability::Available(HashrateStats {
-            current_ehs: Some(877.8),
+            current: Some(Hashrate::from_si(877.8, SiPrefix::Exa)),
             avg_fees_btc: Some(0.021),
             fees_percent: Some(0.66),
             hashprice_per_th_day: Some(0.0562),
@@ -134,7 +135,7 @@ pub fn rate_limited(bucket: SizeBucket) -> ViewData {
 pub fn extremes(bucket: SizeBucket) -> ViewData {
     let mut data = healthy_data();
     if let Availability::Available(stats) = &mut data.hashrate_stats {
-        stats.current_ehs = Some(1_250_000.0);
+        stats.current = Some(Hashrate::from_si(1_250_000.0, SiPrefix::Exa));
         stats.hashprice_per_th_day = Some(9_999.999_9);
         stats.revenue = Some(9_999_999_999.99);
     }
@@ -149,7 +150,7 @@ pub fn extremes(bucket: SizeBucket) -> ViewData {
 pub fn unit_rollover(bucket: SizeBucket) -> ViewData {
     let mut data = healthy_data();
     if let Availability::Available(stats) = &mut data.hashrate_stats {
-        stats.current_ehs = Some(999.99);
+        stats.current = Some(Hashrate::from_si(999.99, SiPrefix::Exa));
         stats.hashprice_per_th_day = Some(999.999_99);
         stats.revenue = Some(999_999_999.99);
     }

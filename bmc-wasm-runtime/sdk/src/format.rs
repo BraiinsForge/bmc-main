@@ -156,18 +156,9 @@ fn si_split(value: f64) -> (f64, &'static str) {
 }
 
 fn si_magnitude(prefix: &str) -> f64 {
-    match prefix {
-        "k" => 1e3,
-        "M" => 1e6,
-        "G" => 1e9,
-        "T" => 1e12,
-        "P" => 1e15,
-        "E" => 1e18,
-        "Z" => 1e21,
-        "Y" => 1e24,
-        "" => 1.0,
-        _ => unreachable!("BUG: NumberPrefix::decimal hands out only k..Y"),
-    }
+    crate::types::SiPrefix::from_symbol(prefix)
+        .expect("BUG: NumberPrefix::decimal hands out only k..Y")
+        .factor()
 }
 
 fn round_to(value: f64, decimals: u32) -> f64 {

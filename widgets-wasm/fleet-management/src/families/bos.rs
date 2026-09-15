@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::types::{Hashrate, Temperature};
+use bmc_wasm_sdk::types::{Hashrate, SiPrefix, Temperature};
 use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
@@ -131,7 +131,7 @@ impl FamilyAdapter for BosAdapter {
                     json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second")
                 {
                     reading.current_hashrate_ths =
-                        hashrate(Hashrate::from_gigahashes_per_second(ghps));
+                        hashrate(Hashrate::from_si(ghps, SiPrefix::Giga));
                 }
                 if let Some(watt) = json.f64("/power_stats/approximated_consumption/watt") {
                     reading.power_w = measurement(watt);
@@ -174,7 +174,7 @@ impl FamilyAdapter for BosAdapter {
                 }
                 if let Some(ghps) = json.f64("/sticker_hashrate/gigahash_per_second") {
                     reading.nominal_hashrate_ths =
-                        hashrate(Hashrate::from_gigahashes_per_second(ghps));
+                        hashrate(Hashrate::from_si(ghps, SiPrefix::Giga));
                 }
                 reading.mac = json.str("/mac_address").filter(|s| !s.is_empty());
             }

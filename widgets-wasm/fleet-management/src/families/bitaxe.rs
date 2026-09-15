@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::types::{Hashrate, Temperature};
+use bmc_wasm_sdk::types::{Hashrate, SiPrefix, Temperature};
 use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
@@ -109,10 +109,10 @@ impl FamilyAdapter for BitaxeAdapter {
             // after boot ("not yet known"); `measurement` drops that sentinel
             // with the rest of the unusable figures, so it never reaches a total.
             if let Some(ghps) = json.f64("/hashRate") {
-                reading.current_hashrate_ths = hashrate(Hashrate::from_gigahashes_per_second(ghps));
+                reading.current_hashrate_ths = hashrate(Hashrate::from_si(ghps, SiPrefix::Giga));
             }
             if let Some(ghps) = json.f64("/expectedHashrate") {
-                reading.nominal_hashrate_ths = hashrate(Hashrate::from_gigahashes_per_second(ghps));
+                reading.nominal_hashrate_ths = hashrate(Hashrate::from_si(ghps, SiPrefix::Giga));
             }
             if let Some(watts) = json.f64("/power") {
                 reading.power_w = measurement(watts);

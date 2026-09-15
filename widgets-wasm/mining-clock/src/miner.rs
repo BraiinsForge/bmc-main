@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::types::Hashrate;
+use bmc_wasm_sdk::types::{Hashrate, SiPrefix};
 use bmc_wasm_sdk::ufmt;
 use mining::gauge::TargetRange;
 use mining::hashboards::JsonLookup;
@@ -46,7 +46,7 @@ pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool 
     let mut stored = false;
     if let Some(ghps) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
         data.hashrate_ths =
-            Some(Hashrate::from_gigahashes_per_second(ghps).as_terahashes_per_second());
+            Some(Hashrate::from_si(ghps, SiPrefix::Giga).as_terahashes_per_second());
         stored = true;
     }
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {

@@ -18,12 +18,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::types::{Hashrate, SiPrefix};
 use units::availability::Availability;
 
 const STALE_TTL_MULTIPLIER: u64 = 2;
-pub(crate) const HASHES_PER_TERAHASH: f64 = 1e12;
-pub(crate) const TERAHASHES_PER_EXAHASH: f64 = 1_000_000.0;
-pub(crate) const TERAHASHES_PER_PETAHASH: f64 = 1_000.0;
+
+/// Hashprice is held per terahash and quoted per petahash.
+/// The hash unit sits in the denominator, so the rate scales the other way round.
+#[must_use]
+pub(crate) fn per_petahash(per_terahash: f64) -> f64 {
+    SiPrefix::convert(per_terahash, SiPrefix::Peta, SiPrefix::Tera)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SizeBucket {
@@ -152,7 +157,7 @@ pub struct DifficultyStats {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HashrateStats {
-    pub current_ehs: Option<f64>,
+    pub current: Option<Hashrate>,
     pub avg_fees_btc: Option<f64>,
     pub fees_percent: Option<f64>,
     pub hashprice_per_th_day: Option<f64>,

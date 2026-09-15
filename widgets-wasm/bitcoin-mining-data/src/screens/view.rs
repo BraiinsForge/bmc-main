@@ -18,7 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::types::Hashrate;
 #[expect(
     clippy::wildcard_imports,
     reason = "screen code uses the SDK's tree builders, macros, and tokens throughout"
@@ -26,9 +25,7 @@ use bmc_wasm_sdk::types::Hashrate;
 use bmc_wasm_sdk::*;
 use units::availability::Availability;
 
-use crate::model::{
-    BitcoinData, Series, SizeBucket, Status, TERAHASHES_PER_EXAHASH, TERAHASHES_PER_PETAHASH,
-};
+use crate::model::{BitcoinData, Series, SizeBucket, Status, per_petahash};
 use crate::screens::icons;
 use crate::screens::parts::{self, color};
 
@@ -244,7 +241,7 @@ fn hashprice_value(view: &ViewData, sizes: parts::ValueSizes) -> Node {
         &view.data.hashrate_stats,
         |stats| {
             stats.hashprice_per_th_day.map(|value| Quantity {
-                number: parts::compact_number(value * TERAHASHES_PER_PETAHASH, 2),
+                number: parts::compact_number(per_petahash(value), 2),
                 unit: "USD/PH/Day".to_owned(),
             })
         },
@@ -397,10 +394,8 @@ fn hashrate_panel(view: &ViewData) -> Node {
             primary_value(
                 &view.data.hashrate_stats,
                 |stats| {
-                    stats.current_ehs.map(|ehs| {
-                        let (number, unit) =
-                            Hashrate::from_terahashes_per_second(ehs * TERAHASHES_PER_EXAHASH)
-                                .format_si_parts(4);
+                    stats.current.map(|rate| {
+                        let (number, unit) = rate.format_si_parts(4);
                         Quantity { number, unit }
                     })
                 },

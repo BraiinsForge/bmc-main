@@ -20,7 +20,9 @@
 
 use core::time::Duration;
 
-use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Ratio, Temperature};
+use bmc_wasm_sdk::types::{
+    ElectricPower, Hashrate, MiningEfficiency, Ratio, SiPrefix, Temperature,
+};
 use bmc_wasm_sdk::ufmt;
 
 use crate::model::{Availability, Constraints, MinerData, ParseResult, TemperatureRange, Verdict};
@@ -73,7 +75,7 @@ pub(crate) fn parse_stats(json: &impl JsonLookup) -> ParseResult<Stats> {
         data: Stats {
             hashrate: json
                 .f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second")
-                .map(Hashrate::from_gigahashes_per_second),
+                .map(|ghps| Hashrate::from_si(ghps, SiPrefix::Giga)),
             power: json
                 .f64("/power_stats/approximated_consumption/watt")
                 .map(ElectricPower::from_watts),

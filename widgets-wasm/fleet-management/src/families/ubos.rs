@@ -19,7 +19,7 @@
 // the grant above.
 
 use base64::prelude::{BASE64_STANDARD, Engine as _};
-use bmc_wasm_sdk::types::{ElectricPower, Hashrate, Temperature};
+use bmc_wasm_sdk::types::{ElectricPower, Hashrate, SiPrefix, Temperature};
 use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
@@ -88,10 +88,11 @@ impl FamilyAdapter for UbosAdapter {
         self.reset_telemetry(endpoint, reading);
         if endpoint == EP_INFO {
             if let Some(hps) = json.f64("/hashrate") {
-                reading.current_hashrate_ths = hashrate(Hashrate::from_hashes_per_second(hps));
+                reading.current_hashrate_ths = hashrate(Hashrate::from_si(hps, SiPrefix::One));
             }
             if let Some(mw) = json.f64("/power_out_mw") {
-                reading.power_w = measurement(ElectricPower::from_milliwatts(mw).as_watts());
+                reading.power_w =
+                    measurement(ElectricPower::from_si(mw, SiPrefix::Milli).as_watts());
             }
             // uBOS has one board sensor.
             if let Some(c) = json.f64("/temperature") {

@@ -29,6 +29,7 @@
 
 use crate::fmt;
 use crate::system::UnitSystem;
+use crate::types::SiPrefix;
 
 // ── Unit-conversion factors ──────────────────────────────────────────
 
@@ -48,12 +49,6 @@ const FREEZING_POINT_FAHRENHEIT: f64 = 32.0;
 const PERCENT_PER_UNIT: f64 = 100.0;
 /// Satoshis per bitcoin.
 const SATOSHIS_PER_BITCOIN: f64 = 100_000_000.0;
-/// Gigahashes per terahash.
-const GIGAHASHES_PER_TERAHASH: f64 = 1_000.0;
-/// Hashes per terahash.
-const HASHES_PER_TERAHASH: f64 = 1_000_000_000_000.0;
-/// Milliwatts per watt.
-const MILLIWATTS_PER_WATT: f64 = 1_000.0;
 
 /// A length, stored canonically in metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -268,25 +263,28 @@ impl ElectricPower {
     /// Unit appended by [`Self::format`].
     pub const UNIT: &'static str = "W";
 
+    /// The prefix the value is stored at.
+    pub const CANONICAL: SiPrefix = SiPrefix::One;
+
     #[must_use]
     pub const fn from_watts(watts: f64) -> Self {
         Self(watts)
     }
 
-    /// Some firmware reports draw in milliwatts.
-    #[must_use]
-    pub const fn from_milliwatts(mw: f64) -> Self {
-        Self(mw / MILLIWATTS_PER_WATT)
-    }
-
-    #[must_use]
-    pub const fn as_milliwatts(self) -> f64 {
-        self.0 * MILLIWATTS_PER_WATT
-    }
-
     #[must_use]
     pub const fn as_watts(self) -> f64 {
         self.0
+    }
+
+    /// `value` in watts at `prefix`, e.g. `(35_000.0, SiPrefix::Milli)`.
+    #[must_use]
+    pub const fn from_si(value: f64, prefix: SiPrefix) -> Self {
+        Self(SiPrefix::convert(value, prefix, Self::CANONICAL))
+    }
+
+    #[must_use]
+    pub const fn as_si(self, prefix: SiPrefix) -> f64 {
+        SiPrefix::convert(self.0, Self::CANONICAL, prefix)
     }
 
     /// The number alone (no unit), for split value/unit rendering.
@@ -326,6 +324,9 @@ impl Hashrate {
     /// Unit appended by [`Self::format`].
     pub const UNIT: &'static str = "TH/s";
 
+    /// The prefix the value is stored at.
+    pub const CANONICAL: SiPrefix = SiPrefix::Tera;
+
     #[must_use]
     pub const fn from_terahashes_per_second(thps: f64) -> Self {
         Self(thps)
@@ -336,26 +337,15 @@ impl Hashrate {
         self.0
     }
 
-    /// Miner firmware reports hashrate in GH/s, whatever the family.
+    /// `value` in hashes per second at `prefix`, e.g. `(122_480.0, SiPrefix::Giga)`.
     #[must_use]
-    pub const fn from_gigahashes_per_second(ghps: f64) -> Self {
-        Self(ghps / GIGAHASHES_PER_TERAHASH)
+    pub const fn from_si(value: f64, prefix: SiPrefix) -> Self {
+        Self(SiPrefix::convert(value, prefix, Self::CANONICAL))
     }
 
     #[must_use]
-    pub const fn as_gigahashes_per_second(self) -> f64 {
-        self.0 * GIGAHASHES_PER_TERAHASH
-    }
-
-    /// Some firmware reports the raw hash count rather than a scaled unit.
-    #[must_use]
-    pub const fn from_hashes_per_second(hps: f64) -> Self {
-        Self(hps / HASHES_PER_TERAHASH)
-    }
-
-    #[must_use]
-    pub const fn as_hashes_per_second(self) -> f64 {
-        self.0 * HASHES_PER_TERAHASH
+    pub const fn as_si(self, prefix: SiPrefix) -> f64 {
+        SiPrefix::convert(self.0, Self::CANONICAL, prefix)
     }
 
     /// The number alone (no unit), for split value/unit rendering.
@@ -377,17 +367,13 @@ impl Hashrate {
     /// real (`313 TH/s`, `16.5 PH/s`), never `kTH/s`.
     #[must_use]
     pub fn format_si(self, sig_figs: u32) -> String {
-        crate::format::_host_format_si(self.as_terahashes_per_second() * 1e12, sig_figs, "H/s")
+        crate::format::_host_format_si(self.as_si(SiPrefix::One), sig_figs, "H/s")
     }
 
     /// SI value and unit as split strings, for value/unit rendering.
     #[must_use]
     pub fn format_si_parts(self, sig_figs: u32) -> (String, String) {
-        crate::format::_host_format_si_parts(
-            self.as_terahashes_per_second() * 1e12,
-            sig_figs,
-            "H/s",
-        )
+        crate::format::_host_format_si_parts(self.as_si(SiPrefix::One), sig_figs, "H/s")
     }
 }
 
@@ -773,16 +759,28 @@ mod tests {
 
     #[test]
     fn quantities_read_the_units_miner_firmware_reports() {
-        let gigahashes = Hashrate::from_gigahashes_per_second(122_480.0);
+        let gigahashes = Hashrate::from_si(122_480.0, SiPrefix::Giga);
         assert!(approx(gigahashes.as_terahashes_per_second(), 122.48));
-        assert!(approx(gigahashes.as_gigahashes_per_second(), 122_480.0));
+        assert!(approx(gigahashes.as_si(SiPrefix::Giga), 122_480.0));
 
-        let raw = Hashrate::from_hashes_per_second(1_071_197_300_000.0);
+        let raw = Hashrate::from_si(1_071_197_300_000.0, SiPrefix::One);
         assert!(approx(raw.as_terahashes_per_second(), 1.071_197_3));
-        assert!(approx(raw.as_hashes_per_second(), 1_071_197_300_000.0));
+        assert!(approx(raw.as_si(SiPrefix::One), 1_071_197_300_000.0));
 
-        let draw = ElectricPower::from_milliwatts(35_000.0);
+        let draw = ElectricPower::from_si(35_000.0, SiPrefix::Milli);
         assert!(approx(draw.as_watts(), 35.0));
-        assert!(approx(draw.as_milliwatts(), 35_000.0));
+        assert!(approx(draw.as_si(SiPrefix::Milli), 35_000.0));
+    }
+
+    #[test]
+    fn the_canonical_prefix_is_the_identity() {
+        assert_eq!(
+            Hashrate::from_si(17.08, Hashrate::CANONICAL),
+            Hashrate::from_terahashes_per_second(17.08)
+        );
+        assert_eq!(
+            ElectricPower::from_si(60.0, ElectricPower::CANONICAL),
+            ElectricPower::from_watts(60.0)
+        );
     }
 }

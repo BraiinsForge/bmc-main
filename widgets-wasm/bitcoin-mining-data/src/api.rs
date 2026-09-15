@@ -18,13 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::types::{Hashrate, SiPrefix};
 use bmc_wasm_sdk::ufmt;
 use mining::hashboards::JsonLookup;
 use units::availability::Availability;
 
 use crate::model::{
-    BitcoinData, DayHistory, DifficultyStats, Freshness, HASHES_PER_TERAHASH, HashrateStats,
-    PriceStats, Resource, Series, TERAHASHES_PER_EXAHASH, TERAHASHES_PER_PETAHASH,
+    BitcoinData, DayHistory, DifficultyStats, Freshness, HashrateStats, PriceStats, Resource,
+    Series, per_petahash,
 };
 
 const BASE_URL: &str = "https://nexus.braiinsforge.com/api/v1/data/bitcoin";
@@ -52,10 +53,10 @@ fn finite_before_scaling(
     (value * multiplier).is_finite().then_some(value)
 }
 
-fn finite_hashrate_ehs(json: &(impl JsonLookup + ?Sized), path: &str) -> Option<f64> {
-    let value = finite(json, path)?;
-    let terahashes = value * TERAHASHES_PER_EXAHASH;
-    (terahashes.is_finite() && (terahashes * HASHES_PER_TERAHASH).is_finite()).then_some(value)
+// Quoted in EH/s; `format_si` rescales it to H/s, which has to stay finite too.
+fn finite_network_hashrate(json: &(impl JsonLookup + ?Sized), path: &str) -> Option<Hashrate> {
+    let rate = Hashrate::from_si(finite(json, path)?, SiPrefix::Exa);
+    rate.as_si(SiPrefix::One).is_finite().then_some(rate)
 }
 
 fn freshness(json: &(impl JsonLookup + ?Sized), received_at_secs: i64) -> Option<Freshness> {
@@ -129,14 +130,12 @@ fn parse_info(
         epoch_block_time_secs: Some(unsigned(json, "/data/epoch_block_time")?),
     };
     let hashrate_stats = HashrateStats {
-        current_ehs: Some(finite_hashrate_ehs(json, "/data/network_hashrate")?),
+        current: Some(finite_network_hashrate(json, "/data/network_hashrate")?),
         avg_fees_btc: Some(finite(json, "/data/avg_fees_per_block")?),
         fees_percent: Some(finite(json, "/data/fees_percent")?),
-        hashprice_per_th_day: Some(finite_before_scaling(
-            json,
-            "/data/hashprice",
-            TERAHASHES_PER_PETAHASH,
-        )?),
+        hashprice_per_th_day: Some(
+            finite(json, "/data/hashprice").filter(|value| per_petahash(*value).is_finite())?,
+        ),
         revenue: Some(finite(json, "/data/total_mining_revenue")?),
     };
     let latest_block = unsigned(json, "/data/block_height")?;
