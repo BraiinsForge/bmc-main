@@ -869,6 +869,37 @@ fn run_loop(
             }
         }
 
+        for overlay in overlays.iter_mut() {
+            let now = Instant::now();
+            overlay.tick(now);
+            if overlay.needs_hide() {
+                if let Err(e) = overlay.hide_with_target_cleanup(|target, client| {
+                    shared.with_gpu_render_lock("host_overlay_hide", |shared| {
+                        target.free_for_hide(&shared.egl, client)
+                    })
+                }) {
+                    tracing::error!("overlay hide error, dropping overlay: {e}");
+                    overlay.mark_failed();
+                }
+                continue;
+            }
+            if overlay.needs_render(now)
+                && let Err(e) =
+                    crate::overlays::render_hosted_overlay(overlay, renderer_ptr, shared, now)
+            {
+                // Mirror the slot render-error path: a lost EGL context is
+                // fatal and must propagate, not be swallowed until the next
+                // widget render notices it.
+                if shared.is_context_lost() {
+                    return Err(FatalError::EglContextLost);
+                }
+                tracing::error!("overlay render error, dropping overlay: {e}");
+                overlay.mark_failed();
+            }
+            overlay.forward_settings_requests();
+            overlay.forward_alarm_requests();
+        }
+
         let now = Instant::now();
         for (id, slot) in slots.iter_mut() {
             if to_teardown.contains(id) {
@@ -933,35 +964,6 @@ fn run_loop(
             }
         }
 
-        for overlay in overlays.iter_mut() {
-            overlay.tick(now);
-            if overlay.needs_hide() {
-                if let Err(e) = overlay.hide_with_target_cleanup(|target, client| {
-                    shared.with_gpu_render_lock("host_overlay_hide", |shared| {
-                        target.free_for_hide(&shared.egl, client)
-                    })
-                }) {
-                    tracing::error!("overlay hide error, dropping overlay: {e}");
-                    overlay.mark_failed();
-                }
-                continue;
-            }
-            if overlay.needs_render(now)
-                && let Err(e) =
-                    crate::overlays::render_hosted_overlay(overlay, renderer_ptr, shared, now)
-            {
-                // Mirror the slot render-error path: a lost EGL context is
-                // fatal and must propagate, not be swallowed until the next
-                // widget render notices it.
-                if shared.is_context_lost() {
-                    return Err(FatalError::EglContextLost);
-                }
-                tracing::error!("overlay render error, dropping overlay: {e}");
-                overlay.mark_failed();
-            }
-            overlay.forward_settings_requests();
-            overlay.forward_alarm_requests();
-        }
         // Drop overlays whose client closed or that hit a terminal error,
         // shutting down each first so its GPU resources are freed. A plain
         // `retain` would Drop them without `shutdown(egl)` and leak.
