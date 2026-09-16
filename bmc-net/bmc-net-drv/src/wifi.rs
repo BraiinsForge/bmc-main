@@ -37,6 +37,7 @@ mod esp32;
 pub use esp32::AP_INTERFACE_NAME;
 pub mod nl80211;
 // Shared building blocks used by every driver.
+mod supplicant;
 mod uci;
 pub mod utils;
 

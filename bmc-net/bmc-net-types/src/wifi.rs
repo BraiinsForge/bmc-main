@@ -29,6 +29,19 @@ use thiserror::Error;
 #[error("This board does not support Wi-Fi")]
 pub struct WifiUnsupportedError;
 
+/// Why a station failed to join a network, when wpa_supplicant said so.
+///
+/// Carried inside the `anyhow::Error` the Wi-Fi calls return, like
+/// [`WifiUnsupportedError`], so a caller that wants to tell an operator what
+/// to change can downcast for it while the rest keep a plain failure.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum WifiJoinError {
+    #[error("the password for '{0}' was rejected")]
+    WrongKey(String),
+    #[error("no access point named '{0}' is on the air")]
+    NetworkNotFound(String),
+}
+
 #[derive(Default, Debug, Display, Eq, PartialEq, Clone)]
 pub enum WifiMode {
     #[default]

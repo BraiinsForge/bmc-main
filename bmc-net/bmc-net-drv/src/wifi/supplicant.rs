@@ -1,0 +1,380 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+//
+// This file is part of Braiins Open-Source Initiative (BOSI).
+//
+// BOSI is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Please, keep in mind that we may also license BOSI or any part thereof
+// under a proprietary license. For more information on the terms and conditions
+// of such proprietary license or if you have any other questions, please
+// contact us at opensource@braiins.com.
+
+//! Why a station join failed, taken from wpa_supplicant itself.
+//!
+//! The join helpers can only observe that a station never associated or never
+//! got an address; the reason - a rejected passphrase, an SSID that is not on
+//! the air - is known only to the supplicant. It publishes it on a per-device
+//! control socket, which this module attaches to for the duration of a join so
+//! a failure can be reported as something the operator can act on.
+
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use anyhow::{Context, Result, anyhow, bail};
+use bmc_net_types::wifi::WifiJoinError;
+use log::debug;
+use tokio::net::UnixDatagram;
+use tokio::time::{Duration, timeout};
+
+/// Where wpa_supplicant keeps one control socket per WiFi device.
+const CONTROL_SOCKET_DIR: &str = "/var/run/wpa_supplicant";
+/// Our end of the socket pair; the supplicant sends unsolicited events here.
+const CLIENT_SOCKET_DIR: &str = "/tmp";
+/// Largest control message the supplicant sends.
+const EVENT_BUFFER_LEN: usize = 4096;
+/// How long draining waits for the next event before calling the socket idle.
+///
+/// The events are already queued on the socket: this only covers the wakeup,
+/// and a join polls once a second, so it costs nothing to be generous.
+const DRAIN_TIMEOUT: Duration = Duration::from_millis(50);
+/// Most events one drain takes, so a talkative supplicant cannot keep the join
+/// out of its own checks.
+const DRAIN_LIMIT: usize = 64;
+/// Most events one join keeps. A verdict needs the last few, not the history.
+const EVENT_LIMIT: usize = 256;
+/// How long a control command waits for its reply.
+///
+/// A join must not hang on the diagnosis of a join: a supplicant that does not
+/// answer leaves the failure unexplained, which is what it was before.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+/// How many times a join tries to subscribe before it stops asking.
+///
+/// Only a supplicant that is there and unresponsive counts: each such attempt
+/// costs [`REPLY_TIMEOUT`], and the join polls once a second. A control socket
+/// that has not appeared yet is the normal state early in a join and is free
+/// to retry.
+const ATTACH_ATTEMPTS: u8 = 3;
+
+/// Distinguishes the client sockets of joins that overlap, so one join's
+/// subscription cannot unlink another's.
+static CLIENT_SEQUENCE: AtomicU32 = AtomicU32::new(0);
+
+/// A wpa_supplicant control connection subscribed to the event stream of one
+/// device.
+///
+/// Dropping it detaches and removes the client socket, so a join that ends
+/// early leaves nothing behind in `/tmp`.
+#[derive(Debug)]
+struct JoinWatcher {
+    socket: UnixDatagram,
+    client_path: PathBuf,
+    server_path: PathBuf,
+    /// Identifies the supplicant instance we subscribed to. Applying a station
+    /// config restarts it, and the new instance knows nothing of our
+    /// subscription, so a join has to notice and subscribe again.
+    server_inode: u64,
+}
+
+impl JoinWatcher {
+    /// Subscribes to `device`'s event stream, or fails when the supplicant is
+    /// not managing it (yet).
+    async fn attach(device: &str, events: &mut Vec<String>) -> Result<Self> {
+        let server_path = control_socket(device);
+        let client_path = Path::new(CLIENT_SOCKET_DIR).join(format!(
+            "bmc-wpa-{}-{}-{device}",
+            std::process::id(),
+            CLIENT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ));
+        // A leftover from a killed process would make the bind fail.
+        let _ = std::fs::remove_file(&client_path);
+
+        let socket = UnixDatagram::bind(&client_path)
+            .with_context(|| format!("binding {}", client_path.display()))?;
+        // The supplicant runs as its own user and answers to this address, so
+        // it has to be able to write to it. Without this the ATTACH reply never
+        // arrives and every join would wait for a diagnosis that cannot come.
+        // No exec bit: it is a socket, and anything that can write here can
+        // only feed us events we attribute to this device.
+        std::fs::set_permissions(&client_path, std::fs::Permissions::from_mode(0o666))
+            .with_context(|| format!("opening {} to wpa_supplicant", client_path.display()))?;
+        socket
+            .connect(&server_path)
+            .with_context(|| format!("connecting to {}", server_path.display()))?;
+        let server_inode =
+            inode(&server_path).with_context(|| format!("reading {}", server_path.display()))?;
+        let mut watcher = Self {
+            socket,
+            client_path,
+            server_path,
+            server_inode,
+        };
+        watcher.request("ATTACH", events).await?;
+        Ok(watcher)
+    }
+
+    /// Sends a control command and waits for its reply, keeping any event that
+    /// arrives in the meantime.
+    async fn request(&mut self, command: &str, events: &mut Vec<String>) -> Result<()> {
+        timeout(REPLY_TIMEOUT, self.exchange(command, events))
+            .await
+            .map_err(|_| anyhow!("wpa_supplicant did not answer {command}"))?
+    }
+
+    /// One command/reply round trip, unbounded on its own.
+    async fn exchange(&mut self, command: &str, events: &mut Vec<String>) -> Result<()> {
+        self.socket
+            .send(command.as_bytes())
+            .await
+            .with_context(|| format!("sending {command} to wpa_supplicant"))?;
+        let mut buffer = [0_u8; EVENT_BUFFER_LEN];
+        // The reply can queue behind events, which are kept rather than dropped.
+        for _ in 0..DRAIN_LIMIT {
+            let read = self.socket.recv(&mut buffer).await?;
+            let message = String::from_utf8_lossy(&buffer[..read]).into_owned();
+            if message.starts_with('<') {
+                push_event(events, message);
+                continue;
+            }
+            return match message.trim() {
+                "OK" => Ok(()),
+                other => bail!("wpa_supplicant rejected {command}: {other}"),
+            };
+        }
+        bail!("only events, no reply to {command} from wpa_supplicant")
+    }
+
+    /// Collects the events that arrived since the last call.
+    ///
+    /// Reading with a short timeout rather than `try_recv`: the latter answers
+    /// from the readiness registration, which nothing here ever arms, so it
+    /// would report an empty socket however many events are queued on it.
+    async fn poll_events(&mut self, events: &mut Vec<String>) {
+        let mut buffer = [0_u8; EVENT_BUFFER_LEN];
+        for _ in 0..DRAIN_LIMIT {
+            let Ok(Ok(read)) = timeout(DRAIN_TIMEOUT, self.socket.recv(&mut buffer)).await else {
+                return;
+            };
+            let message = String::from_utf8_lossy(&buffer[..read]).into_owned();
+            debug!("wpa_supplicant: {}", message.trim());
+            push_event(events, message);
+        }
+    }
+
+    /// Whether the supplicant we subscribed to has been replaced.
+    fn server_replaced(&self) -> bool {
+        inode(&self.server_path).is_none_or(|current| current != self.server_inode)
+    }
+}
+
+impl Drop for JoinWatcher {
+    fn drop(&mut self) {
+        // Best effort: the supplicant drops an unresponsive subscriber anyway.
+        let _ = self.socket.try_send(b"DETACH");
+        let _ = std::fs::remove_file(&self.client_path);
+    }
+}
+
+/// Follows one join: subscribes when the supplicant appears, subscribes again
+/// when it is replaced, and stops trying after [`ATTACH_ATTEMPTS`] unanswered
+/// attempts.
+///
+/// The events live here rather than in the subscription, so a supplicant
+/// restart - or a failed re-subscribe - cannot lose what it already said.
+#[derive(Debug)]
+pub(crate) struct JoinDiagnosis {
+    watcher: Option<JoinWatcher>,
+    events: Vec<String>,
+    attempts_left: u8,
+}
+
+impl Default for JoinDiagnosis {
+    fn default() -> Self {
+        Self {
+            watcher: None,
+            events: Vec::new(),
+            attempts_left: ATTACH_ATTEMPTS,
+        }
+    }
+}
+
+impl JoinDiagnosis {
+    /// Drains what the supplicant has said, subscribing or re-subscribing if
+    /// that is still worth a try. Called between the join's own attempts.
+    pub(crate) async fn poll(&mut self, device: &str) {
+        if let Some(watcher) = self.watcher.as_mut() {
+            watcher.poll_events(&mut self.events).await;
+            if !watcher.server_replaced() {
+                return;
+            }
+            debug!("wpa_supplicant restarted, subscribing to the new one");
+            self.watcher = None;
+        }
+        if self.attempts_left == 0 || !control_socket(device).exists() {
+            return;
+        }
+        match JoinWatcher::attach(device, &mut self.events).await {
+            Ok(watcher) => self.watcher = Some(watcher),
+            Err(e) => {
+                self.attempts_left = self.attempts_left.saturating_sub(1);
+                debug!(
+                    "wpa_supplicant did not take the subscription ({} attempts left): {e}",
+                    self.attempts_left
+                );
+            }
+        }
+    }
+
+    /// Forgets what the supplicant said before the station associated.
+    ///
+    /// A scan that had not yet found the network says nothing about a join
+    /// that reached the access point and then failed to get an address.
+    pub(crate) fn associated(&mut self) {
+        self.events.clear();
+    }
+
+    /// The reason the supplicant gave for failing to join `ssid`, if it gave one.
+    pub(crate) async fn verdict(&mut self, ssid: &str) -> Option<WifiJoinError> {
+        if let Some(watcher) = self.watcher.as_mut() {
+            watcher.poll_events(&mut self.events).await;
+        }
+        classify(self.events.iter().map(String::as_str), ssid)
+    }
+}
+
+/// Keeps the newest events and drops the rest: a verdict needs the tail of the
+/// stream, and a join can run for a minute against a flapping access point.
+fn push_event(events: &mut Vec<String>, message: String) {
+    if events.len() >= EVENT_LIMIT {
+        events.remove(0);
+    }
+    events.push(message);
+}
+
+/// The control socket wpa_supplicant opens for `device`.
+fn control_socket(device: &str) -> PathBuf {
+    Path::new(CONTROL_SOCKET_DIR).join(device)
+}
+
+/// Inode of a control socket, `None` while it does not exist.
+fn inode(path: &Path) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|meta| meta.ino())
+}
+
+/// The network an event is about, when it names one.
+fn event_ssid(line: &str) -> Option<&str> {
+    let rest = line.split_once("ssid=\"")?.1;
+    rest.split_once('"').map(|(ssid, _)| ssid)
+}
+
+/// Maps supplicant events onto the reasons a caller can act on.
+///
+/// An event that names a network is only believed for that network: the
+/// supplicant keeps retrying what it was given before, and a rejection meant
+/// for another SSID must not be reported against this one. That is why the
+/// verdict rests on `reason=WRONG_KEY`, which carries the SSID, and not on the
+/// bare "4-Way Handshake failed" line that accompanies it: the latter would be
+/// attributed to whichever network the caller happened to ask about. A
+/// rejected passphrase is decided first: a supplicant that keeps retrying
+/// emits a scan failure after it, and the passphrase is the actionable half.
+fn classify<'a>(events: impl Iterator<Item = &'a str>, ssid: &str) -> Option<WifiJoinError> {
+    let mut not_found = false;
+    for event in events {
+        for line in event.lines() {
+            if event_ssid(line).is_some_and(|named| named != ssid) {
+                continue;
+            }
+            if line.contains("reason=WRONG_KEY") {
+                return Some(WifiJoinError::WrongKey(ssid.to_owned()));
+            }
+            if line.contains("CTRL-EVENT-NETWORK-NOT-FOUND") {
+                not_found = true;
+            }
+        }
+    }
+    not_found.then(|| WifiJoinError::NetworkNotFound(ssid.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lines as a BMM101 emitted them, `logread` timestamps stripped.
+    const WRONG_KEY: &[&str] = &[
+        "<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='I301' freq=2462 MHz)",
+        "<3>Associated with c0:06:c3:ec:3f:06",
+        "<3>CTRL-EVENT-DISCONNECTED bssid=c0:06:c3:ec:3f:06 reason=15",
+        "<3>WPA: 4-Way Handshake failed - pre-shared key may be incorrect",
+        "<3>CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid=\"I301\" auth_failures=1 duration=10 reason=WRONG_KEY",
+    ];
+
+    const NOT_FOUND: &[&str] = &[
+        "<3>CTRL-EVENT-SCAN-STARTED ",
+        "<3>CTRL-EVENT-SCAN-RESULTS ",
+        "<3>CTRL-EVENT-NETWORK-NOT-FOUND ",
+    ];
+
+    #[test]
+    fn a_rejected_passphrase_is_recognised() {
+        assert!(matches!(
+            classify(WRONG_KEY.iter().copied(), "I301"),
+            Some(WifiJoinError::WrongKey(ssid)) if ssid == "I301"
+        ));
+    }
+
+    #[test]
+    fn a_network_that_is_not_on_air_is_recognised() {
+        assert!(matches!(
+            classify(NOT_FOUND.iter().copied(), "Absent"),
+            Some(WifiJoinError::NetworkNotFound(ssid)) if ssid == "Absent"
+        ));
+    }
+
+    #[test]
+    fn a_passphrase_rejection_wins_over_a_later_scan_failure() {
+        let events = WRONG_KEY.iter().copied().chain(NOT_FOUND.iter().copied());
+        assert!(matches!(
+            classify(events, "I301"),
+            Some(WifiJoinError::WrongKey(_))
+        ));
+    }
+
+    #[test]
+    fn a_join_in_progress_has_no_verdict() {
+        let events = [
+            "<3>CTRL-EVENT-SCAN-STARTED ",
+            "<3>Associated with c0:06:c3:ec:3f:06",
+        ];
+        assert!(classify(events.iter().copied(), "I301").is_none());
+    }
+
+    #[test]
+    fn a_rejection_meant_for_another_network_is_not_ours() {
+        assert!(classify(WRONG_KEY.iter().copied(), "Another").is_none());
+    }
+
+    #[test]
+    fn the_newest_events_survive_the_cap() {
+        let mut events = Vec::new();
+        for i in 0..EVENT_LIMIT + 10 {
+            push_event(&mut events, format!("<3>CTRL-EVENT-SCAN-STARTED {i}"));
+        }
+        assert_eq!(events.len(), EVENT_LIMIT);
+        assert!(
+            events
+                .last()
+                .is_some_and(|last| last.ends_with(&format!("{}", EVENT_LIMIT + 9)))
+        );
+    }
+}

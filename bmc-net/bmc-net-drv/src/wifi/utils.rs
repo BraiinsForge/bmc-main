@@ -32,6 +32,7 @@ use strum::{Display, EnumString};
 use tokio::process::Command;
 use tokio::time::{self, Duration, MissedTickBehavior};
 
+use crate::wifi::supplicant::JoinDiagnosis;
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
 
 /// Polls netifd until `interface` (a `network` section name such as `wifi_ap`)
@@ -124,6 +125,10 @@ where
     let mut interval = time::interval(IP_CHECK_INTERVAL);
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut associated = false;
+    // The supplicant is subscribed to as soon as it manages the netdev: it
+    // only streams live events, so attaching after the timeout would miss the
+    // reason the join failed.
+    let mut diagnosis = JoinDiagnosis::default();
     for i in 0..attempts {
         interval.tick().await;
         let device = match resolve_device().await {
@@ -133,10 +138,12 @@ where
                 continue;
             }
         };
+        diagnosis.poll(&device).await;
         debug!("{i}/{attempts} attempt to see {device} associated with {ssid}");
         match CommandUtils::call_iw_cmd(&["dev", &device, "link"]).await {
             Ok(output) if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid) => {
                 debug!("{device} is associated with {ssid}");
+                diagnosis.associated();
                 associated = true;
                 break;
             }
@@ -145,7 +152,12 @@ where
         }
     }
     if !associated {
-        bail!("the station did not associate with {ssid}");
+        return Err(join_failure(
+            &mut diagnosis,
+            ssid,
+            anyhow!("the station did not associate with {ssid}"),
+        )
+        .await);
     }
     for i in 0..attempts {
         interval.tick().await;
@@ -156,6 +168,7 @@ where
                 continue;
             }
         };
+        diagnosis.poll(&device).await;
         debug!("{i}/{attempts} attempt to get IP address from {device}");
         let ip = tokio::task::spawn_blocking(move || {
             NetworkInterface::get_by_substr(&device).and_then(|network| network.ipv4_address())
@@ -167,7 +180,21 @@ where
             return Ok(());
         }
     }
-    bail!("the station joined {ssid} but got no IPv4 address")
+    // A wrong passphrase shows up here rather than above: the station
+    // associates first and only the 4-way handshake fails, so it can look
+    // joined for a moment and then never reach an address.
+    Err(join_failure(
+        &mut diagnosis,
+        ssid,
+        anyhow!("the station joined {ssid} but got no IPv4 address"),
+    )
+    .await)
+}
+
+/// Prefers the supplicant's own reason for a failed join over what the poll
+/// loop could observe.
+async fn join_failure(diagnosis: &mut JoinDiagnosis, ssid: &str, fallback: Error) -> Error {
+    diagnosis.verdict(ssid).await.map_or(fallback, Into::into)
 }
 
 /// SSID of the association `iw dev <device> link` reports, `None` while the
