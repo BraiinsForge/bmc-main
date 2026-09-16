@@ -31,10 +31,6 @@
     inline-size: 100%;
     min-inline-size: to-rem(250px);
     max-inline-size: unset;
-
-    ul[role='listbox'] {
-        inline-size: 100%;
-    }
 }
 
 .fullWidth {

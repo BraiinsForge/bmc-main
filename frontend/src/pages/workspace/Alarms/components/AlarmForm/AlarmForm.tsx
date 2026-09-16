@@ -223,6 +223,7 @@ class View extends Component<Props, State> {
                         <Dropdown<null | pb.SoundInfo>
                             id={$('sound')}
                             className={css.soundDropdown}
+                            autoAlign
                             titleText=""
                             label={formatMessage({ defaultMessage: 'Select a sound…' })}
                             items={sound.options}
@@ -256,6 +257,7 @@ class View extends Component<Props, State> {
                         <Dropdown<pb.SnoozeLimit>
                             id={$('snooze-limit')}
                             className={css.dropdown}
+                            autoAlign
                             titleText={formatMessage({ defaultMessage: 'Snooze Limit' })}
                             label={formatMessage({ defaultMessage: 'Select snooze limit…' })}
                             helperText={formatMessage({
@@ -273,6 +275,7 @@ class View extends Component<Props, State> {
                         <Dropdown<pb.SnoozeDuration>
                             id={$('snooze-duration')}
                             className={css.dropdown}
+                            autoAlign
                             titleText={formatMessage({ defaultMessage: 'Snooze Duration' })}
                             label={formatMessage({ defaultMessage: 'Select snooze duration…' })}
                             items={pb.alarmSnoozeDurationOptions}
