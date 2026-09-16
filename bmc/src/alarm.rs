@@ -875,6 +875,56 @@ fn pick_soonest_next_alarm(
         .min_by_key(|n| n.fire_at_utc_ms)
 }
 
+#[derive(Debug)]
+pub(crate) enum AlarmBackend {
+    Supported(AlarmController),
+    Unsupported {
+        // Held only to keep the channel open; closing it signals shutdown.
+        next_alarm_sender: tokio::sync::watch::Sender<Option<NextAlarm>>,
+    },
+}
+
+impl AlarmBackend {
+    pub(crate) async fn init(
+        alarm_supported: bool,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        scheduler: JobScheduler,
+        sound_controller: SoundController,
+        alarm_bus: AlarmBus,
+        timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
+    ) -> Self {
+        if alarm_supported {
+            Self::Supported(
+                AlarmController::init(
+                    config_handle,
+                    scheduler,
+                    sound_controller,
+                    alarm_bus,
+                    timezone_receiver,
+                )
+                .await,
+            )
+        } else {
+            let (next_alarm_sender, _) = tokio::sync::watch::channel(None);
+            Self::Unsupported { next_alarm_sender }
+        }
+    }
+
+    pub(crate) fn controller(&self) -> Option<AlarmController> {
+        match self {
+            Self::Supported(controller) => Some(controller.clone()),
+            Self::Unsupported { .. } => None,
+        }
+    }
+
+    pub(crate) fn subscribe_next_alarm(&self) -> tokio::sync::watch::Receiver<Option<NextAlarm>> {
+        match self {
+            Self::Supported(controller) => controller.subscribe_next_alarm(),
+            Self::Unsupported { next_alarm_sender } => next_alarm_sender.subscribe(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AlarmController {
     config_handle: Arc<RwLock<ConfigHandle>>,
@@ -1174,6 +1224,129 @@ pub(crate) enum AlarmError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct BackendFixture {
+        _temp: tempfile::TempDir,
+        config_path: std::path::PathBuf,
+        expected_config: Vec<u8>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        scheduler: JobScheduler,
+    }
+
+    async fn backend_fixture() -> BackendFixture {
+        let temp = tempfile::tempdir().expect("BUG: create alarm backend test directory");
+        let config_path = temp.path().join("bmc-config.json");
+        let (mut config_handle, _) = ConfigHandle::init(
+            config_path.clone(),
+            50,
+            50,
+            50,
+            50,
+            bmc_platform::Product::Bmm101,
+        )
+        .await;
+        config_handle.add_alarm(AlarmData::new(
+            true,
+            "persisted".to_owned(),
+            NaiveTime::from_hms_opt(7, 30, 0).expect("BUG: valid alarm test time"),
+            BTreeSet::new(),
+            None,
+            None,
+        ));
+        config_handle
+            .save()
+            .await
+            .expect("BUG: persist alarm backend test config");
+        let expected_config = tokio::fs::read(&config_path)
+            .await
+            .expect("BUG: read alarm backend test config");
+        let config_handle = Arc::new(RwLock::new(config_handle));
+        let (_timezone_sender, timezone_receiver) =
+            tokio::sync::watch::channel(Timezone::default());
+        let scheduler = JobScheduler::init(
+            timezone_receiver,
+            Some(temp.path().join("scheduler-crontab")),
+        )
+        .await;
+
+        BackendFixture {
+            _temp: temp,
+            config_path,
+            expected_config,
+            config_handle,
+            scheduler,
+        }
+    }
+
+    async fn init_backend(fixture: &BackendFixture, alarm_supported: bool) -> AlarmBackend {
+        let (_timezone_sender, timezone_receiver) =
+            tokio::sync::watch::channel(Timezone::default());
+        AlarmBackend::init(
+            alarm_supported,
+            fixture.config_handle.clone(),
+            fixture.scheduler.clone(),
+            SoundController::new(
+                fixture.config_handle.clone(),
+                fixture
+                    .config_path
+                    .parent()
+                    .expect("BUG: test config has a parent")
+                    .join("sounds"),
+            ),
+            AlarmBus::new(),
+            timezone_receiver,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn unsupported_backend_preserves_enabled_alarm_without_scheduling_it() {
+        let fixture = backend_fixture().await;
+        let backend = init_backend(&fixture, false).await;
+        let next_alarm_receiver = backend.subscribe_next_alarm();
+
+        assert!(backend.controller().is_none());
+        assert!(next_alarm_receiver.borrow().is_none());
+        assert!(
+            next_alarm_receiver.has_changed().is_ok(),
+            "unsupported alarm channel must remain open"
+        );
+        assert!(
+            fixture
+                .scheduler
+                .jobs_by_source(AlarmScheduler::SCHEDULER_SOURCE)
+                .await
+                .expect("BUG: list alarm jobs")
+                .is_empty()
+        );
+        let alarms = fixture.config_handle.read().await.alarms();
+        assert_eq!(alarms.len(), 1);
+        assert!(alarms[0].enabled);
+        assert_eq!(
+            tokio::fs::read(&fixture.config_path)
+                .await
+                .expect("BUG: reread alarm backend test config"),
+            fixture.expected_config
+        );
+    }
+
+    #[tokio::test]
+    async fn supported_backend_schedules_enabled_persisted_alarm() {
+        let fixture = backend_fixture().await;
+        let backend = init_backend(&fixture, true).await;
+
+        assert!(backend.controller().is_some());
+        assert_eq!(
+            fixture
+                .scheduler
+                .jobs_by_source(AlarmScheduler::SCHEDULER_SOURCE)
+                .await
+                .expect("BUG: list alarm jobs")
+                .len(),
+            1
+        );
+        assert!(backend.subscribe_next_alarm().borrow().is_some());
+    }
 
     fn active_alarm(snooze_options: Option<SnoozeOptions>, snooze_count: u32) -> ActiveAlarm {
         let data = AlarmData::new(

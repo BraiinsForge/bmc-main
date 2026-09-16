@@ -102,7 +102,8 @@ available.
 `BMM100`, `BMM101`, and `BFM100` are fullscreen-only in the current UI/API surface. They have no slot grid, so combined
 scenes are filtered out during startup/cycling and rejected by scene-management RPCs. They also have no LED strip
 profile, so the OpenWrt LED driver is disabled for those products. With neither sound nor LED output, they report
-`alarm_supported = false`. See the [hardware gRPC contract](grpc/hardware-service.md) for capability details.
+`alarm_supported = false`. BMC does not initialize the alarm runtime, does not register `AlarmService`, and leaves
+persisted alarms untouched. Browser clients should gate alarm UI on `window.SYSTEM.capabilities.alarm_supported`.
 
 Widget manifest matching uses the active platform capabilities:
 

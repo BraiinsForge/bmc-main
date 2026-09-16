@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use crate::alarm::{AlarmBus, AlarmController, AlarmEvent};
+use crate::alarm::{AlarmBackend, AlarmBus, AlarmEvent};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::{
@@ -514,7 +514,7 @@ where
     widget_reload_task: tokio::task::JoinHandle<()>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
-    alarm_controller: AlarmController,
+    alarm_backend: AlarmBackend,
     hardware_capabilities: HardwareCapabilities,
 }
 
@@ -687,7 +687,8 @@ where
         // ring during startup can't be missed.
         let alarm_ringing = spawn_alarm_ringing_watch(&alarm_bus);
 
-        let alarm_controller = AlarmController::init(
+        let alarm_backend = AlarmBackend::init(
+            hardware_capabilities.alarm_supported,
             config_handle.clone(),
             scheduler.clone(),
             sound_controller.clone(),
@@ -776,7 +777,7 @@ where
                 localization_rx,
                 system_manager.subscribe_night_mode(),
                 manager.watch_timezone_updates(),
-                alarm_controller.subscribe_next_alarm(),
+                alarm_backend.subscribe_next_alarm(),
             );
         }
 
@@ -823,7 +824,7 @@ where
             let localization = config_guard.localization_config();
             let timezone = manager.timezone();
             let night_mode_active = *system_manager.subscribe_night_mode().borrow();
-            let next_alarm = alarm_controller.subscribe_next_alarm().borrow().clone();
+            let next_alarm = alarm_backend.subscribe_next_alarm().borrow().clone();
             let scene_cycling = config_guard.scene_cycling();
             if let Err(err) = widget_coordinator
                 .compositor()
@@ -888,7 +889,7 @@ where
             widget_reload_task,
             system_manager,
             sound_controller,
-            alarm_controller,
+            alarm_backend,
             hardware_capabilities,
         })
     }
@@ -915,7 +916,7 @@ where
             self.led_coordinator,
             self.system_manager,
             self.sound_controller,
-            Some(self.alarm_controller),
+            self.alarm_backend.controller(),
             self.hardware_capabilities,
         )
         .run(self.listener)
