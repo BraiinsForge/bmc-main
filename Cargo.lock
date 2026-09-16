@@ -731,6 +731,7 @@ dependencies = [
  "http 1.3.1",
  "humantime-serde",
  "hyper 1.6.0",
+ "hyper-util",
  "indexmap",
  "itertools 0.14.0",
  "libc",

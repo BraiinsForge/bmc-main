@@ -44,7 +44,7 @@ use mime_guess::from_path;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 use tower_http::compression::CompressionLayer;
-use tracing::info;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{BmcManager, manager::BmcState, widget::WidgetRegistry};
@@ -52,6 +52,10 @@ use crate::{BmcManager, manager::BmcState, widget::WidgetRegistry};
 use super::{ServerConfig, captive_portal::CaptivePortalLayer};
 
 const ZERO: &str = "0";
+
+/// Cap on a request body forwarded to boser; the upgrade image goes over
+/// its own endpoint, so anything larger here is a bug or an attack.
+const PROXY_MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 const SUPPORT_ARCHIVE_FILENAME_PREFIX: &str = "support_archive_";
 // NOTE: the suffix reflects the format the manager implementation produces —
 // a standard zip whose entries are password-protected.
@@ -75,8 +79,34 @@ pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
 pub(crate) const DEVICE_SETUP_URL_ENDPOINT: &str = "/init_setup";
 pub(crate) const ROOT_URL_ENDPOINT: &str = "/";
 
+/// Roots of our own single-page-app routes, mirroring `URLS.pages` in
+/// `frontend/src/constants.tsx` - keep the two in step when adding a page
+/// there. Anything outside this set belongs to boser once it is mounted.
+const SPA_ROUTE_ROOTS: &[&str] = &[
+    "accounts",
+    "alarms",
+    "display",
+    "init_setup",
+    "login",
+    "network",
+    "notifications",
+    "price-alerts",
+    "settings",
+];
+
+/// Whether a path that missed on disk is one of our own single-page-app
+/// routes. Boser owns everything else, so this is what decides between
+/// answering with index.html and forwarding the request on.
+fn spa_owns_route(file_path: &str) -> bool {
+    let root = file_path.split('/').next().unwrap_or_default();
+    SPA_ROUTE_ROOTS.contains(&root)
+}
+
 impl<T: BmcManager> HttpServer<T> {
     const INDEX_PATH: &str = "index.html";
+    /// Upper bound on boser's handshake response head.
+    const WS_HANDSHAKE_MAX_BYTES: usize = 64 * 1024;
+    const PROXY_MAX_BODY_BYTES: usize = PROXY_MAX_BODY_BYTES;
     const INITIAL_SETUP_INDEX_FILENAME: &str = "index-connect.html";
     const SUPPORT_ARCHIVE: &str = "/api/get_support_archive";
     const WIDGET_ICON: &str = "/widgets/{uid}/icon";
@@ -94,10 +124,25 @@ impl<T: BmcManager> HttpServer<T> {
     }
 
     pub(crate) fn build(&self) -> Router {
-        Router::new()
+        let router = Router::new()
             .merge(self.static_file_router())
             .merge(self.general_api_router())
-            .merge(self.widget_icon_router())
+            .merge(self.widget_icon_router());
+
+        // Requests this binary has no route for belong to boser: it owns the
+        // miner API and its own frontend, while :80 is ours on a display
+        // device. Without boser the server stays standalone.
+        let router = match self.config.boser {
+            Some(boser) => router
+                .fallback(move |req| Self::proxy_to_boser(boser, req))
+                // The static catch-all is GET-only, so a non-GET to any path
+                // matches it and axum answers 405 before reaching the
+                // fallback. boser's API is mostly POST, so route those too.
+                .method_not_allowed_fallback(move |req| Self::proxy_to_boser(boser, req)),
+            None => router,
+        };
+
+        router
             .layer(CompressionLayer::new())
             .layer(CaptivePortalLayer::new(self.manager.clone()))
             .layer(middleware::from_fn(Self::log_request))
@@ -108,15 +153,25 @@ impl<T: BmcManager> HttpServer<T> {
         let var_storage = Storage::new(self.config.www_var_path.clone());
         let assets_storage = Storage::new(self.config.www_assets_path.clone());
 
+        // /var and /assets exist in both frontends. Ours answers first, so a
+        // file only boser has (its branding, favicon) would 404 here instead of
+        // reaching the proxy. Fall through on a miss so both are reachable.
+        let boser = self.config.boser;
         let var_router = Router::new()
-            .route("/var/{*file_path}", get(Storage::file_handler))
+            .route(
+                "/var/{*file_path}",
+                get(move |state, path, request| Self::static_or_boser(boser, state, path, request)),
+            )
             .with_state(var_storage);
 
         let assets_router = Router::new()
-            .route("/assets/{*file_path}", get(Storage::file_handler))
+            .route(
+                "/assets/{*file_path}",
+                get(move |state, path, request| Self::static_or_boser(boser, state, path, request)),
+            )
             .with_state(assets_storage);
 
-        let index_state = IndexState::new(www_storage, self.manager.clone());
+        let index_state = IndexState::new(www_storage, self.manager.clone(), self.config.boser);
 
         Router::new()
             .route(ROOT_URL_ENDPOINT, get(Self::index_handler))
@@ -163,19 +218,258 @@ impl<T: BmcManager> HttpServer<T> {
     }
 
     async fn file_handler_with_index_fallback(
-        State(IndexState { storage, manager }): State<IndexState<T>>,
+        State(IndexState {
+            storage,
+            manager,
+            boser,
+        }): State<IndexState<T>>,
         Path(file_path): Path<String>,
+        request: Request,
     ) -> impl IntoResponse {
+        let spa_owned = spa_owns_route(&file_path);
+
         let response = Storage::file_handler(State(storage.clone()), Path(file_path))
             .await
             .into_response();
 
-        if response.status() == StatusCode::NOT_FOUND {
-            Self::index_handler(State(IndexState { storage, manager }))
-                .await
-                .into_response()
-        } else {
-            response
+        if response.status() != StatusCode::NOT_FOUND {
+            return response;
+        }
+
+        // A miss is either one of our client-side routes, which resolve only
+        // once index.html runs, or a path we do not own at all. Route root is
+        // the discriminator rather than protocol: boser's API and subscriptions
+        // are ordinary GETs, so index.html would shadow them.
+        if let Some(boser) = boser
+            && !spa_owned
+        {
+            return Self::proxy_to_boser(boser, request).await;
+        }
+
+        Self::index_handler(State(IndexState {
+            storage,
+            manager,
+            boser,
+        }))
+        .await
+        .into_response()
+    }
+
+    /// Serve a static file, handing the request to boser when we do not have
+    /// it. Keeps our own assets authoritative without hiding boser's.
+    async fn static_or_boser(
+        boser: Option<std::net::SocketAddr>,
+        State(storage): State<Storage>,
+        Path(file_path): Path<String>,
+        request: Request,
+    ) -> Response {
+        let response = Storage::file_handler(State(storage), Path(file_path))
+            .await
+            .into_response();
+
+        match (response.status(), boser) {
+            (StatusCode::NOT_FOUND, Some(boser)) => Self::proxy_to_boser(boser, request).await,
+            _ => response,
+        }
+    }
+
+    /// Relay a WebSocket to boser. The GraphQL subscriptions the frontend
+    /// opens are upgrades, which an HTTP client cannot forward, so the
+    /// handshake is replayed on a raw socket and the two ends are then joined
+    /// byte for byte.
+    /// Relay a WebSocket to boser. The client's handshake is replayed onto a
+    /// raw socket and boser's answer is returned verbatim: the browser needs
+    /// boser's own `Sec-WebSocket-Accept` and `Upgrade` headers, and rejects
+    /// the connection outright if the 101 arrives without them.
+    async fn proxy_websocket(boser: std::net::SocketAddr, request: Request) -> Response {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let (parts, body) = request.into_parts();
+        let path_and_query = parts
+            .uri
+            .path_and_query()
+            .map_or_else(|| parts.uri.path().to_owned(), ToString::to_string);
+
+        let mut handshake = format!("GET {path_and_query} HTTP/1.1\r\n");
+        for (name, value) in &parts.headers {
+            if let Ok(value) = value.to_str() {
+                use std::fmt::Write as _;
+                // Ignore: writing to a String cannot fail.
+                let _ = write!(handshake, "{name}: {value}\r\n");
+            }
+        }
+        handshake.push_str("\r\n");
+
+        let mut server = match tokio::net::TcpStream::connect(boser).await {
+            Ok(server) => server,
+            Err(err) => {
+                warn!(%err, "WebSocket connect to boser failed");
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+        };
+        if let Err(err) = server.write_all(handshake.as_bytes()).await {
+            warn!(%err, "WebSocket handshake to boser failed");
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+
+        let mut buffered = Vec::new();
+        let header_end = loop {
+            if let Some(at) = buffered.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+            if buffered.len() > Self::WS_HANDSHAKE_MAX_BYTES {
+                warn!("boser's WebSocket handshake exceeded the size limit");
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+            let mut chunk = [0_u8; 1024];
+            match server.read(&mut chunk).await {
+                Ok(0) => {
+                    warn!("boser closed the connection during the WebSocket handshake");
+                    return StatusCode::BAD_GATEWAY.into_response();
+                }
+                Ok(read) => buffered.extend_from_slice(&chunk[..read]),
+                Err(err) => {
+                    warn!(%err, "Reading boser's WebSocket handshake failed");
+                    return StatusCode::BAD_GATEWAY.into_response();
+                }
+            }
+        };
+
+        let Ok(head) = std::str::from_utf8(&buffered[..header_end]) else {
+            warn!("boser's WebSocket handshake was not valid UTF-8");
+            return StatusCode::BAD_GATEWAY.into_response();
+        };
+        let mut lines = head.split("\r\n");
+        let status = lines
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|code| code.parse::<u16>().ok())
+            .and_then(|code| StatusCode::from_u16(code).ok());
+        let Some(status) = status else {
+            warn!("boser's WebSocket handshake had no usable status line");
+            return StatusCode::BAD_GATEWAY.into_response();
+        };
+
+        let mut response = Response::builder().status(status);
+        for line in lines {
+            if let Some((name, value)) = line.split_once(':') {
+                response = response.header(name.trim(), value.trim());
+            }
+        }
+        let Ok(response) = response.body(axum::body::Body::empty()) else {
+            warn!("Rebuilding boser's WebSocket handshake failed");
+            return StatusCode::BAD_GATEWAY.into_response();
+        };
+
+        // Anything boser already sent past its handshake belongs to the client.
+        let leftover = buffered.split_off(header_end);
+
+        if status == StatusCode::SWITCHING_PROTOCOLS {
+            let upgraded = hyper::upgrade::on(Request::from_parts(parts, body));
+            tokio::spawn(async move {
+                match upgraded.await {
+                    Ok(client) => {
+                        let mut client = hyper_util::rt::TokioIo::new(client);
+                        if !leftover.is_empty()
+                            && let Err(err) = client.write_all(&leftover).await
+                        {
+                            debug!(%err, "Forwarding buffered WebSocket bytes failed");
+                            return;
+                        }
+                        // Runs until either side closes; errors here are just
+                        // the connection ending, so they are logged at debug.
+                        if let Err(err) =
+                            tokio::io::copy_bidirectional(&mut client, &mut server).await
+                        {
+                            debug!(%err, "WebSocket relay finished");
+                        }
+                    }
+                    Err(err) => warn!(%err, "Client WebSocket upgrade failed"),
+                }
+            });
+        }
+
+        response
+    }
+
+    /// Forward a request to boser verbatim and return its response.
+    async fn proxy_to_boser(boser: std::net::SocketAddr, request: Request) -> Response {
+        if request
+            .headers()
+            .get(http::header::UPGRADE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+        {
+            return Self::proxy_websocket(boser, request).await;
+        }
+
+        let (parts, body) = request.into_parts();
+        let path_and_query = parts
+            .uri
+            .path_and_query()
+            .map_or_else(|| parts.uri.path().to_owned(), ToString::to_string);
+        let url = format!("http://{boser}{path_and_query}");
+
+        let body = match axum::body::to_bytes(body, Self::PROXY_MAX_BODY_BYTES).await {
+            Ok(body) => body,
+            Err(err) => {
+                warn!(%err, "Rejecting oversized request for boser");
+                return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+            }
+        };
+
+        // reqwest carries its own `http` major, so the method and headers are
+        // rebuilt from bytes rather than moved across.
+        let Ok(method) = reqwest::Method::from_bytes(parts.method.as_str().as_bytes()) else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+
+        let client = reqwest::Client::new();
+        let mut outgoing = client.request(method, &url).body(body.to_vec());
+        for (name, value) in &parts.headers {
+            // Rewritten by the client for the new connection.
+            if name != http::header::HOST {
+                outgoing = outgoing.header(name.as_str(), value.as_bytes());
+            }
+        }
+
+        match outgoing.send().await {
+            Ok(boser_response) => {
+                let status = boser_response.status();
+                let headers = boser_response.headers().clone();
+                // Streamed, not collected: boser answers gRPC-web
+                // subscriptions with a body that stays open for the
+                // life of the subscription, so waiting for the end of
+                // it would hang the request until the client gave up.
+                let mut response =
+                    Response::new(axum::body::Body::from_stream(boser_response.bytes_stream()));
+                *response.status_mut() =
+                    StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                for (name, value) in &headers {
+                    // The client already decoded the body and the new
+                    // framing is ours, so boser's encoding and length
+                    // headers would describe bytes that no longer
+                    // exist. Hop-by-hop headers do not survive a hop
+                    // either. Everything else is passed through.
+                    if matches!(
+                        name.as_str(),
+                        "content-encoding" | "content-length" | "transfer-encoding" | "connection"
+                    ) {
+                        continue;
+                    }
+                    if let (Ok(name), Ok(value)) = (
+                        http::HeaderName::from_bytes(name.as_str().as_bytes()),
+                        http::HeaderValue::from_bytes(value.as_bytes()),
+                    ) {
+                        response.headers_mut().insert(name, value);
+                    }
+                }
+                response
+            }
+            Err(err) => {
+                warn!(%err, url, "Forwarding to boser failed");
+                StatusCode::BAD_GATEWAY.into_response()
+            }
         }
     }
 
@@ -194,7 +488,9 @@ impl<T: BmcManager> HttpServer<T> {
     }
 
     async fn wifi_setup_index_handler(
-        State(IndexState { storage, manager }): State<IndexState<T>>,
+        State(IndexState {
+            storage, manager, ..
+        }): State<IndexState<T>>,
     ) -> Response {
         let state = manager
             .network_manager()
@@ -221,7 +517,9 @@ impl<T: BmcManager> HttpServer<T> {
     }
 
     async fn device_setup_handler(
-        State(IndexState { storage, manager }): State<IndexState<T>>,
+        State(IndexState {
+            storage, manager, ..
+        }): State<IndexState<T>>,
     ) -> Response {
         if manager
             .network_manager()
@@ -428,11 +726,16 @@ impl Storage {
 struct IndexState<T: BmcManager> {
     storage: Storage,
     manager: Arc<T>,
+    boser: Option<std::net::SocketAddr>,
 }
 
 impl<T: BmcManager> IndexState<T> {
-    fn new(storage: Storage, manager: Arc<T>) -> Self {
-        Self { storage, manager }
+    fn new(storage: Storage, manager: Arc<T>, boser: Option<std::net::SocketAddr>) -> Self {
+        Self {
+            storage,
+            manager,
+            boser,
+        }
     }
 }
 
@@ -441,6 +744,7 @@ impl<T: BmcManager> Clone for IndexState<T> {
         Self {
             storage: self.storage.clone(),
             manager: self.manager.clone(),
+            boser: self.boser,
         }
     }
 }
@@ -452,6 +756,43 @@ mod tests {
     use super::*;
     use crate::widget::{WidgetInfo, WidgetRegistry};
     use tower::ServiceExt as _;
+
+    /// boser's REST API must not be shadowed by the SPA fallback: answering
+    /// it with index.html returns HTML under status 200, which the fleet widget
+    /// reads as a miner doing 0 TH/s.
+    #[test]
+    fn boser_paths_are_not_claimed_by_the_spa_fallback() {
+        for path in [
+            "api/v1/miner/stats",
+            "api/v1/miner/hw/hashboards",
+            "api/v1/miner/details",
+            "api/v1/version",
+            "graphql",
+        ] {
+            assert!(
+                !spa_owns_route(path),
+                "boser owns /{path}, it must be forwarded"
+            );
+        }
+
+        for path in [
+            "display",
+            "display/scene-1",
+            "settings",
+            "login",
+            "network",
+            "alarms",
+            "price-alerts",
+            "notifications",
+            "accounts",
+            "init_setup",
+        ] {
+            assert!(
+                spa_owns_route(path),
+                "/{path} is our own route and only resolves once index.html runs"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn file_router_rejects_traversal_as_bad_request() {

@@ -119,6 +119,10 @@ async fn main() -> Result<()> {
             .set_www_assets_path(www_path.join("assets"))
             .set_www_var_path(www_path.join("var"));
     }
+    if let Some(boser_address) = args.boser_address {
+        info!(%boser_address, "Forwarding unhandled requests to boser");
+        config.server_config = config.server_config.set_boser(Some(boser_address));
+    }
 
     let bmc_index = bmc::firmware::BmcIndex::default();
 

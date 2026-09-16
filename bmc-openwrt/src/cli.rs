@@ -52,4 +52,9 @@ pub struct Args {
     /// Defaults to `auto`, which uses the platform from /etc/bos_platform.
     #[clap(long = "hardware-profile", default_value = "auto")]
     pub hardware_profile: String,
+
+    /// boser's address. This binary owns :80 on a display device, so requests
+    /// it does not serve itself are forwarded here. Unset keeps it standalone.
+    #[clap(long)]
+    pub boser_address: Option<std::net::SocketAddr>,
 }

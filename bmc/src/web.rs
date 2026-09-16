@@ -75,6 +75,11 @@ pub(crate) struct WebService<
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
     WebService<T, S, U, V>
 {
+    /// gRPC package our own services live under.
+    const GRPC_OWN_PACKAGE_PREFIX: &'static str = "/braiins.bmc.";
+    /// gRPC's own namespace, covering reflection and health.
+    const GRPC_RESERVED_PREFIX: &'static str = "/grpc.";
+
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         manager: Arc<T>,
@@ -147,13 +152,19 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             |req: &Request, _services: &[_]| {
                 // grpc service -> 1
                 // http service -> 0
-                usize::from(
-                    req.headers()
-                        .get(CONTENT_TYPE)
-                        .map(axum::http::HeaderValue::as_bytes)
-                        .as_ref()
-                        .is_some_and(|content_type| content_type.starts_with(b"application/grpc")),
-                )
+                let is_grpc = req
+                    .headers()
+                    .get(CONTENT_TYPE)
+                    .map(axum::http::HeaderValue::as_bytes)
+                    .as_ref()
+                    .is_some_and(|content_type| content_type.starts_with(b"application/grpc"));
+                // Only our own services are mounted here; tonic answers
+                // UNIMPLEMENTED for anything else, so boser's gRPC has to reach
+                // the HTTP router and be forwarded from there.
+                let path = req.uri().path();
+                let ours = path.starts_with(Self::GRPC_OWN_PACKAGE_PREFIX)
+                    || path.starts_with(Self::GRPC_RESERVED_PREFIX);
+                usize::from(is_grpc && ours)
             },
         );
 
@@ -214,9 +225,19 @@ pub struct ServerConfig {
     pub www_root_path: PathBuf,
     pub www_assets_path: PathBuf,
     pub www_var_path: PathBuf,
+    /// boser's address. On a display device this binary owns `:80`, so
+    /// anything it does not serve itself is forwarded there; `None` keeps the
+    /// server standalone and unknown requests stay local.
+    pub boser: Option<std::net::SocketAddr>,
 }
 
 impl ServerConfig {
+    #[must_use]
+    pub fn set_boser(mut self, boser: Option<std::net::SocketAddr>) -> Self {
+        self.boser = boser;
+        self
+    }
+
     #[must_use]
     pub fn set_www_root_path(mut self, www_root_path: PathBuf) -> Self {
         self.www_root_path = www_root_path;
@@ -246,6 +267,7 @@ impl Default for ServerConfig {
             www_root_path: PathBuf::from(DEFAULT_ROOT),
             www_assets_path: PathBuf::from(DEFAULT_ROOT).join("assets"),
             www_var_path: PathBuf::from(DEFAULT_ROOT).join("var"),
+            boser: None,
         }
     }
 }

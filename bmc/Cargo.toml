@@ -57,13 +57,14 @@ futures.workspace = true
 http.workspace = true
 humantime-serde.workspace = true
 hyper.workspace = true
+hyper-util.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
 libc.workspace = true
 mime_guess.workspace = true
 prost-types.workspace = true
 rand.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
