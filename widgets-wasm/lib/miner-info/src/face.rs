@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::types::Ratio;
 #[expect(
     clippy::wildcard_imports,
     reason = "widget render code uses many SDK exports and macros in one file"
@@ -29,6 +30,8 @@ use crate::layout::{self, Panel};
 use crate::model::{Availability, MinerData, PublicData};
 use prices::chart;
 
+pub mod bmm101;
+pub mod icons;
 pub mod round;
 
 const TITLE: Color = GRAY_50;
@@ -75,9 +78,10 @@ fn unit_visible(value: &str) -> bool {
     value != format::NOT_AVAILABLE
 }
 
+// One paragraph, so the unit sits on the value's baseline.
 fn value_with_unit(
     value: format::Rendered,
-    size: u32,
+    sizes: layout::TextSizes,
     align: TextAlign,
     value_color: Color,
     weight: FontWeight,
@@ -87,10 +91,13 @@ fn value_with_unit(
     if let Some(unit) = value.unit
         && show_unit
     {
-        spans.push(span(bmc_wasm_sdk::fmt!("  {unit}"), style!(color: UNIT)));
+        spans.push(span(
+            bmc_wasm_sdk::fmt!("  {unit}"),
+            style!(size: sizes.unit, color: UNIT),
+        ));
     }
     paragraph(
-        style!(size: size, weight: weight, color: value_color, align: align),
+        style!(size: sizes.value, weight: weight, color: value_color, align: align),
         spans,
     )
 }
@@ -103,13 +110,7 @@ fn text_line(name: &'static str, value: format::Rendered, sizes: layout::TextSiz
                 name,
                 style!(size: sizes.title, weight: FontWeight::SEMIBOLD, color: TITLE, flex: 1.0),
             ),
-            value_with_unit(
-                value,
-                sizes.value,
-                TextAlign::Right,
-                VALUE,
-                FontWeight::REGULAR,
-            ),
+            value_with_unit(value, sizes, TextAlign::Right, VALUE, FontWeight::REGULAR),
         ],
     )
 }
@@ -204,7 +205,7 @@ fn block(
             ),
             value_with_unit(
                 value,
-                metrics.text.value,
+                metrics.text,
                 TextAlign::Left,
                 value_color,
                 value_weight,
@@ -224,6 +225,7 @@ fn block_row(blocks: Vec<Node>, metrics: layout::BlockLayout) -> Node {
     )
 }
 
+// Flexed so a zero `vertical_gap` spreads the rows over what the header left.
 fn space_between_rows(rows: Vec<Node>, metrics: layout::BlockLayout) -> Node {
     let mut children = Vec::with_capacity(rows.len().saturating_mul(2) + 2);
     children.push(fixed_height(metrics.padding_top));
@@ -238,15 +240,21 @@ fn space_between_rows(rows: Vec<Node>, metrics: layout::BlockLayout) -> Node {
         children.push(row);
     }
     children.push(fixed_height(metrics.padding_bottom));
-    col(props!(background: BACKGROUND), children)
+    col(props!(background: BACKGROUND, flex: 1.0), children)
+}
+
+fn change_color(change: Availability<Ratio>) -> Color {
+    match change {
+        Availability::Available(value) if value.as_percent() >= 0.0 => GREEN_50,
+        Availability::Available(_) => RED_60,
+        Availability::Unavailable | Availability::Failed => TITLE,
+    }
 }
 
 // The header sparkline. Returns an empty fixed-width column when the series has
 // too few points to draw, so the price column keeps its grid slot whether or not
 // the history has loaded.
-fn price_chart(history: &[f64], metrics: layout::BlockLayout) -> Node {
-    let width = metrics.block_width;
-    let height = metrics.block_height;
+fn price_chart(history: &[f64], width: f32, height: f32) -> Node {
     let line = chart::series_points(history, width, height, CHART_INSET);
     if line.len() < 2 {
         return fixed_width(width);
@@ -273,21 +281,19 @@ fn info_overload_header(
     show_price_graph: bool,
     metrics: layout::BlockLayout,
 ) -> Node {
-    let change_color = match public.btc_change_24h {
-        Availability::Available(value) if value.as_percent() >= 0.0 => GREEN_50,
-        Availability::Available(_) => RED_60,
-        Availability::Unavailable | Availability::Failed => TITLE,
-    };
-
     let mut blocks = vec![block(
         "Bitcoin (24h)",
         format::signed_percent_unit(public.btc_change_24h, 2).into(),
         metrics,
-        change_color,
+        change_color(public.btc_change_24h),
         FontWeight::BOLD,
     )];
     if show_price_graph {
-        blocks.push(price_chart(&public.btc_price_history, metrics));
+        blocks.push(price_chart(
+            &public.btc_price_history,
+            metrics.block_width,
+            metrics.block_height,
+        ));
     }
     blocks.push(text(
         format::money(public.btc_price, 0).value,

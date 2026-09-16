@@ -75,6 +75,8 @@ pub fn classify(viewport: WidgetViewport) -> Panel {
 pub struct TextSizes {
     pub title: u32,
     pub value: u32,
+    /// The unit trailing a value; set apart from it only where the frame does.
+    pub unit: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -107,6 +109,7 @@ pub(crate) fn mining_layout(panel: Panel) -> MiningLayout {
             text: TextSizes {
                 title: 16,
                 value: 16,
+                unit: 16,
             },
         },
         Panel::Bmm101 | Panel::Round => MiningLayout {
@@ -116,6 +119,7 @@ pub(crate) fn mining_layout(panel: Panel) -> MiningLayout {
             text: TextSizes {
                 title: 20,
                 value: 20,
+                unit: 20,
             },
         },
     }
@@ -125,22 +129,39 @@ pub(crate) fn mining_layout(panel: Panel) -> MiningLayout {
 /// rather than reflowing. Three blocks need 479 px of a 480 px screen,
 /// and the 317 px BMC100 slot has room for two —
 /// the narrower block is what keeps that pair inside it.
+///
+/// BMM101's grid follows its Figma frame; its zero vertical gap turns into
+/// flex spacers, so the rows spread over the height below the price band.
 #[must_use]
 pub(crate) fn info_overload_layout(panel: Panel) -> BlockLayout {
-    BlockLayout {
-        padding_horizontal: 16.0,
-        padding_top: 24.0,
-        padding_bottom: 24.0,
-        horizontal_gap: 24.0,
-        vertical_gap: 15.0,
-        block_width: match panel {
-            Panel::Small => 130.0,
-            Panel::Bmm101 | Panel::Round => 133.0,
+    match panel {
+        Panel::Bmm101 => BlockLayout {
+            padding_horizontal: 16.0,
+            padding_top: 13.0,
+            padding_bottom: 16.0,
+            horizontal_gap: 8.0,
+            vertical_gap: 0.0,
+            block_width: 144.0,
+            block_height: 46.0,
+            text: TextSizes {
+                title: 14,
+                value: 20,
+                unit: 14,
+            },
         },
-        block_height: 41.0,
-        text: TextSizes {
-            title: 16,
-            value: 16,
+        Panel::Small | Panel::Round => BlockLayout {
+            padding_horizontal: 16.0,
+            padding_top: 24.0,
+            padding_bottom: 24.0,
+            horizontal_gap: 24.0,
+            vertical_gap: 15.0,
+            block_width: if panel == Panel::Small { 130.0 } else { 133.0 },
+            block_height: 41.0,
+            text: TextSizes {
+                title: 16,
+                value: 16,
+                unit: 16,
+            },
         },
     }
 }
@@ -233,16 +254,17 @@ mod tests {
                 padding_bottom: 22.0,
                 text: TextSizes {
                     title: 16,
-                    value: 16
+                    value: 16,
+                    unit: 16,
                 }
             }
         );
     }
 
     #[test]
-    fn info_overload_layout_keeps_boser_grid_without_graph() {
+    fn info_overload_layout_keeps_boser_grid_on_the_round_panel() {
         assert_eq!(
-            info_overload_layout(Panel::Bmm101),
+            info_overload_layout(Panel::Round),
             BlockLayout {
                 padding_horizontal: 16.0,
                 padding_top: 24.0,
@@ -253,7 +275,8 @@ mod tests {
                 block_height: 41.0,
                 text: TextSizes {
                     title: 16,
-                    value: 16
+                    value: 16,
+                    unit: 16,
                 }
             }
         );
@@ -263,6 +286,7 @@ mod tests {
     fn each_grid_fits_the_narrowest_screen_it_serves() {
         for (panel, width, screen) in [
             (Panel::Bmm101, 480.0, "BMM101"),
+            (Panel::Round, 480.0, "BFM100"),
             (Panel::Small, 317.0, "BMC100 small"),
         ] {
             let metrics = info_overload_layout(panel);

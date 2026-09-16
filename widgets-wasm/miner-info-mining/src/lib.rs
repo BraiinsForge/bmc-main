@@ -23,12 +23,6 @@
 
 mod manifest_params;
 
-// `include_svg!` resolves against the crate hosting the file,
-// so the asset lives with the widget
-// and is handed to the faces that draw it.
-#[cfg(target_arch = "wasm32")]
-const CHIP_ICON: bmc_wasm_sdk::Svg = bmc_wasm_sdk::include_svg!("assets/chip.svg");
-
 #[cfg(target_arch = "wasm32")]
 #[expect(
     clippy::wildcard_imports,
@@ -101,7 +95,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     // so the host animates the real fill in from an empty-ish baseline.
     let seed_gauge = panel.draws_gauge() && engine::take_first_frame();
     let root = match panel {
-        Panel::Round => face::round::mining(size, &miner, seed_gauge, &CHIP_ICON),
+        Panel::Round => face::round::mining(size, &miner, seed_gauge),
         Panel::Small | Panel::Bmm101 => face::mining(panel, &miner),
     };
     let overlay = engine::overlay(engine::View::Mining, panel, &auth);

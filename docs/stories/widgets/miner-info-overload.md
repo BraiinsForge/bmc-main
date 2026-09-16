@@ -19,6 +19,16 @@ Add the widget once per miner to watch several at a time.
   adjustments, epoch progress, miner uptime, the fee share over the last 144 blocks, and hashvalue (SAT/TH/day).
 - The band carries a small sparkline of the last day's price between the change and the price itself.
 
+### See it on the Mini Miner
+
+> As a user with a BMM101, I want the dashboard laid out for its own 480×320 screen rather than borrowed from another.
+
+- The screen opens with the widget's icon and name, then the Bitcoin band on the black background, then a hairline, then
+  the nine figures in three rows spread over the rest of the height.
+- The band spreads the 24-hour change, the sparkline and the price across the width; the currency symbol sits smaller
+  beside the price.
+- Each figure's unit is set smaller than its value, and the labels smaller still.
+
 ### Read it on a small screen
 
 > As a user with a small display, I want the dashboard to stay readable rather than run off the edge.
@@ -76,9 +86,9 @@ Add the widget once per miner to watch several at a time.
 
 - The widget renders on rectangular viewports from 317×238 up to 480×320 and on the round 480×480 viewport. The
   rectangular targets are the BMM100 (320×240), the BMM101 (480×320), and the BMC100's 1×1 slot (317×238); the round
-  viewport targets the BFM100.
-- The wider BMC100 views are deliberately unsupported: the grid is drawn at a fixed block width for a 480-wide screen,
-  so on a larger one it would sit in a corner rather than fill it. A design for those sizes does not exist yet.
+  viewport targets the BFM100. The BMM100 and the BMC100 slot share one layout; the BMM101 has its own.
+- The wider BMC100 views are deliberately unsupported: the grids are drawn at fixed block widths for their screens, so
+  on a larger one a grid would sit in a corner rather than fill it. A design for those sizes does not exist yet.
 - Font sizes are fixed across viewports — fields are hidden rather than shrunk.
 - *Miner URL* and *Miner password* are manifest-driven widget parameters, configurable from the web UI.
 - The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter

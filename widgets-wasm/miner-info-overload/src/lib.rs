@@ -89,7 +89,8 @@ pub extern "C" fn render(_delta_ms: u32) {
     let panel = layout::classify(viewport);
     let root = match panel {
         Panel::Round => face::round::info_overload(&miner, &public),
-        Panel::Small | Panel::Bmm101 => face::info_overload(panel, &miner, &public),
+        Panel::Bmm101 => face::bmm101::info_overload(&miner, &public),
+        Panel::Small => face::info_overload(panel, &miner, &public),
     };
     let overlay = engine::overlay(engine::View::InfoOverload, panel, &auth);
     let root = mining::overlay::apply_overlay(root, overlay, viewport.shape);

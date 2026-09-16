@@ -5,6 +5,11 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 publish = false
 
+# The icons the faces embed with `include_svg!`,
+# which resolves against this crate.
+[package.metadata.nix]
+include = ["assets/**"]
+
 [dependencies]
 bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
 mining = { path = "../mining" }

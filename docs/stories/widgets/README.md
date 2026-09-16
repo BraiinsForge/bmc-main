@@ -73,7 +73,8 @@ price are fetched independently, so either can fail without blanking the other. 
 ### [Miner Info — Info Overload Widget](miner-info-overload.md)
 
 A dense dashboard combining one miner with the Bitcoin network — price and 24-hour change over a grid of difficulty
-adjustments, epoch progress, block height, fees and hashvalue. Drops to two columns on the smallest displays.
+adjustments, epoch progress, block height, fees and hashvalue. Laid out for the BMM101's own screen; drops to two
+columns on the smallest displays.
 
 ### [Mining Clock Widget](mining-clock.md)
 

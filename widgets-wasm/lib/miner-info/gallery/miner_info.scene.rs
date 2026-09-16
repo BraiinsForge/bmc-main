@@ -18,41 +18,30 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use core::time::Duration;
-
 use bmc_gallery::prelude::*;
-use bmc_wasm_sdk::types::{
-    Availability, BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio,
-    SiPrefix, Temperature,
-};
-use bmc_wasm_sdk::{Svg, ViewportShape, WidgetViewport, include_svg};
+use bmc_wasm_sdk::{ViewportShape, WidgetViewport};
 use miner_info::face;
 use miner_info::face::RenderSize;
+use miner_info::fixtures::{DEFAULT_TARGET_THS, PriceMove, Reported, miner, public};
 use miner_info::layout;
-use miner_info::model::{
-    Constraints, Currency, MinerData, Money, PublicData, TargetRange, TemperatureRange,
-};
 
 scene_meta! { title: "Widgets / Miner Info" }
 
-// `include_svg!` resolves against the crate hosting the file, so the gallery
-// keeps a copy of its own to hand to the faces that draw it.
-const CHIP_ICON: Svg = include_svg!("assets/chip.svg");
+/// The panels that share the small rectangular faces.
+const SMALL_VIEWPORTS: [(u32, u32, &str); 2] = [(317, 238, "BMC100 slot"), (320, 240, "BMM100")];
 
-const RECT_VIEWPORTS: [(u32, u32, &str); 3] = [
-    (317, 238, "BMC100 slot"),
-    (320, 240, "BMM100"),
-    (480, 320, "BMM101"),
+const BMM101_VIEWPORT: (u32, u32) = (480, 320);
+
+const PRICE_MOVES: [(&str, PriceMove); 3] = [
+    ("Up", PriceMove::Up),
+    ("Down", PriceMove::Down),
+    ("No history", PriceMove::NoHistory),
 ];
 
 /// Diameter of the BFM100 face. Staged as [`Round`] rather than a square
 /// so the mask shows what the bezel cuts — the faces lay out in bands,
 /// and whether a band clears the circle is the thing worth looking at.
 const ROUND_DIAMETER: usize = 480;
-
-/// Tuner target the gauge sweeps anchor against. A healthy miner is tuned to
-/// the default, so `hashrate` relative to it decides the gauge state.
-const DEFAULT_TARGET_THS: f64 = 1.0;
 
 /// Hashrates that land on each `GaugeState`, given [`DEFAULT_TARGET_THS`]
 /// and the +/-5% good band. `None` leaves the reading unavailable.
@@ -63,75 +52,6 @@ const GAUGE_STATES: [(&str, Option<f64>); 5] = [
     ("Off", Some(0.0)),
     ("Unavailable", None),
 ];
-
-/// How much of itself a miner reports.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Reported {
-    /// Everything the faces can draw.
-    All,
-    /// No board sensor and no per-board rates, which is all it takes to lose
-    /// the temperature row and the mining-mode ratio: each needs a pair of
-    /// readings, and half a pair reads as nothing.
-    WithoutBoards,
-    /// Nothing at all — the placeholder pass every face has to survive
-    /// without collapsing its layout.
-    Nothing,
-}
-
-fn miner(reported: Reported, hashrate_ths: Option<f64>) -> MinerData {
-    if reported == Reported::Nothing {
-        return MinerData::default();
-    }
-    let boards = reported == Reported::All;
-    MinerData {
-        hashrate: hashrate_ths
-            .map(Hashrate::from_terahashes_per_second)
-            .into(),
-        temperature: boards
-            .then(|| TemperatureRange {
-                board: Temperature::from_celsius(61.0),
-                chip: Temperature::from_celsius(74.0),
-            })
-            .into(),
-        power: Availability::Available(ElectricPower::from_watts(41.0)),
-        efficiency: Availability::Available(MiningEfficiency::from_joules_per_terahash(21.5)),
-        mcr: boards.then(|| Ratio::from_percent(98.0)).into(),
-        fan_speed: Availability::Available(Ratio::from_percent(72.0)),
-        uptime: Availability::Available(Duration::from_hours(2 * 24 + 3) + Duration::from_mins(57)),
-        ip_address: Availability::Available("192.168.23.1".to_owned()),
-        chip_type: Availability::Available("BM1370".to_owned()),
-        chip_count: Availability::Available(108),
-        constraints: Constraints {
-            hashrate: Some(TargetRange {
-                min: 0.5,
-                default: DEFAULT_TARGET_THS,
-                max: 1.4,
-            }),
-        },
-    }
-}
-
-/// The market fixture, or a fully-unavailable one. Drops alongside the miner
-/// half: a face reading only one of the two would otherwise still look full.
-fn public(reported: Reported) -> PublicData {
-    if reported == Reported::Nothing {
-        return PublicData::default();
-    }
-    PublicData {
-        btc_price: Availability::Available(Money::new(101_754.0, Currency::Usd)),
-        btc_change_24h: Availability::Available(Ratio::from_percent(6.25)),
-        prev_diff_adjust: Availability::Available(Ratio::from_fraction(-0.021)),
-        est_diff_adjust: Availability::Available(Ratio::from_fraction(-0.045)),
-        epoch_progress: Availability::Available(Ratio::from_fraction(0.87)),
-        epoch_remaining: Availability::Available(Duration::from_secs(262 * 600)),
-        network_hashrate: Availability::Available(Hashrate::from_si(650.0, SiPrefix::Exa)),
-        avg_fees_per_block: Availability::Available(BitcoinAmount::from_bitcoin(0.055)),
-        avg_fee_share: Availability::Available(Ratio::from_percent(12.1)),
-        block_height: Availability::Available(880_123),
-        hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(70.0)),
-        btc_price_history: (0..64).map(|i| 100_000.0 + f64::from(i) * 30.0).collect(),
-    }
-}
 
 fn rectangular_panel(viewport: (u32, u32)) -> layout::Panel {
     layout::classify(WidgetViewport {
@@ -183,16 +103,40 @@ fn reported(ctx: &mut SceneCtx) -> Reported {
     }
 }
 
+fn price_move(ctx: &mut SceneCtx) -> PriceMove {
+    let labels: Vec<&str> = PRICE_MOVES.iter().map(|(label, _)| *label).collect();
+    PRICE_MOVES[ctx.select("Price", &labels, 0)].1
+}
+
+/// Which of the three widgets to draw; the same pick serves every panel.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Face {
+    Mining,
+    Geek,
+    InfoOverload,
+}
+
+fn face_pick(ctx: &mut SceneCtx) -> Face {
+    match ctx.select("Face", &["Mining", "Geek", "Info Overload"], 0) {
+        1 => Face::Geek,
+        2 => Face::InfoOverload,
+        _ => Face::Mining,
+    }
+}
+
 #[scene]
 fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let selected = ctx.select("Viewport", &["All", "BMC100 slot", "BMM100", "BMM101"], 0);
-    let face_pick = ctx.select("Face", &["Mining", "Geek", "Info Overload"], 0);
+    let mut labels = vec!["All"];
+    labels.extend(SMALL_VIEWPORTS.iter().map(|(.., label)| *label));
+    let selected = ctx.select("Viewport", &labels, 0);
+    let face = face_pick(ctx);
     let shown = reported(ctx);
+    let price = price_move(ctx);
     system_settings(ctx);
 
     // Laid out across rather than stacked: the frames are small enough that
     // a wide window fits several side by side, which is how you compare them.
-    let staged: Vec<_> = RECT_VIEWPORTS
+    let staged: Vec<_> = SMALL_VIEWPORTS
         .into_iter()
         .enumerate()
         .filter(|(index, _)| selected == 0 || selected == index + 1)
@@ -208,18 +152,38 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
                     ui.heading(label);
                     ctx.node_stage(ui, (width, height), move || {
                         let data = miner(shown, Some(1.02));
-                        let market = public(shown);
+                        let market = public(shown, price);
                         let panel = rectangular_panel((width, height));
-                        match face_pick {
-                            1 => face::geek(panel, &data, &market),
-                            2 => face::info_overload(panel, &data, &market),
-                            _ => face::mining(panel, &data),
+                        match face {
+                            Face::Mining => face::mining(panel, &data),
+                            Face::Geek => face::geek(panel, &data, &market),
+                            Face::InfoOverload => face::info_overload(panel, &data, &market),
                         }
                     });
                 });
             }
         });
     }
+}
+
+/// The BMM101 faces at their own size.
+#[scene]
+fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let face = face_pick(ctx);
+    let shown = reported(ctx);
+    let price = price_move(ctx);
+    system_settings(ctx);
+
+    ctx.node_stage(ui, BMM101_VIEWPORT, move || {
+        let data = miner(shown, Some(1.02));
+        let market = public(shown, price);
+        let panel = rectangular_panel(BMM101_VIEWPORT);
+        match face {
+            Face::Mining => face::mining(panel, &data),
+            Face::Geek => face::geek(panel, &data, &market),
+            Face::InfoOverload => face::bmm101::info_overload(&data, &market),
+        }
+    });
 }
 
 /// The round Mining and Geek faces across every gauge state,
@@ -240,12 +204,12 @@ fn round_gauge(ctx: &mut SceneCtx, ui: &mut Ui) {
                     ui.heading(label);
                     ctx.node_stage(ui, Round(ROUND_DIAMETER), move || {
                         let data = miner(shown, hashrate);
-                        let market = public(shown);
+                        let market = public(shown, PriceMove::Up);
                         let at = round_size();
                         if geek {
-                            face::round::geek(at, &data, &market, false, &CHIP_ICON)
+                            face::round::geek(at, &data, &market, false)
                         } else {
-                            face::round::mining(at, &data, false, &CHIP_ICON)
+                            face::round::mining(at, &data, false)
                         }
                     });
                 });
@@ -257,8 +221,9 @@ fn round_gauge(ctx: &mut SceneCtx, ui: &mut Ui) {
 #[scene]
 fn round_info_overload(ctx: &mut SceneCtx, ui: &mut Ui) {
     let shown = reported(ctx);
+    let price = price_move(ctx);
     system_settings(ctx);
     ctx.node_stage(ui, Round(ROUND_DIAMETER), move || {
-        face::round::info_overload(&miner(shown, Some(1.02)), &public(shown))
+        face::round::info_overload(&miner(shown, Some(1.02)), &public(shown, price))
     });
 }

@@ -31,8 +31,8 @@ use bmc_wasm_sdk::types::Hashrate;
 use bmc_wasm_sdk::*;
 
 use super::{
-    BACKGROUND, RenderSize, VALUE, fixed_height, fixed_width, info_overload_header, text_block,
-    unit_visible,
+    BACKGROUND, RenderSize, VALUE, fixed_height, fixed_width, icons, info_overload_header,
+    text_block, unit_visible,
 };
 use crate::format;
 use crate::layout;
@@ -366,7 +366,7 @@ fn center_caption(cx: f32, cy: f32, scale: f32) -> Node {
 // horizontal center and inset below the rim. The icon is drawn into a small
 // fixed-size canvas so it flows in the flex row and the whole group centers
 // together. The model reads in the value tone, the count in the label gray.
-fn chip_header(cx: f32, cy: f32, scale: f32, chip_icon: &Svg, model: &str, count: usize) -> Node {
+fn chip_header(cx: f32, cy: f32, scale: f32, model: &str, count: usize) -> Node {
     let icon = canvas(
         props!(width: CHIP_ICON_SIZE, height: CHIP_ICON_SIZE),
         vec![
@@ -375,7 +375,7 @@ fn chip_header(cx: f32, cy: f32, scale: f32, chip_icon: &Svg, model: &str, count
                 0.0,
                 CHIP_ICON_SIZE,
                 CHIP_ICON_SIZE,
-                chip_icon,
+                &icons::CHIP,
                 LABEL_GRAY,
             )
             .with_anti_alias(),
@@ -483,7 +483,6 @@ fn gauge_screen(
     g: &Gauge,
     hashrate: Availability<Hashrate>,
     chip: Option<(&str, usize)>,
-    chip_icon: &Svg,
     clusters: &[ClusterSpec; 4],
 ) -> Node {
     let w = px(size.width);
@@ -504,7 +503,7 @@ fn gauge_screen(
         center_caption(cx, cy, scale),
     ];
     if let Some((model, count)) = chip {
-        children.push(chip_header(cx, cy, scale, chip_icon, model, count));
+        children.push(chip_header(cx, cy, scale, model, count));
     }
     let centers = [TL_CENTER, TR_CENTER, BL_CENTER, BR_CENTER];
     for (center, spec) in centers.into_iter().zip(clusters.iter()) {
@@ -543,14 +542,13 @@ fn chip_header_data(miner: &MinerData) -> Option<(&str, usize)> {
 }
 
 #[must_use]
-pub fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool, chip_icon: &Svg) -> Node {
+pub fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> Node {
     let g = seeded_gauge(miner, seed_gauge);
     gauge_screen(
         size,
         &g,
         miner.hashrate,
         chip_header_data(miner),
-        chip_icon,
         &[
             ClusterSpec {
                 label: "Power Cons.",
@@ -577,20 +575,13 @@ pub fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool, chip_icon: 
 }
 
 #[must_use]
-pub fn geek(
-    size: RenderSize,
-    miner: &MinerData,
-    public: &PublicData,
-    seed_gauge: bool,
-    chip_icon: &Svg,
-) -> Node {
+pub fn geek(size: RenderSize, miner: &MinerData, public: &PublicData, seed_gauge: bool) -> Node {
     let g = seeded_gauge(miner, seed_gauge);
     gauge_screen(
         size,
         &g,
         miner.hashrate,
         chip_header_data(miner),
-        chip_icon,
         &[
             ClusterSpec {
                 label: "Power Cons.",

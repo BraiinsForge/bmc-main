@@ -42,6 +42,7 @@
 pub mod api;
 pub mod engine;
 pub mod face;
+pub mod fixtures;
 pub mod format;
 pub mod layout;
 pub mod model;
