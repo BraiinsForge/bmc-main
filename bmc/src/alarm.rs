@@ -209,12 +209,8 @@ impl SnoozeDuration {
 
 #[derive(Clone, Debug)]
 pub enum AlarmCmd {
-    /// Stop only the alarm currently ringing (the single `current_alarm`
-    /// slot). Other alarms' pending snoozes are left untouched.
     StopCurrent,
-    Stop {
-        id: AlarmId,
-    },
+    Stop { id: AlarmId },
     Snooze,
 }
 
@@ -241,10 +237,6 @@ impl AlarmBus {
         }
     }
 
-    /// Dismiss the currently ringing alarm without disturbing other alarms'
-    /// pending snoozes. Only one alarm rings at a time (`current_alarm` is a
-    /// single slot, replaced on each new fire), so no id is needed to target
-    /// it — and a ringing alarm is never itself snooze-pending.
     pub fn stop_current(&self) {
         if let Err(err) = self.tx_commands.send(AlarmCmd::StopCurrent) {
             warn!(error = %err, "Failed to send StopCurrent command, no active receivers");
@@ -321,10 +313,8 @@ impl From<AlarmData> for ActiveAlarm {
 }
 
 impl ActiveAlarm {
-    /// Whether this firing may still be snoozed: snooze is configured *and* the
-    /// per-firing snooze count is below the limit (`Forever` has none). The
-    /// single source of truth shared by the snooze-command guard and the
-    /// overlay's snooze-button gating in `startup.rs`, so the two cannot drift.
+    /// Whether this firing may still be snoozed: snooze is configured,
+    /// and the per-firing count is below the limit (`Forever` has none).
     pub(crate) fn snooze_allowed(&self) -> bool {
         self.snooze_options
             .as_ref()
@@ -459,8 +449,9 @@ impl AlarmScheduler {
                         "Starting alarm"
                     );
 
-                    // NOTE: Check if active_alarm is really enabled.
-                    // It could happen that alarm is snoozed and then it is manually removed or disabled
+                    // A firing already queued here outruns a removal or disable:
+                    // a snooze re-fire clears its pending entry before sending,
+                    // so cancelling the snooze no longer stops it.
                     if !self_
                         .active_alarms
                         .lock()
@@ -565,16 +556,11 @@ impl AlarmScheduler {
                     match cmd {
                         AlarmCmd::StopCurrent => {
                             info!("Received StopCurrent command");
-                            // Dismiss stops only the alarm on screen. Other
-                            // alarms' pending snoozes are left to re-fire, and
-                            // the ringing alarm is never itself snooze-pending
-                            // (a snooze re-fire clears its entry before it
-                            // rings), so there is nothing of its own to drop.
                             self_.cancel_current_alarm().await;
                         }
                         AlarmCmd::Stop { id } => {
                             info!(alarm_id = %id, "Received Stop command");
-                            // `remove()` drops the pending snooze as well, but it may look too early:
+                            // `remove()` drops the pending snooze as well, but it may run too early:
                             // a Snooze queued before this command registers its entry only after the join.
                             // This arm runs after that Snooze, so it is the drop that sees the entry.
                             let pending = self_.pending_snoozes.lock().await.remove(&id);
@@ -759,7 +745,8 @@ impl AlarmScheduler {
     }
 
     async fn remove(&self, id: &AlarmId) -> anyhow::Result<()> {
-        // Kept out of the `if let`, whose guard would span the await below.
+        // Guard dropped first: the cancel below touches the crontab,
+        // and every firing takes this lock.
         let scheduled = self.active_alarms.lock().await.remove(id);
         let cancel_result = if let Some(scheduled) = scheduled {
             self.alarm_bus.stop_alarm(id);
@@ -772,10 +759,9 @@ impl AlarmScheduler {
             Ok(())
         };
 
-        // Drop any pending snooze for this alarm so a deletion-while-
-        // snoozed doesn't cause the already-removed alarm to re-fire.
-        // Runs even on a failed cancel: the alarm has already left `active_alarms`,
-        // so a surviving snooze would never ring anyway.
+        // A surviving snooze would show the removed alarm on the widget as next;
+        // its re-fire is caught by the `active_alarms` check on every firing.
+        // Runs even on a failed cancel: the alarm has already left `active_alarms`.
         if let Some(pending) = self.pending_snoozes.lock().await.remove(id) {
             pending.cancel.cancel();
         }
@@ -2011,13 +1997,10 @@ mod tests {
             );
         }
 
-        // Race window with no snooze: scheduler reports a job whose `active_alarms`
-        // entry has just been removed. The broadcast must still update — leaving
-        // the watch on a stale value lies to widgets about the next alarm.
-        //
-        // Currently this case skips the broadcast entirely; once the early-return
-        // is removed it will broadcast `None`, which is the correct "no alarm" signal
-        // for a UI showing nothing scheduled and no snoozes.
+        // Race window with no snooze: the scheduler reports a job
+        // whose `active_alarms` entry has just been removed.
+        // With nothing else to offer,
+        // the broadcast must resolve to "no alarm".
         #[tokio::test]
         async fn race_miss_without_snooze_broadcasts_none() {
             let (scheduler, _temp_dir) = make_scheduler().await;
