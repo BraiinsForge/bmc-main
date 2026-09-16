@@ -2872,6 +2872,8 @@ mod tests {
         };
         use tokio::sync::watch;
 
+        mod boser_managed;
+
         const UNREACHABLE: &str = "BUG: a gated auto-upgrade must not reach the service's stubs";
 
         fn capabilities(product: Product) -> HardwareCapabilities {
