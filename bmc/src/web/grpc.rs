@@ -74,6 +74,41 @@ mod upgrade_service;
 
 use logging::GrpcLoggingLayer;
 
+const BOSER_MANAGED_STATUS_MESSAGE: &str = "This operation is managed by Boser on this platform";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManagedRpcOwner {
+    Bmc,
+    Boser,
+}
+
+fn managed_rpc_owner(path: &str) -> Option<ManagedRpcOwner> {
+    let path = path.strip_prefix('/')?;
+    let (service, method) = path.split_once('/')?;
+
+    match (service, method) {
+        (
+            web::network_service_server::SERVICE_NAME,
+            "GetNetworkInfo"
+            | "GetNetworkConfig"
+            | "GetWifiStatus"
+            | "GetWifiSavedNetworks"
+            | "ScanWifi",
+        )
+        | (
+            web::system_service_server::SERVICE_NAME,
+            "HasPassword" | "GetTimezone" | "GetTimezoneList",
+        ) => Some(ManagedRpcOwner::Bmc),
+        (web::network_service_server::SERVICE_NAME, "SetNetworkConfig" | "SetWifi")
+        | (
+            web::system_service_server::SERVICE_NAME,
+            "CreatePassword" | "ChangePassword" | "RemovePassword" | "SetTimezone" | "FactoryReset"
+            | "Reboot",
+        ) => Some(ManagedRpcOwner::Boser),
+        _ => None,
+    }
+}
+
 struct AuthInterceptor<S: SessionManager> {
     pub session_manager: Arc<S>,
 }
@@ -92,6 +127,23 @@ impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
         debug!("Intercepting request: {:?}", req);
 
         let _ = extract_session::<S>(req.extensions())?;
+        Ok(req)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BoserOwnershipInterceptor {
+    hardware_capabilities: HardwareCapabilities,
+}
+
+#[async_trait::async_trait]
+impl RequestInterceptor for BoserOwnershipInterceptor {
+    async fn intercept(&self, req: Request<Body>) -> Result<Request<Body>, Status> {
+        if self.hardware_capabilities.boser_managed
+            && managed_rpc_owner(req.uri().path()) == Some(ManagedRpcOwner::Boser)
+        {
+            return Err(Status::unimplemented(BOSER_MANAGED_STATUS_MESSAGE));
+        }
 
         Ok(req)
     }
@@ -117,6 +169,17 @@ fn add_alarm_service<S: SessionManager>(
                 GrpcWebLayer::new()
                     .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
             ),
+    )
+}
+
+fn authenticated_with_boser_ownership<T, S: SessionManager>(
+    service: T,
+    ownership_interceptor: BoserOwnershipInterceptor,
+    auth_interceptor: AuthInterceptor<S>,
+) -> InterceptorFor<InterceptorFor<T, BoserOwnershipInterceptor>, AuthInterceptor<S>> {
+    InterceptorFor::new(
+        InterceptorFor::new(service, ownership_interceptor),
+        auth_interceptor,
     )
 }
 
@@ -184,6 +247,9 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
     pub(crate) fn build(self) -> Routes {
         let auth_interceptor = AuthInterceptor {
             session_manager: self.session_manager.clone(),
+        };
+        let boser_ownership_interceptor = BoserOwnershipInterceptor {
+            hardware_capabilities: self.hardware_capabilities,
         };
 
         let upgrade_service = web::upgrade_service_server::UpgradeServiceServer::new(
@@ -318,10 +384,13 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             .add_service(
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        system_service,
-                        auth_interceptor.clone(),
-                    ))),
+                    .service(
+                        GrpcWebLayer::new().layer(authenticated_with_boser_ownership(
+                            system_service,
+                            boser_ownership_interceptor,
+                            auth_interceptor.clone(),
+                        )),
+                    ),
             )
             .add_service(
                 tower::ServiceBuilder::new()
@@ -339,10 +408,13 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             .add_service(
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        network_service,
-                        auth_interceptor.clone(),
-                    ))),
+                    .service(
+                        GrpcWebLayer::new().layer(authenticated_with_boser_ownership(
+                            network_service,
+                            boser_ownership_interceptor,
+                            auth_interceptor.clone(),
+                        )),
+                    ),
             );
 
         let routes = add_alarm_service(

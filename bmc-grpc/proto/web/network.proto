@@ -99,9 +99,11 @@ message WifiSavedNetworksResponse {
 service NetworkService {
   rpc GetNetworkInfo(google.protobuf.Empty) returns (NetworkInfoResponse);
   rpc GetNetworkConfig(google.protobuf.Empty) returns (NetworkConfig);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc SetNetworkConfig(NetworkConfig) returns (google.protobuf.Empty);
   rpc GetWifiStatus(google.protobuf.Empty) returns (WifiStatusResponse);
   rpc GetWifiSavedNetworks(google.protobuf.Empty) returns (WifiSavedNetworksResponse);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc SetWifi(SetWifiRequest) returns (google.protobuf.Empty);
   rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
 }

@@ -156,6 +156,8 @@ export const SystemService: GenService<{
         output: typeof BoolValueSchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.SystemService.CreatePassword
      */
     createPassword: {
@@ -164,6 +166,8 @@ export const SystemService: GenService<{
         output: typeof EmptySchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.SystemService.ChangePassword
      */
     changePassword: {
@@ -172,6 +176,8 @@ export const SystemService: GenService<{
         output: typeof EmptySchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.SystemService.RemovePassword
      */
     removePassword: {
@@ -190,7 +196,7 @@ export const SystemService: GenService<{
         output: typeof GetTimezoneResponseSchema;
     };
     /**
-     * Set the timezone
+     * Set the timezone. Returns UNIMPLEMENTED on boser_managed platforms.
      *
      * @generated from rpc braiins.bmc.web.SystemService.SetTimezone
      */
@@ -210,6 +216,8 @@ export const SystemService: GenService<{
         output: typeof GetTimezoneListResponseSchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.SystemService.FactoryReset
      */
     factoryReset: {
@@ -218,6 +226,8 @@ export const SystemService: GenService<{
         output: typeof EmptySchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.SystemService.Reboot
      */
     reboot: {

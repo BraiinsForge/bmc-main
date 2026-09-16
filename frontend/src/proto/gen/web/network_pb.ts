@@ -355,6 +355,8 @@ export const NetworkService: GenService<{
         output: typeof NetworkConfigSchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.NetworkService.SetNetworkConfig
      */
     setNetworkConfig: {
@@ -379,6 +381,8 @@ export const NetworkService: GenService<{
         output: typeof WifiSavedNetworksResponseSchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.NetworkService.SetWifi
      */
     setWifi: {

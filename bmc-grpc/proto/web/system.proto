@@ -60,15 +60,20 @@ message GetTimezoneListResponse {
 // Service to provide information about system
 service SystemService {
   rpc HasPassword(google.protobuf.Empty) returns (google.protobuf.BoolValue);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc CreatePassword(CreatePasswordRequest) returns (google.protobuf.Empty);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc RemovePassword(RemovePasswordRequest) returns (google.protobuf.Empty);
   // Get the current timezone
   rpc GetTimezone(google.protobuf.Empty) returns (GetTimezoneResponse);
-  // Set the timezone
+  // Set the timezone. Returns UNIMPLEMENTED on boser_managed platforms.
   rpc SetTimezone(SetTimezoneRequest) returns (google.protobuf.Empty);
   // Get the list of available timezones
   rpc GetTimezoneList(google.protobuf.Empty) returns (GetTimezoneListResponse);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc FactoryReset(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc Reboot(google.protobuf.Empty) returns (google.protobuf.Empty);
 }
