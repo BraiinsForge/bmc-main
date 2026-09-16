@@ -117,8 +117,8 @@ fn text_line(name: &'static str, value: format::Rendered, sizes: layout::TextSiz
 // Mirrors BOSer's `VerticalLayout { alignment: space-between }`: flex spacers
 // between rows distribute the rows across the full viewport height instead of
 // packing them at the top. The SDK has no main-axis justify.
-fn vertical_lines(panel: Panel, lines: Vec<Node>) -> Node {
-    let metrics = layout::mining_layout(panel);
+fn vertical_lines(lines: Vec<Node>) -> Node {
+    let metrics = layout::mining_layout();
     let mut children = Vec::with_capacity(lines.len().saturating_mul(2));
     children.push(fixed_height(metrics.padding_top));
     for (index, line) in lines.into_iter().enumerate() {
@@ -137,53 +137,47 @@ fn vertical_lines(panel: Panel, lines: Vec<Node>) -> Node {
 }
 
 #[must_use]
-pub fn mining(panel: Panel, miner: &MinerData) -> Node {
-    let sizes = layout::mining_layout(panel).text;
-    vertical_lines(
-        panel,
-        vec![
-            text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
-            text_line("Temperature", format::temperature(miner.temperature), sizes),
-            text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
-            text_line("MCR", format::fixed(miner.mcr, 1), sizes),
-            text_line("Fan Speed", format::fixed(miner.fan_speed, 0), sizes),
-            text_line(
-                "IP Address",
-                miner
-                    .ip_address
-                    .as_option()
-                    .cloned()
-                    .unwrap_or_else(format::unavailable)
-                    .into(),
-                sizes,
-            ),
-        ],
-    )
+pub fn mining(miner: &MinerData) -> Node {
+    let sizes = layout::mining_layout().text;
+    vertical_lines(vec![
+        text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
+        text_line("Temperature", format::temperature(miner.temperature), sizes),
+        text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
+        text_line("MCR", format::fixed(miner.mcr, 1), sizes),
+        text_line("Fan Speed", format::fixed(miner.fan_speed, 0), sizes),
+        text_line(
+            "IP Address",
+            miner
+                .ip_address
+                .as_option()
+                .cloned()
+                .unwrap_or_else(format::unavailable)
+                .into(),
+            sizes,
+        ),
+    ])
 }
 
 #[must_use]
-pub fn geek(panel: Panel, miner: &MinerData, public: &PublicData) -> Node {
-    let sizes = layout::mining_layout(panel).text;
-    vertical_lines(
-        panel,
-        vec![
-            text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
-            text_line("Temperature", format::temperature(miner.temperature), sizes),
-            text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
-            text_line("Miner Uptime", format::uptime(miner.uptime), sizes),
-            text_line(
-                "IP Address",
-                miner
-                    .ip_address
-                    .as_option()
-                    .cloned()
-                    .unwrap_or_else(format::unavailable)
-                    .into(),
-                sizes,
-            ),
-            text_line("BTC Price", format::money(public.btc_price, 0), sizes),
-        ],
-    )
+pub fn geek(miner: &MinerData, public: &PublicData) -> Node {
+    let sizes = layout::mining_layout().text;
+    vertical_lines(vec![
+        text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
+        text_line("Temperature", format::temperature(miner.temperature), sizes),
+        text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
+        text_line("Miner Uptime", format::uptime(miner.uptime), sizes),
+        text_line(
+            "IP Address",
+            miner
+                .ip_address
+                .as_option()
+                .cloned()
+                .unwrap_or_else(format::unavailable)
+                .into(),
+            sizes,
+        ),
+        text_line("BTC Price", format::money(public.btc_price, 0), sizes),
+    ])
 }
 
 const BTC_PRICE_SIZE: u32 = 28;
@@ -397,9 +391,9 @@ fn info_overload_bottom_row(
 }
 
 #[must_use]
-pub fn info_overload(panel: Panel, miner: &MinerData, public: &PublicData) -> Node {
-    let fields = layout::info_overload_fields(panel);
-    let metrics = layout::info_overload_layout(panel);
+pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
+    let fields = layout::info_overload_fields(Panel::Small);
+    let metrics = layout::info_overload_layout(Panel::Small);
     let mut rows = vec![info_overload_primary_row(miner, public, fields, metrics)];
     if fields.show_difficulty_row {
         rows.push(info_overload_difficulty_row(public, metrics));

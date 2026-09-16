@@ -54,6 +54,12 @@ const CHART_HEIGHT: f32 = 44.0;
 const PRICE_SIZE: u32 = 32;
 const PRICE_SYMBOL_SIZE: u32 = 20;
 
+/// The Geek lines: label and value at one size, the unit no smaller.
+const LINE_TEXT: layout::TextSizes = layout::TextSizes {
+    title: 20,
+    value: 20,
+    unit: 20,
+};
 const ETA_GAP: f32 = 16.0;
 const ADJUSTMENT_DECIMALS: u32 = 1;
 const TAG_PADDING: f32 = 2.0;
@@ -251,7 +257,7 @@ pub fn mining(miner: &MinerData, public: &PublicData, seed_gauge: bool) -> Node 
 
 #[must_use]
 pub fn geek(public: &PublicData) -> Node {
-    let sizes = layout::mining_layout(Panel::Bmm101).text;
+    let sizes = LINE_TEXT;
     let lines = [
         text_line(
             "Network HR",
@@ -405,11 +411,10 @@ mod tests {
 
     #[test]
     fn a_known_adjustment_wears_a_pill_and_a_placeholder_does_not() {
-        let sizes = layout::mining_layout(Panel::Bmm101).text;
         let known = adjustment_line(
             "Diff. Adjustment",
             Availability::Available(Ratio::from_percent(-4.5)),
-            sizes,
+            LINE_TEXT,
         );
         let Node::Row(_, children) = known else {
             panic!("BUG: a line is a row");
@@ -419,7 +424,7 @@ mod tests {
             "the value sits in a rounded pill"
         );
 
-        let placeholder = adjustment_line("Diff. Adjustment", Availability::Unavailable, sizes);
+        let placeholder = adjustment_line("Diff. Adjustment", Availability::Unavailable, LINE_TEXT);
         let Node::Row(_, children) = placeholder else {
             panic!("BUG: a line is a row");
         };

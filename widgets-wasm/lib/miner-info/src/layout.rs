@@ -92,28 +92,17 @@ pub struct BlockLayout {
     pub text: TextSizes,
 }
 
+/// The line list the rectangular Mining and Geek faces draw on the small panel.
 #[must_use]
-pub(crate) fn mining_layout(panel: Panel) -> MiningLayout {
-    match panel {
-        Panel::Small => MiningLayout {
-            padding_horizontal: 16.0,
-            padding_top: 16.0,
-            padding_bottom: 22.0,
-            text: TextSizes {
-                title: 16,
-                value: 16,
-                unit: 16,
-            },
-        },
-        Panel::Bmm101 | Panel::Round => MiningLayout {
-            padding_horizontal: 16.0,
-            padding_top: 28.0,
-            padding_bottom: 25.0,
-            text: TextSizes {
-                title: 20,
-                value: 20,
-                unit: 20,
-            },
+pub(crate) fn mining_layout() -> MiningLayout {
+    MiningLayout {
+        padding_horizontal: 16.0,
+        padding_top: 16.0,
+        padding_bottom: 22.0,
+        text: TextSizes {
+            title: 16,
+            value: 16,
+            unit: 16,
         },
     }
 }
@@ -233,7 +222,7 @@ mod tests {
     #[test]
     fn mining_layout_matches_boser_theme_for_bmm100() {
         assert_eq!(
-            mining_layout(Panel::Small),
+            mining_layout(),
             MiningLayout {
                 padding_horizontal: 16.0,
                 padding_top: 16.0,

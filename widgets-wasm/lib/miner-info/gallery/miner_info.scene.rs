@@ -19,11 +19,9 @@
 // the grant above.
 
 use bmc_gallery::prelude::*;
-use bmc_wasm_sdk::{ViewportShape, WidgetViewport};
 use miner_info::face;
 use miner_info::face::RenderSize;
 use miner_info::fixtures::{DEFAULT_TARGET_THS, PriceMove, Reported, miner, public};
-use miner_info::layout;
 
 scene_meta! { title: "Widgets / Miner Info" }
 
@@ -43,23 +41,15 @@ const PRICE_MOVES: [(&str, PriceMove); 3] = [
 /// and whether a band clears the circle is the thing worth looking at.
 const ROUND_DIAMETER: usize = 480;
 
-/// Hashrates that land on each `GaugeState`, given [`DEFAULT_TARGET_THS`]
+/// Hashrates that land on each `GaugeState`, given the fixture's tuner target
 /// and the +/-5% good band. `None` leaves the reading unavailable.
 const GAUGE_STATES: [(&str, Option<f64>); 5] = [
-    ("Good", Some(1.0)),
-    ("Overclocked", Some(1.2)),
-    ("Underclocked", Some(0.8)),
+    ("Good", Some(DEFAULT_TARGET_THS)),
+    ("Overclocked", Some(1.2 * DEFAULT_TARGET_THS)),
+    ("Underclocked", Some(0.8 * DEFAULT_TARGET_THS)),
     ("Off", Some(0.0)),
     ("Unavailable", None),
 ];
-
-fn rectangular_panel(viewport: (u32, u32)) -> layout::Panel {
-    layout::classify(WidgetViewport {
-        width: viewport.0,
-        height: viewport.1,
-        shape: ViewportShape::Rectangular,
-    })
-}
 
 #[expect(
     clippy::cast_possible_truncation,
@@ -153,11 +143,10 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
                     ctx.node_stage(ui, (width, height), move || {
                         let data = miner(shown, Some(1.02));
                         let market = public(shown, price);
-                        let panel = rectangular_panel((width, height));
                         match face {
-                            Face::Mining => face::mining(panel, &data),
-                            Face::Geek => face::geek(panel, &data, &market),
-                            Face::InfoOverload => face::info_overload(panel, &data, &market),
+                            Face::Mining => face::mining(&data),
+                            Face::Geek => face::geek(&data, &market),
+                            Face::InfoOverload => face::info_overload(&data, &market),
                         }
                     });
                 });
