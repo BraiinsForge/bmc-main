@@ -98,7 +98,9 @@ walkdir.workspace = true
 
 [dev-dependencies]
 async-stream.workspace = true
+bmc-grpc = { workspace = true, features = ["client"] }
 proptest.workspace = true
+prost.workspace = true
 similar-asserts.workspace = true
 tempfile.workspace = true
 

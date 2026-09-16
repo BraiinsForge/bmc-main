@@ -738,6 +738,7 @@ dependencies = [
  "libc",
  "mime_guess",
  "proptest",
+ "prost",
  "prost-types",
  "rand 0.9.1",
  "reqwest",

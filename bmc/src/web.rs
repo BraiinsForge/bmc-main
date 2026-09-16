@@ -117,18 +117,15 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         }
     }
 
-    pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
-        let boser_proxied = self.config.boser.is_some();
-        let http_router = http_server::HttpServer::new(
-            self.config,
-            self.manager.clone(),
-            self.widget_registry.clone(),
-            self.hardware_capabilities,
-        )
-        .build();
-        let grpc_router = grpc::GrpcWeb::new(
-            self.manager.clone(),
-            self.session_manager.clone(),
+    #[cfg(test)]
+    pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
+        self.into_grpc_web().1.build()
+    }
+
+    fn into_grpc_web(self) -> (ServerConfig, grpc::GrpcWeb<T, S, U, V>) {
+        let grpc_web = grpc::GrpcWeb::new(
+            self.manager,
+            self.session_manager,
             self.system_upgrade_service,
             self.config_handle,
             self.secret_store,
@@ -141,12 +138,30 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.sound_controller,
             self.alarm_controller,
             self.hardware_capabilities,
+        );
+        (self.config, grpc_web)
+    }
+
+    pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
+        let boser_proxied = self.config.boser.is_some();
+        let manager = self.manager.clone();
+        let session_manager = self.session_manager.clone();
+        let widget_registry = self.widget_registry.clone();
+        let hardware_capabilities = self.hardware_capabilities;
+        let (config, grpc_web) = self.into_grpc_web();
+        let http_router = http_server::HttpServer::new(
+            config,
+            manager.clone(),
+            widget_registry,
+            hardware_capabilities,
         )
-        .build()
-        .into_axum_router()
-        .layer(session::SessionLayer::new(self.session_manager.clone()))
-        .layer(no_password::NoPasswordLayer::new(self.session_manager))
-        .layer(tower_cookies::CookieManagerLayer::new());
+        .build();
+        let grpc_router = grpc_web
+            .build()
+            .into_axum_router()
+            .layer(session::SessionLayer::new(session_manager.clone()))
+            .layer(no_password::NoPasswordLayer::new(session_manager))
+            .layer(tower_cookies::CookieManagerLayer::new());
 
         // combine grpc and http router into one service
         let service = Steer::new(
@@ -184,7 +199,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let (signalled_tx, signalled) = oneshot::channel();
         let server = axum::serve(listener, service)
             .with_graceful_shutdown(async move {
-                self.manager.handle_graceful_shutdown().await;
+                manager.handle_graceful_shutdown().await;
                 let _ = signalled_tx.send(());
             })
             .into_future();

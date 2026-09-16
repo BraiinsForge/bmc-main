@@ -50,6 +50,7 @@ type RegistrationObserver = Box<dyn FnOnce() + Send>;
 
 #[derive(Default)]
 pub(crate) struct RecordingCompositor {
+    hardware_capabilities: Option<HardwareCapabilities>,
     pub(crate) scene_cycling_configs: Mutex<Vec<SceneCycling>>,
     pub(crate) scene_cycling_lists: Mutex<Vec<Vec<SceneLayout>>>,
     pub(crate) parameter_pushes: Mutex<Vec<ParameterPush>>,
@@ -71,6 +72,13 @@ pub(crate) struct RecordingCompositor {
 }
 
 impl RecordingCompositor {
+    pub(crate) fn with_hardware_capabilities(hardware_capabilities: HardwareCapabilities) -> Self {
+        Self {
+            hardware_capabilities: Some(hardware_capabilities),
+            ..Self::default()
+        }
+    }
+
     fn record(&self, call: String) {
         self.widget_calls
             .lock()
@@ -276,7 +284,8 @@ impl Compositor for RecordingCompositor {
     }
 
     fn hardware_capabilities(&self) -> HardwareCapabilities {
-        HardwareProfile::for_product(Product::Bmc100).capabilities()
+        self.hardware_capabilities
+            .unwrap_or_else(|| HardwareProfile::for_product(Product::Bmc100).capabilities())
     }
 
     fn enqueue_register_widget(

@@ -451,7 +451,7 @@ impl Display for GrpcError {
 }
 
 #[cfg(test)]
-mod tests {
+mod alarm_tests {
     use std::sync::Arc;
 
     use axum::body::Body as AxumBody;
@@ -530,3 +530,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

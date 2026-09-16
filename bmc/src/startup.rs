@@ -518,6 +518,47 @@ where
     hardware_capabilities: HardwareCapabilities,
 }
 
+struct AppServer<T, U, V>
+where
+    T: BmcManager,
+    U: DisplayBacklightDriver,
+    V: FirmwareIndex,
+{
+    listener: TcpListener,
+    button_manager: ButtonManager<T>,
+    widget_reload_task: tokio::task::JoinHandle<()>,
+    widget_shutdown_config: Arc<RwLock<ConfigHandle>>,
+    widget_coordinator: Arc<Coordinator>,
+    web_service: WebService<T, T::SessionManager, V, U>,
+}
+
+impl<T, U, V> AppServer<T, U, V>
+where
+    T: BmcManager,
+    U: DisplayBacklightDriver,
+    V: FirmwareIndex,
+{
+    async fn run(self) -> Result<()> {
+        tokio::spawn(self.button_manager.run());
+
+        let server_result = self.web_service.run(self.listener).await;
+
+        // In case the app panics, this is not executed.
+        // The children are SIGKILL'd thanks to kill_on_drop(true).
+        self.widget_reload_task.abort();
+        if let Err(error) = self.widget_reload_task.await
+            && !error.is_cancelled()
+        {
+            warn!(%error, "widget reload task failed before shutdown");
+        }
+        self.widget_coordinator
+            .stop_all(&self.widget_shutdown_config)
+            .await;
+        server_result?;
+        Ok(())
+    }
+}
+
 impl<T, U, V> App<T, U, V>
 where
     T: BmcManager,
@@ -898,11 +939,13 @@ where
         let address = self.listener.local_addr()?;
         info!("Starting server on http://{}", address);
 
-        tokio::spawn(self.button_manager.run());
+        self.into_server().run().await
+    }
 
-        let widget_reload_task = self.widget_reload_task;
+    fn into_server(self) -> AppServer<T, U, V> {
         let widget_shutdown_config = Arc::clone(&self.config_handle);
-        let server_result = WebService::new(
+        let widget_coordinator = self.widget_coordinator.clone();
+        let web_service = WebService::new(
             self.manager,
             self.session_manager,
             self.config.server_config,
@@ -912,29 +955,29 @@ where
             self.initial_setup,
             self.led_controller,
             self.widget_registry,
-            self.widget_coordinator.clone(),
+            self.widget_coordinator,
             self.led_coordinator,
             self.system_manager,
             self.sound_controller,
             self.alarm_backend.controller(),
             self.hardware_capabilities,
-        )
-        .run(self.listener)
-        .await;
+        );
 
-        // In case the app panics, this is not executed.
-        // The children are SIGKILL'd thanks to kill_on_drop(true).
-        widget_reload_task.abort();
-        if let Err(error) = widget_reload_task.await
-            && !error.is_cancelled()
-        {
-            warn!(%error, "widget reload task failed before shutdown");
+        AppServer {
+            listener: self.listener,
+            button_manager: self.button_manager,
+            widget_reload_task: self.widget_reload_task,
+            widget_shutdown_config,
+            widget_coordinator,
+            web_service,
         }
-        self.widget_coordinator
-            .stop_all(&widget_shutdown_config)
-            .await;
-        server_result?;
-        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
+        let server = self.into_server();
+        server.widget_reload_task.abort();
+        server.web_service.build_grpc_routes()
     }
 
     pub fn port(&self) -> Result<u16> {
