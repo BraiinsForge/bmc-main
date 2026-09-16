@@ -81,6 +81,10 @@ struct JoinWatcher {
     socket: UnixDatagram,
     client_path: PathBuf,
     server_path: PathBuf,
+    /// The netdev the subscription is for. An ESP32 reload can rename it
+    /// while the old control socket lingers, so the name is checked as well
+    /// as the socket identity.
+    device: String,
     /// Identifies the supplicant instance we subscribed to. Applying a station
     /// config restarts it, and the new instance knows nothing of our
     /// subscription, so a join has to notice and subscribe again.
@@ -102,26 +106,33 @@ impl JoinWatcher {
 
         let socket = UnixDatagram::bind(&client_path)
             .with_context(|| format!("binding {}", client_path.display()))?;
+        // Owned from here on: whatever fails below, `Drop` unlinks the path.
+        let mut watcher = Self {
+            socket,
+            client_path,
+            server_path,
+            device: device.to_owned(),
+            server_inode: 0,
+        };
+        watcher.connect()?;
+        watcher.request("ATTACH", events).await?;
+        Ok(watcher)
+    }
+
+    fn connect(&mut self) -> Result<()> {
         // The supplicant runs as its own user and answers to this address, so
         // it has to be able to write to it. Without this the ATTACH reply never
         // arrives and every join would wait for a diagnosis that cannot come.
         // No exec bit: it is a socket, and anything that can write here can
         // only feed us events we attribute to this device.
-        std::fs::set_permissions(&client_path, std::fs::Permissions::from_mode(0o666))
-            .with_context(|| format!("opening {} to wpa_supplicant", client_path.display()))?;
-        socket
-            .connect(&server_path)
-            .with_context(|| format!("connecting to {}", server_path.display()))?;
-        let server_inode =
-            inode(&server_path).with_context(|| format!("reading {}", server_path.display()))?;
-        let mut watcher = Self {
-            socket,
-            client_path,
-            server_path,
-            server_inode,
-        };
-        watcher.request("ATTACH", events).await?;
-        Ok(watcher)
+        std::fs::set_permissions(&self.client_path, std::fs::Permissions::from_mode(0o666))
+            .with_context(|| format!("opening {} to wpa_supplicant", self.client_path.display()))?;
+        self.socket
+            .connect(&self.server_path)
+            .with_context(|| format!("connecting to {}", self.server_path.display()))?;
+        self.server_inode = inode(&self.server_path)
+            .with_context(|| format!("reading {}", self.server_path.display()))?;
+        Ok(())
     }
 
     /// Sends a control command and waits for its reply, keeping any event that
@@ -172,9 +183,11 @@ impl JoinWatcher {
         }
     }
 
-    /// Whether the supplicant we subscribed to has been replaced.
-    fn server_replaced(&self) -> bool {
-        inode(&self.server_path).is_none_or(|current| current != self.server_inode)
+    /// Whether the supplicant we subscribed to has been replaced, or the
+    /// station now goes by another name.
+    fn server_replaced(&self, device: &str) -> bool {
+        self.device != device
+            || inode(&self.server_path).is_none_or(|current| current != self.server_inode)
     }
 }
 
@@ -215,11 +228,14 @@ impl JoinDiagnosis {
     pub(crate) async fn poll(&mut self, device: &str) {
         if let Some(watcher) = self.watcher.as_mut() {
             watcher.poll_events(&mut self.events).await;
-            if !watcher.server_replaced() {
+            if !watcher.server_replaced(device) {
                 return;
             }
+            // What the old instance said was about the configuration it ran
+            // with; the verdict rests on the new one.
             debug!("wpa_supplicant restarted, subscribing to the new one");
             self.watcher = None;
+            self.events.clear();
         }
         if self.attempts_left == 0 || !control_socket(device).exists() {
             return;
