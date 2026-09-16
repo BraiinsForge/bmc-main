@@ -77,7 +77,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 {
     /// gRPC package our own services live under.
     const GRPC_OWN_PACKAGE_PREFIX: &'static str = "/braiins.bmc.";
-    /// gRPC's own namespace, covering reflection and health.
+    /// gRPC's own namespace (reflection is what we register there).
     const GRPC_RESERVED_PREFIX: &'static str = "/grpc.";
 
     #[expect(clippy::too_many_arguments)]
@@ -118,6 +118,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
     }
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
+        let boser_proxied = self.config.boser.is_some();
         let http_router = http_server::HttpServer::new(
             self.config,
             self.manager.clone(),
@@ -149,22 +150,29 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         // combine grpc and http router into one service
         let service = Steer::new(
             vec![http_router, grpc_router],
-            |req: &Request, _services: &[_]| {
-                // grpc service -> 1
-                // http service -> 0
-                let is_grpc = req
+            move |req: &Request, _services: &[_]| {
+                const HTTP: usize = 0;
+                const GRPC: usize = 1;
+                let content_type = req
                     .headers()
                     .get(CONTENT_TYPE)
                     .map(axum::http::HeaderValue::as_bytes)
-                    .as_ref()
-                    .is_some_and(|content_type| content_type.starts_with(b"application/grpc"));
-                // Only our own services are mounted here; tonic answers
-                // UNIMPLEMENTED for anything else, so boser's gRPC has to reach
-                // the HTTP router and be forwarded from there.
+                    .unwrap_or_default();
+                if !content_type.starts_with(b"application/grpc") {
+                    return HTTP;
+                }
                 let path = req.uri().path();
                 let ours = path.starts_with(Self::GRPC_OWN_PACKAGE_PREFIX)
                     || path.starts_with(Self::GRPC_RESERVED_PREFIX);
-                usize::from(is_grpc && ours)
+                // Only our own services are mounted on the gRPC router. Of the
+                // rest, gRPC-web is boser's and goes to the HTTP router to be
+                // forwarded; it is the only flavour that crosses the HTTP/1.1
+                // proxy, and boser's native gRPC has its own listener anyway.
+                // Everything else stays with tonic, which answers UNIMPLEMENTED
+                // rather than the HTTP router's 405.
+                let boser_web =
+                    boser_proxied && !ours && content_type.starts_with(b"application/grpc-web");
+                if boser_web { HTTP } else { GRPC }
             },
         );
 
@@ -228,12 +236,12 @@ pub struct ServerConfig {
     /// boser's address. On a display device this binary owns `:80`, so
     /// anything it does not serve itself is forwarded there; `None` keeps the
     /// server standalone and unknown requests stay local.
-    pub boser: Option<std::net::SocketAddr>,
+    pub boser: Option<SocketAddr>,
 }
 
 impl ServerConfig {
     #[must_use]
-    pub fn set_boser(mut self, boser: Option<std::net::SocketAddr>) -> Self {
+    pub fn set_boser(mut self, boser: Option<SocketAddr>) -> Self {
         self.boser = boser;
         self
     }

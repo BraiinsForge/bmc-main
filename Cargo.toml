@@ -83,6 +83,9 @@ include = [
     # so the files are an input to this workspace's tests even though the crate
     # that ships them lives in another.
     "widgets-wasm/formula-1/gallery/artwork/**",
+    # `bmc`'s `spa_route_roots_match_the_frontend` pins its SPA route list
+    # against the frontend's route table, which is not a crate.
+    "frontend/src/constants.tsx",
     # Same reasoning for the widgets' simulator blueprints: `bmc-netsim`
     # parses every one of them, and a mistyped param key otherwise sits
     # undetected until it wastes a recording session.

@@ -56,7 +56,7 @@ chrono-tz.workspace = true
 futures.workspace = true
 http.workspace = true
 humantime-serde.workspace = true
-hyper.workspace = true
+hyper = { workspace = true, features = ["client", "http1"] }
 hyper-util.workspace = true
 indexmap.workspace = true
 itertools.workspace = true

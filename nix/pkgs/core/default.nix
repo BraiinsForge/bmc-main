@@ -128,9 +128,7 @@ let
     enabled = true;
     command = "${bmc-openwrt}/bin/bmc-openwrt";
     dependsOn = [ wasmLauncher wasmHost bmcSystemConfig ];
-    # boser owns the miner API and its own frontend but sits behind us on a
-    # display device, so anything this binary does not serve is forwarded there.
-    args = [ "--log-to-file" "--boser-address" "127.0.0.1:8088" ];
+    args = [ "--log-to-file" ];
     env = {
       MESA_SHADER_CACHE_MAX_SIZE = "16M";
       XDG_CACHE_HOME = "/mnt/data/bmc/cache";

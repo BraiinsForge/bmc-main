@@ -58,6 +58,11 @@ const _: () = {
     );
 };
 
+/// Where boser listens on a board whose `:80` this binary owns. boser picks the
+/// same port when it finds the marker the core activation leaves for it.
+const BOSER_PROXY_ADDRESS: std::net::SocketAddr =
+    std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8088);
+
 fn led_driver_for_profile(
     profile: &bmc_platform::HardwareProfile,
 ) -> bmc_led::led_driver::LedDriver {
@@ -96,18 +101,24 @@ async fn main() -> Result<()> {
             }
         };
 
-    // Resolve the platform once so the HTTP port and the WiFi path agree.
-    // Port detection is best-effort: if it fails we keep the built-in default
+    // Resolve the platform once so the boser proxy and the WiFi path agree.
+    // Detection is best-effort here: if it fails the server stays standalone
     // and the WiFi path resolution surfaces the error.
     let detected_platform = match platform_override {
         Some(platform) => Ok(platform),
         None => BmcInfo::load().map(|info| info.bmc_platform),
     };
-    if let Ok(platform) = &detected_platform {
-        config
-            .address
-            .set_port(platform.product().default_http_port());
-    }
+    // One decision, keyed on the platform: where boser is managed, this binary
+    // owns `:80` and boser sits behind it on its loopback port; elsewhere the
+    // server is standalone on `:80`. `--boser-address` only overrides the target.
+    let boser_managed = detected_platform.as_ref().is_ok_and(|platform| {
+        HardwareProfile::for_product(platform.product())
+            .capabilities()
+            .boser_managed
+    });
+    let boser_address = args
+        .boser_address
+        .or_else(|| boser_managed.then_some(BOSER_PROXY_ADDRESS));
 
     if let Some(address) = args.address {
         config.address = address;
@@ -119,7 +130,7 @@ async fn main() -> Result<()> {
             .set_www_assets_path(www_path.join("assets"))
             .set_www_var_path(www_path.join("var"));
     }
-    if let Some(boser_address) = args.boser_address {
+    if let Some(boser_address) = boser_address {
         info!(%boser_address, "Forwarding unhandled requests to boser");
         config.server_config = config.server_config.set_boser(Some(boser_address));
     }

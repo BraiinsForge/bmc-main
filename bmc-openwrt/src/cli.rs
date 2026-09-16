@@ -38,9 +38,8 @@ pub struct Args {
     #[clap(long)]
     pub headless_compositor: bool,
 
-    /// HTTP server bind address (default 0.0.0.0).
-    /// The port defaults to 80 on the BMC100, and to 81 on the BMM/BFM units
-    /// where boser's web UI already holds port 80.
+    /// HTTP server bind address (default 0.0.0.0:80 on every product; where
+    /// boser is managed it sits behind this binary, not beside it).
     #[clap(long)]
     pub address: Option<SocketAddr>,
 
@@ -53,8 +52,10 @@ pub struct Args {
     #[clap(long = "hardware-profile", default_value = "auto")]
     pub hardware_profile: String,
 
-    /// boser's address. This binary owns :80 on a display device, so requests
-    /// it does not serve itself are forwarded here. Unset keeps it standalone.
+    /// Override for boser's address. Where the platform reports boser as
+    /// managed, requests this binary does not serve itself are forwarded to
+    /// boser on its loopback port by default; elsewhere the server stays
+    /// standalone unless this is set.
     #[clap(long)]
-    pub boser_address: Option<std::net::SocketAddr>,
+    pub boser_address: Option<SocketAddr>,
 }

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Tell boser that this image runs the display binary as the `:80` reverse
+# proxy, so it binds its loopback port instead of `:80`. Activation runs before
+# any service starts, so the marker is there when boser makes that choice; it
+# lives on tmpfs so it never outlives the boot (or the image) that wrote it.
+# Unconditional on purpose: the products without boser never read it.
+set -e
+mkdir -p /var/run
+: > /var/run/bmc-proxy
