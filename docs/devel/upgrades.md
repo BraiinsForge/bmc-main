@@ -120,7 +120,10 @@ Periodic garbage collection shares the exact minute and second drawn from that s
 Upgrade checks use the odd-hour pattern `{second} {minute} 1/2 * * *`; collection uses the corresponding even-hour grid.
 The jobs therefore alternate exactly one hour apart on a device, while independent draws stagger devices across a fleet.
 The grid follows the device's civil time, so a DST fall-back stretches one check interval to three elapsed hours. This
-is accepted, like the single occurrence a clock correction can cost; the two-hour cadence otherwise holds.
+is accepted, like the single occurrence a clock correction can cost; the two-hour cadence otherwise holds. On
+`HardwareCapabilities::boser_managed` products, `bmc` registers neither maintenance job. It preserves the persisted
+auto-upgrade preference so older firmware can restore scheduling after a rollback, but that preference has no local
+effect; see [Boser-managed platform ownership](boser-managed-platforms.md).
 
 The first job whose hour parity matches the drawn target runs between 30 minutes and one hour after a process startup.
 The opposite-parity job first runs exactly one hour later, between 90 minutes and two hours after a process startup.
@@ -132,8 +135,9 @@ User-facing and gRPC configuration exposes only the enabled flag, with no freque
 The derived `cron` value remains in the on-disk config solely so older firmware can schedule upgrades after a rollback.
 Current firmware derives its schedule from the maintenance stagger and never reads the compatibility field.
 
-Initial device setup enables the recurring schedule and queues a one-shot check immediately after the setup completes.
-This check bypasses the startup floor so a new device does not wait for its first scheduled occurrence.
+On self-managed hardware, initial device setup enables the recurring schedule and queues a one-shot check immediately
+after the setup completes. This check bypasses the startup floor so a new device does not wait for its first scheduled
+occurrence.
 
 ### Developer Opt-Out
 
@@ -328,6 +332,9 @@ changes (glibc or compiler bumps). `bmc-nix::gc` reclaims space in two stages:
 - Matching parity first runs in that window.
 - Opposite parity runs exactly one hour later, 90 minutes to just under two hours after startup.
 - The shared offset keeps both jobs one hour apart, while independent per-device draws stagger the fleet.
+
+On `HardwareCapabilities::boser_managed` products, `bmc` does not register this job; Boser owns garbage collection as
+described in [Boser-managed platform ownership](boser-managed-platforms.md).
 
 Clock corrections or a DST fall-back can defer collection by one further occurrence.
 

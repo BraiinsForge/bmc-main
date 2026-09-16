@@ -15,6 +15,11 @@ How `bmc-openwrt` detects the active hardware platform, how BOS platform strings
 `bmc-platform::HardwareProfile` describes display geometry, slot-grid support, LED strips, and frontend/backend
 capabilities for `BMC100`, `BMM100`, `BMM101`, and `BFM100`, including the browser capability surface in `/system.js`.
 
+### [Boser-managed Platform Ownership](boser-managed-platforms.md)
+
+How the `boser_managed` capability divides post-setup gRPC mutations and local maintenance between BMC and Boser while
+preserving BMC-owned initial setup and presentation behavior and keeping `UpgradeService` structurally available.
+
 ### [BMC Profiles](profiles.md)
 
 How `bmc-nix` builds custom profile generations, how the optimized symlink tree is structured, and where hooks,
