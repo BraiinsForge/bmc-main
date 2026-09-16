@@ -215,11 +215,12 @@ left, not a fresh full interval.
 
 ## `deck_platform_v1`
 
-New for the mining-status pickaxe, and generic on purpose: it carries the hardware platform's capability set, the same
-bools `bmc_platform::HardwareCapabilities` holds and bmc already reports over gRPC, so an overlay can gate a function on
-what the board supports without reading the product name itself. It is where a new capability goes first (see the
-"Geometry versus capability" rule in [`README.md`](README.md)); `deck_settings_v1`'s own `capabilities` bitfield
-predates it and stays where it is because its bits describe controls the tray offers, not the board.
+New for the mining-status pickaxe, and generic on purpose: it carries the subset of the hardware platform's capability
+set that system overlays consume. The values come from `bmc_platform::HardwareCapabilities`, which bmc also serves to
+browsers as `window.SYSTEM.capabilities`, so an overlay can gate a function on what the board supports without reading
+the product name itself. A capability needed by an overlay goes here first (see the "Geometry versus capability" rule in
+[`README.md`](README.md)); `deck_settings_v1`'s own `capabilities` bitfield predates it and stays where it is because
+its bits describe controls the tray offers, not the board.
 
 ### `deck_platform_v1` (version 1)
 

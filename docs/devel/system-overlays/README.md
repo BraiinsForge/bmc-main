@@ -33,9 +33,9 @@ versus rectangular is display *shape*, part of the geometry, not a product gate.
 `Product` stays legitimate for capabilities — whether the board has a speaker, or drives its setup AP through a radio
 the overlay can speak to. Those are not readable off a screen size. The settings tray's `wifi_reconfig_supported` and
 `show_volume` are the current examples. Even they are the fallback path: the compositor sends `caps` over
-`deck_settings_v1` and the tray prefers it. A capability of the *board* rather than of the tray's controls goes over
-`deck_platform_v1`, which carries `bmc_platform::HardwareCapabilities` as a bitfield; the corner status gates its mining
-poller on its `mining` bit and never reads the product.
+`deck_settings_v1` and the tray prefers it. A board capability outside the tray's controls goes over `deck_platform_v1`.
+Its bitfield carries the subset of `bmc_platform::HardwareCapabilities` consumed by system overlays; the corner status
+gates its mining poller on the `mining` bit and never reads the product.
 
 ### Where the numbers come from
 

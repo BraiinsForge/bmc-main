@@ -27,7 +27,7 @@ use super::lifecycle_emitter::LifecycleEmitter;
 use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
-use super::settings::{SettingsState, caps_for_product};
+use super::settings::{SettingsState, caps_for_profile};
 use super::widget_tracker::{LifecycleState, WidgetTracker};
 use crate::compositor::layer_surface::{LayerEntry, replace_buffer};
 use bmc::compositor::InstanceId;
@@ -419,6 +419,7 @@ impl CompositorState {
 
         let output_capture_source_state = OutputCaptureSourceState::new::<Self>(&display_handle);
         let image_copy_capture_state = ImageCopyCaptureState::new::<Self>(&display_handle);
+        let hardware_capabilities = profile.capabilities();
 
         Self {
             display_handle,
@@ -430,11 +431,11 @@ impl CompositorState {
             layer_shell_state,
             layer_surfaces: Vec::new(),
             screen_edge_sessions: Vec::new(),
-            settings: SettingsState::new(caps_for_product(profile.product)),
+            settings: SettingsState::new(caps_for_profile(profile, &hardware_capabilities)),
             alarm: crate::compositor::alarm::AlarmState::default(),
             upgrade: crate::compositor::upgrade::UpgradeState::default(),
             device_info: crate::compositor::device_info::DeviceInfoState::default(),
-            platform: crate::compositor::platform::PlatformState::new(profile.capabilities()),
+            platform: crate::compositor::platform::PlatformState::new(hardware_capabilities),
             seat_state,
             data_device_state,
             deck_widget_state,

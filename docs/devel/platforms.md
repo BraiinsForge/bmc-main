@@ -80,29 +80,19 @@ mode to a `480x1280` visible area, then the 270 degree scanout transform exposes
 
 ## Capabilities
 
-`HardwareProfile::capabilities()` projects the profile into the smaller `HardwareCapabilities` value used by `bmc` core:
+`HardwareProfile::capabilities()` projects the profile into the `HardwareCapabilities` value used by `bmc` core.
+`display` is the logical display information delivered to widgets, while `slot_grid` controls combined-scene support.
+The value also reports sound and LED support and derives `alarm_supported` as `sound_supported || led_supported`.
+Browser clients receive the value before login as `window.SYSTEM.capabilities` from `/system.js`.
 
-```rust
-pub struct HardwareCapabilities {
-    pub display: DisplayInfo,
-    pub slot_grid: Option<SlotGrid>,
-}
-```
+An absent `slot_grid` means combined scenes are not supported on that hardware.
 
-`display` is the logical display information delivered to widgets. `slot_grid` controls combined-scene support. If
-`slot_grid` is `None`, combined scenes are not supported on that hardware.
+The [hardware gRPC contract](grpc/hardware-service.md) documents the frozen legacy projection used by initial setup and
+combined-scene gating.
 
-The public gRPC `HardwareCapabilities` message is intentionally narrower today:
-
-```proto
-message HardwareCapabilities {
-  bool combined_scenes_supported = 1;
-}
-```
-
-The backend sets that boolean from `caps.slot_grid.is_some()`. The frontend uses it to hide or redirect the
-combined-scene editor, and scene-management RPCs also reject combined-scene operations with `FailedPrecondition` when no
-slot grid is available.
+The backend sets `combined_scenes_supported` from `caps.slot_grid.is_some()`. The frontend uses it to hide or redirect
+the combined-scene editor, and scene-management RPCs also reject combined-scene operations with `FailedPrecondition`
+when no slot grid is available.
 
 ## Platform Differences In Current Behavior
 
@@ -111,7 +101,8 @@ available.
 
 `BMM100`, `BMM101`, and `BFM100` are fullscreen-only in the current UI/API surface. They have no slot grid, so combined
 scenes are filtered out during startup/cycling and rejected by scene-management RPCs. They also have no LED strip
-profile, so the OpenWrt LED driver is disabled for those products.
+profile, so the OpenWrt LED driver is disabled for those products. With neither sound nor LED output, they report
+`alarm_supported = false`. See the [hardware gRPC contract](grpc/hardware-service.md) for capability details.
 
 Widget manifest matching uses the active platform capabilities:
 

@@ -13,7 +13,7 @@ Components large enough to grow multiple documents get their own subdirectory he
 
 How `bmc-openwrt` detects the active hardware platform, how BOS platform strings map to products, and how
 `bmc-platform::HardwareProfile` describes display geometry, slot-grid support, LED strips, and frontend/backend
-capabilities for `BMC100`, `BMM100`, `BMM101`, and `BFM100`.
+capabilities for `BMC100`, `BMM100`, `BMM101`, and `BFM100`, including the browser capability surface in `/system.js`.
 
 ### [BMC Profiles](profiles.md)
 
@@ -100,9 +100,9 @@ rules that callers must handle.
 
 ### [Hardware gRPC](grpc/hardware-service.md)
 
-Frontend-facing API contract for querying platform hardware capabilities. Covers
-`HardwareService.GetHardwareCapabilities` and how `combined_scenes_supported` (derived from the platform's slot grid)
-gates combined-scene controls and RPCs.
+Frozen legacy frontend API used by initial setup and combined-scene gating. Covers
+`HardwareService.GetHardwareCapabilities`, its existing fields, and how `combined_scenes_supported` (derived from the
+platform's slot grid) gates combined-scene controls and RPCs.
 
 ### [Widget Hardware Actions](widget-hardware-actions.md)
 

@@ -241,11 +241,14 @@ pub struct LedStripProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent per-product hardware capability flags, not a state machine"
+    reason = "hardware capability flags model a product profile, not a state machine"
 )]
 pub struct HardwareCapabilities {
     pub display: DisplayInfo,
     pub slot_grid: Option<SlotGrid>,
+    pub sound_supported: bool,
+    pub led_supported: bool,
+    pub alarm_supported: bool,
     pub wifi_supported: bool,
     pub ethernet_supported: bool,
     pub mining_supported: bool,
@@ -480,12 +483,13 @@ impl HardwareProfile {
 
     #[must_use]
     pub fn capabilities(&self) -> HardwareCapabilities {
-        let (wifi_supported, ethernet_supported, mining_supported, boser_managed) =
+        let (sound_supported, wifi_supported, ethernet_supported, mining_supported, boser_managed) =
             match self.product {
-                Product::Bmc100 => (true, false, false, false),
-                Product::Bmm100 => (false, true, true, true),
-                Product::Bmm101 | Product::Bfm100 => (true, true, true, true),
+                Product::Bmc100 => (true, true, false, false, false),
+                Product::Bmm100 => (false, false, true, true, true),
+                Product::Bmm101 | Product::Bfm100 => (false, true, true, true, true),
             };
+        let led_supported = self.led_strip.is_some();
         HardwareCapabilities {
             display: DisplayInfo {
                 width: self.display.logical_width,
@@ -494,6 +498,9 @@ impl HardwareProfile {
                 dpi: self.display.dpi,
             },
             slot_grid: self.slot_grid,
+            sound_supported,
+            led_supported,
+            alarm_supported: sound_supported || led_supported,
             wifi_supported,
             ethernet_supported,
             mining_supported,
@@ -670,6 +677,43 @@ mod test {
             assert_eq!(caps.ethernet_supported, ethernet, "{product:?}: ethernet");
             assert_eq!(caps.mining_supported, mining, "{product:?}: mining");
             assert_eq!(caps.boser_managed, boser, "{product:?}: boser");
+        }
+    }
+
+    #[test]
+    fn alarm_support_is_derived_from_profile_outputs() {
+        let sound_only = HardwareProfile {
+            led_strip: None,
+            ..HardwareProfile::for_product(Product::Bmc100)
+        }
+        .capabilities();
+        assert!(sound_only.sound_supported);
+        assert!(!sound_only.led_supported);
+        assert!(sound_only.alarm_supported);
+
+        let led_only = HardwareProfile {
+            led_strip: HardwareProfile::for_product(Product::Bmc100).led_strip,
+            ..HardwareProfile::for_product(Product::Bmm101)
+        }
+        .capabilities();
+        assert!(!led_only.sound_supported);
+        assert!(led_only.led_supported);
+        assert!(led_only.alarm_supported);
+    }
+
+    #[test]
+    fn alarm_output_capabilities_per_product() {
+        let cases = [
+            (Product::Bmc100, true, true, true),
+            (Product::Bmm100, false, false, false),
+            (Product::Bmm101, false, false, false),
+            (Product::Bfm100, false, false, false),
+        ];
+        for (product, sound, led, alarm) in cases {
+            let caps = HardwareProfile::for_product(product).capabilities();
+            assert_eq!(caps.sound_supported, sound, "{product:?}: sound");
+            assert_eq!(caps.led_supported, led, "{product:?}: LED");
+            assert_eq!(caps.alarm_supported, alarm, "{product:?}: alarm");
         }
     }
 

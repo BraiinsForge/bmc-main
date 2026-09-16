@@ -27,7 +27,7 @@
 //! buffer are testable without live Wayland resources.
 
 use ::deck_settings_v1::server::deck_settings_v1::{self, Capability, DeckSettingsV1};
-use bmc_platform::Product;
+use bmc_platform::{HardwareCapabilities, HardwareProfile, Product};
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
@@ -58,15 +58,19 @@ pub struct SettingsState {
     pub pending_actions: Vec<SettingsAction>,
 }
 
-/// The wl_seat-style capability set for a hardware product. Sound hardware
-/// exists only on BMC100; WiFi setup matches the tray's mac80211-only gate
+/// The wl_seat-style capability set for a hardware product.
+/// Sound comes from the hardware profile; WiFi setup matches the tray's mac80211-only gate
 /// (the BMM boards drive their ESP32 AP through a separate firmware path).
-pub fn caps_for_product(product: Product) -> Capability {
-    match product {
-        Product::Bmc100 => Capability::Brightness | Capability::Sound | Capability::WifiSetup,
-        Product::Bfm100 => Capability::Brightness | Capability::WifiSetup,
+pub fn caps_for_profile(
+    profile: &HardwareProfile,
+    hardware_capabilities: &HardwareCapabilities,
+) -> Capability {
+    let mut caps = match profile.product {
+        Product::Bmc100 | Product::Bfm100 => Capability::Brightness | Capability::WifiSetup,
         Product::Bmm100 | Product::Bmm101 => Capability::Brightness,
-    }
+    };
+    caps.set(Capability::Sound, hardware_capabilities.sound_supported);
+    caps
 }
 
 impl SettingsState {
@@ -274,6 +278,11 @@ pub fn create_global(display: &DisplayHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn caps_for_product(product: Product) -> Capability {
+        let profile = HardwareProfile::for_product(product);
+        caps_for_profile(&profile, &profile.capabilities())
+    }
 
     // Note: the request clamp, `remove`-by-identity, and event fan-out all need
     // live Wayland resources, so they are exercised by the on-device path, not
