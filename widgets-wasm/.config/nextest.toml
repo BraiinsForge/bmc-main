@@ -1,0 +1,9 @@
+# Nextest settings for the widget workspace; the root's `.config/nextest.toml`
+# does not reach it, and a profile named in `NEXTEST_PROFILE` has to exist here.
+
+# For a coding agent: the built-in reporter goes silent, and `scripts/nextest_report.py`
+# reads the `libtest-json-plus` stream instead — a line per binary naming every test,
+# failures in full. `common.justfile` selects it whenever an agent's environment is detected.
+[profile.agent]
+status-level = "none"
+final-status-level = "none"

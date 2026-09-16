@@ -2,6 +2,7 @@ import 'common.justfile'
 
 # Frontend build, lint, test, and mock-backend serving.
 mod fe 'frontend/justfile'
+# Gallery shows of components & other UI building blocks of UI
 mod gallery 'bmc-gallery/justfile'
 # Widget manifest schema generation and drift checks.
 mod manifest 'bmc-widget-manifest/justfile'
@@ -30,7 +31,7 @@ validate: format clippy python
     # The other generated-artifact guard: every widget's manifest_params.rs
     # against its manifest. Stale output otherwise surfaces only in CI.
     # Bare like the cargo runs below, so one toolchain owns the target dir.
-    cargo nextest run -p bmc-widget-codegen
+    just nextest -p bmc-widget-codegen
     # Native crates are clippy-gated above but not otherwise tested here: a
     # `--workspace` run cannot build (bmc-wasm-sdk loses bmc_render_macros under
     # workspace-wide feature unification), so each has to be named.
@@ -39,12 +40,12 @@ validate: format clippy python
     nix run ".#ast-grep"
 
     # Dependency policy, host and wasm.
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny"
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm-examples"
+    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny"
+    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
+    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm-examples"
 
     # Public widget asset contract (icon paths, extension allowlist).
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.public-widget-assets"
+    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.public-widget-assets"
 
     # Wasm lint; production widgets are gated, examples only have to build.
     cargo clippy --profile fast -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
@@ -54,14 +55,14 @@ validate: format clippy python
     # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.
     # Left unwrapped like the clippy runs above: `nix develop` swaps the toolchain
     # and the sccache wrapper, and two rustc setups over one target dir do not link.
-    cargo nextest run -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-svg-compiler -p bmc-wasm-thin -p bmc-wasm-thin-protocol
+    just nextest -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-svg-compiler -p bmc-wasm-thin -p bmc-wasm-thin-protocol
 
     # Widget logic has native tests; the wasm32 builds below can't run them.
-    (cd widgets-wasm && cargo nextest run --workspace)
+    just nextest --manifest-path widgets-wasm/Cargo.toml --workspace
 
     # Slowest last: every widget workspace for wasm32, then the SDK docs.
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
+    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
 
     @echo "validate: OK"
 
@@ -112,9 +113,25 @@ python:
 
 # Run nextest for a single crate (auto-enters nix shell).
 test crate *FEATURES="--all-features":
-    {{ NIX_DEV }} cargo nextest run -p {{ crate }} {{ FEATURES }}
+    {{ NIX_DEV }} just nextest -p {{ crate }} {{ FEATURES }}
 
-# Run one widget's native tests, FILTER naming a substring of the test names.
+# nextest streamed for a person, or condensed to a line per binary by `scripts/nextest_report.py` for an agent.
+[positional-arguments]
+[private]
+nextest *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ "{{ AGENT }}" != "1" ]; then
+        exec cargo nextest run "$@"
+    fi
+
+    # The JSON stream is nextest's only reporter hook; the flag is its stability caveat.
+    NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 \
+        cargo nextest run "$@" --message-format libtest-json-plus \
+        | scripts/nextest_report.py
+
+# Run one widget's (or shared lib's) native tests, FILTER naming a substring of the test names.
 test-widget WIDGET FILTER="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -123,12 +140,11 @@ test-widget WIDGET FILTER="":
     # `nix develop` swaps the toolchain and the sccache wrapper,
     # and one target dir cannot link against two rustc setups.
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do
-        if [ -d "$root/{{ WIDGET }}" ]; then
-            cd "$root"
+        if [ -d "$root/{{ WIDGET }}" ] || [ -d "$root/lib/{{ WIDGET }}" ]; then
             if [ -n "{{ FILTER }}" ]; then
-                exec cargo nextest run -p {{ WIDGET }} "{{ FILTER }}"
+                exec just nextest --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} "{{ FILTER }}"
             fi
-            exec cargo nextest run -p {{ WIDGET }}
+            exec just nextest --manifest-path "$root/Cargo.toml" -p {{ WIDGET }}
         fi
     done
 

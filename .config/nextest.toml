@@ -10,6 +10,13 @@ success-output = "never"
 # is the first thing a long log loses.
 failure-output = "final"
 
+# For a coding agent: the built-in reporter goes silent, and `scripts/nextest_report.py` reads
+# the `libtest-json-plus` stream instead — a line per binary naming every test, failures in full.
+# `common.justfile` selects it whenever an agent's environment is detected.
+[profile.agent]
+status-level = "none"
+final-status-level = "none"
+
 # Passing output for the runs where a silent skip is the thing being hunted.
 # Several integration tests need a headless EGL stack and return early without
 # one — they print nothing and read as a pass.

@@ -21,6 +21,13 @@ fixup or proposing the change is "done".
 3. Repo content checks (the `content` nix check).
 4. Final marker: `@echo "validate: OK"` — if you don't see that line, validate failed or is still running.
 
+Under a coding agent the tools run in their own quiet modes (`common.justfile` detects the agent's environment and sets
+`CARGO_TERM_QUIET`, `PYTEST_ADDOPTS=-q`, and drops nix's `-L`), and nextest reports through `scripts/nextest_report.py`:
+one line per test binary naming every passing test by module, failures printed in full. So the output is the echoed step
+commands, the test lines, and whatever failed. A failure ends with `error: recipe validate failed on line N` — that line
+of the root `justfile` is the step; the diagnostic sits just above it. To see one test run by name, use
+`just test-widget WIDGET FILTER` (a shared lib under `widgets-wasm/lib/` works too) or `just test CRATE`.
+
 The frontend is not part of `just validate`: on a branch that changes `frontend/`, run `just fe::validate` separately.
 
 Why it's not "just clippy": the formatter step is load-bearing. `cargo check` / `cargo clippy` / `just clippy` alone
