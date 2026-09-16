@@ -18,10 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Round (BFM100, 480×480) render variants. Mining and Geek share a circular
-//! 28-tick gauge with four quadrant stat clusters; Info Overload uses a
-//! three-band layout. Geometry is authored in 480 native units and scaled by
-//! `min(w, h) / 480`; typography is fixed (not scaled) per project convention.
+//! Round (BFM100, 480×480) render variants.
+//! Mining and Geek share a circular 28-tick gauge with four quadrant stat clusters;
+//! Info Overload uses a three-band layout.
+//! Geometry is authored in 480 native units and scaled by `min(w, h) / 480`;
+//! typography is fixed per face, set by a [`GaugeType`].
 
 use bmc_wasm_sdk::types::Hashrate;
 #[expect(
@@ -57,15 +58,36 @@ const GAUGE_TRANSITION_MS: u32 = 500;
 const LABEL_GRAY: Color = Color::from_rgb(0x8d, 0x8d, 0x8d);
 const DIVIDER: Color = Color::from_rgba(0xff, 0xff, 0xff, 0x1a);
 
-const HASHRATE_SIZE: u32 = 64;
-const HASHRATE_UNIT_SIZE: u32 = 24;
-const STATUS_SIZE: u32 = 16;
-// The "1 min" caption reads as a sub-note under "Hashrate", a step below the
-// other gray labels.
-const CAPTION_SIZE: u32 = 14;
-const CLUSTER_VALUE_SIZE: u32 = 32;
-const CLUSTER_LABEL_SIZE: u32 = 16;
-const CLUSTER_UNIT_SIZE: u32 = 16;
+/// The type sizes of a gauge face. The round face sets the frame's own;
+/// the BMM101 disc, the same frame at 0.6, scales them along with the geometry.
+#[derive(Clone, Copy)]
+pub(super) struct GaugeType {
+    pub(super) hashrate: u32,
+    pub(super) hashrate_unit: u32,
+    /// The "Hashrate" status label under the value.
+    pub(super) status: u32,
+    /// The "1 min" caption under the status label, a step below the other
+    /// gray labels; `None` leaves it out.
+    pub(super) caption: Option<u32>,
+    pub(super) cluster_value: u32,
+    pub(super) cluster_label: u32,
+    pub(super) cluster_unit: u32,
+    /// Fixed width reserved for the trailing "TH/s", mirrored by an empty slot
+    /// on the left so the value alone lands on the frame centre.
+    /// Sized to clear "TH/s" at `hashrate_unit`.
+    pub(super) unit_slot_w: f32,
+}
+
+const ROUND_TYPE: GaugeType = GaugeType {
+    hashrate: 64,
+    hashrate_unit: 24,
+    status: 16,
+    caption: Some(14),
+    cluster_value: 32,
+    cluster_label: 16,
+    cluster_unit: 16,
+    unit_slot_w: 60.0,
+};
 
 // Top-center "<icon> <chip model> x<count>" header. Native y sits below the rim
 // and clear of the top quadrant clusters at native y=122. Icon and text are
@@ -109,12 +131,6 @@ const CENTER_CELL_H: f32 = 140.0;
 const CENTER_UNIT_GAP: f32 = 6.0;
 const CENTER_LABEL_GAP: f32 = 5.0;
 
-// Fixed pixel width reserved for the trailing "TH/s" unit, mirrored by an empty
-// slot of equal width on the left of the value so the value alone lands on the
-// frame center. Sized to clear "TH/s" at `HASHRATE_UNIT_SIZE`; not scaled, since
-// typography is fixed.
-const CENTER_UNIT_SLOT_W: f32 = 60.0;
-
 // Native (480-space) centers of the four quadrant clusters; the frame center is
 // (240, 240). Derived from the Top (86,90,308×65) and Down (86,319,308×65)
 // frames split at the x=239 divider.
@@ -131,7 +147,7 @@ fn px(v: u32) -> f32 {
     v as f32
 }
 
-struct ClusterSpec {
+pub(super) struct ClusterSpec {
     label: &'static str,
     prefix: Option<&'static str>,
     value: format::Rendered,
@@ -290,6 +306,7 @@ fn center_node(
     scale: f32,
     hashrate: Availability<Hashrate>,
     state: GaugeState,
+    type_: GaugeType,
 ) -> Node {
     let cell_w = CENTER_CELL_W * scale;
     let cell_h = CENTER_CELL_H * scale;
@@ -298,16 +315,16 @@ fn center_node(
 
     let value = text(
         format::fixed(hashrate, 2).value,
-        style!(size: HASHRATE_SIZE, weight: FontWeight::BOLD, color: VALUE, line_height: 1.0),
+        style!(size: type_.hashrate, weight: FontWeight::BOLD, color: VALUE, line_height: 1.0),
     );
     let unit_slot = col(
-        props!(width: CENTER_UNIT_SLOT_W, cross_align: CrossAlign::Start),
+        props!(width: type_.unit_slot_w, cross_align: CrossAlign::Start),
         [text(
             Hashrate::UNIT,
-            style!(size: HASHRATE_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE, line_height: 1.0),
+            style!(size: type_.hashrate_unit, weight: FontWeight::REGULAR, color: VALUE, line_height: 1.0),
         )],
     );
-    let left_reserve = col(props!(width: CENTER_UNIT_SLOT_W), Vec::<Node>::new());
+    let left_reserve = col(props!(width: type_.unit_slot_w), Vec::<Node>::new());
     let value_row = row(
         props!(cross_align: CrossAlign::Center, gap: CENTER_UNIT_GAP * scale),
         [left_reserve, value, unit_slot],
@@ -327,7 +344,7 @@ fn center_node(
             value_row,
             text(
                 "Hashrate",
-                style!(size: STATUS_SIZE, weight: FontWeight::REGULAR, color: style(state).status_color),
+                style!(size: type_.status, weight: FontWeight::REGULAR, color: style(state).status_color),
             ),
             spacer(1.0),
         ],
@@ -343,10 +360,10 @@ fn center_node(
 // the group height below center; the caption sits at that edge, snug under
 // the label (the label and caption line-height padding supply the visible gap),
 // derived from the same constants the group uses so the two stay aligned across scales.
-fn center_caption(cx: f32, cy: f32, scale: f32) -> Node {
+fn center_caption(cx: f32, cy: f32, scale: f32, type_: GaugeType, size: u32) -> Node {
     let cell_w = CENTER_CELL_W * scale;
     let group_half =
-        f32::midpoint(px(HASHRATE_SIZE), px(STATUS_SIZE)) + CENTER_LABEL_GAP * scale / 2.0;
+        f32::midpoint(px(type_.hashrate), px(type_.status)) + CENTER_LABEL_GAP * scale / 2.0;
     let top = cy + group_half - 2.0 * scale;
     col(
         props!(
@@ -357,7 +374,7 @@ fn center_caption(cx: f32, cy: f32, scale: f32) -> Node {
         ),
         [text(
             "1 min",
-            style!(size: CAPTION_SIZE, weight: FontWeight::REGULAR, color: LABEL_GRAY),
+            style!(size: size, weight: FontWeight::REGULAR, color: LABEL_GRAY),
         )],
     )
 }
@@ -419,7 +436,7 @@ fn chip_header(cx: f32, cy: f32, scale: f32, model: &str, count: usize) -> Node 
 // the quadrant center and the known cell size, so the group lands centered
 // on the point without measuring any text. Overlaid on the gauge canvas
 // as an absolute child of the root.
-fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
+fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec, type_: GaugeType) -> Node {
     let cell_w = CLUSTER_CELL_W * scale;
     let cell_h = CLUSTER_CELL_H * scale;
     let inset_left = center_px.0 - cell_w / 2.0;
@@ -432,17 +449,17 @@ fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
     if let Some(prefix) = spec.prefix.filter(|_| show_affixes) {
         parts.push(text(
             prefix,
-            style!(size: CLUSTER_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE),
+            style!(size: type_.cluster_unit, weight: FontWeight::REGULAR, color: VALUE),
         ));
     }
     parts.push(text(
         spec.value.value.clone(),
-        style!(size: CLUSTER_VALUE_SIZE, weight: FontWeight::SEMIBOLD, color: VALUE),
+        style!(size: type_.cluster_value, weight: FontWeight::SEMIBOLD, color: VALUE),
     ));
     if let Some(unit) = spec.value.unit.as_deref().filter(|_| show_affixes) {
         parts.push(text(
             unit,
-            style!(size: CLUSTER_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE),
+            style!(size: type_.cluster_unit, weight: FontWeight::REGULAR, color: VALUE),
         ));
     }
     let value_row = row(
@@ -464,7 +481,7 @@ fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
             value_row,
             text(
                 spec.label,
-                style!(size: CLUSTER_LABEL_SIZE, weight: FontWeight::REGULAR, color: LABEL_GRAY),
+                style!(size: type_.cluster_label, weight: FontWeight::REGULAR, color: LABEL_GRAY),
             ),
             spacer(1.0),
         ],
@@ -478,12 +495,13 @@ fn native_to_px(cx: f32, cy: f32, scale: f32, native: (f32, f32)) -> (f32, f32) 
     )
 }
 
-fn gauge_screen(
+pub(super) fn gauge_screen(
     size: RenderSize,
     g: &Gauge,
     hashrate: Availability<Hashrate>,
     chip: Option<(&str, usize)>,
     clusters: &[ClusterSpec; 4],
+    type_: GaugeType,
 ) -> Node {
     let w = px(size.width);
     let h = px(size.height);
@@ -499,9 +517,11 @@ fn gauge_screen(
 
     let mut children = vec![
         canvas(props!(width: w, height: h), draws),
-        center_node(cx, cy, scale, hashrate, g.state),
-        center_caption(cx, cy, scale),
+        center_node(cx, cy, scale, hashrate, g.state, type_),
     ];
+    if let Some(caption) = type_.caption {
+        children.push(center_caption(cx, cy, scale, type_, caption));
+    }
     if let Some((model, count)) = chip {
         children.push(chip_header(cx, cy, scale, model, count));
     }
@@ -511,16 +531,17 @@ fn gauge_screen(
             native_to_px(cx, cy, scale, center),
             scale,
             spec,
+            type_,
         ));
     }
 
     col(props!(background: BACKGROUND), children)
 }
 
-// The gauge for the round Mining/Geek faces. On the seed frame the lit count
+// The gauge for the Mining/Geek faces. On the seed frame the lit count
 // is pinned to a single tick so the host transition has an empty-ish baseline
 // to animate the real fill in from, regardless of whether data is already loaded.
-fn seeded_gauge(miner: &MinerData, seed_gauge: bool) -> Gauge {
+pub(super) fn seeded_gauge(miner: &MinerData, seed_gauge: bool) -> Gauge {
     let mut g = gauge::gauge(
         miner
             .hashrate
@@ -541,6 +562,56 @@ fn chip_header_data(miner: &MinerData) -> Option<(&str, usize)> {
     Some((model.as_str(), count))
 }
 
+fn mining_clusters(miner: &MinerData) -> [ClusterSpec; 4] {
+    [
+        ClusterSpec {
+            label: "Power Cons.",
+            prefix: None,
+            value: format::fixed(miner.power, 0),
+        },
+        ClusterSpec {
+            label: "MCR",
+            prefix: None,
+            value: format::fixed(miner.mcr, 1),
+        },
+        ClusterSpec {
+            label: "Temperature",
+            prefix: None,
+            value: format::chip_temperature(miner.temperature),
+        },
+        ClusterSpec {
+            label: "Fan Speed",
+            prefix: None,
+            value: format::fixed(miner.fan_speed, 0),
+        },
+    ]
+}
+
+pub(super) fn geek_clusters(miner: &MinerData, public: &PublicData) -> [ClusterSpec; 4] {
+    [
+        ClusterSpec {
+            label: "Power Cons.",
+            prefix: None,
+            value: format::fixed(miner.power, 0),
+        },
+        ClusterSpec {
+            label: "Efficiency",
+            prefix: None,
+            value: format::fixed(miner.efficiency, 1),
+        },
+        ClusterSpec {
+            label: "Temperature",
+            prefix: None,
+            value: format::chip_temperature(miner.temperature),
+        },
+        ClusterSpec {
+            label: "BTC Price",
+            prefix: format::money_symbol(public.btc_price),
+            value: format::money_amount(public.btc_price, 0).into(),
+        },
+    ]
+}
+
 #[must_use]
 pub fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> Node {
     let g = seeded_gauge(miner, seed_gauge);
@@ -549,28 +620,8 @@ pub fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> Node {
         &g,
         miner.hashrate,
         chip_header_data(miner),
-        &[
-            ClusterSpec {
-                label: "Power Cons.",
-                prefix: None,
-                value: format::fixed(miner.power, 0),
-            },
-            ClusterSpec {
-                label: "MCR",
-                prefix: None,
-                value: format::fixed(miner.mcr, 1),
-            },
-            ClusterSpec {
-                label: "Temperature",
-                prefix: None,
-                value: format::chip_temperature(miner.temperature),
-            },
-            ClusterSpec {
-                label: "Fan Speed",
-                prefix: None,
-                value: format::fixed(miner.fan_speed, 0),
-            },
-        ],
+        &mining_clusters(miner),
+        ROUND_TYPE,
     )
 }
 
@@ -582,28 +633,8 @@ pub fn geek(size: RenderSize, miner: &MinerData, public: &PublicData, seed_gauge
         &g,
         miner.hashrate,
         chip_header_data(miner),
-        &[
-            ClusterSpec {
-                label: "Power Cons.",
-                prefix: None,
-                value: format::fixed(miner.power, 0),
-            },
-            ClusterSpec {
-                label: "Efficiency",
-                prefix: None,
-                value: format::fixed(miner.efficiency, 1),
-            },
-            ClusterSpec {
-                label: "Temperature",
-                prefix: None,
-                value: format::chip_temperature(miner.temperature),
-            },
-            ClusterSpec {
-                label: "BTC Price",
-                prefix: format::money_symbol(public.btc_price),
-                value: format::money_amount(public.btc_price, 0).into(),
-            },
-        ],
+        &geek_clusters(miner, public),
+        ROUND_TYPE,
     )
 }
 

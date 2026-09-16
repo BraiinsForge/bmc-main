@@ -94,7 +94,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     let panel = layout::classify(viewport);
     // A gauge seeds from a single lit tick
     // so the host animates the real fill in from an empty-ish baseline.
-    let seed_gauge = panel.draws_gauge() && engine::take_first_frame();
+    let seed_gauge = engine::View::Geek.draws_gauge(panel) && engine::take_first_frame();
     let root = match panel {
         Panel::Round => face::round::geek(size, &miner, &public, seed_gauge),
         Panel::Bmm101 => face::bmm101::geek(&public),

@@ -166,20 +166,26 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
     }
 }
 
+/// The hashrate behind one gauge state, picked by name.
+fn gauge_state(ctx: &mut SceneCtx) -> Option<f64> {
+    let labels: Vec<&str> = GAUGE_STATES.iter().map(|(label, _)| *label).collect();
+    GAUGE_STATES[ctx.select("Tuner", &labels, 0)].1
+}
+
 /// The BMM101 faces at their own size.
 #[scene]
 fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
     let face = face_pick(ctx);
     let shown = reported(ctx);
+    let hashrate = gauge_state(ctx);
     let price = price_move(ctx);
     system_settings(ctx);
 
     ctx.node_stage(ui, BMM101_VIEWPORT, move || {
-        let data = miner(shown, Some(1.02));
+        let data = miner(shown, hashrate);
         let market = public(shown, price);
-        let panel = rectangular_panel(BMM101_VIEWPORT);
         match face {
-            Face::Mining => face::mining(panel, &data),
+            Face::Mining => face::bmm101::mining(&data, &market, false),
             Face::Geek => face::bmm101::geek(&market),
             Face::InfoOverload => face::bmm101::info_overload(&data, &market),
         }

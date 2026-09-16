@@ -31,13 +31,6 @@ pub enum Panel {
     Round,
 }
 
-impl Panel {
-    #[must_use]
-    pub const fn draws_gauge(self) -> bool {
-        matches!(self, Self::Round)
-    }
-}
-
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent per-field visibility toggles, not a state enum"
@@ -226,13 +219,6 @@ mod tests {
         assert_eq!(classify(rectangular(480, 319)), Panel::Small);
         assert_eq!(classify(rectangular(400, 300)), Panel::Small);
         assert_eq!(classify(rectangular(480, 320)), Panel::Bmm101);
-    }
-
-    #[test]
-    fn only_the_round_panel_draws_the_gauge() {
-        assert!(Panel::Round.draws_gauge());
-        assert!(!Panel::Small.draws_gauge());
-        assert!(!Panel::Bmm101.draws_gauge());
     }
 
     #[test]

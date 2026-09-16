@@ -54,9 +54,10 @@ pub extern "C" fn init() {
     engine::init(config);
 }
 
-// Absent a previous snapshot the credentials count as moved,
-// so the first update authenticates.
-// This face reads no public endpoint, so no currency ever changes.
+// Absent a previous snapshot the credentials count
+// as moved, so the first update authenticates.
+// The quoted currency is a build-time constant
+// rather than a param, so no update can move it.
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
@@ -89,14 +90,15 @@ pub extern "C" fn render(_delta_ms: u32) {
         width: viewport.width,
         height: viewport.height,
     };
-    let (miner, _public, auth) = engine::frame();
+    let (miner, public, auth) = engine::frame();
     let panel = layout::classify(viewport);
     // A gauge seeds from a single lit tick
     // so the host animates the real fill in from an empty-ish baseline.
-    let seed_gauge = panel.draws_gauge() && engine::take_first_frame();
+    let seed_gauge = engine::View::Mining.draws_gauge(panel) && engine::take_first_frame();
     let root = match panel {
         Panel::Round => face::round::mining(size, &miner, seed_gauge),
-        Panel::Small | Panel::Bmm101 => face::mining(panel, &miner),
+        Panel::Bmm101 => face::bmm101::mining(&miner, &public, seed_gauge),
+        Panel::Small => face::mining(panel, &miner),
     };
     let overlay = engine::overlay(engine::View::Mining, panel, &auth);
     let root = mining::overlay::apply_overlay(root, overlay, viewport.shape);

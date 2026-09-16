@@ -1,7 +1,7 @@
 # Miner Info — Mining Widget
 
 A miner overview: the readings that say whether one Bitcoin miner is running healthily. It reads a BOS miner over its
-REST API and nothing else, so it needs no internet connection.
+REST API and, on the BMM101 alone, the Bitcoin price; everywhere else it needs no internet connection.
 
 Add the widget once per miner to watch several at a time.
 
@@ -28,6 +28,15 @@ Add the widget once per miner to watch several at a time.
   screen shows.
 - Above the ring a chip header shows a chip icon, the chip model and the count across all hashboards (e.g. *BM1370
   x108*). It appears only when the miner reports both; otherwise it is omitted rather than showing placeholders.
+
+### See the ring on the Mini Miner
+
+> As a user with a BMM101, I want the same ring on its own 480×320 screen.
+
+- On the BMM101 the round face draws as a disc at six tenths of its size, centred on the black screen, type scaled with
+  it and no chip header above it.
+- The quadrants are the Geek set: power consumption, efficiency, temperature and the BTC price, so the price is fetched
+  on this panel alone.
 
 ### Read the miner's health from the ring
 
@@ -62,7 +71,8 @@ Add the widget once per miner to watch several at a time.
 - Unavailable values read as `N/A`.
 - A refused login shows a `Cannot authenticate` banner over the fields. An unreachable miner shows the same banner,
   since the widget cannot tell the two apart from the failed login alone.
-- A miner that answers the login but fails its telemetry shows `Failed to load: Miner` instead.
+- A miner that answers the login but fails its telemetry shows `Failed to load: Miner` instead; on the BMM101 a price
+  that never loads shows `Failed to load: Network`, while the miner's readings stay.
 - Failed fetches retry on their own without user action. When a refresh keeps failing the last good values stay on
   screen under a `Stale data` banner until the next successful fetch.
 - Numbers use the device's configured number format for digit grouping and the decimal mark.
@@ -81,5 +91,8 @@ Add the widget once per miner to watch several at a time.
   [Mining Clock Widget](mining-clock.md).
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
 - Field sets, labels, and units mirror the BOSer BMM screens.
-- The tuner constraints that scale the ring are read from `/configuration/constraints`. They are fetched only on the
-  round viewport, and only once per login, since they change only when the miner is re-tuned.
+- The tuner constraints that scale the ring are read from `/configuration/constraints`. They are fetched only where the
+  ring draws, the round viewport and the BMM101, and only once per login, since they change only when the miner is
+  re-tuned.
+- The BTC price on the BMM101 comes from `public-api.braiins.com` in US dollars and refreshes about every sixty seconds,
+  independently of the miner.

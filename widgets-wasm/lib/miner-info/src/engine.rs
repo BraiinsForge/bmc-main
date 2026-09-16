@@ -39,7 +39,6 @@ use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
 use crate::layout;
-#[cfg(any(target_arch = "wasm32", test))]
 use crate::layout::Panel;
 #[cfg(target_arch = "wasm32")]
 use crate::model::{Currency, MinerData, PublicData, Verdict};
@@ -60,6 +59,18 @@ pub enum View {
     Mining,
     Geek,
     InfoOverload,
+}
+
+impl View {
+    /// Whether the face is the hashrate gauge on this panel.
+    #[must_use]
+    pub const fn draws_gauge(self, panel: Panel) -> bool {
+        match self {
+            Self::Mining => matches!(panel, Panel::Round | Panel::Bmm101),
+            Self::Geek => matches!(panel, Panel::Round),
+            Self::InfoOverload => false,
+        }
+    }
 }
 
 /// What the runtime needs from the widget's parameters on every callback.
@@ -143,11 +154,14 @@ mod reads {
 
     // The tuner target anchors the ring, so only a gauge face reads it.
     pub(super) fn constraints(view: View, panel: Panel) -> bool {
-        matches!(view, View::Mining | View::Geek) && panel.draws_gauge()
+        view.draws_gauge(panel)
     }
 
+    // The BMM101 Mining disc carries the Geek quadrants, BTC price included.
     pub(super) fn price_stats(view: View, panel: Panel) -> bool {
-        view == View::InfoOverload || geek_miner_face(view, panel)
+        view == View::InfoOverload
+            || geek_miner_face(view, panel)
+            || (view == View::Mining && panel == Panel::Bmm101)
     }
 
     pub(super) fn network_figures(view: View, panel: Panel) -> bool {
@@ -825,9 +839,15 @@ mod tests {
 
     fn expected_reads(view: View, panel: Panel) -> &'static [&'static str] {
         match (view, panel) {
-            (View::Mining, Panel::Small | Panel::Bmm101) => {
-                &["stats", "hashboards", "cooling", "network"]
-            }
+            (View::Mining, Panel::Small) => &["stats", "hashboards", "cooling", "network"],
+            (View::Mining, Panel::Bmm101) => &[
+                "stats",
+                "hashboards",
+                "cooling",
+                "network",
+                "constraints",
+                "price-stats",
+            ],
             (View::Mining, Panel::Round) => {
                 &["stats", "hashboards", "cooling", "network", "constraints"]
             }
@@ -865,6 +885,27 @@ mod tests {
                 assert_eq!(read, expected_reads(view, panel), "{view:?} on {panel:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_gauge_is_the_round_mining_and_geek_faces_and_the_bmm101_mining_one() {
+        let gauges: Vec<(View, Panel)> = [View::Mining, View::Geek, View::InfoOverload]
+            .into_iter()
+            .flat_map(|view| {
+                [Panel::Small, Panel::Bmm101, Panel::Round]
+                    .into_iter()
+                    .map(move |panel| (view, panel))
+            })
+            .filter(|(view, panel)| view.draws_gauge(*panel))
+            .collect();
+        assert_eq!(
+            gauges,
+            [
+                (View::Mining, Panel::Bmm101),
+                (View::Mining, Panel::Round),
+                (View::Geek, Panel::Round),
+            ]
+        );
     }
 
     #[test]

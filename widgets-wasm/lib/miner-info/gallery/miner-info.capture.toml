@@ -1,4 +1,4 @@
-# The BMM101 faces: Mining with and without board readings,
+# The BMM101 faces: Mining across the gauge states,
 # Geek with and without the network, Info Overload across
 # the three price moves.
 #
@@ -12,25 +12,60 @@ sheet = "sheet.png"
 report = "capture.json"
 settle = true
 
-# Temperature pairs a board reading with a chip one, and the mining-mode ratio
-# pairs a real rate with a nominal one. A miner reporting neither half loses
-# both rows outright, which is what the two shots straddle.
 [[shot]]
-name = "mining-bmm101-all-readings"
+name = "mining-bmm101-good"
 scene = "bmc_gallery::miner_info::Bmm101"
 frames = 4
 
 [shot.knobs]
-Data = "Populated"
 Face = "Mining"
+Tuner = "Good"
 
 [[shot]]
-name = "mining-bmm101-without-board-readings"
+name = "mining-bmm101-overclocked"
+scene = "bmc_gallery::miner_info::Bmm101"
+frames = 4
+
+[shot.knobs]
+Face = "Mining"
+Tuner = "Overclocked"
+
+[[shot]]
+name = "mining-bmm101-underclocked"
+scene = "bmc_gallery::miner_info::Bmm101"
+frames = 4
+
+[shot.knobs]
+Face = "Mining"
+Tuner = "Underclocked"
+
+[[shot]]
+name = "mining-bmm101-off"
+scene = "bmc_gallery::miner_info::Bmm101"
+frames = 4
+
+[shot.knobs]
+Face = "Mining"
+Tuner = "Off"
+
+# Temperature and MCR each need a pair of readings; a miner reporting
+# only half of each shows their placeholders among live rows.
+[[shot]]
+name = "mining-bmm101-without-boards"
 scene = "bmc_gallery::miner_info::Bmm101"
 frames = 4
 
 [shot.knobs]
 Data = "Without board readings"
+Face = "Mining"
+
+[[shot]]
+name = "mining-bmm101-unavailable"
+scene = "bmc_gallery::miner_info::Bmm101"
+frames = 4
+
+[shot.knobs]
+Data = "Unavailable"
 Face = "Mining"
 
 [[shot]]
