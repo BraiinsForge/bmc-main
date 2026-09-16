@@ -289,26 +289,82 @@ fn inode(path: &Path) -> Option<u64> {
 }
 
 /// The network an event is about, when it names one.
-fn event_ssid(line: &str) -> Option<&str> {
-    let rest = line.split_once("ssid=\"")?.1;
-    rest.split_once('"').map(|(ssid, _)| ssid)
+/// The SSID an event names, as bytes: `ssid="..."` in the CTRL events and
+/// `SSID='...'` in the SME lines. Both go through the supplicant's
+/// `printf_encode`, so the field is decoded before anyone compares it.
+fn event_ssid(line: &str) -> Option<Vec<u8>> {
+    if let Some((_, rest)) = line.split_once("ssid=\"") {
+        return Some(decode_printf(quoted(rest)));
+    }
+    let rest = line.split_once("SSID='")?.1;
+    // `'` is not escaped by the encoder; the field ends where the line's next
+    // parameter begins, or at the last quote when it is the last thing said.
+    let end = rest
+        .find("' ")
+        .or_else(|| rest.rfind('\''))
+        .unwrap_or(rest.len());
+    // The quote is ASCII, so the cut is on a character boundary.
+    Some(decode_printf(rest.get(..end).unwrap_or(rest)))
 }
 
-/// Maps supplicant events onto the reasons a caller can act on.
+/// The text up to the closing quote, escaped quotes skipped.
+fn quoted(rest: &str) -> &str {
+    let mut escaped = false;
+    for (index, byte) in rest.bytes().enumerate() {
+        match byte {
+            b'\\' if !escaped => escaped = true,
+            b'"' if !escaped => return rest.get(..index).unwrap_or(rest),
+            _ => escaped = false,
+        }
+    }
+    rest
+}
+
+/// Undoes wpa_supplicant's `printf_encode`: `\xNN` for a byte outside
+/// printable ASCII, `\"`, `\\`, `\e`, `\n`, `\r` and `\t` for the rest.
+fn decode_printf(field: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(field.len());
+    let mut bytes = field.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' {
+            out.push(byte);
+            continue;
+        }
+        match bytes.next() {
+            Some(b'x') => {
+                let hex: String = bytes.by_ref().take(2).map(char::from).collect();
+                match u8::from_str_radix(&hex, 16) {
+                    Ok(value) => out.push(value),
+                    // Not an escape after all: keep what was read.
+                    Err(_) => out.extend_from_slice(format!("\\x{hex}").as_bytes()),
+                }
+            }
+            Some(b'e') => out.push(0x1b),
+            Some(b'n') => out.push(b'\n'),
+            Some(b'r') => out.push(b'\r'),
+            Some(b't') => out.push(b'\t'),
+            Some(other) => out.push(other),
+            None => out.push(b'\\'),
+        }
+    }
+    out
+}
+
+/// What the events say about a join of `ssid`, read in the order they came.
 ///
-/// An event that names a network is only believed for that network: the
-/// supplicant keeps retrying what it was given before, and a rejection meant
-/// for another SSID must not be reported against this one. That is why the
-/// verdict rests on `reason=WRONG_KEY`, which carries the SSID, and not on the
-/// bare "4-Way Handshake failed" line that accompanies it: the latter would be
-/// attributed to whichever network the caller happened to ask about. A
-/// rejected passphrase is decided first: a supplicant that keeps retrying
-/// emits a scan failure after it, and the passphrase is the actionable half.
+/// A rejected passphrase names the network and is final. A scan that did not
+/// find the network is only the verdict while nothing later shows the access
+/// point answering: the supplicant tries again, and an authentication attempt
+/// for `ssid` proves it is on the air, so the failure is then something else.
 fn classify<'a>(events: impl Iterator<Item = &'a str>, ssid: &str) -> Option<WifiJoinError> {
     let mut not_found = false;
     for event in events {
         for line in event.lines() {
-            if event_ssid(line).is_some_and(|named| named != ssid) {
+            let named = event_ssid(line);
+            if named
+                .as_deref()
+                .is_some_and(|named| named != ssid.as_bytes())
+            {
                 continue;
             }
             if line.contains("reason=WRONG_KEY") {
@@ -316,6 +372,8 @@ fn classify<'a>(events: impl Iterator<Item = &'a str>, ssid: &str) -> Option<Wif
             }
             if line.contains("CTRL-EVENT-NETWORK-NOT-FOUND") {
                 not_found = true;
+            } else if named.is_some() {
+                not_found = false;
             }
         }
     }
@@ -378,6 +436,64 @@ mod tests {
     #[test]
     fn a_rejection_meant_for_another_network_is_not_ours() {
         assert!(classify(WRONG_KEY.iter().copied(), "Another").is_none());
+    }
+
+    #[test]
+    fn a_not_found_before_the_network_answered_is_not_the_verdict() {
+        let events = NOT_FOUND.iter().copied().chain([
+            "<3>CTRL-EVENT-SCAN-STARTED ",
+            "<3>CTRL-EVENT-SCAN-RESULTS ",
+            "<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='I301' freq=2462 MHz)",
+            "<3>CTRL-EVENT-DISCONNECTED bssid=c0:06:c3:ec:3f:06 reason=3",
+        ]);
+        assert!(classify(events, "I301").is_none());
+    }
+
+    #[test]
+    fn a_not_found_after_the_network_went_away_again_stands() {
+        let events = [
+            "<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='I301' freq=2462 MHz)",
+            "<3>CTRL-EVENT-DISCONNECTED bssid=c0:06:c3:ec:3f:06 reason=3",
+        ]
+        .into_iter()
+        .chain(NOT_FOUND.iter().copied());
+        assert!(matches!(
+            classify(events, "I301"),
+            Some(WifiJoinError::NetworkNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_non_ascii_ssid_is_matched_through_the_supplicants_encoding() {
+        let events = [
+            r"<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='Dom\xc5\xaf' freq=2462 MHz)",
+            "<3>WPA: 4-Way Handshake failed - pre-shared key may be incorrect",
+            r#"<3>CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="Dom\xc5\xaf" auth_failures=1 duration=10 reason=WRONG_KEY"#,
+        ];
+        assert!(matches!(
+            classify(events.iter().copied(), "Domů"),
+            Some(WifiJoinError::WrongKey(ssid)) if ssid == "Domů"
+        ));
+        assert!(classify(events.iter().copied(), "Domu").is_none());
+    }
+
+    #[test]
+    fn a_quoted_ssid_is_matched_through_the_supplicants_encoding() {
+        let events = [
+            r#"<3>CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="Say \"hi\" \\ done" auth_failures=1 duration=10 reason=WRONG_KEY"#,
+        ];
+        assert!(matches!(
+            classify(events.iter().copied(), r#"Say "hi" \ done"#),
+            Some(WifiJoinError::WrongKey(_))
+        ));
+        assert!(classify(events.iter().copied(), "Say hi").is_none());
+    }
+
+    #[test]
+    fn the_encoding_round_trips_the_control_characters() {
+        assert_eq!(decode_printf(r"a\tb\nc\rd\ee"), b"a\tb\nc\rd\x1be");
+        assert_eq!(decode_printf(r"tail\"), b"tail\\");
+        assert_eq!(decode_printf(r"\xzz"), b"\\xzz");
     }
 
     #[test]
