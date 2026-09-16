@@ -554,7 +554,9 @@ export const UpgradeService: GenService<{
         output: typeof UpgradeProgressSchema;
     };
     /**
-     * Allows en/disabling of AutoUpgrade feature
+     * Enables or disables automatic upgrades.
+     * On boser_managed platforms the preference is persisted,
+     * but local automatic upgrades remain disabled.
      *
      * @generated from rpc braiins.bmc.web.UpgradeService.SetAutoUpgrade
      */
@@ -564,7 +566,8 @@ export const UpgradeService: GenService<{
         output: typeof EmptySchema;
     };
     /**
-     * Returns the current AutoUpgrade configuration and status
+     * Returns the persisted automatic-upgrade preference.
+     * On boser_managed platforms local automatic upgrades remain disabled.
      *
      * @generated from rpc braiins.bmc.web.UpgradeService.GetAutoUpgrade
      */

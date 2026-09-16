@@ -664,6 +664,7 @@ where
             state_service.clone(),
             scheduler.clone(),
             started,
+            hardware_capabilities,
             package_backend,
             Arc::new(UpgradeWidgetLifecycle::new(
                 widget_coordinator.clone(),

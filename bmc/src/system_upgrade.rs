@@ -28,6 +28,7 @@ use crate::compositor::{
     DownloadProgress, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
     UpgradePhase,
 };
+use bmc_platform::HardwareCapabilities;
 use bmc_scheduler::jobs::to_boxed;
 use bmc_scheduler::scheduler::{JobConfig, Schedule, Task};
 use bmc_scheduler::{Cron, JobScheduler};
@@ -777,6 +778,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     scheduler: JobScheduler,
     stagger: MaintenanceStagger,
     started: tokio::time::Instant,
+    hardware_capabilities: HardwareCapabilities,
     autoupgrade: Arc<AutoUpgrade>,
     autoupgrade_enabled: Arc<AtomicBool>,
     run_gate: Arc<Mutex<()>>,
@@ -801,6 +803,7 @@ where
             scheduler: self.scheduler.clone(),
             stagger: self.stagger,
             started: self.started,
+            hardware_capabilities: self.hardware_capabilities,
             autoupgrade: self.autoupgrade.clone(),
             autoupgrade_enabled: Arc::clone(&self.autoupgrade_enabled),
             run_gate: self.run_gate.clone(),
@@ -822,6 +825,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         state_service: StateService,
         scheduler: JobScheduler,
         started: tokio::time::Instant,
+        hardware_capabilities: HardwareCapabilities,
         package_backend: Arc<dyn PackageBackend>,
         widget_lifecycle: Arc<dyn WidgetLifecycle>,
         pending_install_path: PathBuf,
@@ -844,6 +848,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             scheduler,
             stagger,
             started,
+            hardware_capabilities,
             autoupgrade: Arc::new(autoupgrade),
             autoupgrade_enabled: Arc::new(AtomicBool::new(false)),
             run_gate: Arc::new(Mutex::new(())),
@@ -1161,6 +1166,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         if let Err(err) = self.apply_autoupgrade(enabled).await {
             error!(?err, "Failed to reschedule autoupgrade");
         }
+        if self.hardware_capabilities.boser_managed {
+            info!("Skipping local automatic-upgrade scheduling because Boser manages maintenance");
+            return;
+        }
 
         let self_clone = self.clone();
         let notifier = self.autoupgrade.notifier.clone();
@@ -1183,6 +1192,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     pub(crate) async fn gc_init(&self, gc_config_path: PathBuf) {
+        if self.hardware_capabilities.boser_managed {
+            info!("Skipping local Nix garbage collection because Boser manages maintenance");
+            return;
+        }
         let gc = Arc::new(periodic_gc::PeriodicGc::new(
             self.started,
             Arc::clone(&self.run_gate),
@@ -1264,6 +1277,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     pub async fn apply_autoupgrade(&self, enabled: bool) -> anyhow::Result<()> {
+        let enabled = enabled && !self.hardware_capabilities.boser_managed;
         // Flip the run-side gate before touching the scheduler: a tick firing
         // between this store and the cancellation below already sees the new
         // state instead of racing it.
@@ -1300,7 +1314,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     /// Queue an enabled automatic check through the runtime trigger loop,
     /// bypassing the scheduled task's boot floor.
     pub(crate) fn autoupgrade_check_now(&self) {
-        self.autoupgrade.notifier.notify_one();
+        if !self.hardware_capabilities.boser_managed {
+            self.autoupgrade.notifier.notify_one();
+        }
     }
 }
 
@@ -2847,7 +2863,7 @@ mod tests {
     mod service {
         use super::*;
         use crate::test_support::StubManager;
-        use bmc_platform::BosPlatform;
+        use bmc_platform::{BosPlatform, HardwareProfile, Product};
         use bmc_shared_time::time::Timezone;
         use bmc_upgrade::firmware::{FirmwareDownloadError, UpgradeMetadata};
         use bmc_upgrade::packages::{
@@ -2857,6 +2873,10 @@ mod tests {
         use tokio::sync::watch;
 
         const UNREACHABLE: &str = "BUG: a gated auto-upgrade must not reach the service's stubs";
+
+        fn capabilities(product: Product) -> HardwareCapabilities {
+            HardwareProfile::for_product(product).capabilities()
+        }
 
         #[derive(Debug)]
         struct StubIndex;
@@ -2949,12 +2969,37 @@ mod tests {
             SystemUpgradeService<StubIndex, StubManager>,
             watch::Sender<Timezone>,
         ) {
-            discovery_service(StubIndex, Arc::new(StubBackend(None))).await
+            stub_service_with_capabilities(capabilities(Product::Bmc100)).await
+        }
+
+        async fn stub_service_with_capabilities(
+            hardware_capabilities: HardwareCapabilities,
+        ) -> (
+            SystemUpgradeService<StubIndex, StubManager>,
+            watch::Sender<Timezone>,
+        ) {
+            discovery_service_with_capabilities(
+                StubIndex,
+                Arc::new(StubBackend(None)),
+                hardware_capabilities,
+            )
+            .await
         }
 
         async fn discovery_service<T: FirmwareIndex>(
             index: T,
             backend: Arc<dyn PackageBackend>,
+        ) -> (
+            SystemUpgradeService<T, StubManager>,
+            watch::Sender<Timezone>,
+        ) {
+            discovery_service_with_capabilities(index, backend, capabilities(Product::Bmc100)).await
+        }
+
+        async fn discovery_service_with_capabilities<T: FirmwareIndex>(
+            index: T,
+            backend: Arc<dyn PackageBackend>,
+            hardware_capabilities: HardwareCapabilities,
         ) -> (
             SystemUpgradeService<T, StubManager>,
             watch::Sender<Timezone>,
@@ -2968,6 +3013,7 @@ mod tests {
                 StateService::new(),
                 scheduler,
                 tokio::time::Instant::now(),
+                hardware_capabilities,
                 backend,
                 Arc::new(StubLifecycle),
                 PathBuf::from("/nonexistent/pending-install"),
