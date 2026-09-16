@@ -34,6 +34,7 @@
 //! ```
 
 use bmc_wasm_sdk::types::Speed;
+use bmc_wasm_sdk::typography::DEGREE;
 #[expect(
     clippy::wildcard_imports,
     reason = "widget render uses many SDK exports"
@@ -196,11 +197,5 @@ fn format_coords(lat: f64, lon: f64) -> String {
     let lon_dir = if lon >= 0.0 { "E" } else { "W" };
     let lat_str = format_number!(lat.abs(), 1);
     let lon_str = format_number!(lon.abs(), 1);
-    fmt!(
-        "{}\u{00b0}{}, {}\u{00b0}{}",
-        lat_str,
-        lat_dir,
-        lon_str,
-        lon_dir
-    )
+    fmt!("{lat_str}{DEGREE}{lat_dir}, {lon_str}{DEGREE}{lon_dir}")
 }

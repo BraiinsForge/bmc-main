@@ -209,7 +209,7 @@ fn ip_mac_tile(ip: &str, mac: Option<&str>) -> Node {
         label_row("IP/MAC", &icons::STAT_NETWORK),
         col(
             props!(gap: 8.0, cross_align: CrossAlign::Center),
-            [line(ip), line(mac.unwrap_or("\u{2014}"))],
+            [line(ip), line(mac.unwrap_or(UNAVAILABLE))],
         ),
     ])
 }

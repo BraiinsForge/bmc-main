@@ -21,6 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::number_format::NumberFormat;
+use crate::typography::DEGREE;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum TemperatureUnit {
@@ -59,9 +60,9 @@ impl TemperatureUnit {
     ) -> String {
         let num = number_format.format_number(self.convert(celsius), precision);
         if show_unit {
-            format!("{num} \u{00b0}{}", self.scale())
+            format!("{num} {DEGREE}{}", self.scale())
         } else {
-            format!("{num}\u{00b0}")
+            format!("{num}{DEGREE}")
         }
     }
 }
@@ -73,19 +74,19 @@ mod tests {
     #[test]
     fn celsius_keeps_the_value_and_scale() {
         let f = TemperatureUnit::Celsius.format(NumberFormat::SpaceGroupDotDecimal, 20.0, 0, true);
-        assert_eq!(f, "20 \u{00b0}C");
+        assert_eq!(f, format!("20 {DEGREE}C"));
     }
 
     #[test]
     fn fahrenheit_converts_from_celsius() {
         let f =
             TemperatureUnit::Fahrenheit.format(NumberFormat::SpaceGroupDotDecimal, 20.0, 0, true);
-        assert_eq!(f, "68 \u{00b0}F");
+        assert_eq!(f, format!("68 {DEGREE}F"));
     }
 
     #[test]
     fn bare_mode_drops_the_scale_letter_and_space() {
         let f = TemperatureUnit::Celsius.format(NumberFormat::SpaceGroupDotDecimal, 26.0, 0, false);
-        assert_eq!(f, "26\u{00b0}");
+        assert_eq!(f, format!("26{DEGREE}"));
     }
 }

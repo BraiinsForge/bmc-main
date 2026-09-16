@@ -20,6 +20,7 @@
 
 //! Launch data model and nexus payload parsing.
 
+use bmc_wasm_sdk::typography::TIMES;
 #[expect(clippy::wildcard_imports, reason = "widget code uses many SDK exports")]
 use bmc_wasm_sdk::*;
 
@@ -143,7 +144,7 @@ pub fn format_booster(flights: i64) -> String {
     if flights <= 1 {
         "Flight #1".into()
     } else {
-        fmt!("{}\u{00d7} flown", flights)
+        fmt!("{flights}{TIMES} flown")
     }
 }
 
@@ -169,6 +170,6 @@ mod tests {
     fn booster_reads_first_flight_then_flown_count() {
         assert_eq!(format_booster(1), "Flight #1");
         assert_eq!(format_booster(0), "Flight #1");
-        assert_eq!(format_booster(3), "3\u{00d7} flown");
+        assert_eq!(format_booster(3), format!("3{TIMES} flown"));
     }
 }

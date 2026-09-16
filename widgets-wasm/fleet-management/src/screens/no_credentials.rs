@@ -27,6 +27,8 @@
 )]
 use bmc_wasm_sdk::*;
 
+use bmc_wasm_sdk::typography::{LDQUO, RDQUO};
+
 use crate::screens::parts::{
     BACK_CHIP, FRAME_H, FRAME_W, LABEL, LABEL_FONT, LINK, PAD, ROW_FONT, TITLE_FONT,
 };
@@ -88,7 +90,7 @@ fn network_hint(ssid: &str, url: &str) -> Node {
         props!(gap: 6.0, cross_align: CrossAlign::Center),
         [
             text(
-                fmt!("On the network \u{201c}{ssid}\u{201d}"),
+                fmt!("On the network {LDQUO}{ssid}{RDQUO}"),
                 style!(size: ROW_FONT, color: LABEL),
             ),
             text(url, style!(size: ROW_FONT, color: LINK)),

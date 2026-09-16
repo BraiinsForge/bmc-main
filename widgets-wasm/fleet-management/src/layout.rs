@@ -18,6 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::typography::ELLIPSIS;
+
 /// Truncate to `max_chars` characters, ending in `…` when cut. The render
 /// engine has no text ellipsis, so overlong labels must be cut in code to
 /// keep table rows from wrapping.
@@ -27,7 +29,7 @@ pub fn truncate_label(label: &str, max_chars: usize) -> String {
         return label.to_owned();
     }
     let mut out: String = label.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push('\u{2026}');
+    out.push_str(ELLIPSIS);
     out
 }
 
@@ -44,7 +46,7 @@ mod tests {
     #[test]
     fn long_labels_cut_to_the_budget_with_an_ellipsis() {
         let cut = truncate_label("Bitaxe Gamma 601", 12);
-        assert_eq!(cut, "Bitaxe Gamm\u{2026}");
+        assert_eq!(cut, format!("Bitaxe Gamm{ELLIPSIS}"));
         assert_eq!(cut.chars().count(), 12);
     }
 }

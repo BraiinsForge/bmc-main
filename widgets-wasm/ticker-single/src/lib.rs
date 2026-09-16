@@ -350,6 +350,7 @@ mod wasm_glue {
     };
     use std::cell::{Cell, RefCell};
 
+    use bmc_wasm_sdk::typography::EMDASH;
     #[expect(clippy::wildcard_imports, reason = "widget glue uses many SDK exports")]
     use bmc_wasm_sdk::*;
     use prices::candle;
@@ -598,7 +599,7 @@ mod wasm_glue {
                 }
                 State::NoData => {
                     let message = if MARKET_OPEN.with(Cell::get) == Some(false) {
-                        fmt!("{symbol} \u{2014} market closed")
+                        fmt!("{symbol} {EMDASH} market closed")
                     } else {
                         fmt!("No data for this period")
                     };

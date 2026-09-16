@@ -140,6 +140,8 @@ pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmc_wasm_sdk::typography::NBSP;
+
     use crate::fixtures::{PriceMove, Reported, miner, public};
 
     fn texts(node: &Node) -> Vec<String> {
@@ -176,7 +178,7 @@ mod tests {
                 "Miner Info - Info Overload",
                 "Bitcoin (24h)",
                 "-4,80%",
-                "$ 101\u{a0}754"
+                format!("$ 101{NBSP}754").as_str()
             ]
         );
         for label in [

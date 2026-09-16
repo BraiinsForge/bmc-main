@@ -240,6 +240,8 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::typography::ELLIPSIS;
+
     use super::{FontWeight, POSITION, columns, truncate};
 
     use crate::model::SizeBucket;
@@ -314,7 +316,10 @@ mod tests {
     #[test]
     fn a_name_longer_than_its_column_is_cut_to_it() {
         assert_eq!(truncate("Lando Norris", 34), "Lando Norris");
-        assert_eq!(truncate("Andrea Kimi Antonelli", 10), "Andrea Ki\u{2026}");
+        assert_eq!(
+            truncate("Andrea Kimi Antonelli", 10),
+            format!("Andrea Ki{ELLIPSIS}")
+        );
     }
 
     /// Cutting is the guard against an upstream that renames a driver,

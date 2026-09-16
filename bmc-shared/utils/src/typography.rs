@@ -1,4 +1,3 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
 // Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -19,9 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-pub mod asset;
-pub mod number_format;
-pub mod process_supervisor;
-pub mod temperature;
-pub mod typography;
-pub mod unit_system;
+//! The typographic characters the host's formatting emits, by name rather than by escape.
+//! `bmc_wasm_sdk::typography` names the same ones for widgets, which cannot reach this crate on wasm32.
+
+pub const NBSP: &str = "\u{a0}";
+pub const DEGREE: &str = "\u{b0}";

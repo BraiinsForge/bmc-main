@@ -28,6 +28,7 @@
 //! Every fragment takes its geometry from parameters; which variant a
 //! frame gets is the layouts' decision.
 
+use bmc_wasm_sdk::typography::{ELLIPSIS, LDQUO, RDQUO};
 #[cfg_attr(
     not(test),
     expect(
@@ -113,7 +114,7 @@ pub fn header_left(account: Option<&str>) -> Node {
     if let Some(account) = account {
         let run = if account.chars().count() > ACCOUNT_MAX_CHARS {
             let head: String = account.chars().take(ACCOUNT_MAX_CHARS).collect();
-            fmt!("({head}\u{2026})")
+            fmt!("({head}{ELLIPSIS})")
         } else {
             fmt!("({account})")
         };
@@ -748,7 +749,7 @@ pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> No
     if !compact && !hint.ssid.is_empty() {
         rendered += if narrow { BIND_NETWORK_LINES } else { 1.0 };
         lines.push(text(
-            fmt!("On the network \u{201c}{}\u{201d}", hint.ssid),
+            fmt!("On the network {LDQUO}{}{RDQUO}", hint.ssid),
             style!(size: font::BODY, color: color::TEXT_MUTED, align: text_align, line_height: BIND_LINE_HEIGHT),
         ));
     }
@@ -874,13 +875,15 @@ pub fn denied_body(bucket: SizeBucket) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::typography::NBSP;
+
     use super::*;
 
     #[test]
     fn a_count_the_column_seats_keeps_every_digit() {
         assert_eq!(worker_count(0), "0");
-        assert_eq!(worker_count(1_628), "1\u{a0}628");
-        assert_eq!(worker_count(9_999), "9\u{a0}999");
+        assert_eq!(worker_count(1_628), format!("1{NBSP}628"));
+        assert_eq!(worker_count(9_999), format!("9{NBSP}999"));
     }
 
     /// Past the column's widest whole number the count takes `k` form,

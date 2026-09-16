@@ -397,6 +397,7 @@ pub mod ssdp;
 pub mod text;
 pub mod tree;
 pub mod types;
+pub mod typography;
 pub mod tz;
 #[cfg(target_arch = "wasm32")]
 pub mod udp_broadcast;

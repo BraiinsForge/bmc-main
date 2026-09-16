@@ -1,4 +1,3 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
 // Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -19,9 +18,21 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-pub mod asset;
-pub mod number_format;
-pub mod process_supervisor;
-pub mod temperature;
-pub mod typography;
-pub mod unit_system;
+//! The typographic characters a widget sets, by name rather than by escape.
+//!
+//! `NBSP` and `DEGREE` double as what the host's number and temperature
+//! formatting emit, which `bmc_shared_utils::typography` names on its side.
+//! One definition cannot serve both: the SDK takes shared-utils on native
+//! targets only, so formato never lands in a widget binary.
+
+pub const NBSP: &str = "\u{a0}";
+pub const ENDASH: &str = "\u{2013}";
+pub const EMDASH: &str = "\u{2014}";
+pub const ELLIPSIS: &str = "\u{2026}";
+pub const LDQUO: &str = "\u{201c}";
+pub const RDQUO: &str = "\u{201d}";
+pub const TIMES: &str = "\u{d7}";
+pub const DEGREE: &str = "\u{b0}";
+pub const PRIME: &str = "\u{2032}";
+pub const DOUBLE_PRIME: &str = "\u{2033}";
+pub const BITCOIN: &str = "\u{20bf}";

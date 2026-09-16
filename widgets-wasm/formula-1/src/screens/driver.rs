@@ -371,6 +371,8 @@ pub fn driver_view(view: &DriverViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::typography::ELLIPSIS;
+
     use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, name_line, parts, parts::space};
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
@@ -420,7 +422,7 @@ mod tests {
             }
             let overrun = "x".repeat(chars + 1);
             assert!(
-                parts::truncate(&overrun, chars).ends_with('\u{2026}'),
+                parts::truncate(&overrun, chars).ends_with(ELLIPSIS),
                 "{bucket:?} must still cut what overruns its {chars}",
             );
         }

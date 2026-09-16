@@ -402,7 +402,7 @@ fn tire_cell(row_data: &TimingRow) -> Node {
 
 fn sector_cell(sector: Option<Sector>, size: u32) -> Node {
     let Some(sector) = sector else {
-        return value("\u{2014}", size, color::TEXT_MUTED);
+        return value(typography::EMDASH, size, color::TEXT_MUTED);
     };
     let tone = match sector.color {
         SectorColor::Normal => live_color::SECTOR_WHITE,

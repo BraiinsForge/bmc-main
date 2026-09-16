@@ -21,6 +21,7 @@
 //! Host-pure per-row data model and the company-name truncation. No SDK draw
 //! types, so it all unit-tests on the host.
 
+use bmc_wasm_sdk::typography::ELLIPSIS;
 use prices::candle::Candles;
 use prices::fetch::PriceMiss;
 
@@ -109,7 +110,7 @@ pub fn truncate_name(name: &str, max_chars: usize) -> String {
     }
     let keep = max_chars.saturating_sub(1);
     let mut out: String = name.chars().take(keep).collect();
-    out.push('\u{2026}');
+    out.push_str(ELLIPSIS);
     out
 }
 
@@ -252,7 +253,7 @@ mod tests {
         assert_eq!(truncate_name("Apple Inc.", 20), "Apple Inc.");
         assert_eq!(
             truncate_name("Advanced Micro Devices, Inc.", 18),
-            "Advanced Micro De\u{2026}"
+            format!("Advanced Micro De{ELLIPSIS}")
         );
         assert_eq!(truncate_name("", 5), "");
     }

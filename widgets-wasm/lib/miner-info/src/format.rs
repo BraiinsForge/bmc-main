@@ -330,6 +330,7 @@ pub(crate) fn uptime(value: Availability<Duration>) -> Rendered {
 mod tests {
     use super::*;
     use bmc_wasm_sdk::types::Temperature;
+    use bmc_wasm_sdk::typography::NBSP;
 
     #[test]
     fn formats_temperature_range_like_boser() {
@@ -388,7 +389,7 @@ mod tests {
         let usd = Money::new(104_250.4, crate::model::Currency::Usd);
         assert_eq!(
             money(Availability::Available(usd), 0).value,
-            "$ 104\u{a0}250"
+            format!("$ 104{NBSP}250")
         );
     }
 
@@ -398,7 +399,7 @@ mod tests {
         assert_eq!(money_symbol(Availability::Available(usd)), Some("$"));
         assert_eq!(
             money_amount(Availability::Available(usd), 0),
-            "104\u{a0}250"
+            format!("104{NBSP}250")
         );
         assert_eq!(money_symbol(Availability::Unavailable), None);
         assert_eq!(money_amount(Availability::Unavailable, 0), "N/A");
@@ -420,7 +421,7 @@ mod tests {
     fn unavailable_public_integer_reads_not_available() {
         assert_eq!(
             public_integer(Availability::Available(870_123)).value,
-            "870\u{a0}123"
+            format!("870{NBSP}123")
         );
         assert_eq!(public_integer(Availability::Unavailable).value, "N/A");
     }

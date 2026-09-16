@@ -57,7 +57,7 @@ pub const LABEL_FONT: u32 = 20;
 pub const METRIC_ICON: f32 = 20.0;
 /// Shown in a metric slot the device has no reading for
 /// — never a zero, which reads as a real measurement.
-pub const UNAVAILABLE: &str = "\u{2014}";
+pub const UNAVAILABLE: &str = typography::EMDASH;
 
 /// A quantity's `format_si_parts` value and unit, or the marker and no unit when
 /// the reading is absent — the one place the value/unit split renders "no data".

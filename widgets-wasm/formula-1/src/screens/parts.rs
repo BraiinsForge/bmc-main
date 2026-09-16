@@ -31,6 +31,7 @@
 use bmc_wasm_sdk::*;
 
 use bmc_wasm_sdk::system::{self, DateFormat, TimeFormat};
+use bmc_wasm_sdk::typography::{ELLIPSIS, ENDASH};
 
 use crate::images::{self, ImageKind};
 use crate::model::{ImageUrl, SizeBucket};
@@ -278,7 +279,7 @@ pub fn truncate(label: &str, max_chars: usize) -> String {
         return label.to_owned();
     }
     let mut out: String = label.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push('\u{2026}');
+    out.push_str(ELLIPSIS);
     out
 }
 
@@ -343,7 +344,7 @@ pub fn date_range(start: CalendarDate, end: Option<CalendarDate>) -> String {
     } else {
         fmt!("{}", start.day)
     };
-    fmt!("{} \u{2013} {}", opening, day_and_month(end, month_first))
+    fmt!("{} {ENDASH} {}", opening, day_and_month(end, month_first))
 }
 
 /// The largest box of `bitmap`'s own proportions that fits inside
@@ -478,7 +479,7 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
 mod tests {
     use bmc_wasm_sdk::{Node, assets, cache, encode_image_meta};
 
-    use super::{CalendarDate, DateFormat, clock, contained, date_range, flag, system};
+    use super::{CalendarDate, DateFormat, ENDASH, clock, contained, date_range, flag, system};
     use crate::images::{ImageKind, tag_for};
     use crate::model::ImageUrl;
     use crate::screens::fixtures::{weekend_day, weekend_time};
@@ -558,7 +559,7 @@ mod tests {
     fn a_weekend_spanning_days_names_its_month_once() {
         dates(DateFormat::DdMmYyyyDot);
         let range = date_range(weekend_day(21), Some(weekend_day(23)));
-        assert_eq!(range, "21 \u{2013} 23 Aug");
+        assert_eq!(range, format!("21 {ENDASH} 23 Aug"));
     }
 
     #[test]
@@ -575,15 +576,18 @@ mod tests {
         dates(DateFormat::DdMmYyyyDot);
         assert_eq!(
             date_range(across.0, across.1),
-            "30 Oct \u{2013} 1 Nov",
+            format!("30 Oct {ENDASH} 1 Nov"),
             "dropping the opening month reads as two days of November",
         );
 
         dates(DateFormat::MDYyyySlash);
-        assert_eq!(date_range(across.0, across.1), "Oct 30 \u{2013} Nov 1");
+        assert_eq!(
+            date_range(across.0, across.1),
+            format!("Oct 30 {ENDASH} Nov 1")
+        );
         assert_eq!(
             date_range(weekend_day(21), Some(weekend_day(23))),
-            "Aug 21 \u{2013} Aug 23",
+            format!("Aug 21 {ENDASH} Aug 23"),
             "month-first names the month on both ends within one month too",
         );
     }

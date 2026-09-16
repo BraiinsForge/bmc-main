@@ -21,6 +21,8 @@
 use formato::{FormatOptions, Formato};
 use serde::{Deserialize, Serialize};
 
+use crate::typography::NBSP;
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum NumberFormat {
     #[default]
@@ -35,10 +37,10 @@ impl NumberFormat {
     pub fn format_number<T: Formato>(self, number: T, precision: usize) -> String {
         // A non-breaking space groups thousands so a number never wraps mid-value in the UI.
         let (group_sep, decimal_sep) = match self {
-            NumberFormat::SpaceGroupCommaDecimal => ("\u{00a0}", ","),
+            NumberFormat::SpaceGroupCommaDecimal => (NBSP, ","),
             NumberFormat::CommaGroupDotDecimal => (",", "."),
             NumberFormat::DotGroupCommaDecimal => (".", ","),
-            NumberFormat::SpaceGroupDotDecimal => ("\u{00a0}", "."),
+            NumberFormat::SpaceGroupDotDecimal => (NBSP, "."),
         };
 
         let options = FormatOptions::new()
@@ -64,7 +66,7 @@ mod tests {
         let number = 1234567.89;
         let format = NumberFormat::SpaceGroupCommaDecimal;
         let result = format.format_number(number, 2);
-        assert_eq!(result, "1\u{00a0}234\u{00a0}567,89");
+        assert_eq!(result, format!("1{NBSP}234{NBSP}567,89"));
     }
 
     #[test]
@@ -88,7 +90,7 @@ mod tests {
         let number = 1234567.89;
         let format = NumberFormat::SpaceGroupDotDecimal;
         let result = format.format_number(number, 3);
-        assert_eq!(result, "1\u{00a0}234\u{00a0}567.890");
+        assert_eq!(result, format!("1{NBSP}234{NBSP}567.890"));
 
         let number = 0_u64;
         let format = NumberFormat::SpaceGroupDotDecimal;
@@ -98,12 +100,12 @@ mod tests {
         let number = 1234567_u64;
         let format = NumberFormat::SpaceGroupDotDecimal;
         let result = format.format_number(number, 0);
-        assert_eq!(result, "1\u{00a0}234\u{00a0}567");
+        assert_eq!(result, format!("1{NBSP}234{NBSP}567"));
 
         let number = 1234567_f64;
         let format = NumberFormat::SpaceGroupDotDecimal;
         let result = format.format_number(number, 1);
-        assert_eq!(result, "1\u{00a0}234\u{00a0}567.0");
+        assert_eq!(result, format!("1{NBSP}234{NBSP}567.0"));
     }
 
     #[test]

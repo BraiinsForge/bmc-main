@@ -996,6 +996,8 @@ fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<
 
 #[cfg(test)]
 mod temperature_format_tests {
+    use bmc_shared_utils::typography::DEGREE;
+
     use super::*;
 
     #[test]
@@ -1007,7 +1009,7 @@ mod temperature_format_tests {
             1,
             true,
         );
-        assert_eq!(s, "20,5 \u{00b0}C");
+        assert_eq!(s, format!("20,5 {DEGREE}C"));
     }
 
     #[test]
@@ -1019,7 +1021,7 @@ mod temperature_format_tests {
             0,
             true,
         );
-        assert_eq!(s, "68 \u{00b0}F");
+        assert_eq!(s, format!("68 {DEGREE}F"));
     }
 
     #[test]
@@ -1038,8 +1040,8 @@ mod temperature_format_tests {
             0,
             false,
         );
-        assert_eq!(celsius, "20\u{00b0}");
-        assert_eq!(fahrenheit, "68\u{00b0}");
+        assert_eq!(celsius, format!("20{DEGREE}"));
+        assert_eq!(fahrenheit, format!("68{DEGREE}"));
     }
 }
 

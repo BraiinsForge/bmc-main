@@ -30,6 +30,7 @@
 use crate::fmt;
 use crate::system::UnitSystem;
 use crate::types::SiPrefix;
+use crate::typography::{BITCOIN, DOUBLE_PRIME, PRIME};
 
 // ── Unit-conversion factors ──────────────────────────────────────────
 
@@ -108,7 +109,7 @@ impl Length {
         }
         let (feet, inches) = feet_and_inches(centimeters);
         fmt!(
-            "{}\u{2032}{}\u{2033}",
+            "{}{PRIME}{}{DOUBLE_PRIME}",
             crate::format::_host_format_number(feet, 0),
             crate::format::_host_format_number(inches, 0)
         )
@@ -470,7 +471,7 @@ impl BitcoinAmount {
 
     /// The currency sign leading a [`Self::format_with_sign`] rendering,
     /// the way a fiat amount wears one.
-    pub const SIGN: &'static str = "\u{20bf}";
+    pub const SIGN: &'static str = BITCOIN;
 
     /// Decimals every rendering carries.
     /// A satoshi is bitcoin's atomic unit, so a coarser rendering
@@ -645,7 +646,7 @@ mod tests {
     fn an_amount_wears_either_its_unit_or_its_sign() {
         let amount = BitcoinAmount::from_bitcoin(0.000_17);
         assert_eq!(amount.format(), "0,00017000 BTC");
-        assert_eq!(amount.format_with_sign(), "\u{20bf}0,00017000");
+        assert_eq!(amount.format_with_sign(), format!("{BITCOIN}0,00017000"));
     }
 
     /// The minus belongs ahead of the currency sign, as it does on fiat.
@@ -653,11 +654,11 @@ mod tests {
     fn a_negative_amount_leads_with_its_minus() {
         assert_eq!(
             BitcoinAmount::from_bitcoin(-0.5).format_with_sign(),
-            "-\u{20bf}0,50000000"
+            format!("-{BITCOIN}0,50000000")
         );
         assert_eq!(
             BitcoinAmount::from_bitcoin(-0.0).format_with_sign(),
-            "\u{20bf}0,00000000",
+            format!("{BITCOIN}0,00000000"),
             "a negative zero is still zero"
         );
     }
@@ -706,7 +707,7 @@ mod tests {
         );
         assert_eq!(
             Length::from_centimeters(182.0).format_short(0),
-            "6\u{2032}0\u{2033}"
+            format!("6{PRIME}0{DOUBLE_PRIME}")
         );
         assert_eq!(Mass::from_kilograms(70.0).format(0), "154 lbs");
 
