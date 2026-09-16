@@ -383,66 +383,14 @@ mod tests {
     use std::sync::Arc;
 
     use axum::body::Body as AxumBody;
-    use axum_extra::extract::cookie::Cookie;
-    use bmc_scheduler::JobScheduler;
-    use bmc_shared_time::time::Timezone;
     use http::header::CONTENT_TYPE;
-    use tempfile::TempDir;
     use tonic::Code;
     use tower::ServiceExt as _;
 
-    use crate::alarm::{AlarmBus, AlarmController};
-    use crate::config::ConfigHandle;
-    use crate::session;
-    use crate::sound::SoundController;
+    use crate::alarm::{AlarmController, tests::supported_alarm_controller};
+    use crate::test_support::StubSessionManager;
 
     use super::{AuthInterceptor, GrpcLoggingLayer, Routes, add_alarm_service};
-
-    const UNREACHABLE: &str = "BUG: alarm route registration must not use the session stub";
-
-    #[derive(Debug, Clone)]
-    struct StubSession;
-
-    impl session::Handle for StubSession {
-        fn is_valid(&self) -> bool {
-            unimplemented!("{UNREACHABLE}")
-        }
-
-        fn id(&self) -> String {
-            unimplemented!("{UNREACHABLE}")
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct StubSessionManager;
-
-    #[async_trait::async_trait]
-    impl session::Manager for StubSessionManager {
-        type Error = std::io::Error;
-        type Session = StubSession;
-
-        const SESSION_TIMEOUT: u32 = 0;
-
-        async fn login(&self, _password: &str) -> Result<Cookie<'static>, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-
-        async fn logout(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-
-        async fn logout_all_related(&self, _session: Self::Session) -> Result<(), Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-
-        async fn extend(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-
-        async fn find(&self, _cookies: &[Cookie<'_>]) -> Result<Self::Session, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-    }
 
     fn alarm_routes(alarm_controller: Option<AlarmController>) -> Routes {
         add_alarm_service(
@@ -462,31 +410,6 @@ mod tests {
             .header(CONTENT_TYPE, "application/grpc-web+proto")
             .body(AxumBody::empty())
             .expect("BUG: build alarm route request")
-    }
-
-    async fn test_alarm_controller() -> (TempDir, AlarmController) {
-        let temp = tempfile::tempdir().expect("BUG: create alarm route test directory");
-        let config_path = temp.path().join("bmc-config.json");
-        let (config_handle, _) =
-            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
-        let config_handle = Arc::new(tokio::sync::RwLock::new(config_handle));
-        let (_timezone_sender, timezone_receiver) =
-            tokio::sync::watch::channel(Timezone::default());
-        let scheduler = JobScheduler::init(
-            timezone_receiver.clone(),
-            Some(temp.path().join("scheduler-crontab")),
-        )
-        .await;
-        let controller = AlarmController::init(
-            config_handle.clone(),
-            scheduler,
-            SoundController::new(config_handle, temp.path().join("sounds")),
-            AlarmBus::new(),
-            timezone_receiver,
-        )
-        .await;
-
-        (temp, controller)
     }
 
     #[tokio::test]
@@ -519,7 +442,8 @@ mod tests {
 
     #[tokio::test]
     async fn registered_alarm_service_is_wrapped_with_authentication() {
-        let (_temp, alarm_controller) = test_alarm_controller().await;
+        let (_temp, _timezone_sender, alarm_controller) =
+            supported_alarm_controller(bmc_platform::Product::Bmc100).await;
         let response = alarm_routes(Some(alarm_controller))
             .oneshot(alarm_request("GetAlarmInfo"))
             .await

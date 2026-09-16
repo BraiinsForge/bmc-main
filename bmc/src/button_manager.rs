@@ -268,8 +268,7 @@ mod tests {
     use crate::bootloader_config::BootloaderConfig;
     use crate::compositor::testing::RecordingCompositor;
     use crate::manager::{UpgradeError, UpgradeMarker};
-    use crate::session;
-    use axum_extra::extract::cookie::Cookie;
+    use crate::test_support::StubSessionManager;
     use bmc_button::ButtonEventStream;
     use bmc_platform::{BosPlatform, BosVersion, HardwareProfile, Product};
     use bmc_shared_time::time::Timezone;
@@ -304,44 +303,6 @@ mod tests {
                     pulled.fetch_add(1, Ordering::SeqCst);
                 }),
             ))
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct StubSession;
-
-    impl session::Handle for StubSession {
-        fn is_valid(&self) -> bool {
-            unimplemented!("{UNREACHABLE}")
-        }
-        fn id(&self) -> String {
-            unimplemented!("{UNREACHABLE}")
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct StubSessionManager;
-
-    #[async_trait::async_trait]
-    impl session::Manager for StubSessionManager {
-        type Error = std::io::Error;
-        type Session = StubSession;
-        const SESSION_TIMEOUT: u32 = 0;
-
-        async fn login(&self, _password: &str) -> Result<Cookie<'static>, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-        async fn logout(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-        async fn logout_all_related(&self, _session: Self::Session) -> Result<(), Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-        async fn extend(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
-        }
-        async fn find(&self, _cookies: &[Cookie<'_>]) -> Result<Self::Session, Self::Error> {
-            unimplemented!("{UNREACHABLE}")
         }
     }
 
