@@ -367,6 +367,9 @@ export enum SnoozeDuration {
 export const SnoozeDurationSchema: GenEnum<SnoozeDuration> = /*@__PURE__*/ enumDesc(file_web_alarm, 1);
 
 /**
+ * Registered only on platforms with alarm output support.
+ * Unsupported platforms return UNIMPLEMENTED for this service.
+ *
  * @generated from service braiins.bmc.web.AlarmService
  */
 export const AlarmService: GenService<{

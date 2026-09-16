@@ -68,7 +68,7 @@ pub(crate) struct WebService<
     led_coordinator: LedCoordinatorHandle,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
-    alarm_controller: AlarmController,
+    alarm_controller: Option<AlarmController>,
     hardware_capabilities: HardwareCapabilities,
 }
 
@@ -95,7 +95,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         led_coordinator: LedCoordinatorHandle,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
-        alarm_controller: AlarmController,
+        alarm_controller: Option<AlarmController>,
         hardware_capabilities: HardwareCapabilities,
     ) -> Self {
         Self {

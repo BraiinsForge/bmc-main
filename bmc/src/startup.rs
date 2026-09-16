@@ -915,7 +915,7 @@ where
             self.led_coordinator,
             self.system_manager,
             self.sound_controller,
-            self.alarm_controller,
+            Some(self.alarm_controller),
             self.hardware_capabilities,
         )
         .run(self.listener)

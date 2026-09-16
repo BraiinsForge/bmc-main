@@ -101,6 +101,8 @@ message SetAlarmEnabledRequest {
   bool enabled = 2;
 }
 
+// Registered only on platforms with alarm output support.
+// Unsupported platforms return UNIMPLEMENTED for this service.
 service AlarmService {
   rpc GetAlarmInfo(google.protobuf.Empty) returns (AlarmInfoResponse);
   rpc ListAlarms(google.protobuf.Empty) returns (ListAlarmsResponse);

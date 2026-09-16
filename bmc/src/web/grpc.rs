@@ -97,6 +97,29 @@ impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
     }
 }
 
+fn add_alarm_service<S: SessionManager>(
+    routes: Routes,
+    alarm_controller: Option<AlarmController>,
+    logging_layer: &GrpcLoggingLayer,
+    auth_interceptor: &AuthInterceptor<S>,
+) -> Routes {
+    let Some(alarm_controller) = alarm_controller else {
+        return routes;
+    };
+    let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
+        alarm::AlarmService::new(alarm_controller),
+    );
+
+    routes.add_service(
+        tower::ServiceBuilder::new()
+            .layer(logging_layer.clone())
+            .service(
+                GrpcWebLayer::new()
+                    .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
+            ),
+    )
+}
+
 pub(crate) struct GrpcWeb<
     T: BmcManager,
     S: SessionManager,
@@ -115,7 +138,7 @@ pub(crate) struct GrpcWeb<
     led_coordinator: LedCoordinatorHandle,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
-    alarm_controller: AlarmController,
+    alarm_controller: Option<AlarmController>,
     hardware_capabilities: HardwareCapabilities,
 }
 
@@ -136,7 +159,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         led_coordinator: LedCoordinatorHandle,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
-        alarm_controller: AlarmController,
+        alarm_controller: Option<AlarmController>,
         hardware_capabilities: HardwareCapabilities,
     ) -> Self {
         Self {
@@ -236,10 +259,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 credential_management::CredentialManagementService,
             );
 
-        let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
-            alarm::AlarmService::new(self.alarm_controller),
-        );
-
         let led_test_service = web::led_test_service_server::LedTestServiceServer::new(
             led_test::LedTestService::new(self.led_controller),
         );
@@ -248,7 +267,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services
         // All services requiring authentication have to be wrapped in GrpcWebLayer and use "InterceptorFor"
-        Routes::new(GrpcWebLayer::new().layer(reflection_service))
+        let routes = Routes::new(GrpcWebLayer::new().layer(reflection_service))
             .add_service(
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())
@@ -324,18 +343,18 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                         network_service,
                         auth_interceptor.clone(),
                     ))),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(
-                        GrpcWebLayer::new()
-                            .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
-                    ),
-            )
-            .add_service(tower::ServiceBuilder::new().layer(logging_layer).service(
-                GrpcWebLayer::new().layer(InterceptorFor::new(led_test_service, auth_interceptor)),
-            ))
+            );
+
+        let routes = add_alarm_service(
+            routes,
+            self.alarm_controller,
+            &logging_layer,
+            &auth_interceptor,
+        );
+
+        routes.add_service(tower::ServiceBuilder::new().layer(logging_layer).service(
+            GrpcWebLayer::new().layer(InterceptorFor::new(led_test_service, auth_interceptor)),
+        ))
     }
 }
 
@@ -356,5 +375,162 @@ impl Display for GrpcError {
             "{}",
             self.get_serializations().first().unwrap_or(&"unknown")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::body::Body as AxumBody;
+    use axum_extra::extract::cookie::Cookie;
+    use bmc_scheduler::JobScheduler;
+    use bmc_shared_time::time::Timezone;
+    use http::header::CONTENT_TYPE;
+    use tempfile::TempDir;
+    use tonic::Code;
+    use tower::ServiceExt as _;
+
+    use crate::alarm::{AlarmBus, AlarmController};
+    use crate::config::ConfigHandle;
+    use crate::session;
+    use crate::sound::SoundController;
+
+    use super::{AuthInterceptor, GrpcLoggingLayer, Routes, add_alarm_service};
+
+    const UNREACHABLE: &str = "BUG: alarm route registration must not use the session stub";
+
+    #[derive(Debug, Clone)]
+    struct StubSession;
+
+    impl session::Handle for StubSession {
+        fn is_valid(&self) -> bool {
+            unimplemented!("{UNREACHABLE}")
+        }
+
+        fn id(&self) -> String {
+            unimplemented!("{UNREACHABLE}")
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct StubSessionManager;
+
+    #[async_trait::async_trait]
+    impl session::Manager for StubSessionManager {
+        type Error = std::io::Error;
+        type Session = StubSession;
+
+        const SESSION_TIMEOUT: u32 = 0;
+
+        async fn login(&self, _password: &str) -> Result<Cookie<'static>, Self::Error> {
+            unimplemented!("{UNREACHABLE}")
+        }
+
+        async fn logout(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
+            unimplemented!("{UNREACHABLE}")
+        }
+
+        async fn logout_all_related(&self, _session: Self::Session) -> Result<(), Self::Error> {
+            unimplemented!("{UNREACHABLE}")
+        }
+
+        async fn extend(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
+            unimplemented!("{UNREACHABLE}")
+        }
+
+        async fn find(&self, _cookies: &[Cookie<'_>]) -> Result<Self::Session, Self::Error> {
+            unimplemented!("{UNREACHABLE}")
+        }
+    }
+
+    fn alarm_routes(alarm_controller: Option<AlarmController>) -> Routes {
+        add_alarm_service(
+            Routes::default(),
+            alarm_controller,
+            &GrpcLoggingLayer::new(),
+            &AuthInterceptor {
+                session_manager: Arc::new(StubSessionManager),
+            },
+        )
+    }
+
+    fn alarm_request(method: &str) -> http::Request<AxumBody> {
+        http::Request::builder()
+            .method(http::Method::POST)
+            .uri(format!("/braiins.bmc.web.AlarmService/{method}"))
+            .header(CONTENT_TYPE, "application/grpc-web+proto")
+            .body(AxumBody::empty())
+            .expect("BUG: build alarm route request")
+    }
+
+    async fn test_alarm_controller() -> (TempDir, AlarmController) {
+        let temp = tempfile::tempdir().expect("BUG: create alarm route test directory");
+        let config_path = temp.path().join("bmc-config.json");
+        let (config_handle, _) =
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
+        let config_handle = Arc::new(tokio::sync::RwLock::new(config_handle));
+        let (_timezone_sender, timezone_receiver) =
+            tokio::sync::watch::channel(Timezone::default());
+        let scheduler = JobScheduler::init(
+            timezone_receiver.clone(),
+            Some(temp.path().join("scheduler-crontab")),
+        )
+        .await;
+        let controller = AlarmController::init(
+            config_handle.clone(),
+            scheduler,
+            SoundController::new(config_handle, temp.path().join("sounds")),
+            AlarmBus::new(),
+            timezone_receiver,
+        )
+        .await;
+
+        (temp, controller)
+    }
+
+    #[tokio::test]
+    async fn unregistered_alarm_service_methods_are_unimplemented() {
+        let methods = [
+            "GetAlarmInfo",
+            "ListAlarms",
+            "AddAlarm",
+            "SetAlarm",
+            "DeleteAlarm",
+            "SetAlarmEnabled",
+        ];
+
+        for method in methods {
+            let response = alarm_routes(None)
+                .oneshot(alarm_request(method))
+                .await
+                .expect("BUG: tonic routes are infallible");
+
+            assert_eq!(
+                response
+                    .headers()
+                    .get("grpc-status")
+                    .expect("BUG: unregistered gRPC route returns grpc-status"),
+                &(Code::Unimplemented as i32).to_string(),
+                "{method}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn registered_alarm_service_is_wrapped_with_authentication() {
+        let (_temp, alarm_controller) = test_alarm_controller().await;
+        let response = alarm_routes(Some(alarm_controller))
+            .oneshot(alarm_request("GetAlarmInfo"))
+            .await
+            .expect("BUG: tonic routes are infallible");
+
+        assert_eq!(
+            response
+                .headers()
+                .get("grpc-status")
+                .expect("BUG: authenticated gRPC route returns grpc-status"),
+            &(Code::Unauthenticated as i32).to_string()
+        );
     }
 }
