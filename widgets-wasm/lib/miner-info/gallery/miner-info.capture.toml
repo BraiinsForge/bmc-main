@@ -1,7 +1,12 @@
-# The BMM101 faces: Mining with and without board readings, and Info Overload
-# across the three price moves. `capture.json` lands beside the shots for a
-# loop to read; where they land is the recipe's to say — `just
-# gallery::capture` passes an `--out` under the repo's scratch dir.
+# The BMM101 faces: Mining with and without board readings,
+# Geek with and without the network, Info Overload across
+# the three price moves.
+#
+# `capture.json` lands beside the shots for a loop to read;
+# where they land is the recipe's to say.
+#
+# `just gallery::capture` passes an `--out`
+# under the repo's scratch dir.
 size = "1280x720"
 sheet = "sheet.png"
 report = "capture.json"
@@ -27,6 +32,24 @@ frames = 4
 [shot.knobs]
 Data = "Without board readings"
 Face = "Mining"
+
+[[shot]]
+name = "geek-bmm101-network-reporting"
+scene = "bmc_gallery::miner_info::Bmm101"
+frames = 4
+
+[shot.knobs]
+Data = "Populated"
+Face = "Geek"
+
+[[shot]]
+name = "geek-bmm101-network-down"
+scene = "bmc_gallery::miner_info::Bmm101"
+frames = 4
+
+[shot.knobs]
+Data = "Unavailable"
+Face = "Geek"
 
 [[shot]]
 name = "overload-bmm101-price-up"

@@ -69,6 +69,7 @@ panel the hashrate sits inside a gauge ring coloured by how the miner tracks its
 
 A miner detail screen pairing hashrate, temperature, power, uptime and IP address with the current BTC price. Miner and
 price are fetched independently, so either can fail without blanking the other. Carries the same round gauge as Mining.
+On the BMM101 it shows the network alone and reads no miner.
 
 ### [Miner Info — Info Overload Widget](miner-info-overload.md)
 

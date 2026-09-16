@@ -180,7 +180,7 @@ fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
         let panel = rectangular_panel(BMM101_VIEWPORT);
         match face {
             Face::Mining => face::mining(panel, &data),
-            Face::Geek => face::geek(panel, &data, &market),
+            Face::Geek => face::bmm101::geek(&market),
             Face::InfoOverload => face::bmm101::info_overload(&data, &market),
         }
     });

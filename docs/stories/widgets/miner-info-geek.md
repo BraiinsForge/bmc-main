@@ -46,6 +46,17 @@ Add the widget once per miner to watch several at a time.
 - When the hashrate or its target is unavailable the ring stays gray and unlit, and the hashrate label reads neutral
   rather than implying a state.
 
+### See the network on the Mini Miner
+
+> As a user with a BMM101, I want the Geek screen to show the network on its own 480×320 screen.
+
+- On the BMM101 the screen is the network alone: network hashrate, block height, epoch progress, the previous and
+  estimated difficulty adjustment, fees over the last 144 blocks, and hashvalue, one line each, spread over the height.
+- Epoch progress adds the time to the retarget (*in ~ 2 days*).
+- Difficulty adjustments sit in a tinted pill, green up and red down; `N/A` stays plain.
+- Fees read as the per-block average and the share (*~ 0,055 BTC | 12,1%*).
+- No miner is read there: the miner parameters do nothing and only the network can fail.
+
 ### Keep reading whichever source still answers
 
 > As a user, I want a failure on one side to leave the other side readable so a dead miner does not cost me the price,

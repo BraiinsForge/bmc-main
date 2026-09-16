@@ -439,7 +439,7 @@ fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
         spec.value.value.clone(),
         style!(size: CLUSTER_VALUE_SIZE, weight: FontWeight::SEMIBOLD, color: VALUE),
     ));
-    if let Some(unit) = spec.value.unit.filter(|_| show_affixes) {
+    if let Some(unit) = spec.value.unit.as_deref().filter(|_| show_affixes) {
         parts.push(text(
             unit,
             style!(size: CLUSTER_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE),

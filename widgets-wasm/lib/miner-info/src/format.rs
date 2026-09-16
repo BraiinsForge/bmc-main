@@ -19,8 +19,11 @@
 // the grant above.
 
 use core::time::Duration;
+use std::borrow::Cow;
 
-use bmc_wasm_sdk::types::{ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio};
+use bmc_wasm_sdk::types::{
+    BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio,
+};
 
 use crate::model::{Availability, Money, TemperatureRange};
 
@@ -33,10 +36,11 @@ pub(crate) fn unavailable() -> String {
 
 /// A value and the unit it reads in, kept apart
 /// so a face can size the two differently.
+/// The unit is owned only where an SI prefix picked it at render time.
 #[derive(Debug)]
 pub struct Rendered {
     pub value: String,
-    pub unit: Option<&'static str>,
+    pub unit: Option<Cow<'static, str>>,
 }
 
 impl From<String> for Rendered {
@@ -145,7 +149,7 @@ pub(crate) fn fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -> Rende
             out.push_str(&group(value.abs(), decimals));
             Rendered {
                 value: out,
-                unit: Some(Q::UNIT),
+                unit: Some(Q::UNIT.into()),
             }
         }
         // A number has nothing to say about why it is missing;
@@ -183,7 +187,7 @@ pub(crate) fn approx_fixed<Q: Measured>(value: Availability<Q>, decimals: u32) -
             out.push_str(&fixed(value, decimals).value);
             Rendered {
                 value: out,
-                unit: Some(Q::UNIT),
+                unit: Some(Q::UNIT.into()),
             }
         }
         Availability::Unavailable | Availability::Failed => unavailable().into(),
@@ -200,7 +204,7 @@ pub(crate) fn signed_percent<Q: Measured>(value: Availability<Q>, decimals: u32)
             out.push_str(&group(value.abs(), decimals));
             Rendered {
                 value: out,
-                unit: Some(Q::UNIT),
+                unit: Some(Q::UNIT.into()),
             }
         }
         Availability::Unavailable | Availability::Failed => unavailable().into(),
@@ -227,7 +231,7 @@ pub(crate) fn temperature(value: Availability<TemperatureRange>) -> Rendered {
             push_fixed_abs(&mut out, value.chip.as_celsius(), 0);
             Rendered {
                 value: out,
-                unit: Some(UNIT_CELSIUS),
+                unit: Some(UNIT_CELSIUS.into()),
             }
         }
         Availability::Unavailable | Availability::Failed => unavailable().into(),
@@ -242,7 +246,7 @@ pub(crate) fn chip_temperature(value: Availability<TemperatureRange>) -> Rendere
             push_fixed_abs(&mut out, value.chip.as_celsius(), 0);
             Rendered {
                 value: out,
-                unit: Some(UNIT_CELSIUS),
+                unit: Some(UNIT_CELSIUS.into()),
             }
         }
         Availability::Unavailable | Availability::Failed => unavailable().into(),
@@ -326,10 +330,81 @@ pub(crate) fn uptime(value: Availability<Duration>) -> Rendered {
     out.into()
 }
 
+/// Significant digits of a network-wide hashrate, `650 EH/s` or `1.04 ZH/s`.
+const NETWORK_HASHRATE_SIG_FIGS: u32 = 3;
+
+/// SI-prefixed: the unit is picked per value, not fixed by the type.
+#[must_use]
+pub(crate) fn network_hashrate(value: Availability<Hashrate>) -> Rendered {
+    match value {
+        Availability::Available(rate) => {
+            let (value, unit) = rate.format_si_parts(NETWORK_HASHRATE_SIG_FIGS);
+            Rendered {
+                value,
+                unit: Some(unit.into()),
+            }
+        }
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
+    }
+}
+
+/// An average is an estimate, so it drops the satoshi precision an amount keeps.
+const FEE_AMOUNT_DECIMALS: u32 = 3;
+
+/// `~ 0.055 BTC | 12.1%`, or whichever half is known.
+#[must_use]
+pub(crate) fn fees(amount: Availability<BitcoinAmount>, share: Availability<Ratio>) -> Rendered {
+    let mut parts: Vec<String> = Vec::with_capacity(2);
+    if let Availability::Available(amount) = amount {
+        let mut part = String::from("~ ");
+        part.push_str(&group(amount.as_bitcoin(), FEE_AMOUNT_DECIMALS));
+        part.push(' ');
+        part.push_str(BitcoinAmount::UNIT);
+        parts.push(part);
+    }
+    if let Availability::Available(share) = share {
+        let mut part = group(share.as_percent(), 1);
+        part.push_str(Ratio::UNIT);
+        parts.push(part);
+    }
+    if parts.is_empty() {
+        return unavailable().into();
+    }
+    parts.join(" | ").into()
+}
+
+const SECS_PER_MINUTE: u64 = 60;
+const SECS_PER_HOUR: u64 = 60 * SECS_PER_MINUTE;
+const SECS_PER_DAY: u64 = 24 * SECS_PER_HOUR;
+
+/// How far off the retarget is, `in ~ 3 days`,
+/// in the coarsest unit that still rounds to at least one.
+/// Rounding comes before the unit, so 23 h 50 min reads as a day, not 24 hours.
+#[must_use]
+pub(crate) fn epoch_eta(remaining: Duration) -> String {
+    let secs = remaining.as_secs();
+    let rounded = |unit: u64| secs.saturating_add(unit / 2) / unit;
+    let (count, unit) = [
+        (rounded(SECS_PER_DAY), "day"),
+        (rounded(SECS_PER_HOUR), "hour"),
+        (rounded(SECS_PER_MINUTE), "minute"),
+    ]
+    .into_iter()
+    .find(|(count, _)| *count >= 1)
+    .unwrap_or((1, "minute"));
+    let plural = if count == 1 { "" } else { "s" };
+    let mut out = String::from("in ~ ");
+    push_int(&mut out, count);
+    out.push(' ');
+    out.push_str(unit);
+    out.push_str(plural);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_wasm_sdk::types::Temperature;
+    use bmc_wasm_sdk::types::{SiPrefix, Temperature};
     use bmc_wasm_sdk::typography::NBSP;
 
     #[test]
@@ -432,6 +507,71 @@ mod tests {
             board: Temperature::from_celsius(61.0),
             chip: Temperature::from_celsius(74.0),
         };
-        assert_eq!(temperature(Availability::Available(range)).unit, Some("°C"));
+        assert_eq!(
+            temperature(Availability::Available(range)).unit.as_deref(),
+            Some("°C")
+        );
+    }
+
+    #[test]
+    fn network_hashrate_picks_its_prefix_per_value() {
+        let exa = network_hashrate(Availability::Available(Hashrate::from_si(
+            650.0,
+            SiPrefix::Exa,
+        )));
+        assert_eq!(
+            (exa.value.as_str(), exa.unit.as_deref()),
+            ("650", Some("EH/s"))
+        );
+        let zetta = network_hashrate(Availability::Available(Hashrate::from_si(
+            1_036.15,
+            SiPrefix::Exa,
+        )));
+        assert_eq!(
+            (zetta.value.as_str(), zetta.unit.as_deref()),
+            ("1,04", Some("ZH/s"))
+        );
+        assert_eq!(network_hashrate(Availability::Unavailable).value, "N/A");
+    }
+
+    #[test]
+    fn fees_read_as_amount_and_share_or_whichever_is_known() {
+        let amount = Availability::Available(BitcoinAmount::from_bitcoin(0.055));
+        let share = Availability::Available(Ratio::from_percent(12.1));
+        assert_eq!(fees(amount, share).value, "~ 0,055 BTC | 12,1%");
+        assert_eq!(fees(amount, Availability::Unavailable).value, "~ 0,055 BTC");
+        assert_eq!(fees(Availability::Unavailable, share).value, "12,1%");
+        assert_eq!(
+            fees(Availability::Unavailable, Availability::Unavailable).value,
+            "N/A"
+        );
+    }
+
+    #[test]
+    fn epoch_eta_rounds_to_the_coarsest_unit_that_still_counts_one() {
+        let eta = |secs| epoch_eta(Duration::from_secs(secs));
+        assert_eq!(eta(262 * 600), "in ~ 2 days");
+        assert_eq!(eta(SECS_PER_DAY + SECS_PER_HOUR), "in ~ 1 day");
+        assert_eq!(
+            eta(5 * SECS_PER_HOUR + 40 * SECS_PER_MINUTE),
+            "in ~ 6 hours"
+        );
+        assert_eq!(eta(SECS_PER_HOUR), "in ~ 1 hour");
+        assert_eq!(eta(20 * SECS_PER_MINUTE), "in ~ 20 minutes");
+        assert_eq!(eta(0), "in ~ 1 minute");
+    }
+
+    /// A value within half a unit of the next one rounds into it
+    /// rather than reading as 24 hours or 60 minutes.
+    #[test]
+    fn epoch_eta_promotes_what_rounds_past_a_unit() {
+        let eta = |secs| epoch_eta(Duration::from_secs(secs));
+        assert_eq!(eta(23 * SECS_PER_HOUR + 50 * SECS_PER_MINUTE), "in ~ 1 day");
+        assert_eq!(eta(59 * SECS_PER_MINUTE + 40), "in ~ 1 hour");
+        assert_eq!(
+            eta(11 * SECS_PER_HOUR + 59 * SECS_PER_MINUTE),
+            "in ~ 12 hours"
+        );
+        assert_eq!(eta(29 * SECS_PER_MINUTE + 59), "in ~ 30 minutes");
     }
 }

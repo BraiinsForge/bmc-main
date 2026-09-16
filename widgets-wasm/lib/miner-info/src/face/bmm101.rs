@@ -27,20 +27,23 @@
 )]
 use bmc_wasm_sdk::*;
 
+use bmc_wasm_sdk::types::Ratio;
+
 use super::{
-    BACKGROUND, TITLE, block, change_color, fixed_height, icons, info_overload_bottom_row,
-    info_overload_difficulty_row, info_overload_primary_row, price_chart, space_between_rows,
-    with_horizontal_padding,
+    BACKGROUND, TITLE, VALUE, block, change_color, fixed_height, fixed_width, icons,
+    info_overload_bottom_row, info_overload_difficulty_row, info_overload_primary_row, price_chart,
+    space_between_rows, text_line, unit_visible, value_with_unit, with_horizontal_padding,
 };
 use crate::format;
 use crate::layout::{self, Panel};
-use crate::model::{MinerData, PublicData};
+use crate::model::{Availability, MinerData, PublicData};
 
 const EDGE: f32 = 16.0;
 const TITLE_ICON_SIZE: f32 = 16.0;
 const TITLE_GAP: f32 = 8.0;
 const TITLE_SIZE: u32 = 14;
 const TITLE_TO_BAND: f32 = 12.0;
+const TITLE_TO_ROWS: f32 = 16.0;
 const BAND_TO_RULE: f32 = 8.0;
 const RULE: f32 = 1.0;
 const RULE_COLOR: Color = GRAY_90;
@@ -49,6 +52,15 @@ const CHART_WIDTH: f32 = 120.0;
 const CHART_HEIGHT: f32 = 44.0;
 const PRICE_SIZE: u32 = 32;
 const PRICE_SYMBOL_SIZE: u32 = 20;
+
+const ETA_GAP: f32 = 16.0;
+const ADJUSTMENT_DECIMALS: u32 = 1;
+const TAG_PADDING: f32 = 2.0;
+// The frame pads the tag 4 px across and 2 px down; `padding` is one number.
+const TAG_INSET: f32 = 2.0;
+const TAG_RADIUS: f32 = 4.0;
+// Tint over black, as the ticker badges do, rather than the frame's own fills.
+const TAG_BACKGROUND_ALPHA: f32 = 0.15;
 
 fn title_row(icon: &Svg, label: &str) -> Node {
     row(
@@ -137,6 +149,117 @@ pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     )
 }
 
+fn label(name: &'static str, sizes: layout::TextSizes) -> Node {
+    text(
+        name,
+        style!(size: sizes.title, weight: FontWeight::SEMIBOLD, color: TITLE, flex: 1.0),
+    )
+}
+
+// The retarget ETA in the label's voice, the progress in the value's.
+// An unknown ETA is left out, so the line reads one `N/A`, not two.
+fn epoch_line(public: &PublicData, sizes: layout::TextSizes) -> Node {
+    let mut parts = vec![label("Epoch Progress", sizes)];
+    if let Availability::Available(remaining) = public.epoch_remaining {
+        parts.push(text(
+            format::epoch_eta(remaining),
+            style!(size: sizes.value, weight: FontWeight::REGULAR, color: TITLE),
+        ));
+        parts.push(fixed_width(ETA_GAP));
+    }
+    parts.push(value_with_unit(
+        format::fixed(public.epoch_progress, 0),
+        sizes,
+        TextAlign::Right,
+        VALUE,
+        FontWeight::REGULAR,
+    ));
+    row(props!(cross_align: CrossAlign::Center), parts)
+}
+
+// A signed change in a tinted pill; a placeholder stays plain, like an affix.
+fn adjustment_line(
+    name: &'static str,
+    change: Availability<Ratio>,
+    sizes: layout::TextSizes,
+) -> Node {
+    let rendered = format::signed_percent_unit(change, ADJUSTMENT_DECIMALS);
+    let known = unit_visible(&rendered);
+    let color = change_color(change);
+    let value = text(
+        rendered,
+        style!(size: sizes.value, weight: FontWeight::BOLD, color: color),
+    );
+    let trailing = if known {
+        row(
+            props!(
+                background: color.with_alpha(TAG_BACKGROUND_ALPHA),
+                border_radius: TAG_RADIUS,
+                padding: TAG_PADDING
+            ),
+            [fixed_width(TAG_INSET), value, fixed_width(TAG_INSET)],
+        )
+    } else {
+        value
+    };
+    row(
+        props!(cross_align: CrossAlign::Center),
+        [label(name, sizes), trailing],
+    )
+}
+
+#[must_use]
+pub fn geek(public: &PublicData) -> Node {
+    let sizes = layout::mining_layout(Panel::Bmm101).text;
+    let lines = [
+        text_line(
+            "Network HR",
+            format::network_hashrate(public.network_hashrate),
+            sizes,
+        ),
+        text_line(
+            "Block Height",
+            format::public_integer(public.block_height),
+            sizes,
+        ),
+        epoch_line(public, sizes),
+        adjustment_line("Diff. Adjustment", public.prev_diff_adjust, sizes),
+        adjustment_line("Est. Diff. Adjustment", public.est_diff_adjust, sizes),
+        text_line(
+            "Fees (144 Blocks)",
+            format::fees(public.avg_fees_per_block, public.avg_fee_share),
+            sizes,
+        ),
+        text_line(
+            "Hashvalue",
+            format::fixed_strip_zero_fraction(public.hashvalue, 2),
+            sizes,
+        ),
+    ];
+
+    // Lines and rules spread over the height, the frame's `justify-between`.
+    let mut rows = Vec::with_capacity(lines.len() * 4);
+    for (index, line) in lines.into_iter().enumerate() {
+        if index > 0 {
+            rows.push(spacer(1.0));
+            rows.push(with_horizontal_padding(rule(), EDGE));
+            rows.push(spacer(1.0));
+        }
+        rows.push(with_horizontal_padding(line, EDGE));
+    }
+
+    col(
+        props!(background: BACKGROUND),
+        [
+            fixed_height(EDGE),
+            with_horizontal_padding(title_row(&icons::GEEK, "Miner Info - Geek"), EDGE),
+            fixed_height(TITLE_TO_ROWS),
+            col(props!(flex: 1.0), rows),
+            fixed_height(EDGE),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +317,71 @@ mod tests {
         ] {
             assert!(texts.contains(&label.to_owned()), "{label}: {texts:?}");
         }
+    }
+
+    /// The frame: the title, then the seven network figures in order.
+    #[test]
+    fn the_geek_face_lists_the_network_top_down() {
+        assets::init_test_registrars();
+        let texts = texts(&geek(&public(Reported::All, PriceMove::Up)));
+        assert_eq!(
+            texts,
+            [
+                "Miner Info - Geek",
+                "Network HR",
+                "650  EH/s",
+                "Block Height",
+                format!("880{NBSP}123").as_str(),
+                "Epoch Progress",
+                "in ~ 2 days",
+                "87  %",
+                "Diff. Adjustment",
+                "-2,1%",
+                "Est. Diff. Adjustment",
+                "-4,5%",
+                "Fees (144 Blocks)",
+                "~ 0,055 BTC | 12,1%",
+                "Hashvalue",
+                "70  SAT/TH/Day",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unknown_network_reads_one_placeholder_per_line() {
+        assets::init_test_registrars();
+        let texts = texts(&geek(&public(Reported::Nothing, PriceMove::Up)));
+        let placeholders = texts.iter().filter(|text| *text == "N/A").count();
+        assert_eq!(
+            placeholders, 7,
+            "one N/A per line, the epoch ETA left out: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn a_known_adjustment_wears_a_pill_and_a_placeholder_does_not() {
+        let sizes = layout::mining_layout(Panel::Bmm101).text;
+        let known = adjustment_line(
+            "Diff. Adjustment",
+            Availability::Available(Ratio::from_percent(-4.5)),
+            sizes,
+        );
+        let Node::Row(_, children) = known else {
+            panic!("BUG: a line is a row");
+        };
+        assert!(
+            matches!(&children[1], Node::Row(props, _) if props.border_radius > 0.0),
+            "the value sits in a rounded pill"
+        );
+
+        let placeholder = adjustment_line("Diff. Adjustment", Availability::Unavailable, sizes);
+        let Node::Row(_, children) = placeholder else {
+            panic!("BUG: a line is a row");
+        };
+        assert!(
+            matches!(&children[1], Node::Paragraph { .. }),
+            "N/A stays plain text"
+        );
     }
 
     #[test]

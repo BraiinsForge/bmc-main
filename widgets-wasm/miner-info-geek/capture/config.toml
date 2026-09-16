@@ -14,10 +14,6 @@ target = "bmm100:full"
 path = "fixtures/bfm100-full-gauge.jsonl.gz"
 target = "bfm100:full"
 
-[fixtures.bmm101-full-miner-down]
-path = "fixtures/bmm101-full-miner-down.jsonl.gz"
-target = "bmm101:full"
-
 [fixtures.bmm101-full-public-down]
 path = "fixtures/bmm101-full-public-down.jsonl.gz"
 target = "bmm101:full"

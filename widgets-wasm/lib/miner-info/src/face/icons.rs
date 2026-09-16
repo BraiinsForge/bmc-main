@@ -25,4 +25,5 @@
 use bmc_wasm_sdk::{Svg, include_svg};
 
 pub const CHIP: Svg = include_svg!("assets/chip.svg");
+pub const GEEK: Svg = include_svg!("assets/geek.svg");
 pub const INFO_OVERLOAD: Svg = include_svg!("assets/info-overload.svg");

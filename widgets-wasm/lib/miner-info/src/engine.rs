@@ -116,24 +116,29 @@ type Reads = fn(View, Panel) -> bool;
 mod reads {
     use super::{Panel, View};
 
-    pub(super) fn details(view: View, _: Panel) -> bool {
-        matches!(view, View::Geek | View::InfoOverload)
+    // On BMM101 the Geek face is the network alone: no miner poll, no login.
+    fn geek_miner_face(view: View, panel: Panel) -> bool {
+        view == View::Geek && panel != Panel::Bmm101
     }
 
-    pub(super) fn stats(_: View, _: Panel) -> bool {
-        true
+    pub(super) fn details(view: View, panel: Panel) -> bool {
+        view == View::InfoOverload || geek_miner_face(view, panel)
     }
 
-    pub(super) fn hashboards(view: View, _: Panel) -> bool {
-        matches!(view, View::Mining | View::Geek)
+    pub(super) fn stats(view: View, panel: Panel) -> bool {
+        matches!(view, View::Mining | View::InfoOverload) || geek_miner_face(view, panel)
+    }
+
+    pub(super) fn hashboards(view: View, panel: Panel) -> bool {
+        view == View::Mining || geek_miner_face(view, panel)
     }
 
     pub(super) fn cooling(view: View, _: Panel) -> bool {
         view == View::Mining
     }
 
-    pub(super) fn network(view: View, _: Panel) -> bool {
-        matches!(view, View::Mining | View::Geek)
+    pub(super) fn network(view: View, panel: Panel) -> bool {
+        view == View::Mining || geek_miner_face(view, panel)
     }
 
     // The tuner target anchors the ring, so only a gauge face reads it.
@@ -141,12 +146,12 @@ mod reads {
         matches!(view, View::Mining | View::Geek) && panel.draws_gauge()
     }
 
-    pub(super) fn price_stats(view: View, _: Panel) -> bool {
-        matches!(view, View::Geek | View::InfoOverload)
+    pub(super) fn price_stats(view: View, panel: Panel) -> bool {
+        view == View::InfoOverload || geek_miner_face(view, panel)
     }
 
-    pub(super) fn network_figures(view: View, _: Panel) -> bool {
-        view == View::InfoOverload
+    pub(super) fn network_figures(view: View, panel: Panel) -> bool {
+        view == View::InfoOverload || (view == View::Geek && panel == Panel::Bmm101)
     }
 
     pub(super) fn price_history(view: View, _: Panel) -> bool {
@@ -826,9 +831,10 @@ mod tests {
             (View::Mining, Panel::Round) => {
                 &["stats", "hashboards", "cooling", "network", "constraints"]
             }
-            (View::Geek, Panel::Small | Panel::Bmm101) => {
+            (View::Geek, Panel::Small) => {
                 &["details", "stats", "hashboards", "network", "price-stats"]
             }
+            (View::Geek, Panel::Bmm101) => &["network-figures"],
             (View::Geek, Panel::Round) => &[
                 "details",
                 "stats",

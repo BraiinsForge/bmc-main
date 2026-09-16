@@ -91,10 +91,9 @@ fn value_with_unit(
     if let Some(unit) = value.unit
         && show_unit
     {
-        spans.push(span(
-            bmc_wasm_sdk::fmt!("  {unit}"),
-            style!(size: sizes.unit, color: UNIT),
-        ));
+        let mut spaced = String::from("  ");
+        spaced.push_str(&unit);
+        spans.push(span(spaced, style!(size: sizes.unit, color: UNIT)));
     }
     paragraph(
         style!(size: sizes.value, weight: weight, color: value_color, align: align),
