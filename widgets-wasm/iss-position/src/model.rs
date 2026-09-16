@@ -51,6 +51,7 @@ pub struct Tle {
 
 /// One ISS snapshot from nexus: the reported position plus
 /// the orbital elements the widget propagates from between refreshes.
+#[derive(PartialEq)]
 pub struct IssData {
     pub latitude: f64,
     pub longitude: f64,

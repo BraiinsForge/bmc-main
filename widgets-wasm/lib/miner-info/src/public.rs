@@ -231,7 +231,15 @@ mod tests {
 
     #[test]
     fn the_query_carries_the_currency_code() {
-        assert!(price_stats_url(Currency::Usd).ends_with("currency=usd"));
+        for url in [price_stats_url, block_url, difficulty_url, hashrate_url] {
+            assert!(url(Currency::Usd).ends_with("currency=usd"));
+        }
+    }
+
+    /// The sparkline is normalised, so the history has no currency to carry.
+    #[test]
+    fn the_history_query_names_no_currency() {
+        assert!(!price_history_url(Currency::Usd).contains("currency"));
     }
 
     #[test]
@@ -421,6 +429,22 @@ mod tests {
             parse_price_history(&MapJson::default()).verdict,
             Verdict::Unusable
         );
+    }
+
+    #[test]
+    fn reset_block_and_reset_price_history_clear_only_their_own_fields() {
+        let mut data = PublicData {
+            block_height: Availability::Available(900_123),
+            btc_price_history: vec![101_000.0, 102_500.0],
+            hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(5.02)),
+            ..PublicData::default()
+        };
+        reset_block(&mut data);
+        assert_eq!(data.block_height, Availability::Unavailable);
+        assert_eq!(data.btc_price_history, [101_000.0, 102_500.0]);
+        reset_price_history(&mut data);
+        assert!(data.btc_price_history.is_empty());
+        assert!(matches!(data.hashvalue, Availability::Available(_)));
     }
 
     #[test]

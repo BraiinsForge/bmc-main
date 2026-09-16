@@ -315,6 +315,47 @@ mod tests {
         assert_eq!(parsed.data.chip_count, Some(108));
     }
 
+    /// The board reading and the hottest chip make one range,
+    /// and the real rate over the nominal one is the mining-mode ratio.
+    #[test]
+    fn reads_the_first_boards_temperatures_and_mining_ratio() {
+        let mut json = MapJson::default();
+        json.floats
+            .insert("/hashboards/0/board_temp/degree_c", 61.0);
+        json.floats
+            .insert("/hashboards/0/highest_chip_temp/temperature/degree_c", 74.0);
+        json.floats.insert(
+            "/hashboards/0/stats/nominal_hashrate/gigahash_per_second",
+            1_000.0,
+        );
+        json.floats.insert(
+            "/hashboards/0/stats/real_hashrate/last_1m/gigahash_per_second",
+            980.0,
+        );
+        let parsed = parse_hashboards(&json).data;
+        assert_eq!(
+            parsed.temperature,
+            Some(TemperatureRange {
+                board: Temperature::from_celsius(61.0),
+                chip: Temperature::from_celsius(74.0),
+            })
+        );
+        let Some(mcr) = parsed.mcr else {
+            panic!("BUG: both rates are present, so the ratio should be");
+        };
+        assert!((mcr.as_percent() - 98.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reads_the_first_networks_address() {
+        let mut json = MapJson::default();
+        json.strings.insert("/networks/0/address", "192.168.23.1");
+        assert_eq!(
+            parse_network(&json).data.ip_address.as_deref(),
+            Some("192.168.23.1")
+        );
+    }
+
     #[test]
     fn sums_chip_count_across_hashboards() {
         let mut json = MapJson::default();

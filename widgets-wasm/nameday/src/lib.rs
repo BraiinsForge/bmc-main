@@ -20,8 +20,10 @@
 
 //! Nameday widget, four sizes.
 
+#[cfg(target_arch = "wasm32")]
 mod icons;
 mod manifest_params;
+#[cfg(target_arch = "wasm32")]
 mod render;
 
 #[cfg(target_arch = "wasm32")]

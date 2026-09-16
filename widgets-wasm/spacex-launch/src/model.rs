@@ -25,6 +25,7 @@ use bmc_wasm_sdk::*;
 
 /// One upcoming-launch snapshot from nexus, flattened to the strings the
 /// panels render.
+#[cfg(target_arch = "wasm32")]
 pub struct LaunchData {
     pub mission_name: String,
     pub launch_unix: i64,

@@ -28,6 +28,7 @@
 //! upstream Launch Library 2 feed; the countdown is ticked locally from the
 //! device clock between refreshes.
 
+#[cfg(any(target_arch = "wasm32", test))]
 mod model;
 #[cfg(target_arch = "wasm32")]
 mod render;

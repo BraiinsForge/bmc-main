@@ -37,6 +37,8 @@
 //! Each widget hands it a config reader at `init`, and the `view` it returns
 //! picks that widget's endpoints.
 
+// The parsers feed `engine`, which only the device builds; the tests keep them honest.
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod api;
 pub mod engine;
 pub mod face;
@@ -44,4 +46,5 @@ pub mod format;
 pub mod layout;
 pub mod model;
 pub mod money;
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod public;

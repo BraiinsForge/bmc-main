@@ -32,11 +32,13 @@ pub use bmc_wasm_sdk::types::Availability;
 /// What a body reported for one endpoint: its whole field set, and the verdict
 /// on the body itself. Whole, so a reply replaces every reading its endpoint
 /// owns — a field the body dropped reads as absent, not as an older value.
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) struct ParseResult<T> {
     pub data: T,
     pub verdict: Verdict,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 impl<T> ParseResult<T> {
     /// Store the fields, unless the body was no answer
     /// — then the reading stands and goes stale.
@@ -50,12 +52,14 @@ impl<T> ParseResult<T> {
 
 /// Whether a 2xx body was the endpoint's answer. `Unusable` reaches the engine
 /// as a failed request would: the reading goes stale and the poll retries early.
+#[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Verdict {
     Answer,
     Unusable,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 impl Verdict {
     /// `Answer` when the body carried what the endpoint has to report.
     pub(crate) fn from_reported(reported: bool) -> Self {
@@ -131,5 +135,28 @@ mod tests {
         let data = MinerData::default();
         assert_eq!(data.hashrate, Availability::Unavailable);
         assert_eq!(data.temperature, Availability::Unavailable);
+    }
+
+    /// An unusable body leaves the reading as it was,
+    /// so it goes stale rather than reading as absent.
+    #[test]
+    fn only_an_answer_is_stored() {
+        let mut stored = None;
+        let answer = ParseResult {
+            data: 7,
+            verdict: Verdict::Answer,
+        };
+        assert_eq!(answer.stored(|data| stored = Some(data)), Verdict::Answer);
+        assert_eq!(stored, Some(7));
+
+        let unusable = ParseResult {
+            data: 9,
+            verdict: Verdict::Unusable,
+        };
+        assert_eq!(
+            unusable.stored(|data| stored = Some(data)),
+            Verdict::Unusable
+        );
+        assert_eq!(stored, Some(7));
     }
 }

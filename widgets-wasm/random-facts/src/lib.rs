@@ -20,6 +20,7 @@
 
 //! Random Facts widget, four sizes.
 
+#[cfg(target_arch = "wasm32")]
 mod render;
 
 #[cfg(target_arch = "wasm32")]

@@ -26,7 +26,9 @@
 //! position snapshot and the TLE; the live subpoint is propagated on-device
 //! via SGP4 between refreshes.
 
+#[cfg(any(target_arch = "wasm32", test))]
 mod model;
+#[cfg(any(target_arch = "wasm32", test))]
 mod orbit;
 #[cfg(any(target_arch = "wasm32", test))]
 mod orbit_cache;
@@ -247,8 +249,12 @@ mod tests {
 
     #[test]
     fn parsed_payload_is_stored() {
-        assert!(matches!(outcome(Some(sample()), false), Outcome::Store(_)));
-        assert!(matches!(outcome(Some(sample()), true), Outcome::Store(_)));
+        for has_data in [false, true] {
+            let Outcome::Store(data) = outcome(Some(sample()), has_data) else {
+                panic!("BUG: a parsed payload is stored whether or not one is held");
+            };
+            assert!(data == sample(), "stored as parsed");
+        }
     }
 
     #[test]
