@@ -77,7 +77,7 @@ export function renderFieldErrorsAsList(fieldErrors: Maybe<FieldErrors>): null |
 
 export function collectAllErrors(error: unknown | Error | ConnectError): null | string[] {
     const $ = parseFormErrors(error, []);
-    return $.global ?? null;
+    return $.global.length ? $.global : null;
 }
 
 export function collectAllErrorsAsFormattedList(error: unknown | Error | ConnectError): null | string {
