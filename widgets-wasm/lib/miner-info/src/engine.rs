@@ -126,10 +126,22 @@ type Reads = fn(View, Panel) -> bool;
 #[cfg(any(target_arch = "wasm32", test))]
 mod reads {
     use super::{Panel, View};
+    use crate::layout::{InfoOverloadFields, info_overload_fields};
 
-    // On BMM101 the Geek face is the network alone: no miner poll, no login.
+    // Only the round Geek face reads the miner; on a rectangle it is the
+    // network alone, so no miner poll and no login there.
     fn geek_miner_face(view: View, panel: Panel) -> bool {
-        view == View::Geek && panel != Panel::Bmm101
+        view == View::Geek && panel == Panel::Round
+    }
+
+    fn geek_network_list(view: View, panel: Panel) -> bool {
+        view == View::Geek && panel != Panel::Round
+    }
+
+    // An endpoint the grid hides on a panel is not read there: a failure
+    // on it would otherwise raise a banner over a face missing nothing.
+    fn overload_shows(view: View, panel: Panel, field: fn(InfoOverloadFields) -> bool) -> bool {
+        view == View::InfoOverload && field(info_overload_fields(panel))
     }
 
     pub(super) fn details(view: View, panel: Panel) -> bool {
@@ -164,12 +176,24 @@ mod reads {
             || (view == View::Mining && panel == Panel::Bmm101)
     }
 
-    pub(super) fn network_figures(view: View, panel: Panel) -> bool {
-        view == View::InfoOverload || (view == View::Geek && panel == Panel::Bmm101)
+    // Block height is on every Overload grid.
+    pub(super) fn block(view: View, panel: Panel) -> bool {
+        view == View::InfoOverload || geek_network_list(view, panel)
     }
 
-    pub(super) fn price_history(view: View, _: Panel) -> bool {
-        view == View::InfoOverload
+    pub(super) fn difficulty_stats(view: View, panel: Panel) -> bool {
+        overload_shows(view, panel, |fields| fields.show_difficulty_row)
+            || geek_network_list(view, panel)
+    }
+
+    pub(super) fn hashrate_stats(view: View, panel: Panel) -> bool {
+        overload_shows(view, panel, |fields| {
+            fields.show_hashvalue || fields.show_fee_percent
+        }) || geek_network_list(view, panel)
+    }
+
+    pub(super) fn price_history(view: View, panel: Panel) -> bool {
+        overload_shows(view, panel, |fields| fields.show_price_graph)
     }
 }
 
@@ -254,21 +278,21 @@ const PUBLIC_ENDPOINTS: [PublicEndpoint; 5] = [
         url: public_api::block_url,
         parse: public_block,
         reset: public_api::reset_block,
-        needed: reads::network_figures,
+        needed: reads::block,
         currency_dependent: false,
     },
     PublicEndpoint {
         url: public_api::difficulty_url,
         parse: public_difficulty,
         reset: public_api::reset_difficulty_stats,
-        needed: reads::network_figures,
+        needed: reads::difficulty_stats,
         currency_dependent: false,
     },
     PublicEndpoint {
         url: public_api::hashrate_url,
         parse: public_hashrate,
         reset: public_api::reset_hashrate_stats,
-        needed: reads::network_figures,
+        needed: reads::hashrate_stats,
         currency_dependent: true,
     },
     PublicEndpoint {
@@ -825,7 +849,7 @@ mod tests {
         );
     }
 
-    const ENDPOINTS: [(&str, Reads); 9] = [
+    const ENDPOINTS: [(&str, Reads); 11] = [
         ("details", reads::details),
         ("stats", reads::stats),
         ("hashboards", reads::hashboards),
@@ -833,7 +857,9 @@ mod tests {
         ("network", reads::network),
         ("constraints", reads::constraints),
         ("price-stats", reads::price_stats),
-        ("network-figures", reads::network_figures),
+        ("block", reads::block),
+        ("difficulty-stats", reads::difficulty_stats),
+        ("hashrate-stats", reads::hashrate_stats),
         ("price-history", reads::price_history),
     ];
 
@@ -851,10 +877,9 @@ mod tests {
             (View::Mining, Panel::Round) => {
                 &["stats", "hashboards", "cooling", "network", "constraints"]
             }
-            (View::Geek, Panel::Small) => {
-                &["details", "stats", "hashboards", "network", "price-stats"]
+            (View::Geek, Panel::Small | Panel::Bmm101) => {
+                &["block", "difficulty-stats", "hashrate-stats"]
             }
-            (View::Geek, Panel::Bmm101) => &["network-figures"],
             (View::Geek, Panel::Round) => &[
                 "details",
                 "stats",
@@ -863,11 +888,16 @@ mod tests {
                 "constraints",
                 "price-stats",
             ],
-            (View::InfoOverload, _) => &[
+            // The small grid shows block height but no difficulty row,
+            // hashvalue, fee share or sparkline, so it reads none of theirs.
+            (View::InfoOverload, Panel::Small) => &["details", "stats", "price-stats", "block"],
+            (View::InfoOverload, Panel::Bmm101 | Panel::Round) => &[
                 "details",
                 "stats",
                 "price-stats",
-                "network-figures",
+                "block",
+                "difficulty-stats",
+                "hashrate-stats",
                 "price-history",
             ],
         }

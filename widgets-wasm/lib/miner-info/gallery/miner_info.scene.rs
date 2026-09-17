@@ -22,6 +22,7 @@ use bmc_gallery::prelude::*;
 use miner_info::face;
 use miner_info::face::RenderSize;
 use miner_info::fixtures::{DEFAULT_TARGET_THS, PriceMove, Reported, miner, public};
+use miner_info::layout::Panel;
 
 scene_meta! { title: "Widgets / Miner Info" }
 
@@ -145,7 +146,7 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
                         let market = public(shown, price);
                         match face {
                             Face::Mining => face::mining(&data),
-                            Face::Geek => face::geek(&data, &market),
+                            Face::Geek => face::geek(Panel::Small, &market),
                             Face::InfoOverload => face::info_overload(&data, &market),
                         }
                     });
@@ -175,7 +176,7 @@ fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
         let market = public(shown, price);
         match face {
             Face::Mining => face::bmm101::mining(&data, &market, false),
-            Face::Geek => face::bmm101::geek(&market),
+            Face::Geek => face::geek(Panel::Bmm101, &market),
             Face::InfoOverload => face::bmm101::info_overload(&data, &market),
         }
     });

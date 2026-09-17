@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "name": "Miner Info",
   "subname": "Geek",
-  "description": "One miner's hashrate, temperature, power and uptime beside the BTC price",
-  "config_help": "Point this at one miner's BOS REST API.\n\nBraiins OS miners only — other firmware does not serve this API.\n\nThe BTC price comes from Braiins' public API, so that row needs internet access. The miner readings do not.\n\nAdd the widget once per miner to watch several at a time.",
+  "description": "The Bitcoin network's figures, from hashrate to hashvalue; on a round display one miner's gauge beside the BTC price",
+  "config_help": "The network figures come from Braiins' public API, so the widget needs internet access.\n\nOn a round display it shows one miner instead: point it at the miner's BOS REST API. Braiins OS miners only — other firmware does not serve this API. Add the widget once per miner to watch several at a time.",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"

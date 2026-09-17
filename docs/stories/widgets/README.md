@@ -68,9 +68,9 @@ ring as a disc, with the BTC price in a quadrant. Needs no internet, except for 
 
 ### [Miner Info — Geek Widget](miner-info-geek.md)
 
-A miner detail screen pairing hashrate, temperature, power, uptime and IP address with the current BTC price. Miner and
-price are fetched independently, so either can fail without blanking the other. Carries the same round gauge as Mining.
-On the BMM101 it shows the network alone and reads no miner.
+The Bitcoin network's figures on any rectangular screen, network hashrate through hashvalue, reading no miner. On the
+round panel it is one miner's gauge instead, with the BTC price in a quadrant; miner and price are fetched
+independently, so either can fail without blanking the other.
 
 ### [Miner Info — Info Overload Widget](miner-info-overload.md)
 

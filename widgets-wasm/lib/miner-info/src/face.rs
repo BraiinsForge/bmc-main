@@ -31,13 +31,24 @@ use crate::model::{Availability, MinerData, PublicData};
 use prices::chart;
 
 pub mod bmm101;
+mod geek;
 pub mod icons;
 pub mod round;
+
+pub use geek::geek;
 
 const TITLE: Color = GRAY_50;
 const UNIT: Color = GRAY_50;
 const VALUE: Color = WHITE;
 const BACKGROUND: Color = BLACK;
+
+// The title row and hairline the Figma frames open with.
+const EDGE: f32 = 16.0;
+const TITLE_ICON_SIZE: f32 = 16.0;
+const TITLE_GAP: f32 = 8.0;
+const TITLE_SIZE: u32 = 14;
+const RULE: f32 = 1.0;
+const RULE_COLOR: Color = GRAY_90;
 
 // BTC sparkline palette: green when the 1d series ends above where it started,
 // red otherwise. The area gradient fades from a tinted top down to fully transparent;
@@ -76,6 +87,26 @@ fn with_horizontal_padding(node: Node, padding: f32) -> Node {
 
 fn unit_visible(value: &str) -> bool {
     value != format::NOT_AVAILABLE
+}
+
+fn title_row(icon: &Svg, label: &str) -> Node {
+    row(
+        props!(cross_align: CrossAlign::Center, gap: TITLE_GAP),
+        [
+            canvas(
+                props!(width: TITLE_ICON_SIZE, height: TITLE_ICON_SIZE),
+                [Draw::svg_contain(icon, TITLE_ICON_SIZE, TRANSPARENT).with_anti_alias()],
+            ),
+            text(
+                label,
+                style!(size: TITLE_SIZE, weight: FontWeight::SEMIBOLD, color: TITLE),
+            ),
+        ],
+    )
+}
+
+fn rule() -> Node {
+    col(props!(height: RULE, background: RULE_COLOR), [])
 }
 
 // One paragraph, so the unit sits on the value's baseline.
@@ -155,28 +186,6 @@ pub fn mining(miner: &MinerData) -> Node {
                 .into(),
             sizes,
         ),
-    ])
-}
-
-#[must_use]
-pub fn geek(miner: &MinerData, public: &PublicData) -> Node {
-    let sizes = layout::mining_layout().text;
-    vertical_lines(vec![
-        text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
-        text_line("Temperature", format::temperature(miner.temperature), sizes),
-        text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
-        text_line("Miner Uptime", format::uptime(miner.uptime), sizes),
-        text_line(
-            "IP Address",
-            miner
-                .ip_address
-                .as_option()
-                .cloned()
-                .unwrap_or_else(format::unavailable)
-                .into(),
-            sizes,
-        ),
-        text_line("BTC Price", format::money(public.btc_price, 0), sizes),
     ])
 }
 
@@ -407,4 +416,30 @@ pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
             space_between_rows(rows, metrics),
         ],
     )
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use bmc_wasm_sdk::Node;
+
+    /// Every paragraph's text, top down.
+    pub(crate) fn texts(node: &Node) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_texts(node, &mut out);
+        out
+    }
+
+    fn collect_texts(node: &Node, out: &mut Vec<String>) {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                for child in children {
+                    collect_texts(child, out);
+                }
+            }
+            Node::Paragraph { spans, .. } => {
+                out.push(spans.iter().map(|span| span.text.as_str()).collect());
+            }
+            _ => {}
+        }
+    }
 }

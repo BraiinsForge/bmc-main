@@ -1,24 +1,25 @@
 # Miner Info — Geek Widget
 
-A miner detail screen that pairs one miner's readings with the Bitcoin price. Miner data comes from a BOS miner over its
-REST API; the price comes from the Braiins public API. The two sources are independent, so one can fail without blanking
-the other.
+The Bitcoin network's figures on a rectangular screen, and on a round one a miner's gauge beside the BTC price. The
+network figures and the price come from the Braiins public API; the miner from a BOS miner over its REST API. The two
+sources are independent, so one can fail without blanking the other.
 
-Add the widget once per miner to watch several at a time.
+On a round display, add the widget once per miner to watch several at a time.
 
 ## User stories
 
-### See miner detail
+### See the network
 
-> As a user, I want a detail screen that pairs miner stats with the Bitcoin price so I can read deeper status in one
-> place.
+> As a user, I want the network's figures in one place so I can read where mining stands without a miner of my own.
 
-- The widget shows current hashrate (TH/s), temperature (°C), power consumption (W), miner uptime, the miner's IP
-  address, and the current BTC price.
-- Temperature reads as a board-to-chip range (e.g. *61-74*), matching the BOSer miner screen.
-- Uptime reads compactly as days, hours, and minutes (e.g. *2d 3h 57m*), and stays readable at the widest values a
-  long-running miner produces.
-- Rows fill the height of the display rather than packing at the top.
+- On every rectangular screen the widget is the network alone: network hashrate, block height, epoch progress, the
+  previous and estimated difficulty adjustment, fees over the last 144 blocks, and hashvalue, one line each under the
+  widget's icon and name, spread over the height.
+- Epoch progress adds the time to the retarget (*in ~ 2 days*).
+- Difficulty adjustments sit in a tinted pill, green up and red down; `N/A` stays plain.
+- Fees read as the per-block average and the share (*~ 0,055 BTC | 12,1%*).
+- The BMM101 draws it at its frame's size; the smaller screens take the same list at their own type size.
+- No miner is read there: the miner parameters do nothing and only the network can fail.
 
 ### See my miner on a round display
 
@@ -28,8 +29,8 @@ Add the widget once per miner to watch several at a time.
 - On the round 480×480 display (BFM100) the current hashrate sits at the centre of a 28-segment ring, with the *TH/s*
   unit trailing to its right, and four stats occupy the quadrants around it: power consumption, efficiency (J/TH),
   temperature, and the BTC price.
-- In those compact clusters temperature reads as the chip temperature alone, not the board-to-chip range the rectangular
-  screen shows.
+- In those compact clusters temperature reads as the chip temperature alone, not the board-to-chip range the Mining
+  widget's rectangular screen shows.
 - Above the ring a chip header shows a chip icon, the chip model and the count across all hashboards (e.g. *BM1370
   x108*). It appears only when the miner reports both; otherwise it is omitted rather than showing placeholders.
 
@@ -46,24 +47,13 @@ Add the widget once per miner to watch several at a time.
 - When the hashrate or its target is unavailable the ring stays gray and unlit, and the hashrate label reads neutral
   rather than implying a state.
 
-### See the network on the Mini Miner
-
-> As a user with a BMM101, I want the Geek screen to show the network on its own 480×320 screen.
-
-- On the BMM101 the screen is the network alone: network hashrate, block height, epoch progress, the previous and
-  estimated difficulty adjustment, fees over the last 144 blocks, and hashvalue, one line each, spread over the height.
-- Epoch progress adds the time to the retarget (*in ~ 2 days*).
-- Difficulty adjustments sit in a tinted pill, green up and red down; `N/A` stays plain.
-- Fees read as the per-block average and the share (*~ 0,055 BTC | 12,1%*).
-- No miner is read there: the miner parameters do nothing and only the network can fail.
-
 ### Keep reading whichever source still answers
 
-> As a user, I want a failure on one side to leave the other side readable so a dead miner does not cost me the price,
-> and no internet does not cost me my miner.
+> As a user with a round display, I want a failure on one side to leave the other side readable so a dead miner does not
+> cost me the price, and no internet does not cost me my miner.
 
-- Miner rows and the BTC price are fetched independently. When the miner is unreachable its rows read `N/A` while the
-  price keeps updating; when the public API is unreachable the price reads `N/A` while the miner rows keep updating.
+- The miner and the BTC price are fetched independently. When the miner is unreachable its quadrants read `N/A` while
+  the price keeps updating; when the public API is unreachable the price reads `N/A` while the miner keeps updating.
 - A failure banner names which source failed: `Cannot authenticate` for a refused or unreachable miner,
   `Failed to load: Miner` for one that answers the login but fails its telemetry, and `Failed to load: Network` for the
   public API.
@@ -71,9 +61,11 @@ Add the widget once per miner to watch several at a time.
 
 ### Point the widget at my miner
 
-> As a user, I want to tell the widget where my miner is and how to log in so it can read live stats.
+> As a user with a round display, I want to tell the widget where my miner is and how to log in so it can read live
+> stats.
 
-- The *Miner URL* parameter is the base BOS REST API URL of the miner; it defaults to `http://localhost/api/v1`.
+- The *Miner URL* parameter is the base BOS REST API URL of the miner; it defaults to `http://localhost/api/v1`. On a
+  rectangular screen neither parameter is read.
 - The *Miner password* parameter is the password for the miner's `root` login; it defaults to `root`. The login username
   is always `root`.
 - The widget logs in, caches the session token, and re-authenticates on its own if the token expires; miner stats
@@ -97,14 +89,15 @@ Add the widget once per miner to watch several at a time.
   viewport targets the BFM100.
 - The wider BMC100 views are deliberately unsupported: the layout is drawn for a 480-wide screen and a design for the
   larger ones does not exist yet.
-- Font sizes are fixed across viewports — fields are hidden rather than shrunk.
-- *Miner URL* and *Miner password* are manifest-driven widget parameters, configurable from the web UI.
+- Font sizes are fixed per viewport: the network list sets its type by screen, with nothing hidden.
+- *Miner URL* and *Miner password* are manifest-driven widget parameters, configurable from the web UI, read on the
+  round viewport only.
 - The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
   type yet. This is a known limitation, shared with the other Miner Info widgets and the
   [Mining Clock Widget](mining-clock.md).
 - Prices read in US dollars. There is no currency parameter.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
-- Miner data comes from the miner's BOS REST API and refreshes about every five seconds; the BTC price comes from
-  `public-api.braiins.com` and refreshes about every sixty. The two retry independently.
+- Miner data comes from the miner's BOS REST API and refreshes about every five seconds; the network figures and the BTC
+  price come from `public-api.braiins.com` and refresh about every sixty. The two retry independently.
 - The tuner constraints that scale the ring are read from `/configuration/constraints`. They are fetched only on the
   round viewport, and only once per login, since they change only when the miner is re-tuned.

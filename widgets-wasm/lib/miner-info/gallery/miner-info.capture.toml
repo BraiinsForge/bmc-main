@@ -77,6 +77,17 @@ frames = 4
 Data = "Populated"
 Face = "Geek"
 
+# The same list at the small panel's type size, on the tightest screen it serves.
+[[shot]]
+name = "geek-small-network-reporting"
+scene = "bmc_gallery::miner_info::Rectangular"
+frames = 4
+
+[shot.knobs]
+Data = "Populated"
+Face = "Geek"
+Viewport = "BMC100 slot"
+
 [[shot]]
 name = "geek-bmm101-network-down"
 scene = "bmc_gallery::miner_info::Bmm101"

@@ -92,7 +92,44 @@ pub struct BlockLayout {
     pub text: TextSizes,
 }
 
-/// The line list the rectangular Mining and Geek faces draw on the small panel.
+/// The Geek list: a title row, then the lines and their rules spread over the
+/// rest of the height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GeekLayout {
+    /// The margin on every side, and the rules' inset.
+    pub edge: f32,
+    pub title_to_rows: f32,
+    pub text: TextSizes,
+}
+
+/// BMM101 follows its frame; the small panel takes the same list
+/// at the type size its other faces use, with margins to match.
+#[must_use]
+pub(crate) fn geek_layout(panel: Panel) -> GeekLayout {
+    match panel {
+        Panel::Small => GeekLayout {
+            edge: 12.0,
+            title_to_rows: 8.0,
+            text: TextSizes {
+                title: 16,
+                value: 16,
+                unit: 16,
+            },
+        },
+        Panel::Bmm101 => GeekLayout {
+            edge: 16.0,
+            title_to_rows: 16.0,
+            text: TextSizes {
+                title: 20,
+                value: 20,
+                unit: 20,
+            },
+        },
+        Panel::Round => unreachable!("BUG: the round Geek face is the gauge, not the list"),
+    }
+}
+
+/// The line list the rectangular Mining face draws on the small panel.
 #[must_use]
 pub(crate) fn mining_layout() -> MiningLayout {
     MiningLayout {
