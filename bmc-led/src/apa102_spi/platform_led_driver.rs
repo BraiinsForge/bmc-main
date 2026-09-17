@@ -201,17 +201,15 @@ impl LedState {
         self.brightness = ((f32::from(APA102_MAX_BRIGHTNESS)) * brightness.clamp(0.0, 1.0)) as u8;
     }
 
-    /// Wait until the next render is needed: frame tick, temp-effect expiry,
-    /// or block forever (only a command can wake the loop).
     async fn next_wake(&mut self) {
+        let expiry = self.temporary.as_ref().and_then(ActiveScene::expiry);
         let animated = self.active_scene().is_animated();
         if self.enabled && animated {
             self.frame_interval.tick().await;
         } else {
-            match self.temporary.as_ref().and_then(ActiveScene::expiry) {
-                Some(expiry) => tokio::time::sleep_until(expiry).await,
-                None => std::future::pending().await,
-            }
+            let refresh = Instant::now() + config::STATIC_REFRESH_INTERVAL;
+            let wake = expiry.map_or(refresh, |expiry| expiry.min(refresh));
+            tokio::time::sleep_until(wake).await;
         }
     }
 }

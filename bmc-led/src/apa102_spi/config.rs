@@ -25,5 +25,8 @@ pub const LED_MIN_FACTOR: f32 = 0.1;
 pub const LED_PHASE_MULTIPLIER: f32 = 2.0;
 pub const SNAKE_LEN: u8 = 3;
 pub const FRAME_RATE_HZ: f64 = 120.0;
+/// The APA102 chain is write-only, so a missed static frame leaves
+/// the previous output latched. Periodic rewrites restore the intended state.
+pub const STATIC_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub const RGB_MAX: u8 = 255;
