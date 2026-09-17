@@ -285,3 +285,121 @@ async fn led_worker(device_path: PathBuf, mut led_cmd_rx: Receiver<LedCommand>) 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::RGB_GREEN;
+
+    #[tokio::test(start_paused = true)]
+    async fn persistent_solid_refreshes_at_static_cadence() {
+        let mut state = LedState::new();
+        state.apply_command(LedCommand::SetEffect(LedScene {
+            effect: LedEffect::Solid(RGB_GREEN),
+            period: None,
+            duration: None,
+        }));
+        let started = Instant::now();
+
+        state.next_wake().await;
+
+        assert_eq!(started.elapsed(), config::STATIC_REFRESH_INTERVAL);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn off_state_refreshes_at_static_cadence() {
+        let mut state = LedState::new();
+        let started = Instant::now();
+
+        state.next_wake().await;
+
+        assert_eq!(started.elapsed(), config::STATIC_REFRESH_INTERVAL);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn disabled_state_refreshes_at_static_cadence() {
+        let mut state = LedState::new();
+        state.apply_command(LedCommand::SetEffect(LedScene {
+            effect: LedEffect::Breathe(RGB_GREEN),
+            period: Some(Duration::from_secs(4)),
+            duration: None,
+        }));
+        state.apply_command(LedCommand::Disable);
+        let started = Instant::now();
+
+        state.next_wake().await;
+
+        assert_eq!(started.elapsed(), config::STATIC_REFRESH_INTERVAL);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn temporary_static_scene_expiry_precedes_refresh() {
+        let duration = Duration::from_millis(250);
+        let mut state = LedState::new();
+        state.apply_command(LedCommand::SetEffect(LedScene {
+            effect: LedEffect::Solid(RGB_GREEN),
+            period: None,
+            duration: Some(duration),
+        }));
+        let started = Instant::now();
+
+        state.next_wake().await;
+
+        assert_eq!(started.elapsed(), duration);
+        assert_eq!(state.active_scene().effect(), LedEffect::None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn long_temporary_static_scene_refreshes_before_expiry() {
+        let mut state = LedState::new();
+        state.apply_command(LedCommand::SetEffect(LedScene {
+            effect: LedEffect::Solid(RGB_GREEN),
+            period: None,
+            duration: Some(Duration::from_secs(5)),
+        }));
+        let started = Instant::now();
+
+        state.next_wake().await;
+
+        assert_eq!(started.elapsed(), config::STATIC_REFRESH_INTERVAL);
+        assert_eq!(state.active_scene().effect(), LedEffect::Solid(RGB_GREEN));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_temporary_scene_wakes_immediately() {
+        let duration = Duration::from_millis(250);
+        let mut state = LedState::new();
+        state.apply_command(LedCommand::SetEffect(LedScene {
+            effect: LedEffect::Solid(RGB_GREEN),
+            period: None,
+            duration: Some(duration),
+        }));
+        tokio::time::advance(duration).await;
+        let started = Instant::now();
+
+        state.next_wake().await;
+
+        assert_eq!(started.elapsed(), Duration::ZERO);
+        assert_eq!(state.active_scene().effect(), LedEffect::None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn animated_scene_does_not_use_static_cadence() {
+        let mut state = LedState::new();
+        state.apply_command(LedCommand::SetEffect(LedScene {
+            effect: LedEffect::Breathe(RGB_GREEN),
+            period: Some(Duration::from_secs(4)),
+            duration: None,
+        }));
+        let started = Instant::now();
+
+        state.next_wake().await;
+
+        let frame_interval = Duration::from_secs_f64(1.0 / FRAME_RATE_HZ);
+        assert!(
+            started.elapsed() >= frame_interval
+                && started.elapsed() <= frame_interval + Duration::from_millis(1),
+            "an animated scene must keep the configured frame cadence"
+        );
+    }
+}
