@@ -398,7 +398,7 @@ def test_sysupgrade_cleans_up_tmp_after_flash_failure(
     )
 
     with pytest.raises(Abort):
-        Sysupgrade(device="h", image=image.path, yes=True).run()
+        Sysupgrade(device="h", image=str(image.path), yes=True).run()
 
     assert any(f"rm -f {shlex.quote(image.remote_path)}" in argv[-1] for argv in backend.runs)
 

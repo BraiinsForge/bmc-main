@@ -39,7 +39,9 @@ from bmc_tui.fw_index import (
     INDEX_NAME,
     PLATFORM_ASSET_KEY,
     FwIndexServer,
+    Release,
     index_document,
+    parse_releases,
 )
 
 _RUNNING_TEXT = "2025-06-15-0-acde0123-25.06"
@@ -131,6 +133,74 @@ def test_index_document_is_byte_deterministic(tmp_path: Path) -> None:
     firmware.write_bytes(_FIRMWARE_BYTES)
 
     assert _document(firmware) == _document(firmware)
+
+
+def test_parse_releases_round_trips_the_generated_document(tmp_path: Path) -> None:
+    firmware = tmp_path / "firmware.tar"
+    firmware.write_bytes(_FIRMWARE_BYTES)
+    running, image = _versions()
+
+    releases = parse_releases(_document(firmware))
+
+    assert releases == [
+        Release(
+            version=running.canonical,
+            release_date=running.release_date,
+            is_major=False,
+            url=_ANCHOR_URL,
+            sha256=None,
+            size=None,
+        ),
+        Release(
+            version=image.canonical,
+            release_date=image.release_date,
+            is_major=False,
+            url=_IMAGE_URL,
+            sha256=hashlib.sha256(_FIRMWARE_BYTES).hexdigest(),
+            size=len(_FIRMWARE_BYTES),
+        ),
+    ]
+
+
+def test_parse_releases_skips_entries_without_the_platform_asset() -> None:
+    document = json.dumps(
+        {
+            "version": "v1",
+            "releases": [
+                {
+                    "metadata": {
+                        "bmc_version": "2026-01-01-0-00000001-26.01",
+                        "release_date": "2026-01-01",
+                        "assets": {"sysupgrade_other_board": {"url": "http://x/other.tar"}},
+                    }
+                },
+                {
+                    "metadata": {
+                        "bmc_version": "2026-02-01-0-00000002-26.02",
+                        "release_date": "2026-02-01",
+                        "is_major": True,
+                        "assets": {PLATFORM_ASSET_KEY: {"url": "http://x/fw.tar"}},
+                    }
+                },
+            ],
+        }
+    )
+
+    releases = parse_releases(document)
+
+    assert [release.version for release in releases] == ["2026-02-01-0-00000002-26.02"]
+    assert releases[0].is_major is True
+    assert releases[0].sha256 is None
+
+
+def test_parse_releases_rejects_another_schema_version() -> None:
+    with pytest.raises(ValueError, match="not a v1 document"):
+        parse_releases(json.dumps({"version": "v2", "releases": []}))
+
+
+def test_parse_releases_rejects_non_json() -> None:
+    with pytest.raises(ValueError, match="not JSON"):
+        parse_releases("<html>")
 
 
 def test_server_records_completed_index_and_firmware_fetches(tmp_path: Path) -> None:

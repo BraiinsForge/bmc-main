@@ -99,6 +99,25 @@ def test_confirm_returns_false_without_tty(monkeypatch: pytest.MonkeyPatch) -> N
     assert console.confirm("flash it?") is False
 
 
+def test_choose_returns_none_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(console.sys.stdin, "isatty", lambda: False)
+    assert console.choose("Release", [("a",), ("b",)], columns=("name",)) is None
+
+
+def test_choose_returns_the_picked_row_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: dict[str, object] = {}
+
+    def ask(question: str, **kwargs: object) -> int:
+        asked.update(kwargs, question=question)
+        return 2
+
+    monkeypatch.setattr(console.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(console.IntPrompt, "ask", ask)
+    assert console.choose("Release", [("a",), ("b",), ("c",)], columns=("name",)) == 1
+    assert asked["choices"] == ["1", "2", "3"]
+    assert asked["default"] == 1
+
+
 def test_alert_silent_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[str] = []
     monkeypatch.setattr(console.sys.stdout, "isatty", lambda: False)

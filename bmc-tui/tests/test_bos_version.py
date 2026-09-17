@@ -52,6 +52,18 @@ def test_build_suffix_roundtrips(text: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "short"),
+    [
+        ("2025-06-15-0-acde0123-25.06", "25.06"),
+        ("2025-06-15-0-acde0123-25.06.1-plus", "25.06.1-plus"),
+        ("2025-06-15-0-acde0123-25.06-plus-rc", "25.06-plus-rc"),
+    ],
+)
+def test_short_is_the_release_name_with_its_suffixes(text: str, short: str) -> None:
+    assert parse_bos_version(text).short == short
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "hello",

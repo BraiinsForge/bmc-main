@@ -71,6 +71,33 @@ overhead.
 nix run .#deck -- deploy --device 192.168.1.2 --profile debug
 ```
 
+## deck sysupgrade — Flash a firmware image
+
+`nix run .#deck -- sysupgrade` uploads a sysupgrade tar to the device's `/tmp`, verifies its checksum there, runs
+`sysupgrade`, waits for the reboot and checks the running version. The image can be a local tar, a direct URL to one, or
+a release from the published index:
+
+```sh
+# pick a release interactively from https://downloads.braiins.com/braiins-deck/index.v1.json
+nix run .#deck -- sysupgrade --device 192.168.1.2
+
+# the same pick from the staging index
+nix run .#deck -- sysupgrade --device 192.168.1.2 --index https://downloads.braiins.com.ii.zone/braiins-deck/index.v1.json
+
+# a direct link
+nix run .#deck -- sysupgrade --device 192.168.1.2 --image https://feeds.braiins-os.com/.../firmware_....tar
+
+# a pre-downloaded tar
+nix run .#deck -- sysupgrade --device 192.168.1.2 --image ./firmware_....tar
+```
+
+Downloads land in `$XDG_CACHE_HOME/deck/firmware/` (`~/.cache/deck/firmware/` by default). A release picked from the
+index is verified against the index's sha256 and reused from the cache on the next run; a direct URL carries no
+checksum, so it is fetched afresh every time. `--index` points the pick at another index document.
+
+The flash prompts for confirmation (`--yes` skips it); `--force` passes `-F` to `sysupgrade` to override the device's
+own compatibility check.
+
 Run `nix run .#deck -- <init|deploy|sysupgrade|upgrade-e2e> --help` for the full option set of each procedure.
 
 ## nix-cargo-deploy.sh — Fast impure deploy of cargo-built native binaries

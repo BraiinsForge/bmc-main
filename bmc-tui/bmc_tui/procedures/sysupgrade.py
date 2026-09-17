@@ -20,17 +20,18 @@
 
 """Flash a firmware image to a Deck and verify the result.
 
+The image is a local sysupgrade tar, a direct URL to one, or — with neither
+given — a release picked from the published index.
+
 The Nix packages are deployed by a separate procedure; run that first when a
 firmware bump also needs new widgets (it avoids the post-upgrade /nix unmount).
 """
 
 from dataclasses import dataclass
-from pathlib import Path
 
-from bmc_tui import catalog, console
+from bmc_tui import catalog, console, firmware
 from bmc_tui.device import Device
-from bmc_tui.image import Image
-from bmc_tui.stage import best_effort, dry_run, entrypoint, require
+from bmc_tui.stage import best_effort, dry_run, entrypoint
 
 # sysupgrade stages the tar in /tmp (tmpfs) and pivots
 # to a ramdisk, so it needs RAM beyond the tar: a ~45 MB tar
@@ -41,7 +42,8 @@ FLASH_HEADROOM = 20 * 1024 * 1024
 @dataclass
 class Sysupgrade:
     device: str  # IP or host of the target Deck
-    image: Path  # path to the firmware sysupgrade .tar
+    image: str | None = None  # sysupgrade .tar path or URL; omitted → pick from the release index
+    index: str = firmware.DEFAULT_INDEX_URL  # release index the pick is offered from
     force: bool = False  # pass -F to sysupgrade (override the device's compat check)
     yes: bool = False  # skip the confirm prompt before the irreversible flash
     skip_nix: bool = False  # set BOS_NIX_SKIP=1 to skip Nix staging (already-initialized store)
@@ -51,11 +53,10 @@ class Sysupgrade:
         if self.dry_run:
             dry_run.set(True)
         dev = Device(self.device)
-        image = Image(self.image)
-        require(image.path.is_file(), f"image not found: {console.lit(image.path)}")
 
         console.header("Firmware update")
         dev.print()
+        image = firmware.obtain(self.image, index_url=self.index)
         image.print()
 
         catalog.ensure_device_reachable(dev)

@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 from collections import deque
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -45,16 +45,18 @@ from rich.progress import (
     TimeRemainingColumn,
     TransferSpeedColumn,
 )
-from rich.prompt import Confirm
+from rich.prompt import Confirm, IntPrompt
 from rich.spinner import Spinner
 from rich.status import Status
 from rich.syntax import Syntax
+from rich.table import Table
 from rich.text import Text
 
 __all__ = [
     "INSTRUCT_HINT",
     "SupportsCapture",
     "alert",
+    "choose",
     "cmd_output",
     "code",
     "confirm",
@@ -260,8 +262,9 @@ def countdown(label: str, seconds: int) -> None:
 
 
 @contextmanager
-def progress(label: str, total: int) -> Generator[Callable[[int], None], None, None]:
+def progress(label: str, total: int | None) -> Generator[Callable[[int], None], None, None]:
     """Byte-count progress bar; yields an ``advance(n)`` callback.
+    An unknown `total` leaves the bar indeterminate.
 
     Usage::
 
@@ -488,6 +491,30 @@ def confirm(question: str) -> bool:
         return False
     alert("confirmation required", body=question)
     return Confirm.ask(question, default=False, console=out)
+
+
+def choose(question: str, rows: Sequence[Sequence[str]], *, columns: Sequence[str]) -> int | None:
+    """Show `rows` as a numbered table and ask which one.
+    Returns the chosen row's index — the first row is the default — or None when not a TTY."""
+    if not sys.stdin.isatty():
+        return None
+    table = Table(box=None, pad_edge=False, header_style="dim")
+    table.add_column("#", justify="right", style="dim")
+    for column in columns:
+        table.add_column(column)
+    for number, row in enumerate(rows, start=1):
+        table.add_row(str(number), *row)
+    blank()
+    out.print(table)
+    alert("choice required", body=question)
+    picked = IntPrompt.ask(
+        question,
+        choices=[str(number) for number in range(1, len(rows) + 1)],
+        default=1,
+        show_choices=False,
+        console=out,
+    )
+    return picked - 1
 
 
 def desktop_notify(summary: str, *, body: str | None = None, level: Level = "info") -> None:

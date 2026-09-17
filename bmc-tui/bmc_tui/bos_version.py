@@ -69,10 +69,15 @@ class BosVersion:
 
     @property
     def canonical(self) -> str:
-        rendered = (
+        return (
             f"{self.date.year}-{self.date.month:02}-{self.date.day:02}-{self.day_index}"
-            f"-{self.commit:08x}-{self.version}"
+            f"-{self.commit:08x}-{self.short}"
         )
+
+    @property
+    def short(self) -> str:
+        """The release name alone — `25.06`, `25.06.1-plus`, `25.06-rc`."""
+        rendered = str(self.version)
         if self.is_plus:
             rendered += "-plus"
         if self.build is not None:

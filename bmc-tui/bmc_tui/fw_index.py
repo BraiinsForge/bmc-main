@@ -18,7 +18,8 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-"""Firmware release index generation and request-recording HTTP serving."""
+"""Firmware release index: the v1 document (generation and parsing) and
+request-recording HTTP serving."""
 
 import io
 import json
@@ -36,11 +37,61 @@ from typing import cast
 from bmc_tui.bos_version import BosVersion
 
 INDEX_NAME = "index.v1.json"
+INDEX_VERSION = "v1"
 PLATFORM_ASSET_KEY = "sysupgrade_emmc_stm32mp157c_ii3_bmc1"
 
 
 def release_uuid(full_version: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, full_version))
+
+
+@dataclass(frozen=True)
+class Release:
+    """One index entry's sysupgrade asset for this platform."""
+
+    version: str
+    release_date: str
+    is_major: bool
+    url: str
+    sha256: str | None
+    size: int | None
+
+
+def parse_releases(document: str, *, asset_key: str = PLATFORM_ASSET_KEY) -> list[Release]:
+    """The releases in an index document that ship an `asset_key` asset,
+    in the document's own order.
+
+    Raises ``ValueError`` when the document is not a v1 index.
+    """
+    try:
+        index = json.loads(document)
+    except json.JSONDecodeError as exc:
+        msg = f"index is not JSON: {exc}"
+        raise ValueError(msg) from None
+    if not isinstance(index, dict) or index.get("version") != INDEX_VERSION:
+        msg = f"index is not a {INDEX_VERSION} document"
+        raise ValueError(msg)
+    releases = []
+    for entry in index.get("releases", []):
+        metadata = entry.get("metadata", {})
+        asset = metadata.get("assets", {}).get(asset_key)
+        if asset is None:
+            continue
+        # The e2e index anchors the running firmware with a bare URL;
+        # a published asset is an object with an integrity block.
+        integrity = asset.get("integrity", {}) if isinstance(asset, dict) else {}
+        checksum = integrity.get("checksum")
+        releases.append(
+            Release(
+                version=metadata["bmc_version"],
+                release_date=metadata["release_date"],
+                is_major=bool(metadata.get("is_major", False)),
+                url=asset["url"] if isinstance(asset, dict) else asset,
+                sha256=checksum.lower() if isinstance(checksum, str) else None,
+                size=integrity.get("size_bytes"),
+            )
+        )
+    return releases
 
 
 def index_document(  # noqa: PLR0913
