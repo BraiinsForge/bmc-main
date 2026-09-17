@@ -56,6 +56,9 @@ const BOARD_BELOW_CHIP_C: f64 = 13.0;
 /// and the miner runs at its chosen frequencies.
 const TUNER_STABLE: i32 = 2;
 
+/// Blocks the simulated miner has found, the count the BMM101 frame draws.
+const FOUND_BLOCKS: u64 = 4;
+
 /// One board's share of the miner's hashrate, since the miner
 /// reports totals and each board reports its own part of them.
 #[expect(
@@ -195,7 +198,10 @@ impl Params {
             self.telemetry(
                 "/api/v1/miner/stats",
                 json!({
-                    "miner_stats": { "real_hashrate": { "last_1m": { "gigahash_per_second": ghs } } },
+                    "miner_stats": {
+                        "real_hashrate": { "last_1m": { "gigahash_per_second": ghs } },
+                        "found_blocks": FOUND_BLOCKS,
+                    },
                     "power_stats": {
                         "approximated_consumption": { "watt": watt },
                         "efficiency": efficiency

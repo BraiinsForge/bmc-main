@@ -1,4 +1,4 @@
-# The BMM101 faces: Mining across the gauge states,
+# The BMM101 faces: Mining with the miner reporting and with it gone,
 # Geek with and without the network, Info Overload across
 # the three price moves.
 #
@@ -13,40 +13,13 @@ report = "capture.json"
 settle = true
 
 [[shot]]
-name = "mining-bmm101-good"
+name = "mining-bmm101-reporting"
 scene = "bmc_gallery::miner_info::Bmm101"
 frames = 4
 
 [shot.knobs]
+Data = "Populated"
 Face = "Mining"
-Tuner = "Good"
-
-[[shot]]
-name = "mining-bmm101-overclocked"
-scene = "bmc_gallery::miner_info::Bmm101"
-frames = 4
-
-[shot.knobs]
-Face = "Mining"
-Tuner = "Overclocked"
-
-[[shot]]
-name = "mining-bmm101-underclocked"
-scene = "bmc_gallery::miner_info::Bmm101"
-frames = 4
-
-[shot.knobs]
-Face = "Mining"
-Tuner = "Underclocked"
-
-[[shot]]
-name = "mining-bmm101-off"
-scene = "bmc_gallery::miner_info::Bmm101"
-frames = 4
-
-[shot.knobs]
-Face = "Mining"
-Tuner = "Off"
 
 # Temperature and MCR each need a pair of readings; a miner reporting
 # only half of each shows their placeholders among live rows.

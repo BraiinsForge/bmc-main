@@ -29,14 +29,14 @@ Add the widget once per miner to watch several at a time.
 - Above the ring a chip header shows a chip icon, the chip model and the count across all hashboards (e.g. *BM1370
   x108*). It appears only when the miner reports both; otherwise it is omitted rather than showing placeholders.
 
-### See the ring on the Mini Miner
+### See my miner on the Mini Miner
 
-> As a user with a BMM101, I want the same ring on its own 480×320 screen.
+> As a user with a BMM101, I want the overview laid out for its own 480×320 screen.
 
-- On the BMM101 the round face draws as a disc at six tenths of its size, centred on the black screen, type scaled with
-  it and no chip header above it.
-- The quadrants are the Geek set: power consumption, efficiency, temperature and the BTC price, so the price is fetched
-  on this panel alone.
+- On the BMM101 the screen is six lines under the widget's icon and name, parted by hairlines and spread over the
+  height: current hashrate, miner uptime, the BTC price, power consumption, the blocks the miner has found, and its IP
+  address.
+- The price is fetched on this panel alone; temperature, MCR and fan speed are not read here.
 
 ### Read the miner's health from the ring
 
@@ -90,9 +90,8 @@ Add the widget once per miner to watch several at a time.
   type yet. This is a known limitation, shared with the other Miner Info widgets and the
   [Mining Clock Widget](mining-clock.md).
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
-- Field sets, labels, and units mirror the BOSer BMM screens.
-- The tuner constraints that scale the ring are read from `/configuration/constraints`. They are fetched only where the
-  ring draws, the round viewport and the BMM101, and only once per login, since they change only when the miner is
-  re-tuned.
+- Field sets, labels, and units mirror the BOSer BMM screens, except on the BMM101, which follows its own frame.
+- The tuner constraints that scale the ring are read from `/configuration/constraints`. They are fetched only on the
+  round viewport, and only once per login, since they change only when the miner is re-tuned.
 - The BTC price on the BMM101 comes from `public-api.braiins.com` in US dollars and refreshes about every sixty seconds,
   independently of the miner.

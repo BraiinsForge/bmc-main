@@ -83,6 +83,7 @@ pub fn miner(reported: Reported, hashrate_ths: Option<f64>) -> MinerData {
         ip_address: Availability::Available("192.168.23.1".to_owned()),
         chip_type: Availability::Available("BM1370".to_owned()),
         chip_count: Availability::Available(108),
+        found_blocks: Availability::Available(4),
         constraints: Constraints {
             hashrate: Some(TargetRange {
                 min: 0.5,

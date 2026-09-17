@@ -287,7 +287,7 @@ pub(crate) fn money_amount(value: Availability<Money>, decimals: u32) -> String 
 }
 
 #[must_use]
-pub(crate) fn public_integer(value: Availability<u64>) -> Rendered {
+pub(crate) fn integer(value: Availability<u64>) -> Rendered {
     match value {
         Availability::Available(value) => {
             #[expect(
@@ -493,12 +493,12 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_public_integer_reads_not_available() {
+    fn unavailable_integer_reads_not_available() {
         assert_eq!(
-            public_integer(Availability::Available(870_123)).value,
+            integer(Availability::Available(870_123)).value,
             format!("870{NBSP}123")
         );
-        assert_eq!(public_integer(Availability::Unavailable).value, "N/A");
+        assert_eq!(integer(Availability::Unavailable).value, "N/A");
     }
 
     #[test]

@@ -27,11 +27,10 @@
 )]
 use bmc_wasm_sdk::*;
 
-use super::round::{self, GaugeType};
 use super::{
-    BACKGROUND, EDGE, RenderSize, block, change_color, fixed_height, icons,
-    info_overload_bottom_row, info_overload_difficulty_row, info_overload_primary_row, price_chart,
-    rule, space_between_rows, title_row, with_horizontal_padding,
+    BACKGROUND, EDGE, block, change_color, fixed_height, icons, info_overload_bottom_row,
+    info_overload_difficulty_row, info_overload_primary_row, price_chart, rule, space_between_rows,
+    text_line, title_row, titled_lines, with_horizontal_padding,
 };
 use crate::format;
 use crate::layout::{self, Panel};
@@ -44,20 +43,6 @@ const CHART_WIDTH: f32 = 120.0;
 const CHART_HEIGHT: f32 = 44.0;
 const PRICE_SIZE: u32 = 32;
 const PRICE_SYMBOL_SIZE: u32 = 20;
-
-/// The gauge disc: the round face at 0.6, which is what fits the height.
-const GAUGE_SIDE: u32 = 288;
-/// The round type at 0.6, rounded to whole pixels.
-const GAUGE_TYPE: GaugeType = GaugeType {
-    hashrate: 38,
-    hashrate_unit: 14,
-    status: 10,
-    caption: Some(8),
-    cluster_value: 19,
-    cluster_label: 10,
-    cluster_unit: 10,
-    unit_slot_w: 36.0,
-};
 
 // The currency symbol rides in the amount's paragraph at its own size,
 // so the two share a baseline.
@@ -126,28 +111,30 @@ pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     )
 }
 
-/// The round gauge as a disc centred on the panel, without the chip header
-/// and with the Geek quadrants, BTC price included.
+/// The frame's six lines: the miner's readings with the BTC price among them.
 #[must_use]
-pub fn mining(miner: &MinerData, public: &PublicData, seed_gauge: bool) -> Node {
-    let g = round::seeded_gauge(miner, seed_gauge);
-    let disc = round::gauge_screen(
-        RenderSize {
-            width: GAUGE_SIDE,
-            height: GAUGE_SIDE,
-        },
-        &g,
-        miner.hashrate,
-        None,
-        &round::geek_clusters(miner, public),
-        GAUGE_TYPE,
-    );
-    col(
-        props!(background: BACKGROUND),
-        [
-            spacer(1.0),
-            row(props!(), [spacer(1.0), disc, spacer(1.0)]),
-            spacer(1.0),
+pub fn mining(miner: &MinerData, public: &PublicData) -> Node {
+    let sizes = layout::list_layout(Panel::Bmm101).text;
+    titled_lines(
+        Panel::Bmm101,
+        &icons::MINING,
+        "Miner Info - Mining",
+        vec![
+            text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
+            text_line("Miner Uptime", format::uptime(miner.uptime), sizes),
+            text_line("BTC Price", format::money(public.btc_price, 0), sizes),
+            text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
+            text_line("Block Counter", format::integer(miner.found_blocks), sizes),
+            text_line(
+                "IP Address",
+                miner
+                    .ip_address
+                    .as_option()
+                    .cloned()
+                    .unwrap_or_else(format::unavailable)
+                    .into(),
+                sizes,
+            ),
         ],
     )
 }
@@ -158,42 +145,6 @@ mod tests {
 
     use crate::face::test_support::texts;
     use crate::fixtures::{PriceMove, Reported, miner, public};
-
-    fn mining_face() -> Node {
-        mining(
-            &miner(Reported::All, Some(1.02)),
-            &public(Reported::All, PriceMove::Up),
-            false,
-        )
-    }
-
-    /// The disc sits between spacers on both axes, at the round face's 0.6.
-    #[test]
-    fn the_mining_face_centres_the_gauge_disc() {
-        let Node::Column(_, rows) = mining_face() else {
-            panic!("BUG: the face is a column");
-        };
-        let Node::Row(_, cells) = &rows[1] else {
-            panic!("BUG: the disc row sits between the spacers");
-        };
-        let Node::Column(_, disc) = &cells[1] else {
-            panic!("BUG: the disc sits between the spacers");
-        };
-        let Node::Canvas { props, .. } = &disc[0] else {
-            panic!("BUG: the disc draws on a canvas");
-        };
-        assert_eq!((props.width, props.height), (288.0, 288.0));
-    }
-
-    /// The fixture miner reports its chip, which the round face would name.
-    #[test]
-    fn the_mining_face_draws_no_chip_header() {
-        let texts = texts(&mining_face());
-        assert!(
-            !texts.contains(&"BM1370".to_owned()),
-            "no chip header: {texts:?}"
-        );
-    }
 
     #[test]
     fn an_unknown_price_wears_no_symbol() {

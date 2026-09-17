@@ -83,6 +83,8 @@ pub struct MinerData {
     pub ip_address: Availability<String>,
     pub chip_type: Availability<String>,
     pub chip_count: Availability<usize>,
+    /// Blocks this miner has found, the solo miner's tally.
+    pub found_blocks: Availability<u64>,
     pub constraints: Constraints,
 }
 

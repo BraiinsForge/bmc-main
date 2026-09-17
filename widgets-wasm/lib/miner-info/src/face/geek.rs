@@ -31,8 +31,8 @@ use bmc_wasm_sdk::*;
 use bmc_wasm_sdk::types::Ratio;
 
 use super::{
-    BACKGROUND, TITLE, VALUE, change_color, fixed_height, fixed_width, icons, rule, text_line,
-    title_row, unit_visible, value_with_unit, with_horizontal_padding,
+    TITLE, VALUE, change_color, fixed_width, icons, text_line, titled_lines, unit_visible,
+    value_with_unit,
 };
 use crate::format;
 use crate::layout::{self, Panel};
@@ -108,53 +108,31 @@ fn adjustment_line(
 
 #[must_use]
 pub fn geek(panel: Panel, public: &PublicData) -> Node {
-    let metrics = layout::geek_layout(panel);
-    let sizes = metrics.text;
-    let lines = [
-        text_line(
-            "Network HR",
-            format::network_hashrate(public.network_hashrate),
-            sizes,
-        ),
-        text_line(
-            "Block Height",
-            format::public_integer(public.block_height),
-            sizes,
-        ),
-        epoch_line(public, sizes),
-        adjustment_line("Diff. Adjustment", public.prev_diff_adjust, sizes),
-        adjustment_line("Est. Diff. Adjustment", public.est_diff_adjust, sizes),
-        text_line(
-            "Fees (144 Blocks)",
-            format::fees(public.avg_fees_per_block, public.avg_fee_share),
-            sizes,
-        ),
-        text_line(
-            "Hashvalue",
-            format::fixed_strip_zero_fraction(public.hashvalue, 2),
-            sizes,
-        ),
-    ];
-
-    // Lines and rules spread over the height, the frame's `justify-between`.
-    let mut rows = Vec::with_capacity(lines.len() * 4);
-    for (index, line) in lines.into_iter().enumerate() {
-        if index > 0 {
-            rows.push(spacer(1.0));
-            rows.push(with_horizontal_padding(rule(), metrics.edge));
-            rows.push(spacer(1.0));
-        }
-        rows.push(with_horizontal_padding(line, metrics.edge));
-    }
-
-    col(
-        props!(background: BACKGROUND),
-        [
-            fixed_height(metrics.edge),
-            with_horizontal_padding(title_row(&icons::GEEK, "Miner Info - Geek"), metrics.edge),
-            fixed_height(metrics.title_to_rows),
-            col(props!(flex: 1.0), rows),
-            fixed_height(metrics.edge),
+    let sizes = layout::list_layout(panel).text;
+    titled_lines(
+        panel,
+        &icons::GEEK,
+        "Miner Info - Geek",
+        vec![
+            text_line(
+                "Network HR",
+                format::network_hashrate(public.network_hashrate),
+                sizes,
+            ),
+            text_line("Block Height", format::integer(public.block_height), sizes),
+            epoch_line(public, sizes),
+            adjustment_line("Diff. Adjustment", public.prev_diff_adjust, sizes),
+            adjustment_line("Est. Diff. Adjustment", public.est_diff_adjust, sizes),
+            text_line(
+                "Fees (144 Blocks)",
+                format::fees(public.avg_fees_per_block, public.avg_fee_share),
+                sizes,
+            ),
+            text_line(
+                "Hashvalue",
+                format::fixed_strip_zero_fraction(public.hashvalue, 2),
+                sizes,
+            ),
         ],
     )
 }
@@ -182,7 +160,7 @@ mod tests {
 
     #[test]
     fn a_known_adjustment_wears_a_pill_and_a_placeholder_does_not() {
-        let sizes = layout::geek_layout(Panel::Bmm101).text;
+        let sizes = layout::list_layout(Panel::Bmm101).text;
         let known = adjustment_line(
             "Diff. Adjustment",
             Availability::Available(Ratio::from_percent(-4.5)),

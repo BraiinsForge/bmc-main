@@ -63,8 +63,8 @@ refreshes. Rectangular viewports only.
 ### [Miner Info — Mining Widget](miner-info-mining.md)
 
 A miner overview: hashrate, temperature, power, MCR, fan speed and IP address, read over the BOS REST API. On the round
-panel the hashrate sits inside a gauge ring coloured by how the miner tracks its tuner target; the BMM101 gets the same
-ring as a disc, with the BTC price in a quadrant. Needs no internet, except for that price.
+panel the hashrate sits inside a gauge ring coloured by how the miner tracks its tuner target; the BMM101 lists
+hashrate, uptime, the BTC price, power, blocks found and the address. Needs no internet, except for that price.
 
 ### [Miner Info — Geek Widget](miner-info-geek.md)
 

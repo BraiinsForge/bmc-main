@@ -109,6 +109,32 @@ fn rule() -> Node {
     col(props!(height: RULE, background: RULE_COLOR), [])
 }
 
+/// The list the BMM101 frames draw: the widget's icon and name, then lines
+/// parted by hairlines, all spread over the height like the frame's
+/// `justify-between`.
+fn titled_lines(panel: Panel, icon: &Svg, title: &str, lines: Vec<Node>) -> Node {
+    let metrics = layout::list_layout(panel);
+    let mut rows = Vec::with_capacity(lines.len() * 4);
+    for (index, line) in lines.into_iter().enumerate() {
+        if index > 0 {
+            rows.push(spacer(1.0));
+            rows.push(with_horizontal_padding(rule(), metrics.edge));
+            rows.push(spacer(1.0));
+        }
+        rows.push(with_horizontal_padding(line, metrics.edge));
+    }
+    col(
+        props!(background: BACKGROUND),
+        [
+            fixed_height(metrics.edge),
+            with_horizontal_padding(title_row(icon, title), metrics.edge),
+            fixed_height(metrics.title_to_rows),
+            col(props!(flex: 1.0), rows),
+            fixed_height(metrics.edge),
+        ],
+    )
+}
+
 // One paragraph, so the unit sits on the value's baseline.
 fn value_with_unit(
     value: format::Rendered,
@@ -330,7 +356,7 @@ fn info_overload_primary_row(
     if fields.grid_columns > 2 {
         blocks.push(text_block(
             "Block Height",
-            format::public_integer(public.block_height),
+            format::integer(public.block_height),
             metrics,
         ));
     }
@@ -392,7 +418,7 @@ fn info_overload_bottom_row(
     if fields.grid_columns <= 2 {
         blocks.push(text_block(
             "Block Height",
-            format::public_integer(public.block_height),
+            format::integer(public.block_height),
             metrics,
         ));
     }

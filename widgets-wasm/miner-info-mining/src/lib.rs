@@ -97,7 +97,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     let seed_gauge = engine::View::Mining.draws_gauge(panel) && engine::take_first_frame();
     let root = match panel {
         Panel::Round => face::round::mining(size, &miner, seed_gauge),
-        Panel::Bmm101 => face::bmm101::mining(&miner, &public, seed_gauge),
+        Panel::Bmm101 => face::bmm101::mining(&miner, &public),
         Panel::Small => face::mining(&miner),
     };
     let overlay = engine::overlay(engine::View::Mining, panel, &auth);
