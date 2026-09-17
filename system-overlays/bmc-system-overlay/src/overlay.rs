@@ -391,7 +391,7 @@ pub struct TickOutcome {
 pub use ::deck_upgrade_v1::client::deck_upgrade_v1::Kind as UpgradeKind;
 /// Upgrade stage supplied by the compositor (the `deck_upgrade_v1` wire enum).
 pub use ::deck_upgrade_v1::client::deck_upgrade_v1::Phase as UpgradePhase;
-pub use ::deck_upgrade_v1::{DownloadProgress, UpgradeSnapshot, UpgradeState};
+pub use ::deck_upgrade_v1::{DownloadProgress, UpgradeSnapshot, UpgradeState, UpgradeUpdate};
 
 /// A privileged system overlay. Implementors do background work in `tick`,
 /// draw in `render`, and declare placement via `layer_config`.
@@ -426,6 +426,8 @@ pub trait SystemOverlay {
     }
     /// Receive one coherent compositor upgrade snapshot before `tick`.
     fn on_upgrade_state(&mut self, _snapshot: UpgradeSnapshot) {}
+    /// Clear the current upgrade presentation before `tick`.
+    fn on_upgrade_cleared(&mut self) {}
 
     /// Whether this overlay binds the `deck_device_info_v1` state feed.
     /// `false` (default) means the framework neither binds it nor delivers
@@ -613,15 +615,18 @@ pub(crate) fn deliver_platform_events(overlay: &mut dyn SystemOverlay, events: P
     }
 }
 
-pub(crate) fn deliver_upgrade_snapshot_and_tick(
+pub(crate) fn deliver_upgrade_update_and_tick(
     overlay: &mut dyn SystemOverlay,
-    snapshot: Option<UpgradeSnapshot>,
+    update: Option<UpgradeUpdate>,
     now: Instant,
 ) -> TickOutcome {
     if overlay.uses_upgrade()
-        && let Some(snapshot) = snapshot
+        && let Some(update) = update
     {
-        overlay.on_upgrade_state(snapshot);
+        match update {
+            UpgradeUpdate::Snapshot(snapshot) => overlay.on_upgrade_state(snapshot),
+            UpgradeUpdate::Cleared => overlay.on_upgrade_cleared(),
+        }
     }
     overlay.tick(now)
 }
@@ -645,6 +650,7 @@ mod tests {
     struct RecordingUpgradeOverlay {
         enabled: bool,
         snapshot: Option<UpgradeSnapshot>,
+        clears: usize,
         calls: Vec<&'static str>,
     }
 
@@ -668,6 +674,11 @@ mod tests {
             self.calls.push("upgrade");
             self.snapshot = Some(snapshot);
         }
+
+        fn on_upgrade_cleared(&mut self) {
+            self.calls.push("clear");
+            self.clears += 1;
+        }
     }
 
     fn run_upgrade_delivery() -> RecordingUpgradeOverlay {
@@ -685,7 +696,11 @@ mod tests {
             enabled: true,
             ..RecordingUpgradeOverlay::default()
         };
-        let _ = deliver_upgrade_snapshot_and_tick(&mut overlay, Some(snapshot), Instant::now());
+        let _ = deliver_upgrade_update_and_tick(
+            &mut overlay,
+            Some(UpgradeUpdate::Snapshot(snapshot)),
+            Instant::now(),
+        );
         overlay
     }
 
@@ -698,21 +713,44 @@ mod tests {
     }
 
     #[test]
+    fn shared_upgrade_clear_calls_callback_before_tick() {
+        let mut overlay = RecordingUpgradeOverlay {
+            enabled: true,
+            ..RecordingUpgradeOverlay::default()
+        };
+
+        let _ = deliver_upgrade_update_and_tick(
+            &mut overlay,
+            Some(UpgradeUpdate::Cleared),
+            Instant::now(),
+        );
+
+        assert_eq!(overlay.clears, 1);
+        assert_eq!(overlay.calls, vec!["clear", "tick"]);
+    }
+
+    #[test]
     fn opted_out_overlay_does_not_receive_upgrade_snapshot() {
         let mut overlay = RecordingUpgradeOverlay::default();
-        let _ = deliver_upgrade_snapshot_and_tick(
+        let _ = deliver_upgrade_update_and_tick(
             &mut overlay,
-            Some(UpgradeSnapshot {
+            Some(UpgradeUpdate::Snapshot(UpgradeSnapshot {
                 kind: UpgradeKind::Firmware,
                 state: UpgradeState::Succeeded {
                     remaining: Duration::from_secs(1),
                 },
-            }),
+            })),
+            Instant::now(),
+        );
+        let _ = deliver_upgrade_update_and_tick(
+            &mut overlay,
+            Some(UpgradeUpdate::Cleared),
             Instant::now(),
         );
 
         assert_eq!(overlay.snapshot, None);
-        assert_eq!(overlay.calls, vec!["tick"]);
+        assert_eq!(overlay.clears, 0);
+        assert_eq!(overlay.calls, vec!["tick", "tick"]);
     }
 
     #[derive(Default)]

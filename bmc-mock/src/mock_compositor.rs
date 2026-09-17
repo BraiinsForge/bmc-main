@@ -205,6 +205,15 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    fn clear_upgrade_state(&self) -> Result<(), CompositorError> {
+        tracing::debug!("MockCompositor: clear upgrade state");
+        *self
+            .upgrade_state
+            .lock()
+            .expect("BUG: upgrade_state lock poisoned") = None;
+        Ok(())
+    }
+
     fn enqueue_register_widget(
         &self,
         registration: WidgetRegistration,

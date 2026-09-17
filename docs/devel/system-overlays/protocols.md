@@ -187,7 +187,7 @@ request beyond the destructor.
 Unlike the alarm, this is a *broadcast* protocol rather than a relay for one owning overlay: the two upgrade surfaces
 and the startup screen all bind it, and each decides for itself what a snapshot means.
 
-### `deck_upgrade_v1` (version 1)
+### `deck_upgrade_v1` (version 2)
 
 | Member                            | Kind    | Args                                                | Notes                                                                                        |
 | --------------------------------- | ------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -199,11 +199,15 @@ and the startup screen all bind it, and each decides for itself what a snapshot 
 | `succeeded(remaining_ms)`         | event   | `remaining_ms: uint`                                | Terminal success, with how long it still has on screen.                                      |
 | `failed(remaining_ms)`            | event   | `remaining_ms: uint`                                | Terminal failure, with how long it still has on screen.                                      |
 | `snapshot_done`                   | event   | —                                                   | Closes the snapshot; the client commits it.                                                  |
+| `cleared`                         | event   | —, v2                                               | Discards any staged candidate and hides the current presentation.                            |
 
 **Snapshot framing.** Wayland dispatch batches events, so a client that acted on each event as it arrived could paint a
 phase from one snapshot with a byte count from the next. Every snapshot is therefore bracketed by `started` and
 `snapshot_done`, and a client ignores anything outside that bracket and commits only on `snapshot_done`. A sequence with
 an invalid enum value or bad ordering is discarded whole and the client keeps its last coherent view.
+
+`cleared` is not snapshot-framed: a version 2 client acts on it immediately, discarding any unfinished candidate and its
+current presentation. The compositor skips a version 1 client, which keeps its last snapshot.
 
 **Byte counts.** Wayland has no 64-bit integer argument, so each byte count is split into two `uint` words (`_hi` /
 `_lo`) rather than truncated to 32 bits.

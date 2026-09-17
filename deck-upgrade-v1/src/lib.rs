@@ -23,7 +23,7 @@
 
 mod decoder;
 
-pub use decoder::{DownloadProgress, UpgradeDecoder, UpgradeSnapshot, UpgradeState};
+pub use decoder::{DownloadProgress, UpgradeDecoder, UpgradeSnapshot, UpgradeState, UpgradeUpdate};
 
 /// Split a byte count into the high and low words carried by the protocol.
 #[must_use]

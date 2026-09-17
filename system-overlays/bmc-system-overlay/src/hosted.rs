@@ -26,7 +26,7 @@ use bmc_widget::egl::{DmaBufInfo, EglContext};
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
     AlarmEvent, FenceState, HideFenceAction, HideFenceGate, MIN_INTER_FRAME, PollGate, RenderGate,
-    SystemOverlay, deliver_platform_events, deliver_upgrade_snapshot_and_tick, hide_fence_action,
+    SystemOverlay, deliver_platform_events, deliver_upgrade_update_and_tick, hide_fence_action,
     hide_fence_after_tick, overlay_needs_hide, overlay_needs_render, overlay_poll_timeout,
     resize_transition, resolved_configured_size, screen_edge_visible,
 };
@@ -250,9 +250,9 @@ impl HostedOverlay {
 
     /// Run background work; updates visibility, render-want and next-wake.
     pub fn tick(&mut self, now: Instant) {
-        let outcome = deliver_upgrade_snapshot_and_tick(
+        let outcome = deliver_upgrade_update_and_tick(
             &mut *self.overlay,
-            self.client.take_upgrade_snapshot(),
+            self.client.take_upgrade_update(),
             now,
         );
         self.visible = match self.screen_edge {

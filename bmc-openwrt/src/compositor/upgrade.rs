@@ -86,6 +86,10 @@ impl UpgradeCache {
         self.current = Some(CachedSnapshot { snapshot, deadline });
     }
 
+    fn clear(&mut self) {
+        self.current = None;
+    }
+
     fn events(&self, now: Instant) -> Option<Vec<WireEvent>> {
         let cached = self.current.as_ref()?;
         let mut events = vec![WireEvent::Started(kind(&cached.snapshot.state))];
@@ -175,6 +179,16 @@ impl UpgradeState {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.cache.clear();
+        self.resources.retain(Resource::is_alive);
+        for resource in &self.resources {
+            if resource.version() >= 2 {
+                resource.cleared();
+            }
+        }
+    }
+
     fn replay(&mut self, resource: &DeckUpgradeV1) {
         if let Some(events) = self.cache.events(Instant::now()) {
             emit(resource, &events);
@@ -243,7 +257,7 @@ impl Dispatch<DeckUpgradeV1, ()> for CompositorState {
 }
 
 pub fn create_global(display: &DisplayHandle) {
-    display.create_global::<CompositorState, DeckUpgradeV1, ()>(1, ());
+    display.create_global::<CompositorState, DeckUpgradeV1, ()>(2, ());
 }
 
 #[cfg(test)]
@@ -409,6 +423,17 @@ mod tests {
                 WireEvent::SnapshotDone,
             ])
         );
+    }
+
+    #[test]
+    fn clear_removes_the_cached_replay() {
+        let now = Instant::now();
+        let mut cache = UpgradeCache::default();
+        cache.set(running(1), now);
+
+        cache.clear();
+
+        assert_eq!(cache.events(now), None);
     }
 
     #[test]

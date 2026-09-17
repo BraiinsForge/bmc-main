@@ -219,6 +219,10 @@ bmc pushes state through the `Compositor::set_upgrade_state(UpgradeDisplaySnapsh
 there is no incremental update path, which is what lets a client discard a malformed sequence and keep its last coherent
 view.
 
+`Compositor::clear_upgrade_state` arrives as a `CompositorCommand::ClearUpgradeState` and lands in
+`UpgradeState::clear`. The compositor discards the cached current snapshot and sends `cleared` only to clients bound at
+protocol version 2, so a version 1 client keeps its last view.
+
 `UpgradeState` splits into a pure `UpgradeCache` (snapshot plus deadline, unit-testable without Wayland resources) and
 the resource list. Two behaviors live in the cache:
 

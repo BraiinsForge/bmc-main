@@ -41,6 +41,12 @@ pub struct UpgradeSnapshot {
     pub state: UpgradeState,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeUpdate {
+    Snapshot(UpgradeSnapshot),
+    Cleared,
+}
+
 /// Current lifecycle state of an upgrade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpgradeState {
@@ -76,19 +82,19 @@ enum UpgradeCandidateState {
     Invalid,
 }
 
-/// Decodes one complete `deck_upgrade_v1` snapshot at a time.
+/// Decodes coherent `deck_upgrade_v1` snapshots and explicit clears.
 ///
-/// Malformed candidates remain invalid until `snapshot_done`, which prevents a
-/// later event in the same wire sequence from becoming a partial snapshot.
+/// Malformed candidates remain invalid until `snapshot_done` or `cleared`,
+/// which prevents a later snapshot event from committing partial state.
 #[derive(Debug, Default)]
 pub struct UpgradeDecoder {
     candidate: Option<UpgradeCandidateState>,
 }
 
 impl UpgradeDecoder {
-    /// Feed one wire event; returns a snapshot
-    /// when `snapshot_done` commits a coherent candidate.
-    pub fn decode(&mut self, event: &Event) -> Option<UpgradeSnapshot> {
+    /// Feed one wire event; returns a snapshot when `snapshot_done` commits
+    /// a coherent candidate, or a clear as soon as it arrives.
+    pub fn decode(&mut self, event: &Event) -> Option<UpgradeUpdate> {
         match event {
             Event::Started { kind } => {
                 self.started(kind.into_result().ok());
@@ -132,7 +138,11 @@ impl UpgradeDecoder {
                 });
                 None
             }
-            Event::SnapshotDone => self.snapshot_done(),
+            Event::SnapshotDone => self.snapshot_done().map(UpgradeUpdate::Snapshot),
+            Event::Cleared => {
+                self.candidate = None;
+                Some(UpgradeUpdate::Cleared)
+            }
         }
     }
 
@@ -342,7 +352,11 @@ mod tests {
 
             assert_eq!(
                 decoder.decode(&Event::SnapshotDone),
-                Some(running_snapshot(Kind::Firmware, Some(wire_phase), None)),
+                Some(UpgradeUpdate::Snapshot(running_snapshot(
+                    Kind::Firmware,
+                    Some(wire_phase),
+                    None,
+                ))),
                 "firmware upgrade must accept {wire_phase:?}"
             );
         }
@@ -360,7 +374,11 @@ mod tests {
             decode_all(&mut decoder, [started(Kind::Packages), phase(wire_phase)]);
             assert_eq!(
                 decoder.decode(&Event::SnapshotDone),
-                Some(running_snapshot(Kind::Packages, Some(wire_phase), None))
+                Some(UpgradeUpdate::Snapshot(running_snapshot(
+                    Kind::Packages,
+                    Some(wire_phase),
+                    None,
+                )))
             );
         }
 
@@ -392,7 +410,11 @@ mod tests {
         decode_all(&mut decoder, [started(Kind::Packages)]);
         assert_eq!(
             decoder.decode(&Event::SnapshotDone),
-            Some(running_snapshot(Kind::Packages, None, None))
+            Some(UpgradeUpdate::Snapshot(running_snapshot(
+                Kind::Packages,
+                None,
+                None,
+            )))
         );
     }
 
@@ -432,14 +454,14 @@ mod tests {
             );
             assert_eq!(
                 decoder.decode(&Event::SnapshotDone),
-                Some(running_snapshot(
+                Some(UpgradeUpdate::Snapshot(running_snapshot(
                     Kind::Packages,
                     None,
                     Some(DownloadProgress {
                         downloaded_bytes,
                         total_bytes: None,
                     }),
-                )),
+                ))),
                 "unknown-total progress must preserve {downloaded_bytes:#x}"
             );
         }
@@ -454,14 +476,14 @@ mod tests {
         );
         assert_eq!(
             decoder.decode(&Event::SnapshotDone),
-            Some(running_snapshot(
+            Some(UpgradeUpdate::Snapshot(running_snapshot(
                 Kind::Firmware,
                 None,
                 Some(DownloadProgress {
                     downloaded_bytes: u64::from(u32::MAX) + 1,
                     total_bytes: Some(u64::MAX),
                 }),
-            ))
+            )))
         );
 
         let mut decoder = UpgradeDecoder::default();
@@ -475,14 +497,14 @@ mod tests {
         );
         assert_eq!(
             decoder.decode(&Event::SnapshotDone),
-            Some(running_snapshot(
+            Some(UpgradeUpdate::Snapshot(running_snapshot(
                 Kind::Packages,
                 Some(Phase::PackageRealizing),
                 Some(DownloadProgress {
                     downloaded_bytes: 3,
                     total_bytes: Some(5),
                 }),
-            ))
+            )))
         );
     }
 
@@ -500,12 +522,12 @@ mod tests {
         );
         assert_eq!(
             decoder.decode(&Event::SnapshotDone),
-            Some(UpgradeSnapshot {
+            Some(UpgradeUpdate::Snapshot(UpgradeSnapshot {
                 kind: Kind::Firmware,
                 state: UpgradeState::Succeeded {
                     remaining: Duration::from_millis(1_500),
                 },
-            })
+            }))
         );
 
         let mut decoder = UpgradeDecoder::default();
@@ -515,12 +537,12 @@ mod tests {
         );
         assert_eq!(
             decoder.decode(&Event::SnapshotDone),
-            Some(UpgradeSnapshot {
+            Some(UpgradeUpdate::Snapshot(UpgradeSnapshot {
                 kind: Kind::Packages,
                 state: UpgradeState::Failed {
                     remaining: Duration::from_millis(250),
                 },
-            })
+            }))
         );
     }
 
@@ -557,5 +579,20 @@ mod tests {
             Event::Failed { remaining_ms: 1 },
         ]);
         assert_invalid_upgrade_sequence([started(Kind::Firmware), started(Kind::Packages)]);
+    }
+
+    #[test]
+    fn clear_discards_an_unfinished_candidate() {
+        let mut decoder = UpgradeDecoder::default();
+        decode_all(
+            &mut decoder,
+            [started(Kind::Packages), phase(Phase::PackageRealizing)],
+        );
+
+        assert_eq!(
+            decoder.decode(&Event::Cleared),
+            Some(UpgradeUpdate::Cleared)
+        );
+        assert_eq!(decoder.decode(&Event::SnapshotDone), None);
     }
 }

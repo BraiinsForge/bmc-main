@@ -173,6 +173,9 @@ The snapshot's `remaining` dwell is ignored: like every other screen here, this 
 the screen only ever opens the operational flow, `boot_flow_delivered` covers it too — a restarted overlay does not
 confirm an upgrade the user was already told about.
 
+The device-info overlay deliberately ignores `cleared`: a clear alone must neither start a post-upgrade sequence nor
+restart one already in progress. Once a success selects the opening path, that flow's own screen and timer finish it.
+
 Which of the two paths runs is decided by the runner, not by the wire: the device-info events are drained before the
 snapshot is applied in `tick`, whichever order the compositor replayed them in. So on a post-upgrade boot the
 `device_state` has already opened the connect screen, and the snapshot switches it to the upgrade screen on the spot,
@@ -428,7 +431,8 @@ generic policy as the alarm — suppressed scene navigation and a preempted sett
 
 ### Map, progress, and dismiss
 
-Visibility is a single `Option<UpgradeView>`, filled from `on_upgrade_state` and cleared when the run ends:
+Visibility is a single `Option<UpgradeView>`, filled from `on_upgrade_state`. `on_upgrade_cleared` drops it immediately;
+a terminal view also clears itself when its deadline expires:
 
 - **Running** shows the phase label ("Verifying firmware", "Verifying packages", "Preparing update" before the first
   phase) and a bar whose mode follows the snapshot: determinate when a download reports a total, indeterminate when it

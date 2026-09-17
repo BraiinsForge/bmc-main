@@ -2323,6 +2323,9 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::SetUpgradeState { state: upgrade } => {
             state.compositor.upgrade.set(upgrade, Instant::now());
         }
+        CompositorCommand::ClearUpgradeState => {
+            state.compositor.upgrade.clear();
+        }
         CompositorCommand::RestartDeclined { reason } => {
             state.compositor.settings.restart_declined(&reason);
         }
@@ -2657,6 +2660,12 @@ impl Compositor for EglCompositor {
     ) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetUpgradeState { state })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn clear_upgrade_state(&self) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::ClearUpgradeState)
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
@@ -4002,6 +4011,24 @@ mod tests {
         );
 
         assert_eq!(state.compositor.upgrade.current_snapshot(), Some(&snapshot));
+    }
+
+    #[test]
+    fn clear_upgrade_state_command_removes_the_authoritative_snapshot() {
+        let mut state = make_app_state();
+        state.compositor.upgrade.set(
+            UpgradeDisplaySnapshot {
+                generation: UpgradeGeneration::new(9),
+                state: UpgradeDisplayState::Succeeded {
+                    kind: UpgradeKind::Firmware,
+                },
+            },
+            Instant::now(),
+        );
+
+        handle_command(&mut state, CompositorCommand::ClearUpgradeState);
+
+        assert_eq!(state.compositor.upgrade.current_snapshot(), None);
     }
 
     #[test]

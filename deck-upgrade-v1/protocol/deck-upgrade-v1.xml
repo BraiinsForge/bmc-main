@@ -8,7 +8,7 @@
     a complete display snapshot to the firmware and package overlay clients.
   </copyright>
 
-  <interface name="deck_upgrade_v1" version="1">
+  <interface name="deck_upgrade_v1" version="2">
     <description summary="Deck upgrade-progress interface">
       Lightweight compositor-relayed IPC for upgrade overlays. Each complete
       snapshot starts with started and ends with snapshot_done, so a client
@@ -93,6 +93,12 @@
         Marks the end of a complete snapshot sequence. Clients retain their last
         coherent view if the candidate sequence contained invalid enum values or
         event ordering.
+      </description>
+    </event>
+
+    <event name="cleared" since="2">
+      <description summary="clear the upgrade presentation">
+        Discard any staged snapshot and hide the current upgrade presentation.
       </description>
     </event>
   </interface>

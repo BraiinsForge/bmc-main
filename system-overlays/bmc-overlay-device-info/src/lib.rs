@@ -1696,6 +1696,29 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_clear_does_not_start_or_restart_the_boot_sequence() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational, true);
+        assert_eq!(overlay.screen, Screen::Hidden);
+
+        overlay.on_upgrade_cleared();
+
+        assert_eq!(overlay.screen, Screen::Hidden);
+        assert_eq!(overlay.post_upgrade, None);
+
+        let mut active = overlay_with_ip(None);
+        active.on_device_state(DeviceState::Operational, false);
+        active.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        assert!(matches!(active.screen, Screen::OpUpgraded { .. }));
+        let screen = active.screen;
+
+        active.on_upgrade_cleared();
+
+        assert_eq!(active.screen, screen);
+        assert_eq!(active.post_upgrade, Some(UpgradeKind::Firmware));
+    }
+
+    #[test]
     fn firmware_upgrade_success_opens_the_flow_and_hands_over_to_connecting() {
         let mut overlay = overlay_with_ip(None);
         overlay.on_device_state(DeviceState::Operational, false);

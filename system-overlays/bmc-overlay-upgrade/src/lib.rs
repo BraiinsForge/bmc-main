@@ -388,6 +388,10 @@ impl SystemOverlay for UpgradeOverlay {
         self.state.receive(snapshot, Instant::now());
     }
 
+    fn on_upgrade_cleared(&mut self) {
+        self.state.clear();
+    }
+
     fn tick(&mut self, now: Instant) -> TickOutcome {
         self.state.tick(now)
     }
@@ -601,6 +605,18 @@ mod tests {
             },
         });
         assert!(overlay.tick(now).visible);
+    }
+
+    #[test]
+    fn clear_hides_an_active_upgrade_presentation() {
+        let now = Instant::now();
+        let mut overlay = UpgradeOverlay::packages_for_display(DECK);
+        overlay.on_upgrade_state(running(UpgradeKind::Packages));
+        assert!(overlay.tick(now).visible);
+
+        overlay.on_upgrade_cleared();
+
+        assert!(!overlay.tick(now).visible);
     }
 
     #[test]

@@ -77,6 +77,7 @@ pub enum CompositorCommand {
     SetUpgradeState {
         state: UpgradeDisplaySnapshot,
     },
+    ClearUpgradeState,
     RestartDeclined {
         reason: String,
     },

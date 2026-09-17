@@ -130,9 +130,8 @@ struct State {
     wants_upgrade: bool,
     upgrade: Option<DeckUpgradeV1>,
     upgrade_decoder: UpgradeDecoder,
-    /// Latest coherent `deck_upgrade_v1` snapshot, drained by the framework
-    /// before its next tick.
-    pending_upgrade_snapshot: Option<crate::overlay::UpgradeSnapshot>,
+    /// Latest `deck_upgrade_v1` update, drained by the framework before its next tick.
+    pending_upgrade_update: Option<crate::overlay::UpgradeUpdate>,
 
     /// Whether this overlay opted into `deck_device_info_v1` (its
     /// `SystemOverlay::uses_device_info`).
@@ -219,7 +218,7 @@ impl Default for State {
             wants_upgrade: false,
             upgrade: None,
             upgrade_decoder: UpgradeDecoder::default(),
-            pending_upgrade_snapshot: None,
+            pending_upgrade_update: None,
             wants_device_info: false,
             device_info: None,
             pending_device_lifecycle: None,
@@ -286,8 +285,8 @@ impl State {
     }
 
     fn on_upgrade_event(&mut self, event: &deck_upgrade_v1::Event) {
-        if let Some(snapshot) = self.upgrade_decoder.decode(event) {
-            self.pending_upgrade_snapshot = Some(snapshot);
+        if let Some(update) = self.upgrade_decoder.decode(event) {
+            self.pending_upgrade_update = Some(update);
         }
     }
 
@@ -749,8 +748,8 @@ impl LayerSurfaceClient {
         self.state.pending_alarm_event.take()
     }
 
-    pub fn take_upgrade_snapshot(&mut self) -> Option<crate::overlay::UpgradeSnapshot> {
-        self.state.pending_upgrade_snapshot.take()
+    pub fn take_upgrade_update(&mut self) -> Option<crate::overlay::UpgradeUpdate> {
+        self.state.pending_upgrade_update.take()
     }
 
     /// The lifecycle state, and whether this session's operational boot sequence
@@ -943,7 +942,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "deck_upgrade_v1" if state.wants_upgrade => {
                     let upgrade =
-                        registry.bind::<DeckUpgradeV1, _, _>(name, version.min(1), qh, ());
+                        registry.bind::<DeckUpgradeV1, _, _>(name, version.min(2), qh, ());
                     state.upgrade = Some(upgrade);
                 }
                 "deck_device_info_v1" if state.wants_device_info => {
@@ -1486,7 +1485,46 @@ mod tests {
         });
         state.on_upgrade_event(&Event::SnapshotDone);
 
-        assert_eq!(state.pending_upgrade_snapshot, Some(valid));
+        assert_eq!(
+            state.pending_upgrade_update,
+            Some(crate::overlay::UpgradeUpdate::Snapshot(valid))
+        );
+    }
+
+    #[test]
+    fn clear_replaces_pending_upgrade_state_and_discards_the_candidate() {
+        let valid = running_snapshot(
+            crate::overlay::UpgradeKind::Packages,
+            Some(crate::overlay::UpgradePhase::PackageRealizing),
+            None,
+        );
+        let mut state = State::default();
+        state.on_upgrade_event(&started(Kind::Packages));
+        state.on_upgrade_event(&phase(Phase::PackageRealizing));
+        state.on_upgrade_event(&Event::SnapshotDone);
+        assert_eq!(
+            state.pending_upgrade_update,
+            Some(crate::overlay::UpgradeUpdate::Snapshot(valid))
+        );
+
+        state.on_upgrade_event(&started(Kind::Firmware));
+        state.on_upgrade_event(&Event::Cleared);
+        state.on_upgrade_event(&Event::SnapshotDone);
+        assert_eq!(
+            state.pending_upgrade_update,
+            Some(crate::overlay::UpgradeUpdate::Cleared)
+        );
+
+        state.on_upgrade_event(&started(Kind::Packages));
+        state.on_upgrade_event(&Event::SnapshotDone);
+        assert_eq!(
+            state.pending_upgrade_update,
+            Some(crate::overlay::UpgradeUpdate::Snapshot(running_snapshot(
+                crate::overlay::UpgradeKind::Packages,
+                None,
+                None,
+            )))
+        );
     }
 
     #[derive(Default)]
@@ -1554,9 +1592,9 @@ mod tests {
         state.on_upgrade_event(&Event::SnapshotDone);
 
         let mut observer = UpgradeObserver::default();
-        let _ = crate::overlay::deliver_upgrade_snapshot_and_tick(
+        let _ = crate::overlay::deliver_upgrade_update_and_tick(
             &mut observer,
-            state.pending_upgrade_snapshot.take(),
+            state.pending_upgrade_update.take(),
             Instant::now(),
         );
 
@@ -1574,13 +1612,15 @@ mod tests {
         state.on_upgrade_event(&Event::SnapshotDone);
 
         assert_eq!(
-            state.pending_upgrade_snapshot,
-            Some(crate::overlay::UpgradeSnapshot {
-                kind: crate::overlay::UpgradeKind::Firmware,
-                state: crate::overlay::UpgradeState::Succeeded {
-                    remaining: Duration::from_millis(500),
-                },
-            })
+            state.pending_upgrade_update,
+            Some(crate::overlay::UpgradeUpdate::Snapshot(
+                crate::overlay::UpgradeSnapshot {
+                    kind: crate::overlay::UpgradeKind::Firmware,
+                    state: crate::overlay::UpgradeState::Succeeded {
+                        remaining: Duration::from_millis(500),
+                    },
+                }
+            ))
         );
     }
 

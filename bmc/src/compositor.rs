@@ -374,6 +374,10 @@ pub trait Compositor: Send + Sync {
         Ok(())
     }
 
+    fn clear_upgrade_state(&self) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
     fn enqueue_register_widget(
         &self,
         registration: WidgetRegistration,
