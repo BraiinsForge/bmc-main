@@ -38,8 +38,8 @@ fetched independently so one bad symbol never blanks the others.
   price of the selected period to the latest price.
 - A non-negative change is green and a negative change is red; the sparkline and its fill take the same colour.
 - The sparkline traces the price across the whole selected period within its row.
-- The price is formatted with as many decimals as its magnitude warrants — none at 100 000 and above, two at 1 and
-  above, and progressively more for small values.
+- The price is formatted with as many decimals as its magnitude warrants — none at 1000 and above, two at 1 and above,
+  and progressively more for small values.
 - Currency pairs made of two fiat currencies below a rate of 1000 use five decimals, or three when quoted in JPY.
 - Number grouping and the decimal separator follow the device localization setting.
 
