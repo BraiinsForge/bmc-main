@@ -77,7 +77,7 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         ));
         draws.push(path!(line, stroke: CHART_STROKE, color: trend.with_alpha(alpha)));
     }
-    // Above 100 000 a price loses its decimals but its digits grow without bound
+    // Above 1000 a price loses its decimals but its digits grow without bound
     // (BTC-KRW reaches nine), so tile width runs out before font size does.
     let price_center_y = h / 2.0 - header_h;
     #[expect(

@@ -50,9 +50,9 @@ const FIAT_CODES: &[&str] = &[
 /// the forex quote convention (5 fraction digits, 3 for a JPY quote) while the
 /// rate fits the column (< 1000); everything else uses magnitude buckets that
 /// keep roughly four significant digits below 1 and the classic two decimals
-/// above (none from 100 000 up). A value that rounds across its bucket
-/// boundary takes the wider bucket's digits, so 99 999.995 renders `100 000`,
-/// not `100 000.00`.
+/// above (none from 1000 up). A value that rounds across its bucket boundary
+/// takes the wider bucket's digits, so 999.995 renders `1 000`, not
+/// `1 000.00`.
 #[must_use]
 pub fn price_precision(symbol: &str, value: f64) -> PricePrecision {
     let v = value.abs();
@@ -81,7 +81,7 @@ pub fn price_precision(symbol: &str, value: f64) -> PricePrecision {
 
 /// Fraction digits for a positive in-range magnitude.
 fn bucket_digits(v: f64) -> u32 {
-    if v >= 100_000.0 {
+    if v >= 1_000.0 {
         0
     } else if v >= 1.0 {
         2
@@ -220,9 +220,9 @@ mod tests {
     fn rounding_into_the_next_bucket_uses_that_buckets_digits() {
         // 0.99995 would render "1.0000" with sub-one digits; carry to "1.00"
         assert_eq!(price_precision("X", 0.999_95), Fraction(2));
-        // 99999.995 would render "100 000.00"; carry to "100 000"
-        assert_eq!(price_precision("X", 99_999.995), Fraction(0));
-        assert_eq!(price_precision("X", 99_999.99), Fraction(2));
+        // 999.995 would render "1 000.00"; carry to "1 000"
+        assert_eq!(price_precision("X", 999.995), Fraction(0));
+        assert_eq!(price_precision("X", 999.99), Fraction(2));
     }
 
     #[test]
@@ -242,7 +242,11 @@ mod tests {
         assert_eq!(price_precision("BTC-USD", 1.16), Fraction(2));
         assert_eq!(price_precision("BRK-B", 491.62), Fraction(2));
         // a rate >= 1000 falls back to the magnitude rule (width guard)
-        assert_eq!(price_precision("USD-HUF", 1234.5), Fraction(2));
+        assert_eq!(price_precision("USD-HUF", 1234.5), Fraction(0));
+        assert_eq!(price_precision("EUR-USD", 1000.0), Fraction(0));
+        assert_eq!(price_precision("USD-JPY", 1000.0), Fraction(0));
+        assert_eq!(price_precision("EUR-USD", 999.99), Fraction(5));
+        assert_eq!(price_precision("USD-JPY", 999.99), Fraction(3));
     }
 
     #[test]
