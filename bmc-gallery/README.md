@@ -5,16 +5,16 @@ Every `*.scene.rs` in the repo, rendered through bmc-render's femtovg pipeline o
 so the framework's egui version stays clear of the workspace's.
 
 ```sh
-just gallery::run                                        # the window
-just gallery::hot                                        # the window, reloading scenes as you edit
-just gallery::check                                      # type-check scenes + launcher, no GL
-just gallery::build                                      # the above, plus scene codegen and linking
-just gallery::ci                                         # the build, lints and policy checks CI runs
+just gallery::run                                                 # the window
+just gallery::hot                                                 # the window, reloading scenes as you edit
+just gallery::check                                               # type-check scenes + launcher, no GL
+just gallery::build                                               # the above, plus scene codegen and linking
+just gallery::ci                                                  # the build, lints and policy checks CI runs
 
-just gallery::preview 'animation::Easing Curves' easing  # one scene at its declared knobs
-just gallery::knobs 'overlays::Settings Tray'            # what a recipe can set
-just gallery::capture-init 'overlays::Settings Tray'     # a recipe with those knobs filled in
-just gallery::capture                                    # every shot in capture.toml
+just gallery::preview 'animation::Easing Curves' easing           # one scene at its declared knobs
+just gallery::knobs 'settings_tray_bmc100::Settings Tray'         # what a recipe can set
+just gallery::capture-init 'settings_tray_bmc100::Settings Tray'  # a recipe with those knobs filled in
+just gallery::capture                                             # every shot in capture.toml
 ```
 
 `preview` shows a scene as it declares itself; setting knobs is what `capture` is for. Both write under `.tmp/`, taking
