@@ -200,11 +200,13 @@ impl Drop for JoinWatcher {
 }
 
 /// Follows one join: subscribes when the supplicant appears, subscribes again
-/// when it is replaced, and stops trying after [`ATTACH_ATTEMPTS`] unanswered
+/// when it is replaced, and stops trying after [`ATTACH_ATTEMPTS`] failed
 /// attempts.
 ///
-/// The events live here rather than in the subscription, so a supplicant
-/// restart - or a failed re-subscribe - cannot lose what it already said.
+/// The events live here rather than in the subscription, so they outlive a
+/// drained socket while the watcher stays current. Once the supplicant is
+/// replaced they are discarded: they described the configuration the old
+/// instance ran with, and the verdict rests on what the new one says.
 #[derive(Debug)]
 pub(crate) struct JoinDiagnosis {
     watcher: Option<JoinWatcher>,
