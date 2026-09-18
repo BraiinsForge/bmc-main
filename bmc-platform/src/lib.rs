@@ -500,7 +500,7 @@ impl HardwareProfile {
             slot_grid: self.slot_grid,
             sound_supported,
             led_supported,
-            alarm_supported: sound_supported || led_supported,
+            alarm_supported: sound_supported,
             wifi_supported,
             ethernet_supported,
             mining_supported,
@@ -681,7 +681,7 @@ mod test {
     }
 
     #[test]
-    fn alarm_support_is_derived_from_profile_outputs() {
+    fn alarm_support_follows_sound_not_the_led_strip() {
         let sound_only = HardwareProfile {
             led_strip: None,
             ..HardwareProfile::for_product(Product::Bmc100)
@@ -698,7 +698,10 @@ mod test {
         .capabilities();
         assert!(!led_only.sound_supported);
         assert!(led_only.led_supported);
-        assert!(led_only.alarm_supported);
+        assert!(
+            !led_only.alarm_supported,
+            "an LED strip alone does not make an alarm"
+        );
     }
 
     #[test]

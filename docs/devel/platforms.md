@@ -82,8 +82,9 @@ mode to a `480x1280` visible area, then the 270 degree scanout transform exposes
 
 `HardwareProfile::capabilities()` projects the profile into the `HardwareCapabilities` value used by `bmc` core.
 `display` is the logical display information delivered to widgets, while `slot_grid` controls combined-scene support.
-The value also reports sound and LED support and derives `alarm_supported` as `sound_supported || led_supported`.
-Browser clients receive the value before login as `window.SYSTEM.capabilities` from `/system.js`.
+The value also reports sound and LED support and derives `alarm_supported` from `sound_supported` alone; an LED strip by
+itself does not make an alarm. Browser clients receive the value before login as `window.SYSTEM.capabilities` from
+`/system.js`.
 
 An absent `slot_grid` means combined scenes are not supported on that hardware.
 
@@ -98,7 +99,7 @@ available.
 
 `BMM100`, `BMM101`, and `BFM100` are fullscreen-only in the current UI/API surface. They have no slot grid, so combined
 scenes are filtered out during startup/cycling and rejected by scene-management RPCs. They also have no LED strip
-profile, so the OpenWrt LED driver is disabled for those products. With neither sound nor LED output, they report
+profile, so the OpenWrt LED driver is disabled for those products. Without sound output, they report
 `alarm_supported = false`. BMC does not initialize the alarm runtime, does not register `AlarmService`, and leaves
 persisted alarms untouched. Browser clients should gate alarm UI on `window.SYSTEM.capabilities.alarm_supported`.
 
