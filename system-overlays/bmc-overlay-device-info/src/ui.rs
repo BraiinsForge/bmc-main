@@ -178,6 +178,45 @@ const TRAY_HINT_GAP: f32 = 8.0;
 /// reads as one sentence rather than two blocks.
 const HEADLINE_GAP: f32 = 4.0;
 
+/// Widest artwork a screen's leading icon may draw, one field per group of screens that share a size.
+/// The groups follow what a screen puts around the icon, not the panel:
+/// a column sharing the panel with a QR takes less than a screen holding the panel on its own.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IconWidths {
+    /// The setup screen once the AP is up, whose icon column stands beside the
+    /// QR column and so has the least room of any screen's.
+    ap_up: f32,
+    /// The address-and-QR screens: setup over a cable, the setup connect info
+    /// and the operational connect info.
+    connect_info: f32,
+    /// The same setup screen while the AP is still coming up, which holds the
+    /// panel on its own and so fits far more.
+    ap_pending: f32,
+    /// Every other screen, all of them the icon + text template.
+    other: f32,
+}
+
+/// Which registered artwork the setup screen leads with once the AP is up.
+/// [`IconWidths::ap_up`] says how wide it draws. The pending variant of the
+/// same screen makes no such choice: it holds the panel on its own, so the
+/// authored illustration fits whatever the panel.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SetupApIcon {
+    /// The Wi-Fi join illustration the screen was authored with.
+    WifiConnect,
+    /// The plain Wi-Fi glyph the connect-progress screens lead with.
+    Wifi,
+}
+
+impl SetupApIcon {
+    fn pick(self, icons: DeviceInfoIcons) -> Icon {
+        match self {
+            Self::WifiConnect => icons.wifi_connect,
+            Self::Wifi => icons.wifi,
+        }
+    }
+}
+
 /// Size-dependent metrics. The screens were authored for the Deck's 1280x480
 /// panel; the compact tier refits the same layouts to small panels such as
 /// the BMM101's 480x320.
@@ -196,11 +235,10 @@ pub(crate) struct Tier {
     /// Width of the QR column, so the code and its text keep their proportions
     /// whatever the column beside them holds.
     qr_column_width: f32,
-    /// Widest artwork a split screen's column holds: half the panel, less the
-    /// rule and the gaps around it.
-    column_icon_width: f32,
-    /// Widest a centered template's leading icon may draw.
-    icon_max_width: f32,
+    icon_width: IconWidths,
+    /// The artwork the setup screen leads with once the AP is up,
+    /// a per-panel choice like the sizes.
+    ap_up_icon: SetupApIcon,
     icon_margin: f32,
     /// Breathing room above the first line of a screen, and between its blocks.
     top_inset: f32,
@@ -225,8 +263,13 @@ const TIER_WIDE: Tier = Tier {
     qr: 336.0,
     qr_column: 224.0,
     qr_column_width: 480.0,
-    column_icon_width: 520.0,
-    icon_max_width: f32::MAX,
+    icon_width: IconWidths {
+        ap_up: 520.0,
+        connect_info: f32::MAX,
+        ap_pending: f32::MAX,
+        other: f32::MAX,
+    },
+    ap_up_icon: SetupApIcon::WifiConnect,
     icon_margin: 30.0,
     top_inset: 40.0,
     gap: 20.0,
@@ -245,10 +288,15 @@ const TIER_COMPACT: Tier = Tier {
     qr: 150.0,
     qr_column: 120.0,
     qr_column_width: 190.0,
-    column_icon_width: 140.0,
-    icon_max_width: 84.0,
+    icon_width: IconWidths {
+        ap_up: 30.0,
+        connect_info: 150.0,
+        ap_pending: 350.0,
+        other: 80.0,
+    },
+    ap_up_icon: SetupApIcon::Wifi,
     icon_margin: 8.0,
-    top_inset: 12.0,
+    top_inset: 50.0,
     gap: 8.0,
     label_gap: 4.0,
     column_gap: 16.0,
@@ -598,9 +646,30 @@ fn template_children(
     children
 }
 
-/// The centered icon + text template shared by the simple screens.
+/// The icon + text template shared by the simple screens.
 fn template_tree(
     tier: Tier,
+    justify: Justify,
+    show_eyebrow: bool,
+    icon_id: Icon,
+    title_text: &str,
+    lines: Vec<TreeNode>,
+) -> TreeNode {
+    template_tree_with_icon_width(
+        tier,
+        tier.icon_width.other,
+        justify,
+        show_eyebrow,
+        icon_id,
+        title_text,
+        lines,
+    )
+}
+
+/// `template_tree` for a screen that sizes its artwork on its own.
+fn template_tree_with_icon_width(
+    tier: Tier,
+    icon_width: f32,
     justify: Justify,
     show_eyebrow: bool,
     icon_id: Icon,
@@ -615,7 +684,7 @@ fn template_tree(
             template_children(
                 tier,
                 show_eyebrow,
-                icon_within(icon_id, tier.icon_max_width),
+                icon_within(icon_id, icon_width),
                 title_text,
                 lines,
             ),
@@ -633,6 +702,8 @@ struct QrColumn<'a> {
 
 /// `template_tree` with a second column to its right, on the far side of a rule:
 /// the same icon + text stack, and a QR under its own headline beside it.
+/// The setup screen with its AP up is the only screen laid out this way,
+/// so it is that screen's icon width the stack draws within.
 fn template_tree_with_qr(
     tier: Tier,
     justify: Justify,
@@ -655,7 +726,7 @@ fn template_tree_with_qr(
                 template_children(
                     tier,
                     show_eyebrow,
-                    icon_within(icon_id, tier.column_icon_width),
+                    icon_within(icon_id, tier.icon_width.ap_up),
                     title_text,
                     lines,
                 ),
@@ -737,7 +808,7 @@ fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &st
             margin: tier.icon_margin,
             ..PropsData::default()
         },
-        [icon_within(icon_id, tier.icon_max_width)],
+        [icon_within(icon_id, tier.icon_width.connect_info)],
     );
 
     let text_section = col(
@@ -772,7 +843,6 @@ fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &st
 fn connecting_parts(
     tier: Tier,
     icons: DeviceInfoIcons,
-    device_icon: Icon,
     link: &Link,
 ) -> (Icon, &'static str, Vec<TreeNode>) {
     match link {
@@ -781,20 +851,23 @@ fn connecting_parts(
             CONNECTING_TITLE,
             ssid_lines(tier, ssid.as_deref()),
         ),
-        Link::Cable => (device_icon, CONNECTING_CABLE_TITLE, Vec::new()),
+        Link::Cable => (icons.ethernet, CONNECTING_CABLE_TITLE, Vec::new()),
     }
 }
 
 /// The setup flow's connect progress: shown while joining the chosen network,
 /// and again while the uplink's address is still pending.
-fn setup_connecting_tree(
-    tier: Tier,
-    icons: DeviceInfoIcons,
-    device_icon: Icon,
-    link: &Link,
-) -> TreeNode {
-    let (icon_id, title_text, lines) = connecting_parts(tier, icons, device_icon, link);
+fn setup_connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> TreeNode {
+    let (icon_id, title_text, lines) = connecting_parts(tier, icons, link);
     template_tree(tier, Justify::Start, true, icon_id, title_text, lines)
+}
+
+/// The operational flow's connect progress: the setup screen's parts, centered
+/// and saying what the device is still waiting for.
+fn connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> TreeNode {
+    let (icon_id, title_text, mut lines) = connecting_parts(tier, icons, link);
+    lines.push(content(tier, WAITING_FOR_IP, TextAlign::Center));
+    template_tree(tier, Justify::Center, false, icon_id, title_text, lines)
 }
 
 /// First-boot / reconfiguration AP screen.
@@ -824,7 +897,7 @@ fn setup_start_tree(
                 tier,
                 Justify::Start,
                 true,
-                icons.wifi_connect,
+                tier.ap_up_icon.pick(icons),
                 &format!("Connect to {device_name} Wi-Fi"),
                 lines,
                 QrColumn {
@@ -841,8 +914,12 @@ fn setup_start_tree(
             CONNECT_CABLE_TITLE,
             Vec::new(),
         ),
-        None => template_tree(
+        // The authored illustration on every tier, unlike the screen above:
+        // this variant holds the panel on its own, so there is nothing per-panel
+        // to choose between.
+        None => template_tree_with_icon_width(
             tier,
+            tier.icon_width.ap_pending,
             Justify::Start,
             true,
             icons.wifi_connect,
@@ -897,13 +974,11 @@ pub fn build_device_info_tree(
             tier,
             Justify::Start,
             true,
-            device_icon,
+            icons.ethernet,
             "Your device is being set up...",
             Vec::new(),
         ),
-        DeviceInfoView::SetupConnecting { link } => {
-            setup_connecting_tree(tier, icons, device_icon, link)
-        }
+        DeviceInfoView::SetupConnecting { link } => setup_connecting_tree(tier, icons, link),
         DeviceInfoView::SetupConnected { ssid } => template_tree(
             tier,
             Justify::Start,
@@ -916,7 +991,7 @@ pub fn build_device_info_tree(
             if let Some(ip) = ip {
                 connected_info_tree(tier, device_icon, "Complete the setup\nby accessing", *ip)
             } else {
-                setup_connecting_tree(tier, icons, device_icon, link)
+                setup_connecting_tree(tier, icons, link)
             }
         }
         DeviceInfoView::SetupCompleted => template_tree(
@@ -946,11 +1021,7 @@ pub fn build_device_info_tree(
             UPGRADE_SUCCESS_TITLE,
             Vec::new(),
         ),
-        DeviceInfoView::Connecting { link } => {
-            let (icon_id, title_text, mut lines) = connecting_parts(tier, icons, device_icon, link);
-            lines.push(content(tier, WAITING_FOR_IP, TextAlign::Center));
-            template_tree(tier, Justify::Center, false, icon_id, title_text, lines)
-        }
+        DeviceInfoView::Connecting { link } => connecting_tree(tier, icons, link),
         DeviceInfoView::Success { ip } => overlaid(
             connected_info_tree(tier, device_icon, "Access the device at", *ip),
             tray_hint(tier, icons.swipe_down),
@@ -973,7 +1044,7 @@ pub fn build_device_info_tree(
             tier,
             Justify::Center,
             false,
-            icons.error,
+            icons.ethernet_error,
             NO_NETWORK_TITLE,
             vec![content(tier, CHECK_CABLE, TextAlign::Center)],
         ),
@@ -1011,8 +1082,8 @@ pub fn render_device_info(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessPoint, DeviceInfoView, Link, Uplinks, build_device_info_tree, dismisses_on_touch,
-        tier_for,
+        AccessPoint, DeviceInfoView, Link, SetupApIcon, TIER_WIDE, Tier, Uplinks,
+        build_device_info_tree, dismisses_on_touch, tier_for,
     };
 
     /// The name and panel the screens were authored against.
@@ -1231,6 +1302,8 @@ mod tests {
         DeviceInfoIcons {
             wifi: id(),
             miner: id(),
+            ethernet: id(),
+            ethernet_error: id(),
             wifi_connect: id(),
             wifi_error: id(),
             success: id(),
@@ -1551,9 +1624,9 @@ mod tests {
             ),
             (
                 DeviceInfoView::SetupConnecting { link: Link::Cable },
-                icons.desktop_clock,
+                icons.ethernet,
             ),
-            (DeviceInfoView::TurningApOff, icons.desktop_clock),
+            (DeviceInfoView::TurningApOff, icons.ethernet),
             (DeviceInfoView::SetupConnected { ssid: None }, icons.wifi),
             (
                 DeviceInfoView::SetupConnectInfo {
@@ -1582,20 +1655,54 @@ mod tests {
             (DeviceInfoView::Connecting { link: wifi(None) }, icons.wifi),
             (
                 DeviceInfoView::Connecting { link: Link::Cable },
-                icons.desktop_clock,
+                icons.ethernet,
             ),
             (DeviceInfoView::Success { ip: IP }, icons.desktop_clock),
             (
                 DeviceInfoView::Failed { link: wifi(None) },
                 icons.wifi_error,
             ),
-            (DeviceInfoView::Failed { link: Link::Cable }, icons.error),
+            (
+                DeviceInfoView::Failed { link: Link::Cable },
+                icons.ethernet_error,
+            ),
         ] {
             let drawn = icon_ids(&tree_for(&view));
             let wanted = wanted.id.expect("BUG: fixture icons carry an ID");
             assert!(
                 drawn.contains(&wanted),
                 "{view:?} draws {drawn:?}, which does not include its own icon {wanted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_setup_screen_leads_with_the_icon_its_tier_names() {
+        let icons = distinct_icons();
+        for (choice, wanted) in [
+            (SetupApIcon::WifiConnect, icons.wifi_connect),
+            (SetupApIcon::Wifi, icons.wifi),
+        ] {
+            let tier = Tier {
+                ap_up_icon: choice,
+                ..TIER_WIDE
+            };
+            let tree = build_device_info_tree(
+                &DeviceInfoView::SetupStart {
+                    ap: Some(setup_ap()),
+                    uplinks: Uplinks::WIFI_ONLY,
+                },
+                icons,
+                tier,
+                DEVICE_NAME,
+                false,
+            )
+            .expect("BUG: the setup screen builds a tree");
+            let wanted = wanted.id.expect("BUG: fixture icons carry an ID");
+            let drawn = icon_ids(&tree);
+            assert!(
+                drawn.contains(&wanted),
+                "{choice:?} draws {drawn:?}, which does not include {wanted:?}"
             );
         }
     }

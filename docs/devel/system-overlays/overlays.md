@@ -109,8 +109,8 @@ over the cable is the exception on the setup screen: after `ADDRESS_LOSS_GRACE` 
 because a pulled cable is the likely cause, the connect progress brings the address back on the next lease, and a dead
 wizard URL helps nobody. Which it is, the overlay reads off the wording the connect progress would use, so a board that
 has an ethernet port but joined Wi-Fi keeps its address like the Deck: a station that drops out comes back with the same
-one. The screens render through the `bmc-render` tree pipeline with the legacy init-setup SVG icons and the miner
-outline embedded at build time; every screen has a gallery cell, one scene per product
+one. The screens render through the `bmc-render` tree pipeline with the legacy init-setup SVG icons, the miner outline
+and the ethernet icons embedded at build time; every screen has a gallery cell, one scene per product
 (`Overlays / Device Info / BMC100 | BMM101 | BMM100` in `overlays.scene.rs`) staging the screens that product can show
 at its own panel, and the `Screen` knob picks one card for `capture.toml`.
 
