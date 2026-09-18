@@ -26,7 +26,7 @@ import { Key } from 'ts-key-enum';
 import { URLS } from '@/constants';
 import { store, useStore } from '@/store';
 import type { Capabilities } from '@/lib/system';
-import { boserChrome, networkConfigurable } from '@/lib/capabilities';
+import { alarmsAvailable, boserChrome, networkConfigurable } from '@/lib/capabilities';
 import type { Brand } from '@/lib/brand';
 import { ARIA, LogoHeader, LinksBar } from '@/components';
 import cn from 'clsx';
@@ -138,11 +138,13 @@ class Base extends Component<Props, State> {
                     url={URLS.pages.accounts}
                     label={formatMessage({ defaultMessage: 'Connected Accounts' })}
                 />
-                <SideLink
-                    icon={IconAlarm}
-                    url={URLS.pages.alarms}
-                    label={formatMessage({ defaultMessage: 'Alarms' })}
-                />
+                {alarmsAvailable(this.props.capabilities) && (
+                    <SideLink
+                        icon={IconAlarm}
+                        url={URLS.pages.alarms}
+                        label={formatMessage({ defaultMessage: 'Alarms' })}
+                    />
+                )}
                 {/*
                 <SideLink icon={IconPriceAlerts} url={URLS.pages.priceAlerts} label={formatMessage({ defaultMessage: 'Price Alerts' })} />
                 <SideLink icon={IconNotification} url={URLS.pages.notifications} label={formatMessage({ defaultMessage: 'Notifications' })} />

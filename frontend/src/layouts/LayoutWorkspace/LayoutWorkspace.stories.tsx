@@ -71,3 +71,22 @@ export const Deck: Story = {
 export const BoserManaged: Story = {
     decorators: [onDevice(deckCapabilities({ boserManaged: true, ethernetSupported: true }), BRAND)],
 };
+
+// The flags `bmc-platform` reports for BMM101.
+export const Bmm101: Story = {
+    decorators: [
+        onDevice(
+            deckCapabilities({
+                combinedScenesSupported: false,
+                ethernetSupported: true,
+                miningSupported: true,
+                soundSupported: false,
+                ledSupported: false,
+                alarmSupported: false,
+                boserManaged: true,
+                productName: 'Braiins Mini Miner',
+            }),
+            BRAND,
+        ),
+    ],
+};

@@ -19,11 +19,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component } from 'react';
+import { Component, useEffect, type ReactElement } from 'react';
 import { debounce } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { useIntl, type IntlShape, FormattedMessage } from 'react-intl';
+import { useNavigate } from 'react-router';
 
+import { URLS } from '@/constants';
+import { useStore } from '@/store';
+import type { Capabilities } from '@/lib/system';
+import { alarmsAvailable } from '@/lib/capabilities';
 import { getID } from '@/lib/form';
 import { setState } from '@/lib/react';
 import { toast } from '@/lib/toast';
@@ -568,7 +573,31 @@ export class View extends Component<Props, State> {
     }
 }
 
+export function alarmsRedirectTarget(caps: Capabilities): null | string {
+    return alarmsAvailable(caps) ? null : URLS.pages.display.list;
+}
+
+export function AlarmsCapabilityGate(props: {
+    capabilities: Capabilities;
+    children: ReactElement;
+}): null | ReactElement {
+    const navigate = useNavigate();
+    const target = alarmsRedirectTarget(props.capabilities);
+
+    useEffect(() => {
+        if (target !== null) navigate(target, { replace: true });
+    }, [navigate, target]);
+
+    if (target !== null) return null;
+    return props.children;
+}
+
 export default function AlarmsPage() {
     const intl = useIntl();
-    return <View intl={intl} />;
+    const capabilities = useStore(x => x.state.hardwareCapabilities);
+    return (
+        <AlarmsCapabilityGate capabilities={capabilities}>
+            <View intl={intl} />
+        </AlarmsCapabilityGate>
+    );
 }
