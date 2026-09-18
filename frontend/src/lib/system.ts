@@ -31,6 +31,9 @@ export interface Capabilities {
     wifiSupported: boolean;
     ethernetSupported: boolean;
     miningSupported: boolean;
+    soundSupported: boolean;
+    ledSupported: boolean;
+    alarmSupported: boolean;
     boserManaged: boolean;
     productName: string;
 }
@@ -58,6 +61,9 @@ function parseCapabilities(caps: unknown): Capabilities {
         wifiSupported: bool(caps, 'wifi_supported'),
         ethernetSupported: bool(caps, 'ethernet_supported'),
         miningSupported: bool(caps, 'mining_supported'),
+        soundSupported: bool(caps, 'sound_supported'),
+        ledSupported: bool(caps, 'led_supported'),
+        alarmSupported: bool(caps, 'alarm_supported'),
         boserManaged: bool(caps, 'boser_managed'),
         productName,
     };

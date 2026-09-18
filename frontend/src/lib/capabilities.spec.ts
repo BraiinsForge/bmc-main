@@ -20,7 +20,14 @@
 
 import { describe, expect, test } from '@rstest/core';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
-import { boserChrome, ethernetConfigurable, networkConfigurable, wifiConfigurable } from './capabilities';
+import {
+    alarmsAvailable,
+    boserChrome,
+    ethernetConfigurable,
+    networkConfigurable,
+    soundOrLightConfigurable,
+    wifiConfigurable,
+} from './capabilities';
 
 describe('capability predicates', () => {
     test('a standalone Deck configures the interfaces it has', () => {
@@ -36,5 +43,20 @@ describe('capability predicates', () => {
 
         expect(networkConfigurable(caps)).toBe(false);
         expect(boserChrome(caps)).toBe(true);
+    });
+
+    test('either output alone opens Sound & Light', () => {
+        expect(soundOrLightConfigurable(deckCapabilities({ soundSupported: true, ledSupported: false }))).toBe(true);
+        expect(soundOrLightConfigurable(deckCapabilities({ soundSupported: false, ledSupported: true }))).toBe(true);
+    });
+
+    test('no output closes Sound & Light', () => {
+        expect(soundOrLightConfigurable(deckCapabilities({ soundSupported: false, ledSupported: false }))).toBe(false);
+    });
+
+    test('alarm availability is the backend flag, not a local sound-or-LED rule', () => {
+        const caps = deckCapabilities({ soundSupported: true, ledSupported: true, alarmSupported: false });
+
+        expect(alarmsAvailable(caps)).toBe(false);
     });
 });

@@ -32,6 +32,23 @@ export function networkConfigurable(caps: Capabilities): boolean {
     return ethernetConfigurable(caps) || wifiConfigurable(caps);
 }
 
+export function soundConfigurable(caps: Capabilities): boolean {
+    return caps.soundSupported;
+}
+
+export function ledConfigurable(caps: Capabilities): boolean {
+    return caps.ledSupported;
+}
+
+export function soundOrLightConfigurable(caps: Capabilities): boolean {
+    return soundConfigurable(caps) || ledConfigurable(caps);
+}
+
+// The backend derives alarm support from its outputs; a second rule here could drift from it.
+export function alarmsAvailable(caps: Capabilities): boolean {
+    return caps.alarmSupported;
+}
+
 function boserManaged(caps: Capabilities): boolean {
     return caps.boserManaged;
 }
