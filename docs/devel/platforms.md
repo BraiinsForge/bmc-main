@@ -87,12 +87,9 @@ Browser clients receive the value before login as `window.SYSTEM.capabilities` f
 
 An absent `slot_grid` means combined scenes are not supported on that hardware.
 
-The [hardware gRPC contract](grpc/hardware-service.md) documents the frozen legacy projection used by initial setup and
-combined-scene gating.
-
-The backend sets `combined_scenes_supported` from `caps.slot_grid.is_some()`. The frontend uses it to hide or redirect
-the combined-scene editor, and scene-management RPCs also reject combined-scene operations with `FailedPrecondition`
-when no slot grid is available.
+The frontend derives combined-scene support from the presence of `slot_grid` in `window.SYSTEM.capabilities` and uses it
+to hide or redirect the combined-scene editor. Scene-management RPCs also reject combined-scene operations with
+`FailedPrecondition` when no slot grid is available.
 
 ## Platform Differences In Current Behavior
 

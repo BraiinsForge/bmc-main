@@ -59,9 +59,8 @@ Primary sources:
 ### Hardware capability gating
 
 - Combined scenes require a slot grid. When the active platform has no `slot_grid`, `AddCombinedScene` and the
-  combined-scene paths reject with `FailedPrecondition`. The frontend can pre-check this via
-  `HardwareService.GetHardwareCapabilities` (`combined_scenes_supported`); see
-  [`hardware-service.md`](hardware-service.md).
+  combined-scene paths reject with `FailedPrecondition`. The frontend pre-checks this through the `slot_grid` field of
+  `window.SYSTEM.capabilities` served by `/system.js`; see [`platforms.md`](../platforms.md).
 - On add/update, each widget's `viewport_shape` is stamped from the platform's display shape
   (`HardwareCapabilities.display.shape`), so round-panel widgets receive a round viewport.
 

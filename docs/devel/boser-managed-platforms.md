@@ -61,8 +61,7 @@ Every mutating web gRPC service has an explicit managed-product owner:
 | `SystemService`            | `CreatePassword`, `ChangePassword`, `RemovePassword`, `SetTimezone`, `FactoryReset`, `Reboot`                                                                                     | Boser                       | reject in `BoserOwnershipInterceptor` after authentication                   |
 | `UpgradeService`           | `CheckForUpgrade`, `StartUpgrade`, `SetAutoUpgrade`                                                                                                                               | Boser (integration pending) | keep the current implementation available until the Boser integration lands  |
 
-`CredentialManagementService`, `HardwareService`, `MetadataService`, and the remaining methods on the listed services
-are read-only.
+`CredentialManagementService`, `MetadataService`, and the remaining methods on the listed services are read-only.
 
 ## Initial setup and Wi-Fi recovery
 
