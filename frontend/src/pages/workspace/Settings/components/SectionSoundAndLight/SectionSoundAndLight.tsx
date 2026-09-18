@@ -207,7 +207,7 @@ class View extends Component<Props> {
                         description={intl.formatMessage({
                             defaultMessage: 'Use LED lights for notifications and alerts during Night Mode.',
                         })}
-                        disabled={ledNotifyEnabled.disabled}
+                        disabled={ledNotifyEnabledNight.disabled}
                     >
                         <CarbonFormField error={ledNotifyEnabledNight.error}>
                             <Toggle
