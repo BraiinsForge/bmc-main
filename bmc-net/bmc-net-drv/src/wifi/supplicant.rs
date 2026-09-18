@@ -292,19 +292,81 @@ fn inode(path: &Path) -> Option<u64> {
 /// The SSID an event names, as bytes: `ssid="..."` in the CTRL events and
 /// `SSID='...'` in the SME lines. Both go through the supplicant's
 /// `printf_encode`, so the field is decoded before anyone compares it.
-fn event_ssid(line: &str) -> Option<Vec<u8>> {
-    if let Some((_, rest)) = line.split_once("ssid=\"") {
-        return Some(decode_printf(quoted(rest)));
+/// One line of a supplicant event taken apart: what it reports, the SSID it
+/// names, and the text around that SSID. The SSID is a payload the network
+/// chose, so nothing is ever looked for inside it.
+struct Line<'a> {
+    /// The first word after the `<N>` priority: `CTRL-EVENT-...`, `SME:`,
+    /// `WPA:`, `Associated`...
+    kind: &'a str,
+    ssid: Option<Vec<u8>>,
+    /// The line with the SSID cut out, where the fields are.
+    outside: String,
+}
+
+impl<'a> Line<'a> {
+    fn parse(line: &'a str) -> Self {
+        let body = line
+            .strip_prefix('<')
+            .and_then(|rest| rest.split_once('>'))
+            .map_or(line, |(_, body)| body);
+        let kind = body.split_whitespace().next().unwrap_or_default();
+        let Some((ssid, range)) = ssid_span(body) else {
+            return Self {
+                kind,
+                ssid: None,
+                outside: body.to_owned(),
+            };
+        };
+        let outside = format!(
+            "{}{}",
+            body.get(..range.start).unwrap_or_default(),
+            body.get(range.end..).unwrap_or_default()
+        );
+        Self {
+            kind,
+            ssid: Some(ssid),
+            outside,
+        }
     }
-    let rest = line.split_once("SSID='")?.1;
-    // `'` is not escaped by the encoder; the field ends where the line's next
-    // parameter begins, or at the last quote when it is the last thing said.
-    let end = rest
-        .find("' ")
+
+    /// Whether a `key=value` field outside the SSID reads exactly `field`.
+    fn has_field(&self, field: &str) -> bool {
+        self.outside.split_whitespace().any(|word| word == field)
+    }
+}
+
+/// The SSID `body` names, decoded, and where its encoded form sits: `ssid="..."`
+/// in the CTRL events, `SSID='...'` in the SME lines. Whichever marker comes
+/// first is the real one: a payload can only follow its own marker, so text
+/// inside the SSID that looks like the other marker is never mistaken for it.
+fn ssid_span(body: &str) -> Option<(Vec<u8>, std::ops::Range<usize>)> {
+    const CTRL_MARKER: &str = "ssid=\"";
+    const SME_MARKER: &str = "SSID='";
+    let ctrl = body.find(CTRL_MARKER);
+    let sme = body.find(SME_MARKER);
+    let ctrl_first = match (ctrl, sme) {
+        (Some(ctrl), Some(sme)) => ctrl < sme,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => return None,
+    };
+    if ctrl_first {
+        let start = ctrl? + CTRL_MARKER.len();
+        let payload = quoted(body.get(start..).unwrap_or_default());
+        return Some((decode_printf(payload), start..start + payload.len()));
+    }
+    let start = sme? + SME_MARKER.len();
+    let rest = body.get(start..).unwrap_or_default();
+    // The encoder leaves `'` alone, so the payload may hold quotes of its own.
+    // The SME line always follows the SSID with `' freq=`, and the real one
+    // is the last; a line without it ends the field at its last quote.
+    let len = rest
+        .rfind("' freq=")
         .or_else(|| rest.rfind('\''))
         .unwrap_or(rest.len());
-    // The quote is ASCII, so the cut is on a character boundary.
-    Some(decode_printf(rest.get(..end).unwrap_or(rest)))
+    let payload = rest.get(..len).unwrap_or(rest);
+    Some((decode_printf(payload), start..start + len))
 }
 
 /// The text up to the closing quote, escaped quotes skipped.
@@ -360,19 +422,20 @@ fn classify<'a>(events: impl Iterator<Item = &'a str>, ssid: &str) -> Option<Wif
     let mut not_found = false;
     for event in events {
         for line in event.lines() {
-            let named = event_ssid(line);
-            if named
+            let line = Line::parse(line);
+            if line
+                .ssid
                 .as_deref()
                 .is_some_and(|named| named != ssid.as_bytes())
             {
                 continue;
             }
-            if line.contains("reason=WRONG_KEY") {
+            if line.has_field("reason=WRONG_KEY") {
                 return Some(WifiJoinError::WrongKey(ssid.to_owned()));
             }
-            if line.contains("CTRL-EVENT-NETWORK-NOT-FOUND") {
+            if line.kind == "CTRL-EVENT-NETWORK-NOT-FOUND" {
                 not_found = true;
-            } else if named.is_some() {
+            } else if line.ssid.is_some() {
                 not_found = false;
             }
         }
@@ -487,6 +550,54 @@ mod tests {
             Some(WifiJoinError::WrongKey(_))
         ));
         assert!(classify(events.iter().copied(), "Say hi").is_none());
+    }
+
+    #[test]
+    fn a_token_shaped_ssid_cannot_forge_a_verdict() {
+        let wrong_key = [
+            "<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='reason=WRONG_KEY' freq=2462 MHz)",
+        ];
+        assert!(classify(wrong_key.iter().copied(), "reason=WRONG_KEY").is_none());
+
+        let not_found = [
+            "<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='CTRL-EVENT-NETWORK-NOT-FOUND' freq=2462 MHz)",
+        ];
+        assert!(classify(not_found.iter().copied(), "CTRL-EVENT-NETWORK-NOT-FOUND").is_none());
+
+        // The genuine verdict for such a network still comes through.
+        let rejected = [
+            r#"<3>CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="reason=WRONG_KEY" auth_failures=1 duration=10 reason=WRONG_KEY"#,
+        ];
+        assert!(matches!(
+            classify(rejected.iter().copied(), "reason=WRONG_KEY"),
+            Some(WifiJoinError::WrongKey(_))
+        ));
+    }
+
+    #[test]
+    fn an_apostrophe_in_the_ssid_does_not_end_the_sme_field() {
+        let events = NOT_FOUND.iter().copied().chain([
+            "<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='James' WiFi' freq=2462 MHz)",
+            "<3>CTRL-EVENT-DISCONNECTED bssid=c0:06:c3:ec:3f:06 reason=3",
+        ]);
+        assert!(classify(events, "James' WiFi").is_none());
+        assert_eq!(
+            Line::parse("<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='James' WiFi' freq=2462 MHz)").ssid,
+            Some(b"James' WiFi".to_vec())
+        );
+    }
+
+    #[test]
+    fn a_marker_inside_the_ssid_does_not_move_the_field() {
+        let sme = Line::parse(
+            r#"<3>SME: Trying to authenticate with c0:06:c3:ec:3f:06 (SSID='ssid="x' freq=2462 MHz)"#,
+        );
+        assert_eq!(sme.ssid, Some(br#"ssid="x"#.to_vec()));
+        let ctrl = Line::parse(
+            r#"<3>CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="SSID='y" auth_failures=1 duration=10 reason=WRONG_KEY"#,
+        );
+        assert_eq!(ctrl.ssid, Some(b"SSID='y".to_vec()));
+        assert!(ctrl.has_field("reason=WRONG_KEY"));
     }
 
     #[test]
