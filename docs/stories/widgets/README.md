@@ -63,14 +63,14 @@ refreshes. Rectangular viewports only.
 ### [Miner Info — Mining Widget](miner-info-mining.md)
 
 A miner overview: hashrate, temperature, power, MCR, fan speed and IP address, read over the BOS REST API. On the round
-panel the hashrate sits inside a gauge ring coloured by how the miner tracks its tuner target; the BMM101 lists
-hashrate, uptime, the BTC price, power, blocks found and the address. Needs no internet, except for that price.
+panel the hashrate sits inside a gauge ring coloured by how the miner tracks its tuner target; the BMM101 lists them
+under the widget's name with hairlines between. Needs no internet.
 
 ### [Miner Info — Geek Widget](miner-info-geek.md)
 
-The Bitcoin network's figures on any rectangular screen, network hashrate through hashvalue, reading no miner. On the
-round panel it is one miner's gauge instead, with the BTC price in a quadrant; miner and price are fetched
-independently, so either can fail without blanking the other.
+A miner detail screen pairing hashrate, temperature, power, uptime and IP address with the current BTC price. Miner and
+price are fetched independently, so either can fail without blanking the other. Carries the same round gauge as Mining;
+rectangular screens list the readings under the widget's name with hairlines between.
 
 ### [Miner Info — Info Overload Widget](miner-info-overload.md)
 

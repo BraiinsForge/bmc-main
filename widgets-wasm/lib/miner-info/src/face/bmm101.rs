@@ -29,8 +29,8 @@ use bmc_wasm_sdk::*;
 
 use super::{
     BACKGROUND, EDGE, block, change_color, fixed_height, icons, info_overload_bottom_row,
-    info_overload_difficulty_row, info_overload_primary_row, price_chart, rule, space_between_rows,
-    text_line, title_row, titled_lines, with_horizontal_padding,
+    info_overload_difficulty_row, info_overload_primary_row, ip_line, price_chart, rule,
+    space_between_rows, text_line, title_row, titled_lines, with_horizontal_padding,
 };
 use crate::format;
 use crate::layout::{self, Panel};
@@ -111,9 +111,9 @@ pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     )
 }
 
-/// The frame's six lines: the miner's readings with the BTC price among them.
+/// The small panel's six readings in the frame's titled list.
 #[must_use]
-pub fn mining(miner: &MinerData, public: &PublicData) -> Node {
+pub fn mining(miner: &MinerData) -> Node {
     let sizes = layout::list_layout(Panel::Bmm101).text;
     titled_lines(
         Panel::Bmm101,
@@ -121,20 +121,11 @@ pub fn mining(miner: &MinerData, public: &PublicData) -> Node {
         "Miner Info - Mining",
         vec![
             text_line("Current Hashrate", format::fixed(miner.hashrate, 2), sizes),
-            text_line("Miner Uptime", format::uptime(miner.uptime), sizes),
-            text_line("BTC Price", format::money(public.btc_price, 0), sizes),
+            text_line("Temperature", format::temperature(miner.temperature), sizes),
             text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
-            text_line("Block Counter", format::integer(miner.found_blocks), sizes),
-            text_line(
-                "IP Address",
-                miner
-                    .ip_address
-                    .as_option()
-                    .cloned()
-                    .unwrap_or_else(format::unavailable)
-                    .into(),
-                sizes,
-            ),
+            text_line("MCR", format::fixed(miner.mcr, 1), sizes),
+            text_line("Fan Speed", format::fixed(miner.fan_speed, 0), sizes),
+            ip_line(miner, sizes),
         ],
     )
 }

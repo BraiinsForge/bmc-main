@@ -1,13 +1,10 @@
 {
   "$schema": "../../bmc-netsim/blueprint.schema.json",
 
-  // One miner per scenario, each on its own port, and the cloud API
-  // the BMM101 face reads the BTC price from in a block of its own.
-  //
-  // The miner URL is a widget param, so a scenario is chosen by editing
-  // `miner_url` — including mid-recording, which mints a frame for the state
-  // it lands in; the public base URL is compiled in, so its scenario
-  // is picked at launch by the `record` recipe's `--rewrite-url`.
+  // One miner per scenario, each on its own port.
+  // The miner URL is a widget param, so a scenario is chosen
+  // by editing `miner_url` — including mid-recording,
+  // which mints a frame for the state it lands in.
   //
   // The unreachable case needs no entry:
   // point `miner_url` at any port nothing is serving.
@@ -64,17 +61,6 @@
       label: "Loads, then stops refreshing 20s in",
       port: 20307,
       params: { status: 503, fail_after_secs: 20 },
-    },
-    {
-      device: "braiins-public-api",
-      label: "Live BTC price",
-      port: 20320,
-    },
-    {
-      device: "braiins-public-api",
-      label: "Price unavailable — the BMM101 disc must keep its miner readings without it",
-      port: 20321,
-      params: { status: 503 },
     },
   ],
 }

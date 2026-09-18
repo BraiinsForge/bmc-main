@@ -146,7 +146,7 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
                         let market = public(shown, price);
                         match face {
                             Face::Mining => face::mining(&data),
-                            Face::Geek => face::geek(Panel::Small, &market),
+                            Face::Geek => face::geek(Panel::Small, &data, &market),
                             Face::InfoOverload => face::info_overload(&data, &market),
                         }
                     });
@@ -168,8 +168,8 @@ fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
         let data = miner(shown, Some(1.02));
         let market = public(shown, price);
         match face {
-            Face::Mining => face::bmm101::mining(&data, &market),
-            Face::Geek => face::geek(Panel::Bmm101, &market),
+            Face::Mining => face::bmm101::mining(&data),
+            Face::Geek => face::geek(Panel::Bmm101, &data, &market),
             Face::InfoOverload => face::bmm101::info_overload(&data, &market),
         }
     });

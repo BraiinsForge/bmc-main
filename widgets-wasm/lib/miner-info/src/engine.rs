@@ -124,48 +124,30 @@ mod reads {
     use super::{Panel, View};
     use crate::layout::{InfoOverloadFields, info_overload_fields};
 
-    // Only the round Geek face reads the miner; on a rectangle it is the
-    // network alone, so no miner poll and no login there.
-    fn geek_miner_face(view: View, panel: Panel) -> bool {
-        view == View::Geek && panel == Panel::Round
-    }
-
-    fn geek_network_list(view: View, panel: Panel) -> bool {
-        view == View::Geek && panel != Panel::Round
-    }
-
     // An endpoint the grid hides on a panel is not read there: a failure
     // on it would otherwise raise a banner over a face missing nothing.
     fn overload_shows(view: View, panel: Panel, field: fn(InfoOverloadFields) -> bool) -> bool {
         view == View::InfoOverload && field(info_overload_fields(panel))
     }
 
-    // The BMM101 Mining list swaps the board and fan readings for uptime and
-    // the BTC price; the other Mining faces mirror BOSer and keep them.
-    fn mining_bmm101_list(view: View, panel: Panel) -> bool {
-        view == View::Mining && panel == Panel::Bmm101
+    pub(super) fn details(view: View, _: Panel) -> bool {
+        matches!(view, View::Geek | View::InfoOverload)
     }
 
-    pub(super) fn details(view: View, panel: Panel) -> bool {
-        view == View::InfoOverload
-            || geek_miner_face(view, panel)
-            || mining_bmm101_list(view, panel)
+    pub(super) fn stats(_: View, _: Panel) -> bool {
+        true
     }
 
-    pub(super) fn stats(view: View, panel: Panel) -> bool {
-        matches!(view, View::Mining | View::InfoOverload) || geek_miner_face(view, panel)
+    pub(super) fn hashboards(view: View, _: Panel) -> bool {
+        matches!(view, View::Mining | View::Geek)
     }
 
-    pub(super) fn hashboards(view: View, panel: Panel) -> bool {
-        (view == View::Mining && !mining_bmm101_list(view, panel)) || geek_miner_face(view, panel)
+    pub(super) fn cooling(view: View, _: Panel) -> bool {
+        view == View::Mining
     }
 
-    pub(super) fn cooling(view: View, panel: Panel) -> bool {
-        view == View::Mining && !mining_bmm101_list(view, panel)
-    }
-
-    pub(super) fn network(view: View, panel: Panel) -> bool {
-        view == View::Mining || geek_miner_face(view, panel)
+    pub(super) fn network(view: View, _: Panel) -> bool {
+        matches!(view, View::Mining | View::Geek)
     }
 
     // The tuner target anchors the ring, so only a gauge face reads it.
@@ -173,26 +155,23 @@ mod reads {
         view.draws_gauge(panel)
     }
 
-    pub(super) fn price_stats(view: View, panel: Panel) -> bool {
-        view == View::InfoOverload
-            || geek_miner_face(view, panel)
-            || mining_bmm101_list(view, panel)
+    pub(super) fn price_stats(view: View, _: Panel) -> bool {
+        matches!(view, View::Geek | View::InfoOverload)
     }
 
     // Block height is on every Overload grid.
-    pub(super) fn block(view: View, panel: Panel) -> bool {
-        view == View::InfoOverload || geek_network_list(view, panel)
+    pub(super) fn block(view: View, _: Panel) -> bool {
+        view == View::InfoOverload
     }
 
     pub(super) fn difficulty_stats(view: View, panel: Panel) -> bool {
         overload_shows(view, panel, |fields| fields.show_difficulty_row)
-            || geek_network_list(view, panel)
     }
 
     pub(super) fn hashrate_stats(view: View, panel: Panel) -> bool {
         overload_shows(view, panel, |fields| {
             fields.show_hashvalue || fields.show_fee_percent
-        }) || geek_network_list(view, panel)
+        })
     }
 
     pub(super) fn price_history(view: View, panel: Panel) -> bool {
@@ -342,7 +321,6 @@ fn miner_stats(json: &JsonDoc, data: &mut MinerData) -> Verdict {
         data.hashrate = stats.hashrate.into();
         data.power = stats.power.into();
         data.efficiency = stats.efficiency.into();
-        data.found_blocks = stats.found_blocks.into();
     })
 }
 #[cfg(target_arch = "wasm32")]
@@ -383,14 +361,11 @@ fn public_difficulty(json: &JsonDoc, _currency: Currency, data: &mut PublicData)
         data.prev_diff_adjust = difficulty.prev_diff_adjust.into();
         data.est_diff_adjust = difficulty.est_diff_adjust.into();
         data.epoch_progress = difficulty.epoch_progress.into();
-        data.epoch_remaining = difficulty.epoch_remaining.into();
     })
 }
 #[cfg(target_arch = "wasm32")]
 fn public_hashrate(json: &JsonDoc, _currency: Currency, data: &mut PublicData) -> Verdict {
     public_api::parse_hashrate_stats(json).stored(|hashrate| {
-        data.network_hashrate = hashrate.network_hashrate.into();
-        data.avg_fees_per_block = hashrate.avg_fees_per_block.into();
         data.avg_fee_share = hashrate.avg_fee_share.into();
         data.hashvalue = hashrate.hashvalue.into();
     })
@@ -869,13 +844,14 @@ mod tests {
 
     fn expected_reads(view: View, panel: Panel) -> &'static [&'static str] {
         match (view, panel) {
-            (View::Mining, Panel::Small) => &["stats", "hashboards", "cooling", "network"],
-            (View::Mining, Panel::Bmm101) => &["details", "stats", "network", "price-stats"],
+            (View::Mining, Panel::Small | Panel::Bmm101) => {
+                &["stats", "hashboards", "cooling", "network"]
+            }
             (View::Mining, Panel::Round) => {
                 &["stats", "hashboards", "cooling", "network", "constraints"]
             }
             (View::Geek, Panel::Small | Panel::Bmm101) => {
-                &["block", "difficulty-stats", "hashrate-stats"]
+                &["details", "stats", "hashboards", "network", "price-stats"]
             }
             (View::Geek, Panel::Round) => &[
                 "details",

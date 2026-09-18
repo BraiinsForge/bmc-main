@@ -24,8 +24,7 @@
 use core::time::Duration;
 
 use bmc_wasm_sdk::types::{
-    Availability, BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio,
-    SiPrefix, Temperature,
+    Availability, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
 };
 
 use crate::model::{
@@ -83,7 +82,6 @@ pub fn miner(reported: Reported, hashrate_ths: Option<f64>) -> MinerData {
         ip_address: Availability::Available("192.168.23.1".to_owned()),
         chip_type: Availability::Available("BM1370".to_owned()),
         chip_count: Availability::Available(108),
-        found_blocks: Availability::Available(4),
         constraints: Constraints {
             hashrate: Some(TargetRange {
                 min: 0.5,
@@ -113,9 +111,6 @@ pub fn public(reported: Reported, price: PriceMove) -> PublicData {
         prev_diff_adjust: Availability::Available(Ratio::from_fraction(-0.021)),
         est_diff_adjust: Availability::Available(Ratio::from_fraction(-0.045)),
         epoch_progress: Availability::Available(Ratio::from_fraction(0.87)),
-        epoch_remaining: Availability::Available(Duration::from_mins(262 * 10)),
-        network_hashrate: Availability::Available(Hashrate::from_si(650.0, SiPrefix::Exa)),
-        avg_fees_per_block: Availability::Available(BitcoinAmount::from_bitcoin(0.055)),
         avg_fee_share: Availability::Available(Ratio::from_percent(12.1)),
         block_height: Availability::Available(880_123),
         hashvalue: Availability::Available(Hashvalue::from_satoshis_per_terahash_day(70.0)),

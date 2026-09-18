@@ -387,12 +387,6 @@
           "format": "double",
           "default": 650.0
         },
-        "epoch_block_time": {
-          "description": "Average seconds per block over the current epoch.",
-          "type": "number",
-          "format": "double",
-          "default": 600.0
-        },
         "estimated_adjustment": {
           "description": "Projected difficulty adjustment, as a fraction.",
           "type": "number",

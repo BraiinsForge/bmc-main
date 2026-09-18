@@ -38,7 +38,6 @@ pub(crate) struct Stats {
     pub hashrate: Option<Hashrate>,
     pub power: Option<ElectricPower>,
     pub efficiency: Option<MiningEfficiency>,
-    pub found_blocks: Option<u64>,
 }
 
 pub(crate) struct Hashboards {
@@ -83,9 +82,6 @@ pub(crate) fn parse_stats(json: &impl JsonLookup) -> ParseResult<Stats> {
             efficiency: json
                 .f64("/power_stats/efficiency/joule_per_terahash")
                 .map(MiningEfficiency::from_joules_per_terahash),
-            found_blocks: json
-                .i64("/miner_stats/found_blocks")
-                .and_then(|count| u64::try_from(count).ok()),
         },
         verdict: Verdict::Answer,
     }
@@ -168,7 +164,6 @@ fn reset_stats(data: &mut MinerData) {
     data.hashrate = Availability::Unavailable;
     data.power = Availability::Unavailable;
     data.efficiency = Availability::Unavailable;
-    data.found_blocks = Availability::Unavailable;
 }
 
 fn reset_hashboards(data: &mut MinerData) {
@@ -266,16 +261,6 @@ mod tests {
     fn leaves_efficiency_absent_when_the_body_omits_it() {
         let json = MapJson::default();
         assert_eq!(parse_stats(&json).data.efficiency, None);
-    }
-
-    /// A count below zero is no count, so it reads as absent like an omitted one.
-    #[test]
-    fn a_found_blocks_count_is_read_unless_negative() {
-        let mut json = MapJson::default();
-        json.ints.insert("/miner_stats/found_blocks", 4);
-        assert_eq!(parse_stats(&json).data.found_blocks, Some(4));
-        json.ints.insert("/miner_stats/found_blocks", -1);
-        assert_eq!(parse_stats(&json).data.found_blocks, None);
     }
 
     /// `bosminer_uptime_s` is the one field the BOS+ schema requires of a reply
@@ -481,7 +466,6 @@ mod tests {
             ip_address: Availability::Available("192.168.1.42".to_owned()),
             chip_type: Availability::Available("BM1370".into()),
             chip_count: Availability::Available(146),
-            found_blocks: Availability::Available(4),
             constraints: crate::model::Constraints {
                 hashrate: Some(TargetRange {
                     min: 50.0,

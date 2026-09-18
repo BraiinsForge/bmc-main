@@ -1,9 +1,8 @@
-# The BMM101 faces: Mining with the miner reporting and with it gone,
-# Geek with and without the network, Info Overload across
-# the three price moves.
+# The BMM101 faces: Mining and Geek with the miner reporting
+# and with it gone, Info Overload across the three price moves.
 #
-# `capture.json` lands beside the shots for a loop to read;
-# where they land is the recipe's to say.
+# `capture.json` lands beside the shots for a loop
+# to read; where they land is the recipe's to say.
 #
 # `just gallery::capture` passes an `--out`
 # under the repo's scratch dir.
@@ -42,7 +41,7 @@ Data = "Unavailable"
 Face = "Mining"
 
 [[shot]]
-name = "geek-bmm101-network-reporting"
+name = "geek-bmm101-reporting"
 scene = "bmc_gallery::miner_info::Bmm101"
 frames = 4
 
@@ -50,9 +49,10 @@ frames = 4
 Data = "Populated"
 Face = "Geek"
 
-# The same list at the small panel's type size, on the tightest screen it serves.
+# The same list at the small panel's type size,
+# on the tightest screen it serves.
 [[shot]]
-name = "geek-small-network-reporting"
+name = "geek-small-reporting"
 scene = "bmc_gallery::miner_info::Rectangular"
 frames = 4
 
@@ -62,7 +62,7 @@ Face = "Geek"
 Viewport = "BMC100 slot"
 
 [[shot]]
-name = "geek-bmm101-network-down"
+name = "geek-bmm101-unavailable"
 scene = "bmc_gallery::miner_info::Bmm101"
 frames = 4
 

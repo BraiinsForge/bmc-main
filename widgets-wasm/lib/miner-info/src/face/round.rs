@@ -439,7 +439,7 @@ fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
         spec.value.value.clone(),
         style!(size: CLUSTER_VALUE_SIZE, weight: FontWeight::SEMIBOLD, color: VALUE),
     ));
-    if let Some(unit) = spec.value.unit.as_deref().filter(|_| show_affixes) {
+    if let Some(unit) = spec.value.unit.filter(|_| show_affixes) {
         parts.push(text(
             unit,
             style!(size: CLUSTER_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE),
@@ -680,7 +680,7 @@ pub fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
         text_block("Power Consump.", format::fixed(miner.power, 0), metrics),
         text_block(
             "Block Height",
-            format::integer(public.block_height),
+            format::public_integer(public.block_height),
             metrics,
         ),
         metrics,

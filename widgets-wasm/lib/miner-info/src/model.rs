@@ -21,7 +21,7 @@
 use core::time::Duration;
 
 use bmc_wasm_sdk::types::{
-    BitcoinAmount, ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
+    ElectricPower, Hashrate, Hashvalue, MiningEfficiency, Ratio, Temperature,
 };
 pub use mining::gauge::TargetRange;
 
@@ -83,8 +83,6 @@ pub struct MinerData {
     pub ip_address: Availability<String>,
     pub chip_type: Availability<String>,
     pub chip_count: Availability<usize>,
-    /// Blocks this miner has found, the solo miner's tally.
-    pub found_blocks: Availability<u64>,
     pub constraints: Constraints,
 }
 
@@ -110,10 +108,6 @@ pub struct PublicData {
     pub prev_diff_adjust: Availability<Ratio>,
     pub est_diff_adjust: Availability<Ratio>,
     pub epoch_progress: Availability<Ratio>,
-    /// Until the retarget, at the block pace this epoch has kept.
-    pub epoch_remaining: Availability<Duration>,
-    pub network_hashrate: Availability<Hashrate>,
-    pub avg_fees_per_block: Availability<BitcoinAmount>,
     pub avg_fee_share: Availability<Ratio>,
     pub block_height: Availability<u64>,
     pub hashvalue: Availability<Hashvalue>,

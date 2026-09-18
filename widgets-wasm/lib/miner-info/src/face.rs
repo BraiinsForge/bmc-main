@@ -148,9 +148,10 @@ fn value_with_unit(
     if let Some(unit) = value.unit
         && show_unit
     {
-        let mut spaced = String::from("  ");
-        spaced.push_str(&unit);
-        spans.push(span(spaced, style!(size: sizes.unit, color: UNIT)));
+        spans.push(span(
+            bmc_wasm_sdk::fmt!("  {unit}"),
+            style!(size: sizes.unit, color: UNIT),
+        ));
     }
     paragraph(
         style!(size: sizes.value, weight: weight, color: value_color, align: align),
@@ -168,6 +169,19 @@ fn text_line(name: &'static str, value: format::Rendered, sizes: layout::TextSiz
             ),
             value_with_unit(value, sizes, TextAlign::Right, VALUE, FontWeight::REGULAR),
         ],
+    )
+}
+
+fn ip_line(miner: &MinerData, sizes: layout::TextSizes) -> Node {
+    text_line(
+        "IP Address",
+        miner
+            .ip_address
+            .as_option()
+            .cloned()
+            .unwrap_or_else(format::unavailable)
+            .into(),
+        sizes,
     )
 }
 
@@ -202,16 +216,7 @@ pub fn mining(miner: &MinerData) -> Node {
         text_line("Power Consumption", format::fixed(miner.power, 0), sizes),
         text_line("MCR", format::fixed(miner.mcr, 1), sizes),
         text_line("Fan Speed", format::fixed(miner.fan_speed, 0), sizes),
-        text_line(
-            "IP Address",
-            miner
-                .ip_address
-                .as_option()
-                .cloned()
-                .unwrap_or_else(format::unavailable)
-                .into(),
-            sizes,
-        ),
+        ip_line(miner, sizes),
     ])
 }
 
@@ -356,7 +361,7 @@ fn info_overload_primary_row(
     if fields.grid_columns > 2 {
         blocks.push(text_block(
             "Block Height",
-            format::integer(public.block_height),
+            format::public_integer(public.block_height),
             metrics,
         ));
     }
@@ -418,7 +423,7 @@ fn info_overload_bottom_row(
     if fields.grid_columns <= 2 {
         blocks.push(text_block(
             "Block Height",
-            format::integer(public.block_height),
+            format::public_integer(public.block_height),
             metrics,
         ));
     }
