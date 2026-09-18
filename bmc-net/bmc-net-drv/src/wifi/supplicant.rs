@@ -71,6 +71,29 @@ const ATTACH_ATTEMPTS: u8 = 3;
 /// subscription cannot unlink another's.
 static CLIENT_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 
+/// Where the supplicant listens and where our client sockets go. Tests point
+/// both at a directory of their own.
+#[derive(Clone, Debug)]
+struct SocketDirs {
+    control: PathBuf,
+    client: PathBuf,
+}
+
+impl Default for SocketDirs {
+    fn default() -> Self {
+        Self {
+            control: PathBuf::from(CONTROL_SOCKET_DIR),
+            client: PathBuf::from(CLIENT_SOCKET_DIR),
+        }
+    }
+}
+
+impl SocketDirs {
+    fn control_socket(&self, device: &str) -> PathBuf {
+        self.control.join(device)
+    }
+}
+
 /// A wpa_supplicant control connection subscribed to the event stream of one
 /// device.
 ///
@@ -94,9 +117,9 @@ struct JoinWatcher {
 impl JoinWatcher {
     /// Subscribes to `device`'s event stream, or fails when the supplicant is
     /// not managing it (yet).
-    async fn attach(device: &str, events: &mut Vec<String>) -> Result<Self> {
-        let server_path = control_socket(device);
-        let client_path = Path::new(CLIENT_SOCKET_DIR).join(format!(
+    async fn attach(dirs: &SocketDirs, device: &str, events: &mut Vec<String>) -> Result<Self> {
+        let server_path = dirs.control_socket(device);
+        let client_path = dirs.client.join(format!(
             "bmc-wpa-{}-{}-{device}",
             std::process::id(),
             CLIENT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
@@ -209,6 +232,7 @@ impl Drop for JoinWatcher {
 /// instance ran with, and the verdict rests on what the new one says.
 #[derive(Debug)]
 pub(crate) struct JoinDiagnosis {
+    dirs: SocketDirs,
     watcher: Option<JoinWatcher>,
     events: Vec<String>,
     attempts_left: u8,
@@ -216,15 +240,20 @@ pub(crate) struct JoinDiagnosis {
 
 impl Default for JoinDiagnosis {
     fn default() -> Self {
+        Self::in_dirs(SocketDirs::default())
+    }
+}
+
+impl JoinDiagnosis {
+    fn in_dirs(dirs: SocketDirs) -> Self {
         Self {
+            dirs,
             watcher: None,
             events: Vec::new(),
             attempts_left: ATTACH_ATTEMPTS,
         }
     }
-}
 
-impl JoinDiagnosis {
     /// Drains what the supplicant has said, subscribing or re-subscribing if
     /// that is still worth a try. Called between the join's own attempts.
     pub(crate) async fn poll(&mut self, device: &str) {
@@ -239,10 +268,10 @@ impl JoinDiagnosis {
             self.watcher = None;
             self.events.clear();
         }
-        if self.attempts_left == 0 || !control_socket(device).exists() {
+        if self.attempts_left == 0 || !self.dirs.control_socket(device).exists() {
             return;
         }
-        match JoinWatcher::attach(device, &mut self.events).await {
+        match JoinWatcher::attach(&self.dirs, device, &mut self.events).await {
             Ok(watcher) => self.watcher = Some(watcher),
             Err(e) => {
                 self.attempts_left = self.attempts_left.saturating_sub(1);
@@ -281,10 +310,6 @@ fn push_event(events: &mut Vec<String>, message: String) {
 }
 
 /// The control socket wpa_supplicant opens for `device`.
-fn control_socket(device: &str) -> PathBuf {
-    Path::new(CONTROL_SOCKET_DIR).join(device)
-}
-
 /// Inode of a control socket, `None` while it does not exist.
 fn inode(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|meta| meta.ino())
@@ -448,6 +473,147 @@ fn classify<'a>(events: impl Iterator<Item = &'a str>, ssid: &str) -> Option<Wif
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+
+    /// A stand-in supplicant listening where the watcher expects one: answers
+    /// every command with `reply` and counts the `ATTACH`es it received.
+    struct FakeSupplicant {
+        path: PathBuf,
+        attaches: Arc<AtomicUsize>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl FakeSupplicant {
+        fn listen(dir: &Path, device: &str, reply: &'static str) -> Self {
+            let path = dir.join(device);
+            let socket = UnixDatagram::bind(&path).expect("BUG: fake supplicant bind");
+            let attaches = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&attaches);
+            let task = tokio::spawn(async move {
+                let mut buffer = [0_u8; 256];
+                while let Ok((read, from)) = socket.recv_from(&mut buffer).await {
+                    if &buffer[..read] == b"ATTACH" {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                    if let Some(peer) = from.as_pathname() {
+                        let _ = socket.send_to(reply.as_bytes(), peer).await;
+                    }
+                }
+            });
+            Self {
+                path,
+                attaches,
+                task,
+            }
+        }
+
+        fn attaches(&self) -> usize {
+            self.attaches.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Drop for FakeSupplicant {
+        fn drop(&mut self) {
+            self.task.abort();
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    fn client_sockets(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .expect("BUG: read_dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("bmc-wpa-"))
+            .collect()
+    }
+
+    fn diagnosis_in(dir: &Path) -> JoinDiagnosis {
+        JoinDiagnosis::in_dirs(SocketDirs {
+            control: dir.to_path_buf(),
+            client: dir.to_path_buf(),
+        })
+    }
+
+    #[tokio::test]
+    async fn a_refused_attach_leaves_no_client_socket_behind() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let supplicant = FakeSupplicant::listen(dir.path(), "wlan0", "FAIL\n");
+        let mut diagnosis = diagnosis_in(dir.path());
+
+        diagnosis.poll("wlan0").await;
+
+        assert_eq!(supplicant.attaches(), 1);
+        assert!(diagnosis.watcher.is_none());
+        assert_eq!(diagnosis.attempts_left, ATTACH_ATTEMPTS - 1);
+        assert!(client_sockets(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_attach_budget_runs_out_and_stays_out() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let supplicant = FakeSupplicant::listen(dir.path(), "wlan0", "FAIL\n");
+        let mut diagnosis = diagnosis_in(dir.path());
+
+        for _ in 0..usize::from(ATTACH_ATTEMPTS) + 2 {
+            diagnosis.poll("wlan0").await;
+        }
+
+        assert_eq!(supplicant.attaches(), usize::from(ATTACH_ATTEMPTS));
+        assert_eq!(diagnosis.attempts_left, 0);
+        assert!(client_sockets(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_renamed_station_gets_a_fresh_subscription() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let old = FakeSupplicant::listen(dir.path(), "wlan0", "OK\n");
+        let new = FakeSupplicant::listen(dir.path(), "wlan1", "OK\n");
+        let mut diagnosis = diagnosis_in(dir.path());
+
+        diagnosis.poll("wlan0").await;
+        assert_eq!(old.attaches(), 1);
+        assert!(
+            diagnosis
+                .watcher
+                .as_ref()
+                .is_some_and(|watcher| watcher.device == "wlan0")
+        );
+
+        // The old control socket is still there; only the name moved on.
+        diagnosis.poll("wlan1").await;
+        assert_eq!(new.attaches(), 1);
+        assert!(
+            diagnosis
+                .watcher
+                .as_ref()
+                .is_some_and(|watcher| watcher.device == "wlan1")
+        );
+        assert_eq!(client_sockets(dir.path()).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_replaced_supplicant_takes_the_old_events_with_it() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let first = FakeSupplicant::listen(dir.path(), "wlan0", "OK\n");
+        let mut diagnosis = diagnosis_in(dir.path());
+
+        diagnosis.poll("wlan0").await;
+        assert_eq!(first.attaches(), 1);
+        push_event(
+            &mut diagnosis.events,
+            "<3>CTRL-EVENT-NETWORK-NOT-FOUND ".to_owned(),
+        );
+        drop(first);
+        let second = FakeSupplicant::listen(dir.path(), "wlan0", "OK\n");
+
+        diagnosis.poll("wlan0").await;
+
+        assert_eq!(second.attaches(), 1);
+        assert!(diagnosis.events.is_empty());
+        assert!(diagnosis.verdict("Absent").await.is_none());
+    }
 
     /// Lines as a BMM101 emitted them, `logread` timestamps stripped.
     const WRONG_KEY: &[&str] = &[

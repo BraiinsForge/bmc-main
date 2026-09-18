@@ -23,6 +23,9 @@ strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "net", "process", "rt", "sync", "time"] }
 wl-nl80211.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [[example]]
 name = "get_mac_address"
 path = "examples/get_mac_address.rs"
