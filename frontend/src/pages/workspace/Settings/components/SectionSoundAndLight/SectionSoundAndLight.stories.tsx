@@ -41,18 +41,30 @@ export default {
     title: 'settings/components/SectionSoundAndLight',
     component: Component,
     args: {
-        soundVolume: getArg('brightnessDay', pb.create(pb.SoundVolumeSchema, { value: 22, min: 0, max: 100, step: 4 })),
-        soundVolumeNight: getArg(
-            'nightBrightness',
-            pb.create(pb.SoundVolumeSchema, { value: 33, min: 0, max: 100, step: 4 }),
-        ),
-        bootSoundEnabled: getArg('bootSoundEnabled', true),
-        // alarmAndNotifyVolume: getArg('nightEnabled', 44),
-        ledNotifyEnabled: getArg('nightNotify', true),
-        ledNotifyEnabledNight: getArg('ledNotifyEnabledNight', true),
+        sound: {
+            volume: getArg('volume', pb.create(pb.SoundVolumeSchema, { value: 22, min: 0, max: 100, step: 4 })),
+            volumeNight: getArg(
+                'volumeNight',
+                pb.create(pb.SoundVolumeSchema, { value: 33, min: 0, max: 100, step: 4 }),
+            ),
+            bootSoundEnabled: getArg('bootSoundEnabled', true),
+            // alarmAndNotifyVolume: getArg('alarmAndNotifyVolume', 44),
+        },
+        led: {
+            notifyEnabled: getArg('notifyEnabled', true),
+            notifyEnabledNight: getArg('notifyEnabledNight', true),
+        },
     } satisfies SectionSoundAndLightProps,
 } satisfies Meta<SectionSoundAndLightProps>;
 
 export function SectionSoundAndLight(args: SectionSoundAndLightProps) {
     return <Component {...args} />;
+}
+
+export function SoundOnly(args: SectionSoundAndLightProps) {
+    return <Component {...args} led={null} />;
+}
+
+export function LedOnly(args: SectionSoundAndLightProps) {
+    return <Component {...args} sound={null} />;
 }

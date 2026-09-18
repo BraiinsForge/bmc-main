@@ -334,3 +334,84 @@ describe('Settings tabs on a boser-managed device (BOS-3948)', () => {
         expect(window.location.hash).toBe('#general');
     });
 });
+
+function installSoundLightMocks() {
+    const getSoundVolumeSettings = rstest.fn(() =>
+        pb.create(pb.SoundVolumeSettingsResponseSchema, {
+            volume: { value: 40, min: 0, max: 100, step: 1 },
+            volumeNightmode: { value: 20, min: 0, max: 100, step: 1 },
+        }),
+    );
+    const getBootSoundSettings = rstest.fn(() =>
+        pb.create(pb.BootSoundSettingsResponseSchema, { bootSoundEnabled: true }),
+    );
+    const getLedSettings = rstest.fn(() =>
+        pb.create(pb.LedSettingsResponseSchema, { ledEnabled: true, ledEnabledNightmode: false }),
+    );
+    registerMocks(pb.services.ConfigurationService, { getSoundVolumeSettings, getBootSoundSettings, getLedSettings });
+    return { getSoundVolumeSettings, getBootSoundSettings, getLedSettings };
+}
+const soundControlsShown = (): boolean => screen.queryByText('Sound Volume') !== null;
+const ledControlsShown = (): boolean => screen.queryByText('Enable LED Notifications') !== null;
+
+describe('Settings Sound & Light gating (BDK-794)', () => {
+    test('a Deck shows the sound and LED controls and loads both', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ soundSupported: true, ledSupported: true }));
+        const rpc = installSoundLightMocks();
+
+        renderPage('#sound-and-light');
+        await advance(300);
+
+        expect(soundControlsShown()).toBe(true);
+        expect(ledControlsShown()).toBe(true);
+        expect(rpc.getSoundVolumeSettings).toHaveBeenCalledTimes(1);
+        expect(rpc.getBootSoundSettings).toHaveBeenCalledTimes(1);
+        expect(rpc.getLedSettings).toHaveBeenCalledTimes(1);
+    });
+
+    test('sound only hides the LED controls and never asks for LED settings', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ soundSupported: true, ledSupported: false }));
+        const rpc = installSoundLightMocks();
+
+        renderPage('#sound-and-light');
+        await advance(300);
+
+        expect(tabLabels()).toContain('Sound & Light');
+        expect(soundControlsShown()).toBe(true);
+        expect(ledControlsShown()).toBe(false);
+        expect(rpc.getLedSettings).not.toHaveBeenCalled();
+    });
+
+    test('LED only hides the sound controls and never asks for sound settings', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ soundSupported: false, ledSupported: true }));
+        const rpc = installSoundLightMocks();
+
+        renderPage('#sound-and-light');
+        await advance(300);
+
+        expect(tabLabels()).toContain('Sound & Light');
+        expect(soundControlsShown()).toBe(false);
+        expect(ledControlsShown()).toBe(true);
+        expect(rpc.getSoundVolumeSettings).not.toHaveBeenCalled();
+        expect(rpc.getBootSoundSettings).not.toHaveBeenCalled();
+    });
+
+    test('neither output drops the tab, falls back to General and asks for nothing', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ soundSupported: false, ledSupported: false }));
+        const rpc = installSoundLightMocks();
+
+        renderPage('#sound-and-light');
+        await advance(300);
+
+        expect(tabLabels()).toEqual(['General', 'Display', 'Security', 'Upgrades']);
+        expect(generalTabOpen()).toBe(true);
+        expect(window.location.hash).toBe('#general');
+        expect(rpc.getSoundVolumeSettings).not.toHaveBeenCalled();
+        expect(rpc.getBootSoundSettings).not.toHaveBeenCalled();
+        expect(rpc.getLedSettings).not.toHaveBeenCalled();
+    });
+});

@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component } from 'react';
+import { Component, Fragment, type ReactNode } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { Form, type iField } from '@/lib/form';
 import { handleSliderParentKeyDownCapture } from '@/lib/carbon';
@@ -35,15 +35,20 @@ import { Toggle, Slider } from '@carbon/react';
 // Styles
 import css from './SectionSoundAndLight.scss';
 
-export interface SectionSoundAndLightProps {
-    soundVolume: iField<pb.SoundVolume>;
-    soundVolumeNight: iField<pb.SoundVolume>;
+export interface SoundFields {
+    volume: iField<pb.SoundVolume>;
+    volumeNight: iField<pb.SoundVolume>;
     bootSoundEnabled: iField<boolean>;
 
     // alarmAndNotifyVolume: iField<Integer<0, 100>>;
-
-    ledNotifyEnabled: iField<boolean>;
-    ledNotifyEnabledNight: iField<boolean>;
+}
+export interface LedFields {
+    notifyEnabled: iField<boolean>;
+    notifyEnabledNight: iField<boolean>;
+}
+export interface SectionSoundAndLightProps {
+    sound: null | SoundFields;
+    led: null | LedFields;
 }
 interface Props extends SectionSoundAndLightProps {
     intl: IntlShape;
@@ -52,50 +57,30 @@ interface Props extends SectionSoundAndLightProps {
 const $ = getID('general').get;
 
 class View extends Component<Props> {
-    #handleVolumeChange = (x: { value: number }): void => {
-        const { value, onChange } = this.props.soundVolume;
+    #volumeChange(field: iField<pb.SoundVolume>): (x: { value: number }) => void {
+        const { value, onChange } = field;
 
-        onChange?.(
-            pb.create(pb.SoundVolumeSchema, {
-                min: value?.min,
-                max: value?.max,
-                step: value?.step,
-                value: x.value,
-            }),
-        );
-    };
-    #handleNightVolumeChange = (x: { value: number }): void => {
-        const { value, onChange } = this.props.soundVolumeNight;
+        return x =>
+            onChange?.(
+                pb.create(pb.SoundVolumeSchema, {
+                    min: value?.min,
+                    max: value?.max,
+                    step: value?.step,
+                    value: x.value,
+                }),
+            );
+    }
 
-        onChange?.(
-            pb.create(pb.SoundVolumeSchema, {
-                min: value?.min,
-                max: value?.max,
-                step: value?.step,
-                value: x.value,
-            }),
-        );
-    };
-
-    render() {
-        const {
-            intl,
-
-            // Fields
-            soundVolume,
-            soundVolumeNight,
-            bootSoundEnabled,
-            // alarmAndNotifyVolume,
-            ledNotifyEnabled,
-            ledNotifyEnabledNight,
-        } = this.props;
+    #soundRender = (sound: SoundFields): ReactNode => {
+        const { intl } = this.props;
+        const { volume, volumeNight, bootSoundEnabled } = sound;
 
         return (
-            <Form className={css.root}>
+            <Fragment>
                 <FieldSet title={intl.formatMessage({ defaultMessage: 'Volume' })}>
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Sound Volume' })}
-                        disabled={soundVolume.disabled}
+                        disabled={volume.disabled}
                         onKeyDownCapture={handleSliderParentKeyDownCapture}
                     >
                         <Slider
@@ -103,21 +88,21 @@ class View extends Component<Props> {
                             hideLabel
                             labelText=""
                             // Range
-                            min={soundVolume.value?.min ?? 0}
-                            max={soundVolume.value?.max ?? 100}
-                            step={soundVolume.value?.step ?? 1}
+                            min={volume.value?.min ?? 0}
+                            max={volume.value?.max ?? 100}
+                            step={volume.value?.step ?? 1}
                             // Value
-                            value={soundVolume.value?.value ?? 0}
-                            disabled={soundVolume.disabled}
-                            onChange={this.#handleVolumeChange}
-                            invalid={!!soundVolume.error}
-                            invalidText={soundVolume.error}
+                            value={volume.value?.value ?? 0}
+                            disabled={volume.disabled}
+                            onChange={this.#volumeChange(volume)}
+                            invalid={!!volume.error}
+                            invalidText={volume.error}
                         />
                     </Field>
 
                     <Field
                         title={intl.formatMessage({ defaultMessage: 'Sound Volume in Night Mode' })}
-                        disabled={soundVolumeNight.disabled}
+                        disabled={volumeNight.disabled}
                         onKeyDownCapture={handleSliderParentKeyDownCapture}
                     >
                         <Slider
@@ -125,15 +110,15 @@ class View extends Component<Props> {
                             hideLabel
                             labelText=""
                             // Range
-                            min={soundVolumeNight.value?.min ?? 0}
-                            max={soundVolumeNight.value?.max ?? 100}
-                            step={soundVolumeNight.value?.step ?? 1}
+                            min={volumeNight.value?.min ?? 0}
+                            max={volumeNight.value?.max ?? 100}
+                            step={volumeNight.value?.step ?? 1}
                             // Value
-                            value={soundVolumeNight.value?.value ?? 0}
-                            disabled={soundVolumeNight.disabled}
-                            onChange={this.#handleNightVolumeChange}
-                            invalid={!!soundVolumeNight.error}
-                            invalidText={soundVolumeNight.error}
+                            value={volumeNight.value?.value ?? 0}
+                            disabled={volumeNight.disabled}
+                            onChange={this.#volumeChange(volumeNight)}
+                            invalid={!!volumeNight.error}
+                            invalidText={volumeNight.error}
                         />
                     </Field>
 
@@ -181,46 +166,64 @@ class View extends Component<Props> {
                         </CarbonFormField>
                     </Field>
                 </FieldSet>
+            </Fragment>
+        );
+    };
 
-                <FieldSet title={intl.formatMessage({ defaultMessage: 'LED Notification Lights' })}>
-                    <Field
-                        title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications' })}
-                        description={intl.formatMessage({
-                            defaultMessage: 'Use LED lights for notifications and alerts.',
-                        })}
-                        disabled={ledNotifyEnabled.disabled}
-                    >
-                        <CarbonFormField error={ledNotifyEnabled.error}>
-                            <Toggle
-                                id={$('led', 'notify', 'enabled')}
-                                size="md"
-                                aria-invalid={!!ledNotifyEnabled.error}
-                                toggled={!!ledNotifyEnabled.value}
-                                onToggle={ledNotifyEnabled.onChange}
-                                disabled={ledNotifyEnabled.disabled}
-                            />
-                        </CarbonFormField>
-                    </Field>
+    #ledRender = (led: LedFields): ReactNode => {
+        const { intl } = this.props;
+        const { notifyEnabled, notifyEnabledNight } = led;
 
-                    <Field
-                        title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications in Night Mode' })}
-                        description={intl.formatMessage({
-                            defaultMessage: 'Use LED lights for notifications and alerts during Night Mode.',
-                        })}
-                        disabled={ledNotifyEnabledNight.disabled}
-                    >
-                        <CarbonFormField error={ledNotifyEnabledNight.error}>
-                            <Toggle
-                                id={$('led', 'notify-night', 'enabled')}
-                                size="md"
-                                aria-invalid={!!ledNotifyEnabledNight.error}
-                                toggled={!!ledNotifyEnabledNight.value}
-                                onToggle={ledNotifyEnabledNight.onChange}
-                                disabled={ledNotifyEnabledNight.disabled}
-                            />
-                        </CarbonFormField>
-                    </Field>
-                </FieldSet>
+        return (
+            <FieldSet title={intl.formatMessage({ defaultMessage: 'LED Notification Lights' })}>
+                <Field
+                    title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications' })}
+                    description={intl.formatMessage({
+                        defaultMessage: 'Use LED lights for notifications and alerts.',
+                    })}
+                    disabled={notifyEnabled.disabled}
+                >
+                    <CarbonFormField error={notifyEnabled.error}>
+                        <Toggle
+                            id={$('led', 'notify', 'enabled')}
+                            size="md"
+                            aria-invalid={!!notifyEnabled.error}
+                            toggled={!!notifyEnabled.value}
+                            onToggle={notifyEnabled.onChange}
+                            disabled={notifyEnabled.disabled}
+                        />
+                    </CarbonFormField>
+                </Field>
+
+                <Field
+                    title={intl.formatMessage({ defaultMessage: 'Enable LED Notifications in Night Mode' })}
+                    description={intl.formatMessage({
+                        defaultMessage: 'Use LED lights for notifications and alerts during Night Mode.',
+                    })}
+                    disabled={notifyEnabledNight.disabled}
+                >
+                    <CarbonFormField error={notifyEnabledNight.error}>
+                        <Toggle
+                            id={$('led', 'notify-night', 'enabled')}
+                            size="md"
+                            aria-invalid={!!notifyEnabledNight.error}
+                            toggled={!!notifyEnabledNight.value}
+                            onToggle={notifyEnabledNight.onChange}
+                            disabled={notifyEnabledNight.disabled}
+                        />
+                    </CarbonFormField>
+                </Field>
+            </FieldSet>
+        );
+    };
+
+    render() {
+        const { sound, led } = this.props;
+
+        return (
+            <Form className={css.root}>
+                {sound && this.#soundRender(sound)}
+                {led && this.#ledRender(led)}
             </Form>
         );
     }

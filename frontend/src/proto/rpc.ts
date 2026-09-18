@@ -55,6 +55,7 @@ export const rpc = {
 export const services = {
     AccountManagementService,
     AuthenticationService,
+    ConfigurationService,
     CredentialManagementService,
     InitialSetupService,
     MetadataService,
