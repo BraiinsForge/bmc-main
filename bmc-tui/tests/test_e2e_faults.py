@@ -28,7 +28,7 @@ from typing import cast
 
 import pytest
 
-from bmc_tui import cli
+from bmc_tui import cli, rig
 from bmc_tui.device import Device
 from bmc_tui.procedures import e2e_sysupgrade_faults as faults
 from bmc_tui.procedures.e2e_sysupgrade_faults import E2eSysupgradeFaults
@@ -45,6 +45,21 @@ from tests.test_catalog import (
 )
 
 
+class _TarballServer:
+    def __init__(self) -> None:
+        self.requests: list[rig.TarballRequest] = []
+
+    @property
+    def tarball_requests(self) -> tuple[rig.TarballRequest, ...]:
+        return tuple(self.requests)
+
+
+# 16-byte fixture tarball, 7 bytes retained: the good init asks for the rest.
+_RESUMED = rig.TarballRequest("bytes=7-", 206, 9)
+_RANGE_IGNORED = rig.TarballRequest("bytes=7-", 200, 16)
+_FULL_FETCH = rig.TarballRequest(None, 200, 16)
+
+
 def test_suite_order_is_pinned() -> None:
     assert faults.SUITE_ORDER == (
         "unsigned-feed",
@@ -52,7 +67,6 @@ def test_suite_order_is_pinned() -> None:
         "wrong-key-signature",
         "corrupt-tarball",
         "download-stall",
-        "good-init",
         "store-remnants",
         "missing-store-db",
         "unmounted-store",
@@ -95,7 +109,7 @@ def test_every_scenario_id_has_a_driver() -> None:
 
 
 def test_suite_order_ids_are_driven() -> None:
-    assert all(sid in faults._DRIVERS or sid == "good-init" for sid in faults.SUITE_ORDER)
+    assert all(sid in faults._DRIVERS for sid in faults.SUITE_ORDER)
 
 
 def test_a_group_runs_scenarios_in_pinned_order(monkeypatch) -> None:
@@ -105,16 +119,14 @@ def test_a_group_runs_scenarios_in_pinned_order(monkeypatch) -> None:
         "unsigned-feed",
         "untrusted-key-name",
         "corrupt-tarball",
-        "download-stall",
     ):
         monkeypatch.setitem(faults._DRIVERS, sid, lambda _ctx, sid=sid: calls.append(sid))
-    # The fake finale mimics the real contract: _flash_good_init closes the
-    # quiesced window on its way out (after the reboot revives mDNS).
-    monkeypatch.setattr(
-        faults,
-        "_flash_good_init",
-        lambda ctx: (calls.append("finale"), setattr(ctx, "quiesced_pin", None)),
-    )
+
+    def download_stall_with_recovery(ctx) -> None:
+        calls.append("download-stall")
+        ctx.quiesced_pin = None
+
+    monkeypatch.setitem(faults._DRIVERS, "download-stall", download_stall_with_recovery)
     # Pin must happen BEFORE the cleardown: the cleardown's quiesce kills the
     # mDNS name, so the whole group runs on the numeric handle pinned first.
     monkeypatch.setattr(faults.catalog, "pin_device_address", lambda *_a, **_k: calls.append("pin"))
@@ -140,7 +152,6 @@ def test_a_group_runs_scenarios_in_pinned_order(monkeypatch) -> None:
         "wrong-key-signature",
         "corrupt-tarball",
         "download-stall",
-        "finale",
     ]
     assert fake_ctx.quiesced_pin is None  # the window is closed after the group
 
@@ -170,6 +181,187 @@ def test_a_group_failure_leaves_the_quiesced_pin_for_cleanup(monkeypatch) -> Non
     with pytest.raises(Abort, match="cleardown died"):
         faults._group_a(fake_ctx)
     assert fake_ctx.quiesced_pin is pinned  # the outer cleanup can still reach the device
+
+
+def test_a_group_requires_recovery_flash_to_close_the_quiesced_window(monkeypatch) -> None:
+    for sid in faults._GROUP_A_ORDER:
+        monkeypatch.setitem(faults._DRIVERS, sid, lambda _ctx: None)
+    monkeypatch.setattr(faults.catalog, "pin_device_address", lambda *_a, **_k: None)
+    monkeypatch.setattr(faults, "_pinned", lambda ctx: ctx.dev)
+    monkeypatch.setattr(faults.catalog, "clear_nix_store", lambda *_a, **_k: None)
+    ctx = cast(
+        "faults._Ctx",
+        types.SimpleNamespace(
+            dev=object(),
+            yes=True,
+            run=types.SimpleNamespace(device_mutated=False),
+            quiesced_pin=None,
+        ),
+    )
+    with pytest.raises(Abort, match="did not complete its recovery flash"):
+        faults._group_a(ctx)
+
+
+def test_good_init_closes_quiesced_window_after_flash(monkeypatch) -> None:
+    pinned = object()
+    ctx = cast(
+        "faults._Ctx",
+        types.SimpleNamespace(
+            dev=object(),
+            image_a=object(),
+            quiesced_pin=pinned,
+            run=object(),
+            state=object(),
+            yes=True,
+        ),
+    )
+    calls: list[tuple[str, object | None]] = []
+    monkeypatch.setattr(faults, "_prepare_flash", lambda *_a: pinned)
+    monkeypatch.setattr(
+        faults.catalog,
+        "flash_e2e",
+        lambda *_a, **_k: calls.append(("flash", ctx.quiesced_pin)),
+    )
+    monkeypatch.setattr(
+        faults.catalog,
+        "wait_for_device",
+        lambda *_a: calls.append(("wait", ctx.quiesced_pin)),
+    )
+    monkeypatch.setattr(faults.catalog, "verify_initialized", lambda *_a: None)
+    monkeypatch.setattr(faults.catalog, "require_staged_once", lambda *_a: None)
+    faults._flash_good_init(ctx)
+    assert calls == [("flash", pinned), ("wait", None)]
+
+
+@pytest.mark.parametrize("retain_download", [False, True])
+@pytest.mark.parametrize("fail", [False, True])
+def test_init_abort_sweeps_except_after_successful_retention(
+    monkeypatch, retain_download: bool, fail: bool
+) -> None:
+    calls: list[str] = []
+    pinned = object()
+    monkeypatch.setattr(faults.catalog, "require_store_absent", lambda *_a: None)
+    monkeypatch.setattr(faults, "_prepare_flash", lambda *_a: pinned)
+    monkeypatch.setattr(
+        faults.catalog, "sweep_download_artifact", lambda *_a: calls.append("sweep")
+    )
+    monkeypatch.setattr(
+        faults.catalog,
+        "require_download_artifact_absent",
+        lambda *_a: calls.append("absent"),
+    )
+    monkeypatch.setattr(faults, "_restore_rig", lambda *_a: calls.append("restore"))
+
+    def flash(*_a, **_k) -> None:
+        calls.append("flash")
+        if fail:
+            raise Abort("flash failed")
+
+    monkeypatch.setattr(faults.catalog, "flash_expect_abort", flash)
+    ctx = cast(
+        "faults._Ctx",
+        types.SimpleNamespace(
+            dev=pinned,
+            quiesced_pin=pinned,
+            image_a=object(),
+            state=object(),
+            yes=True,
+        ),
+    )
+    if fail:
+        with pytest.raises(Abort, match="flash failed"):
+            faults._attempt_init_abort(
+                ctx, tamper=lambda: None, expect="fault", retain_download=retain_download
+            )
+    else:
+        faults._attempt_init_abort(
+            ctx, tamper=lambda: None, expect="fault", retain_download=retain_download
+        )
+    assert calls == [
+        "sweep",
+        "flash",
+        *(["absent"] if not fail and not retain_download else []),
+        *(["sweep"] if fail or not retain_download else []),
+        "restore",
+    ]
+
+
+def test_download_stall_resumes_retained_bytes_before_cleanup(monkeypatch, tmp_path: Path) -> None:
+    tarball = tmp_path / "init.tar.gz"
+    tarball.write_bytes(b"complete tarball")
+    server = _TarballServer()
+    calls: list[str] = []
+    pinned = object()
+
+    def abort_with_partial(_ctx, **kwargs) -> None:
+        assert kwargs["retain_download"] is True
+        calls.append("abort")
+
+    def flash_good_init(_ctx) -> None:
+        calls.append("flash")
+        server.requests.append(_RESUMED)
+        _ctx.quiesced_pin = None
+
+    monkeypatch.setattr(faults, "_attempt_init_abort", abort_with_partial)
+    monkeypatch.setattr(faults, "_pinned", lambda _ctx: pinned)
+    monkeypatch.setattr(faults.catalog, "require_retained_download", lambda _dev: None)
+    monkeypatch.setattr(faults.catalog, "retained_download_size", lambda _dev: 7)
+    monkeypatch.setattr(faults, "_flash_good_init", flash_good_init)
+    monkeypatch.setattr(
+        faults.catalog,
+        "sweep_download_artifact",
+        lambda dev: calls.append("sweep-device" if dev is ctx.dev else "sweep-pinned"),
+    )
+    ctx = cast(
+        "faults._Ctx",
+        types.SimpleNamespace(
+            dev=object(),
+            quiesced_pin=pinned,
+            run=types.SimpleNamespace(variant_a=types.SimpleNamespace(tarball=tarball)),
+            server=server,
+        ),
+    )
+    faults._scenario_download_stall(ctx)
+    assert calls == ["abort", "flash", "sweep-device"]
+
+
+@pytest.mark.parametrize(
+    ("prior", "recovery", "message"),
+    [
+        ([_RESUMED], [], "did not resume"),
+        ([], [_RANGE_IGNORED], "did not resume"),
+        ([], [_RESUMED, _FULL_FETCH], "refetched the full tarball"),
+    ],
+)
+def test_download_stall_rejects_unresumed_download(
+    monkeypatch,
+    tmp_path: Path,
+    prior: list[rig.TarballRequest],
+    recovery: list[rig.TarballRequest],
+    message: str,
+) -> None:
+    tarball = tmp_path / "init.tar.gz"
+    tarball.write_bytes(b"complete tarball")
+    pinned = object()
+    server = _TarballServer()
+    server.requests.extend(prior)
+    monkeypatch.setattr(faults, "_attempt_init_abort", lambda *_a, **_k: None)
+    monkeypatch.setattr(faults, "_pinned", lambda _ctx: pinned)
+    monkeypatch.setattr(faults.catalog, "require_retained_download", lambda _dev: None)
+    monkeypatch.setattr(faults.catalog, "retained_download_size", lambda _dev: 7)
+    monkeypatch.setattr(faults, "_flash_good_init", lambda _ctx: server.requests.extend(recovery))
+    monkeypatch.setattr(faults.catalog, "sweep_download_artifact", lambda _dev: None)
+    ctx = cast(
+        "faults._Ctx",
+        types.SimpleNamespace(
+            dev=object(),
+            quiesced_pin=pinned,
+            run=types.SimpleNamespace(variant_a=types.SimpleNamespace(tarball=tarball)),
+            server=server,
+        ),
+    )
+    with pytest.raises(Abort, match=message):
+        faults._scenario_download_stall(ctx)
 
 
 def test_b_group_order_and_recovery_wrapper(monkeypatch) -> None:

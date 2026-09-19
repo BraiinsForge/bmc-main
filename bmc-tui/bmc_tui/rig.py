@@ -33,12 +33,13 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Self
 
 from bmc_tui.nix import Nix, StorePath
-from bmc_tui.server import ServerHandle, server
+from bmc_tui.server import CHUNK_BYTES, ServerHandle, server
 from bmc_tui.stage import require
 
 FEED_NAME = "nix-package-feed.v1.json"
@@ -207,7 +208,7 @@ def populate_cache(nix: Nix, secret: Path, cache: Path, variants: list[Variant])
 
 
 _STALL_MAX_SECONDS = 900
-_STALL_CLAIMED_LENGTH = 1 << 20
+_STALL_PREFIX_BYTES = CHUNK_BYTES
 # STALL is path-selective: the device fetches the package feed first and only
 # then the tarball (store.rs). Stalling the feed would abort init before any
 # tarball bytes exist, so the partial-file lifecycle A5 exercises never runs.
@@ -225,6 +226,16 @@ class FaultMode(enum.Enum):
     STALL = "stall"
 
 
+@dataclass(frozen=True)
+class TarballRequest:
+    """One tarball fetch as the rig answered it: the Range asked for, the status,
+    and the body bytes actually written — both None when a fault dropped it."""
+
+    range: str | None
+    status: int | None
+    length: int | None
+
+
 class RigServer:
     """Mount `root` at the serve root; use as a context manager.
 
@@ -239,34 +250,64 @@ class RigServer:
         self._bind_ip = bind_ip
         self._handle: ServerHandle | None = None
         self._fault = FaultMode.NONE
+        self._stall_sent = False
+        self._tarball_requests: list[TarballRequest] = []
 
     def set_fault(self, mode: FaultMode) -> None:
         """Flip the per-request fault switch (A5/C2); NONE restores serving."""
         self._fault = mode
+        if mode is FaultMode.STALL:
+            self._stall_sent = False
+
+    @property
+    def tarball_requests(self) -> tuple[TarballRequest, ...]:
+        """Every tarball request in arrival order, dropped ones included."""
+        return tuple(self._tarball_requests)
 
     @property
     def fault(self) -> FaultMode:
         return self._fault
 
     def _intercept(self, handler: BaseHTTPRequestHandler) -> bool:
-        """REFUSE drops the connection before any response; STALL sends a
-        tarball's headers and withholds the body until the mode resets or
-        the cap expires — the client sees a stall, then a short read."""
+        """REFUSE drops connections; STALL serves one tarball prefix, then
+        drops later tarball requests until the mode resets. The first response
+        stalls until reset or the cap expires."""
+        tarball_request = handler.path.startswith(_TARBALL_URL_PREFIX)
+        requested = handler.headers.get("Range")
         mode = self._fault
-        if mode is FaultMode.REFUSE:
+        if mode is FaultMode.REFUSE or (
+            mode is FaultMode.STALL and self._stall_sent and tarball_request
+        ):
+            if tarball_request:
+                self._tarball_requests.append(TarballRequest(requested, None, None))
             handler.close_connection = True
             handler.connection.close()
             return True
-        if mode is FaultMode.STALL and handler.path.startswith(_TARBALL_URL_PREFIX):
-            handler.send_response(200)
-            handler.send_header("Content-Length", str(_STALL_CLAIMED_LENGTH))
+        if mode is FaultMode.STALL and tarball_request:
+            self._stall_sent = True
+            tarball = self._root / "tarballs" / Path(handler.path).name
+            size = tarball.stat().st_size
+            if size == 0:
+                raise RuntimeError("BUG: a stall must hold back at least one tarball byte")
+            prefix = min(_STALL_PREFIX_BYTES, size - 1)
+            self._tarball_requests.append(TarballRequest(requested, int(HTTPStatus.OK), prefix))
+            handler.send_response(HTTPStatus.OK)
+            handler.send_header("Content-Length", str(size))
             handler.end_headers()
+            with tarball.open("rb") as source:
+                handler.wfile.write(source.read(prefix))
+                handler.wfile.flush()
             deadline = time.monotonic() + _STALL_MAX_SECONDS
             while self._fault is FaultMode.STALL and time.monotonic() < deadline:
                 time.sleep(0.5)
             handler.close_connection = True
             return True
         return False
+
+    def _observe(self, handler: BaseHTTPRequestHandler, status: int, length: int) -> None:
+        if handler.path.startswith(_TARBALL_URL_PREFIX):
+            request = TarballRequest(handler.headers.get("Range"), int(status), length)
+            self._tarball_requests.append(request)
 
     @property
     def port(self) -> int:
@@ -281,6 +322,7 @@ class RigServer:
             bind_host=self._bind_ip,
             port=self._port,
             intercept=self._intercept,
+            observe=self._observe,
         )
         return self
 

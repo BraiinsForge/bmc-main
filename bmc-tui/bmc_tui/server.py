@@ -27,9 +27,9 @@ request, or to a directory to mount; the handle reports every address it bound
 on, so a caller can hand the device one it can actually reach.
 """
 
+import enum
 import json
 import mimetypes
-import shutil
 import socket
 import socketserver
 import sys
@@ -107,6 +107,11 @@ ViewConfig = View | Response
 # faults (refused connections, stalled bodies) a view cannot express.
 Intercept = Callable[[BaseHTTPRequestHandler], bool]
 
+# Told each finished reply's status and the body bytes actually written; a reply
+# the client hung up on is never reported. This is how the package rig checks
+# that a device resumed a download, not only asked to.
+Observe = Callable[[BaseHTTPRequestHandler, int, int], None]
+
 
 def default_serve_ip(device_host: str, *, port: int = 22) -> str:
     """The IPv4 address the device can reach us on: the source address the
@@ -153,7 +158,14 @@ def _encode(value: ResponseValue) -> tuple[bytes, str]:
     raise TypeError(f"view returned an unsupported response: {type(value).__name__}")
 
 
-def _byte_range(header: str | None, size: int) -> tuple[int, int] | None:
+class _Unsatisfiable(enum.Enum):
+    """A `bytes=` start at or past the end: 416 with the size (RFC 9110 §14.4),
+    which is how a device learns its retained partial is already complete."""
+
+    RANGE = enum.auto()
+
+
+def _byte_range(header: str | None, size: int) -> tuple[int, int] | None | _Unsatisfiable:
     """Inclusive start/end for a single `bytes=` range, or None to send it all.
 
     Only the one-range form is honoured; anything else falls back to the whole
@@ -166,7 +178,9 @@ def _byte_range(header: str | None, size: int) -> tuple[int, int] | None:
         return None
     start = int(first)
     end = int(last) if last.isdigit() else size - 1
-    if start > end or start >= size:
+    if start >= size:
+        return _Unsatisfiable.RANGE
+    if start > end:
         return None
     return start, min(end, size - 1)
 
@@ -193,7 +207,7 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = IDLE_TIMEOUT_SECS
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  the two hooks ride beside socketserver's fixed trio
         self,
         request: socket.socket,
         client_address: tuple[str, int],
@@ -201,9 +215,11 @@ class _Handler(BaseHTTPRequestHandler):
         *,
         views: Mapping[str, View],
         intercept: Intercept | None = None,
+        observe: Observe | None = None,
     ) -> None:
         self._views = views
         self._intercept = intercept
+        self._observe = observe
         self._mounts = sorted(
             ((p, v.response) for p, v in views.items() if isinstance(v.response, Path)),
             key=lambda item: len(item[0]),
@@ -262,6 +278,44 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.end_headers()
 
+    def _observed(self, status: int, sent: int) -> None:
+        if self._observe is not None:
+            self._observe(self, status, sent)
+
+    def _ranged_headers(
+        self,
+        *,
+        status: int,
+        size: int,
+        content_type: str,
+        extra: Mapping[str, str] | None = None,
+    ) -> tuple[int, tuple[int, int] | None | _Unsatisfiable]:
+        """Send the headers for a `size`-byte body under the request's Range;
+        return the status sent and the span to stream — None for all of it,
+        nothing after a 416."""
+        span = _byte_range(self.headers.get("Range"), size)
+        if span is None:
+            self._headers(status=status, length=size, content_type=content_type, extra=extra)
+            return status, span
+        if isinstance(span, _Unsatisfiable):
+            status = HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE
+            self._headers(
+                status=status,
+                length=0,
+                content_type=content_type,
+                extra={**(extra or {}), "Content-Range": f"bytes */{size}"},
+            )
+            return status, span
+        start, end = span
+        status = HTTPStatus.PARTIAL_CONTENT
+        self._headers(
+            status=status,
+            length=end - start + 1,
+            content_type=content_type,
+            extra={**(extra or {}), "Content-Range": f"bytes {start}-{end}/{size}"},
+        )
+        return status, span
+
     def _respond(
         self,
         *,
@@ -273,27 +327,25 @@ class _Handler(BaseHTTPRequestHandler):
     ) -> None:
         """Ranged like `_respond_file`, so sampling a header costs 16 bytes."""
         size = len(body)
-        ranged = status == HTTPStatus.OK
-        span = _byte_range(self.headers.get("Range"), size) if ranged else None
-        if span is None:
-            self._headers(status=status, length=size, content_type=content_type, extra=extra)
+        if status == HTTPStatus.OK:
+            status, span = self._ranged_headers(
+                status=status, size=size, content_type=content_type, extra=extra
+            )
         else:
-            start, end = span
-            body = body[start : end + 1]
-            self.send_response(HTTPStatus.PARTIAL_CONTENT)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-            self.send_header("Content-Length", str(len(body)))
-            for key, value in (extra or {}).items():
-                self.send_header(key, value)
-            self.end_headers()
-        if not head:
+            self._headers(status=status, length=size, content_type=content_type, extra=extra)
+            span = None
+        sent = 0
+        if not head and not isinstance(span, _Unsatisfiable):
+            if span is not None:
+                body = body[span[0] : span[1] + 1]
             # One socket operation per chunk. `timeout` bounds each of them, and
             # `wfile` is unbuffered, so a single multi-megabyte write to a peer
             # that stops reading at its own cap trips it before that cap is hit.
             view = memoryview(body)
             for start in range(0, len(view), CHUNK_BYTES):
                 self.wfile.write(view[start : start + CHUNK_BYTES])
+            sent = len(body)
+        self._observed(status, sent)
 
     def _respond_file(
         self,
@@ -310,30 +362,40 @@ class _Handler(BaseHTTPRequestHandler):
         A ranged request is answered as one, so a caller sampling a header
         does not pull a whole fixture down and hang up mid-write.
         """
-        size = path.stat().st_size
-        span = _byte_range(self.headers.get("Range"), size)
-        with path.open("rb") as handle:
-            if span is None:
-                self._headers(status=status, length=size, content_type=content_type, extra=extra)
-            else:
-                start, end = span
-                handle.seek(start)
-                self.send_response(206)
-                self.send_header("Content-Type", content_type)
-                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-                self.send_header("Content-Length", str(end - start + 1))
-                for key, value in (extra or {}).items():
-                    self.send_header(key, value)
-                self.end_headers()
-            if head:
-                return
-            self._stream(handle, span)
+        try:
+            size = path.stat().st_size
+            handle = path.open("rb")
+        except OSError as error:
+            detail = f"view for {self.path} failed: {error}\n"
+            self._respond(status=500, body=detail.encode(), content_type="text/plain", head=head)
+            return
+        with handle:
+            status, span = self._ranged_headers(
+                status=status, size=size, content_type=content_type, extra=extra
+            )
+            sent = 0
+            if not head and not isinstance(span, _Unsatisfiable):
+                if span is not None:
+                    handle.seek(span[0])
+                sent = self._stream(handle, span)
+        self._observed(status, sent)
 
-    def _stream(self, handle: BinaryIO, span: tuple[int, int] | None) -> None:
+    def _stream(self, handle: BinaryIO, span: tuple[int, int] | None) -> int:
+        """Write the file (or `span` of it) and return the bytes written."""
         if span is None:
-            shutil.copyfileobj(handle, self.wfile)
-        else:
-            self.wfile.write(handle.read(span[1] - span[0] + 1))
+            sent = 0
+            while chunk := handle.read(CHUNK_BYTES):
+                self.wfile.write(chunk)
+                sent += len(chunk)
+            return sent
+        remaining = span[1] - span[0] + 1
+        while remaining:
+            chunk = handle.read(min(CHUNK_BYTES, remaining))
+            if not chunk:
+                raise OSError("file ended while serving a range")
+            self.wfile.write(chunk)
+            remaining -= len(chunk)
+        return span[1] - span[0] + 1
 
     def _handle(self, *, head: bool = False) -> None:
         if self._intercept is not None and self._intercept(self):
@@ -344,24 +406,25 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond(status=404, body=b"not found\n", content_type="text/plain", head=head)
             return
         view, mounted = found
-        # A view is caller code: a failure has to reach the client as a status
-        # rather than drop the connection mid-response.
+        # Resolve a view before sending headers so its errors can be reported
+        # as a status. A failed stream must close, not write into its body.
         try:
             value = mounted if mounted is not None else _resolve(view.response, request)
-            if isinstance(value, Path):
-                guessed, _ = mimetypes.guess_type(value.name)
-                self._respond_file(
-                    status=view.status,
-                    path=value,
-                    content_type=view.content_type or guessed or "application/octet-stream",
-                    head=head,
-                    extra=view.headers,
-                )
-                return
-            body, guessed = _encode(value)
+            if not isinstance(value, Path):
+                body, guessed = _encode(value)
         except Exception as error:
             detail = f"view for {request.path} failed: {error}\n"
             self._respond(status=500, body=detail.encode(), content_type="text/plain", head=head)
+            return
+        if isinstance(value, Path):
+            guessed, _ = mimetypes.guess_type(value.name)
+            self._respond_file(
+                status=view.status,
+                path=value,
+                content_type=view.content_type or guessed or "application/octet-stream",
+                head=head,
+                extra=view.headers,
+            )
             return
         self._respond(
             status=view.status,
@@ -477,13 +540,14 @@ def _await_healthy(httpd: _Server, thread: threading.Thread) -> None:
     raise RuntimeError(f"local server never accepted on port {port}")
 
 
-def server(
+def server(  # noqa: PLR0913  bind options and the two request hooks are all keyword-only
     views: Mapping[str, ViewConfig],
     *,
     reachable_from: str | None = None,
     bind_host: str = "0.0.0.0",
     port: int = 0,
     intercept: Intercept | None = None,
+    observe: Observe | None = None,
 ) -> ServerHandle:
     """Serve `views` on an ephemeral port until the handle is stopped.
 
@@ -491,7 +555,7 @@ def server(
     that device would reach us on rather than a guess at the default route.
     """
     resolved = {path: _as_view(config) for path, config in views.items()}
-    httpd = _Server((bind_host, port), _handler(resolved, intercept))
+    httpd = _Server((bind_host, port), _handler(resolved, intercept, observe))
     # socketserver's _Threads.append drops daemon threads,
     # so ThreadingHTTPServer's daemon_threads=True default leaves nothing
     # for server_close() to join — a request can outlive stop().
@@ -514,13 +578,17 @@ def server(
 
 
 def _handler(
-    views: Mapping[str, View], intercept: Intercept | None = None
+    views: Mapping[str, View],
+    intercept: Intercept | None = None,
+    observe: Observe | None = None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     def build(
         request: socket.socket,
         client_address: tuple[str, int],
         server: socketserver.BaseServer,
     ) -> BaseHTTPRequestHandler:
-        return _Handler(request, client_address, server, views=views, intercept=intercept)
+        return _Handler(
+            request, client_address, server, views=views, intercept=intercept, observe=observe
+        )
 
     return build

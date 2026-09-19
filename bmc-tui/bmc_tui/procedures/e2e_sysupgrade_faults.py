@@ -34,6 +34,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import Literal
 
@@ -42,7 +43,7 @@ from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Nix
 from bmc_tui.server import default_serve_ip
-from bmc_tui.stage import Abort, dry_run, entrypoint, require
+from bmc_tui.stage import Abort, dry_run, entrypoint, require, stage
 
 # sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk; same
 # headroom rationale as procedures/e2e_sysupgrade.py. Private there, so
@@ -107,9 +108,7 @@ _GROUP_C_ORDER = (
     "cache-swap-retry",  # fuses stale-next-marker + servers-json on retry
     "same-version-reflash",  # fuses shm-local-file (staged via /dev/shm)
 )
-# `good-init` is the clean init flash that closes group A — a flash step,
-# not a scenario driver.
-SUITE_ORDER = (*_GROUP_A_ORDER, "good-init", *_GROUP_B_ORDER, *_GROUP_C_ORDER)
+SUITE_ORDER = (*_GROUP_A_ORDER, *_GROUP_B_ORDER, *_GROUP_C_ORDER)
 
 
 def _best_effort(action: Callable[[], object]) -> None:
@@ -242,10 +241,9 @@ def _attempt_init_abort(
     *,
     tamper: Callable[[], None],
     expect: str | tuple[str, ...],
-    artifact_deleted: bool = True,
+    retain_download: bool = False,
 ) -> None:
-    """Check device cleanup before the harness sweep. A5's stalled partial
-    is deliberately exempt and removed by the sweep afterward."""
+    """Check ordinary abort cleanup, or retain a partial for recovery."""
     catalog.require_store_absent(ctx.quiesced_pin or ctx.dev)
     pinned = _prepare_flash(ctx, ctx.image_a)
     failed = False
@@ -256,14 +254,14 @@ def _attempt_init_abort(
             pinned, ctx.image_a, expect=expect, state=ctx.state, assume_yes=ctx.yes
         )
         catalog.require_store_absent(pinned)
-        if artifact_deleted:
+        if not retain_download:
             catalog.require_download_artifact_absent(pinned)
     except BaseException:
         failed = True
         raise
     finally:
-        # a cleanup error must not replace the real Abort the flash raised
-        _best_effort(lambda: catalog.sweep_download_artifact(pinned))
+        if failed or not retain_download:
+            _best_effort(lambda: catalog.sweep_download_artifact(pinned))
         _restore_step(failed=failed, action=lambda: _restore_rig(ctx))
 
 
@@ -332,12 +330,54 @@ def _scenario_corrupt_tarball(ctx: _Ctx) -> None:
 
 
 def _scenario_download_stall(ctx: _Ctx) -> None:
-    _attempt_init_abort(
-        ctx,
-        tamper=lambda: ctx.server.set_fault(rig.FaultMode.STALL),
-        expect=("download stalled", "tarball download failed"),
-        artifact_deleted=False,
+    """Abort with a real partial, then use the next init as group A's recovery flash."""
+    variant_a = ctx.run.variant_a
+    if variant_a is None:
+        msg = "BUG: variant A was not built before the download fault"
+        raise RuntimeError(msg)
+    try:
+        _attempt_init_abort(
+            ctx,
+            tamper=lambda: ctx.server.set_fault(rig.FaultMode.STALL),
+            expect=("download stalled", "tarball download failed"),
+            retain_download=True,
+        )
+        if dry_run.get():
+            _flash_good_init(ctx)
+            return
+        pinned = _pinned(ctx)
+        total = variant_a.tarball.stat().st_size
+        catalog.require_retained_download(pinned)
+        retained = catalog.retained_download_size(pinned)
+        require(retained < total, "retained download is already complete")
+        observed = len(ctx.server.tarball_requests)
+        _flash_good_init(ctx)
+        _require_resumed_download(
+            ctx.server.tarball_requests[observed:], retained=retained, total=total
+        )
+    finally:
+        # A successful flash may change the DHCP address; use mDNS after reboot.
+        _best_effort(lambda: catalog.sweep_download_artifact(ctx.quiesced_pin or ctx.dev))
+
+
+@stage("Retained download resumed (A5)")
+def _require_resumed_download(
+    served: tuple[rig.TarballRequest, ...], *, retained: int, total: int
+) -> str:
+    """A Range request alone proves nothing: the rig must have answered it
+    with 206 and exactly the bytes the partial lacked."""
+    resumed = rig.TarballRequest(f"bytes={retained}-", HTTPStatus.PARTIAL_CONTENT, total - retained)
+    require(
+        resumed in served,
+        f"good init did not resume the retained {retained}-byte partial "
+        f"(no 206 for the remaining {total - retained} bytes; the partial may have "
+        f"been cleared or the range ignored); saw {served}",
     )
+    require(
+        all(request.range is not None for request in served),
+        f"good init refetched the full tarball: {served}",
+    )
+    return f"resumed at byte {retained} of {total}"
 
 
 def _flash_good_init(ctx: _Ctx) -> None:
@@ -369,7 +409,7 @@ def _group_a(ctx: _Ctx) -> None:
     catalog.clear_nix_store(ctx.quiesced_pin, assume_yes=ctx.yes)
     for sid in _GROUP_A_ORDER:
         _DRIVERS[sid](ctx)
-    _flash_good_init(ctx)  # clears quiesced_pin before its post-reboot wait
+    require(ctx.quiesced_pin is None, "group A did not complete its recovery flash")
 
 
 def _require_b_preconditions(ctx: _Ctx) -> None:

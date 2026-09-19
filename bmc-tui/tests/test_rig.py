@@ -250,22 +250,40 @@ def test_fault_refuse_drops_connections_and_none_restores(tmp_path: Path) -> Non
         assert json.loads(_get(f"{base}/{rig.FEED_NAME}"))["entries"]
 
 
-def test_fault_stall_sends_headers_but_no_body(tmp_path: Path) -> None:
+def test_fault_stall_retains_a_resumable_tarball_prefix(tmp_path: Path) -> None:
     a = _variant(tmp_path, "va", ["/nix/store/a"])
     root = tmp_path / "serve"
     rig.write_serve_root(root, [a], "http://placeholder")
     with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
+        url = f"http://127.0.0.1:{server.port}/tarballs/nix-va.tar.gz"
+        tarball = a.tarball.read_bytes()
+        prefix = tarball[: min(rig.CHUNK_BYTES, len(tarball) - 1)]
+        assert 0 < len(prefix) < len(tarball)
         server.set_fault(rig.FaultMode.STALL)
         try:
-            # the tarball download is what A5 stalls (the partial-file path)
-            url = f"http://127.0.0.1:{server.port}/tarballs/nix-va.tar.gz"
-            with (
-                urllib.request.urlopen(url, timeout=1) as response,
-                pytest.raises(TimeoutError),
-            ):
-                response.read()
+            with urllib.request.urlopen(url, timeout=1) as response:
+                assert response.headers["Content-Length"] == str(a.tarball.stat().st_size)
+                assert response.read(len(prefix)) == prefix
+                with pytest.raises(TimeoutError):
+                    response.read(1)
+                with pytest.raises((ConnectionError, urllib.error.URLError)) as dropped:
+                    urllib.request.urlopen(url, timeout=1)
+                if isinstance(dropped.value, urllib.error.URLError):
+                    assert not isinstance(dropped.value, urllib.error.HTTPError)
+                    assert not isinstance(dropped.value.reason, TimeoutError)
         finally:
-            server.set_fault(rig.FaultMode.NONE)  # release the stalled handler
+            server.set_fault(rig.FaultMode.NONE)
+        request = urllib.request.Request(url, headers={"Range": f"bytes={len(prefix)}-"})
+        with urllib.request.urlopen(request, timeout=1) as response:
+            assert response.status == 206
+            assert response.read() == tarball[len(prefix) :]
+    # A reply is recorded after its body is written, so the client can finish
+    # reading first; leaving the block joins the worker.
+    assert server.tarball_requests == (
+        rig.TarballRequest(None, 200, len(prefix)),
+        rig.TarballRequest(None, None, None),
+        rig.TarballRequest(f"bytes={len(prefix)}-", 206, len(tarball) - len(prefix)),
+    )
 
 
 def test_fault_stall_is_path_selective_feed_survives(tmp_path: Path) -> None:
@@ -283,12 +301,13 @@ def test_fault_stall_is_path_selective_feed_survives(tmp_path: Path) -> None:
             # the feed comes back in full despite the armed stall
             feed = json.loads(_get(f"{base}/{rig.FEED_NAME}"))
             assert feed["entries"][0]["bos_version"] == "va"
-            # the tarball, in contrast, hangs
-            with (
-                urllib.request.urlopen(f"{base}/tarballs/nix-va.tar.gz", timeout=1) as response,
-                pytest.raises(TimeoutError),
-            ):
-                response.read()
+            tarball = a.tarball.read_bytes()
+            prefix = tarball[: min(rig.CHUNK_BYTES, len(tarball) - 1)]
+            with urllib.request.urlopen(f"{base}/tarballs/nix-va.tar.gz", timeout=1) as response:
+                assert response.read(len(prefix)) == prefix
+                with pytest.raises(TimeoutError):
+                    response.read(1)
+            assert json.loads(_get(f"{base}/{rig.FEED_NAME}"))["entries"]
         finally:
             server.set_fault(rig.FaultMode.NONE)
 

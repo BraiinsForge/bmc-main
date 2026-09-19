@@ -1904,6 +1904,24 @@ def require_download_artifact_absent(dev: Device) -> str:
     return "download artifacts absent"
 
 
+def retained_download_size(dev: Device) -> int:
+    """Bytes in the retained `.part`, guarded by its sidecar: a partial without
+    signature metadata is one the next init will discard, not resume."""
+    _, part, metadata = _DOWNLOAD_ARTIFACTS
+    size = dev.read(f"wc -c 2>/dev/null < {shlex.quote(part)} || true")
+    require(size.isdecimal() and int(size) > 0, f"no nonempty retained download at {part}")
+    require(
+        dev.read(f"[ -f {shlex.quote(metadata)} ] && echo yes || true") == "yes",
+        f"no signature metadata at {metadata}",
+    )
+    return int(size)
+
+
+@stage("Retained download present (A5)")
+def require_retained_download(dev: Device) -> str:
+    return f"{retained_download_size(dev)} bytes retained with signature metadata"
+
+
 @stage("Staging ran once (D4)")
 def require_staged_once(state: FaultsState) -> str:
     if dry_run.get():

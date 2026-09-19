@@ -3059,6 +3059,33 @@ def test_download_artifact_absence_detects_each_fixed_path(suffix: str) -> None:
         catalog.require_download_artifact_absent(Device("h", backend=exc))
 
 
+def test_retained_download_requires_nonempty_part_and_signature_metadata() -> None:
+    exc = _Exec(
+        _routes(
+            {
+                "wc -c 2>/dev/null < /mnt/data/init-tarball.tar.gz.part": "65536",
+                "[ -f /mnt/data/init-tarball.tar.gz.metadata.json ]": "yes",
+            }
+        )
+    )
+    assert catalog.retained_download_size(Device("h", backend=exc)) == 65536
+    catalog.require_retained_download(Device("h", backend=exc))
+
+
+@pytest.mark.parametrize(("size", "metadata"), [("", "yes"), ("0", "yes"), ("65536", "")])
+def test_retained_download_rejects_missing_part_or_metadata(size: str, metadata: str) -> None:
+    exc = _Exec(
+        _routes(
+            {
+                "wc -c 2>/dev/null < /mnt/data/init-tarball.tar.gz.part": size,
+                "[ -f /mnt/data/init-tarball.tar.gz.metadata.json ]": metadata,
+            }
+        )
+    )
+    with pytest.raises(Abort):
+        catalog.require_retained_download(Device("h", backend=exc))
+
+
 class _PollKnobs(TypedDict):
     timeout: int
     sleep: Callable[[float], None]

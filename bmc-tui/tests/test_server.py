@@ -20,6 +20,9 @@
 
 """Unit tests for the local asset server."""
 
+import http.client
+import http.server
+import io
 import json
 import socket
 import struct
@@ -247,6 +250,63 @@ def test_file_view_answers_a_ranged_request(tmp_path: Path) -> None:
             assert response.read() == bytes(range(16))
 
 
+def test_large_file_range_is_written_in_bounded_chunks() -> None:
+    payload = b"x" * (bmc_server.CHUNK_BYTES * 2 + 7)
+
+    class Writer:
+        def __init__(self) -> None:
+            self.parts: list[bytes] = []
+
+        def write(self, chunk: bytes) -> None:
+            assert len(chunk) <= bmc_server.CHUNK_BYTES, "range writes must fit one chunk"
+            self.parts.append(chunk)
+
+    writer = Writer()
+    handler = bmc_server._Handler.__new__(bmc_server._Handler)
+    handler.wfile = writer  # type: ignore[assignment]
+    handler._stream(io.BytesIO(payload), (0, len(payload) - 1))
+    assert b"".join(writer.parts) == payload
+
+
+def test_short_file_range_closes_without_looping() -> None:
+    handler = bmc_server._Handler.__new__(bmc_server._Handler)
+    handler.wfile = io.BytesIO()
+    with pytest.raises(OSError, match="file ended while serving a range"):
+        handler._stream(io.BytesIO(b"short"), (0, 15))
+
+
+def test_failed_file_stream_does_not_append_an_error_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blob = tmp_path / "asset.bin"
+    blob.write_bytes(b"x" * 16)
+
+    def fail_after_prefix(handler: bmc_server._Handler, _handle: object, _span: object) -> None:
+        handler.wfile.write(b"abc")
+        raise TimeoutError("simulated interrupted response")
+
+    monkeypatch.setattr(bmc_server._Handler, "_stream", fail_after_prefix)
+    with server({"/asset.bin": blob}) as handle:
+        request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=0-15"})
+        with (
+            urllib.request.urlopen(request) as response,
+            pytest.raises(http.client.IncompleteRead) as error,
+        ):
+            assert response.status == 206
+            response.read()
+    assert error.value.partial == b"abc"
+
+
+def test_missing_file_view_returns_an_error_response(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.bin"
+    with (
+        server({"/asset.bin": missing}) as handle,
+        pytest.raises(urllib.error.HTTPError) as error,
+    ):
+        urllib.request.urlopen(handle.url("/asset.bin"))
+    assert error.value.code == 500
+
+
 def test_bytes_view_answers_a_ranged_request_like_a_file() -> None:
     """The harness synthesises its oversized cases, so a 200 here
     would make every pre-flight pull megabytes and hang up mid-write."""
@@ -268,14 +328,52 @@ def test_a_body_past_one_chunk_arrives_whole() -> None:
     assert received == body
 
 
-def test_unsatisfiable_range_falls_back_to_the_whole_body(tmp_path: Path) -> None:
+def test_unsatisfiable_range_is_answered_with_416(tmp_path: Path) -> None:
+    """A device whose retained partial is already complete asks from its end;
+    416 tells it to verify what it has rather than download everything again."""
     blob = tmp_path / "asset.bin"
     blob.write_bytes(b"abcd")
-    with server({"/asset.bin": blob}) as handle:
-        request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=99-"})
+    with (
+        server({"/asset.bin": blob}) as handle,
+        pytest.raises(urllib.error.HTTPError) as error,
+    ):
+        request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=4-"})
+        urllib.request.urlopen(request)
+    assert error.value.code == 416
+    assert error.value.headers["Content-Range"] == "bytes */4"
+
+
+def test_observe_sees_each_reply_status_and_length() -> None:
+    seen: list[tuple[str, int, int]] = []
+
+    def observe(handler: http.server.BaseHTTPRequestHandler, status: int, length: int) -> None:
+        seen.append((handler.path, int(status), length))
+
+    with server({"/asset.bin": bytes(range(256))}, observe=observe) as handle:
+        with urllib.request.urlopen(handle.url("/asset.bin")) as response:
+            response.read()
+        request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=16-"})
         with urllib.request.urlopen(request) as response:
-            assert response.status == 200
-            assert response.read() == b"abcd"
+            response.read()
+    assert seen == [("/asset.bin", 200, 256), ("/asset.bin", 206, 240)]
+
+
+def test_a_reply_the_client_abandons_is_not_observed(tmp_path: Path) -> None:
+    """The rig counts observed bytes as served; a hung-up transfer must not count."""
+    blob = tmp_path / "big.bin"
+    blob.write_bytes(b"x" * (4 * 1024 * 1024))
+    seen: list[int] = []
+    with server({"/big.bin": blob}, observe=lambda _h, _s, sent: seen.append(sent)) as handle:
+        host, port = handle.binds[0].removeprefix("http://").split(":")
+        with socket.create_connection((host, int(port))) as rude:
+            rude.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            rude.sendall(b"GET /big.bin HTTP/1.1\r\nHost: x\r\n\r\n")
+            rude.recv(64)
+        time.sleep(0.5)
+        assert handle.drops, "the disconnect should have been recorded"
+        assert seen == []
+        assert _get(handle.url("/big.bin"))[1] == b"x" * (4 * 1024 * 1024)
+    assert seen == [4 * 1024 * 1024]
 
 
 def test_a_client_that_hangs_up_is_recorded_not_printed(
