@@ -25,9 +25,7 @@
 //! entry carries the signature, and the publisher signs with a secret
 //! key in the `nix key generate-secret` layout (base64 of seed ‖
 //! public key). Ed25519 signs a short domain-separated fingerprint of
-//! the tarball's SHA-256 digest, never the tarball bytes, so the
-//! digest can be computed incrementally while the file streams to
-//! disk.
+//! the tarball's SHA-256 digest, never the tarball bytes.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;

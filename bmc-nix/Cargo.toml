@@ -25,6 +25,7 @@ clap = { workspace = true, features = ["derive"] }
 cognos.workspace = true
 file-rotate.workspace = true
 futures.workspace = true
+headers.workspace = true
 libc.workspace = true
 log = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }

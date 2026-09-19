@@ -20,6 +20,8 @@ skip = [
     # reqwest 0.11 → hyper 0.14 ecosystem (remove after upgrading to reqwest 0.12+)
     { crate = "base64@0.21" },
     { crate = "h2@0.3" },
+    { crate = "headers@0.3" },
+    { crate = "headers-core@0.2" },
     { crate = "http@0.2" },
     { crate = "http-body@0.4" },
     { crate = "hyper@0.14" },

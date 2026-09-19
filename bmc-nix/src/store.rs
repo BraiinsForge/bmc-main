@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+mod init_download;
 pub mod progress;
 
 use std::collections::HashSet;
@@ -670,6 +671,10 @@ pub enum InitStoreError {
     },
     #[error("download stalled: no data received for {timeout_secs}s")]
     DownloadStalled { timeout_secs: u64 },
+    #[error("invalid init download response: {0}")]
+    DownloadProtocol(String),
+    #[error("failed to access init download files: {0}")]
+    DownloadFileIo(#[source] std::io::Error),
     #[error("failed to write tarball to disk: {0}")]
     WriteFailed(#[source] std::io::Error),
     #[error("initialized store already exists at {path}; pass --wipe to replace it")]
@@ -731,8 +736,7 @@ pub enum InitStoreError {
     },
 }
 
-/// If no bytes arrive for this duration, the download is considered stalled.
-const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(1);
+const HTTP_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// Maximum accepted size of the factory package feed, in bytes.
 ///
@@ -1001,20 +1005,9 @@ async fn extract_and_promote(
     extract_staged(tarball_path, stage_dir).await
 }
 
-/// Initialize the Nix store from a factory tarball.
-///
-/// 0. Take the exclusive init lock on `<stage_dir>/.init.lock`
-/// 1. Fetch the package feed from the factory server
-/// 2. Find the feed entry matching current BOS version; with
-///    verification enabled, require its signature and a well-formed
-///    trusted key before anything is downloaded
-/// 3. Download tarball to `download_dir` (streaming to disk, hashing
-///    each chunk)
-/// 4. Verify the signature over the tarball's SHA-256 digest
-/// 5. Extract to `<stage_dir>/nix.tmp`
-/// 6. Promote `<stage_dir>/nix.tmp/nix` to `<stage_dir>/nix`
-/// 7. Clean up downloaded tarball
-/// 8. Return the `profile_path` from the tarball metadata
+/// Initialize the Nix store from the factory feed's selected tarball.
+/// The init lock covers retained download state and staged promotion.
+/// Signed candidates are verified from disk before extraction.
 #[expect(
     clippy::too_many_arguments,
     reason = "the init pipeline's inputs are genuinely this many; \
@@ -1044,37 +1037,8 @@ pub async fn init_store(
     // data-partition space.
     clean_stale_staging(stage_dir)?;
 
-    // Step 1: Fetch the package feed, bounded like the index fetches:
-    // reject early on Content-Length, cap the accumulated body, and
-    // treat a stalled read as a failure instead of waiting forever.
     let feed_url = crate::index::make_package_feed_url(&factory_server.base_url);
-    let mut feed_response = client
-        .get(&feed_url)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|source| InitStoreError::PackageFeedFetch {
-            url: feed_url.clone(),
-            source,
-        })?;
-
-    if let Some(len) = feed_response.content_length() {
-        check_feed_size(&feed_url, len)?;
-    }
-    let mut feed_body: Vec<u8> = Vec::new();
-    while let Some(chunk) = tokio::time::timeout(READ_IDLE_TIMEOUT, feed_response.chunk())
-        .await
-        .map_err(|_| InitStoreError::DownloadStalled {
-            timeout_secs: READ_IDLE_TIMEOUT.as_secs(),
-        })?
-        .map_err(|source| InitStoreError::PackageFeedFetch {
-            url: feed_url.clone(),
-            source,
-        })?
-    {
-        check_feed_size(&feed_url, (feed_body.len() + chunk.len()) as u64)?;
-        feed_body.extend_from_slice(&chunk);
-    }
+    let feed_body = init_download::fetch_feed(client, &feed_url).await?;
     let feed: crate::feed::PackageFeed =
         serde_json::from_slice(&feed_body).map_err(|source| InitStoreError::PackageFeedParse {
             url: feed_url.clone(),
@@ -1087,7 +1051,6 @@ pub async fn init_store(
         }
     })?;
 
-    // Step 2: Find the matching feed entry
     let tarball = crate::feed::select_entry(&feed_url, &feed, bos_version)
         .map_err(|_| InitStoreError::MissingPackageFeedEntry(bos_version.to_owned()))?;
 
@@ -1106,96 +1069,31 @@ pub async fn init_store(
         SignatureVerification::Disabled => None,
     };
 
-    // Steps 3+4: Download tarball to disk and verify its signature
-    let tarball_path = download_dir.join("init-tarball.tar.gz");
     std::fs::create_dir_all(download_dir).map_err(InitStoreError::WriteFailed)?;
-
-    download_and_verify_tarball(
+    let tarball_path = init_download::download(
         client,
         &tarball.download_url,
-        &tarball_path,
+        download_dir,
         required_signature,
         progress,
     )
     .await?;
 
-    // Step 5: Extract into staging and promote the store atomically
     if let Some(p) = progress {
         p.on_extracting();
     }
 
-    extract_and_promote(&tarball_path, stage_dir, wipe_store).await?;
-
-    // Step 6: Clean up tarball
-    let _ = tokio::fs::remove_file(&tarball_path).await;
+    let extraction = extract_and_promote(&tarball_path, stage_dir, wipe_store).await;
+    if (extraction.is_ok() || required_signature.is_none())
+        && let Err(error) = init_download::cleanup(download_dir)
+    {
+        tracing::warn!(%error, "failed to clean init download artifacts");
+    }
+    extraction?;
 
     Ok(InitStoreResult {
         profile_path: PathBuf::from(&tarball.profile_path),
     })
-}
-
-/// Stream the tarball at `download_url` to `tarball_path`, hashing
-/// each chunk, then verify `required_signature` — a
-/// `(trusted public key, signature)` pair — over the final SHA-256
-/// digest. A rejected tarball is removed so no poisoned artifact
-/// lingers at the fixed download path.
-async fn download_and_verify_tarball(
-    client: &reqwest::Client,
-    download_url: &str,
-    tarball_path: &Path,
-    required_signature: Option<(&str, &str)>,
-    progress: Option<&dyn DownloadProgress>,
-) -> Result<(), InitStoreError> {
-    use tokio::io::AsyncWriteExt;
-
-    let mut response = client
-        .get(download_url)
-        .send()
-        .await
-        .map_err(|source| InitStoreError::DownloadFailed { source })?
-        .error_for_status()
-        .map_err(|source| InitStoreError::DownloadFailed { source })?;
-
-    let total_size = response
-        .content_length()
-        .and_then(|n| usize::try_from(n).ok());
-    let mut downloaded: usize = 0;
-    let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
-    let mut file = tokio::fs::File::create(tarball_path)
-        .await
-        .map_err(InitStoreError::WriteFailed)?;
-
-    while let Some(chunk) = tokio::time::timeout(READ_IDLE_TIMEOUT, response.chunk())
-        .await
-        .map_err(|_| InitStoreError::DownloadStalled {
-            timeout_secs: READ_IDLE_TIMEOUT.as_secs(),
-        })?
-        .map_err(|source| InitStoreError::DownloadFailed { source })?
-    {
-        file.write_all(&chunk)
-            .await
-            .map_err(InitStoreError::WriteFailed)?;
-        digest.update(&chunk);
-        downloaded += chunk.len();
-        if let Some(p) = progress {
-            p.on_bytes_downloaded(downloaded, total_size);
-        }
-    }
-    file.flush().await.map_err(InitStoreError::WriteFailed)?;
-    drop(file);
-
-    if let Some((trusted_public_key, signature)) = required_signature {
-        let digest: [u8; 32] = digest
-            .finish()
-            .as_ref()
-            .try_into()
-            .expect("BUG: SHA-256 digests are 32 bytes");
-        if let Err(source) = crate::signature::verify(trusted_public_key, &digest, signature) {
-            let _ = tokio::fs::remove_file(tarball_path).await;
-            return Err(InitStoreError::SignatureVerificationFailed { source });
-        }
-    }
-    Ok(())
 }
 
 /// Initialize the Nix store from a local factory tarball.
