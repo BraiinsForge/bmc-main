@@ -56,8 +56,9 @@ as success.
 
 How a device upgrading from firmware without Nix support gains its package store: the ordinary firmware upgrade
 downloads the store contents published for exactly that firmware release and verifies their Ed25519 signature against a
-factory-provisioned key before installing anything, so a network attacker cannot plant tampered software. Inconsistent
-stores are wiped and reinitialized at the next firmware upgrade.
+factory-provisioned key before installing anything, so a network attacker cannot plant tampered software. Interrupted
+downloads can continue from saved bytes when safe, while inconsistent stores are reinitialized at the next firmware
+upgrade.
 
 ### [Touch & Gestures](touch-and-gestures.md)
 

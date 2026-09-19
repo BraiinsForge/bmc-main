@@ -20,6 +20,20 @@ installs only content published, and cryptographically signed, for the selected 
 - If neither entry exists, initialization fails visibly. An exact entry with broken or missing artifacts still fails; it
   never silently switches to shared content.
 
+### Continuing an interrupted download
+
+> As a user on an unreliable connection, I want an interrupted firmware upgrade to keep useful download progress so that
+> I do not have to start the large initial package download over every time.
+
+- The device retries temporary network failures during the initial package download.
+- If the same signed package is still selected when initialization restarts, the device can continue from bytes already
+  saved on its data storage. If the selected package changes or the server cannot continue the transfer, it starts a
+  fresh download. A server that swaps the file without saying so can leave mixed bytes behind; they fail the check below
+  and never get installed.
+- A power loss may damage saved bytes. The device checks the complete download before installing it and makes one clean
+  download attempt if retained bytes fail that check. If the network or the clean download still fails, the upgrade
+  reports failure without installing unverified content.
+
 ### Downloading only trusted content
 
 > As a user, I expect my device to download only verified files when it initializes its packages so that an attacker on
@@ -29,7 +43,8 @@ installs only content published, and cryptographically signed, for the selected 
 - Every published initialization tarball carries an Ed25519 signature, and the device verifies the downloaded bytes
   against the signing key provisioned in its factory configuration before anything is extracted.
 - A catalog entry that offers no signature, or a factory trust anchor that is malformed, aborts initialization before
-  the download even starts; a downloaded tarball that fails verification is deleted and never extracted.
+  the download even starts. A downloaded tarball that fails verification is discarded and never extracted; a retained
+  candidate gets one clean retry before initialization fails.
 - Verification is on by default. Development setups can disable it explicitly, and the device then warns loudly that it
   is trusting the transport alone.
 
@@ -61,3 +76,5 @@ installs only content published, and cryptographically signed, for the selected 
   release. This matches the trust model of the firmware images themselves and is accepted; binding the firmware version
   into the signed data is possible future hardening.
 - TLS certificate validation requires a roughly correct system clock.
+- Continuing a download after a crash is best effort. It does not guarantee that every byte saved before a power loss
+  survives intact; complete-file signature verification remains the installation gate.

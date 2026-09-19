@@ -173,13 +173,25 @@ in the tarball.
    matches the full version, selection tries the corresponding shared release key, preserving variant, patch and build
    suffix. If both entries are absent, `init` fails. This is the same selection used for package upgrades; see
    [shared release entries](upgrades.md#shared-release-entries). A selected entry's failure never triggers fallback.
+   Transient feed and tarball failures are retried independently. With signature verification enabled, `init` records
+   the selected signature before writing an `init-tarball.tar.gz.part` file. A later invocation resumes that partial
+   only when the newly selected signature matches. The sidecar also records the strong `ETag` of the 200 that started
+   the partial and the total length once a response names it; a resume request carries the tag as `If-Range`. A range
+   response appends only when its tag and total match the recorded ones, where both are known. A 200 replaces the
+   partial with a fresh download. A definitively rejected ranged request, an unusable range response, or a ranged
+   request the server keeps answering with retryable error statuses is retried without a range, and the partial is kept
+   until a 200 replaces it. A complete partial is verified in place after an HTTP 416 response. A crash or power cut may
+   lose or damage partial bytes, so resume is best effort rather than a durability guarantee.
 4. **Verify the tarball signature.** The feed entry carries a nix-style `name:base64` Ed25519 signature of the init
-   tarball, and `init` verifies it against the factory entry's `known_public_key` by default. The tarball is hashed
-   (SHA-256) while it streams to disk; the signature covers a domain-separated fingerprint of that digest
+   tarball, and `init` verifies it against the factory entry's `known_public_key` by default. The completed file is
+   hashed from disk (SHA-256); the signature covers a domain-separated fingerprint of that digest
    (`bmc-init-tarball-1;sha256:<hex>`), never the tarball bytes themselves. A feed entry without a signature or a trust
    anchor that fails to parse aborts the init before the download starts; a downloaded tarball that fails verification
-   is deleted and never extracted. `--no-verify-signature` is the only escape hatch — a development convenience that
-   logs a loud warning and trusts the transport alone. The feed document itself is authenticated by TLS — the
+   is never extracted. A retained candidate that fails verification gets one clean download from zero before failing
+   definitively. A verified final tarball can be reverified and reused after an extraction failure: it stays on the data
+   partition even when extraction keeps failing, and `init --wipe` reverifies and reuses it rather than downloading
+   again. `--no-verify-signature` is the only escape hatch — a development convenience that logs a loud warning, trusts
+   the transport alone, and never resumes a retained partial. The feed document itself is authenticated by TLS — the
    certificate must validate, which requires a roughly correct system clock. The local `--tarball` init path stays
    outside signature verification: it is a trust-what-you-hand-it dev/recovery path with no feed entry to carry a
    signature. (NAR substitutions on the package-upgrade path are unaffected — nix verifies those against the
