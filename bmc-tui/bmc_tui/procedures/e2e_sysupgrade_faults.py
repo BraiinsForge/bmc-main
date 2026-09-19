@@ -229,8 +229,7 @@ def _prepare_flash(ctx: _Ctx, image: Image, *, memory_need: int | None = None) -
 
 def _tarball_a(ctx: _Ctx) -> str:
     """Image A's SERVED tarball filename — for rig-side tampering only.
-    The on-device download path is fixed (init-tarball.tar.gz) and never
-    carries this name; the artifact stages take no name for that reason."""
+    The on-device download paths are fixed and never carry this name."""
     a = ctx.run.variant_a
     if a is None:
         msg = "BUG: variants were not built before the A-group"
@@ -245,16 +244,8 @@ def _attempt_init_abort(
     expect: str | tuple[str, ...],
     artifact_deleted: bool = True,
 ) -> None:
-    """One tampered init attempt: precondition, tamper, expect-abort flash
-    of image A, then the observables: store absent, and (by default) the
-    fixed-path download artifact absent. The artifact assertion is
-    device behavior, not cleanup: A2 aborts before any bytes are fetched
-    (missing feed signature), and A1/A3/A4's tarball is deleted by
-    bmc-nix itself on signature rejection — including A3, which downloads
-    the full tarball before the key-name mismatch is caught (store.rs).
-    A5 passes artifact_deleted=False — the stall/download-error paths
-    return WITHOUT deleting the partial file, so only the finally-sweep
-    (which always runs, pass or fail) cleans it there."""
+    """Check device cleanup before the harness sweep. A5's stalled partial
+    is deliberately exempt and removed by the sweep afterward."""
     catalog.require_store_absent(ctx.quiesced_pin or ctx.dev)
     pinned = _prepare_flash(ctx, ctx.image_a)
     failed = False
@@ -341,8 +332,6 @@ def _scenario_corrupt_tarball(ctx: _Ctx) -> None:
 
 
 def _scenario_download_stall(ctx: _Ctx) -> None:
-    # artifact_deleted=False: a stalled download returns without deleting
-    # the partial file (store.rs) — the attempt's finally-sweep cleans it
     _attempt_init_abort(
         ctx,
         tamper=lambda: ctx.server.set_fault(rig.FaultMode.STALL),

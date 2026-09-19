@@ -1753,11 +1753,9 @@ def flash_e2e(
 # the union: exactly one across the whole flash output.
 _STAGING_TOKENS = ("Initializing Nix store", "Staging Nix profile for the new firmware")
 
-# bmc-nix downloads the factory tarball to the FIXED path
-# <download-dir>/init-tarball.tar.gz (store.rs joins that constant name onto
-# --download-dir, which COMMAND sets to /mnt/data); the served feed filename
-# never appears on the device.
-_DOWNLOAD_ARTIFACT = f"{_DATA_MOUNT}/init-tarball.tar.gz"
+_DOWNLOAD_ARTIFACTS = tuple(
+    f"{_DATA_MOUNT}/init-tarball.tar.gz{suffix}" for suffix in ("", ".part", ".metadata.json")
+)
 
 
 def _next_markers(dev: Device) -> list[str]:
@@ -1884,29 +1882,26 @@ def require_upgrade_state_untouched(dev: Device, state: FaultsState) -> str:
 
 @stage("Sweep download artifact")
 def sweep_download_artifact(dev: Device) -> str:
-    """Init downloads the factory tarball to the FIXED path
-    <download-dir>/init-tarball.tar.gz (store.rs joins that constant
-    name onto --download-dir, which COMMAND sets to /mnt/data); the
-    served feed filename never appears on the device. Stall and
-    mid-download failures leave the partial file behind — the harness
-    sweeps it here."""
-    dev.run(f"rm -f {shlex.quote(_DOWNLOAD_ARTIFACT)}")
+    paths = " ".join(shlex.quote(path) for path in _DOWNLOAD_ARTIFACTS)
+    dev.run(f"rm -f {paths}")
     if dry_run.get():
-        return f"sweep of {console.lit(_DOWNLOAD_ARTIFACT)} logged (dry-run)"
-    require(
-        not dev.read(f"[ -e {shlex.quote(_DOWNLOAD_ARTIFACT)} ] && echo yes || true"),
-        f"{console.lit(_DOWNLOAD_ARTIFACT)} survived the sweep",
-    )
-    return f"{console.lit(_DOWNLOAD_ARTIFACT)} absent"
+        return "download artifact sweep logged (dry-run)"
+    for path in _DOWNLOAD_ARTIFACTS:
+        require(
+            not dev.read(f"[ -e {shlex.quote(path)} ] && echo yes || true"),
+            f"{console.lit(path)} survived the sweep",
+        )
+    return "download artifacts absent"
 
 
 @stage("Download artifact absent")
 def require_download_artifact_absent(dev: Device) -> str:
-    require(
-        not dev.read(f"[ -e {shlex.quote(_DOWNLOAD_ARTIFACT)} ] && echo yes || true"),
-        f"{console.lit(_DOWNLOAD_ARTIFACT)} exists — bytes were fetched or left behind",
-    )
-    return f"{console.lit(_DOWNLOAD_ARTIFACT)} absent"
+    for path in _DOWNLOAD_ARTIFACTS:
+        require(
+            not dev.read(f"[ -e {shlex.quote(path)} ] && echo yes || true"),
+            f"{console.lit(path)} exists — download state was left behind",
+        )
+    return "download artifacts absent"
 
 
 @stage("Staging ran once (D4)")

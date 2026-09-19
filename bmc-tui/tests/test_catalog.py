@@ -3041,6 +3041,24 @@ def test_marker_and_image_sweep_commands(tmp_path: Path) -> None:
     ]
 
 
+def test_download_artifact_sweep_clears_every_fixed_path() -> None:
+    exc = _Exec(_routes({}))
+    catalog.sweep_download_artifact(Device("h", backend=exc))
+    assert exc.runs[0][-1] == (
+        "rm -f /mnt/data/init-tarball.tar.gz"
+        " /mnt/data/init-tarball.tar.gz.part"
+        " /mnt/data/init-tarball.tar.gz.metadata.json"
+    )
+
+
+@pytest.mark.parametrize("suffix", ["", ".part", ".metadata.json"])
+def test_download_artifact_absence_detects_each_fixed_path(suffix: str) -> None:
+    path = f"/mnt/data/init-tarball.tar.gz{suffix}"
+    exc = _Exec(_routes({f"[ -e {path} ]": "yes"}))
+    with pytest.raises(Abort):
+        catalog.require_download_artifact_absent(Device("h", backend=exc))
+
+
 class _PollKnobs(TypedDict):
     timeout: int
     sleep: Callable[[float], None]

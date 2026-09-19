@@ -56,6 +56,22 @@ fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_bmc-nix-cli")
 }
 
+fn assert_no_download_artifacts(download_dir: &Path, reason: &str) {
+    for name in [
+        "init-tarball.tar.gz",
+        "init-tarball.tar.gz.part",
+        "init-tarball.tar.gz.metadata.json",
+    ] {
+        let path = download_dir.join(name);
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "{reason}: {} still exists",
+            path.display()
+        );
+    }
+}
+
 // ── minimal loopback HTTP server ─────────────────────────────────────────
 
 /// A single served route: exact request-path match -> response body.
@@ -439,9 +455,9 @@ fn init_downloads_extracts_and_promotes() {
         !env.data_dir.join("nix.tmp").exists(),
         "staging directory must not survive a successful init"
     );
-    assert!(
-        !env.download_dir.join("init-tarball.tar.gz").exists(),
-        "the downloaded tarball must be removed on success"
+    assert_no_download_artifacts(
+        &env.download_dir,
+        "successful init must clean download state",
     );
 }
 
@@ -747,10 +763,7 @@ fn init_rejects_signature_by_untrusted_key_by_default() {
         !env.data_dir.join("nix").exists(),
         "a tarball signed by an untrusted key must never be promoted"
     );
-    assert!(
-        !env.download_dir.join("init-tarball.tar.gz").exists(),
-        "the rejected tarball must not linger at the download path"
-    );
+    assert_no_download_artifacts(&env.download_dir, "rejected tarball must not linger");
 }
 
 /// The development escape hatch: `--no-verify-signature` accepts an
@@ -940,10 +953,7 @@ async fn init_store_blocks_on_held_init_lock() {
             0,
             "a lock-blocked init must not have fetched anything"
         );
-        assert!(
-            !download_dir.join("init-tarball.tar.gz").exists(),
-            "a lock-blocked init must not have created the download"
-        );
+        assert_no_download_artifacts(&download_dir, "lock-blocked init must not create downloads");
     }
     assert!(
         !task.is_finished(),
@@ -1180,9 +1190,9 @@ async fn init_store_rejects_signature_over_different_content() {
         ),
         "expected SignatureVerificationFailed, got: {err:?}"
     );
-    assert!(
-        !tmp.path().join("download/init-tarball.tar.gz").exists(),
-        "the rejected tarball must not linger at the download path"
+    assert_no_download_artifacts(
+        &tmp.path().join("download"),
+        "rejected tarball must not linger",
     );
     assert!(
         !tmp.path().join("stage/nix").exists(),
