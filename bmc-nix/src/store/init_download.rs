@@ -924,3 +924,6 @@ async fn download_transfer(
 pub(super) fn cleanup(dir: &Path) -> Result<(), InitStoreError> {
     DownloadPaths::new(dir).clear_all()
 }
+
+#[cfg(test)]
+mod timeout_tests;

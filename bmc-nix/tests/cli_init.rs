@@ -47,10 +47,17 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
 use bmc_nix::feed::{PackageFeed, PackageFeedEntry};
-use bmc_nix::store::{InitStoreError, SignatureVerification};
+use bmc_nix::store::{DownloadProgress, InitStoreError, SignatureVerification};
 use bmc_nix::types::{FactoryServerEntry, ServersConfig};
 use serial_test::serial;
 use tempfile::TempDir;
+
+#[path = "cli_init/entity_tags.rs"]
+mod entity_tags;
+#[path = "cli_init/resume.rs"]
+mod resume;
+#[path = "cli_init/scripted.rs"]
+mod scripted;
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_bmc-nix-cli")
@@ -1055,6 +1062,7 @@ async fn run_init_store(
     base_url: String,
     bos_version: &str,
     verification: &SignatureVerification,
+    progress: Option<&dyn DownloadProgress>,
 ) -> Result<bmc_nix::store::InitStoreResult, bmc_nix::store::InitStoreError> {
     let factory_server = FactoryServerEntry {
         id: "test".to_owned(),
@@ -1071,7 +1079,7 @@ async fn run_init_store(
         &tmp.path().join("stage"),
         false,
         verification,
-        None,
+        progress,
     )
     .await
 }
@@ -1110,6 +1118,7 @@ async fn init_store_does_not_borrow_shared_signature_for_exact_entry() {
         &SignatureVerification::Enabled {
             trusted_public_key: public,
         },
+        None,
     )
     .await
     .expect_err("the unsigned exact entry must stay authoritative");
@@ -1145,6 +1154,7 @@ async fn init_store_accepts_correctly_signed_tarball() {
             &SignatureVerification::Enabled {
                 trusted_public_key: public,
             },
+            None,
         )
         .await
         .expect("a correctly signed tarball must initialize");
@@ -1177,6 +1187,7 @@ async fn init_store_rejects_signature_over_different_content() {
         &SignatureVerification::Enabled {
             trusted_public_key: public,
         },
+        None,
     )
     .await
     .expect_err("a signature over different content must be rejected");
@@ -1221,6 +1232,7 @@ async fn init_store_rejects_signature_by_untrusted_key() {
         &SignatureVerification::Enabled {
             trusted_public_key: trusted_public,
         },
+        None,
     )
     .await
     .expect_err("a signature by an untrusted key must be rejected");
@@ -1251,6 +1263,7 @@ async fn init_store_requires_signature_before_download() {
         &SignatureVerification::Enabled {
             trusted_public_key: public,
         },
+        None,
     )
     .await
     .expect_err("an unsigned feed entry must be rejected");
@@ -1287,6 +1300,7 @@ async fn init_store_rejects_malformed_trusted_key_before_download() {
         &SignatureVerification::Enabled {
             trusted_public_key: "not a nix-format key".to_owned(),
         },
+        None,
     )
     .await
     .expect_err("a malformed trusted key must be rejected");
