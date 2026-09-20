@@ -209,6 +209,62 @@ There is no code path in the firmware-upgrade flow that activates the profile im
 optional here would risk activating a generation whose services expect kernel/userland facilities the current (about to
 be replaced) BOS does not provide.
 
+## Managed Upgrade Observation
+
+On Boser-managed products (`HardwareCapabilities::boser_managed`) bmc runs no upgrade itself: every `UpgradeService`
+gRPC method answers `Unimplemented`, and one task follows Boser's `GET /api/v1/upgrade/state/events` stream so the
+display and the restart block behave as they do for a local upgrade on Deck. The stream transport lives in
+`bmc/src/boser.rs` and is shared by every Boser state stream bmc observes; `bmc/src/system_upgrade/boser.rs` holds the
+upgrade stream's sink, which projects each state onto the display.
+
+The stream is authenticated with Boser's local API token from `/var/run/boser-api.token`
+(`Configuration::boser_token_path`). The observer reads the file on every connection, strips its trailing newline, and
+sends it as a Bearer token, so Boser's token replacement takes effect at the next reconnect.
+
+Two Boser flows feed the stream and never overlap. An execution reports `RUNNING` with its id, kind and phase, then
+`REBOOTING`, `COMPLETED` or `FAILED`. The legacy BOS+ download reports id-less `DOWNLOADING_IMAGE` progress that ends in
+`DOWNLOAD_FAILED`, or in `NONE` when the image is fine, after which the web UI starts an execution of its own for the
+apply.
+
+Starting an upgrade from the BMC frontend is not available on a managed product: all five `UpgradeService` methods
+answer `Unimplemented`. The executions the projection presents originate in Boser, from either its API entry points or
+automatic-upgrade scheduler.
+
+The projection keeps one execution on display at a time, keyed by Boser's id or by the fixed download key, under one
+display generation:
+
+- a snapshot that continues the execution on display updates the presentation; a terminal one presents success or
+  failure, releases the restart block, and is hidden by the compositor's deadline;
+- `NONE`, or a snapshot of another execution, while something is on display ends that execution without an observed
+  outcome: the display and the restart block are cleared and the LED animation stops without a flash, then the new
+  snapshot is handled as if nothing had been on display;
+- other valid JSON that does not fit the wire contract — for example a newer state or kind, or a missing required field
+  — ends the execution on display the same way and leaves the connection open; it is logged with the raw payload and
+  warned once per run of snapshots it cannot decode. Boser replays its retained state on every connection, so dropping
+  the stream over one would never recover. A frame whose data is not JSON at all is corruption rather than a contract
+  this build is behind: it counts as a broken connection and takes the reconnect path below;
+- with nothing on display, only a non-terminal snapshot starts a presentation. A retained `COMPLETED` at boot, a
+  terminal replayed after a reconnect, and a `DOWNLOAD_FAILED` without a preceding download are ignored.
+
+Completing an upgrade after the reboot stays with bmc on a managed product, as it is on Deck: bmc consumes
+`/etc/upgrade_result` on startup and runs the Device Info firmware-success sequence from it. Boser dropped its own
+display support and no longer reads that file, so there is no second authority on that screen — which is also why the
+projection ignores a `COMPLETED` replayed at boot: presenting it would claim the same completion a second time, from a
+stream that cannot say whether the device has rebooted in between.
+
+While the stream is down Boser's status is unknown: the last picture and its restart block stay together through a
+30-second reconnect grace. A decoded state cancels the grace and either continues or ends the execution. Otherwise, the
+first failed attempt at or after the grace clears both without claiming an outcome. Because expiry is sampled at attempt
+boundaries, 30 seconds is a lower bound rather than an exact display lifetime. The LED animation follows the block, so
+it keeps running through the grace, stops when the execution is cleared, and starts again if a later `RUNNING` replay
+begins a fresh presentation. Reconnects run every 5 s without backoff. A connection is dropped when the headers do not
+arrive within 10 s, when the replayed current state does not arrive within 10 s of them, or when no bytes arrive for 60
+s; Boser's keep-alive comments count as bytes. A response that is not a 2xx is rejected on the spot with its status,
+redirects included, since the client follows none of them. Each outage is logged once at warn and its recovery at info,
+recovery counting only once a state decodes. Until the first frame of the process arrives the log stays at debug: the
+compositor starts before Boser, so a refused connection is the boot order rather than a fault. After a dozen attempts,
+about a minute, it warns once all the same. A missing or empty token follows the same grace.
+
 ## Deferred Activation (`--next-boot`)
 
 `bmc-nix-cli upgrade --firmware <bos-version> --next-boot` is the same resolution and profile-build path as a normal

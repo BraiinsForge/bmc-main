@@ -5,7 +5,9 @@ configuration and maintenance. The capability comes from the hardware profile an
 Self-managed products retain the normal BMC behavior.
 
 Initial setup and native Wi-Fi reconfiguration remain BMC-owned on every product. Only BMC drives the setup access point
-and captive portal. `UpgradeService` is Boser-owned on managed products: every method answers `Unimplemented`.
+and captive portal. `UpgradeService` is Boser-owned on managed products: every method answers `Unimplemented`, and bmc
+observes Boser's upgrade state instead of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade
+Observation").
 
 ## gRPC boundary
 
@@ -88,7 +90,8 @@ while the gRPC method changes saved networks and the active uplink and remains B
 Every `UpgradeService` method nests `BoserOwnershipInterceptor` inside `AuthInterceptor` and answers `Unimplemented` on
 managed products, the read-only `GetAutoUpgrade` included: Boser owns package and firmware upgrades and their
 automatic-upgrade configuration there. The frontend hides the Upgrades tab and skips its upgrade-feed request on managed
-products.
+products. bmc still presents Boser's upgrades on the display and blocks tray restarts while one runs; the observer
+behind that is described in [`upgrades.md`](upgrades.md).
 
 `SystemUpgradeService` nevertheless prevents managed products from running competing local maintenance:
 

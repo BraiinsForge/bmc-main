@@ -184,8 +184,9 @@ New for the upgrade-progress overlays (`bmc-overlay-upgrade`). It relays bmc's `
 overlays are bound. During a live run, that snapshot projects the local `UpgradeRunState` on self-managed products or
 Boser's upgrade state on `boser_managed` products. On either product class, startup can also call
 `DisplayStateService::publish_post_reboot_success` after consuming the firmware or service upgrade marker
-(`/etc/upgrade_result` for firmware). The interface is one-way — the overlays never drive an upgrade, so it carries no
-request beyond the destructor.
+(`/etc/upgrade_result` for firmware). See [Managed Upgrade Observation](../upgrades.md#managed-upgrade-observation) for
+why the Boser projection does not also present a retained completion. The interface is one-way — the overlays never
+drive an upgrade, so it carries no request beyond the destructor.
 
 Unlike the alarm, this is a *broadcast* protocol rather than a relay for one owning overlay: the two upgrade surfaces
 and the startup screen all bind it, and each decides for itself what a snapshot means.

@@ -28,6 +28,10 @@ For development and recovery, `bmc-openwrt` accepts these product-code overrides
 The override maps to the representative `BosPlatform`, then follows the same product/profile path as autodetection.
 `bmc-mock` uses the same parser, but its `auto` value falls back to `BMC100`.
 
+A mock started as a managed product (`--hardware-profile BMM100`, `BMM101` or `BFM100`) with `--boser-address` also
+observes Boser's upgrade state. It reads Boser's local API token from `--boser-token-path` (default
+`<mockfs-path>/run/boser-api.token`). An absolute override remains outside the mock filesystem.
+
 ## Platform And Product Mapping
 
 `BosPlatform` is the detected BOS/platform identity. `Product` is the hardware profile key used by the application. They
