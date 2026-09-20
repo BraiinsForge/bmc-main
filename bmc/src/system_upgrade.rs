@@ -19,6 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+pub(crate) mod boser;
 mod periodic_gc;
 pub(crate) mod stagger;
 
@@ -687,7 +688,7 @@ impl StateService {
         }
     }
 
-    fn notify(&self, value: SystemUpgradeState) {
+    pub(crate) fn notify(&self, value: SystemUpgradeState) {
         let value = Some(value);
 
         self.sender.send_if_modified(|current| {
@@ -699,19 +700,24 @@ impl StateService {
         });
     }
 
+    pub(crate) fn clear(&self) {
+        self.sender
+            .send_if_modified(|current| current.take().is_some());
+    }
+
     pub(crate) fn subscribe(&self) -> Receiver<Option<SystemUpgradeState>> {
         self.sender.subscribe()
     }
 }
 
 #[derive(Clone, Debug)]
-struct DisplayStateService {
+pub(crate) struct DisplayStateService {
     sender: Arc<watch::Sender<Option<UpgradeDisplaySnapshot>>>,
     generation: Arc<AtomicUsize>,
 }
 
 impl DisplayStateService {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (sender, _) = watch::channel(None);
 
         Self {
@@ -720,12 +726,12 @@ impl DisplayStateService {
         }
     }
 
-    fn next_generation(&self) -> UpgradeGeneration {
+    pub(crate) fn next_generation(&self) -> UpgradeGeneration {
         let value = self.generation.fetch_add(1, Ordering::Relaxed);
         UpgradeGeneration::new(value)
     }
 
-    fn publish(&self, snapshot: UpgradeDisplaySnapshot) {
+    pub(crate) fn publish(&self, snapshot: UpgradeDisplaySnapshot) {
         let snapshot = Some(snapshot);
         self.sender.send_if_modified(|current| {
             if *current != snapshot {
@@ -734,6 +740,11 @@ impl DisplayStateService {
             }
             false
         });
+    }
+
+    pub(crate) fn clear(&self) {
+        self.sender
+            .send_if_modified(|current| current.take().is_some());
     }
 
     fn subscribe(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
@@ -957,6 +968,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
     pub(crate) fn subscribe_display_state(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
         self.display_state_service.subscribe()
+    }
+
+    pub(crate) fn display_state_service(&self) -> DisplayStateService {
+        self.display_state_service.clone()
     }
 
     pub(crate) fn publish_post_reboot_success(&self, kind: UpgradeKind) {

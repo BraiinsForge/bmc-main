@@ -28,6 +28,7 @@ use std::time::Duration;
 
 use crate::alarm::{AlarmBackend, AlarmBus, AlarmEvent};
 use crate::backlight::DisplayBacklightDriver;
+use crate::boser::{StreamConfig, Timing};
 use crate::button_manager::ButtonManager;
 use crate::compositor::{
     AccessPointInfo, AlarmCommand, Compositor, CompositorEvent, SetupProgress,
@@ -42,6 +43,7 @@ use crate::manager::{BmcManager, BmcState, UpgradeMarker};
 use crate::secret_store::SecretStoreHandle;
 use crate::sound::SoundController;
 use crate::system_manager::{ScreenRequest, SystemManager};
+use crate::system_upgrade::boser;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget::{Coordinator, UpgradeWidgetLifecycle, WidgetManager, WidgetRegistry};
@@ -604,6 +606,24 @@ async fn forward_upgrade_display_state<F>(
     }
 }
 
+/// Whether the Boser upgrade observer runs, and why not when it does not.
+#[derive(Debug, PartialEq, Eq)]
+enum BoserObservation {
+    Observe(SocketAddr),
+    SelfManaged,
+    AddressMissing,
+}
+
+fn boser_observation(boser_managed: bool, address: Option<SocketAddr>) -> BoserObservation {
+    if !boser_managed {
+        BoserObservation::SelfManaged
+    } else if let Some(address) = address {
+        BoserObservation::Observe(address)
+    } else {
+        BoserObservation::AddressMissing
+    }
+}
+
 #[derive(Debug)]
 pub struct App<T, U, V>
 where
@@ -626,6 +646,7 @@ where
     widget_registry: Arc<WidgetRegistry>,
     widget_reload_task: tokio::task::JoinHandle<()>,
     file_token_poller: tokio::task::JoinHandle<()>,
+    boser_upgrade_observer: Option<tokio::task::JoinHandle<()>>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
     alarm_backend: AlarmBackend,
@@ -642,9 +663,19 @@ where
     button_manager: ButtonManager<T>,
     widget_reload_task: tokio::task::JoinHandle<()>,
     file_token_poller: tokio::task::JoinHandle<()>,
+    boser_upgrade_observer: Option<tokio::task::JoinHandle<()>>,
     widget_shutdown_config: Arc<RwLock<ConfigHandle>>,
     widget_coordinator: Arc<Coordinator>,
     web_service: WebService<T, T::SessionManager, V, U>,
+}
+
+async fn abort_background_task(name: &str, task: tokio::task::JoinHandle<()>) {
+    task.abort();
+    if let Err(error) = task.await
+        && !error.is_cancelled()
+    {
+        warn!(%error, name, "background task failed before shutdown");
+    }
 }
 
 impl<T, U, V> AppServer<T, U, V>
@@ -660,18 +691,11 @@ where
 
         // In case the app panics, this is not executed.
         // The children are SIGKILL'd thanks to kill_on_drop(true).
-        self.widget_reload_task.abort();
-        if let Err(error) = self.widget_reload_task.await
-            && !error.is_cancelled()
-        {
-            warn!(%error, "widget reload task failed before shutdown");
+        abort_background_task("widget reload", self.widget_reload_task).await;
+        if let Some(observer) = self.boser_upgrade_observer {
+            abort_background_task("boser upgrade observer", observer).await;
         }
-        self.file_token_poller.abort();
-        if let Err(error) = self.file_token_poller.await
-            && !error.is_cancelled()
-        {
-            warn!(%error, "file token poller failed before shutdown");
-        }
+        abort_background_task("file token poller", self.file_token_poller).await;
         self.widget_coordinator
             .stop_all(&self.widget_shutdown_config)
             .await;
@@ -1044,6 +1068,26 @@ where
                 .watch_setup_ap_active(),
         );
 
+        let boser_upgrade_observer = match boser_observation(
+            hardware_capabilities.boser_managed,
+            config.server_config.boser,
+        ) {
+            BoserObservation::Observe(address) => Some(boser::spawn_observer(
+                StreamConfig {
+                    address,
+                    token_path: config.boser_token_path.clone(),
+                    timing: Timing::default(),
+                },
+                system_upgrade_service.display_state_service(),
+                state_service.clone(),
+            )),
+            BoserObservation::SelfManaged => None,
+            BoserObservation::AddressMissing => {
+                warn!("no Boser address configured, upgrade state stays unobserved");
+                None
+            }
+        };
+
         Ok(Self {
             listener,
             manager,
@@ -1060,6 +1104,7 @@ where
             widget_registry,
             widget_reload_task,
             file_token_poller,
+            boser_upgrade_observer,
             system_manager,
             sound_controller,
             alarm_backend,
@@ -1100,6 +1145,7 @@ where
             button_manager: self.button_manager,
             widget_reload_task: self.widget_reload_task,
             file_token_poller: self.file_token_poller,
+            boser_upgrade_observer: self.boser_upgrade_observer,
             widget_shutdown_config,
             widget_coordinator,
             web_service,
@@ -1111,6 +1157,9 @@ where
         let server = self.into_server();
         server.widget_reload_task.abort();
         server.file_token_poller.abort();
+        if let Some(observer) = &server.boser_upgrade_observer {
+            observer.abort();
+        }
         server.web_service.build_grpc_routes()
     }
 
@@ -1123,6 +1172,7 @@ where
 pub struct Configuration {
     pub address: SocketAddr,
     pub server_config: ServerConfig,
+    pub boser_token_path: PathBuf,
     pub upgrade_image_path: PathBuf,
     pub config_path: PathBuf,
     pub default_brightness_pct: u8,
@@ -1142,6 +1192,7 @@ pub struct Configuration {
 }
 
 impl Configuration {
+    const BOSER_TOKEN_PATH: &str = "/var/run/boser-api.token";
     const UPGRADE_IMAGE_PATH: &str = "/tmp/firmware.tar";
     const CONFIG_PATH: &str = "/etc/bmc/config.json";
     const DEFAULT_BRIGHTNESS_PCT: u8 = 60;
@@ -1169,6 +1220,7 @@ impl Default for Configuration {
         Self {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 80),
             server_config: ServerConfig::default(),
+            boser_token_path: PathBuf::from(Self::BOSER_TOKEN_PATH),
             upgrade_image_path: PathBuf::from(Self::UPGRADE_IMAGE_PATH),
             config_path: Self::CONFIG_PATH.into(),
             default_brightness_pct: Self::DEFAULT_BRIGHTNESS_PCT,

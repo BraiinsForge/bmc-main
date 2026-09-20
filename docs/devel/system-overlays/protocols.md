@@ -180,8 +180,11 @@ fallback ([`compositor-integration.md`](compositor-integration.md)).
 
 ## `deck_upgrade_v1`
 
-New for the upgrade-progress overlays (`bmc-overlay-upgrade`). It relays a display projection of bmc's `UpgradeRunState`
-to whichever overlays are bound. It is one-way — the overlays never drive an upgrade, so the interface carries no
+New for the upgrade-progress overlays (`bmc-overlay-upgrade`). It relays bmc's `UpgradeDisplaySnapshot` to whichever
+overlays are bound. During a live run, that snapshot projects the local `UpgradeRunState` on self-managed products or
+Boser's upgrade state on `boser_managed` products. On either product class, startup can also call
+`DisplayStateService::publish_post_reboot_success` after consuming the firmware or service upgrade marker
+(`/etc/upgrade_result` for firmware). The interface is one-way — the overlays never drive an upgrade, so it carries no
 request beyond the destructor.
 
 Unlike the alarm, this is a *broadcast* protocol rather than a relay for one owning overlay: the two upgrade surfaces

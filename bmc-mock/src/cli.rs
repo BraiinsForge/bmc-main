@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
+const BOSER_TOKEN_PATH: &str = "run/boser-api.token";
+
 fn data_dir(subdir: impl AsRef<Path>) -> &'static str {
     let path = dirs::data_local_dir()
         .expect("BUG: cannot determine data_local_dir")
@@ -47,6 +49,9 @@ pub struct Config {
     /// Forward unhandled HTTP requests to this boser address.
     #[clap(long)]
     pub boser_address: Option<std::net::SocketAddr>,
+    /// Read the Boser local API token for the upgrade observer from this file.
+    #[clap(long, default_value = BOSER_TOKEN_PATH)]
+    pub boser_token_path: PathBuf,
     /// Set path to a web content directory
     #[clap(long, default_value = data_dir("www"))]
     pub www_path: PathBuf,
@@ -137,6 +142,7 @@ impl From<Config> for Configuration {
         Configuration {
             address: value.address,
             server_config,
+            boser_token_path: value.mockfs_path.join(value.boser_token_path),
             upgrade_image_path: value.mockfs_path.join("tmp/firmware.tar"),
             config_path: value.mockfs_path.join(value.config_path),
             default_brightness_pct: value.default_brightness_pct,
@@ -156,5 +162,38 @@ impl From<Config> for Configuration {
             nix_hooks_dir: "hooks".to_owned(),
             nix_hooks_override_path: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boser_token_defaults_under_mockfs() {
+        let config = Config::parse_from(["bmc-mock", "--mockfs-path", "/tmp/bmc-mock"]);
+        let configuration: Configuration = config.into();
+
+        assert_eq!(
+            configuration.boser_token_path,
+            Path::new("/tmp/bmc-mock/run/boser-api.token")
+        );
+    }
+
+    #[test]
+    fn absolute_boser_token_override_stays_absolute() {
+        let config = Config::parse_from([
+            "bmc-mock",
+            "--mockfs-path",
+            "/tmp/bmc-mock",
+            "--boser-token-path",
+            "/var/run/boser-api.token",
+        ]);
+        let configuration: Configuration = config.into();
+
+        assert_eq!(
+            configuration.boser_token_path,
+            Path::new("/var/run/boser-api.token")
+        );
     }
 }
