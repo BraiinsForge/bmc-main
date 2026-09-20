@@ -221,6 +221,9 @@ impl LedIndicatorsState {
                     duration: Some(ERROR_DURATION),
                 });
             }
+            LedEvent::DownloadOrUpgradeEnded => {
+                self.sys_persist = None;
+            }
         }
     }
 
@@ -359,6 +362,18 @@ mod tests {
             .expect("BUG: the success flash must outlive an unrelated event");
         assert!(matches!(scene.effect, LedEffect::Solid(_)));
         assert_eq!(state.temp_deadline(), Some(deadline));
+    }
+
+    #[test]
+    fn upgrade_ended_releases_the_persistent_scene_without_a_flash() {
+        let mut state = LedIndicatorsState::new();
+        state.apply_event(LedEvent::DownloadOrUpgradeStarted);
+        state.apply_event(LedEvent::DownloadOrUpgradeEnded);
+
+        // An unobserved outcome is neither a success nor a failure:
+        // the animation stops and no flash reports a result that never arrived.
+        assert!(state.current_scene().is_none());
+        assert!(state.temp_deadline().is_none());
     }
 
     #[test]

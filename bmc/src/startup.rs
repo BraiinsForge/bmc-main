@@ -568,8 +568,11 @@ fn spawn_upgrade_display_listener(
     receiver: watch::Receiver<Option<UpgradeDisplaySnapshot>>,
 ) {
     tokio::spawn(async move {
-        forward_upgrade_display_state(receiver, |snapshot| compositor.set_upgrade_state(snapshot))
-            .await;
+        forward_upgrade_display_state(receiver, |snapshot| match snapshot {
+            Some(snapshot) => compositor.set_upgrade_state(snapshot),
+            None => compositor.clear_upgrade_state(),
+        })
+        .await;
     });
 }
 
@@ -585,18 +588,17 @@ fn post_upgrade_kind(firmware: UpgradeMarker, service: UpgradeMarker) -> Option<
 
 async fn forward_upgrade_display_state<F>(
     mut receiver: watch::Receiver<Option<UpgradeDisplaySnapshot>>,
-    mut set_state: F,
+    mut apply: F,
 ) where
-    F: FnMut(UpgradeDisplaySnapshot) -> Result<(), crate::compositor::CompositorError>,
+    F: FnMut(Option<UpgradeDisplaySnapshot>) -> Result<(), crate::compositor::CompositorError>,
 {
     receiver.mark_changed();
     loop {
         if receiver.changed().await.is_err() {
             break;
         }
-        if let Some(snapshot) = receiver.borrow_and_update().clone()
-            && let Err(error) = set_state(snapshot)
-        {
+        let snapshot = receiver.borrow_and_update().clone();
+        if let Err(error) = apply(snapshot) {
             warn!(%error, "failed to relay upgrade display state to compositor");
         }
     }
@@ -1417,7 +1419,7 @@ mod tests {
 
         assert_eq!(
             *received.lock().expect("BUG: received lock poisoned"),
-            vec![second]
+            vec![Some(second)]
         );
     }
 
@@ -1448,7 +1450,7 @@ mod tests {
 
         assert_eq!(
             *received.lock().expect("BUG: received lock poisoned"),
-            vec![second]
+            vec![Some(second)]
         );
     }
 
@@ -1488,7 +1490,41 @@ mod tests {
 
         assert_eq!(
             *received.lock().expect("BUG: received lock poisoned"),
-            vec![snapshot(1), second]
+            vec![Some(snapshot(1)), Some(second)]
+        );
+    }
+
+    #[tokio::test]
+    async fn upgrade_bridge_relays_a_clear_after_a_snapshot() {
+        let (sender, receiver) = watch::channel(None);
+        let first = snapshot(1);
+        let entered = Arc::new(Notify::new());
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let task = tokio::spawn(forward_upgrade_display_state(receiver, {
+            let entered = Arc::clone(&entered);
+            let received = Arc::clone(&received);
+            move |state| {
+                received
+                    .lock()
+                    .expect("BUG: received lock poisoned")
+                    .push(state);
+                entered.notify_one();
+                Ok(())
+            }
+        }));
+
+        entered.notified().await;
+        sender.send(Some(first)).expect("BUG: receiver is live");
+        entered.notified().await;
+        sender.send(None).expect("BUG: receiver is live");
+        drop(sender);
+        task.await.expect("BUG: bridge task must finish");
+
+        // An execution whose outcome was never observed must leave the display,
+        // not linger as a stale in-progress picture.
+        assert_eq!(
+            *received.lock().expect("BUG: received lock poisoned"),
+            vec![None, Some(snapshot(1)), None]
         );
     }
 

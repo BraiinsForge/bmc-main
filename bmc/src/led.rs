@@ -189,23 +189,10 @@ where
     }
 
     fn run_sysupgrade_task(&self, led_event_tx: Sender<LedEvent>) {
-        let mut receiver = self.system_upgrade_receiver.clone();
-
-        task::spawn(async move {
-            loop {
-                if receiver.changed().await.is_ok() {
-                    let state = (*receiver.borrow()).clone();
-                    if let Some(upgrade_status) = state
-                        && let Some(led_event) = upgrade_state_to_led(&upgrade_status)
-                    {
-                        // Ignore the result, since we don't care if the send fails
-                        if let Err(e) = led_event_tx.send(led_event).await {
-                            error!("Failed to send command: {}", e);
-                        }
-                    }
-                }
-            }
-        });
+        task::spawn(forward_upgrade_watch(
+            self.system_upgrade_receiver.clone(),
+            led_event_tx,
+        ));
     }
 
     // TODO: Price alerts
@@ -414,9 +401,32 @@ fn upgrade_state_to_led(state: &SystemUpgradeState) -> Option<LedEvent> {
     }
 }
 
+async fn forward_upgrade_watch(
+    mut receiver: watch::Receiver<Option<SystemUpgradeState>>,
+    led_event_tx: Sender<LedEvent>,
+) {
+    while receiver.changed().await.is_ok() {
+        let state = (*receiver.borrow()).clone();
+        if let Some(led_event) = upgrade_watch_to_led(state.as_ref())
+            && let Err(e) = led_event_tx.send(led_event).await
+        {
+            error!("Failed to send command: {}", e);
+        }
+    }
+}
+
+fn upgrade_watch_to_led(state: Option<&SystemUpgradeState>) -> Option<LedEvent> {
+    match state {
+        Some(state) => upgrade_state_to_led(state),
+        // An upgrade that ends without an observed outcome clears the watch,
+        // so the animation stops without reporting a result.
+        None => Some(LedEvent::DownloadOrUpgradeEnded),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::upgrade_state_to_led;
+    use super::{forward_upgrade_watch, upgrade_state_to_led};
     use crate::system_upgrade::SystemUpgradeState;
     use bmc_led::data::LedEvent;
 
@@ -446,5 +456,67 @@ mod tests {
             upgrade_state_to_led(&SystemUpgradeState::Failed),
             Some(LedEvent::DownloadOrUpgradeError)
         );
+    }
+
+    async fn next(events: &mut tokio::sync::mpsc::Receiver<LedEvent>) -> Option<LedEvent> {
+        tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .expect("the LED task must forward the change within a second")
+    }
+
+    #[tokio::test]
+    async fn a_clear_after_a_start_reaches_the_driver_as_ended() {
+        let (state_sender, state_receiver) = tokio::sync::watch::channel(None);
+        let (event_sender, mut events) = tokio::sync::mpsc::channel(4);
+        let task = tokio::spawn(forward_upgrade_watch(state_receiver, event_sender));
+
+        state_sender
+            .send(Some(SystemUpgradeState::UpgradeStarted))
+            .expect("BUG: the task holds the receiver");
+        assert_eq!(
+            next(&mut events).await,
+            Some(LedEvent::DownloadOrUpgradeStarted)
+        );
+        // The first event was received, so the clear cannot coalesce with the start;
+        // a task that filtered out cleared values times out here.
+        state_sender
+            .send(None)
+            .expect("BUG: the task holds the receiver");
+        assert_eq!(
+            next(&mut events).await,
+            Some(LedEvent::DownloadOrUpgradeEnded),
+            "an unobserved outcome must release the scene without flashing a result"
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cleared_run_and_its_replay_stop_and_restart_the_animation() {
+        let (state_sender, state_receiver) = tokio::sync::watch::channel(None);
+        let (event_sender, mut events) = tokio::sync::mpsc::channel(4);
+        let task = tokio::spawn(forward_upgrade_watch(state_receiver, event_sender));
+
+        state_sender
+            .send(Some(SystemUpgradeState::UpgradeStarted))
+            .expect("BUG: the task holds the receiver");
+        assert_eq!(
+            next(&mut events).await,
+            Some(LedEvent::DownloadOrUpgradeStarted)
+        );
+        state_sender
+            .send(None)
+            .expect("BUG: the task holds the receiver");
+        assert_eq!(
+            next(&mut events).await,
+            Some(LedEvent::DownloadOrUpgradeEnded)
+        );
+        state_sender
+            .send(Some(SystemUpgradeState::UpgradeStarted))
+            .expect("BUG: the task holds the receiver");
+        assert_eq!(
+            next(&mut events).await,
+            Some(LedEvent::DownloadOrUpgradeStarted)
+        );
+        task.abort();
     }
 }
