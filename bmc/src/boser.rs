@@ -303,3 +303,6 @@ impl Health {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
