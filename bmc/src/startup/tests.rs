@@ -20,9 +20,9 @@
 // the grant above.
 
 use super::{
-    Destination, Publication, SETUP_AP_REFRESHES, SETUP_URL_CLEAR_AFTER, SetupPendingWait,
-    current_access_point, forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap,
-    setup_pending_wait,
+    BoserObservation, Destination, Publication, SETUP_AP_REFRESHES, SETUP_URL_CLEAR_AFTER,
+    SetupPendingWait, boser_observation, current_access_point, forward_upgrade_display_state,
+    post_upgrade_kind, runs_setup_ap, setup_pending_wait,
 };
 use crate::compositor::{
     AccessPointInfo, CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState,
@@ -404,4 +404,23 @@ fn absent_firmware_and_unconsumed_service_marker_report_no_upgrade() {
     for service in [UpgradeMarker::Absent, UpgradeMarker::RemovalFailed] {
         assert_eq!(post_upgrade_kind(UpgradeMarker::Absent, service), None);
     }
+}
+
+#[test]
+fn only_a_boser_managed_product_observes_boser() {
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
+
+    assert_eq!(
+        boser_observation(true, Some(address)),
+        BoserObservation::Observe(address)
+    );
+    // On a Deck the observer would compete with the device's local upgrade state.
+    assert_eq!(
+        boser_observation(false, Some(address)),
+        BoserObservation::SelfManaged
+    );
+    assert_eq!(
+        boser_observation(true, None),
+        BoserObservation::AddressMissing
+    );
 }

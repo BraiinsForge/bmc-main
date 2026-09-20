@@ -215,3 +215,6 @@ fn display_phase(phase: WirePhase) -> Option<UpgradePhase> {
         WirePhase::Packages(PackagePhase::Activating) => Some(UpgradePhase::PackageActivating),
     }
 }
+
+#[cfg(test)]
+mod tests;
