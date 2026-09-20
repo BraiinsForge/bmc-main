@@ -103,6 +103,14 @@ fn managed_rpc_owner(path: &str) -> Option<ManagedRpcOwner> {
             web::system_service_server::SERVICE_NAME,
             "CreatePassword" | "ChangePassword" | "RemovePassword" | "SetTimezone" | "FactoryReset"
             | "Reboot",
+        )
+        | (
+            web::upgrade_service_server::SERVICE_NAME,
+            "CheckForUpgrade"
+            | "GetInstallableWidgets"
+            | "StartUpgrade"
+            | "SetAutoUpgrade"
+            | "GetAutoUpgrade",
         ) => Some(ManagedRpcOwner::Boser),
         _ => None,
     }
@@ -385,10 +393,13 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             .add_service(
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        upgrade_service,
-                        auth_interceptor.clone(),
-                    ))),
+                    .service(
+                        GrpcWebLayer::new().layer(authenticated_with_boser_ownership(
+                            upgrade_service,
+                            boser_ownership_interceptor,
+                            auth_interceptor.clone(),
+                        )),
+                    ),
             )
             .add_service(
                 tower::ServiceBuilder::new()

@@ -146,14 +146,14 @@ message GetAutoUpgradeResponse {
 }
 
 service UpgradeService {
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc CheckForUpgrade(CheckForUpgradeRequest) returns (CheckForUpgradeResponse);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc GetInstallableWidgets(google.protobuf.Empty) returns (GetInstallableWidgetsResponse);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc StartUpgrade(StartUpgradeRequest) returns (stream UpgradeProgress);
-  // Enables or disables automatic upgrades.
-  // On boser_managed platforms the preference is persisted,
-  // but local automatic upgrades remain disabled.
+  // Enables or disables automatic upgrades. Returns UNIMPLEMENTED on boser_managed platforms.
   rpc SetAutoUpgrade(SetAutoUpgradeRequest) returns (google.protobuf.Empty);
-  // Returns the persisted automatic-upgrade preference.
-  // On boser_managed platforms local automatic upgrades remain disabled.
+  // Returns the persisted automatic-upgrade preference. Returns UNIMPLEMENTED on boser_managed platforms.
   rpc GetAutoUpgrade(google.protobuf.Empty) returns (GetAutoUpgradeResponse);
 }

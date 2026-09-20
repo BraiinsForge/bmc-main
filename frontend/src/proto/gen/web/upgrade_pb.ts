@@ -530,6 +530,8 @@ export const FirmwareUpgradePhaseSchema: GenEnum<FirmwareUpgradePhase> = /*@__PU
  */
 export const UpgradeService: GenService<{
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.UpgradeService.CheckForUpgrade
      */
     checkForUpgrade: {
@@ -538,6 +540,8 @@ export const UpgradeService: GenService<{
         output: typeof CheckForUpgradeResponseSchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.UpgradeService.GetInstallableWidgets
      */
     getInstallableWidgets: {
@@ -546,6 +550,8 @@ export const UpgradeService: GenService<{
         output: typeof GetInstallableWidgetsResponseSchema;
     };
     /**
+     * Returns UNIMPLEMENTED on boser_managed platforms.
+     *
      * @generated from rpc braiins.bmc.web.UpgradeService.StartUpgrade
      */
     startUpgrade: {
@@ -554,9 +560,7 @@ export const UpgradeService: GenService<{
         output: typeof UpgradeProgressSchema;
     };
     /**
-     * Enables or disables automatic upgrades.
-     * On boser_managed platforms the preference is persisted,
-     * but local automatic upgrades remain disabled.
+     * Enables or disables automatic upgrades. Returns UNIMPLEMENTED on boser_managed platforms.
      *
      * @generated from rpc braiins.bmc.web.UpgradeService.SetAutoUpgrade
      */
@@ -566,8 +570,7 @@ export const UpgradeService: GenService<{
         output: typeof EmptySchema;
     };
     /**
-     * Returns the persisted automatic-upgrade preference.
-     * On boser_managed platforms local automatic upgrades remain disabled.
+     * Returns the persisted automatic-upgrade preference. Returns UNIMPLEMENTED on boser_managed platforms.
      *
      * @generated from rpc braiins.bmc.web.UpgradeService.GetAutoUpgrade
      */

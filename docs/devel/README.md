@@ -18,7 +18,7 @@ capabilities for `BMC100`, `BMM100`, `BMM101`, and `BFM100`, including the brows
 ### [Boser-managed Platform Ownership](boser-managed-platforms.md)
 
 How the `boser_managed` capability divides post-setup gRPC mutations and local maintenance between BMC and Boser while
-preserving BMC-owned initial setup and presentation behavior and keeping `UpgradeService` structurally available.
+preserving BMC-owned initial setup and presentation behavior and handing `UpgradeService` to Boser on managed products.
 
 ### [BMC Profiles](profiles.md)
 
