@@ -22,6 +22,7 @@
 mod alarm;
 pub mod backlight;
 pub mod bootloader_config;
+pub mod boser;
 mod button_manager;
 pub mod compositor;
 mod config;

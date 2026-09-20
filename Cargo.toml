@@ -273,6 +273,7 @@ embedded-hal-async = { version = "1.0.0" }
 enum-assoc = "1.2.4"
 etagere = "0.3"
 evdev = "0.13.1"
+eventsource-stream = "0.2.3"
 fake = "4"
 fdlimit = "0.3.0"
 # femtovg 0.20.4 passes GL_R8 as the Gray8 sub-upload format
