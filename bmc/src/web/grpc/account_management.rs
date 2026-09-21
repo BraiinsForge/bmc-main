@@ -279,7 +279,8 @@ async fn validate_account(
 }
 
 /// `type_id` must name a known credential type, and `field_values`
-/// must supply exactly its fields, each non-empty.
+/// must supply exactly its fields, each non-empty;
+/// a file token's path must also be absolute.
 /// Pure (no upstream call), so unit-testable on its own.
 fn validate_schema(
     type_id: &str,
@@ -301,6 +302,17 @@ fn validate_schema(
         if !cred_type.fields.contains_key(key) {
             violations.push(field_error_key(key.as_str()), "Unknown field");
         }
+    }
+
+    if type_id == credential::BuiltinType::LocalFileToken.id()
+        && let Some(path) = field_values.get(credential::FILE_TOKEN_PATH_FIELD)
+        && !path.is_empty()
+        && !std::path::Path::new(path).is_absolute()
+    {
+        violations.push(
+            field_error_key(credential::FILE_TOKEN_PATH_FIELD),
+            "Must be an absolute path",
+        );
     }
 }
 
@@ -613,6 +625,61 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn a_local_file_token_account_may_carry_a_host_pin() {
+        let violations =
+            allow_hosts_violations(credential::BuiltinType::LocalFileToken.id(), &["localhost"]);
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn a_relative_token_path_is_refused() {
+        let violations = schema_violations(
+            credential::BuiltinType::LocalFileToken.id(),
+            &[(credential::FILE_TOKEN_PATH_FIELD, "run/token")],
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].field,
+            field_error_key(credential::FILE_TOKEN_PATH_FIELD)
+        );
+        assert_eq!(violations[0].description, "Must be an absolute path");
+    }
+
+    #[test]
+    fn an_empty_token_path_is_required_not_relative() {
+        let violations = schema_violations(
+            credential::BuiltinType::LocalFileToken.id(),
+            &[(credential::FILE_TOKEN_PATH_FIELD, "")],
+        );
+        let reasons: Vec<&str> = violations.iter().map(|v| v.description.as_str()).collect();
+        assert_eq!(reasons, ["Required"]);
+    }
+
+    /// The file is written by another service, possibly after the account
+    /// is saved; existence is the poller's business, not the form's.
+    #[test]
+    fn an_absolute_token_path_is_accepted_whether_or_not_the_file_exists() {
+        let violations = schema_violations(
+            credential::BuiltinType::LocalFileToken.id(),
+            &[(credential::FILE_TOKEN_PATH_FIELD, "/nonexistent/for/sure")],
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn the_account_listing_carries_no_field_values() {
+        let key = ParamKey::try_new(credential::FILE_TOKEN_PATH_FIELD.to_owned())
+            .expect("BUG: the path field name is identifier-shaped");
+        let account = Account::new(
+            credential::BuiltinType::LocalFileToken.id().to_owned(),
+            "Local BOS API".to_owned(),
+            IndexMap::from([(key, "/var/run/secret-path".to_owned())]),
+        );
+        let proto = map_account_to_proto(account, Vec::new());
+        assert!(!format!("{proto:?}").contains("secret-path"));
     }
 
     fn violation_fields(status: &Status) -> Vec<String> {
