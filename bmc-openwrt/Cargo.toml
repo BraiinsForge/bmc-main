@@ -70,6 +70,7 @@ tokio-util = { workspace = true, features = ["io-util"] }
 tracing.workspace = true
 
 [dev-dependencies]
+bmc-field-schema.workspace = true
 bmc-kobject = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 wayland-client.workspace = true

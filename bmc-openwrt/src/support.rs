@@ -77,4 +77,18 @@ mod tests {
         let extensions: Vec<_> = EXTENSIONS.iter().map(|ext| ext.name()).collect();
         assert_eq!(extensions, ["nix_profile", "logread"]);
     }
+
+    /// A token file under a collected root would ship in every support archive;
+    /// pinning the seeded path here makes a later switch into one fail loudly.
+    #[test]
+    fn the_seeded_token_path_lies_under_no_collected_root() {
+        let token = std::path::Path::new(bmc_field_schema::credential::LOCAL_BOS_TOKEN_PATH);
+        for root in FS_PATHS.iter() {
+            assert!(
+                !token.starts_with(root),
+                "{} lies under collected root {root}",
+                token.display()
+            );
+        }
+    }
 }

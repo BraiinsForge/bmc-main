@@ -1069,6 +1069,7 @@ dependencies = [
  "axum-extra",
  "bmc",
  "bmc-button",
+ "bmc-field-schema",
  "bmc-gpio",
  "bmc-gpu-render-lock",
  "bmc-kobject",
