@@ -19,9 +19,10 @@
 // the grant above.
 
 use std::collections::BTreeMap;
+use std::str::FromStr as _;
 
 use bmc_platform::Product;
-use bmc_widget_manifest::{ParamKey, ParamValue, ViewportShape};
+use bmc_widget_manifest::{CredentialKey, ParamKey, ParamValue, ViewportShape};
 use indexmap::{IndexMap, indexmap};
 use uuid::Uuid;
 
@@ -30,7 +31,8 @@ use super::widget_uuids::{
     BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, CLOCK_UID, MINER_INFO_GEEK_UID,
     MINER_INFO_MINING_UID, MINER_INFO_OVERLOAD_UID, MINING_CLOCK_UID, TICKER_SINGLE_UID,
 };
-use crate::data::{SceneCycling, SceneCyclingTransition};
+use crate::credential::LOCAL_BOS_ACCOUNT_ID;
+use crate::data::{AccountId, SceneCycling, SceneCyclingTransition};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
@@ -93,16 +95,22 @@ fn ticker_params(pair: &str, period: &str) -> BTreeMap<ParamKey, ParamValue> {
     ])
 }
 
-// Each Miner Info widget pins its own face, so the credentials
-// are all that separates one default from another.
+// The URL is remote mode's setting, and stays at the local default
+// since the defaults bind the local account.
 fn miner_info_params() -> BTreeMap<ParamKey, ParamValue> {
-    params(&[
-        (
-            "miner_url",
-            ParamValue::String("http://localhost/api/v1".into()),
-        ),
-        ("miner_password", ParamValue::String("root".into())),
-    ])
+    params(&[(
+        "miner_url",
+        ParamValue::String("http://localhost/api/v1".into()),
+    )])
+}
+
+// The account seeded on every miner-attached product at first boot.
+fn local_bos_binding() -> BTreeMap<CredentialKey, AccountId> {
+    let slot = CredentialKey::try_new("bos_local".to_owned())
+        .expect("BUG: the slot name is identifier-shaped");
+    let account =
+        AccountId::from_str(LOCAL_BOS_ACCOUNT_ID).expect("BUG: the seeded id is non-empty");
+    BTreeMap::from([(slot, account)])
 }
 
 fn mining_clock_params() -> BTreeMap<ParamKey, ParamValue> {
@@ -125,6 +133,7 @@ fn widget(
     position: WidgetPosition,
     placement: WidgetPlacement,
     params: BTreeMap<ParamKey, ParamValue>,
+    credential_bindings: BTreeMap<CredentialKey, AccountId>,
 ) -> Widget {
     Widget {
         id: WidgetId::generate(),
@@ -133,7 +142,7 @@ fn widget(
         widget_type_id: type_uid,
         viewport_shape: shape,
         params,
-        credential_bindings: BTreeMap::new(),
+        credential_bindings,
     }
 }
 
@@ -141,6 +150,7 @@ fn fullscreen(
     type_uid: Uuid,
     shape: ViewportShape,
     params: BTreeMap<ParamKey, ParamValue>,
+    credential_bindings: BTreeMap<CredentialKey, AccountId>,
 ) -> Scene {
     let widget = widget(
         type_uid,
@@ -148,6 +158,7 @@ fn fullscreen(
         WidgetPosition { row: 0, col: 0 },
         WidgetPlacement::Fullscreen,
         params,
+        credential_bindings,
     );
     Scene {
         id: SceneId::generate(),
@@ -161,9 +172,14 @@ fn fullscreen(
 fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
     let rect = ViewportShape::Rectangular;
 
-    let digital = fullscreen(CLOCK_UID, rect, clock_params("digital"));
+    let digital = fullscreen(CLOCK_UID, rect, clock_params("digital"), BTreeMap::new());
 
-    let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
+    let ticker = fullscreen(
+        TICKER_SINGLE_UID,
+        rect,
+        ticker_params("BTC-USD", "7d"),
+        BTreeMap::new(),
+    );
 
     let combined = {
         let clock_w = widget(
@@ -172,6 +188,7 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
             WidgetPosition { row: 0, col: 0 },
             WidgetPlacement::from(WidgetSize::Medium),
             clock_params("analog_rect"),
+            BTreeMap::new(),
         );
         let block_w = widget(
             BLOCK_HEIGHT_UID,
@@ -179,6 +196,7 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
             WidgetPosition { row: 1, col: 0 },
             WidgetPlacement::from(WidgetSize::Medium),
             blockheight_params(),
+            BTreeMap::new(),
         );
         let ticker_w = widget(
             TICKER_SINGLE_UID,
@@ -186,6 +204,7 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
             WidgetPosition { row: 0, col: 2 },
             WidgetPlacement::from(WidgetSize::Large),
             ticker_params("BTC-USD", "1d"),
+            BTreeMap::new(),
         );
         Scene {
             id: SceneId::generate(),
@@ -210,8 +229,18 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
 fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
     let round = ViewportShape::Round;
 
-    let geek = fullscreen(MINER_INFO_GEEK_UID, round, miner_info_params());
-    let clock = fullscreen(MINING_CLOCK_UID, round, mining_clock_params());
+    let geek = fullscreen(
+        MINER_INFO_GEEK_UID,
+        round,
+        miner_info_params(),
+        local_bos_binding(),
+    );
+    let clock = fullscreen(
+        MINING_CLOCK_UID,
+        round,
+        mining_clock_params(),
+        BTreeMap::new(),
+    );
 
     indexmap! {
         geek.id => geek,
@@ -222,13 +251,38 @@ fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
 fn bmm_scenes(clock_params: BTreeMap<ParamKey, ParamValue>) -> IndexMap<SceneId, Scene> {
     let rect = ViewportShape::Rectangular;
 
-    let clock = fullscreen(CLOCK_UID, rect, clock_params);
-    let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
-    let mining = fullscreen(MINER_INFO_MINING_UID, rect, miner_info_params());
-    let geek = fullscreen(MINER_INFO_GEEK_UID, rect, miner_info_params());
-    let overload = fullscreen(MINER_INFO_OVERLOAD_UID, rect, miner_info_params());
+    let clock = fullscreen(CLOCK_UID, rect, clock_params, BTreeMap::new());
+    let ticker = fullscreen(
+        TICKER_SINGLE_UID,
+        rect,
+        ticker_params("BTC-USD", "7d"),
+        BTreeMap::new(),
+    );
+    let mining = fullscreen(
+        MINER_INFO_MINING_UID,
+        rect,
+        miner_info_params(),
+        local_bos_binding(),
+    );
+    let geek = fullscreen(
+        MINER_INFO_GEEK_UID,
+        rect,
+        miner_info_params(),
+        local_bos_binding(),
+    );
+    let overload = fullscreen(
+        MINER_INFO_OVERLOAD_UID,
+        rect,
+        miner_info_params(),
+        local_bos_binding(),
+    );
     // Bitcoin Mining Data declares no params of its own.
-    let bitcoin = fullscreen(BITCOIN_MINING_DATA_UID, rect, BTreeMap::new());
+    let bitcoin = fullscreen(
+        BITCOIN_MINING_DATA_UID,
+        rect,
+        BTreeMap::new(),
+        BTreeMap::new(),
+    );
 
     indexmap! {
         clock.id => clock,

@@ -4,13 +4,16 @@
   // Two halves on one port block, split by the gap at 20331:
   // the miner below it, the cloud API above.
   //
-  // The miner is chosen by editing `miner_url`, even mid-recording,
+  // Local mode ignores `miner_url`, so a local take reaches the miner
+  // through the recipe's MINER port,
+  // which `--rewrite-url` puts behind `http://localhost`.
+  // A remote take still reaches it by `miner_url`, editable mid-recording,
   // which mints a frame for the state it lands in.
-  // The public base URL is compiled in, so its scenario is picked
+  // The public base URL is compiled in either way, so its scenario is picked
   // at launch by the `record` recipe's `--rewrite-url`.
   //
   // The unreachable miner needs no entry:
-  // point `miner_url` at any port nothing is serving.
+  // aim whichever of the two at a port nothing is serving.
   instances: [
     {
       device: "bos",

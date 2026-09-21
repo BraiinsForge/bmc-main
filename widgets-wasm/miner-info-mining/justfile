@@ -8,19 +8,37 @@ dir := source_directory()
 repo := parent_directory(parent_directory(dir))
 root_justfile := repo / "justfile"
 
-# Widget + sim + watch in mprocs; pick a scenario by editing `miner_url` in the testbed.
-dev:
+# Widget + sim + watch in mprocs. MINER is the sim port local mode dials; bind Local BOS token in the sidebar.
+dev MINER="20300":
     @just --justfile {{ root_justfile }} wasm::prebuild miner-info-mining
     mprocs \
         --names "netsim,watch,testbed" \
         "just --justfile {{ source_file() }} run-netsim" \
         "just --justfile {{ root_justfile }} wasm::watch miner-info-mining" \
-        "just --justfile {{ root_justfile }} wasm::testbed miner-info-mining"
+        "just --justfile {{ source_file() }} run-testbed {{ MINER }}"
 
 # Serve every simulated miner at once, one port each.
 run-netsim:
     @just --justfile {{ root_justfile }} netsim::run {{ dir }}/sim-blueprint.json5
 
-# Testbed ready to record; needs `run-netsim` serving. Scenarios are `miner_url` edits.
-record:
-    @just --justfile {{ root_justfile }} wasm::record miner-info-mining
+# The testbed flags aiming local mode at the sim on MINER, with the secrets file whose bos_local pin admits it.
+[private]
+local-args MINER:
+    @echo "--rewrite-url http://localhost=http://127.0.0.1:{{ MINER }} --secrets {{ repo }}/secrets.local.json"
+
+# Testbed with local mode aimed at MINER; needs `run-netsim` serving.
+[private]
+run-testbed MINER:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    args=$(just --justfile {{ source_file() }} local-args {{ MINER }})
+    exec just --justfile {{ root_justfile }} wasm::testbed miner-info-mining "$args"
+
+# Testbed ready to record, local mode aimed at MINER; needs `run-netsim` serving.
+record MINER="20300":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    args=$(just --justfile {{ source_file() }} local-args {{ MINER }})
+    exec just --justfile {{ root_justfile }} wasm::record miner-info-mining $args

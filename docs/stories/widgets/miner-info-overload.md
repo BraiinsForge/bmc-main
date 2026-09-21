@@ -54,22 +54,29 @@ Add the widget once per miner to watch several at a time.
 
 - Miner fields and network fields are fetched independently. When the miner is unreachable its hashrate, power and
   uptime read `N/A` while block height, the difficulty adjustments, epoch progress, fees and hashvalue keep updating.
-- A failure banner names which source failed: `Cannot authenticate` for a refused or unreachable miner,
-  `Failed to load: Miner` for one that answers the login but fails its telemetry, and `Failed to load: Network` for the
+- A failure banner names which source failed: `Cannot authenticate` for a miner that turns the credentials away — a
+  refused login in remote mode, a rejected token in local mode, where there is no login to refuse —
+  `Failed to load: Miner` for one that never answers or fails its telemetry, and `Failed to load: Network` for the
   public API.
 - The banner floats over the screen rather than replacing it, so the half that still works stays readable underneath.
 
 ### Point the widget at my miner
 
-> As a user, I want to tell the widget where my miner is and how to log in so it can read live stats.
+> As a user, I want the widget to read my own miner without a password, and to be able to watch another miner on my
+> network by giving its address and login.
 
-- The *Miner URL* parameter is the base BOS REST API URL of the miner; it defaults to `http://localhost/api/v1`.
-- The *Miner password* parameter is the password for the miner's `root` login; it defaults to `root`. The login username
-  is always `root`.
-- The widget logs in, caches the session token, and re-authenticates on its own if the token expires; miner stats
-  refresh roughly every five seconds and the network figures about every sixty.
-- Pointing the widget at a different miner clears the readings first, so one miner's figures are never shown under
-  another's address.
+- The widget has two account slots and uses exactly one of them:
+  - *Local BOS token*: the miner this display belongs to. Bind the *Local BOS API* account (present from first boot on
+    BFM100 and BMM) and keep the *Miner URL* at `http://localhost/api/v1`. No password is entered, and the widget keeps
+    working after the miner password changes.
+  - *Remote miner login*: a miner elsewhere on the network. Set the *Miner URL* to its API base, for example
+    `http://10.0.0.5/api/v1`, and bind an account holding that miner's password; the username is always `root`. The
+    widget logs in, caches the session token, and re-authenticates on its own when it expires.
+- With neither slot bound the widget shows "Bind a BOS account"; with both it shows "Bind one BOS account, not both".
+  The local token is never sent to the *Miner URL*.
+- A remote username or password containing `"` or `\` is not supported.
+- Miner stats refresh roughly every five seconds and the network figures about every sixty. Pointing the widget at a
+  different miner clears the readings first, so one miner's figures are never shown under another's address.
 
 ### Trust what the numbers say
 
@@ -90,10 +97,8 @@ Add the widget once per miner to watch several at a time.
 - The wider BMC100 views are deliberately unsupported: the grids are drawn at fixed block widths for their screens, so
   on a larger one a grid would sit in a corner rather than fill it. A design for those sizes does not exist yet.
 - Font sizes are fixed across viewports — fields are hidden rather than shrunk.
-- *Miner URL* and *Miner password* are manifest-driven widget parameters, configurable from the web UI.
-- The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
-  type yet. This is a known limitation, shared with the other Miner Info widgets and the
-  [Mining Clock Widget](mining-clock.md).
+- *Miner URL* is a manifest-driven widget parameter; the two account slots are credential bindings, chosen from saved
+  accounts in the web UI. No password is stored in widget parameters.
 - Prices read in US dollars. There is no currency parameter.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
 - Miner data comes from the miner's BOS REST API and refreshes about every five seconds; the network figures come from

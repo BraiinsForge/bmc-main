@@ -31,19 +31,38 @@ mod manifest_params;
 )]
 use bmc_wasm_sdk::*;
 #[cfg(target_arch = "wasm32")]
+use manifest_params::credentials as slots;
+#[cfg(target_arch = "wasm32")]
 use miner_info::engine;
 #[cfg(target_arch = "wasm32")]
 use miner_info::face;
 #[cfg(target_arch = "wasm32")]
 use miner_info::layout::{self, Panel};
+#[cfg(target_arch = "wasm32")]
+use mining::bos::{AuthMode, Placeholders};
+
+#[cfg(target_arch = "wasm32")]
+fn auth_mode() -> AuthMode {
+    let bound = credentials::current();
+    let local_bound = bound.is_bound("bos_local");
+    let remote_bound = bound.is_bound("bos_remote");
+    AuthMode::derive(
+        local_bound,
+        remote_bound,
+        &manifest_params::Params::current().miner_url,
+        Placeholders {
+            token: slots::bos_local::TOKEN,
+            username: slots::bos_remote::USERNAME,
+            password: slots::bos_remote::PASSWORD,
+        },
+    )
+}
 
 #[cfg(target_arch = "wasm32")]
 fn config() -> engine::Config {
-    let params = manifest_params::Params::current();
     engine::Config {
         view: engine::View::InfoOverload,
-        miner_url: params.miner_url,
-        miner_password: params.miner_password,
+        auth: auth_mode(),
     }
 }
 
@@ -53,22 +72,29 @@ pub extern "C" fn init() {
     engine::init(config);
 }
 
-// Absent a previous snapshot the credentials count as moved,
-// so the first update authenticates.
+// Absent a previous snapshot the URL counts as moved,
+// so remote mode re-authenticates on the first update.
 // The quoted currency is a build-time constant rather than a param,
 // so no update can move it.
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
     let previous = manifest_params::Params::previous();
-    let miner_credentials = previous.as_ref().is_none_or(|previous| {
-        let keys = manifest_params::Params::current().changed_keys(previous);
-        keys.contains(&"miner_url") || keys.contains(&"miner_password")
+    let miner_url = previous.as_ref().is_none_or(|previous| {
+        manifest_params::Params::current()
+            .changed_keys(previous)
+            .contains(&"miner_url")
     });
     engine::on_params_update(engine::Changed {
-        miner_credentials,
+        miner_url,
         currency: false,
     });
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_credentials_update() {
+    engine::on_credentials_update();
 }
 
 // Numbers are formatted from raw state on every render

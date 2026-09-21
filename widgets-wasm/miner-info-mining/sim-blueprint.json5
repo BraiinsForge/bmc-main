@@ -2,12 +2,14 @@
   "$schema": "../../bmc-netsim/blueprint.schema.json",
 
   // One miner per scenario, each on its own port.
-  // The miner URL is a widget param, so a scenario is chosen
-  // by editing `miner_url` — including mid-recording,
-  // which mints a frame for the state it lands in.
+  // Local mode ignores `miner_url`, so a local take picks its scenario
+  // at launch through the recipe's MINER port,
+  // which `--rewrite-url` puts behind `http://localhost`.
+  // A remote take still picks it by editing `miner_url`,
+  // including mid-recording, which mints a frame for the state it lands in.
   //
   // The unreachable case needs no entry:
-  // point `miner_url` at any port nothing is serving.
+  // aim whichever of the two at a port nothing is serving.
   instances: [
     {
       device: "bos",

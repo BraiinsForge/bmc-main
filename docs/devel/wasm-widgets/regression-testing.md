@@ -215,6 +215,24 @@ accounts with `just widgets::braiins-pool::run-netsim` and records against one o
 after they are recorded — so sim-recorded fixtures replay exactly like live-recorded ones, without baking a real
 account's numbers into the baseline.
 
+The Miner Info widgets and the Mining Clock authenticate through two slots and never through a param. Local mode
+(`bos_local` bound) dials `http://localhost/api/v1` whatever *Miner URL* says, so a sim run rewrites that origin:
+`just widgets::miner-info-mining::dev 20300` passes `--rewrite-url http://localhost=http://127.0.0.1:20300` and
+`--secrets` pointed at the gitignored `secrets.local.json` in the repository root. It carries both slots, the local one
+pinned to the rewritten destination:
+
+```json
+{
+  "bos_local": { "token": "sim-token", "allow_hosts": ["127.0.0.1"] },
+  "bos_remote": { "username": "root", "password": "root" }
+}
+```
+
+The simulated miner checks no token on its data endpoints, so the values are arbitrary. Which slot is bound is set in
+the sidebar's Credentials section; the fixture header records the bound slots (types and account names only), and replay
+serves the recorded HTTP without any secret. A dataset that used to be picked by editing *Miner URL* is picked by the
+recipe's `MINER` port instead, since local mode ignores the URL; an unreachable miner is a port nothing serves.
+
 If the widget makes outbound HTTP/WebSocket calls during the recording, the testbed records the real responses into the
 timeline. Re-recording against a flaky endpoint produces flaky fixtures — once a recording is good, leave it.
 

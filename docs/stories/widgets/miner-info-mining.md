@@ -46,24 +46,30 @@ Add the widget once per miner to watch several at a time.
 
 ### Point the widget at my miner
 
-> As a user, I want to tell the widget where my miner is and how to log in so it can read live stats.
+> As a user, I want the widget to read my own miner without a password, and to be able to watch another miner on my
+> network by giving its address and login.
 
-- The *Miner URL* parameter is the base BOS REST API URL of the miner; it defaults to `http://localhost/api/v1`.
-- The *Miner password* parameter is the password for the miner's `root` login; it defaults to `root`. The login username
-  is always `root`.
-- The widget logs in, caches the session token, and re-authenticates on its own if the token expires; stats refresh
-  roughly every five seconds.
-- Pointing the widget at a different miner clears the readings first, so one miner's figures are never shown under
-  another's address.
+- The widget has two account slots and uses exactly one of them:
+  - *Local BOS token*: the miner this display belongs to. Bind the *Local BOS API* account (present from first boot on
+    BFM100 and BMM) and keep the *Miner URL* at `http://localhost/api/v1`. No password is entered, and the widget keeps
+    working after the miner password changes.
+  - *Remote miner login*: a miner elsewhere on the network. Set the *Miner URL* to its API base, for example
+    `http://10.0.0.5/api/v1`, and bind an account holding that miner's password; the username is always `root`. The
+    widget logs in, caches the session token, and re-authenticates on its own when it expires.
+- With neither slot bound the widget shows "Bind a BOS account"; with both it shows "Bind one BOS account, not both".
+  The local token is never sent to the *Miner URL*.
+- A remote username or password containing `"` or `\` is not supported.
+- Stats refresh roughly every five seconds. Pointing the widget at a different miner clears the readings first, so one
+  miner's figures are never shown under another's address.
 
 ### Trust what the numbers say
 
 > As a user, I want clear placeholders when data is missing so I never mistake a stale or absent value for a real one.
 
 - Unavailable values read as `N/A`.
-- A refused login shows a `Cannot authenticate` banner over the fields. An unreachable miner shows the same banner,
-  since the widget cannot tell the two apart from the failed login alone.
-- A miner that answers the login but fails its telemetry shows `Failed to load: Miner` instead.
+- Credentials the miner turns away show a `Cannot authenticate` banner over the fields: a refused login in remote mode,
+  a rejected token in local mode, where there is no login to refuse.
+- A miner that never answers, or that answers but fails its telemetry, shows `Failed to load: Miner` instead.
 - Failed fetches retry on their own without user action. When a refresh keeps failing the last good values stay on
   screen under a `Stale data` banner until the next successful fetch.
 - Numbers use the device's configured number format for digit grouping and the decimal mark.
@@ -76,10 +82,8 @@ Add the widget once per miner to watch several at a time.
 - The wider BMC100 views are deliberately unsupported: the layout is drawn for a 480-wide screen and a design for the
   larger ones does not exist yet.
 - Font sizes are fixed across viewports — fields are hidden rather than shrunk.
-- *Miner URL* and *Miner password* are manifest-driven widget parameters, configurable from the web UI.
-- The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
-  type yet. This is a known limitation, shared with the other Miner Info widgets and the
-  [Mining Clock Widget](mining-clock.md).
+- *Miner URL* is a manifest-driven widget parameter; the two account slots are credential bindings, chosen from saved
+  accounts in the web UI. No password is stored in widget parameters.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
 - Field sets, labels, and units mirror the BOSer BMM screens.
 - The tuner constraints that scale the ring are read from `/configuration/constraints`. They are fetched only on the

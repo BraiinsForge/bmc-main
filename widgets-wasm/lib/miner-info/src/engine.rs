@@ -46,8 +46,9 @@ use crate::model::{Currency, MinerData, PublicData, Verdict};
 use crate::{api as miner_api, model, public as public_api};
 #[cfg(target_arch = "wasm32")]
 use mining::bos;
+use mining::bos::AuthMode;
 #[cfg(target_arch = "wasm32")]
-use mining::bos::{AuthState, endpoint};
+use mining::bos::{AuthState, ReplyAction};
 
 /// Which face a widget draws, and with it which endpoints are worth fetching.
 ///
@@ -69,11 +70,10 @@ impl View {
     }
 }
 
-/// What the runtime needs from the widget's parameters on every callback.
+/// What the runtime needs from the widget on every callback.
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub miner_url: String,
-    pub miner_password: String,
+    pub auth: AuthMode,
     pub view: View,
 }
 
@@ -86,7 +86,7 @@ pub type ConfigFn = fn() -> Config;
 /// whose key names the runtime has no way to know.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Changed {
-    pub miner_credentials: bool,
+    pub miner_url: bool,
     pub currency: bool,
 }
 
@@ -467,6 +467,26 @@ fn view_needs_miner(view: View, panel: Panel) -> bool {
         .any(|endpoint| (endpoint.needed)(view, panel))
 }
 
+// Blank the miner data and start over under the current mode.
+// Blanked data drops its staleness — no pill over the new miner's N/A —
+// and its in-flight requests, whose replies would otherwise
+// refill the fields just cleared.
+#[cfg(target_arch = "wasm32")]
+fn reauthenticate(handles: &Handles) {
+    let auth = config().auth.initial_auth();
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        miner_api::reset_all(&mut state.miner);
+        state.login_failures = 0;
+        state.auth = auth;
+    });
+    for miner in &handles.miner {
+        miner.reset_staleness();
+        miner.invalidate();
+    }
+    handles.login.invalidate();
+}
+
 #[cfg(target_arch = "wasm32")]
 const fn selected_currency() -> Currency {
     model::CURRENCY
@@ -521,7 +541,7 @@ pub fn init(read_config: ConfigFn) {
 }
 
 // Enable the endpoints the view reads and disable the rest,
-// re-authenticating on a credential change.
+// re-authenticating when remote mode's URL moves.
 // The login serves every miner endpoint,
 // so it is gated on whether any of them feeds the view rather than per-endpoint.
 #[cfg(target_arch = "wasm32")]
@@ -536,26 +556,9 @@ pub fn on_params_update(changed: Changed) {
         };
         if view_needs_miner(view, panel) {
             handles.login.set_enabled(true);
-            if changed.miner_credentials {
-                let password_empty = config().miner_password.is_empty();
-                STATE.with(|state| {
-                    let mut state = state.borrow_mut();
-                    miner_api::reset_all(&mut state.miner);
-                    state.login_failures = 0;
-                    state.auth = if password_empty {
-                        AuthState::NoToken
-                    } else {
-                        AuthState::LoggingIn
-                    };
-                });
-                // Blanked data drops its staleness — no pill over the new miner's
-                // N/A — and its in-flight requests, whose replies would otherwise
-                // land after the reset and refill the fields just cleared.
-                for miner in &handles.miner {
-                    miner.reset_staleness();
-                    miner.invalidate();
-                }
-                handles.login.invalidate();
+            // Only remote mode dials the URL param; local mode ignores it.
+            if changed.miner_url && matches!(config().auth, AuthMode::Remote { .. }) {
+                reauthenticate(handles);
             }
             for (idx, miner) in handles.miner.iter().enumerate() {
                 miner.set_enabled(miner_endpoint_needed(idx, view, panel));
@@ -581,17 +584,33 @@ pub fn on_params_update(changed: Changed) {
     request_frame();
 }
 
+/// A slot was bound, unbound or rotated:
+/// derive the mode again and refetch everything under it.
+/// A face reading no miner endpoint polls nothing;
+/// it picks the binding up when `on_params_update` re-enables the polls.
+#[cfg(target_arch = "wasm32")]
+pub fn on_credentials_update() {
+    if !view_needs_miner(config().view, panel()) {
+        return;
+    }
+    HANDLES.with(|handles| {
+        if let Some(handles) = handles.borrow().as_ref() {
+            reauthenticate(handles);
+        }
+    });
+    request_frame();
+}
+
 // `None` keeps the poll dormant while the miner source is hidden
-// or no password is set. The poll is one-shot,
+// or the mode has no login. The poll is one-shot,
 // so re-auth happens by invalidating the handle rather than looping.
 #[cfg(target_arch = "wasm32")]
 fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     let params = config();
-    if !view_needs_miner(params.view, panel()) || params.miner_password.is_empty() {
+    if !view_needs_miner(params.view, panel()) {
         return None;
     }
-    let url = endpoint(&params.miner_url, bos::LOGIN_PATH)?;
-    let body = bos::login_body("root", &params.miner_password);
+    let (url, body) = params.auth.login()?;
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
@@ -600,15 +619,15 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     )
 }
 
-// `None` while no token is held,
-// so the poll stays dormant until login succeeds and invalidates it.
+// `None` while the mode has nothing to send —
+// remote mode holds no token yet, or no slot picks a mode —
+// so the poll stays dormant until a login succeeds and invalidates it.
 #[cfg(target_arch = "wasm32")]
 fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
-    let header = STATE.with(|state| state.borrow().auth.auth_header())?;
-    let url = endpoint(
-        &config().miner_url,
-        MINER_ENDPOINTS[miner_index(handle)].path,
-    )?;
+    let auth = STATE.with(|state| state.borrow().auth.clone());
+    let (url, header) = config()
+        .auth
+        .miner_request(&auth, MINER_ENDPOINTS[miner_index(handle)].path)?;
     Some(
         FetchSpec::get(url)
             .headers(header)
@@ -677,26 +696,38 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
     request_frame();
 }
 
-// A 401 means the token was rejected: drop it and invalidate the login handle,
-// so one re-auth covers every endpoint that hit the same wall.
+// A 401 in remote mode means the session was rejected:
+// drop it and invalidate the login handle,
+// so one re-auth covers every endpoint that hit the same wall;
+// this poll then goes dormant until that login reinvalidates it.
 //
-// This poll then goes dormant — its builder yields `None`
-// without a token — until that login reinvalidates it.
+// In local mode the reply alone raises the auth banner
+// and a later success lowers it; polling continues.
 //
 // Any other failure keeps the last good data, flagging it stale.
 #[cfg(target_arch = "wasm32")]
 fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
-    if response.status == 401 {
-        // A 401 built before the last refusal tells the login nothing new,
-        // and re-invalidating would restart the backoff it is serving.
-        let refused_already = STATE.with(|state| state.borrow().auth == AuthState::Failed);
-        if !refused_already {
+    let current = STATE.with(|state| state.borrow().auth.clone());
+    let action = config().auth.reply_action(&current, response.status);
+    match &action {
+        ReplyAction::SetAuth(auth) => {
+            STATE.with(|state| state.borrow_mut().auth = auth.clone());
+        }
+        ReplyAction::Relogin => {
             STATE.with(|state| state.borrow_mut().auth = AuthState::LoggingIn);
             HANDLES.with(|handles| {
                 if let Some(handles) = handles.borrow().as_ref() {
                     handles.login.invalidate();
                 }
             });
+        }
+        ReplyAction::Keep => {}
+    }
+    if response.status == 401 {
+        // A banner the reply itself raised needs a repaint now;
+        // a re-login paints when it answers.
+        if matches!(action, ReplyAction::SetAuth(_)) {
+            request_frame();
         }
         return;
     }
@@ -765,6 +796,9 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
 
 /// Which overlay, if any, belongs over the frame `auth_failed` describes.
 ///
+/// A binding prompt outranks everything:
+/// without a usable slot no miner request is made,
+/// so nothing else it could say is true.
 /// Auth error outranks stale, since both share the corner.
 /// Both scans consider only endpoints enabled for the current view,
 /// because a disabled endpoint keeps its stale/offline history.
@@ -772,7 +806,9 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
 #[must_use]
 pub fn overlay(view: View, panel: Panel, auth: &AuthState) -> Option<mining::overlay::OverlayKind> {
     let needs_miner = view_needs_miner(view, panel);
-    if needs_miner && *auth == AuthState::Failed {
+    if needs_miner && let Some(binding) = mining::overlay::binding_overlay(&config().auth) {
+        Some(binding)
+    } else if needs_miner && *auth == AuthState::Failed {
         Some(mining::overlay::OverlayKind::Auth)
     } else {
         HANDLES.with(|handles| {
