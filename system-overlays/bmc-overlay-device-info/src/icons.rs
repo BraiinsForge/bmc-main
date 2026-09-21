@@ -40,8 +40,8 @@ const MINER: Svg = include_svg!("assets/miner.svg");
 /// The cable itself, for the screens that wait on one instead of picturing the board.
 const ETHERNET: Svg = include_svg!("assets/ethernet.svg");
 const ETHERNET_ERROR: Svg = include_svg!("assets/ethernet_error.svg");
-/// Carried over from the upgrade overlay rather than the legacy init-setup set,
-/// which has no icon for a failure that is not about WiFi.
+/// Its own artwork, since the legacy init-setup set
+/// has no icon for a failure that is not about WiFi.
 const ERROR: Svg = include_svg!("assets/error.svg");
 /// Resolves to the repo-root `assets/`, shared with the settings tray.
 const CLOSE: Svg = include_svg!("assets/icons/close.svg");
