@@ -26,5 +26,6 @@ pub mod downloader;
 pub mod firmware;
 pub mod offers;
 pub mod packages;
+pub mod phase;
 pub mod upgrader;
 mod utils;
