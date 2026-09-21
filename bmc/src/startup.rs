@@ -34,6 +34,7 @@ use crate::compositor::{
     UpgradeDisplaySnapshot, UpgradeKind, run_night_mode_cycling_task, run_screen_blank_reset_task,
 };
 use crate::config::ConfigHandle;
+use crate::credential;
 use crate::initial_setup::{InitSetupState, InitialSetup, Uplink};
 use crate::led::{LedController, run_led_state_task};
 use crate::led_coordinator::LedCoordinatorHandle;
@@ -731,6 +732,7 @@ where
         // — a guarantee that lasts only until the first config save writes v2 without them.
         // They also stay in the running store, so any later account edit persists them.
         let mut secret_store = SecretStoreHandle::init(&config.config_path).await;
+        credential::seed_local_bos_account(&mut secret_store, &hardware_capabilities).await;
         match secret_store.merge_extracted(extracted_accounts).await {
             Ok(false) => {}
             Ok(true) => {

@@ -62,6 +62,11 @@ pub struct SecretStoreHandle {
     path: PathBuf,
     accounts: IndexMap<AccountId, Account>,
     accounts_change: broadcast::Sender<()>,
+    /// No store file existed at init: a fresh install,
+    /// or one that never saved an account.
+    /// An existing file, even an empty one, is not fresh,
+    /// and neither is a path we could not check.
+    fresh: bool,
 }
 
 impl SecretStoreHandle {
@@ -70,6 +75,7 @@ impl SecretStoreHandle {
     /// so a corrupt file costs the accounts but never blocks boot.
     pub async fn init(config_path: &Path) -> Self {
         let path = config_path.with_file_name(SECRETS_FILE_NAME);
+        let fresh = matches!(path.try_exists(), Ok(false));
         let accounts = match Self::load(&path).await {
             Ok(accounts) => accounts,
             Err(err) => {
@@ -83,6 +89,7 @@ impl SecretStoreHandle {
             path,
             accounts,
             accounts_change,
+            fresh,
         }
     }
 
@@ -108,6 +115,22 @@ impl SecretStoreHandle {
         if self.accounts.len() != known {
             self.save().await?;
         }
+        Ok(true)
+    }
+
+    /// Insert a built-in default when no store existed yet, persisting it.
+    /// Reports whether the account was inserted.
+    ///
+    /// A failed save keeps the account in memory:
+    /// the next successful save carries it, and the file stays missing until then,
+    /// so the next boot seeds again rather than losing it.
+    pub async fn seed_if_fresh(&mut self, account: Account) -> Result<bool> {
+        if !self.fresh {
+            return Ok(false);
+        }
+        self.accounts.insert(account.id.clone(), account);
+        self.save().await?;
+        self.fresh = false;
         Ok(true)
     }
 
@@ -267,6 +290,143 @@ mod tests {
 
         let reloaded = SecretStoreHandle::init(&config_path(&dir)).await;
         assert_eq!(reloaded.accounts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_missing_store_takes_the_seed_and_persists_it() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let mut handle = SecretStoreHandle::init(&config_path(&dir)).await;
+        let seed = account("seed");
+        let id = seed.id.clone();
+
+        assert!(
+            handle
+                .seed_if_fresh(seed)
+                .await
+                .expect("BUG: seed must save")
+        );
+
+        assert!(handle.accounts().contains_key(&id));
+        let reloaded = SecretStoreHandle::init(&config_path(&dir)).await;
+        assert!(reloaded.accounts().contains_key(&id));
+    }
+
+    /// Seeding is what creates the store, so the store is no longer fresh;
+    /// a second call would overwrite the user's edits to the seeded account.
+    #[tokio::test]
+    async fn a_saved_seed_is_not_seeded_a_second_time() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let mut handle = SecretStoreHandle::init(&config_path(&dir)).await;
+        let seed = account("seed");
+        let id = seed.id.clone();
+        assert!(
+            handle
+                .seed_if_fresh(seed)
+                .await
+                .expect("BUG: seed must save")
+        );
+
+        let mut edited = account("renamed by the user");
+        edited.id = id.clone();
+        assert!(!handle.seed_if_fresh(edited).await.expect("BUG: no-op"));
+        assert_eq!(
+            handle.accounts()[&id].name,
+            "seed",
+            "the stored account survives a second seed"
+        );
+    }
+
+    /// Deleting the seeded account must stick across reboots,
+    /// so an existing store, however empty, is never reseeded.
+    #[tokio::test]
+    async fn an_existing_store_even_empty_is_never_seeded() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let first = SecretStoreHandle::init(&config_path(&dir)).await;
+        first.save().await.expect("BUG: save must succeed");
+
+        let mut handle = SecretStoreHandle::init(&config_path(&dir)).await;
+        assert!(
+            !handle
+                .seed_if_fresh(account("seed"))
+                .await
+                .expect("BUG: no-op")
+        );
+        assert!(handle.accounts().is_empty());
+    }
+
+    /// The merge may create the file; seeding after it would then never happen.
+    /// Seeding first keeps both accounts in the file.
+    #[tokio::test]
+    async fn seeding_before_the_merge_keeps_both_in_the_store() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let mut handle = SecretStoreHandle::init(&config_path(&dir)).await;
+        let seed = account("seed");
+        let seed_id = seed.id.clone();
+        handle
+            .seed_if_fresh(seed)
+            .await
+            .expect("BUG: seed must save");
+        let extracted = account("extracted");
+        let extracted_id = extracted.id.clone();
+        handle
+            .merge_extracted(IndexMap::from([(extracted_id.clone(), extracted)]))
+            .await
+            .expect("BUG: merge must save");
+
+        let reloaded = SecretStoreHandle::init(&config_path(&dir)).await;
+        assert!(reloaded.accounts().contains_key(&seed_id));
+        assert!(reloaded.accounts().contains_key(&extracted_id));
+    }
+
+    #[tokio::test]
+    async fn a_failed_seed_save_keeps_the_seed_in_memory() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let mut handle = SecretStoreHandle::init(&config_path(&dir)).await;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500))
+            .expect("BUG: chmod");
+        if std::fs::write(dir.path().join("probe"), b"").is_ok() {
+            // Running as root: nothing here can fail, nothing to prove.
+            return;
+        }
+        let seed = account("seed");
+        let id = seed.id.clone();
+
+        let result = handle.seed_if_fresh(seed).await;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("BUG: chmod back");
+
+        assert!(result.is_err());
+        assert!(handle.accounts().contains_key(&id));
+    }
+
+    /// A store nobody can stat is not a store nobody has:
+    /// seeding one would save the built-in default over real accounts.
+    #[tokio::test]
+    async fn a_store_that_cannot_be_checked_is_not_seeded() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).expect("BUG: create store directory");
+        std::fs::write(
+            locked.join(SECRETS_FILE_NAME),
+            r#"{ "version": 1, "accounts": [] }"#,
+        )
+        .expect("BUG: write store");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+            .expect("BUG: chmod");
+        if std::fs::metadata(locked.join(SECRETS_FILE_NAME)).is_ok() {
+            // Running as root: the path stats fine, nothing to prove.
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700))
+                .expect("BUG: chmod back");
+            return;
+        }
+
+        let mut handle = SecretStoreHandle::init(&locked.join("config.json")).await;
+        let seeded = handle.seed_if_fresh(account("seed")).await;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700))
+            .expect("BUG: chmod back");
+
+        assert_eq!(seeded.ok(), Some(false));
     }
 
     #[tokio::test]

@@ -73,8 +73,12 @@ came from. A WASM widget never sees the secret itself: the device attaches it to
 
 ## Constraints
 
-- This version offers three kinds of account: a single token, a username and password pair, and a Braiins Pool token.
+- This version offers four kinds of account: a single token, a username and password pair, a Braiins Pool token, and a
+  local file token, whose value the device reads from a file another service writes (used for the miner's own BOS API).
   New kinds require a firmware update.
+- Miner-attached products (BFM100, BMM100, BMM101) start with a *Local BOS API* account of the local file token kind,
+  pointed at the Boser API token file and restricted to `localhost`. It is an ordinary account afterwards: it can be
+  renamed, re-pathed or deleted, and a deleted one is not recreated.
 - A widget declares which kind of account each of its credentials accepts, and only matching accounts can be bound.
 - Credential values are stored unencrypted on the device. They are protected by file permissions and by being kept out
   of support archives and logs, not by encryption; anyone with administrative access to the device can read them.

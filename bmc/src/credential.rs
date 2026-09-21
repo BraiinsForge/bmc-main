@@ -26,6 +26,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use bmc_field_schema::ParamKey;
+use bmc_platform::HardwareCapabilities;
 use bmc_widget_manifest::{CredentialKey, CredentialSlot};
 use bmc_widget_protocol::CredentialSecrets;
 use indexmap::IndexMap;
@@ -35,6 +37,51 @@ use crate::data::{Account, AccountId};
 use crate::file_token::FileTokens;
 
 pub use bmc_field_schema::credential::*;
+
+/// Id of the account seeded where the hardware supports mining;
+/// fixed rather than generated so default scenes can bind it.
+pub(crate) const LOCAL_BOS_ACCOUNT_ID: &str = "local-bos-token";
+
+/// The account through which the default miner widgets reach the local BOS API.
+/// Pinned to `localhost`, so the device's own session never leaves it.
+pub(crate) fn local_bos_account(hardware: &HardwareCapabilities) -> Option<Account> {
+    hardware.mining_supported.then(|| {
+        let path_key = ParamKey::try_new(FILE_TOKEN_PATH_FIELD.to_owned())
+            .expect("BUG: the path field name is identifier-shaped");
+        Account {
+            id: LOCAL_BOS_ACCOUNT_ID
+                .parse()
+                .expect("BUG: the seeded account id is non-empty"),
+            type_id: BuiltinType::LocalFileToken.id().to_owned(),
+            name: "Local BOS API".to_owned(),
+            field_values: IndexMap::from([(path_key, LOCAL_BOS_TOKEN_PATH.to_owned())]),
+            allow_hosts: vec!["localhost".to_owned()],
+            created_at: chrono::Utc::now(),
+        }
+    })
+}
+
+/// Seed the built-in account into a store that has never been saved.
+/// Must run before the migration merge,
+/// which may create the store file and would otherwise end freshness for good.
+/// A failed save only warns: the seed stays in memory and the next boot retries.
+pub(crate) async fn seed_local_bos_account(
+    store: &mut crate::secret_store::SecretStoreHandle,
+    hardware: &HardwareCapabilities,
+) {
+    let Some(account) = local_bos_account(hardware) else {
+        return;
+    };
+    match store.seed_if_fresh(account).await {
+        Ok(true) => tracing::info!("seeded the Local BOS API account"),
+        Ok(false) => {}
+        Err(err) => tracing::warn!(
+            ?err,
+            "failed to persist the Local BOS API account; it stays in memory and \
+             the next boot seeds again"
+        ),
+    }
+}
 
 /// Both halves of a resolved binding set,
 /// produced together so the account lookup runs once.
@@ -464,5 +511,67 @@ mod tests {
         let resolution = resolve(&bindings, &store(vec![pool_account()]), &tokens);
 
         assert_eq!(resolution.secrets.field(POOL, "token"), Some("s3cr3t"));
+    }
+
+    fn hardware(product: bmc_platform::Product) -> HardwareCapabilities {
+        bmc_platform::HardwareProfile::for_product(product).capabilities()
+    }
+
+    #[test]
+    fn the_local_bos_account_is_seeded_where_mining_is_supported() {
+        use bmc_platform::Product;
+        assert!(!hardware(Product::Bmc100).mining_supported);
+        assert!(local_bos_account(&hardware(Product::Bmc100)).is_none());
+        for product in [Product::Bfm100, Product::Bmm100, Product::Bmm101] {
+            assert!(hardware(product).mining_supported, "{product:?}");
+            let account =
+                local_bos_account(&hardware(product)).expect("BUG: mining hardware seeds");
+            assert_eq!(account.id.to_string(), LOCAL_BOS_ACCOUNT_ID);
+            assert_eq!(account.type_id, BuiltinType::LocalFileToken.id());
+            assert_eq!(account.name, "Local BOS API");
+            assert_eq!(
+                account
+                    .field_values
+                    .get(FILE_TOKEN_PATH_FIELD)
+                    .map(String::as_str),
+                Some(LOCAL_BOS_TOKEN_PATH)
+            );
+            assert_eq!(account.allow_hosts, ["localhost"]);
+        }
+    }
+
+    /// The path startup takes: a fresh store on mining hardware
+    /// ends up holding the built-in account on disk;
+    /// hardware without mining never does.
+    #[tokio::test]
+    async fn seeding_a_fresh_store_persists_the_local_bos_account_on_mining_hardware() {
+        use crate::secret_store::SecretStoreHandle;
+        use bmc_platform::Product;
+        let seeded_id: AccountId = LOCAL_BOS_ACCOUNT_ID.parse().expect("BUG: non-empty id");
+        for (product, expected) in [(Product::Bfm100, true), (Product::Bmc100, false)] {
+            let dir = tempfile::tempdir().expect("BUG: tempdir");
+            let config_path = dir.path().join("config.json");
+            let mut store = SecretStoreHandle::init(&config_path).await;
+
+            seed_local_bos_account(&mut store, &hardware(product)).await;
+
+            let reloaded = SecretStoreHandle::init(&config_path).await;
+            assert_eq!(
+                reloaded.accounts().contains_key(&seeded_id),
+                expected,
+                "{product:?}"
+            );
+            if expected {
+                let account = &reloaded.accounts()[&seeded_id];
+                assert_eq!(account.type_id, BuiltinType::LocalFileToken.id());
+                assert_eq!(
+                    account
+                        .field_values
+                        .get(FILE_TOKEN_PATH_FIELD)
+                        .map(String::as_str),
+                    Some(LOCAL_BOS_TOKEN_PATH)
+                );
+            }
+        }
     }
 }
