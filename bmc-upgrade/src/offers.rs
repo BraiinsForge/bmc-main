@@ -21,8 +21,7 @@
 use std::future::Future;
 
 use bmc_nix::types::MergedIndex;
-use bmc_upgrade_types::PackagesPreview;
-use uuid::Uuid;
+use bmc_upgrade_types::{ExecutionId, OfferSlot, PackagesPreview};
 
 use crate::arbitration::Disruption;
 
@@ -61,7 +60,7 @@ impl<F> UpgradeOffer<F> {
 pub struct OfferCheck<F> {
     pub firmware: Option<F>,
     pub packages: Option<PackagesPreview>,
-    pub upgrade_id: Option<String>,
+    pub upgrade_id: Option<ExecutionId>,
     pub disruption: Disruption,
 }
 
@@ -113,25 +112,25 @@ where
 /// offer behind.
 #[derive(Debug)]
 pub struct UpgradeOfferCache<F> {
-    current: Option<(String, UpgradeOffer<F>)>,
+    slot: OfferSlot<UpgradeOffer<F>>,
 }
 
 impl<F> Default for UpgradeOfferCache<F> {
     fn default() -> Self {
-        Self { current: None }
+        Self {
+            slot: OfferSlot::default(),
+        }
     }
 }
 
 impl<F> UpgradeOfferCache<F> {
     pub fn invalidate(&mut self) {
-        self.current = None;
+        self.slot.invalidate();
     }
 
     pub fn cache(&mut self, prepared: UpgradePreparation<F>) -> OfferCheck<F> {
-        self.current = prepared
-            .upgrade
-            .map(|offer| (Uuid::new_v4().to_string(), offer));
-        let upgrade_id = self.current.as_ref().map(|(id, _)| id.clone());
+        self.slot.invalidate();
+        let upgrade_id = prepared.upgrade.map(|offer| self.slot.store(offer));
         OfferCheck {
             firmware: prepared.firmware,
             packages: prepared.packages,
@@ -140,16 +139,8 @@ impl<F> UpgradeOfferCache<F> {
         }
     }
 
-    pub fn claim(&mut self, id: &str) -> Option<UpgradeOffer<F>> {
-        if self
-            .current
-            .as_ref()
-            .is_some_and(|(current, _)| current == id)
-        {
-            self.current.take().map(|(_, offer)| offer)
-        } else {
-            None
-        }
+    pub fn claim(&mut self, id: ExecutionId) -> Option<UpgradeOffer<F>> {
+        self.slot.claim(id)
     }
 }
 

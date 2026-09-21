@@ -68,7 +68,7 @@ async fn direct_preparation_does_not_replace_an_interactive_offer_or_its_install
         matches!(automatic.upgrade, Some(UpgradeOffer::Packages { packages, install }) if packages.preview.bmc_version.as_deref() == Some("automatic") && install.is_empty())
     );
     assert!(
-        matches!(offers.claim(&id), Some(UpgradeOffer::Packages { packages, install }) if packages.preview.bmc_version.as_deref() == Some("interactive") && install == ["requested"])
+        matches!(offers.claim(id), Some(UpgradeOffer::Packages { packages, install }) if packages.preview.bmc_version.as_deref() == Some("interactive") && install == ["requested"])
     );
 }
 
@@ -85,7 +85,7 @@ async fn firmware_wins_but_both_previews_are_returned() {
         Some("packages")
     );
     assert_eq!(result.disruption, Disruption::Reboot);
-    let offer = offers.claim(&result.upgrade_id.expect("BUG: firmware offer"));
+    let offer = offers.claim(result.upgrade_id.expect("BUG: firmware offer"));
     assert!(
         matches!(offer, Some(UpgradeOffer::Firmware { firmware: "firmware", package_preview: Some(packages), install }) if packages.bmc_version.as_deref() == Some("packages") && install == ["requested"])
     );
@@ -96,7 +96,7 @@ async fn packages_only_retains_checked_payload_and_install() {
     let mut offers = UpgradeOfferCache::default();
     let result = check(&mut offers, None, Some(packages("checked-index"))).await;
     assert_eq!(result.disruption, Disruption::AppRestart);
-    let offer = offers.claim(&result.upgrade_id.expect("BUG: package offer"));
+    let offer = offers.claim(result.upgrade_id.expect("BUG: package offer"));
     assert!(
         matches!(offer, Some(UpgradeOffer::Packages { packages, install }) if packages.preview.bmc_version.as_deref() == Some("checked-index") && install == ["requested"])
     );
@@ -119,32 +119,4 @@ async fn package_error_blocks_firmware() {
         result.expect_err("BUG: package failure must propagate"),
         "package check failed"
     );
-}
-
-#[tokio::test]
-async fn claims_are_single_use_and_wrong_ids_preserve_current_offer() {
-    let mut offers = UpgradeOfferCache::default();
-    let id = check(&mut offers, Some("firmware"), None)
-        .await
-        .upgrade_id
-        .expect("BUG: offer");
-    assert!(offers.claim("unknown").is_none());
-    assert!(offers.claim(&id).is_some());
-    assert!(offers.claim(&id).is_none());
-}
-
-#[tokio::test]
-async fn a_new_check_replaces_previous_offer() {
-    let mut offers = UpgradeOfferCache::default();
-    let old = check(&mut offers, Some("old"), None)
-        .await
-        .upgrade_id
-        .expect("BUG: old offer");
-    let new = check(&mut offers, Some("new"), None)
-        .await
-        .upgrade_id
-        .expect("BUG: new offer");
-    assert_ne!(old, new);
-    assert!(offers.claim(&old).is_none());
-    assert!(offers.claim(&new).is_some());
 }

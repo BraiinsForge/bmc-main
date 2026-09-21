@@ -45,6 +45,7 @@ pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
 };
+use bmc_upgrade_types::ExecutionId;
 use futures::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
@@ -537,7 +538,11 @@ async fn claim_upgrade(
         )));
     };
 
-    let Some(upgrade) = system_upgrades.lock().await.claim(upgrade_id) else {
+    let claimed = match upgrade_id.parse::<ExecutionId>() {
+        Ok(id) => system_upgrades.lock().await.claim(id),
+        Err(_) => None,
+    };
+    let Some(upgrade) = claimed else {
         warn!(upgrade_id, "Upgrade id is unknown or already consumed");
         return Err(one_shot(UpgradeRunState::Failed(
             SystemUpgradeError::UpgradeExpired,
@@ -850,7 +855,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Ok(CheckOutcome {
             firmware: outcome.firmware,
             packages: outcome.packages,
-            upgrade_id: outcome.upgrade_id,
+            upgrade_id: outcome.upgrade_id.map(|id| id.to_string()),
             disruption: outcome.disruption,
         })
     }
@@ -1439,7 +1444,7 @@ mod tests {
         }
     }
 
-    async fn firmware_offer(offers: &Mutex<SystemOfferCache>) -> String {
+    async fn firmware_offer(offers: &Mutex<SystemOfferCache>) -> ExecutionId {
         let prepared = prepare(Vec::new(), Some(test_upgrade_detail()), async {
             Ok::<_, ()>(None::<PackageOffer>)
         })
@@ -1457,14 +1462,16 @@ mod tests {
     async fn start_upgrade_unknown_id_expires_and_frees_gate() {
         let run_gate = Arc::new(Mutex::new(()));
         let offers = Mutex::new(SystemOfferCache::default());
-        let Err(mut stream) = claim_upgrade(&run_gate, &offers, "unknown").await else {
-            panic!("BUG: unknown offer must not start");
-        };
-        assert!(matches!(
-            stream.next().await,
-            Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
-        ));
-        assert!(run_gate.try_lock().is_ok());
+        for id in ["not-an-id", &ExecutionId::new().to_string()] {
+            let Err(mut stream) = claim_upgrade(&run_gate, &offers, id).await else {
+                panic!("BUG: unknown offer must not start");
+            };
+            assert!(matches!(
+                stream.next().await,
+                Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
+            ));
+            assert!(run_gate.try_lock().is_ok());
+        }
     }
 
     #[tokio::test]
@@ -1473,7 +1480,7 @@ mod tests {
         let offers = Mutex::new(SystemOfferCache::default());
         let id = firmware_offer(&offers).await;
         let guard = run_gate.try_lock().expect("BUG: fresh gate");
-        let Err(mut stream) = claim_upgrade(&run_gate, &offers, &id).await else {
+        let Err(mut stream) = claim_upgrade(&run_gate, &offers, &id.to_string()).await else {
             panic!("BUG: busy gate must reject start");
         };
         assert!(matches!(
@@ -1483,7 +1490,11 @@ mod tests {
             ))
         ));
         drop(guard);
-        assert!(claim_upgrade(&run_gate, &offers, &id).await.is_ok());
+        assert!(
+            claim_upgrade(&run_gate, &offers, &id.to_string())
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -1491,11 +1502,11 @@ mod tests {
         let run_gate = Arc::new(Mutex::new(()));
         let offers = Mutex::new(SystemOfferCache::default());
         let id = firmware_offer(&offers).await;
-        let Ok((guard, _)) = claim_upgrade(&run_gate, &offers, &id).await else {
+        let Ok((guard, _)) = claim_upgrade(&run_gate, &offers, &id.to_string()).await else {
             panic!("BUG: fresh offer must start");
         };
         drop(guard);
-        let Err(mut stream) = claim_upgrade(&run_gate, &offers, &id).await else {
+        let Err(mut stream) = claim_upgrade(&run_gate, &offers, &id.to_string()).await else {
             panic!("BUG: consumed offer must not start");
         };
         let Some(UpgradeRunState::Failed(error)) = stream.next().await else {
@@ -2967,7 +2978,7 @@ mod tests {
                 }
                 assert!(service.run_gate.try_lock().is_ok());
                 assert!(
-                    service.system_upgrades.lock().await.claim(&id).is_some(),
+                    service.system_upgrades.lock().await.claim(id).is_some(),
                     "a non-executing automatic check must preserve the user's offer"
                 );
             }
@@ -2984,7 +2995,7 @@ mod tests {
                 assert!(service.run_gate.try_lock().is_err());
             }
             assert!(service.run_gate.try_lock().is_ok());
-            assert!(service.system_upgrades.lock().await.claim(&id).is_some());
+            assert!(service.system_upgrades.lock().await.claim(id).is_some());
         }
 
         #[tokio::test]
