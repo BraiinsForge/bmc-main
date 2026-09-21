@@ -25,13 +25,14 @@
 //! (`device_state`, `setup_progress`, `access_point`); the displayed address
 //! comes from the connectivity prober's station IP. Every screen-hold timer
 //! lives here; bmc emits transitions the moment they happen.
+//! What the board is and what it can connect with come over `deck_platform_v1`,
+//! so the overlay never reads the hardware profile itself.
 
 mod icons;
 mod ui;
 
 pub use ui::{DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info};
 
-use bmc_platform::BmcInfo;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
@@ -354,7 +355,7 @@ pub struct DeviceInfoOverlay {
     render_state: DeviceInfoRenderState,
     /// Product display name the screens address the user with
     /// ("Braiins Deck", "Braiins Mini Miner", ...).
-    device_name: &'static str,
+    device_name: String,
     /// Whether this is a mining product; picks the device artwork.
     miner: bool,
     /// Which uplinks the board has,
@@ -378,6 +379,8 @@ impl std::fmt::Debug for DeviceInfoOverlay {
 
 impl Default for DeviceInfoOverlay {
     fn default() -> Self {
+        // Until the compositor says otherwise the screens read as the Deck's,
+        // which they were written for. A v1 compositor never sends the name.
         Self {
             screen: Screen::Hidden,
             mode: Mode::Unknown,
@@ -390,16 +393,8 @@ impl Default for DeviceInfoOverlay {
             snapshot_version: None,
             dirty: false,
             render_state: DeviceInfoRenderState::new(Instant::now()),
-            device_name: BmcInfo::load().map_or("Braiins Deck", |info| {
-                info.bmc_platform.product().display_name()
-            }),
-            miner: BmcInfo::load().is_ok_and(|info| {
-                bmc_platform::HardwareProfile::for_product(info.bmc_platform.product())
-                    .capabilities()
-                    .mining_supported
-            }),
-            // Until the compositor says otherwise the screens read as the
-            // Deck's, which they were written for.
+            device_name: "Braiins Deck".to_owned(),
+            miner: false,
             uplinks: Uplinks::WIFI_ONLY,
             env: Box::new(OsEnv),
         }
@@ -552,10 +547,16 @@ impl SystemOverlay for DeviceInfoOverlay {
     }
 
     fn on_platform_capabilities(&mut self, caps: PlatformCaps) {
+        self.miner = caps.mining;
         self.uplinks = Uplinks {
             wifi: caps.wifi,
             ethernet: caps.ethernet,
         };
+        self.dirty = true;
+    }
+
+    fn on_platform_product_name(&mut self, name: &str) {
+        name.clone_into(&mut self.device_name);
         self.dirty = true;
     }
 
@@ -725,7 +726,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             size,
             &mut self.render_state,
             &view,
-            self.device_name,
+            &self.device_name,
             self.miner,
         );
     }
@@ -885,13 +886,23 @@ mod tests {
     #[test]
     fn a_board_reads_as_the_deck_until_the_compositor_says_otherwise() {
         let overlay = DeviceInfoOverlay::default();
+        assert_eq!(overlay.device_name, "Braiins Deck");
+        assert!(!overlay.miner);
         assert_eq!(overlay.uplinks, Uplinks::WIFI_ONLY);
     }
 
     #[test]
-    fn the_platform_capabilities_name_the_uplinks() {
+    fn the_platform_events_name_the_board_and_its_uplinks() {
         let mut overlay = DeviceInfoOverlay::default();
-        overlay.on_platform_capabilities(platform_with(CABLE_ONLY));
+        overlay.on_platform_capabilities(PlatformCaps {
+            wifi: false,
+            ethernet: true,
+            mining: true,
+            boser_managed: true,
+        });
+        overlay.on_platform_product_name("Braiins Mini Miner");
+        assert_eq!(overlay.device_name, "Braiins Mini Miner");
+        assert!(overlay.miner);
         assert_eq!(overlay.uplinks, CABLE_ONLY);
         assert!(overlay.dirty, "a change of wording is a change of content");
     }

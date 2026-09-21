@@ -764,7 +764,6 @@ name = "bmc-overlay-device-info"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bmc-platform",
  "bmc-render",
  "bmc-render-macros",
  "bmc-system-overlay",

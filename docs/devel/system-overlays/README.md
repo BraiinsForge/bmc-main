@@ -108,20 +108,20 @@ the compositor free of a dependency into the overlay folder:
   (`deck_device_info_v1`).
 - `deck-alarm-v1` — firing-alarm ring/stop signalling and dismiss/snooze return path (`deck_alarm_v1`).
 - `deck-upgrade-v1` — one-way upgrade-progress snapshots (`deck_upgrade_v1`).
-- `deck-platform-v1` — the hardware platform's capability set, sent once on bind (`deck_platform_v1`).
+- `deck-platform-v1` — the hardware platform's capability set and product name, sent once on bind (`deck_platform_v1`).
 
 See [`protocols.md`](protocols.md) for all six.
 
 ## The concrete overlays
 
-| Overlay       | Crate                       | Layer        | Placement                                   | Input | Screen edge | Compositor IPC        |
-| ------------- | --------------------------- | ------------ | ------------------------------------------- | ----- | ----------- | --------------------- |
-| Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen                                 | full  | no          | `deck_device_info_v1` |
-| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right                                | none  | no          | `deck_platform_v1`    |
-| Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen                                 | full  | `Top`       | `deck_settings_v1`    |
-| Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen                                 | full  | no          | `deck_alarm_v1`       |
-| Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen                                 | full  | no          | `deck_upgrade_v1`     |
-| Upgrade (pkg) | `bmc-overlay-upgrade`       | `Bottom`     | bottom-right card; full-screen under 400 px | none  | no          | `deck_upgrade_v1`     |
+| Overlay       | Crate                       | Layer        | Placement                                   | Input | Screen edge | Compositor IPC                            |
+| ------------- | --------------------------- | ------------ | ------------------------------------------- | ----- | ----------- | ----------------------------------------- |
+| Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen                                 | full  | no          | `deck_device_info_v1`, `deck_platform_v1` |
+| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right                                | none  | no          | `deck_platform_v1`                        |
+| Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen                                 | full  | `Top`       | `deck_settings_v1`                        |
+| Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen                                 | full  | no          | `deck_alarm_v1`                           |
+| Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen                                 | full  | no          | `deck_upgrade_v1`                         |
+| Upgrade (pkg) | `bmc-overlay-upgrade`       | `Bottom`     | bottom-right card; full-screen under 400 px | none  | no          | `deck_upgrade_v1`                         |
 
 The startup screen also binds `deck_upgrade_v1`: a boot that follows a package restart skips it, and a boot that follows
 a firmware upgrade opens on the "Update Finished" screen it owns.

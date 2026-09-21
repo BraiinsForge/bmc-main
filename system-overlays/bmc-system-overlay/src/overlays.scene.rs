@@ -445,7 +445,7 @@ fn device_info_stage(
 }
 
 /// The product a device-info stage renders for: its panel,
-/// and what the overlay reads from the hardware profile on the device.
+/// and what the compositor tells the overlay over `deck_platform_v1` on the device.
 #[derive(Clone, Copy)]
 struct Board {
     size: (u32, u32),

@@ -37,10 +37,11 @@ reachable for half a minute on a board with WiFi is the AP failing to come up, r
 reboot. A board without WiFi has no AP to bring back, so it keeps waiting for the cable instead.
 
 What the board can offer at all, WiFi, an ethernet port, or both, the compositor tells the overlay over
-`deck_platform_v1` (`wifi` and `ethernet` bits of `capabilities`); the overlay opts in with `uses_platform`. The uplinks
-decide the wording of every screen that waits on a connection: a WiFi join once the board has WiFi and a network to name
-(the target from `connecting_to_wifi`, or the saved station network), else the cable. Until the compositor has said what
-the board has, it reads as the Deck.
+`deck_platform_v1` (`wifi` and `ethernet` bits of `capabilities`), together with the product name the screens address
+the user with (`product_name`) and whether the board mines (`mining`, which picks the device artwork). The overlay opts
+in with `uses_platform` and never reads the hardware profile itself. The uplinks decide the wording of every screen that
+waits on a connection: a WiFi join once the board has WiFi and a network to name (the target from `connecting_to_wifi`,
+or the saved station network), else the cable. Until the compositor has said what the board has, it reads as the Deck.
 
 A fourth event, `report_ip`, is the IP-report button reaching the overlay: it raises the operational connect-info screen
 on demand, on the same timer a boot uses. See "IP-report button" below.
