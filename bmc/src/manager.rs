@@ -86,6 +86,19 @@ pub async fn consume_upgrade_marker(path: &Path) -> UpgradeMarker {
     }
 }
 
+/// Sends `timezone` only when it differs from the current value,
+/// so receivers never wake for a zone they already have.
+#[must_use]
+pub fn replace_if_changed(sender: &watch::Sender<Timezone>, timezone: Timezone) -> bool {
+    sender.send_if_modified(|current| {
+        if *current != timezone {
+            *current = timezone;
+            return true;
+        }
+        false
+    })
+}
+
 #[async_trait::async_trait]
 pub trait BmcManager: Sync + Send + 'static + Debug {
     type SessionManager: crate::session::Manager;
@@ -131,6 +144,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     async fn set_password(&self, password: Option<String>) -> Result<(), Self::Error>;
 
     fn timezone(&self) -> Timezone;
+
+    /// Publish an observed timezone without changing system configuration.
+    /// Return `true` only when the channel value changes.
+    fn publish_timezone(&self, timezone: Timezone) -> bool;
 
     async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()>;
 

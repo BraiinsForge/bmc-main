@@ -29,7 +29,7 @@ use anyhow::anyhow;
 use bmc::BmcManager;
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
-    SERVICE_NAME_ENV, UpgradeError, UpgradeMarker, consume_upgrade_marker,
+    SERVICE_NAME_ENV, UpgradeError, UpgradeMarker, consume_upgrade_marker, replace_if_changed,
     service_upgrade_marker_path,
 };
 use bmc_net::NetworkManager;
@@ -260,6 +260,10 @@ impl BmcManager for Manager {
         self.timezone_sender.borrow().clone()
     }
 
+    fn publish_timezone(&self, timezone: Timezone) -> bool {
+        replace_if_changed(&self.timezone_sender, timezone)
+    }
+
     async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()> {
         let zonename_cmd = format!("{}={}", Self::UCI_SYSTEM_ZONENAME, timezone.iana());
         call_command("uci", &["set", &zonename_cmd]).await?;
@@ -270,13 +274,7 @@ impl BmcManager for Manager {
         self.restart_system_service().await?;
 
         let timezone_for_log = timezone.clone();
-        self.timezone_sender.send_if_modified(|current| {
-            if *current != timezone {
-                *current = timezone;
-                return true;
-            }
-            false
-        });
+        self.publish_timezone(timezone);
 
         info!(timezone = %timezone_for_log, "System timezone updated");
 

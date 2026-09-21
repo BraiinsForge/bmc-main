@@ -137,6 +137,7 @@ async fn main() -> Result<()> {
 
     let bmc_index = bmc::firmware::BmcIndex::default();
 
+    // TODO(BDK-874): Remove the OpenWrt seed on Boser-managed platforms.
     let current_timezone = iana_time_zone::get_timezone()
         .ok()
         .and_then(|timezone| Timezone::from_str(&timezone).ok())

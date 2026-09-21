@@ -40,14 +40,14 @@ use tokio_stream::wrappers::IntervalStream;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 
-const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+pub(crate) const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 const BEARER_TOKEN: &str = "Bearer 0123456789abcdef0123456789abcdef";
 const KEEP_ALIVE: &str = ": keep-alive\n\n";
 /// JSON the event parser accepts and the sink's state type does not.
 const UNKNOWN_STATE: &str = "data: {\"state\":\"SOMETHING_NEW\"}\n\n";
 /// A frame whose data is not JSON at all.
 const CORRUPT_STATE: &str = "data: {not json\n\n";
-const WAIT: Duration = Duration::from_secs(10);
+pub(crate) const WAIT: Duration = Duration::from_secs(10);
 /// Comment period for the bodies that must stay open;
 /// frequent enough that the idle timer never fires on them.
 const KEEP_ALIVE_PERIOD: Duration = Duration::from_millis(100);
@@ -90,7 +90,7 @@ impl StateSink for Recorder {
 
 /// Deadlines for the tests that make one fire: short enough to stay quick,
 /// long enough that a loaded CI box does not trip them on a loopback socket.
-fn timing() -> Timing {
+pub(crate) fn timing() -> Timing {
     Timing {
         response: Duration::from_secs(1),
         first_event: Duration::from_secs(1),
@@ -126,7 +126,7 @@ fn comments_every(period: Duration) -> impl Stream<Item = String> + Send {
     IntervalStream::new(tokio::time::interval(period)).map(|_tick| KEEP_ALIVE.to_owned())
 }
 
-fn sse(body: impl Stream<Item = String> + Send + 'static) -> Response {
+pub(crate) fn sse(body: impl Stream<Item = String> + Send + 'static) -> Response {
     (
         [(header::CONTENT_TYPE, "text/event-stream")],
         Body::from_stream(body.map(Ok::<_, Infallible>)),
@@ -135,7 +135,7 @@ fn sse(body: impl Stream<Item = String> + Send + 'static) -> Response {
 }
 
 /// A state followed by an open, silent connection.
-fn state_then_silence(first: String) -> Response {
+pub(crate) fn state_then_silence(first: String) -> Response {
     sse(stream::iter([first]).chain(stream::pending()))
 }
 
@@ -145,7 +145,7 @@ fn state_then_keep_alives(first: String) -> Response {
 }
 
 #[derive(Clone, Default)]
-struct Server {
+pub(crate) struct Server {
     attempts: Arc<AtomicUsize>,
 }
 
@@ -163,7 +163,7 @@ impl Server {
             .then_some(attempt)
     }
 
-    async fn wait_for_attempts(&self, expected: usize) {
+    pub(crate) async fn wait_for_attempts(&self, expected: usize) {
         tokio::time::timeout(WAIT, async {
             while self.attempts() < expected {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -174,15 +174,23 @@ impl Server {
     }
 }
 
-/// Serves the state stream route; `respond` sees the 1-based attempt number.
 async fn serve<F, Fut>(server: &Server, respond: F) -> SocketAddr
+where
+    F: Fn(usize) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Response> + Send + 'static,
+{
+    serve_at(server, Recorder::PATH, respond).await
+}
+
+/// Serves the state stream at `path`; `respond` sees the 1-based attempt number.
+pub(crate) async fn serve_at<F, Fut>(server: &Server, path: &str, respond: F) -> SocketAddr
 where
     F: Fn(usize) -> Fut + Clone + Send + Sync + 'static,
     Fut: Future<Output = Response> + Send + 'static,
 {
     let server = server.clone();
     let router = Router::new().route(
-        Recorder::PATH,
+        path,
         get(move |headers: HeaderMap| {
             let server = server.clone();
             let respond = respond.clone();

@@ -606,7 +606,7 @@ async fn forward_upgrade_display_state<F>(
     }
 }
 
-/// Whether the Boser upgrade observer runs, and why not when it does not.
+/// Whether the Boser observers run, and why not when they do not.
 #[derive(Debug, PartialEq, Eq)]
 enum BoserObservation {
     Observe(SocketAddr),
@@ -647,6 +647,7 @@ where
     widget_reload_task: tokio::task::JoinHandle<()>,
     file_token_poller: tokio::task::JoinHandle<()>,
     boser_upgrade_observer: Option<tokio::task::JoinHandle<()>>,
+    boser_timezone_observer: Option<tokio::task::JoinHandle<()>>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
     alarm_backend: AlarmBackend,
@@ -664,6 +665,7 @@ where
     widget_reload_task: tokio::task::JoinHandle<()>,
     file_token_poller: tokio::task::JoinHandle<()>,
     boser_upgrade_observer: Option<tokio::task::JoinHandle<()>>,
+    boser_timezone_observer: Option<tokio::task::JoinHandle<()>>,
     widget_shutdown_config: Arc<RwLock<ConfigHandle>>,
     widget_coordinator: Arc<Coordinator>,
     web_service: WebService<T, T::SessionManager, V, U>,
@@ -694,6 +696,9 @@ where
         abort_background_task("widget reload", self.widget_reload_task).await;
         if let Some(observer) = self.boser_upgrade_observer {
             abort_background_task("boser upgrade observer", observer).await;
+        }
+        if let Some(observer) = self.boser_timezone_observer {
+            abort_background_task("boser timezone observer", observer).await;
         }
         abort_background_task("file token poller", self.file_token_poller).await;
         self.widget_coordinator
@@ -1068,23 +1073,32 @@ where
                 .watch_setup_ap_active(),
         );
 
-        let boser_upgrade_observer = match boser_observation(
+        let (boser_upgrade_observer, boser_timezone_observer) = match boser_observation(
             hardware_capabilities.boser_managed,
             config.server_config.boser,
         ) {
-            BoserObservation::Observe(address) => Some(boser::spawn_observer(
-                StreamConfig {
+            BoserObservation::Observe(address) => {
+                let stream_config = StreamConfig {
                     address,
                     token_path: config.boser_token_path.clone(),
                     timing: Timing::default(),
-                },
-                system_upgrade_service.display_state_service(),
-                state_service.clone(),
-            )),
-            BoserObservation::SelfManaged => None,
+                };
+                (
+                    Some(boser::spawn_observer(
+                        stream_config.clone(),
+                        system_upgrade_service.display_state_service(),
+                        state_service.clone(),
+                    )),
+                    Some(crate::timezone_boser::spawn_observer(
+                        stream_config,
+                        manager.clone(),
+                    )),
+                )
+            }
+            BoserObservation::SelfManaged => (None, None),
             BoserObservation::AddressMissing => {
-                warn!("no Boser address configured, upgrade state stays unobserved");
-                None
+                warn!("no Boser address configured, Boser state stays unobserved");
+                (None, None)
             }
         };
 
@@ -1105,6 +1119,7 @@ where
             widget_reload_task,
             file_token_poller,
             boser_upgrade_observer,
+            boser_timezone_observer,
             system_manager,
             sound_controller,
             alarm_backend,
@@ -1146,6 +1161,7 @@ where
             widget_reload_task: self.widget_reload_task,
             file_token_poller: self.file_token_poller,
             boser_upgrade_observer: self.boser_upgrade_observer,
+            boser_timezone_observer: self.boser_timezone_observer,
             widget_shutdown_config,
             widget_coordinator,
             web_service,
@@ -1158,6 +1174,9 @@ where
         server.widget_reload_task.abort();
         server.file_token_poller.abort();
         if let Some(observer) = &server.boser_upgrade_observer {
+            observer.abort();
+        }
+        if let Some(observer) = &server.boser_timezone_observer {
             observer.abort();
         }
         server.web_service.build_grpc_routes()

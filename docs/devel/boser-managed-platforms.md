@@ -1,8 +1,9 @@
 # Boser-managed platform ownership
 
-Products whose `HardwareCapabilities::boser_managed` flag is set use Boser as the owner of post-setup system
-configuration and maintenance. The capability comes from the hardware profile and is fixed for the BMC process lifetime.
-Self-managed products retain the normal BMC behavior.
+Products whose `HardwareCapabilities::boser_managed` flag is set use Boser as the owner of system configuration and
+maintenance after initial setup completes. The capability comes from the hardware profile and is fixed for the BMC
+process lifetime, but its ownership boundary applies only after setup. Self-managed products retain the normal BMC
+behavior.
 
 `HardwareCapabilities::reset_button_owner` resolves who handles the reset button: BMC in `FactoryDefault` and
 `SetupPending`, because Boser stays stopped during initial setup, and Boser in other states on managed products,
@@ -10,10 +11,12 @@ including Wi-Fi reconfiguration. Self-managed products handle it in BMC in every
 governs only the reset button; the fixed `boser_managed` capability still governs API routing and local maintenance as
 described below.
 
-Initial setup and native Wi-Fi reconfiguration remain BMC-owned on every product. Only BMC drives the setup access point
-and captive portal. `UpgradeService` is Boser-owned on managed products: every method answers `Unimplemented`, and bmc
-observes Boser's upgrade state instead of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade
-Observation").
+Initial setup is BMC-owned on every product. BMC has full control of the system during setup, including the system
+timezone, network configuration, and credentials. On mining products it starts `boser` and `bosminer` only after those
+settings and provisioning have been applied. From that point, `boser_managed` transfers the listed runtime operations to
+Boser. Native Wi-Fi reconfiguration remains BMC-owned because only BMC drives the setup access point and captive portal.
+`UpgradeService` is Boser-owned on managed products: every method answers `Unimplemented`, and bmc observes Boser's
+upgrade state instead of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade Observation").
 
 ## gRPC boundary
 
@@ -80,8 +83,9 @@ Every mutating web gRPC service has an explicit managed-product owner:
 `InitialSetupService` is structurally outside both `AuthInterceptor` and `BoserOwnershipInterceptor`. `SetupDevice`
 remains restricted to `SetupPending` and can set network, timezone, password, and BMC presentation preferences directly.
 On mining products, it also writes the pool seed Boser consumes on first boot, applies the hostname with the network
-settings, advances provisioning, and starts `boser` and `bosminer`. Factory-default Wi-Fi setup remains available as
-well.
+settings, advances provisioning, and only then starts `boser` and `bosminer`. Consequently, `boser_managed` must not
+suppress any initial-setup operation: BMC owns and configures the entire system until setup completes. Factory-default
+Wi-Fi setup remains available as well.
 
 The service also accepts Wi-Fi changes in a persisted `WifiReconfiguration` state. The native settings command is the
 fresh transition into that state outside failure recovery and remains BMC-owned on every platform because only BMC can
@@ -112,9 +116,11 @@ remains non-collecting; Boser is responsible for managed store reclamation.
 
 ## Timezone visibility
 
-BMC seeds its timezone watch from the operating system at process start. On managed products, Boser will provide a
-streaming API for timezone changes. The Boser-backed integration will subscribe to that API and publish changes through
-BMC's existing timezone watch. This will let the compositor and widgets receive updates without restarting BMC.
+BMC seeds its timezone watch from the operating system at process start. The Boser observer also starts with BMC on
+managed products and reconnects until Boser is available. During initial setup, BMC writes the selected timezone to the
+operating system before starting Boser. Once Boser is running, the observer publishes its current timezone and later
+updates through BMC's existing timezone watch, so the compositor and widgets receive updates without restarting BMC. An
+invalid event, contract mismatch, or lost stream retains the last usable timezone.
 
 ## Extending the API
 

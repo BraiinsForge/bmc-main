@@ -259,6 +259,10 @@ impl BmcManager for StubBmcManager {
         self.timezone_sender.borrow().clone()
     }
 
+    fn publish_timezone(&self, _timezone: Timezone) -> bool {
+        unimplemented!("{GATED_ROUTE_UNREACHABLE}")
+    }
+
     async fn set_timezone(&self, _timezone: Timezone) -> anyhow::Result<()> {
         unimplemented!("{GATED_ROUTE_UNREACHABLE}")
     }

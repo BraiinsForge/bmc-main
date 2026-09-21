@@ -114,6 +114,9 @@ impl BmcManager for StubManager {
     fn timezone(&self) -> Timezone {
         unimplemented!("{UNREACHABLE}")
     }
+    fn publish_timezone(&self, _timezone: Timezone) -> bool {
+        unimplemented!("{UNREACHABLE}")
+    }
     async fn set_timezone(&self, _timezone: Timezone) -> anyhow::Result<()> {
         unimplemented!("{UNREACHABLE}")
     }

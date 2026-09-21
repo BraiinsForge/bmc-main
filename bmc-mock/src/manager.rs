@@ -22,7 +22,7 @@
 use crate::pacing::UpgradePacing;
 use crate::{MockSessionManager, mockfs::MockFs};
 use bmc::bootloader_config::BootloaderConfig;
-use bmc::manager::{UpgradeError, UpgradeMarker, consume_upgrade_marker};
+use bmc::manager::{UpgradeError, UpgradeMarker, consume_upgrade_marker, replace_if_changed};
 use bmc_net::NetworkManager;
 use bmc_net::mock::MockNetworkManager;
 use bmc_nix::progress::{ActiveDownload, ProgressEvent};
@@ -239,14 +239,12 @@ impl bmc::BmcManager for Manager {
         self.timezone_sender.borrow().clone()
     }
 
+    fn publish_timezone(&self, timezone: Timezone) -> bool {
+        replace_if_changed(&self.timezone_sender, timezone)
+    }
+
     async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()> {
-        self.timezone_sender.send_if_modified(|current| {
-            if *current != timezone {
-                *current = timezone;
-                return true;
-            }
-            false
-        });
+        self.publish_timezone(timezone);
 
         Ok(())
     }

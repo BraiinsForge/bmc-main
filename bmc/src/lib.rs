@@ -51,6 +51,7 @@ mod system_manager;
 mod system_upgrade;
 #[cfg(test)]
 pub(crate) mod test_support;
+mod timezone_boser;
 pub mod utils;
 mod web;
 pub mod widget;
