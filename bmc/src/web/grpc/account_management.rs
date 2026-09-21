@@ -732,7 +732,7 @@ mod tests {
         std::fs::write(
             package.join("manifest.json"),
             format!(
-                r#"{{"uid":"{TEST_WIDGET_TYPE}","version":"1.0.0","name":"account-test","description":"account test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}}],"credentials":{{"slot0":{{"type":"generic-token","label":"First"}},"slot1":{{"type":"generic-token","label":"Second"}},"slot2":{{"type":"generic-token","label":"Third"}}}}}}"#
+                r#"{{"uid":"{TEST_WIDGET_TYPE}","version":"1.0.0","name":"account-test","description":"account test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}}],"credentials":{{"slot0":{{"type":"generic-token","label":"First"}},"slot1":{{"type":"generic-token","label":"Second"}},"slot2":{{"type":"generic-token","label":"Third"}},"slot3":{{"type":"local-file-token","label":"File"}}}}}}"#
             ),
         )
         .expect("BUG: write test widget manifest");
@@ -933,6 +933,7 @@ mod tests {
             Arc::clone(&config_handle),
             scenes_rx,
             accounts_rx,
+            widget_coordinator.file_tokens().subscribe(),
         );
 
         let service =
@@ -1049,6 +1050,69 @@ mod tests {
             .expect("BUG: host update must succeed");
         compositor.wait_for_credential_push_count(3).await;
         assert_eq!(pushed_widget_changes(&compositor), expected_changes);
+    }
+
+    /// The poller only refills the cache;
+    /// the listener is what carries a rotated or withdrawn token
+    /// to a widget that is already running.
+    #[tokio::test]
+    async fn a_token_file_change_reaches_the_widget_bound_to_it() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let token_dir = tempfile::tempdir().expect("BUG: tempdir");
+        let token_file = token_dir.path().join("boser-session");
+        let account_id = AccountId::from_str("file-acct").expect("BUG: non-empty id");
+        let mut widget = widget_binding(&[]);
+        widget.credential_bindings.insert(
+            serde_json::from_str("\"slot3\"").expect("BUG: valid slot key"),
+            account_id.clone(),
+        );
+        let expected_changes = sorted_widget_changes(&[(&widget, true)]);
+        let scene = scene_of(SceneKind::Fullscreen, vec![widget.clone()]);
+        let (_service, _config, store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &[]).await;
+        let token_path = token_file.to_str().expect("BUG: tempdir path is UTF-8");
+        store.write().await.accounts_mut().insert(
+            account_id.clone(),
+            Account {
+                id: account_id,
+                type_id: credential::BuiltinType::LocalFileToken.id().to_owned(),
+                name: "Local BOS API".to_owned(),
+                field_values: values(&[(credential::FILE_TOKEN_PATH_FIELD, token_path)]),
+                allow_hosts: Vec::new(),
+                created_at: chrono::Utc::now(),
+            },
+        );
+        let refresh = async || {
+            let paths = crate::file_token::token_paths(store.read().await.accounts());
+            assert!(
+                coordinator.file_tokens().refresh(paths),
+                "the token file change must reach the cache"
+            );
+        };
+        let spent_token = async || {
+            coordinator
+                .resolve_credentials(&widget)
+                .await
+                .expect("BUG: the test widget manifest is installed")
+                .secrets
+                .field("slot3", credential::FILE_TOKEN_FIELD)
+                .map(str::to_owned)
+        };
+
+        std::fs::write(&token_file, "s3cr3t\n").expect("BUG: write token file");
+        refresh().await;
+
+        compositor.wait_for_credential_push_count(1).await;
+        assert_eq!(pushed_widget_changes(&compositor), expected_changes);
+        assert_eq!(spent_token().await.as_deref(), Some("s3cr3t"));
+        compositor.clear_credential_pushes();
+
+        std::fs::remove_file(&token_file).expect("BUG: remove token file");
+        refresh().await;
+
+        compositor.wait_for_credential_push_count(1).await;
+        assert_eq!(pushed_widget_changes(&compositor), expected_changes);
+        assert_eq!(spent_token().await, None);
     }
 
     #[tokio::test]

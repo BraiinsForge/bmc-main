@@ -4171,6 +4171,7 @@ mod tests {
             Arc::clone(&config),
             scenes_rx,
             accounts_rx,
+            coordinator.file_tokens().subscribe(),
         );
         let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
         let service = Arc::new(SceneManagementService::new(

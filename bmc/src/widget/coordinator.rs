@@ -43,6 +43,7 @@ use crate::config::ConfigHandle;
 use crate::config::LocalizationConfig;
 use crate::credential;
 use crate::data::{Account, AccountId};
+use crate::file_token::FileTokenCache;
 use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
 use crate::secret_store::SecretStoreHandle;
 use bmc_net::NetworkManager;
@@ -277,6 +278,7 @@ pub struct Coordinator {
     /// Lock order: config before secrets. A spawner takes the config lock
     /// first or not at all, and never takes it while holding this one.
     secret_store: Arc<RwLock<SecretStoreHandle>>,
+    file_tokens: FileTokenCache,
 }
 
 #[derive(Clone, Copy)]
@@ -300,13 +302,15 @@ struct PendingCredentialUpdate {
     receipt: CredentialUpdateReceipt,
 }
 
-/// Refresh retained credentials from one consistent configuration/account snapshot.
+/// Refresh retained credentials from one consistent configuration/account snapshot,
+/// each widget's file-backed tokens read from the cache as its slots resolve.
 /// Commands are enqueued under the source locks, but compositor receipts are awaited after release.
 pub fn start_credential_listener(
     coordinator: Arc<Coordinator>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     mut scenes_change_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
     mut accounts_change_rx: broadcast::Receiver<()>,
+    mut file_tokens_rx: broadcast::Receiver<()>,
 ) {
     tokio::spawn(async move {
         loop {
@@ -317,6 +321,11 @@ pub fn start_credential_listener(
                     }
                 }
                 result = accounts_change_rx.recv() => {
+                    if matches!(result, Err(broadcast::error::RecvError::Closed)) {
+                        break;
+                    }
+                }
+                result = file_tokens_rx.recv() => {
                     if matches!(result, Err(broadcast::error::RecvError::Closed)) {
                         break;
                     }
@@ -332,6 +341,10 @@ pub fn start_credential_listener(
                 ) {}
                 while matches!(
                     accounts_change_rx.try_recv(),
+                    Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_))
+                ) {}
+                while matches!(
+                    file_tokens_rx.try_recv(),
                     Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_))
                 ) {}
                 coordinator.enqueue_configured_widget_credentials(&config, accounts.accounts())
@@ -649,7 +662,14 @@ impl Coordinator {
             hardware_capabilities,
             preview_scene_id: Arc::default(),
             secret_store,
+            file_tokens: FileTokenCache::new(),
         }
+    }
+
+    /// The token cache `local-file-token` accounts resolve against.
+    #[must_use]
+    pub(crate) fn file_tokens(&self) -> &FileTokenCache {
+        &self.file_tokens
     }
 
     pub(crate) fn preview_scene_state(&self) -> Arc<Mutex<Option<SceneId>>> {
@@ -1191,7 +1211,7 @@ impl Coordinator {
         viewport: Size,
         accounts: &IndexMap<AccountId, Account>,
     ) -> WidgetRegistration {
-        let resolved = Self::resolve_credentials_for(widget, manifest, accounts);
+        let resolved = self.resolve_credentials_for(widget, manifest, accounts);
         WidgetRegistration {
             key: WidgetInstanceKey::new(widget.id.as_uuid()),
             connection_mode: WidgetConnectionMode::Inactive,
@@ -1365,6 +1385,7 @@ impl Coordinator {
     }
 
     fn resolve_credentials_for(
+        &self,
         widget: &Widget,
         manifest: &Manifest,
         accounts: &IndexMap<AccountId, Account>,
@@ -1392,7 +1413,7 @@ impl Coordinator {
             );
         }
 
-        credential::resolve(&authorised, accounts)
+        credential::resolve(&authorised, accounts, &self.file_tokens.read())
     }
 
     #[cfg(test)]
@@ -1402,11 +1423,7 @@ impl Coordinator {
     ) -> Option<credential::Resolution> {
         let installed = self.widget_registry.get(&widget.widget_type_id)?;
         let store = self.secret_store.read().await;
-        Some(Self::resolve_credentials_for(
-            widget,
-            &installed.manifest,
-            store.accounts(),
-        ))
+        Some(self.resolve_credentials_for(widget, &installed.manifest, store.accounts()))
     }
 
     fn enqueue_widget_credentials(
@@ -1422,7 +1439,7 @@ impl Coordinator {
             );
             return Ok(None);
         };
-        let resolved = Self::resolve_credentials_for(widget, &installed.manifest, accounts);
+        let resolved = self.resolve_credentials_for(widget, &installed.manifest, accounts);
         let instance_id = widget.id.as_uuid().to_string();
         let receipt = self.compositor.enqueue_update_widget_credentials(
             WidgetInstanceKey::new(widget.id.as_uuid()),

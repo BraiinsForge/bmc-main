@@ -24,6 +24,7 @@
 //! for which of a widget's bindings actually count.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use bmc_widget_manifest::{CredentialKey, CredentialSlot};
 use bmc_widget_protocol::CredentialSecrets;
@@ -31,6 +32,7 @@ use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
 use crate::data::{Account, AccountId};
+use crate::file_token::FileTokens;
 
 pub use bmc_field_schema::credential::*;
 
@@ -127,6 +129,7 @@ pub fn dangling_bindings<'a>(
 pub fn resolve(
     bindings: &BTreeMap<CredentialKey, AccountId>,
     accounts: &IndexMap<AccountId, Account>,
+    file_tokens: &FileTokens,
 ) -> Resolution {
     let mut view = Map::new();
     let mut secrets = Map::new();
@@ -136,11 +139,15 @@ pub fn resolve(
             slot.as_str().to_owned(),
             serde_json::json!({ "type": account.type_id, "account": account.name }),
         );
-        let fields: Map<String, Value> = account
-            .field_values
-            .iter()
-            .map(|(field, value)| (field.as_str().to_owned(), Value::String(value.clone())))
-            .collect();
+        let fields = if account.type_id == BuiltinType::LocalFileToken.id() {
+            file_token_fields(account, file_tokens)
+        } else {
+            account
+                .field_values
+                .iter()
+                .map(|(field, value)| (field.as_str().to_owned(), Value::String(value.clone())))
+                .collect()
+        };
         let mut slot_value = serde_json::json!({ "fields": fields });
         if !account.allow_hosts.is_empty() {
             slot_value["allow_hosts"] = serde_json::json!(account.allow_hosts);
@@ -152,6 +159,20 @@ pub fn resolve(
         view,
         secrets: CredentialSecrets::new(secrets),
     }
+}
+
+/// The token read from the account's file, or nothing while the file is
+/// missing or unusable. The slot stays bound; a placeholder spent meanwhile
+/// is refused host-side as an unknown field, so no stale token lingers.
+fn file_token_fields(account: &Account, file_tokens: &FileTokens) -> Map<String, Value> {
+    account
+        .field_values
+        .get(FILE_TOKEN_PATH_FIELD)
+        .and_then(|path| file_tokens.get(Path::new(path)))
+        .map(|token| {
+            Map::from_iter([(FILE_TOKEN_FIELD.to_owned(), Value::String(token.to_owned()))])
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -208,6 +229,20 @@ mod tests {
             "token",
             "s3cr3t",
         )
+    }
+
+    fn file_account(path: &str) -> Account {
+        account(
+            "a-3",
+            BuiltinType::LocalFileToken.id(),
+            "Local BOS API",
+            FILE_TOKEN_PATH_FIELD,
+            path,
+        )
+    }
+
+    fn cached(path: &str, token: &str) -> FileTokens {
+        FileTokens::with(path, token)
     }
 
     fn declares(pairs: &[(&str, &str)]) -> IndexMap<CredentialKey, CredentialSlot> {
@@ -344,7 +379,11 @@ mod tests {
         let plain = account("a-2", BuiltinType::GenericToken.id(), "T", "token", "x");
         let bindings = bound(&[(POOL, "a-1"), (SPARE, "a-2")]);
 
-        let resolution = resolve(&bindings, &store(vec![pinned, plain]));
+        let resolution = resolve(
+            &bindings,
+            &store(vec![pinned, plain]),
+            &FileTokens::default(),
+        );
 
         assert_eq!(
             resolution.secrets.allow_hosts(POOL),
@@ -367,5 +406,63 @@ mod tests {
                 .contains("allow_hosts"),
             "the guest-visible view must not carry the pin"
         );
+    }
+
+    #[test]
+    fn a_file_backed_account_yields_the_token_and_never_the_path() {
+        let bindings = bound(&[(POOL, "a-3")]);
+        let tokens = cached("/run/bos", "sess-1");
+
+        let resolution = resolve(&bindings, &store(vec![file_account("/run/bos")]), &tokens);
+
+        assert_eq!(
+            resolution.secrets.field(POOL, FILE_TOKEN_FIELD),
+            Some("sess-1")
+        );
+        assert_eq!(resolution.secrets.field(POOL, FILE_TOKEN_PATH_FIELD), None);
+        assert!(!resolution.secrets.to_json_string().contains("/run/bos"));
+        assert_eq!(
+            resolution.view[POOL]["type"],
+            BuiltinType::LocalFileToken.id()
+        );
+        let view = Value::Object(resolution.view).to_string();
+        assert!(
+            !view.contains("sess-1"),
+            "the widget-visible view must not carry the token"
+        );
+        assert!(
+            !view.contains("/run/bos"),
+            "the widget-visible view must not carry the token path"
+        );
+    }
+
+    #[test]
+    fn a_file_backed_account_without_a_cached_token_stays_bound_with_no_fields() {
+        let bindings = bound(&[(POOL, "a-3")]);
+
+        let resolution = resolve(
+            &bindings,
+            &store(vec![file_account("/run/bos")]),
+            &FileTokens::default(),
+        );
+
+        assert!(
+            resolution.view.contains_key(POOL),
+            "the guest still sees a bound slot"
+        );
+        assert_eq!(resolution.secrets.field(POOL, FILE_TOKEN_FIELD), None);
+        let wire: serde_json::Value =
+            serde_json::from_str(&resolution.secrets.to_json_string()).expect("BUG: valid JSON");
+        assert_eq!(wire[POOL]["fields"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn other_types_ignore_the_token_cache() {
+        let bindings = bound(&[(POOL, "a-1")]);
+        let tokens = cached("/run/bos", "sess-1");
+
+        let resolution = resolve(&bindings, &store(vec![pool_account()]), &tokens);
+
+        assert_eq!(resolution.secrets.field(POOL, "token"), Some("s3cr3t"));
     }
 }

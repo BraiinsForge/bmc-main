@@ -29,6 +29,7 @@ pub mod config_migration;
 mod credential;
 mod data;
 pub mod entry;
+mod file_token;
 pub mod firmware;
 mod initial_setup;
 mod led;

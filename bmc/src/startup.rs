@@ -622,6 +622,7 @@ where
     widget_coordinator: Arc<Coordinator>,
     widget_registry: Arc<WidgetRegistry>,
     widget_reload_task: tokio::task::JoinHandle<()>,
+    file_token_poller: tokio::task::JoinHandle<()>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
     alarm_backend: AlarmBackend,
@@ -637,6 +638,7 @@ where
     listener: TcpListener,
     button_manager: ButtonManager<T>,
     widget_reload_task: tokio::task::JoinHandle<()>,
+    file_token_poller: tokio::task::JoinHandle<()>,
     widget_shutdown_config: Arc<RwLock<ConfigHandle>>,
     widget_coordinator: Arc<Coordinator>,
     web_service: WebService<T, T::SessionManager, V, U>,
@@ -660,6 +662,12 @@ where
             && !error.is_cancelled()
         {
             warn!(%error, "widget reload task failed before shutdown");
+        }
+        self.file_token_poller.abort();
+        if let Err(error) = self.file_token_poller.await
+            && !error.is_cancelled()
+        {
+            warn!(%error, "file token poller failed before shutdown");
         }
         self.widget_coordinator
             .stop_all(&self.widget_shutdown_config)
@@ -762,6 +770,13 @@ where
             hardware_capabilities,
             secret_store.clone(),
         ));
+        // Subscribe before the poller starts, so the first read's change
+        // signal waits in the channel instead of firing into no receiver.
+        let file_tokens_rx = widget_coordinator.file_tokens().subscribe();
+        let file_token_poller = widget_coordinator
+            .file_tokens()
+            .clone()
+            .spawn_poller(secret_store.clone());
         let widget_reload_task = crate::widget::spawn_reload_signal_task(
             widget_coordinator.clone(),
             config_handle.clone(),
@@ -968,6 +983,7 @@ where
                 config_handle.clone(),
                 scenes_rx,
                 accounts_rx,
+                file_tokens_rx,
             );
         }
 
@@ -1039,6 +1055,7 @@ where
             widget_coordinator,
             widget_registry,
             widget_reload_task,
+            file_token_poller,
             system_manager,
             sound_controller,
             alarm_backend,
@@ -1078,6 +1095,7 @@ where
             listener: self.listener,
             button_manager: self.button_manager,
             widget_reload_task: self.widget_reload_task,
+            file_token_poller: self.file_token_poller,
             widget_shutdown_config,
             widget_coordinator,
             web_service,
@@ -1088,6 +1106,7 @@ where
     pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
         let server = self.into_server();
         server.widget_reload_task.abort();
+        server.file_token_poller.abort();
         server.web_service.build_grpc_routes()
     }
 
