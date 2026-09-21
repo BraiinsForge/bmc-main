@@ -164,7 +164,7 @@ class BoserUpgradeE2e:
             if event.get("id") not in (None, offer_id):
                 raise Abort(f"the stream reports a different execution: {event}")
             if event["state"] == "FAILED":
-                raise Abort(f"upgrade failed in {event['phase']}: {event['reason']}")
+                raise Abort(f"upgrade failed in {phase_label(event['phase'])}: {event['reason']}")
             terminal = event
         if terminal is None:
             msg = "BUG: the event stream returned without a terminal event"
@@ -308,11 +308,17 @@ def check_summary(body: dict[str, Any]) -> list[str]:
     return lines
 
 
+def phase_label(phase: dict[str, str]) -> str:
+    """`STAGE` for a stage without steps, `STAGE/STEP` otherwise."""
+    step = phase.get("step")
+    return phase["stage"] if step is None else f"{phase['stage']}/{step}"
+
+
 def event_summary(event: dict[str, Any]) -> str:
     """`STATE`, `STATE/PHASE` or `STATE/PHASE/downloaded_bytes`, mirroring Boser's own tests."""
     key = str(event.get("state", "?"))
     if "phase" in event:
-        key += f"/{event['phase']}"
+        key += f"/{phase_label(event['phase'])}"
     if "download" in event:
         key += f"/{event['download']['downloaded_bytes']}"
     return key

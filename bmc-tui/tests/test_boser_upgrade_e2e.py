@@ -37,7 +37,12 @@ from bmc_tui.bos_version import parse_bos_version
 from bmc_tui.device import Device
 from bmc_tui.fw_index import FwIndexServer
 from bmc_tui.image import Image
-from bmc_tui.procedures.boser_upgrade_e2e import BoserUpgradeE2e, check_summary, event_summary
+from bmc_tui.procedures.boser_upgrade_e2e import (
+    BoserUpgradeE2e,
+    check_summary,
+    event_summary,
+    phase_label,
+)
 from bmc_tui.stage import Abort
 from tests import boser_stub
 from tests.boser_stub import BoserStub, Script
@@ -376,7 +381,9 @@ def test_failed_run_aborts_with_the_device_reason(
     script = Script(events=[boser_stub.RUNNING, boser_stub.FAILED])
     with BoserStub(script) as stub:
         runner = BoserUpgradeE2e(stub.address, path, RUNNING, "127.0.0.1", "dev")
-        with pytest.raises(Abort, match="failed in NIX_ACTIVATING: activation script exited 1"):
+        with pytest.raises(
+            Abort, match="failed in PACKAGES/ACTIVATING: activation script exited 1"
+        ):
             runner.run(ask=_answers("ready", "yes"), make_device=_DeviceScript().make)
     assert events[-2:] == ["firmware-stop", "packages-stop"]
 
@@ -627,6 +634,11 @@ def test_cli_requires_the_ssh_address() -> None:
         )
 
 
+def test_phase_label_joins_stage_and_step() -> None:
+    assert phase_label({"stage": "PREPARING"}) == "PREPARING"
+    assert phase_label({"stage": "PACKAGES", "step": "REALIZING"}) == "PACKAGES/REALIZING"
+
+
 def test_summaries_read_like_the_console_did() -> None:
     assert check_summary(boser_stub.CHECK_OFFER) == [
         "package capability READY",
@@ -637,7 +649,7 @@ def test_summaries_read_like_the_console_did() -> None:
     assert check_summary(boser_stub.CHECK_NOTHING) == ["package capability READY", "no offer"]
     assert [event_summary(e) for e in (boser_stub.RUNNING, boser_stub.REALIZING)] == [
         "RUNNING/PREPARING",
-        "RUNNING/NIX_REALIZING/524288",
+        "RUNNING/PACKAGES/REALIZING/524288",
     ]
 
 

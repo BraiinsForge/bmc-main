@@ -60,12 +60,12 @@ CHECK_NOTHING = {
     "package_capability": {"status": "READY"},
 }
 
-RUNNING = {"state": "RUNNING", "id": OFFER_ID, "kind": "PACKAGES", "phase": "PREPARING"}
+RUNNING = {"state": "RUNNING", "id": OFFER_ID, "kind": "PACKAGES", "phase": {"stage": "PREPARING"}}
 REALIZING = {
     "state": "RUNNING",
     "id": OFFER_ID,
     "kind": "PACKAGES",
-    "phase": "NIX_REALIZING",
+    "phase": {"stage": "PACKAGES", "step": "REALIZING"},
     "download": {"downloaded_bytes": 524_288, "total_bytes": 1_048_576},
 }
 COMPLETED = {"state": "COMPLETED", "id": OFFER_ID, "kind": "PACKAGES"}
@@ -86,7 +86,7 @@ FAILED = {
     "state": "FAILED",
     "id": OFFER_ID,
     "kind": "PACKAGES",
-    "phase": "NIX_ACTIVATING",
+    "phase": {"stage": "PACKAGES", "step": "ACTIVATING"},
     "reason": "activation script exited 1",
 }
 
