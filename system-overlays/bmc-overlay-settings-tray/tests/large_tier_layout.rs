@@ -18,8 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Resting-layout regression for the Large tier: the panel splits into two
-//! equal flex halves and every control circle lives entirely in the bottom one.
+//! Resting-layout regressions run through the real flex layout: the Large tier
+//! splits into two equal halves with every control circle in the bottom one,
+//! and BMM101's address table cuts its values, never its labels.
 //!
 //! The probe renderer wraps paragraphs like a real text backend: constrained
 //! below its natural width, a paragraph breaks into more lines the narrower
@@ -50,12 +51,14 @@ use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
 };
 
-/// Records circle fills at absolute coordinates; text measurement wraps.
+/// Records circle fills at absolute coordinates, and the box width
+/// every paragraph is drawn into; text measurement wraps.
 #[derive(Default)]
 struct ProbeRenderer {
     offset: (f32, f32),
     saved: Vec<(f32, f32)>,
     circles: Vec<(f32, f32, f32)>,
+    paragraphs: Vec<(String, f32)>,
     next_svg: u16,
 }
 
@@ -192,11 +195,13 @@ impl Renderer for ProbeRenderer {
     fn draw_paragraph(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        spans: &[SpanData],
         _x: f32,
         _y: f32,
-        _max_width: f32,
+        max_width: f32,
     ) {
+        let text = spans.iter().map(|s| s.text.as_str()).collect();
+        self.paragraphs.push((text, max_width));
     }
     fn draw_paragraph_clipped(
         &mut self,
@@ -442,4 +447,38 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
         }),
         "the hold circle must share its center with the held button",
     );
+}
+
+#[test]
+fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
+    let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmm101);
+    view.hostname = Some("braiins-mini-".repeat(4));
+    view.ip = Some("10.0.0.42".to_owned());
+    view.wifi_signal = Some(-52);
+    view.ssid = Some("a-network-name-".repeat(3));
+
+    let now = Instant::now();
+    let mut state = SettingsTrayRenderState::new(now);
+    let mut renderer = ProbeRenderer::default();
+    render_settings_tray(
+        &mut renderer,
+        (view.width, view.height),
+        &mut state,
+        &view,
+        now,
+    );
+
+    for label in ["Hostname", "IP Address", "WiFi SSID"] {
+        let (_, width) = renderer
+            .paragraphs
+            .iter()
+            .find(|(text, _)| text == label)
+            .unwrap_or_else(|| panic!("BUG: the address table labels {label}"));
+        let natural = label.chars().count() as f32 * 16.0 * 0.6;
+        // Taffy lays out on whole pixels.
+        assert!(
+            *width >= natural - 1.0,
+            "{label} was squeezed to {width}px of its {natural}px, so it wraps"
+        );
+    }
 }

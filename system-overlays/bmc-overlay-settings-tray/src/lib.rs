@@ -351,6 +351,8 @@ pub enum Step {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SettingsTrayRenderOutput {
     pub brightness_step: Option<Step>,
+    /// Where along the brightness slider the finger is, while it is down.
+    pub brightness_drag: Option<f32>,
     pub volume_step: Option<Step>,
     pub night_mode_tapped: bool,
     pub close_tapped: bool,
@@ -679,16 +681,30 @@ impl SettingsTrayOverlay {
         }
     }
 
+    /// Take `value` as the brightness now, ask bmc for it, and hold the echo
+    /// off until the write comes back.
+    fn set_brightness_locally(&mut self, value: u8, now: Instant) {
+        self.brightness = value;
+        self.repaint_queued = true;
+        self.pending_requests
+            .push(SettingsRequest::SetBrightness(value));
+        self.brightness_settle_until = Some(now + STEP_ECHO_SETTLE);
+    }
+
     /// Apply a frame's interaction read-back to overlay state and queue the
     /// resulting requests.
     fn apply_render_output(&mut self, output: SettingsTrayRenderOutput, now: Instant) {
         if let Some(step) = output.brightness_step {
             let b = step_value(self.brightness, step, ui::MIN_BRIGHTNESS, 100);
-            self.brightness = b;
-            self.repaint_queued = true;
-            self.pending_requests
-                .push(SettingsRequest::SetBrightness(b));
-            self.brightness_settle_until = Some(now + STEP_ECHO_SETTLE);
+            self.set_brightness_locally(b, now);
+        }
+        // Only a new stop queues a request. Every request rewrites the config
+        // file on flash, and a held finger reports a position every frame.
+        if let Some(fraction) = output.brightness_drag {
+            let b = ui::brightness_from_fraction(fraction);
+            if b != self.brightness {
+                self.set_brightness_locally(b, now);
+            }
         }
         if let Some(step) = output.volume_step {
             let v = step_value(self.volume, step, 0, 100);
@@ -1035,8 +1051,16 @@ pub fn render_settings_tray(
             None
         }
     };
+    // Positions are reported against the slider the touch began on, so they
+    // keep arriving once the finger strays off it, and run past both ends.
+    let brightness_drag = result
+        .drags
+        .get(ui::BRIGHTNESS_SLIDER_KEY)
+        .filter(|hit| hit.width > 0.0)
+        .map(|hit| (hit.x / hit.width).clamp(0.0, 1.0));
     SettingsTrayRenderOutput {
         brightness_step: step_of(ui::BRIGHTNESS_DOWN_KEY, ui::BRIGHTNESS_UP_KEY),
+        brightness_drag,
         volume_step: step_of(ui::VOLUME_DOWN_KEY, ui::VOLUME_UP_KEY),
         night_mode_tapped: result.clicks.contains_key(ui::NIGHT_MODE_KEY),
         close_tapped: result.clicks.contains_key(ui::CLOSE_KEY),
@@ -1428,6 +1452,63 @@ mod step_tests {
         assert_eq!(step_value(15, Step::Down, ui::MIN_BRIGHTNESS, 100), 10);
         assert_eq!(step_value(5, Step::Down, 0, 100), 0);
         assert_eq!(step_value(40, Step::Up, 0, 100), 50);
+    }
+
+    fn brightness_drag(fraction: f32) -> SettingsTrayRenderOutput {
+        SettingsTrayRenderOutput {
+            brightness_drag: Some(fraction),
+            ..Default::default()
+        }
+    }
+
+    /// A held finger reports a position every frame, and every write rewrites
+    /// the config file on flash. Only a frame reaching a new stop may write.
+    #[test]
+    fn a_brightness_drag_writes_once_per_stop_it_reaches() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, t0);
+        overlay.brightness = 50;
+        for _ in 0..10 {
+            overlay.apply_render_output(brightness_drag(0.45), t0);
+        }
+        assert!(
+            overlay.drain_settings_requests().is_empty(),
+            "ten frames inside one stop must not queue a write"
+        );
+        overlay.apply_render_output(brightness_drag(0.5), t0);
+        overlay.apply_render_output(brightness_drag(0.5), t0);
+        assert_eq!(
+            overlay.drain_settings_requests(),
+            vec![SettingsRequest::SetBrightness(55)],
+            "reaching a stop writes once, holding there writes no more"
+        );
+        assert_eq!(overlay.brightness, 55);
+    }
+
+    #[test]
+    fn dragging_to_the_left_end_stops_at_the_floor() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, t0);
+        overlay.brightness = 50;
+        overlay.apply_render_output(brightness_drag(0.0), t0);
+        assert_eq!(overlay.brightness, ui::MIN_BRIGHTNESS);
+        assert_eq!(
+            overlay.drain_settings_requests(),
+            vec![SettingsRequest::SetBrightness(ui::MIN_BRIGHTNESS)]
+        );
+    }
+
+    #[test]
+    fn a_drag_holds_the_echo_off_the_way_a_tap_does() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, t0);
+        overlay.brightness = 50;
+        overlay.apply_render_output(brightness_drag(1.0), t0);
+        overlay.on_brightness_at(50, t0 + Duration::from_millis(100));
+        assert_eq!(
+            overlay.brightness, 100,
+            "the echo of the value we replaced must not snap the thumb back"
+        );
     }
 
     #[test]

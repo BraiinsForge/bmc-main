@@ -26,9 +26,9 @@ use bmc_platform::DisplayShape;
 use bmc_render::tree::{
     DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
 };
-use bmc_wasm_protocol::colors::{BLACK, GRAY_50, GREEN_50, TRANSPARENT, WHITE};
+use bmc_wasm_protocol::colors::{BLACK, GRAY_40, GRAY_50, GREEN_50, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{
-    Color, CrossAlign, Fill, FontWeight, Justify, SvgId, TextAlign, TextOverflow,
+    Color, CrossAlign, Fill, FontWeight, Justify, ProgressKind, SvgId, TextAlign, TextOverflow,
 };
 
 /// Stable touch key for the WiFi reconfiguration hold button.
@@ -55,8 +55,50 @@ pub const BRIGHTNESS_UP_KEY: &str = "brightness_up";
 /// Stable touch key for the close (dismiss) button.
 pub const CLOSE_KEY: &str = "close";
 
-/// Brightness floor: the step buttons never dim the panel below this.
+/// Stable touch key for the brightness slider drag.
+pub const BRIGHTNESS_SLIDER_KEY: &str = "brightness_slider";
+
+/// Brightness floor: below this the panel is too dark to find the control
+/// that would undo it, so neither the step buttons nor the slider go lower.
 pub const MIN_BRIGHTNESS: u8 = 10;
+
+/// Percentage points between the slider's stops. Every drag frame reports a
+/// position, so the value has to land on a grid: without one a single sweep
+/// would queue a `SetBrightness` per frame, and each of those rewrites the
+/// config file on flash.
+const BRIGHTNESS_GRID: u8 = 5;
+
+/// Stops between the floor and full brightness, the floor not counted.
+const BRIGHTNESS_STOPS: u8 = 18;
+
+const _: () = assert!(
+    MIN_BRIGHTNESS + BRIGHTNESS_STOPS * BRIGHTNESS_GRID == 100,
+    "BUG: the slider's stops must land on full brightness exactly",
+);
+
+/// Where the thumb sits for `percent`. The track spans the floor to full
+/// rather than zero to full, so its left end is the dimmest the panel goes
+/// and no part of the track is dead.
+#[must_use]
+pub fn brightness_fraction(percent: u8) -> f32 {
+    let span = f32::from(100 - MIN_BRIGHTNESS);
+    f32::from(percent.clamp(MIN_BRIGHTNESS, 100) - MIN_BRIGHTNESS) / span
+}
+
+/// The brightness a thumb dragged to `fraction` asks for, snapped to
+/// [`BRIGHTNESS_GRID`]. Inverse of [`brightness_fraction`].
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a rounded 0..=1 fraction scaled by the stop count is a small count"
+)]
+pub fn brightness_from_fraction(fraction: f32) -> u8 {
+    let stop = (fraction.clamp(0.0, 1.0) * f32::from(BRIGHTNESS_STOPS)).round() as u8;
+    MIN_BRIGHTNESS + stop * BRIGHTNESS_GRID
+}
+
+const NO_DATA_PLACEHOLDER: &str = "---";
 
 /// Panel scrim: the tray composites over the live scene, so its background is a
 /// near-opaque black that lets the scene faintly show through. Matches the
@@ -101,6 +143,10 @@ const STEP_GAP_LARGE: f32 = 12.0;
 const LARGE_PAIR_W: f32 = 236.0;
 const LARGE_SINGLE_W: f32 = 180.0;
 
+/// BMM101's single-button width. Three groups and their gaps must fit 480px,
+/// which three of the Large tier's 180 do not.
+const BMM101_SINGLE_W: f32 = 146.0;
+
 /// Stable geometry of the Large tier's top info section: panel top padding,
 /// left inset, and the right inset keeping the section clear of the close
 /// target (26px edge + 48px glyph + 32px spacing).
@@ -124,6 +170,28 @@ const WIDE_SSID_WIDTH: u32 = 400;
 /// plus the quiet zone. That puts a module at ~4.4px — 0.51mm
 /// at the panel's 217 DPI, well clear of what a phone camera resolves.
 const WIDE_QR_SIZE: f32 = 144.0;
+
+/// The same 25-module symbol as [`WIDE_QR_SIZE`], shrunk to share its row
+/// with the address table. With the quiet zone the grid is 33 modules, so
+/// one is 2.9 px: 0.45 mm at BMM101's 165 DPI, the smallest code the tray draws.
+const COMPACT_QR_SIZE: f32 = 96.0;
+
+/// The compact layout's one spacing unit, vertical and horizontal alike.
+const COMPACT_GAP: f32 = 16.0;
+
+/// Clearance between the compact info row's right edge and the close target,
+/// so the row never runs under the button's hit region.
+const COMPACT_CLOSE_MARGIN: f32 = 16.0;
+
+/// Text size of the compact info table, labels and values alike.
+const COMPACT_INFO_SIZE: u32 = 16;
+
+/// Side of the square brightness icon beside the slider.
+const BRIGHTNESS_ICON_SIZE: f32 = 32.0;
+
+/// Track thickness of the brightness slider. The node budgets a drag thumb
+/// above and below, so it lays out five times this tall.
+const SLIDER_TRACK_H: f32 = 8.0;
 
 /// Modules of blank margin around the IP QR code; ISO/IEC 18004 asks four.
 /// Finder-pattern detection measures the light run just outside the pattern,
@@ -294,19 +362,24 @@ pub struct Controls<'a> {
     pub pressed: Option<&'a str>,
 }
 
-/// Per-panel control sizing. Selected by panel width in [`tier_for`]: the
-/// Large tier (BMC100) adds static text blocks under every group; the
-/// medium/small tiers render bare buttons with a shared caption line.
+/// Per-panel control sizing, picked by [`tier_for`] from the panel's width
+/// and shape. A labeled tier captions every group; an unlabeled tier renders
+/// bare buttons and leaves the copy to a shared caption line.
 #[derive(Debug, Clone, Copy)]
 struct Tier {
     circle: f32,
     icon: f32,
-    /// Gap inside a ± pair. Equal to `group_gap` on the compact tiers:
-    /// their unlabeled circles read a tighter gap as uneven spacing,
+    /// Gap inside a ± pair. Equal to `group_gap` on an unlabeled tier:
+    /// its bare circles read a tighter gap as uneven spacing,
     /// not as grouping.
     pair_gap: f32,
     group_gap: f32,
-    large_text: bool,
+    /// Whether each group carries its own label and sublabel.
+    labeled: bool,
+    /// Fixed widths of a labeled group, so swapping a caption never shifts
+    /// the centered row. Unread while `labeled` is false.
+    pair_w: f32,
+    single_w: f32,
     value_size: u32,
     caption_size: u32,
     hostname_size: u32,
@@ -319,14 +392,20 @@ struct Tier {
     row_gap: f32,
 }
 
+/// Narrowest panel that takes the Deck's labeled layout; everything below is compact.
+const WIDE_MIN_WIDTH: u32 = 960;
+
 fn tier_for(panel: &Panel) -> Tier {
-    if panel.width >= 960 {
+    if panel.width >= WIDE_MIN_WIDTH {
+        // BMC100.
         Tier {
             circle: 112.0,
             icon: 48.0,
             pair_gap: STEP_GAP_LARGE,
             group_gap: 20.0,
-            large_text: true,
+            labeled: true,
+            pair_w: LARGE_PAIR_W,
+            single_w: LARGE_SINGLE_W,
             value_size: 24,
             caption_size: 20,
             hostname_size: 24,
@@ -336,12 +415,15 @@ fn tier_for(panel: &Panel) -> Tier {
             row_gap: 16.0,
         }
     } else if panel.width <= 320 {
+        // BMM100, too narrow to caption three buttons.
         Tier {
             circle: 48.0,
             icon: 22.0,
             pair_gap: 12.0,
             group_gap: 12.0,
-            large_text: false,
+            labeled: false,
+            pair_w: 0.0,
+            single_w: 0.0,
             value_size: 12,
             caption_size: 12,
             hostname_size: 16,
@@ -350,13 +432,36 @@ fn tier_for(panel: &Panel) -> Tier {
             padding: 12.0,
             row_gap: 6.0,
         }
-    } else {
+    } else if matches!(panel.shape, DisplayShape::Rectangular) {
+        // BMM101. The 12pt caption is what keeps the widest label on one
+        // line; see `the_widest_label_fits_a_bmm101_group`.
         Tier {
             circle: 64.0,
             icon: 28.0,
             pair_gap: 20.0,
             group_gap: 20.0,
-            large_text: false,
+            labeled: true,
+            pair_w: LARGE_PAIR_W,
+            single_w: BMM101_SINGLE_W,
+            value_size: 14,
+            caption_size: 12,
+            hostname_size: 18,
+            wifi_text_size: 14,
+            wifi_icon_size: 20.0,
+            padding: 16.0,
+            row_gap: 8.0,
+        }
+    } else {
+        // BFM100. Labeled groups do not fit across the disc, so its
+        // chord-safe band takes bare buttons under one caption line.
+        Tier {
+            circle: 64.0,
+            icon: 28.0,
+            pair_gap: 20.0,
+            group_gap: 20.0,
+            labeled: false,
+            pair_w: 0.0,
+            single_w: 0.0,
             value_size: 14,
             caption_size: 14,
             hostname_size: 18,
@@ -365,6 +470,26 @@ fn tier_for(panel: &Panel) -> Tier {
             padding: 16.0,
             row_gap: 8.0,
         }
+    }
+}
+
+/// Which arrangement a panel gets, decided once from its shape and width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// The Deck's 1280×480: labeled buttons in one row under an info header.
+    Wide,
+    /// The BMM100 and BMM101 rectangles: the address table on top,
+    /// the brightness slider under it, bare buttons last.
+    Compact,
+    /// The BFM100's disc: one column inside the chord-safe band.
+    Round,
+}
+
+fn layout_for(panel: &Panel) -> Layout {
+    match panel.shape {
+        DisplayShape::Round => Layout::Round,
+        DisplayShape::Rectangular if panel.width >= WIDE_MIN_WIDTH => Layout::Wide,
+        DisplayShape::Rectangular => Layout::Compact,
     }
 }
 
@@ -621,11 +746,8 @@ fn pair_group(
         },
         vec![btn(down_key, low_icon), btn(up_key, high_icon)],
     );
-    let mut kids = vec![
-        buttons,
-        fixed_height(if tier.large_text { 8.0 } else { 2.0 }),
-    ];
-    if tier.large_text {
+    let mut kids = vec![buttons, fixed_height(if tier.labeled { 8.0 } else { 2.0 })];
+    if tier.labeled {
         kids.push(text(
             format!("{value}"),
             TextStyle {
@@ -659,7 +781,7 @@ fn pair_group(
     col(
         PropsData {
             cross_align: CrossAlign::Center,
-            width: if tier.large_text { LARGE_PAIR_W } else { 0.0 },
+            width: if tier.labeled { tier.pair_w } else { 0.0 },
             ..PropsData::default()
         },
         kids,
@@ -683,7 +805,7 @@ fn single_group(
     sublabel: &str,
 ) -> TreeNode {
     let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, hold_progress);
-    if !tier.large_text {
+    if !tier.labeled {
         return btn;
     }
     // The label/sublabel copy is fixed at compile time ("Night Mode: Off",
@@ -717,7 +839,7 @@ fn single_group(
     col(
         PropsData {
             cross_align: CrossAlign::Center,
-            width: LARGE_SINGLE_W,
+            width: tier.single_w,
             ..PropsData::default()
         },
         kids,
@@ -841,7 +963,7 @@ fn control_rows(tier: Tier, pairs: Vec<TreeNode>, singles: Vec<TreeNode>) -> Vec
             )],
         )
     };
-    if tier.large_text {
+    if tier.labeled {
         let mut groups = pairs;
         groups.extend(singles);
         if groups.is_empty() {
@@ -865,7 +987,7 @@ fn shared_caption(tier: Tier, controls: &Controls<'_>) -> Option<TreeNode> {
         Some(format!("Restart: {c}"))
     } else if let Some(c) = controls.wifi_reconfig.caption {
         Some(format!("Reconfigure Wi-Fi: {c}"))
-    } else if !tier.large_text
+    } else if !tier.labeled
         && let Some(n) = controls.night_mode
         && let Some(until) = n.until
     {
@@ -945,6 +1067,28 @@ fn close_button(panel: &Panel, tier: Tier, icon: Option<SvgId>) -> TreeNode {
     }
 }
 
+/// The icon naming the brightness slider; the slider owns the touch key.
+fn brightness_icon(icons: ControlIcons) -> TreeNode {
+    TreeNode::Canvas {
+        props: PropsData {
+            width: BRIGHTNESS_ICON_SIZE,
+            height: BRIGHTNESS_ICON_SIZE,
+            ..PropsData::default()
+        },
+        touch_key: None,
+        draws: vec![DrawCommand::Svg {
+            x: 0.0,
+            y: 0.0,
+            w: BRIGHTNESS_ICON_SIZE,
+            h: BRIGHTNESS_ICON_SIZE,
+            color: TRANSPARENT,
+            icon_id: icons.brightness_high,
+            anti_alias: true,
+            fills: Vec::new(),
+        }],
+    }
+}
+
 /// One Large-tier info block: a small gray header over a white value node.
 fn info_block(header: &'static str, value: TreeNode) -> TreeNode {
     col(
@@ -956,26 +1100,42 @@ fn info_block(header: &'static str, value: TreeNode) -> TreeNode {
     )
 }
 
-/// The QR code for the Deck's web UI, so scanning it opens the address
-/// printed beside it. Omitted while the IP is unknown: a placeholder
-/// would scan as a dead link.
-fn ip_qr(ip: &str) -> TreeNode {
+/// The QR code for the device's web UI, so scanning it opens the address
+/// printed beside it. Callers omit it while the IP is unknown, since a
+/// placeholder would scan as a dead link.
+fn ip_qr(ip: &str, size: f32) -> TreeNode {
     TreeNode::Canvas {
         props: PropsData {
-            width: WIDE_QR_SIZE,
-            height: WIDE_QR_SIZE,
+            width: size,
+            height: size,
             ..PropsData::default()
         },
         touch_key: None,
         draws: vec![DrawCommand::Qr {
             x: 0.0,
             y: 0.0,
-            size: WIDE_QR_SIZE,
+            size,
             dark: BLACK,
             light: WHITE,
             quiet_zone: WIDE_QR_QUIET_ZONE,
             text: format!("http://{ip}"),
         }],
+    }
+}
+
+/// A draggable slider holding no value of its own. The drag position comes
+/// back on `key`; the caller feeds the new fraction in on the next frame.
+fn slider(key: &'static str, fraction: f32) -> TreeNode {
+    TreeNode::ProgressBar {
+        touch_key: Some(key.to_owned()),
+        track_h: SLIDER_TRACK_H,
+        mode: ProgressKind::Slider,
+        fraction: fraction.clamp(0.0, 1.0),
+        active: false,
+        fill_color: WHITE,
+        track_color: GRAY_40,
+        bg_color: TRANSPARENT,
+        skin: None,
     }
 }
 
@@ -1055,7 +1215,10 @@ fn wide_header(
         vec![
             info_block(
                 "IP Address",
-                text(ip.unwrap_or("---"), text_style(value_size, WHITE)),
+                text(
+                    ip.unwrap_or(NO_DATA_PLACEHOLDER),
+                    text_style(value_size, WHITE),
+                ),
             ),
             info_block(
                 "Hostname",
@@ -1064,7 +1227,7 @@ fn wide_header(
         ],
     );
     let left_info = match ip {
-        Some(ip) => vec![ip_qr(ip), addresses],
+        Some(ip) => vec![ip_qr(ip, WIDE_QR_SIZE), addresses],
         None => vec![addresses],
     };
 
@@ -1166,9 +1329,206 @@ fn setup_row(icons: WifiIcons, ap_ssid: &str, tier: Tier) -> TreeNode {
     ])
 }
 
+/// What the tray shows, before a layout decides where.
+/// `wifi_button` already carries the hold button's gate: reconfiguration is supported
+/// and setup is not running, so setup mode keeps its badge and loses the button.
+#[derive(Debug, Clone, Copy)]
+struct Content<'a> {
+    hostname: Option<&'a str>,
+    ip: Option<&'a str>,
+    wifi_signal: Option<i32>,
+    ssid: &'a str,
+    wifi_view: WifiView<'a>,
+    wifi_button: bool,
+    icons: WifiIcons,
+    control_icons: ControlIcons,
+    controls: Controls<'a>,
+}
+
+/// The control rows the content calls for, in the row split the tier wants.
+fn control_row_nodes(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
+    let (pairs, singles) = control_groups(
+        tier,
+        &content.controls,
+        content.control_icons,
+        content.icons,
+        content.wifi_button,
+    );
+    control_rows(tier, pairs, singles)
+}
+
+/// The caption line, holding its height while empty so captions appearing
+/// and disappearing never shift the control rows.
+fn caption_slot(content: Content<'_>, tier: Tier) -> TreeNode {
+    #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
+    let caption_h = tier.caption_size as f32 * LINE_H;
+    shared_caption(tier, &content.controls).unwrap_or_else(|| fixed_height(caption_h))
+}
+
+/// The disc's bottom line: the station info, or the setup badge and AP SSID
+/// while setup runs.
+fn station_line(content: Content<'_>, tier: Tier) -> TreeNode {
+    match content.wifi_view {
+        WifiView::Setup { ap_ssid } => setup_row(content.icons, ap_ssid, tier),
+        WifiView::Idle => compact_info(content.icons, content.wifi_signal, content.ssid, tier),
+    }
+}
+
+/// The Deck's flow children: the info header in the top half,
+/// the labeled control row and the caption in the bottom half.
+fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
+    let header = wide_header(
+        content.hostname.unwrap_or("N/A"),
+        content.ip,
+        content.icons,
+        content.wifi_signal,
+        content.ssid,
+        tier,
+        content.wifi_view,
+    );
+    let rows = control_row_nodes(content, tier);
+    let caption = caption_slot(content, tier);
+    wide_halves(header, rows, caption, tier, tier.padding).into()
+}
+
+/// One column of the compact address table, evenly spaced.
+fn compact_info_column(props: PropsData, lines: [&str; 3], style: TextStyle) -> TreeNode {
+    let mut kids = Vec::new();
+    for line in lines {
+        if !kids.is_empty() {
+            kids.push(fixed_height(COMPACT_GAP));
+        }
+        kids.push(text(line, style));
+    }
+    col(props, kids)
+}
+
+/// The compact address block. Both columns come from one list, so a row
+/// cannot appear on one side alone and slide the values out of line.
+/// Capped short of the close target floating over its top-right corner.
+fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode {
+    let rows = [
+        ("Hostname", content.hostname.unwrap_or(NO_DATA_PLACEHOLDER)),
+        ("IP Address", content.ip.unwrap_or(NO_DATA_PLACEHOLDER)),
+        ("WiFi SSID", content.ssid),
+    ];
+    let label_style = TextStyle {
+        align: TextAlign::Left,
+        ..text_style(COMPACT_INFO_SIZE, GRAY_40)
+    };
+    let value_style = TextStyle {
+        align: TextAlign::Right,
+        text_overflow: TextOverflow::Ellipsis,
+        ..text_style(COMPACT_INFO_SIZE, WHITE)
+    };
+
+    let mut kids = vec![fixed_width(COMPACT_GAP)];
+    if let Some(ip) = content.ip {
+        kids.push(ip_qr(ip, COMPACT_QR_SIZE));
+        kids.push(fixed_width(COMPACT_GAP));
+    }
+    kids.extend([
+        compact_info_column(
+            PropsData::default(),
+            rows.map(|(label, _)| label),
+            label_style,
+        ),
+        fixed_width(COMPACT_GAP),
+        // Grown from zero rather than shrunk from its content, so an overlong value
+        // gives way inside its own column and never squeezes a label into wrapping.
+        compact_info_column(
+            PropsData {
+                flex: 1.0,
+                ..PropsData::default()
+            },
+            rows.map(|(_, value)| value),
+            value_style,
+        ),
+    ]);
+
+    row(
+        PropsData {
+            max_width: close_origin(&panel, tier).0 - COMPACT_CLOSE_MARGIN,
+            ..PropsData::default()
+        },
+        kids,
+    )
+}
+
+fn compact_brightness_row(content: Content<'_>) -> TreeNode {
+    let fraction = content.controls.brightness.map_or(0.0, brightness_fraction);
+    row(
+        PropsData {
+            cross_align: CrossAlign::Center,
+            ..PropsData::default()
+        },
+        [
+            slider(BRIGHTNESS_SLIDER_KEY, fraction),
+            fixed_width(COMPACT_GAP),
+            brightness_icon(content.control_icons),
+        ],
+    )
+}
+
+/// The compact control buttons, singles only. Brightness moved to the slider
+/// above, and no product on this layout has sound, so the ± pairs are empty.
+fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
+    let (_, singles) = control_groups(
+        tier,
+        &content.controls,
+        content.control_icons,
+        content.icons,
+        content.wifi_button,
+    );
+    control_rows(tier, Vec::new(), singles)
+}
+
+/// The BMM100 and BMM101 flow children: address block, brightness slider,
+/// then whichever buttons the product still has.
+fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
+    let mut children = vec![
+        // Top padding is an explicit spacer, not container padding,
+        // so the close button's absolute insets resolve against the panel box.
+        fixed_height(COMPACT_GAP),
+        compact_info_row(content, panel, tier),
+        fixed_height(COMPACT_GAP),
+        pad_horizontal(compact_brightness_row(content), COMPACT_GAP),
+        fixed_height(COMPACT_GAP),
+    ];
+    children.extend(compact_control_rows(content, tier));
+    children
+}
+
+/// The BFM100's flow children: the compact column inside the disc's chord-safe band,
+/// with the control rows pinned to a fixed top edge.
+#[expect(clippy::cast_precision_loss, reason = "display sizes are small")]
+fn round_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
+    let header_h = tier.hostname_size as f32 * LINE_H;
+    let mut children = vec![
+        fixed_height(ROUND_TOP_GAP),
+        pad_horizontal(
+            header_row(
+                content.ip.unwrap_or(NO_DATA_PLACEHOLDER),
+                tier.hostname_size,
+            ),
+            (panel.width as f32 - ROUND_HEADER_WIDTH) / 2.0,
+        ),
+        // Pin the control rows below the chord-safe close target.
+        fixed_height(ROUND_CONTROLS_TOP - ROUND_TOP_GAP - header_h),
+    ];
+    for row_node in control_row_nodes(content, tier) {
+        children.push(pad_horizontal(row_node, ROUND_H_PAD));
+        children.push(fixed_height(tier.row_gap));
+    }
+    children.push(pad_horizontal(caption_slot(content, tier), ROUND_H_PAD));
+    children.push(spacer(1.0));
+    children.push(pad_horizontal(station_line(content, tier), ROUND_H_PAD));
+    children.push(fixed_height(ROUND_BOTTOM_GAP));
+    children
+}
+
 /// Build the overlay UI tree for the current state.
 #[must_use]
-#[expect(clippy::cast_precision_loss, reason = "display sizes are small")]
 #[expect(
     clippy::too_many_arguments,
     reason = "overlay state is a flat set of display fields"
@@ -1185,88 +1545,22 @@ pub fn build_tree(
     controls: Controls<'_>,
 ) -> TreeNode {
     let tier = tier_for(&panel);
-    let w = panel.width as f32;
-    let ssid_str = ssid.unwrap_or("Not configured");
-
-    // The WiFi hold button renders only in normal (non-setup) mode, and only
-    // where the panel reports reconfiguration support; the setup badge still
-    // renders via setup_row.
-    let wifi = panel.wifi_button && matches!(wifi_view, WifiView::Idle);
-    let (pairs, singles) = control_groups(tier, &controls, controls_icons, icons, wifi);
-    let rows = control_rows(tier, pairs, singles);
-
-    let header_h = tier.hostname_size as f32 * LINE_H;
-    let caption_h = tier.caption_size as f32 * LINE_H;
-    let h_pad = match panel.shape {
-        DisplayShape::Round => ROUND_H_PAD,
-        DisplayShape::Rectangular => tier.padding,
+    let content = Content {
+        hostname,
+        ip,
+        wifi_signal,
+        ssid: ssid.unwrap_or("Not configured"),
+        wifi_view,
+        wifi_button: panel.wifi_button && matches!(wifi_view, WifiView::Idle),
+        icons,
+        control_icons: controls_icons,
+        controls,
     };
-
-    // The caption slot always occupies its line height so captions appearing
-    // and disappearing never shift the control rows.
-    let caption_node = shared_caption(tier, &controls).unwrap_or_else(|| fixed_height(caption_h));
-
-    // The wide panel folds the station/setup info into its top header; only
-    // the compact tiers keep a dedicated info line at the bottom.
-    let compact_wifi_node = || match wifi_view {
-        WifiView::Setup { ap_ssid } => setup_row(icons, ap_ssid, tier),
-        WifiView::Idle => compact_info(icons, wifi_signal, ssid_str, tier),
+    let mut children = match layout_for(&panel) {
+        Layout::Wide => wide_children(content, tier),
+        Layout::Compact => compact_children(content, panel, tier),
+        Layout::Round => round_children(content, panel, tier),
     };
-
-    let mut children: Vec<TreeNode> = Vec::new();
-    match panel.shape {
-        DisplayShape::Rectangular if tier.large_text => {
-            let header = wide_header(
-                hostname.unwrap_or("N/A"),
-                ip,
-                icons,
-                wifi_signal,
-                ssid_str,
-                tier,
-                wifi_view,
-            );
-            children.extend(wide_halves(header, rows, caption_node, tier, h_pad));
-        }
-        DisplayShape::Rectangular => {
-            // Top padding is an explicit spacer (not container padding) so the
-            // close button's absolute insets resolve against the panel box.
-            children.push(fixed_height(tier.padding));
-            children.push(pad_horizontal(
-                header_row(ip.unwrap_or("---"), tier.hostname_size),
-                CLOSE_TARGET + tier.padding,
-            ));
-            // Pin the first control row below the close target's bottom edge
-            // so their hit regions stay disjoint.
-            children.push(fixed_height((CLOSE_TARGET - header_h).max(tier.row_gap)));
-            for row_node in rows {
-                children.push(pad_horizontal(row_node, h_pad));
-                children.push(fixed_height(tier.row_gap));
-            }
-            children.push(pad_horizontal(caption_node, h_pad));
-            children.push(fixed_height(tier.row_gap));
-            children.push(spacer(1.0));
-            children.push(pad_horizontal(compact_wifi_node(), h_pad));
-            children.push(fixed_height(tier.padding));
-        }
-        DisplayShape::Round => {
-            children.push(fixed_height(ROUND_TOP_GAP));
-            children.push(pad_horizontal(
-                header_row(ip.unwrap_or("---"), tier.hostname_size),
-                (w - ROUND_HEADER_WIDTH) / 2.0,
-            ));
-            // Pin the control rows to a fixed top edge below the chord-safe
-            // close target.
-            children.push(fixed_height(ROUND_CONTROLS_TOP - ROUND_TOP_GAP - header_h));
-            for row_node in rows {
-                children.push(pad_horizontal(row_node, h_pad));
-                children.push(fixed_height(tier.row_gap));
-            }
-            children.push(pad_horizontal(caption_node, h_pad));
-            children.push(spacer(1.0));
-            children.push(pad_horizontal(compact_wifi_node(), h_pad));
-            children.push(fixed_height(ROUND_BOTTOM_GAP));
-        }
-    }
     // Last child: absolute positioning takes it out of flow, and rendering
     // follows child order, so it paints on top of everything.
     children.push(close_button(&panel, tier, controls_icons.close));
@@ -1552,6 +1846,64 @@ mod tests {
         assert!((tier_for(panel).circle - expected).abs() < f32::EPSILON);
     }
 
+    /// The track's ends are the floor and full brightness, so a thumb at
+    /// either end is at a reachable value and no stretch of track is dead.
+    #[test]
+    fn the_slider_track_spans_the_floor_to_full() {
+        assert!(brightness_fraction(MIN_BRIGHTNESS).abs() < f32::EPSILON);
+        assert!((brightness_fraction(100) - 1.0).abs() < f32::EPSILON);
+        assert_eq!(brightness_from_fraction(0.0), MIN_BRIGHTNESS);
+        assert_eq!(brightness_from_fraction(1.0), 100);
+    }
+
+    #[test]
+    fn brightness_below_the_floor_reads_as_the_floor() {
+        assert!(brightness_fraction(0).abs() < f32::EPSILON);
+        assert!(brightness_fraction(5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_dragged_fraction_snaps_to_the_grid() {
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let value = brightness_from_fraction(fraction);
+            assert_eq!(
+                value % BRIGHTNESS_GRID,
+                0,
+                "{fraction} gave {value}, which is off the grid"
+            );
+        }
+        assert_eq!(brightness_from_fraction(0.5), 55);
+    }
+
+    /// Every stop the slider can produce maps back to the fraction that
+    /// produced it, so reading a value and dragging to it agree.
+    #[test]
+    fn every_stop_round_trips_through_the_fraction() {
+        let mut stop = MIN_BRIGHTNESS;
+        while stop <= 100 {
+            assert_eq!(
+                brightness_from_fraction(brightness_fraction(stop)),
+                stop,
+                "stop {stop} did not survive the round trip"
+            );
+            stop += BRIGHTNESS_GRID;
+        }
+    }
+
+    #[test]
+    fn a_fraction_past_either_end_clamps() {
+        assert_eq!(brightness_from_fraction(-0.4), MIN_BRIGHTNESS);
+        assert_eq!(brightness_from_fraction(1.7), 100);
+    }
+
+    #[test]
+    fn layout_follows_shape_then_width() {
+        assert_eq!(layout_for(&wide_panel()), Layout::Wide);
+        assert_eq!(layout_for(&narrow_panel()), Layout::Compact);
+        assert_eq!(layout_for(&small_panel()), Layout::Compact);
+        assert_eq!(layout_for(&round_panel()), Layout::Round);
+    }
+
     #[test]
     fn tier_selection_by_panel() {
         assert_circle(&wide_panel(), 112.0);
@@ -1735,6 +2087,49 @@ mod tests {
             panic!("expected full-size button fill")
         };
         assert_close(*r, 32.0, "hold button fill radius");
+    }
+
+    /// BMM101 is wide enough to caption its buttons. BMM100 is not, and the
+    /// disc spends its room on the chord-safe band.
+    #[test]
+    fn only_the_labeled_tiers_caption_their_buttons() {
+        for (panel, labeled) in [
+            (wide_panel(), true),
+            (narrow_panel(), true),
+            (small_panel(), false),
+            (round_panel(), false),
+        ] {
+            let mut texts = Vec::new();
+            collect_texts(&build_with_controls(panel, all_controls()), &mut texts);
+            assert_eq!(
+                texts.iter().any(|t| t == "Restart"),
+                labeled,
+                "{panel:?}: the restart button's own label"
+            );
+            assert_eq!(
+                texts.iter().any(|t| t == "Reconfigure Wi-Fi"),
+                labeled,
+                "{panel:?}: the WiFi button's own label"
+            );
+        }
+    }
+
+    /// Labels render verbatim, so the widest must fit its group.
+    /// A wrapped label costs a line the 320px stack cannot spare,
+    /// which is why BMM101 captions at 12pt and not at 14.
+    ///
+    /// The Deck goes unchecked: the same estimate says its 20pt label
+    /// overruns 180px, and it ships that way, so either the glyphs are
+    /// narrower than the estimate or the label wraps and nobody minds.
+    #[test]
+    fn the_widest_label_fits_a_bmm101_group() {
+        let tier = tier_for(&narrow_panel());
+        let width = line_width("Reconfigure Wi-Fi", tier.caption_size);
+        assert!(
+            width <= tier.single_w,
+            "the label needs {width} of {}",
+            tier.single_w
+        );
     }
 
     #[test]
@@ -1965,6 +2360,9 @@ mod tests {
         );
     }
 
+    /// The disc is the only layout left with a caption line. The wide one
+    /// carries the same copy in its labeled groups, and the compact one
+    /// renders bare buttons with nothing beneath them.
     #[test]
     fn caption_precedence_and_prefixes() {
         let caption_texts = |panel: Panel, controls: Controls<'_>| {
@@ -1982,7 +2380,7 @@ mod tests {
             wifi_reconfig: holding,
             ..Controls::default()
         };
-        let all_texts = caption_texts(narrow_panel(), all);
+        let all_texts = caption_texts(round_panel(), all);
         assert!(
             all_texts.iter().any(|t| t == "Restart: Keep holding…"),
             "restart beats the wifi caption"
@@ -1999,7 +2397,7 @@ mod tests {
             ..Controls::default()
         };
         assert!(
-            caption_texts(narrow_panel(), wifi_only)
+            caption_texts(round_panel(), wifi_only)
                 .iter()
                 .any(|t| t == "Reconfigure Wi-Fi: Keep holding…"),
             "reconfigure surfaces its own caption when it is the only hold"
@@ -2013,10 +2411,10 @@ mod tests {
             ..Controls::default()
         };
         assert!(
-            caption_texts(narrow_panel(), night)
+            caption_texts(round_panel(), night)
                 .iter()
                 .any(|t| t == "Night mode on until 22:00"),
-            "compact tiers surface the night end time on the caption line"
+            "the round layout surfaces the night end time on the caption line"
         );
         assert!(
             !caption_texts(wide_panel(), night)
@@ -2083,11 +2481,11 @@ mod tests {
         );
         let top_h: f32 = top_kids
             .iter()
-            .map(|k| expected_flow_height(k, tier, setup))
+            .map(|k| expected_flow_height(k, tier, Layout::Wide, setup))
             .sum();
         let bottom_h: f32 = bottom_kids
             .iter()
-            .map(|k| expected_flow_height(k, tier, setup))
+            .map(|k| expected_flow_height(k, tier, Layout::Wide, setup))
             .sum();
         assert!(
             top_h <= panel_h / 2.0 + 1e-3,
@@ -2126,7 +2524,7 @@ mod tests {
     /// same `Tier` fields the builders use so the test cannot drift from the
     /// layout silently. The flex filler reports 0 (its worst case).
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
-    fn expected_flow_height(node: &TreeNode, tier: Tier, setup: bool) -> f32 {
+    fn expected_flow_height(node: &TreeNode, tier: Tier, layout: Layout, setup: bool) -> f32 {
         if let TreeNode::Column(props, kids) = node
             && kids.is_empty()
         {
@@ -2143,17 +2541,17 @@ mod tests {
         let has_pair = keys.iter().any(|k| PAIR_KEYS.contains(&k.as_str()));
         let has_single = keys.iter().any(|k| SINGLE_KEYS.contains(&k.as_str()));
         if has_pair || has_single {
-            let value_gap = if tier.large_text { 8.0 } else { 2.0 };
+            let value_gap = if tier.labeled { 8.0 } else { 2.0 };
             let pair_h = tier.circle
                 + value_gap
                 + tier.value_size as f32 * LINE_H
-                + if tier.large_text {
+                + if tier.labeled {
                     tier.caption_size as f32 * LINE_H
                 } else {
                     0.0
                 };
             let single_h = tier.circle
-                + if tier.large_text {
+                + if tier.labeled {
                     8.0 + 2.0 * tier.caption_size as f32 * LINE_H
                 } else {
                     0.0
@@ -2166,7 +2564,7 @@ mod tests {
             };
         }
         if has_unkeyed_canvas(node) {
-            return if tier.large_text {
+            return if layout == Layout::Wide {
                 wide_info_height(tier, setup)
             } else {
                 tier.wifi_icon_size.max(tier.wifi_text_size as f32 * LINE_H)
@@ -2205,7 +2603,7 @@ mod tests {
                 let close_bottom = close_origin(&panel, tier).1 + CLOSE_TARGET;
                 #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
                 let panel_h = panel.height as f32;
-                if tier.large_text {
+                if layout_for(&panel) == Layout::Wide {
                     assert_wide_halves(&panel, tier, setup, kids, close_bottom, panel_h);
                     continue;
                 }
@@ -2220,9 +2618,10 @@ mod tests {
                         seen_controls = true;
                     }
                     if !seen_controls {
-                        before_controls += expected_flow_height(kid, tier, setup);
+                        before_controls +=
+                            expected_flow_height(kid, tier, layout_for(&panel), setup);
                     }
-                    total += expected_flow_height(kid, tier, setup);
+                    total += expected_flow_height(kid, tier, layout_for(&panel), setup);
                 }
                 assert!(seen_controls, "{panel:?}: control rows must render");
                 assert!(
@@ -2239,8 +2638,11 @@ mod tests {
         }
     }
 
+    /// The rectangular layouts print a QR beside the address.
+    /// The disc has no room for one, and none of them renders a QR
+    /// without an IP to encode.
     #[test]
-    fn qr_encodes_the_ip_url_only_on_the_wide_tier() {
+    fn qr_encodes_the_ip_url_on_the_rectangular_layouts() {
         for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
             for ip in [Some("10.0.0.2"), None] {
                 let tree = build_tree(
@@ -2256,20 +2658,22 @@ mod tests {
                 );
                 let mut qrs = Vec::new();
                 qr_texts(&tree, &mut qrs);
-                let wide =
-                    matches!(panel.shape, DisplayShape::Rectangular) && tier_for(&panel).large_text;
-                let expected: Vec<String> = if wide {
-                    ip.map(|ip| format!("http://{ip}")).into_iter().collect()
-                } else {
-                    Vec::new()
+                let expected: Vec<String> = match layout_for(&panel) {
+                    Layout::Wide | Layout::Compact => {
+                        ip.map(|ip| format!("http://{ip}")).into_iter().collect()
+                    }
+                    Layout::Round => Vec::new(),
                 };
                 assert_eq!(qrs, expected, "{panel:?} ip={ip:?}");
             }
         }
     }
 
+    /// Every layout shows the address, falling back to `---`.
+    /// The disc is the only one that drops the hostname; the other two
+    /// have room to label both.
     #[test]
-    fn compact_panels_head_with_the_ip_instead_of_the_hostname() {
+    fn every_layout_shows_the_address_and_only_the_disc_drops_the_hostname() {
         for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
             for ip in [Some("10.0.0.2"), Some("255.255.255.255"), None] {
                 let tree = build_tree(
@@ -2285,26 +2689,16 @@ mod tests {
                 );
                 let mut texts = Vec::new();
                 collect_texts(&tree, &mut texts);
-                let address = ip.unwrap_or("---");
-                let large = tier_for(&panel).large_text;
+                let address = ip.unwrap_or(NO_DATA_PLACEHOLDER);
 
-                if large {
-                    assert!(
-                        texts.iter().any(|t| t == address),
-                        "{panel:?} ip={ip:?}: the wide header must carry the address"
-                    );
-                } else {
-                    assert_eq!(
-                        texts.first().map(String::as_str),
-                        Some(address),
-                        "{panel:?} ip={ip:?}: the address is the panel's first line — \
-                         anywhere else and it is something the user has to hunt for"
-                    );
-                }
+                assert!(
+                    texts.iter().any(|t| t == address),
+                    "{panel:?} ip={ip:?}: the address must render somewhere"
+                );
                 assert_eq!(
                     texts.iter().any(|t| t == "braiins-deck"),
-                    large,
-                    "{panel:?} ip={ip:?}: only the wide tier has the room to keep \
+                    layout_for(&panel) != Layout::Round,
+                    "{panel:?} ip={ip:?}: only the disc is too tight to keep \
                      the hostname alongside the address"
                 );
             }
@@ -2569,7 +2963,7 @@ mod tests {
                 ControlIcons::default(),
                 Controls::default(),
             );
-            let large = tier_for(&panel).large_text;
+            let large = layout_for(&panel) == Layout::Wide;
 
             let ssid_style = style_of(&tree, &ssid)
                 .unwrap_or_else(|| panic!("{panel:?}: the SSID must reach the tree whole"));
