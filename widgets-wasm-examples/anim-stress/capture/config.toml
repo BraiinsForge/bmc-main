@@ -1,0 +1,6 @@
+# Capture renders into a cleared target and never scissors to damage,
+# so this pins the layered scene's picture, not its damage contract;
+# the frame-pass tests in bmc-render cover that.
+[fixtures.bmc100-full-layered]
+path = "fixtures/bmc100-full-layered.jsonl.gz"
+target = "bmc100:full"

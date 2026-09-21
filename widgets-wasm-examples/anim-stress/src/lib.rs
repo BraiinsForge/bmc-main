@@ -18,23 +18,38 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Dynamic-heavy render benchmark: every pixel changes every frame.
+//! Dynamic-heavy render benchmark, in two scenes picked by the `scene` param.
 //!
+//! **Full surface** (the default): every pixel changes every frame.
 //! The shipped widgets animate a small share of their surface, which overstates
 //! what a renderer optimisation depending on *unchanged* content — static-layer
-//! caching, damage scissoring — is worth in general. This widget is the opposite
+//! caching, damage scissoring — is worth in general. This scene is the opposite
 //! bound: bands tile the surface and every one animates its colour, so the
 //! partition classifies all of it dynamic and no damage rectangle is smaller
 //! than the whole surface.
 //!
-//! Colours animate **host-side**, so a frame costs layout plus draw plus GPU
-//! with no interpreter time. `BAND_COUNT` is small for the same reason: the
-//! point is area repainted, not draw-call count, which `stress-test` covers.
+//! **Layered**: static content over, and beside, an animated strip;
+//! see `layered.rs`.
+//!
+//! Colours animate **host-side**, so the host keeps producing frames on its own.
+//! The `frames` param picks the pipeline those frames take:
+//! `guest` re-runs the guest every frame to rebuild the tree,
+//! `host` replays the cached tree scissored to damage, with no interpreter time.
+//! `BAND_COUNT` is small because the point is area repainted,
+//! not draw-call count, which `stress-test` covers.
+
+// Generated from `manifest.json` by `bmc-widget-codegen`; regenerate
+// via `just wasm::gen anim-stress` after editing the manifest.
+mod manifest_params;
+
+mod layered;
 
 use bmc_wasm_sdk::{
     AnimProperty, Color, Draw, Easing, LoopMode, WidgetSize, canvas, props, render_ui,
     request_frame_after, widget_size,
 };
+
+use manifest_params::{Frames, Params, Scene};
 
 /// Bands tiling the surface. Enough that no single one dominates a damage
 /// rectangle, few enough that draw-command recording stays negligible against
@@ -63,17 +78,33 @@ pub extern "C" fn render(_delta_ms: u32) {
         reason = "surface dimensions are well under f32 precision"
     )]
     let (fw, fh) = (w as f32, h as f32);
+
+    let params = Params::current();
+    let tree = match params.scene {
+        Scene::Full => canvas(props!(width: fw, height: fh), bands(fw, fh, BAND_COUNT)),
+        Scene::Layered => layered::tree(fw, fh),
+    };
+    let _ = render_ui(w, h, tree);
+
+    // Forces a guest run on every frame,
+    // where the host would otherwise replay the cached tree while its animations run.
+    if params.frames == Frames::Guest {
+        request_frame_after(1);
+    }
+}
+
+/// `count` colour-animating bands tiling a `w` by `h` box.
+fn bands(w: f32, h: f32, count: usize) -> Vec<Draw> {
     #[expect(
         clippy::cast_precision_loss,
         reason = "band count is small and exact in f32"
     )]
-    let band_h = fh / BAND_COUNT as f32;
-
-    let draws: Vec<Draw> = (0..BAND_COUNT)
+    let band_h = h / count as f32;
+    (0..count)
         .map(|i| {
             #[expect(
                 clippy::cast_precision_loss,
-                reason = "band index is bounded by BAND_COUNT"
+                reason = "band index is bounded by the band count"
             )]
             let y = i as f32 * band_h;
             // Staggered so the surface never settles on one flat colour, where
@@ -82,8 +113,8 @@ pub extern "C" fn render(_delta_ms: u32) {
                 clippy::cast_possible_truncation,
                 reason = "the product stays below u16::MAX for a 2 s cycle"
             )]
-            let delay_ms = (CYCLE_MS as usize * i / BAND_COUNT) as u16;
-            Draw::rect(0.0, y, fw, band_h, BAND_FROM).animate_delayed(
+            let delay_ms = (CYCLE_MS as usize * i / count) as u16;
+            Draw::rect(0.0, y, w, band_h, BAND_FROM).animate_delayed(
                 AnimProperty::Color,
                 f32::from_bits(BAND_FROM.to_u32()),
                 f32::from_bits(BAND_TO.to_u32()),
@@ -93,10 +124,5 @@ pub extern "C" fn render(_delta_ms: u32) {
                 LoopMode::PingPong,
             )
         })
-        .collect();
-
-    let _ = render_ui(w, h, canvas(props!(width: fw, height: fh), draws));
-
-    // Host-side animation still needs the host to keep producing frames.
-    request_frame_after(1);
+        .collect()
 }

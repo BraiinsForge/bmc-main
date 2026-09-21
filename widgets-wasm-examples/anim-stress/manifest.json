@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "name": "Anim Stress",
   "subname": "Benchmark",
-  "description": "Repaints the whole surface every frame; benchmark for dynamic-heavy render cost",
+  "description": "Repaints the whole surface every frame, or static content over an animation; benchmark for dynamic-heavy render cost and paint-order banding",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
@@ -15,12 +15,41 @@
   "settings": [],
   "supported_viewports": [
     {
-      "type": "rectangular",
-      "min_width": 317,
-      "max_width": 1280,
-      "min_height": 238,
-      "max_height": 480
+      "type": "rectangular"
     }
   ],
-  "params": {}
+  "params": {
+    "scene": {
+      "name": "Scene",
+      "description": "What the benchmark paints: the whole surface animating, or static content over and beside an animated strip",
+      "type": "string",
+      "default_value": "full",
+      "enum_values": [
+        {
+          "value": "full",
+          "label": "Full surface"
+        },
+        {
+          "value": "layered",
+          "label": "Layered"
+        }
+      ]
+    },
+    "frames": {
+      "name": "Frames",
+      "description": "Who drives the frames: the guest, re-run every frame to rebuild its tree, or the host, replaying the cached tree while its animations run",
+      "type": "string",
+      "default_value": "guest",
+      "enum_values": [
+        {
+          "value": "guest",
+          "label": "Guest"
+        },
+        {
+          "value": "host",
+          "label": "Host"
+        }
+      ]
+    }
+  }
 }
