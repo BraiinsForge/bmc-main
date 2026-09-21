@@ -8,17 +8,19 @@
     to overlay clients
   </copyright>
 
-  <interface name="deck_platform_v1" version="1">
+  <interface name="deck_platform_v1" version="2">
     <description summary="Deck platform capability feed">
       Tells a client what the hardware it runs on can do,
       so an overlay can decide which of its functions to run
-      without reading the product name itself.
-      The set is fixed for the compositor's lifetime: it is derived from
+      without reading the product name itself,
+      and what the product is called, so a screen can address the user
+      with the name on the box.
+      Both are fixed for the compositor's lifetime: they are derived from
       the hardware profile the compositor was started with,
       the same source bmc reports over gRPC.
 
-      The interface is event-only. Capabilities describe the board,
-      not anything a client could change,
+      The interface is event-only. Capabilities and the product name
+      describe the board, not anything a client could change,
       so there is no request beyond the destructor.
     </description>
 
@@ -44,6 +46,18 @@
         and static for the compositor's lifetime.
       </description>
       <arg name="capabilities" type="uint" enum="capability" summary="bitfield of capability"/>
+    </event>
+
+    <event name="product_name" since="2">
+      <description summary="the product's display name">
+        The marketing name of the product the board ships as
+        ("Braiins Deck", "Braiins Mini Miner"), for copy that addresses
+        the user by it. It is a label, not an identifier: a client gates
+        behaviour on the capabilities event, never on this string.
+        Emitted exactly once per resource, right after capabilities,
+        and static for the compositor's lifetime.
+      </description>
+      <arg name="name" type="string" summary="product display name"/>
     </event>
   </interface>
 </protocol>

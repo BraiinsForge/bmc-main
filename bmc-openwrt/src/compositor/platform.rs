@@ -20,16 +20,20 @@
 
 //! Server state and dispatch for the `deck_platform_v1` protocol.
 //!
-//! The capability set is fixed at compositor start and sent once per bind,
-//! so there is nothing to replay later and no resource list to keep.
+//! The capability set and the product name are fixed at compositor start
+//! and sent once per bind, so there is nothing to replay later
+//! and no resource list to keep.
 
 use ::deck_platform_v1::server::deck_platform_v1::{self, Capability, DeckPlatformV1};
-use bmc_platform::HardwareCapabilities;
+use bmc_platform::{HardwareCapabilities, HardwareProfile};
 use smithay::reexports::wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
 use super::state::CompositorState;
+
+const VERSION: u32 = 2;
+const PRODUCT_NAME_SINCE: u32 = 2;
 
 /// The wire bitfield for a hardware profile's capability set.
 #[must_use]
@@ -42,17 +46,19 @@ pub fn caps_wire(caps: HardwareCapabilities) -> Capability {
     wire
 }
 
-/// The capability set every `deck_platform_v1` bind is told.
+/// What every `deck_platform_v1` bind is told.
 #[derive(Debug, Clone, Copy)]
 pub struct PlatformState {
     pub caps: Capability,
+    pub product_name: &'static str,
 }
 
 impl PlatformState {
     #[must_use]
-    pub fn new(caps: HardwareCapabilities) -> Self {
+    pub fn new(profile: &HardwareProfile) -> Self {
         Self {
-            caps: caps_wire(caps),
+            caps: caps_wire(profile.capabilities()),
+            product_name: profile.product.display_name(),
         }
     }
 }
@@ -68,6 +74,9 @@ impl GlobalDispatch<DeckPlatformV1, ()> for CompositorState {
     ) {
         let resource = data_init.init(resource, ());
         resource.capabilities(state.platform.caps);
+        if resource.version() >= PRODUCT_NAME_SINCE {
+            resource.product_name(state.platform.product_name.to_owned());
+        }
     }
 }
 
@@ -90,7 +99,7 @@ impl Dispatch<DeckPlatformV1, ()> for CompositorState {
 
 /// Advertise the `deck_platform_v1` global.
 pub fn create_global(display: &DisplayHandle) {
-    display.create_global::<CompositorState, DeckPlatformV1, ()>(1, ());
+    display.create_global::<CompositorState, DeckPlatformV1, ()>(VERSION, ());
 }
 
 #[cfg(test)]
@@ -124,7 +133,8 @@ mod tests {
 
 /// Drives a real in-process Wayland client/server handshake
 /// so the bind is checked as a client sees it:
-/// the capability event arrives, and carries the profile's bits.
+/// the capability event arrives and carries the profile's bits,
+/// and a v2 bind is told the product name after it.
 #[cfg(test)]
 mod bind_wire_test {
     use std::os::unix::net::UnixStream;
@@ -140,8 +150,11 @@ mod bind_wire_test {
 
     #[derive(Default)]
     struct TestClient {
+        /// Interface version to bind; 1 plays an older client.
+        bind_version: u32,
         platform: Option<client_api::DeckPlatformV1>,
         seen: Vec<u32>,
+        product_name: Option<String>,
     }
 
     impl Dispatch<wl_registry::WlRegistry, ()> for TestClient {
@@ -162,7 +175,7 @@ mod bind_wire_test {
             {
                 state.platform = Some(registry.bind::<client_api::DeckPlatformV1, _, _>(
                     name,
-                    version.min(1),
+                    version.min(state.bind_version),
                     qh,
                     (),
                 ));
@@ -186,6 +199,12 @@ mod bind_wire_test {
                         WEnum::Unknown(raw) => raw,
                     });
                 }
+                client_api::Event::ProductName { name } => {
+                    assert!(
+                        state.product_name.replace(name).is_none(),
+                        "BUG: product_name must arrive once per bind"
+                    );
+                }
                 other => panic!("BUG: unexpected deck_platform_v1 event {other:?}"),
             }
         }
@@ -207,7 +226,7 @@ mod bind_wire_test {
         (display, compositor)
     }
 
-    fn bind_and_collect(product: Product) -> Vec<u32> {
+    fn bind_and_collect(product: Product, bind_version: u32) -> TestClient {
         let (mut display, mut compositor) = compositor(product);
         let (server_stream, client_stream) =
             UnixStream::pair().expect("BUG: unix socket pair should be creatable");
@@ -220,7 +239,10 @@ mod bind_wire_test {
             .expect("BUG: test client socket should form a valid connection");
         let mut queue: EventQueue<TestClient> = conn.new_event_queue();
         let qh = queue.handle();
-        let mut client = TestClient::default();
+        let mut client = TestClient {
+            bind_version,
+            ..TestClient::default()
+        };
 
         conn.display().get_registry(&qh, ());
         pump(
@@ -234,7 +256,7 @@ mod bind_wire_test {
             client.platform.is_some(),
             "BUG: deck_platform_v1 global should have been advertised"
         );
-        // The bind itself, then the one event the server answers it with.
+        // The bind itself, then the events the server answers it with.
         pump(
             &mut display,
             &mut compositor,
@@ -243,7 +265,7 @@ mod bind_wire_test {
             &mut client,
         );
 
-        client.seen
+        client
     }
 
     fn pump(
@@ -268,7 +290,7 @@ mod bind_wire_test {
 
     #[test]
     fn a_bind_on_a_miner_is_told_it_mines() {
-        let seen = bind_and_collect(Product::Bmm101);
+        let seen = bind_and_collect(Product::Bmm101, 2).seen;
         assert_eq!(seen.len(), 1, "exactly one capabilities event: {seen:?}");
         let caps = Capability::from_bits_truncate(seen[0]);
         assert!(caps.contains(Capability::Mining));
@@ -277,10 +299,29 @@ mod bind_wire_test {
 
     #[test]
     fn a_bind_on_a_deck_is_not_told_it_mines() {
-        let seen = bind_and_collect(Product::Bmc100);
+        let seen = bind_and_collect(Product::Bmc100, 2).seen;
         assert_eq!(seen.len(), 1, "exactly one capabilities event: {seen:?}");
         let caps = Capability::from_bits_truncate(seen[0]);
         assert!(!caps.contains(Capability::Mining));
         assert!(caps.contains(Capability::Wifi));
+    }
+
+    #[test]
+    fn a_v2_bind_is_told_the_product_name() {
+        assert_eq!(
+            bind_and_collect(Product::Bmm101, 2).product_name.as_deref(),
+            Some("Braiins Mini Miner")
+        );
+        assert_eq!(
+            bind_and_collect(Product::Bmc100, 2).product_name.as_deref(),
+            Some("Braiins Deck")
+        );
+    }
+
+    #[test]
+    fn a_v1_bind_is_not_sent_the_product_name() {
+        let client = bind_and_collect(Product::Bmm101, 1);
+        assert_eq!(client.seen.len(), 1);
+        assert_eq!(client.product_name, None);
     }
 }

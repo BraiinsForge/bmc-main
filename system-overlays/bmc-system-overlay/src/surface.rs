@@ -157,8 +157,10 @@ struct State {
     /// (its `SystemOverlay::uses_platform`).
     wants_platform: bool,
     platform: Option<DeckPlatformV1>,
-    /// Set on the `capabilities` event, the one event the bind answers with.
+    /// Set on the `capabilities` event, the first event the bind answers with.
     pending_platform_caps: Option<crate::overlay::PlatformCaps>,
+    /// Set on the `product_name` event a v2 compositor sends after `capabilities`.
+    pending_platform_product_name: Option<String>,
 
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
@@ -227,6 +229,7 @@ impl Default for State {
             wants_platform: false,
             platform: None,
             pending_platform_caps: None,
+            pending_platform_product_name: None,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -770,8 +773,11 @@ impl LayerSurfaceClient {
         std::mem::take(&mut self.state.pending_report_ip)
     }
 
-    pub fn take_platform_caps(&mut self) -> Option<crate::overlay::PlatformCaps> {
-        self.state.pending_platform_caps.take()
+    pub(crate) fn take_platform_events(&mut self) -> crate::overlay::PlatformEvents {
+        crate::overlay::PlatformEvents {
+            caps: self.state.pending_platform_caps.take(),
+            product_name: self.state.pending_platform_product_name.take(),
+        }
     }
 
     pub fn send_settings_request(
@@ -947,7 +953,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "deck_platform_v1" if state.wants_platform => {
                     let platform =
-                        registry.bind::<DeckPlatformV1, _, _>(name, version.min(1), qh, ());
+                        registry.bind::<DeckPlatformV1, _, _>(name, version.min(2), qh, ());
                     state.platform = Some(platform);
                 }
                 _ => {}
@@ -1087,6 +1093,9 @@ impl Dispatch<DeckPlatformV1, ()> for State {
                     mining: caps.contains(PlatformCapability::Mining),
                     boser_managed: caps.contains(PlatformCapability::BoserManaged),
                 });
+            }
+            deck_platform_v1::Event::ProductName { name } => {
+                state.pending_platform_product_name = Some(name);
             }
             other => tracing::debug!(?other, "unhandled deck_platform_v1 event"),
         }

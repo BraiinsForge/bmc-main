@@ -435,7 +435,7 @@ impl CompositorState {
             alarm: crate::compositor::alarm::AlarmState::default(),
             upgrade: crate::compositor::upgrade::UpgradeState::default(),
             device_info: crate::compositor::device_info::DeviceInfoState::default(),
-            platform: crate::compositor::platform::PlatformState::new(hardware_capabilities),
+            platform: crate::compositor::platform::PlatformState::new(profile),
             seat_state,
             data_device_state,
             deck_widget_state,

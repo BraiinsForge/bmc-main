@@ -455,9 +455,9 @@ pub trait SystemOverlay {
     /// on screen. Delivered before `tick`, never replayed on bind.
     fn on_report_ip(&mut self) {}
 
-    /// Whether this overlay binds the `deck_platform_v1` capability feed.
+    /// Whether this overlay binds the `deck_platform_v1` feed.
     /// `false` (default) means the framework neither binds it nor delivers
-    /// platform capabilities to this overlay.
+    /// platform capabilities or the product name to this overlay.
     fn uses_platform(&self) -> bool {
         false
     }
@@ -466,6 +466,14 @@ pub trait SystemOverlay {
     /// once, before the first `tick` that follows the bind; the set never
     /// changes for the compositor's lifetime. Default: no-op.
     fn on_platform_capabilities(&mut self, _caps: PlatformCaps) {}
+
+    /// The product's display name ("Braiins Deck", "Braiins Mini Miner"),
+    /// for copy that addresses the user by it.
+    /// Delivered once, right after the capabilities and before the first `tick`
+    /// that follows the bind; a v1 compositor never sends it.
+    /// A label, never a gate: branch on [`Self::on_platform_capabilities`] instead.
+    /// Default: no-op.
+    fn on_platform_product_name(&mut self, _name: &str) {}
 
     /// Opt in to screen-edge reveal. `None` (default) means a normal overlay
     /// whose visibility is driven by [`TickOutcome::visible`]. `Some(edge)` arms
@@ -583,16 +591,25 @@ pub trait SystemOverlay {
     fn on_frame_submitted(&mut self, _now: Instant) {}
 }
 
-/// Hand a received capability set to an overlay that asked for it. Runs before
-/// its `tick`, so the set is in place before the overlay decides anything on it.
-pub(crate) fn deliver_platform_capabilities(
-    overlay: &mut dyn SystemOverlay,
-    caps: Option<PlatformCaps>,
-) {
-    if overlay.uses_platform()
-        && let Some(caps) = caps
-    {
+/// The `deck_platform_v1` events received since the last dispatch round.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PlatformEvents {
+    pub caps: Option<PlatformCaps>,
+    pub product_name: Option<String>,
+}
+
+/// Hand the received platform events to an overlay that asked for them.
+/// Runs before every other protocol's events and before `tick`,
+/// so the set is in place before the overlay decides anything on it.
+pub(crate) fn deliver_platform_events(overlay: &mut dyn SystemOverlay, events: PlatformEvents) {
+    if !overlay.uses_platform() {
+        return;
+    }
+    if let Some(caps) = events.caps {
         overlay.on_platform_capabilities(caps);
+    }
+    if let Some(name) = events.product_name {
+        overlay.on_platform_product_name(&name);
     }
 }
 
@@ -702,6 +719,7 @@ mod tests {
     struct RecordingPlatformOverlay {
         enabled: bool,
         caps: Option<PlatformCaps>,
+        product_name: Option<String>,
     }
 
     impl SystemOverlay for RecordingPlatformOverlay {
@@ -722,6 +740,10 @@ mod tests {
         fn on_platform_capabilities(&mut self, caps: PlatformCaps) {
             self.caps = Some(caps);
         }
+
+        fn on_platform_product_name(&mut self, name: &str) {
+            self.product_name = Some(name.to_owned());
+        }
     }
 
     const MINER_CAPS: PlatformCaps = PlatformCaps {
@@ -731,21 +753,30 @@ mod tests {
         boser_managed: true,
     };
 
-    #[test]
-    fn platform_capabilities_reach_an_opted_in_overlay() {
-        let mut overlay = RecordingPlatformOverlay {
-            enabled: true,
-            caps: None,
-        };
-        deliver_platform_capabilities(&mut overlay, Some(MINER_CAPS));
-        assert_eq!(overlay.caps, Some(MINER_CAPS));
+    fn miner_events() -> PlatformEvents {
+        PlatformEvents {
+            caps: Some(MINER_CAPS),
+            product_name: Some("Braiins Mini Miner".to_owned()),
+        }
     }
 
     #[test]
-    fn platform_capabilities_skip_an_opted_out_overlay() {
+    fn platform_events_reach_an_opted_in_overlay() {
+        let mut overlay = RecordingPlatformOverlay {
+            enabled: true,
+            ..RecordingPlatformOverlay::default()
+        };
+        deliver_platform_events(&mut overlay, miner_events());
+        assert_eq!(overlay.caps, Some(MINER_CAPS));
+        assert_eq!(overlay.product_name.as_deref(), Some("Braiins Mini Miner"));
+    }
+
+    #[test]
+    fn platform_events_skip_an_opted_out_overlay() {
         let mut overlay = RecordingPlatformOverlay::default();
-        deliver_platform_capabilities(&mut overlay, Some(MINER_CAPS));
+        deliver_platform_events(&mut overlay, miner_events());
         assert_eq!(overlay.caps, None);
+        assert_eq!(overlay.product_name, None);
     }
 
     #[test]

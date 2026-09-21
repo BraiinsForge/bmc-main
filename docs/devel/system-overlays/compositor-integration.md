@@ -240,9 +240,10 @@ Snapshots are serialized into a `WireEvent` list bracketed by `started` / `snaps
 
 ## `deck_platform_v1` dispatch
 
-The compositor creates the `deck_platform_v1` global and answers every bind with one `capabilities` event
-(`platform.rs`). The bitfield is computed once, in `CompositorState::new`, from the `HardwareCapabilities` of the
-profile the compositor was started with — the same source `Compositor::hardware_capabilities` reports to bmc — so a
-product gains a capability in `bmc-platform` and nowhere else. There is no incoming request beyond `destroy`, no cache
-to replay and no resource list to prune: the set is static, so a bound resource is written to once and then only
-destroyed. See [`protocols.md`](protocols.md) for the bit layout.
+The compositor creates the `deck_platform_v1` global at version 2 and answers every bind with one `capabilities` event,
+followed on a v2 resource by one `product_name` event (`platform.rs`). Both are computed once, in
+`CompositorState::new`, from the profile the compositor was started with — the `HardwareCapabilities` that
+`Compositor::hardware_capabilities` also reports to bmc, and `Product::display_name` — so a product gains a capability
+or a name in `bmc-platform` and nowhere else. There is no incoming request beyond `destroy`, no cache to replay and no
+resource list to prune: nothing in it changes, so a bound resource is written to once and then only destroyed. See
+[`protocols.md`](protocols.md) for the bit layout.

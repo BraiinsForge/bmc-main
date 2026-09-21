@@ -19,8 +19,9 @@
 // the grant above.
 
 //! Vendored `deck-platform-v1.xml` Wayland protocol: the hardware platform's
-//! capability set, sent once on bind so an overlay can gate its functions on
-//! what the board supports.
+//! capability set and, from version 2, its product name, sent once on bind so
+//! an overlay can gate its functions on what the board supports and address
+//! the user by the product's name.
 
 /// Server-side protocol bindings (for the compositor).
 pub mod server {
