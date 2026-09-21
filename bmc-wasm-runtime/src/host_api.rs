@@ -1022,6 +1022,13 @@ pub(crate) struct HostState {
     /// `partition::host_layout_key`.
     pub last_static_key: Option<(u64, u64, u64)>,
 
+    /// The key of the last guest tree whose capture came out empty.
+    ///
+    /// `has_static_content` sees the tree, not where it lands,
+    /// so it keeps asking for a layer the walk then leaves empty;
+    /// a tree keyed like this one goes without instead.
+    pub empty_static_key: Option<(u64, u64, u64)>,
+
     /// How many upcoming frames must repaint in full because the export buffer
     /// they will paint does not hold what the frame before it showed.
     ///
@@ -1465,6 +1472,7 @@ impl HostState {
             recent_dynamic_rects: [Vec::new(), Vec::new()],
             static_layer_useful: true,
             last_static_key: None,
+            empty_static_key: None,
             stale_export_buffers: 0,
             cached_tree: None,
             guest_tree: GuestTree::Pending,
@@ -1689,6 +1697,14 @@ impl HostState {
     /// Account for a frame that repainted its whole target.
     pub(crate) fn painted_in_full(&mut self) {
         self.stale_export_buffers = self.stale_export_buffers.saturating_sub(1);
+    }
+
+    /// Free a layer the static pass left empty, which would only cost a blit,
+    /// and stop asking for one until the next guest frame decides again.
+    pub(crate) fn release_empty_layer(&mut self, renderer: &mut dyn Renderer) {
+        renderer.invalidate_static_layer(&self.instance_id);
+        self.last_static_key = None;
+        self.static_layer_useful = false;
     }
 }
 

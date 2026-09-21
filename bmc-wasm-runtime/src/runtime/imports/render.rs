@@ -263,7 +263,7 @@ fn submit_tree(
         let now_unix_secs = state.system_time.timestamp();
         let (static_key, static_unchanged) =
             static_layer_key(state, &tree_node, static_bytes, now_unix_secs);
-        let layered = decide_static_layer(renderer, state, &tree_node);
+        let layered = decide_static_layer(renderer, state, &tree_node, static_key);
         state.last_asset_restoration = None;
         let delta_ms = state.delta_ms;
         let frame_counter = state.frame_counter;
@@ -313,6 +313,7 @@ fn submit_tree(
         }
         match render_result {
             Ok((result, has_active)) => commit_submitted_frame(
+                renderer,
                 state,
                 SubmittedFrame {
                     tree_node,
@@ -332,8 +333,9 @@ fn submit_tree(
     })
 }
 
-/// Whether `tree_node` gets a static layer,
-/// per [`has_static_content`](bmc_render::partition::has_static_content).
+/// Whether `tree_node` gets a static layer: it must have static content,
+/// per [`has_static_content`](bmc_render::partition::has_static_content),
+/// and must not key like the last tree whose capture came out empty.
 ///
 /// A tree without one frees any earlier capture along with its key,
 /// or a later static tree hashing like it would reuse a layer that is gone.
@@ -341,8 +343,10 @@ fn decide_static_layer(
     renderer: &mut dyn Renderer,
     state: &mut HostState,
     tree_node: &bmc_render::tree::TreeNode,
+    static_key: (u64, u64, u64),
 ) -> bool {
-    let layered = bmc_render::partition::has_static_content(tree_node);
+    let layered = bmc_render::partition::has_static_content(tree_node)
+        && state.empty_static_key != Some(static_key);
     if !layered {
         renderer.invalidate_static_layer(&state.instance_id);
         state.last_static_key = None;
@@ -396,6 +400,7 @@ struct SubmittedFrame {
 
 /// Fold a rendered guest frame's results into the host state.
 fn commit_submitted_frame(
+    renderer: &mut dyn Renderer,
     state: &mut HostState,
     frame: SubmittedFrame,
     result: bmc_render::tree::TreeResult,
@@ -409,6 +414,10 @@ fn commit_submitted_frame(
     state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
     state.cached_tree = Some((frame.tree_node, frame.w, frame.h));
     state.guest_tree = crate::host_api::GuestTree::Committed;
+    if result.static_layer_empty {
+        state.release_empty_layer(renderer);
+        state.empty_static_key = Some(frame.static_key);
+    }
     // A key without a captured layer would have the next frame blit an image
     // that does not exist, and the host preserve a target on its strength.
     // An ignored frame captured none either, though its wire-byte key never
@@ -474,4 +483,88 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HostState, SubmittedFrame, commit_submitted_frame, decide_static_layer};
+    use bmc_render::renderer::test_support::ShapingRecorder;
+    use bmc_render::tree::{TreeNode, TreeResult};
+    use bmc_wasm_protocol::{Color, PropsData};
+
+    const EMPTY_KEY: (u64, u64, u64) = (1, 2, 3);
+    const OTHER_KEY: (u64, u64, u64) = (4, 5, 6);
+
+    fn state() -> HostState {
+        HostState::new(
+            crate::runtime_limits::RuntimeResourceLimits::default(),
+            chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                .expect("BUG: fixed test timestamp must parse"),
+            crate::runtime::FetchAgent::default(),
+        )
+    }
+
+    /// Static content as far as the tree can tell.
+    fn panel() -> TreeNode {
+        TreeNode::Column(
+            PropsData {
+                background: Color::from_rgb(1, 2, 3),
+                ..PropsData::default()
+            },
+            Vec::new(),
+        )
+    }
+
+    fn commit_empty_capture(renderer: &mut ShapingRecorder, state: &mut HostState) {
+        commit_submitted_frame(
+            renderer,
+            state,
+            SubmittedFrame {
+                tree_node: panel(),
+                w: 100.0,
+                h: 100.0,
+                static_key: EMPTY_KEY,
+                static_unchanged: false,
+                timings: bmc_render::FrameTimings::default(),
+                has_active: true,
+            },
+            TreeResult {
+                static_layer_empty: true,
+                ..TreeResult::default()
+            },
+        );
+    }
+
+    #[test]
+    fn an_empty_capture_stops_reusing_the_layer() {
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        commit_empty_capture(&mut renderer, &mut state);
+        assert_eq!(
+            state.last_static_key, None,
+            "a freed layer must not be blitted"
+        );
+        assert!(!state.static_layer_useful);
+    }
+
+    #[test]
+    fn a_tree_keyed_like_an_empty_capture_goes_without_a_layer() {
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        commit_empty_capture(&mut renderer, &mut state);
+        assert!(
+            !decide_static_layer(&mut renderer, &mut state, &panel(), EMPTY_KEY),
+            "the same tree would only capture an empty layer again"
+        );
+    }
+
+    #[test]
+    fn a_tree_keyed_otherwise_gets_a_layer_after_an_empty_capture() {
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        commit_empty_capture(&mut renderer, &mut state);
+        assert!(decide_static_layer(
+            &mut renderer,
+            &mut state,
+            &panel(),
+            OTHER_KEY
+        ));
+    }
 }

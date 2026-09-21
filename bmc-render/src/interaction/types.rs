@@ -115,6 +115,17 @@ impl Rect {
             && other.y < self.y + self.h
     }
 
+    /// The area the two rectangles share, if any.
+    #[must_use]
+    pub fn intersection(&self, other: Rect) -> Option<Rect> {
+        self.overlaps(other).then(|| {
+            let (x, y) = (self.x.max(other.x), self.y.max(other.y));
+            let right = (self.x + self.w).min(other.x + other.w);
+            let bottom = (self.y + self.h).min(other.y + other.h);
+            Rect::new(x, y, right - x, bottom - y)
+        })
+    }
+
     /// Grow `bounds` to include `rect`.
     pub fn union_bounds(bounds: &mut Option<Rect>, rect: Rect) {
         if let Some(bounds) = bounds {
@@ -202,3 +213,28 @@ pub trait CoalesceIterExt: Iterator<Item = Rect> + Sized {
 }
 
 impl<I: Iterator<Item = Rect>> CoalesceIterExt for I {}
+
+#[cfg(test)]
+mod tests {
+    use super::Rect;
+
+    #[test]
+    fn intersection_is_the_shared_area() {
+        let shared = Rect::new(0.0, 0.0, 10.0, 10.0)
+            .intersection(Rect::new(5.0, 2.0, 10.0, 4.0))
+            .expect("BUG: the two rects overlap");
+        assert_eq!(
+            (shared.x, shared.y, shared.w, shared.h),
+            (5.0, 2.0, 5.0, 4.0)
+        );
+    }
+
+    #[test]
+    fn rects_that_only_touch_have_no_intersection() {
+        assert!(
+            Rect::new(0.0, 0.0, 10.0, 10.0)
+                .intersection(Rect::new(10.0, 0.0, 5.0, 5.0))
+                .is_none()
+        );
+    }
+}

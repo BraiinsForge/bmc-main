@@ -123,6 +123,8 @@ required-features = ["capture"]
 
 [dev-dependencies]
 bmc-wasm-assets = { path = "../bmc-wasm-assets" }
+# A renderer for unit tests of the host's layer bookkeeping, which needs no GL.
+bmc-render = { path = "../bmc-render", features = ["test-support"] }
 # Pull the SDK parser in for the host-encoder → SDK-parser round-trip test in
 # `runtime::imports::params::tests`. The wasm32-gated externs aren't compiled
 # on native; only the parser (`Params::from_bytes`, `entries()`) is exercised.

@@ -1488,6 +1488,9 @@ impl WasmWidgetRuntime {
                     state.static_layer_useful = false;
                     state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS;
                 }
+                if result.static_layer_empty {
+                    state.release_empty_layer(renderer);
+                }
                 true
             }
             Err(e) => {

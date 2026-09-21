@@ -1776,6 +1776,79 @@ impl EmitMode {
     }
 }
 
+/// How far two boxes must overlap before a pixel can tell, in logical pixels.
+///
+/// Layout lands on whole pixels, but a fractional scroll offset does not,
+/// and boxes that merely touch can then overlap by a float step.
+const OVERLAP_SLACK: f32 = 0.01;
+
+/// The area the dynamic half has painted over so far, in paint order.
+///
+/// The cached layer composites in one go before the dynamic half.
+/// A static node the walk reaches after dynamic content can stay in the layer
+/// only while the two do not overlap; where they do,
+/// the layer paints it *underneath* the content it should cover.
+///
+/// Hence a geometric test rather than position alone, which would band out
+/// every node after the first animation — the ordinary column
+/// whose label merely follows one included.
+///
+/// One rect per node painting outside the layer, kept apart:
+/// [`Self::covers`] asks whether any of them overlaps,
+/// and merging two into their bounding box would cover pixels neither paints.
+///
+/// Rects are clipped to the enclosing scroll viewport:
+/// a node scrolled out of it paints nothing,
+/// so it neither covers what follows nor is covered.
+#[derive(Debug, Default)]
+pub(crate) struct DynamicHalf {
+    rects: Vec<Rect>,
+    clip: Option<Rect>,
+}
+
+impl DynamicHalf {
+    /// Whether anything painted so far shares pixels with `rect`.
+    fn covers(&self, rect: Rect) -> bool {
+        let inset = Rect::new(
+            rect.x + OVERLAP_SLACK,
+            rect.y + OVERLAP_SLACK,
+            rect.w - 2.0 * OVERLAP_SLACK,
+            rect.h - 2.0 * OVERLAP_SLACK,
+        );
+        self.visible(inset)
+            .is_some_and(|rect| self.rects.iter().any(|painted| painted.overlaps(rect)))
+    }
+
+    fn add(&mut self, rect: Rect) {
+        if let Some(rect) = self.visible(rect) {
+            self.rects.push(rect);
+        }
+    }
+
+    fn visible(&self, rect: Rect) -> Option<Rect> {
+        self.clip.map_or(Some(rect), |clip| clip.intersection(rect))
+    }
+
+    /// Narrow the clip to `viewport`, returning the clip to restore after.
+    fn enter_viewport(&mut self, viewport: Rect) -> Option<Rect> {
+        let outer = self.clip;
+        // A viewport clipped away entirely leaves an empty clip, which nothing overlaps.
+        self.clip = Some(
+            self.visible(viewport)
+                .unwrap_or(Rect::new(viewport.x, viewport.y, 0.0, 0.0)),
+        );
+        outer
+    }
+
+    fn leave_viewport(&mut self, outer: Option<Rect>) {
+        self.clip = outer;
+    }
+
+    fn clear(&mut self) {
+        self.rects.clear();
+    }
+}
+
 /// Mutable animation context threaded through the render pipeline.
 pub(crate) struct AnimationContext<'a> {
     /// Gates emission for static-layer caching; see [`EmitMode`].
@@ -1789,6 +1862,14 @@ pub(crate) struct AnimationContext<'a> {
     pub(crate) draw_in_canvas: u16,
     /// Monotonic counter for mesh atlas slot allocation (one per `draw_mesh` call).
     pub(crate) mesh_slot_counter: u8,
+    /// What the walk has already painted into the dynamic half, in paint order.
+    ///
+    /// The running half of a node's [`Band`]; see [`DynamicHalf`].
+    /// Both passes of a capture frame have to band identically,
+    /// so this resets with the positional counters in [`render_tree`].
+    pub(crate) dynamic_half: DynamicHalf,
+    /// Whether the static pass has painted anything into the layer.
+    pub(crate) layer_painted: bool,
     /// Set to true when any animation or transition is in progress.
     pub(crate) has_active: bool,
     /// Injected clock (unix seconds) for lazily-built subtrees.
@@ -1833,6 +1914,11 @@ pub struct TreeResult {
     /// Whether the frame asked for the static layer and did not get it, so the
     /// caller must not treat the layer as holding this frame's static half.
     pub static_layer_missed: bool,
+    /// Whether this frame captured a layer and painted nothing into it,
+    /// every static node having banded above the dynamic half.
+    /// Such a layer only costs a blit; dropping it never changes the picture,
+    /// since a frame without one paints the whole tree.
+    pub static_layer_empty: bool,
 }
 
 /// Paragraph data for measurement and rendering
@@ -2082,6 +2168,8 @@ fn layout_and_render_inner(
         canvas_index: 0,
         draw_in_canvas: 0,
         mesh_slot_counter: 0,
+        dynamic_half: DynamicHalf::default(),
+        layer_painted: false,
         has_active: false,
         now_unix_secs: ctx.now_unix_secs,
     };
@@ -2198,6 +2286,9 @@ fn render_modal_overlays(
     }
     let emit_before = anim_ctx.emit;
     anim_ctx.emit = EmitMode::All;
+    // An overlay paints over the whole frame, layer and dynamic half alike,
+    // so it starts its own paint order rather than inheriting the tree's.
+    let painted_before = std::mem::take(&mut anim_ctx.dynamic_half);
     for modal in modals {
         render_modal(
             modal,
@@ -2214,6 +2305,7 @@ fn render_modal_overlays(
         );
     }
     anim_ctx.emit = emit_before;
+    anim_ctx.dynamic_half = painted_before;
 }
 
 /// Render the tree, splitting into a static and a dynamic pass when this frame
@@ -2307,6 +2399,7 @@ fn render_tree(
             0,
         );
         renderer.end_static_layer(static_layer_key);
+        result.static_layer_empty = !anim_ctx.layer_painted;
         #[cfg(feature = "frame-timings")]
         if pass_timing {
             timings.gpu_capture_us = renderer.flush_and_fence_us();
@@ -2322,6 +2415,10 @@ fn render_tree(
         anim_ctx.emit = EmitMode::DynamicOnly;
         anim_ctx.draw_counter = 0;
         anim_ctx.canvas_index = 0;
+        // Bands are positional too: starting from what the last pass painted
+        // would band the whole tree `Above` and repaint what the layer has
+        // just supplied.
+        anim_ctx.dynamic_half.clear();
         // The mesh atlas caches per slot and skips re-rendering when a slot
         // already holds the same mesh, so a draw landing on a different slot
         // depending on frame type would re-render on every alternation.
@@ -3227,6 +3324,25 @@ pub(crate) fn compute_taffy_layout(
     Ok(())
 }
 
+/// Whether this node paints anything inside its own box, canvas draws aside.
+///
+/// The box decoration plus every host-rendered component.
+/// Canvas draws are left out: they band and damage one by one,
+/// which bounds them far more tightly than the node's box.
+fn paints_own_box(ctx: &NodeContext) -> bool {
+    crate::partition::decoration_paints(
+        ctx.bg_nine_patch.bitmap_id,
+        ctx.background,
+        ctx.border_width,
+    ) || ctx.tag.is_some()
+        || ctx.paragraph.is_some()
+        || ctx.button.is_some()
+        || ctx.progress_bar.is_some()
+        || ctx.notification.is_some()
+        || ctx.switcher.is_some()
+        || ctx.skeleton.is_some()
+}
+
 /// Paint `node_id` and its subtree at its [`TreeNode::Dimmed`] factor, if any,
 /// restoring the renderer's brightness after.
 #[expect(clippy::too_many_arguments)]
@@ -3301,13 +3417,37 @@ fn render_taffy_node_body(
     // static nodes a dynamic-only pass must not repaint, and vice versa. An
     // untagged node falls through to `true` and draws in every mode rather
     // than vanishing.
-    let emits = taffy
-        .get_node_context(node_id)
-        .is_none_or(|ctx| anim_ctx.emit.emits(ctx.self_dynamic));
+    //
+    // The gate reads a band rather than the classification alone.
+    // The walk runs in paint order, so a static node landing on pixels
+    // the dynamic half has already painted repaints with that half
+    // rather than sitting in the layer beneath them.
+    //
+    // Bands read the laid-out box, not the ink:
+    // a paragraph set tighter than its font's natural line height
+    // paints a few rows outside it (BDK-932).
+    let node_rect = Rect::new(x, y, w, h);
+    let band = taffy.get_node_context(node_id).map(|ctx| {
+        if ctx.self_dynamic {
+            Band::Dynamic
+        } else if anim_ctx.dynamic_half.covers(node_rect) {
+            Band::Above
+        } else {
+            Band::Below
+        }
+    });
+    let emits = band.is_none_or(|band| anim_ctx.emit.emits_band(band));
 
     // The index this node's canvas draws key their transition state on, read
     // before the walk below advances it.
     let canvas_index = anim_ctx.canvas_index;
+
+    if anim_ctx.emit == EmitMode::StaticOnly
+        && emits
+        && taffy.get_node_context(node_id).is_some_and(paints_own_box)
+    {
+        anim_ctx.layer_painted = true;
+    }
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
         if !emits {
@@ -3395,9 +3535,10 @@ fn render_taffy_node_body(
             // is, so the node-level gate is too coarse here. Skipping a
             // non-`Modified` draw cannot desynchronise `draw_counter`, which
             // only advances inside the `Modified` arm.
-            let bands = crate::partition::canvas_bands(&ctx.draws);
+            let bands = crate::partition::canvas_bands_after(&ctx.draws, band == Some(Band::Above));
             for (draw, band) in ctx.draws.iter().zip(bands) {
                 if anim_ctx.emit.emits_band(band) {
+                    anim_ctx.layer_painted |= anim_ctx.emit == EmitMode::StaticOnly;
                     render_draw_command(renderer, draw, x, y, w, h, anim_ctx);
                 }
                 anim_ctx.draw_in_canvas += 1;
@@ -3417,45 +3558,73 @@ fn render_taffy_node_body(
         }
     }
 
-    // Record what a damage-tracked frame would have to repaint. Leaves only:
-    // `dynamic` on a container merely says a descendant animates, so counting
-    // containers would union the whole subtree and report the root as damaged.
+    // Whatever this node paints outside the layer joins the dynamic half,
+    // so the nodes after it band against it.
+    // Its own box bounds that: a canvas's draws are scissored to it,
+    // and a container's background covers the children that follow.
+    if let Some(ctx) = taffy.get_node_context(node_id)
+        && let Some(band) = band
+        && match band {
+            Band::Dynamic => true,
+            Band::Above => paints_own_box(ctx) || !ctx.draws.is_empty(),
+            // A canvas of its own, holding at least one animating draw.
+            Band::Below => ctx.dynamic && !ctx.draws.is_empty(),
+        }
+    {
+        anim_ctx.dynamic_half.add(node_rect);
+    }
+
+    // Record what a damage-tracked frame would have to repaint.
+    // Dynamic nodes count at the leaves: `dynamic` on a container merely
+    // says some descendant animates, so counting containers would union
+    // the whole subtree and report the root as damaged.
+    // A container painting itself `Above` is the one exception,
+    // and it owes only its own box.
     //
     // After the draws above, not before: that pass advances each transition's
     // recorded span, and a rect taken beforehand describes the span the
     // previous walk interpolated, so a target the guest just moved sweeps
     // outside it.
-    if taffy.child_count(node_id) == 0
-        && let Some(ctx) = taffy.get_node_context(node_id)
-        && ctx.dynamic
+    if let Some(ctx) = taffy.get_node_context(node_id)
+        && (ctx.dynamic || band == Some(Band::Above))
     {
-        let node = Rect::new(x, y, w, h);
-        // A canvas is one leaf holding many draws, so its own rect is far
-        // coarser than what the dynamic pass repaints: `crate::damage` bounds
-        // each draw, and only one it cannot bound falls back to the whole
-        // canvas. A dynamic leaf with no draws is host-driven and repaints
-        // entirely.
-        let mut damaged = ctx.draws.is_empty().then_some(node);
-        let bands = crate::partition::canvas_bands(&ctx.draws);
-        for (draw, _) in ctx
-            .draws
-            .iter()
-            .zip(bands)
-            .filter(|(_, band)| !band.is_in_layer())
-        {
-            match crate::damage::canvas_draw_damage(
-                draw,
-                node,
-                anim_ctx.transition_states,
-                canvas_index,
-            ) {
-                crate::damage::DrawDamage::Region(rect) => {
-                    Rect::union_bounds(&mut damaged, rect);
-                }
-                crate::damage::DrawDamage::Nothing => {}
-                crate::damage::DrawDamage::WholeCanvas => {
-                    damaged = Some(node);
-                    break;
+        // An `Above` node is static but paints with the dynamic half,
+        // so it owes a rect for the same reason a dynamic one does:
+        // outside the damage set the scissor drops the repaint,
+        // and the layer blitted underneath holds no copy of it.
+        // Containers too — a background painted `Above` covers what the layer
+        // supplied beneath it.
+        let mut damaged = (band == Some(Band::Above) && paints_own_box(ctx)).then_some(node_rect);
+        if taffy.child_count(node_id) == 0 {
+            // A canvas is one leaf holding many draws,
+            // so its own rect is far coarser than what the dynamic pass repaints:
+            // `crate::damage` bounds each draw,
+            // and only one it cannot bound falls back to the whole canvas.
+            // A dynamic leaf with no draws is host-driven and repaints entirely.
+            if ctx.draws.is_empty() && ctx.dynamic {
+                damaged = Some(node_rect);
+            }
+            let bands = crate::partition::canvas_bands_after(&ctx.draws, band == Some(Band::Above));
+            for (draw, _) in ctx
+                .draws
+                .iter()
+                .zip(bands)
+                .filter(|(_, band)| !band.is_in_layer())
+            {
+                match crate::damage::canvas_draw_damage(
+                    draw,
+                    node_rect,
+                    anim_ctx.transition_states,
+                    canvas_index,
+                ) {
+                    crate::damage::DrawDamage::Region(rect) => {
+                        Rect::union_bounds(&mut damaged, rect);
+                    }
+                    crate::damage::DrawDamage::Nothing => {}
+                    crate::damage::DrawDamage::WholeCanvas => {
+                        damaged = Some(node_rect);
+                        break;
+                    }
                 }
             }
         }
@@ -3578,6 +3747,7 @@ fn render_taffy_node_body(
         let offset = state.scroll_offset;
 
         renderer.push_scissor(x, y, w, h);
+        let outer_clip = anim_ctx.dynamic_half.enter_viewport(Rect::new(x, y, w, h));
         for child_id in children {
             // Render culling: skip children entirely outside the visible viewport
             if let Ok(cl) = taffy.layout(child_id) {
@@ -3600,6 +3770,7 @@ fn render_taffy_node_body(
                 depth + 1,
             );
         }
+        anim_ctx.dynamic_half.leave_viewport(outer_clip);
         renderer.pop_scissor();
 
         // Draw scrollbar overlay (no reflow — drawn after content, outside scissor)
@@ -3743,6 +3914,38 @@ mod tests {
         }
         assert!(EmitMode::StaticOnly.emits(false));
         assert!(EmitMode::DynamicOnly.emits(true));
+    }
+
+    /// After a fractional scroll, a row's top can land a float step
+    /// above the bottom of the dynamic row before it.
+    #[test]
+    fn the_dynamic_half_ignores_an_overlap_no_pixel_shows() {
+        let mut painted = DynamicHalf::default();
+        let row = Rect::new(0.0, 10.3, 100.0, 33.0);
+        painted.add(row);
+        let bottom = row.y + row.h;
+        let next_top = f32::from_bits(bottom.to_bits() - 1);
+        assert!(
+            !painted.covers(Rect::new(0.0, next_top, 100.0, 33.0)),
+            "a row merely touching the dynamic one belongs in the layer"
+        );
+        assert!(
+            painted.covers(Rect::new(0.0, bottom - 1.0, 100.0, 33.0)),
+            "a whole pixel of overlap still bands the row above"
+        );
+    }
+
+    /// Two strips meeting in a corner have the whole surface as their bounding box,
+    /// yet neither reaches the opposite corner.
+    #[test]
+    fn the_dynamic_half_covers_only_what_was_painted() {
+        let mut painted = DynamicHalf::default();
+        painted.add(Rect::new(0.0, 0.0, 100.0, 10.0));
+        painted.add(Rect::new(0.0, 0.0, 10.0, 100.0));
+        assert!(
+            !painted.covers(Rect::new(80.0, 80.0, 10.0, 10.0)),
+            "a node clear of both strips belongs in the layer"
+        );
     }
 
     /// The tag must survive the trip into `NodeContext`, which is all the
@@ -4994,6 +5197,34 @@ mod frame_pass_tests {
             .expect("BUG: layout_and_render must succeed for the dynamic pass");
     }
 
+    /// One walk in `emit` with no layer of its own:
+    /// a capture frame's two halves, run singly so a test can read them apart.
+    fn render_pass(
+        state: &mut SlotState,
+        renderer: &mut KeyRecordingRenderer,
+        tree: &TreeNode,
+        emit: super::EmitMode,
+    ) {
+        let mut ctx = ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter: 1,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit,
+            static_layer: LayerUse::Ignore,
+            static_layer_key: "band-test",
+            damage_rects: &[],
+        };
+        let mut timings = FrameTimings::default();
+        layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
+            .expect("BUG: layout_and_render must succeed for a banded tree");
+    }
+
     fn render_once(
         state: &mut SlotState,
         renderer: &mut KeyRecordingRenderer,
@@ -5489,6 +5720,464 @@ mod frame_pass_tests {
             result.static_layer_missed,
             "a failed blit must report the miss, or the host keeps reusing the layer \
              and never repaints the other export buffers",
+        );
+    }
+
+    /// Size of the trailing static rect, unlike anything else the tree paints
+    /// so the draw log identifies it.
+    const STATIC_RECT: f32 = 37.0;
+
+    fn sized_canvas(props: PropsData, draws: Vec<super::DrawCommand>) -> TreeNode {
+        TreeNode::Canvas {
+            props: PropsData {
+                width: 100.0,
+                height: 50.0,
+                ..props
+            },
+            touch_key: None,
+            draws,
+        }
+    }
+
+    fn static_draws() -> Vec<super::DrawCommand> {
+        vec![super::DrawCommand::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: STATIC_RECT,
+            h: STATIC_RECT,
+            fill: Fill::Solid(Color::from_rgb(1, 2, 3)),
+        }]
+    }
+
+    fn animated_draws() -> Vec<super::DrawCommand> {
+        let TreeNode::Canvas { draws, .. } = moving_dot(10.0) else {
+            unreachable!("BUG: `moving_dot` builds a canvas")
+        };
+        draws
+    }
+
+    /// A static canvas pinned over the animated one below it.
+    fn static_over_dynamic() -> TreeNode {
+        let over = PropsData {
+            inset_top: 0.0,
+            inset_left: 0.0,
+            ..PropsData::default()
+        };
+        TreeNode::Column(
+            PropsData::default(),
+            vec![
+                sized_canvas(PropsData::default(), animated_draws()),
+                sized_canvas(over, static_draws()),
+            ],
+        )
+    }
+
+    /// The same two canvases as flex siblings, which never overlap.
+    fn static_beside_dynamic() -> TreeNode {
+        TreeNode::Column(
+            PropsData::default(),
+            vec![
+                sized_canvas(PropsData::default(), animated_draws()),
+                sized_canvas(PropsData::default(), static_draws()),
+            ],
+        )
+    }
+
+    fn painted_static_rect(renderer: &KeyRecordingRenderer) -> bool {
+        renderer
+            .draws
+            .iter()
+            .any(|r| (r.w - STATIC_RECT).abs() < f32::EPSILON)
+    }
+
+    /// The layer composites in one go before the dynamic half, so static
+    /// content painted over pixels the dynamic half owns repaints with that
+    /// half: in the layer it would land underneath what it should cover.
+    #[test]
+    fn a_static_node_over_a_dynamic_one_paints_with_the_dynamic_half() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        render_pass(
+            &mut state,
+            &mut renderer,
+            &static_over_dynamic(),
+            super::EmitMode::StaticOnly,
+        );
+        assert!(
+            !painted_static_rect(&renderer),
+            "a static draw over a dynamic node must stay out of the cached layer"
+        );
+
+        renderer.draws.clear();
+        render_pass(
+            &mut state,
+            &mut renderer,
+            &static_over_dynamic(),
+            super::EmitMode::DynamicOnly,
+        );
+        assert!(
+            painted_static_rect(&renderer),
+            "the pass that skipped it in the layer must paint it over the dynamic half"
+        );
+    }
+
+    /// Paint order is only observable where the two overlap.
+    /// Banding a node `Above` for following an animation it never touches
+    /// would cost the commonest layout in the fleet its layer,
+    /// and damage the whole of it every frame.
+    #[test]
+    fn a_static_node_beside_a_dynamic_one_stays_in_the_layer() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        render_pass(
+            &mut state,
+            &mut renderer,
+            &static_beside_dynamic(),
+            super::EmitMode::StaticOnly,
+        );
+        assert!(
+            painted_static_rect(&renderer),
+            "a static draw that overlaps nothing dynamic belongs in the layer"
+        );
+
+        renderer.draws.clear();
+        let result = render_once(&mut state, &mut renderer, &static_beside_dynamic());
+        assert!(
+            !result
+                .dynamic_rects
+                .iter()
+                .any(|r| r.y >= 50.0 && r.h > 0.0),
+            "nothing in the static half owes damage, got {:?}",
+            result.dynamic_rects
+        );
+    }
+
+    /// A bordered or nine-patch container over the animation owes its box
+    /// just as a filled one does, though only the fill shows in the fill log.
+    #[test]
+    fn a_bordered_or_nine_patch_container_over_a_dynamic_one_damages_its_box() {
+        let panel_box = crate::interaction::Rect::new(0.0, 0.0, 60.0, 30.0);
+        let decorations = [
+            (
+                "border",
+                PropsData {
+                    border_width: 2.0,
+                    border_color: PANEL,
+                    ..PropsData::default()
+                },
+            ),
+            (
+                "nine-patch",
+                PropsData {
+                    bg_np_id: BitmapId::from_wire(1),
+                    ..PropsData::default()
+                },
+            ),
+        ];
+        for (decoration, props) in decorations {
+            let panel = TreeNode::Column(
+                PropsData {
+                    width: panel_box.w,
+                    height: panel_box.h,
+                    inset_top: panel_box.y,
+                    inset_left: panel_box.x,
+                    ..props
+                },
+                Vec::new(),
+            );
+            let tree = TreeNode::Column(
+                PropsData::default(),
+                vec![sized_canvas(PropsData::default(), animated_draws()), panel],
+            );
+
+            let mut renderer = KeyRecordingRenderer::default();
+            let mut state = SlotState::default();
+            let result = render_once(&mut state, &mut renderer, &tree);
+
+            assert!(
+                within(&result.dynamic_rects, panel_box),
+                "a {decoration} panel {panel_box:?} must be damaged, got {:?}",
+                result.dynamic_rects
+            );
+        }
+    }
+
+    /// Colour of the container laid over the animation,
+    /// unlike anything else the tree paints, so the fill log identifies it.
+    const PANEL: Color = Color::from_rgb(7, 77, 177);
+
+    /// A container's own background is the one box an `Above` node owes whole,
+    /// not draw by draw.
+    #[test]
+    fn a_container_over_a_dynamic_one_paints_and_damages_its_background_above() {
+        let panel = TreeNode::Column(
+            PropsData {
+                width: 60.0,
+                height: 30.0,
+                inset_top: 0.0,
+                inset_left: 0.0,
+                background: PANEL,
+                ..PropsData::default()
+            },
+            Vec::new(),
+        );
+        let tree = TreeNode::Column(
+            PropsData::default(),
+            vec![sized_canvas(PropsData::default(), animated_draws()), panel],
+        );
+        let panel_fill = |renderer: &KeyRecordingRenderer| {
+            renderer
+                .fills
+                .iter()
+                .find(|(_, color, _)| *color == PANEL)
+                .map(|(rect, _, _)| *rect)
+        };
+
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        render_pass(
+            &mut state,
+            &mut renderer,
+            &tree,
+            super::EmitMode::StaticOnly,
+        );
+        assert!(
+            panel_fill(&renderer).is_none(),
+            "a background over the animation must stay out of the layer"
+        );
+
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        let result = render_once(&mut state, &mut renderer, &tree);
+        let fill = panel_fill(&renderer).expect("BUG: the single walk paints the panel");
+        assert!(
+            within(&result.dynamic_rects, fill),
+            "the panel {fill:?} must be damaged, got {:?}",
+            result.dynamic_rects
+        );
+    }
+
+    /// Emitting it with the dynamic half is only half the contract:
+    /// a cached frame scissors to the damage set, so an unreported `Above`
+    /// node is dropped, and the layer blitted underneath holds no copy of it.
+    #[test]
+    fn a_static_node_over_a_dynamic_one_reports_damage() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        let result = render_once(&mut state, &mut renderer, &static_over_dynamic());
+
+        renderer.draws.clear();
+        render_dynamic_pass(
+            &mut state,
+            &mut renderer,
+            &static_over_dynamic(),
+            &result.dynamic_rects,
+        );
+
+        assert!(
+            painted_static_rect(&renderer),
+            "this proves nothing if the pass paints nothing"
+        );
+        for draw in &renderer.draws {
+            assert!(
+                within(&result.dynamic_rects, *draw),
+                "draw {draw:?} falls outside the damage {:?}, so the scissor drops it",
+                result.dynamic_rects
+            );
+        }
+    }
+
+    /// The dial under the hands: static, but before the animation it sits under.
+    fn dynamic_over_static() -> TreeNode {
+        let over = PropsData {
+            inset_top: 0.0,
+            inset_left: 0.0,
+            ..PropsData::default()
+        };
+        TreeNode::Column(
+            PropsData::default(),
+            vec![
+                sized_canvas(PropsData::default(), static_draws()),
+                sized_canvas(over, animated_draws()),
+            ],
+        )
+    }
+
+    /// A capture frame walks the tree twice.
+    /// Banding the second walk against what the first one painted
+    /// would put the dial `Above` the hands it precedes.
+    #[test]
+    fn a_capture_frame_bands_its_dynamic_pass_like_a_single_walk() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        let single_walk = render_once(&mut state, &mut renderer, &dynamic_over_static());
+
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        let captured = capture_once(&mut state, &mut renderer, &dynamic_over_static());
+
+        let dial_draws = renderer
+            .draws
+            .iter()
+            .filter(|r| (r.w - STATIC_RECT).abs() < f32::EPSILON)
+            .count();
+        assert_eq!(
+            dial_draws, 1,
+            "the dial belongs in the layer alone, not repainted over it"
+        );
+        for rect in &captured.dynamic_rects {
+            assert!(
+                within(&single_walk.dynamic_rects, *rect),
+                "the dial owes {rect:?}, which a single walk of {:?} does not",
+                single_walk.dynamic_rects
+            );
+        }
+    }
+
+    /// The scroll viewport clips only what is inside the container.
+    /// Kept past it, the clip would empty the animated footer's rect,
+    /// and the static overlay on top of it would land in the layer underneath.
+    #[test]
+    fn a_static_node_over_a_dynamic_one_after_a_scroll_container_paints_above() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        let over_footer = PropsData {
+            inset_top: 50.0,
+            inset_left: 0.0,
+            ..PropsData::default()
+        };
+        let tree = TreeNode::Column(
+            PropsData::default(),
+            vec![
+                TreeNode::Scroll {
+                    scroll_key: "rows".to_owned(),
+                    props: PropsData {
+                        height: 50.0,
+                        ..PropsData::default()
+                    },
+                    children: vec![sized_canvas(PropsData::default(), Vec::new())],
+                },
+                sized_canvas(PropsData::default(), animated_draws()),
+                sized_canvas(over_footer, static_draws()),
+            ],
+        );
+
+        render_pass(
+            &mut state,
+            &mut renderer,
+            &tree,
+            super::EmitMode::StaticOnly,
+        );
+
+        assert!(
+            !painted_static_rect(&renderer),
+            "the overlay covers an animation below the viewport, so it must stay out of the layer"
+        );
+    }
+
+    /// Paint order chains through static nodes too:
+    /// the second overlay touches only the first, which already paints above the animation,
+    /// so the second has to paint above it as well.
+    #[test]
+    fn a_static_node_over_one_already_above_paints_above_too() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        let pinned = |top: f32| PropsData {
+            inset_top: top,
+            inset_left: 0.0,
+            ..PropsData::default()
+        };
+        let first_over = vec![super::DrawCommand::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+            fill: Fill::Solid(Color::from_rgb(4, 5, 6)),
+        }];
+        let tree = TreeNode::Column(
+            PropsData::default(),
+            vec![
+                sized_canvas(PropsData::default(), animated_draws()),
+                sized_canvas(pinned(25.0), first_over),
+                sized_canvas(pinned(60.0), static_draws()),
+            ],
+        );
+
+        render_pass(
+            &mut state,
+            &mut renderer,
+            &tree,
+            super::EmitMode::StaticOnly,
+        );
+
+        assert!(
+            !painted_static_rect(&renderer),
+            "a node over one that paints above the animation must not sit beneath it in the layer"
+        );
+    }
+
+    /// Everything static paints over the animation, so the layer captures nothing.
+    #[test]
+    fn a_capture_with_every_static_node_above_reports_an_empty_layer() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        let result = capture_once(&mut state, &mut renderer, &static_over_dynamic());
+
+        assert!(result.static_layer_empty);
+    }
+
+    #[test]
+    fn a_capture_holding_the_dial_reports_a_layer_in_use() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        let result = capture_once(&mut state, &mut renderer, &dynamic_over_static());
+
+        assert!(!result.static_layer_empty);
+    }
+
+    /// A row scrolled out below the viewport paints nothing,
+    /// so the footer laid out where it would land keeps its layer.
+    #[test]
+    fn a_static_node_beside_a_scrolled_out_dynamic_one_stays_in_the_layer() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        let viewport = PropsData {
+            height: 50.0,
+            ..PropsData::default()
+        };
+        let tree = TreeNode::Column(
+            PropsData::default(),
+            vec![
+                TreeNode::Scroll {
+                    scroll_key: "rows".to_owned(),
+                    props: viewport,
+                    children: vec![TreeNode::Column(
+                        PropsData::default(),
+                        vec![
+                            sized_canvas(PropsData::default(), Vec::new()),
+                            sized_canvas(PropsData::default(), animated_draws()),
+                        ],
+                    )],
+                },
+                sized_canvas(PropsData::default(), static_draws()),
+            ],
+        );
+
+        render_pass(
+            &mut state,
+            &mut renderer,
+            &tree,
+            super::EmitMode::StaticOnly,
+        );
+
+        assert!(
+            painted_static_rect(&renderer),
+            "the footer overlaps only a row the viewport hides, so it belongs in the layer"
         );
     }
 

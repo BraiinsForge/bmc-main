@@ -2200,6 +2200,8 @@ mod tests {
             canvas_index: 0,
             draw_in_canvas: 0,
             mesh_slot_counter: 0,
+            dynamic_half: crate::tree::DynamicHalf::default(),
+            layer_painted: false,
             has_active: false,
             now_unix_secs: 0,
         }

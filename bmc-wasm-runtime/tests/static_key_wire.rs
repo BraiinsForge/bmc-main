@@ -219,3 +219,27 @@ fn a_dynamic_node_changing_kind_moves_the_key() {
         "a progress bar takes height where a modal takes none, so the labels move"
     );
 }
+
+#[test]
+fn a_canvas_gaining_or_losing_its_dynamic_draw_moves_the_key() {
+    // The overlay paints above the animation only while there is one,
+    // so the layer holds it in one tree and lacks it in the other.
+    let over = PropsData {
+        inset_top: 0.0,
+        inset_left: 0.0,
+        ..PropsData::default()
+    };
+    let overlaid = |under: Vec<Draw>| {
+        col(
+            PropsData::default(),
+            [
+                canvas(PropsData::default(), under),
+                canvas(over, [square(5.0)]),
+            ],
+        )
+    };
+    assert_ne!(
+        key(&overlaid(vec![spinning(square(0.0))])),
+        key(&overlaid(Vec::new())),
+    );
+}

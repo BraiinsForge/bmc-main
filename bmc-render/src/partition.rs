@@ -39,8 +39,8 @@ use std::ops::Range;
 
 use crate::ScrollState;
 use crate::tree::{DrawCommand, TreeNode};
-use bmc_wasm_protocol::PropsData;
 use bmc_wasm_protocol::colors::Color;
+use bmc_wasm_protocol::{BitmapId, PropsData};
 
 /// Whether `draw`, or anything it wraps, can change while the guest is idle.
 #[must_use]
@@ -107,7 +107,20 @@ impl Band {
 /// itself. Every reader has to agree: a draw emitted with the dynamic half but
 /// missing from the damage set is scissored away and disappears.
 pub fn canvas_bands(draws: &[DrawCommand]) -> impl Iterator<Item = Band> + '_ {
-    let mut seen_dynamic = false;
+    canvas_bands_after(draws, false)
+}
+
+/// The [`Band`] of each draw, seeded with whether the canvas itself
+/// already paints over the dynamic half.
+///
+/// Paint order runs through the whole tree, not one canvas at a time.
+/// A canvas the walk banded [`Band::Above`] covers content it must keep
+/// painting after, so every draw in it bands `Above` too,
+/// including the ones before its own first dynamic draw.
+pub fn canvas_bands_after(
+    draws: &[DrawCommand],
+    mut seen_dynamic: bool,
+) -> impl Iterator<Item = Band> + '_ {
     draws.iter().map(move |draw| {
         if draw_is_dynamic(draw) {
             seen_dynamic = true;
@@ -234,8 +247,9 @@ pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
 /// the tag around it, and a layer holding the narrow pill shows the text
 /// running past its own background.
 ///
-/// `RelTime` is the whole of it: a `ProgressBar` is sized from its props rather
-/// than its value, and a `Modal` lays out as `Display::None`.
+/// The decoder keys none of a dynamic node's bytes, its sizing props included,
+/// so those come in here too: a `RelTime`'s style and a `ProgressBar`'s track,
+/// but not its value. A `Modal` lays out as `Display::None`.
 ///
 /// Cheap on purpose — an animation-only replay recomputes this every frame,
 /// where [`static_hash`] runs on guest frames only.
@@ -252,13 +266,24 @@ fn hash_layout_contribution<H: Hasher>(node: &TreeNode, now_unix_secs: i64, hash
             anchor,
             format,
             clamp,
-            ..
+            style,
         } => {
             // Taffy measures the rendered text, so hash that rather than the
             // anchor: an unchanged label has moved nothing, whatever the clock
             // did.
             let label = crate::components::format_rel(now_unix_secs - *anchor, *format, *clamp);
             hash_debug(&label, hasher);
+            hash_debug(style, hasher);
+        }
+        TreeNode::ProgressBar {
+            track_h,
+            mode,
+            skin,
+            ..
+        } => {
+            hash_debug(track_h, hasher);
+            hash_debug(mode, hasher);
+            hash_debug(skin, hasher);
         }
         TreeNode::Column(_, children)
         | TreeNode::Row(_, children)
@@ -271,7 +296,6 @@ fn hash_layout_contribution<H: Hasher>(node: &TreeNode, now_unix_secs: i64, hash
         TreeNode::Tag { content, .. } => hash_layout_contribution(content, now_unix_secs, hasher),
         TreeNode::Dimmed { child, .. } => hash_layout_contribution(child, now_unix_secs, hasher),
         TreeNode::Modal { .. }
-        | TreeNode::ProgressBar { .. }
         | TreeNode::Canvas { .. }
         | TreeNode::Paragraph { .. }
         | TreeNode::Button { .. }
@@ -297,121 +321,23 @@ pub struct HostPaintState<'a> {
     pub scroll_offsets: &'a HashMap<String, ScrollState>,
 }
 
-/// Whether the cached layer would invert paint order for `node`.
+/// Whether a box's own decoration paints anything.
 ///
-/// [`canvas_bands`] keeps the order inside one canvas; the node walk has no
-/// equivalent and gates on `self_dynamic` alone, so a static node emitted after
-/// a dynamic one still lands in the layer — which composites before the dynamic
-/// half and paints it *underneath* the content it should cover.
-///
-/// Only visible where the two overlap, and in this flex layout siblings overlap
-/// only through absolute positioning ([`PropsData::is_absolute`], any inset set)
-/// or a negative margin. Both are rare, so answering `true` — costing the whole
-/// tree its layer — is cheaper in practice than banding every node in paint
-/// order, a contract the walk, the damage set and both passes would each have
-/// to keep.
+/// The three sources a container draws its box from, in order of precedence:
+/// a nine-patch background, a solid fill, a border.
+/// A bordered box with no fill paints just as surely as a filled one,
+/// so reading the fill alone would miss it.
 #[must_use]
-pub fn layer_would_invert_paint_order(node: &TreeNode) -> bool {
-    static_paints_after_dynamic(node, &mut false) && can_overlap_siblings(node)
+pub(crate) fn decoration_paints(
+    nine_patch: Option<BitmapId>,
+    background: Color,
+    border_width: f32,
+) -> bool {
+    nine_patch.is_some() || background != Color::default() || border_width > 0.0
 }
 
-/// Whether a node's own props paint anything.
-///
-/// The three sources `render_taffy_node` draws a container from, in its own
-/// order of precedence: a nine-patch background, a solid fill, a border. A
-/// bordered box with no fill paints just as surely as a filled one, so reading
-/// the fill alone would miss it.
 fn props_paint(props: &PropsData) -> bool {
-    props.bg_np_id.is_some() || props.background != Color::default() || props.border_width > 0.0
-}
-
-/// Whether anything static paints after the first dynamic content,
-/// in the walk's own order.
-fn static_paints_after_dynamic(node: &TreeNode, seen_dynamic: &mut bool) -> bool {
-    match node {
-        TreeNode::Column(props, children)
-        | TreeNode::Row(props, children)
-        | TreeNode::Center(props, children) => {
-            // A container paints itself before descending.
-            if *seen_dynamic && props_paint(props) {
-                return true;
-            }
-            children
-                .iter()
-                .any(|child| static_paints_after_dynamic(child, seen_dynamic))
-        }
-        TreeNode::Scroll {
-            props, children, ..
-        } => {
-            if *seen_dynamic && props_paint(props) {
-                return true;
-            }
-            children
-                .iter()
-                .any(|child| static_paints_after_dynamic(child, seen_dynamic))
-        }
-        TreeNode::Canvas { props, draws, .. } => {
-            if *seen_dynamic && props_paint(props) {
-                return true;
-            }
-            for band in canvas_bands(draws) {
-                match band {
-                    Band::Dynamic => *seen_dynamic = true,
-                    // Already banded out of the layer by its own canvas.
-                    Band::Above => {}
-                    Band::Below => {
-                        if *seen_dynamic {
-                            return true;
-                        }
-                    }
-                }
-            }
-            false
-        }
-        TreeNode::Dimmed { child, .. } => static_paints_after_dynamic(child, seen_dynamic),
-        // The pill paints before the content it wraps.
-        TreeNode::Tag { content, .. } => {
-            *seen_dynamic || static_paints_after_dynamic(content, seen_dynamic)
-        }
-        TreeNode::RelTime { .. } | TreeNode::ProgressBar { .. } | TreeNode::Modal { .. } => {
-            *seen_dynamic = true;
-            false
-        }
-        // Paints nothing of its own.
-        TreeNode::Spacer { .. } => false,
-        TreeNode::Paragraph { .. }
-        | TreeNode::Button { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Notification { .. } => *seen_dynamic,
-    }
-}
-
-/// Whether any node could be drawn outside the box flex gave it, which is what
-/// it takes for paint order to be observable between siblings.
-fn can_overlap_siblings(node: &TreeNode) -> bool {
-    let escapes = |props: &PropsData| props.is_absolute() || props.margin < 0.0;
-    match node {
-        TreeNode::Column(props, children)
-        | TreeNode::Row(props, children)
-        | TreeNode::Center(props, children) => {
-            escapes(props) || children.iter().any(can_overlap_siblings)
-        }
-        TreeNode::Scroll {
-            props, children, ..
-        } => escapes(props) || children.iter().any(can_overlap_siblings),
-        TreeNode::Canvas { props, .. } | TreeNode::Paragraph { props, .. } => escapes(props),
-        TreeNode::Tag { content, .. } => can_overlap_siblings(content),
-        TreeNode::Dimmed { child, .. } => can_overlap_siblings(child),
-        TreeNode::Button { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Notification { .. }
-        | TreeNode::RelTime { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Modal { .. }
-        | TreeNode::ProgressBar { .. } => false,
-    }
+    decoration_paints(props.bg_np_id, props.background, props.border_width)
 }
 
 /// Whether the static half of `node` would paint anything at all.
@@ -421,7 +347,11 @@ fn can_overlap_siblings(node: &TreeNode) -> bool {
 /// caller skip both the capture and the blit and emit the whole tree instead —
 /// the same picture for less work.
 ///
-/// Errs toward `true`: a wrong `true` only keeps today's behaviour, a wrong
+/// Banding needs the laid-out boxes, so this answers only whether anything static paints.
+/// A static node laid over the animation counts, though it never reaches the layer;
+/// a capture left empty that way reports [`crate::tree::TreeResult::static_layer_empty`].
+///
+/// Errs toward `true`: a wrong `true` costs one empty capture, a wrong
 /// `false` re-rasterises the static half. Neither changes what reaches screen.
 #[must_use]
 pub fn has_static_content(node: &TreeNode) -> bool {
@@ -429,17 +359,12 @@ pub fn has_static_content(node: &TreeNode) -> bool {
         !node_self_is_dynamic(node) || node_is_dynamic(node),
         "a node that repaints itself while the guest is idle must be dynamic as a subtree",
     );
-    if layer_would_invert_paint_order(node) {
-        return false;
-    }
     match node {
-        // Only the background paints; no other container field draws.
+        // Only the box decoration paints; no other container field draws.
         TreeNode::Column(props, children)
         | TreeNode::Row(props, children)
-        | TreeNode::Center(props, children) => {
-            props_paint(props) || children.iter().any(has_static_content)
-        }
-        TreeNode::Scroll {
+        | TreeNode::Center(props, children)
+        | TreeNode::Scroll {
             props, children, ..
         } => props_paint(props) || children.iter().any(has_static_content),
         TreeNode::Canvas { props, draws, .. } => {
@@ -479,9 +404,9 @@ fn hash_debug<H: Hasher>(value: &dyn fmt::Debug, hasher: &mut H) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Band, HashMap, HostPaintState, Range, ScrollState, canvas_bands, draw_is_dynamic,
-        has_static_content, host_layout_key, layer_would_invert_paint_order, node_is_dynamic,
-        node_self_is_dynamic, static_bytes_key, static_hash, static_paints_after_dynamic,
+        Band, HashMap, HostPaintState, Range, ScrollState, canvas_bands, canvas_bands_after,
+        draw_is_dynamic, has_static_content, host_layout_key, node_is_dynamic,
+        node_self_is_dynamic, static_bytes_key, static_hash,
     };
     use crate::tree::{DrawCommand, HostAnimationDef, HostTransitionDef, TreeNode};
     use bmc_wasm_protocol::{
@@ -681,6 +606,20 @@ mod tests {
         assert!(node_is_dynamic(&rel_time));
     }
 
+    fn progress_bar(track_h: f32, fraction: f32) -> TreeNode {
+        TreeNode::ProgressBar {
+            touch_key: None,
+            track_h,
+            mode: ProgressKind::Meter,
+            fraction,
+            active: true,
+            fill_color: Color::from_rgb(1, 2, 3),
+            track_color: Color::from_rgb(1, 2, 3),
+            bg_color: Color::from_rgb(1, 2, 3),
+            skin: None,
+        }
+    }
+
     fn rel_time_at(anchor: i64) -> TreeNode {
         TreeNode::RelTime {
             anchor,
@@ -746,23 +685,46 @@ mod tests {
         assert_ne!(host_layout_key(&row, 9), host_layout_key(&row, 10));
     }
 
-    /// The other two host-driven nodes lay out from their props — a progress bar
-    /// from its track height, a modal as `Display::None` — so folding them in
-    /// would drop the layer for nothing.
+    /// A progress bar's value moves its fill, never its box,
+    /// so folding it in would drop the layer for nothing.
     #[test]
     fn a_progress_value_leaves_the_layout_key_alone() {
-        let bar = |fraction: f32| TreeNode::ProgressBar {
-            touch_key: None,
-            track_h: 4.0,
-            mode: ProgressKind::Meter,
-            fraction,
-            active: true,
-            fill_color: Color::from_rgb(1, 2, 3),
-            track_color: Color::from_rgb(1, 2, 3),
-            bg_color: Color::from_rgb(1, 2, 3),
-            skin: None,
+        assert_eq!(
+            host_layout_key(&progress_bar(4.0, 0.1), 0),
+            host_layout_key(&progress_bar(4.0, 0.9), 0)
+        );
+    }
+
+    /// The decoder keys none of a progress bar's bytes,
+    /// so a taller track would move its static siblings under an unchanged layer.
+    #[test]
+    fn a_progress_track_moves_the_layout_key() {
+        assert_ne!(
+            host_layout_key(&progress_bar(4.0, 0.5), 0),
+            host_layout_key(&progress_bar(8.0, 0.5), 0)
+        );
+    }
+
+    /// Taffy measures the label in its style,
+    /// so a larger font reflows it even when the text holds.
+    #[test]
+    fn a_rel_time_style_moves_the_layout_key() {
+        let styled = |size: u32| TreeNode::RelTime {
+            anchor: 0,
+            format: RelTimeFormat {
+                length: RelTimeLength::Short,
+                segments: RelTimeSegments::Single,
+            },
+            clamp: RelTimeClamp::default(),
+            style: TextStyle {
+                size,
+                ..TextStyle::default()
+            },
         };
-        assert_eq!(host_layout_key(&bar(0.1), 0), host_layout_key(&bar(0.9), 0));
+        assert_ne!(
+            host_layout_key(&styled(14), 0),
+            host_layout_key(&styled(28), 0)
+        );
     }
 
     /// A tree the clock cannot touch must key identically forever, or every
@@ -787,30 +749,6 @@ mod tests {
         }
     }
 
-    fn paragraph() -> TreeNode {
-        TreeNode::Paragraph {
-            props: PropsData::default(),
-            base_style: TextStyle::default(),
-            spans: Vec::new(),
-        }
-    }
-
-    /// The layer composites before the dynamic half, so a static node the walk
-    /// paints *after* dynamic content would land underneath it. Only visible
-    /// when the two can overlap, which takes an absolute node.
-    #[test]
-    fn a_static_node_over_a_dynamic_one_gives_up_the_layer() {
-        let inverted = TreeNode::Row(
-            PropsData::default(),
-            vec![canvas(vec![animated(leaf())]), absolute_paragraph()],
-        );
-        assert!(layer_would_invert_paint_order(&inverted));
-        assert!(
-            !has_static_content(&inverted),
-            "drawing it wrong is worse than re-rasterising it"
-        );
-    }
-
     fn bordered_row(children: Vec<TreeNode>) -> TreeNode {
         TreeNode::Row(
             PropsData {
@@ -822,49 +760,6 @@ mod tests {
         )
     }
 
-    /// A container paints from three sources, and a border is one of them.
-    /// A bordered box with no fill still lands over the dynamic half, so
-    /// reading the fill alone admits a layer that inverts.
-    #[test]
-    fn a_bordered_container_after_dynamic_content_counts_as_paint() {
-        // Empty and absolute: its border is the only thing it paints,
-        // and the only reason the two can overlap.
-        let bordered = TreeNode::Row(
-            PropsData {
-                border_width: 2.0,
-                border_color: Color::from_rgb(9, 9, 9),
-                inset_top: 0.0,
-                ..PropsData::default()
-            },
-            Vec::new(),
-        );
-        let inverted = TreeNode::Row(
-            PropsData::default(),
-            vec![canvas(vec![animated(leaf())]), bordered],
-        );
-        assert!(layer_would_invert_paint_order(&inverted));
-        assert!(!has_static_content(&inverted));
-    }
-
-    /// The nine-patch is the third source, and it paints instead of the fill
-    /// rather than beside it.
-    #[test]
-    fn a_nine_patch_container_after_dynamic_content_counts_as_paint() {
-        let nine_patch = TreeNode::Row(
-            PropsData {
-                bg_np_id: Some(bmc_wasm_protocol::BitmapId::from_ffi(1).expect("BUG: id 1")),
-                inset_top: 0.0,
-                ..PropsData::default()
-            },
-            Vec::new(),
-        );
-        let inverted = TreeNode::Row(
-            PropsData::default(),
-            vec![canvas(vec![animated(leaf())]), nine_patch],
-        );
-        assert!(layer_would_invert_paint_order(&inverted));
-    }
-
     /// A bordered container is static paint in its own right, so a tree whose
     /// only static content is a border still earns a layer.
     #[test]
@@ -872,70 +767,23 @@ mod tests {
         assert!(has_static_content(&bordered_row(Vec::new())));
     }
 
-    /// Flex siblings do not overlap, so the same order is harmless — keeping the
-    /// layer here is the point of narrowing the fallback.
+    /// A canvas following dynamic content paints after it as a whole,
+    /// so the draws before its own first dynamic one band `Above` too.
     #[test]
-    fn a_static_node_after_a_dynamic_one_keeps_the_layer_when_nothing_can_overlap() {
-        let ordinary = TreeNode::Row(
-            PropsData::default(),
-            vec![canvas(vec![animated(leaf())]), paragraph()],
-        );
-        assert!(!layer_would_invert_paint_order(&ordinary));
-        assert!(has_static_content(&ordinary));
+    fn a_canvas_after_dynamic_content_bands_every_draw_above() {
+        let draws = vec![leaf(), animated(leaf()), leaf()];
+        let bands: Vec<_> = canvas_bands_after(&draws, true).collect();
+        assert_eq!(bands, vec![Band::Above, Band::Dynamic, Band::Above]);
     }
 
-    /// A negative margin pulls a sibling back over the one before it without
-    /// any inset, so it counts as overlap too.
+    /// Where a static node lands is the walk's question, not this one's.
     #[test]
-    fn a_negative_margin_counts_as_overlap() {
-        let pulled_back = TreeNode::Row(
+    fn an_absolute_static_node_over_a_dynamic_canvas_is_static_content() {
+        let over = TreeNode::Row(
             PropsData::default(),
-            vec![
-                canvas(vec![animated(leaf())]),
-                TreeNode::Paragraph {
-                    props: PropsData {
-                        margin: -8.0,
-                        ..PropsData::default()
-                    },
-                    base_style: TextStyle::default(),
-                    spans: Vec::new(),
-                },
-            ],
+            vec![canvas(vec![animated(leaf())]), absolute_paragraph()],
         );
-        assert!(layer_would_invert_paint_order(&pulled_back));
-    }
-
-    /// Order the other way round is what the layer is for: static first, then
-    /// the dynamic half painted over it.
-    #[test]
-    fn a_static_node_before_a_dynamic_one_keeps_the_layer() {
-        let ordered = TreeNode::Row(
-            PropsData::default(),
-            vec![absolute_paragraph(), canvas(vec![animated(leaf())])],
-        );
-        assert!(!layer_would_invert_paint_order(&ordered));
-        assert!(has_static_content(&ordered));
-    }
-
-    /// `canvas_bands` already bands an in-canvas inversion out of the layer, so
-    /// it must not cost the tree its layer a second time.
-    #[test]
-    fn an_inversion_inside_one_canvas_is_left_to_the_bands() {
-        let within = TreeNode::Row(
-            PropsData::default(),
-            vec![
-                absolute_paragraph(),
-                canvas(vec![leaf(), animated(leaf()), leaf()]),
-            ],
-        );
-        assert!(
-            !static_paints_after_dynamic(&within, &mut false),
-            "the trailing draw bands Above, which is already out of the layer"
-        );
-        assert!(
-            has_static_content(&within),
-            "the leading draw still bands Below"
-        );
+        assert!(has_static_content(&over));
     }
 
     /// `has_static_content` answers for the host-driven nodes from its own

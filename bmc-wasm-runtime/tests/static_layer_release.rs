@@ -198,3 +198,35 @@ fn a_static_tree_after_a_release_captures_a_fresh_layer() {
         "a static tree hashing like the released one must recapture, not reuse the freed layer"
     );
 }
+
+#[test]
+fn a_capture_left_empty_by_banding_releases_the_layer() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let sized = PropsData {
+        width: 64.0,
+        height: 64.0,
+        ..PropsData::default()
+    };
+    let over = PropsData {
+        inset_top: 0.0,
+        inset_left: 0.0,
+        ..sized
+    };
+    // Static, but laid over the animation, so it repaints with the dynamic half.
+    let overlaid = tree_bytes(&bmc_wasm_sdk::col(
+        PropsData::default(),
+        [
+            bmc_wasm_sdk::canvas(sized, [animated_rect()]),
+            bmc_wasm_sdk::canvas(over, [static_rect()]),
+        ],
+    ));
+    let (mut runtime, mut renderer) = probe(&gl, &[overlaid]);
+
+    render_frame(&mut runtime, &mut renderer);
+    assert!(
+        !layer_blits(&runtime, &mut renderer),
+        "a layer the static pass left empty only costs a blit, so it must be released"
+    );
+}
