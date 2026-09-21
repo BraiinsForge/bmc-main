@@ -6,7 +6,9 @@ license = "GPL-3.0-or-later"
 authors = ["Braiins <braiins@braiins.com>"]
 
 [dependencies]
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+uuid = { workspace = true, features = ["serde", "v4"] }
 
 [lints]
 workspace = true

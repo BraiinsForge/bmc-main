@@ -140,7 +140,7 @@ fn kind(state: &UpgradeDisplayState) -> Kind {
         UpgradeDisplayState::Running { kind, .. }
         | UpgradeDisplayState::Succeeded { kind }
         | UpgradeDisplayState::Failed { kind } => match kind {
-            UpgradeKind::Firmware => Kind::Firmware,
+            UpgradeKind::Firmware | UpgradeKind::FirmwareAndPackages => Kind::Firmware,
             UpgradeKind::Packages => Kind::Packages,
         },
     }
@@ -293,6 +293,30 @@ mod tests {
                 generation: UpgradeGeneration::new(1),
                 state: UpgradeDisplayState::Running {
                     kind: UpgradeKind::Firmware,
+                    phase: None,
+                    progress: None,
+                },
+            },
+            now,
+        );
+        assert_eq!(
+            cache.events(now),
+            Some(vec![
+                WireEvent::Started(Kind::Firmware),
+                WireEvent::SnapshotDone
+            ])
+        );
+    }
+
+    #[test]
+    fn a_combined_upgrade_is_announced_as_firmware() {
+        let now = Instant::now();
+        let mut cache = UpgradeCache::default();
+        cache.set(
+            UpgradeDisplaySnapshot {
+                generation: UpgradeGeneration::new(1),
+                state: UpgradeDisplayState::Running {
+                    kind: UpgradeKind::FirmwareAndPackages,
                     phase: None,
                     progress: None,
                 },
