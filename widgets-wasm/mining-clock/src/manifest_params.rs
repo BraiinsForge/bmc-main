@@ -49,7 +49,6 @@ impl NumbersFontStyle {
 bmc_wasm_sdk::impl_manifest_str_enum!(NumbersFontStyle);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
-    pub miner_password: String,
     pub miner_url: String,
     pub numbers_font_style: NumbersFontStyle,
     pub show_date: bool,
@@ -62,7 +61,6 @@ impl Params {
     #[must_use]
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
-            miner_password: <String as ParamRead>::read_required(snap, "miner_password"),
             miner_url: <String as ParamRead>::read_required(snap, "miner_url"),
             numbers_font_style: <NumbersFontStyle as ParamRead>::read_required(
                 snap,
@@ -117,9 +115,6 @@ impl Params {
     #[must_use]
     pub fn changed_keys(&self, other: &Self) -> Vec<&'static str> {
         let mut out = Vec::new();
-        if self.miner_password != other.miner_password {
-            out.push("miner_password");
-        }
         if self.miner_url != other.miner_url {
             out.push("miner_url");
         }
@@ -139,5 +134,24 @@ impl Params {
             out.push("timezone_override");
         }
         out
+    }
+}
+/// Credential slots this widget declares, one module per slot.
+pub mod credentials {
+    ///Local BOS token — a `local-file-token` account. Optional.
+    ///
+    ///For the miner this display belongs to. Bind the Local BOS API account; the Miner URL is then ignored. Leave Remote miner login unbound.
+    pub mod bos_local {
+        ///Placeholder for this slot's `token` field.
+        pub const TOKEN: &str = "{{ credential.bos_local.token }}";
+    }
+    ///Remote miner login — a `generic-userpass` account. Optional.
+    ///
+    ///For a miner elsewhere on your network. Bind an account with the miner's password; the username is always root. Set the Miner URL to its API. Leave Local BOS token unbound.
+    pub mod bos_remote {
+        ///Placeholder for this slot's `password` field.
+        pub const PASSWORD: &str = "{{ credential.bos_remote.password }}";
+        ///Placeholder for this slot's `username` field.
+        pub const USERNAME: &str = "{{ credential.bos_remote.username }}";
     }
 }

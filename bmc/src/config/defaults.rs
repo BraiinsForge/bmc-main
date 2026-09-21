@@ -119,7 +119,6 @@ fn mining_clock_params() -> BTreeMap<ParamKey, ParamValue> {
             "miner_url",
             ParamValue::String("http://localhost/api/v1".into()),
         ),
-        ("miner_password", ParamValue::String("root".into())),
         ("numbers_font_style", ParamValue::String("semi-bold".into())),
         ("show_date", ParamValue::Boolean(true)),
         ("show_seconds", ParamValue::Boolean(true)),
@@ -239,7 +238,7 @@ fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
         MINING_CLOCK_UID,
         round,
         mining_clock_params(),
-        BTreeMap::new(),
+        local_bos_binding(),
     );
 
     indexmap! {
@@ -426,6 +425,67 @@ mod tests {
                     "{product:?} ticker must use BTC with the period for its placement"
                 );
             }
+        }
+    }
+
+    /// Every BOS default reaches the local miner through the seeded account,
+    /// and none carries the password param the manifests no longer declare.
+    /// The BMC100 has no local BOS API, so the seeded account does not exist there
+    /// and its defaults bind nothing.
+    #[test]
+    fn bos_defaults_bind_the_seeded_local_account_and_carry_no_password() {
+        let bos_widgets = [
+            MINER_INFO_MINING_UID,
+            MINER_INFO_GEEK_UID,
+            MINER_INFO_OVERLOAD_UID,
+            MINING_CLOCK_UID,
+        ];
+        let password = ParamKey::try_new("miner_password".to_owned()).expect("BUG: key");
+        let mut seen = 0;
+        for product in [Product::Bfm100, Product::Bmm100, Product::Bmm101] {
+            for widget in scenes_for(product)
+                .values()
+                .flat_map(|scene| scene.widgets.values())
+            {
+                if !bos_widgets.contains(&widget.widget_type_id) {
+                    continue;
+                }
+                seen += 1;
+                assert!(!widget.params.contains_key(&password), "{product:?}");
+                let slot = CredentialKey::try_new("bos_local".to_owned()).expect("BUG: key");
+                assert_eq!(
+                    widget
+                        .credential_bindings
+                        .get(&slot)
+                        .map(ToString::to_string),
+                    Some(LOCAL_BOS_ACCOUNT_ID.to_owned()),
+                    "{product:?} {:?}",
+                    widget.widget_type_id
+                );
+                assert_eq!(widget.credential_bindings.len(), 1);
+            }
+        }
+        assert_eq!(
+            seen, 8,
+            "BFM100 binds two BOS widgets and each of the two BMM products three"
+        );
+        for widget in scenes_for(Product::Bmc100)
+            .values()
+            .flat_map(|scene| scene.widgets.values())
+        {
+            if !bos_widgets.contains(&widget.widget_type_id) {
+                continue;
+            }
+            assert!(
+                !widget.params.contains_key(&password),
+                "Bmc100 {:?}",
+                widget.widget_type_id
+            );
+            assert!(
+                widget.credential_bindings.is_empty(),
+                "Bmc100 {:?} must bind no BOS account",
+                widget.widget_type_id
+            );
         }
     }
 

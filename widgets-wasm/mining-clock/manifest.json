@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "name": "Mining Clock",
   "description": "Analog clock with live miner hashrate and power rings for BFM100",
+  "config_help": "Reads one miner's BOS REST API. Only Braiins OS miners serve this API.\n\n**The miner this display belongs to:** bind **Local BOS token** to the *Local BOS API* account and keep the Miner URL at `http://localhost/api/v1`. No password is needed, and the widget keeps working after you change the miner password.\n\n**Another miner on your network:** set the Miner URL to that miner's API, for example `http://10.0.0.5/api/v1`, and bind **Remote miner login** to an account holding that miner's password. The username is always `root`. Leave Local BOS token unbound.\n\nBind exactly one of the two accounts. With neither the widget asks you to bind one; with both it asks you to choose.",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
@@ -24,16 +25,10 @@
   "params": {
     "miner_url": {
       "name": "Miner URL",
-      "description": "Base BOS REST API URL for the miner, e.g. http://localhost/api/v1",
+      "description": "BOS REST API base URL of a remote miner, e.g. http://10.0.0.5/api/v1. Used only with Remote miner login; keep http://localhost/api/v1 for this display's miner.",
       "type": "string",
       "format": "uri",
       "default_value": "http://localhost/api/v1"
-    },
-    "miner_password": {
-      "name": "Miner password",
-      "description": "Password for root login. This is stored as normal widget text until secret params exist.",
-      "type": "string",
-      "default_value": "root"
     },
     "numbers_font_style": {
       "name": "Numbers font style",
@@ -78,6 +73,20 @@
       "description": "Timezone to display the clock in. Defaults to the system timezone.",
       "type": "timezone",
       "optional": true
+    }
+  },
+  "credentials": {
+    "bos_local": {
+      "type": "local-file-token",
+      "label": "Local BOS token",
+      "description": "For the miner this display belongs to. Bind the Local BOS API account; the Miner URL is then ignored. Leave Remote miner login unbound.",
+      "required": false
+    },
+    "bos_remote": {
+      "type": "generic-userpass",
+      "label": "Remote miner login",
+      "description": "For a miner elsewhere on your network. Bind an account with the miner's password; the username is always root. Set the Miner URL to its API. Leave Local BOS token unbound.",
+      "required": false
     }
   }
 }

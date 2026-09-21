@@ -108,6 +108,36 @@ fn every_default_widget_matches_its_manifest() {
     }
 }
 
+/// The four BOS widgets authenticate through accounts, never a param.
+#[test]
+fn bos_widgets_declare_both_account_slots_and_no_password_param() {
+    let key = |name: &str| CredentialKey::try_new(name.to_owned()).expect("BUG: identifier-shaped");
+    for name in [
+        "miner-info-mining",
+        "miner-info-geek",
+        "miner-info-overload",
+        "mining-clock",
+    ] {
+        let manifest = load_wasm_manifest(name);
+        assert!(
+            !manifest.params.contains_key(&key("miner_password")),
+            "{name}"
+        );
+        let local = manifest
+            .credentials
+            .get(&key("bos_local"))
+            .unwrap_or_else(|| panic!("BUG: {name} declares no bos_local slot"));
+        assert_eq!(local.type_id, "local-file-token", "{name}");
+        assert!(!local.required, "{name}");
+        let remote = manifest
+            .credentials
+            .get(&key("bos_remote"))
+            .unwrap_or_else(|| panic!("BUG: {name} declares no bos_remote slot"));
+        assert_eq!(remote.type_id, "generic-userpass", "{name}");
+        assert!(!remote.required, "{name}");
+    }
+}
+
 #[test]
 fn manifest_uids_match_the_shipped_manifests() {
     for (name, uid) in widget_uids() {

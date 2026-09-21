@@ -49,17 +49,26 @@ use bmc_wasm_sdk::{Draw, Easing};
 
 #[cfg(target_arch = "wasm32")]
 use manifest_params::Params;
+#[cfg(target_arch = "wasm32")]
+use manifest_params::credentials as slots;
 #[cfg(any(target_arch = "wasm32", test))]
 use miner::MinerData;
 #[cfg(target_arch = "wasm32")]
 use mining::bos;
+#[cfg(any(target_arch = "wasm32", test))]
+use mining::bos::AuthMode;
 #[cfg(target_arch = "wasm32")]
-use mining::bos::AuthState;
+use mining::bos::{AuthState, Placeholders, ReplyAction};
 #[cfg(target_arch = "wasm32")]
 use shared::clock_palette;
 
 #[cfg(target_arch = "wasm32")]
 const STATS_REFRESH_MS: u32 = 5_000;
+
+#[cfg(target_arch = "wasm32")]
+const STATS_POLL: usize = 1;
+#[cfg(target_arch = "wasm32")]
+const CONSTRAINTS_POLL: usize = 2;
 
 /// Widgets get no entering/visible lifecycle hook, so a render gap this long
 /// stands in for one: the hands snap to the current time
@@ -147,6 +156,11 @@ pub extern "C" fn init() {
     // Tuner constraints anchor both gauge rings. Fetched once per login
     // (constraints change only on a re-tune): one-shot, invalidated on login.
     let constraints = register_poll(build_miner, on_miner_reply, PollConfig::default());
+    assert_eq!(
+        (stats.index(), constraints.index()),
+        (STATS_POLL, CONSTRAINTS_POLL),
+        "BUG: poll order drifted from miner_source"
+    );
     HANDLES.with(|handles| {
         *handles.borrow_mut() = Some(Handles {
             login,
@@ -157,31 +171,37 @@ pub extern "C" fn init() {
     request_frame();
 }
 
+// Mapped by registration index, not through `HANDLES`: `register_poll`
+// runs the builder before `init` can store the handle it returns.
 #[cfg(target_arch = "wasm32")]
 fn miner_source(handle: PollHandle) -> MinerSource {
-    HANDLES.with(|handles| {
-        let handles = handles.borrow();
-        let handles = handles
-            .as_ref()
-            .expect("BUG: mining-clock poll handle used before init");
-        if handle == handles.stats {
-            MinerSource::Stats
-        } else if handle == handles.constraints {
-            MinerSource::Constraints
-        } else {
-            panic!("BUG: mining-clock unknown miner poll handle");
-        }
-    })
+    match handle.index() {
+        STATS_POLL => MinerSource::Stats,
+        CONSTRAINTS_POLL => MinerSource::Constraints,
+        _ => panic!("BUG: mining-clock unknown miner poll handle"),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn auth_mode() -> AuthMode {
+    let bound = credentials::current();
+    let local_bound = bound.is_bound("bos_local");
+    let remote_bound = bound.is_bound("bos_remote");
+    AuthMode::derive(
+        local_bound,
+        remote_bound,
+        &Params::current().miner_url,
+        Placeholders {
+            token: slots::bos_local::TOKEN,
+            username: slots::bos_remote::USERNAME,
+            password: slots::bos_remote::PASSWORD,
+        },
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
 fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
-    let params = Params::current();
-    if params.miner_password.is_empty() {
-        return None;
-    }
-    let url = bos::endpoint(&params.miner_url, bos::LOGIN_PATH)?;
-    let body = bos::login_body("root", &params.miner_password);
+    let (url, body) = auth_mode().login()?;
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
@@ -192,12 +212,12 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
 
 #[cfg(target_arch = "wasm32")]
 fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
-    let header = STATE.with(|state| state.borrow().auth.auth_header())?;
     let path = match miner_source(handle) {
         MinerSource::Stats => bos::STATS_PATH,
         MinerSource::Constraints => bos::CONSTRAINTS_PATH,
     };
-    let url = bos::endpoint(&Params::current().miner_url, path)?;
+    let auth = STATE.with(|state| state.borrow().auth.clone());
+    let (url, header) = auth_mode().miner_request(&auth, path)?;
     Some(
         FetchSpec::get(url)
             .headers(header)
@@ -258,11 +278,11 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
 // the second hand off its even one-second steps.
 #[cfg(target_arch = "wasm32")]
 fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
-    if response.status == 401 {
-        // A 401 built before the last refusal tells the login nothing new,
-        // and re-invalidating would restart the retry it is already waiting out.
-        let refused_already = STATE.with(|state| state.borrow().auth == AuthState::Failed);
-        if !refused_already {
+    let current = STATE.with(|state| state.borrow().auth.clone());
+    match auth_mode().reply_action(&current, response.status) {
+        // Local mode has no login to re-arm; the next tick paints the banner.
+        ReplyAction::SetAuth(auth) => STATE.with(|state| state.borrow_mut().auth = auth),
+        ReplyAction::Relogin => {
             STATE.with(|state| state.borrow_mut().auth = AuthState::LoggingIn);
             HANDLES.with(|handles| {
                 if let Some(handles) = handles.borrow().as_ref() {
@@ -270,6 +290,9 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
                 }
             });
         }
+        ReplyAction::Keep => {}
+    }
+    if response.status == 401 {
         return;
     }
 
@@ -307,22 +330,34 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum OverlaySelect {
+    Unbound,
+    Ambiguous,
     Auth,
     Stale,
     None,
 }
 
-// Auth error outranks stale; stale needs loaded data (a never-connected miner
-// reads as N/A, not stale). The render fills the stale anchor from the poll.
+// A binding prompt outranks everything,
+// since nothing is fetched without a usable slot.
+// Auth error outranks stale; stale needs loaded data
+// (a never-connected miner reads as N/A, not stale).
+// The render fills the stale anchor from the poll.
 #[cfg(any(target_arch = "wasm32", test))]
-fn select_overlay(auth_failed: bool, stale: bool, miner: &MinerData) -> OverlaySelect {
+fn select_overlay(
+    mode: &AuthMode,
+    auth_failed: bool,
+    stale: bool,
+    miner: &MinerData,
+) -> OverlaySelect {
     let has_data = miner.hashrate_ths.is_some() || miner.power_w.is_some();
-    if auth_failed {
-        OverlaySelect::Auth
-    } else if stale && has_data {
-        OverlaySelect::Stale
-    } else {
-        OverlaySelect::None
+    match mode {
+        AuthMode::Unbound => OverlaySelect::Unbound,
+        AuthMode::Ambiguous => OverlaySelect::Ambiguous,
+        AuthMode::Local { .. } | AuthMode::Remote { .. } if auth_failed => OverlaySelect::Auth,
+        AuthMode::Local { .. } | AuthMode::Remote { .. } if stale && has_data => {
+            OverlaySelect::Stale
+        }
+        AuthMode::Local { .. } | AuthMode::Remote { .. } => OverlaySelect::None,
     }
 }
 
@@ -348,7 +383,9 @@ pub extern "C" fn render(delta_ms: u32) {
             (handles.stats.is_stale(), handles.stats.last_success_time())
         })
     });
-    let overlay = match select_overlay(auth_failed, stale, &miner) {
+    let overlay = match select_overlay(&auth_mode(), auth_failed, stale, &miner) {
+        OverlaySelect::Unbound => Some(mining::overlay::OverlayKind::Unbound),
+        OverlaySelect::Ambiguous => Some(mining::overlay::OverlayKind::Ambiguous),
         OverlaySelect::Auth => Some(mining::overlay::OverlayKind::Auth),
         OverlaySelect::Stale => anchor.map(mining::overlay::OverlayKind::Stale),
         OverlaySelect::None => None,
@@ -385,40 +422,61 @@ pub extern "C" fn on_system_update() {
     request_frame();
 }
 
-/// Re-authenticates when the miner URL or password changes.
-///
+// Blanks the readings while installing the freshly derived mode,
+// so one miner's figures are never shown under another's address.
+#[cfg(target_arch = "wasm32")]
+fn reauthenticate() {
+    let auth = auth_mode().initial_auth();
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.miner = MinerData::default();
+        state.auth = auth;
+    });
+    HANDLES.with(|handles| {
+        if let Some(handles) = handles.borrow().as_ref() {
+            handles.login.invalidate();
+            handles.stats.invalidate();
+            handles.constraints.invalidate();
+        }
+    });
+}
+
 /// Deliberately requests no frame: the next 1 s tick shows the new values,
 /// and an off-cadence repaint makes the second hand skip its even steps.
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
     let prev = Params::previous();
-    let changed = prev.as_ref().map_or_else(
-        || vec!["miner_url", "miner_password"],
-        |prev| Params::current().changed_keys(prev),
-    );
-    if changed.contains(&"miner_url") || changed.contains(&"miner_password") {
-        let password_empty = Params::current().miner_password.is_empty();
-        STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            state.auth = if password_empty {
-                AuthState::NoToken
-            } else {
-                AuthState::LoggingIn
-            };
-        });
-        HANDLES.with(|handles| {
-            if let Some(handles) = handles.borrow().as_ref() {
-                handles.login.invalidate();
-            }
-        });
+    let url_changed = prev
+        .as_ref()
+        .is_none_or(|prev| Params::current().changed_keys(prev).contains(&"miner_url"));
+    if url_changed && matches!(auth_mode(), AuthMode::Remote { .. }) {
+        reauthenticate();
     }
+}
+
+/// Same cadence rule as the other callbacks: no frame request.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_credentials_update() {
+    reauthenticate();
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ClockHandTransition, OverlaySelect, miner::MinerData, select_overlay};
     use bmc_wasm_sdk::{Draw, Easing, WHITE};
+    use mining::bos::{AuthMode, Placeholders};
+
+    const PLACEHOLDERS: Placeholders = Placeholders {
+        token: "t",
+        username: "u",
+        password: "p",
+    };
+
+    fn mode(local: bool, remote: bool) -> AuthMode {
+        AuthMode::derive(local, remote, "http://10.0.0.5/api/v1", PLACEHOLDERS)
+    }
 
     #[test]
     fn hand_transitions_animate_through_five_second_render_gaps() {
@@ -480,13 +538,16 @@ mod tests {
             ..MinerData::default()
         };
 
-        assert_eq!(select_overlay(true, true, &miner), OverlaySelect::Auth);
+        assert_eq!(
+            select_overlay(&mode(true, false), true, true, &miner),
+            OverlaySelect::Auth
+        );
     }
 
     #[test]
     fn stale_overlay_requires_loaded_miner_data() {
         assert_eq!(
-            select_overlay(false, true, &MinerData::default()),
+            select_overlay(&mode(true, false), false, true, &MinerData::default()),
             OverlaySelect::None
         );
 
@@ -495,6 +556,31 @@ mod tests {
             ..MinerData::default()
         };
 
-        assert_eq!(select_overlay(false, true, &miner), OverlaySelect::Stale);
+        assert_eq!(
+            select_overlay(&mode(true, false), false, true, &miner),
+            OverlaySelect::Stale
+        );
+    }
+
+    /// With no usable slot nothing is fetched, so a stale pill
+    /// or an auth banner would describe requests that never happen.
+    #[test]
+    fn a_binding_prompt_outranks_auth_and_stale() {
+        let miner = MinerData {
+            hashrate_ths: Some(122.48),
+            ..MinerData::default()
+        };
+        assert_eq!(
+            select_overlay(&mode(false, false), true, true, &miner),
+            OverlaySelect::Unbound
+        );
+        assert_eq!(
+            select_overlay(&mode(true, true), true, true, &miner),
+            OverlaySelect::Ambiguous
+        );
+        assert_eq!(
+            select_overlay(&mode(false, true), true, true, &miner),
+            OverlaySelect::Auth
+        );
     }
 }

@@ -100,15 +100,23 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 
 ### Point the widget at my miner
 
-> As a user, I want to tell the widget where my miner is and how to log in so it can read live stats.
+> As a user, I want the widget to read my own miner without a password, and to be able to watch another miner on my
+> network by giving its address and login.
 
-- The *Miner URL* parameter is the base BOS REST API URL of the miner; it defaults to `http://localhost/api/v1`.
-- The *Miner password* parameter is the password for the miner's `root` login; it defaults to `root`. The login username
-  is always `root`.
-- The widget logs in, caches the session token, and re-authenticates on its own when the token expires; hashrate and
-  power refresh roughly every five seconds, while the tuner constraints that scale the rings are fetched once per login
-  (they change only when the miner is re-tuned) and re-fetched when the widget re-authenticates.
-- When the password is empty or the login fails, the gauges read empty and the rings keep their stable transition slots.
+- The widget has two account slots and uses exactly one of them:
+  - *Local BOS token*: the miner this display belongs to. Bind the *Local BOS API* account (present from first boot on
+    BFM100 and BMM) and keep the *Miner URL* at `http://localhost/api/v1`. No password is entered, and the widget keeps
+    working after the miner password changes.
+  - *Remote miner login*: a miner elsewhere on the network. Set the *Miner URL* to its API base, for example
+    `http://10.0.0.5/api/v1`, and bind an account holding that miner's password; the username is always `root`. The
+    widget logs in, caches the session token, and re-authenticates on its own when it expires.
+- With neither slot bound the widget shows "Bind a BOS account"; with both it shows "Bind one BOS account, not both".
+  The local token is never sent to the *Miner URL*.
+- A remote username or password containing `"` or `\` is not supported.
+- Hashrate and power refresh roughly every five seconds, while the tuner constraints that scale the rings are fetched
+  once per authentication. Pointing the widget at a different miner clears the readings first, so one miner's figures
+  are never shown under another's address.
+- When no slot is bound or the login fails, the gauges read empty and the rings keep their stable transition slots.
 
 ### Trust what the numbers say
 
@@ -124,8 +132,8 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 - The widget renders only on the round 480×480 viewport; it is a round-display widget by design.
 - The date window and next-alarm indicator are gated by render size: the date window appears at the larger sizes, the
   alarm row only at the full size.
-- *Miner URL*, *Miner password*, *Numbers font style*, *Show date*, *Show seconds*, *Show timezone*, and the timezone
-  override are manifest-driven widget parameters, configurable from the web UI.
+- *Miner URL*, *Numbers font style*, *Show date*, *Show seconds*, *Show timezone*, and the timezone override are
+  manifest-driven widget parameters, configurable from the web UI.
 - Both rings scale against the miner's tuner constraints — the configured min / default / max for hashrate and for power
   — with the minimum at a quarter of the ring, the default at three-quarters, and the maximum at the full ring. When a
   target is unavailable, its ring reads empty rather than guessing a scale.
@@ -133,10 +141,11 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
   setting. See [Night Mode](../night-mode.md).
 - The next alarm and the 12-/24-hour time format come from device system state, not from widget configuration.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
-- The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
-  type yet. This is a known limitation, shared with the [Miner Info widgets](miner-info-mining.md).
+- The two account slots are credential bindings, chosen from saved accounts in the web UI. No password is stored in
+  widget parameters.
 - Miner-local data comes from the miner's BOS REST API; the widget reads `/miner/stats` for live hashrate and power and
-  `/configuration/constraints` for the gauge target scales, authenticating via `/auth/login`.
+  `/configuration/constraints` for the gauge target scales. Remote mode authenticates via `/auth/login`; local mode
+  sends the bound token and never logs in.
 
 ## Platforms
 
