@@ -15,6 +15,7 @@ provisioned or factory-reset device meaningful content out of the box, before th
 - BFM100 defaults to Miner Info — Geek and the mining clock, rendered round fullscreen.
 - BMM100 and BMM101 default to a digital clock, a BTC ticker, the three Miner Info widgets (Mining, Geek, Info
   Overload), and Bitcoin Mining Data.
+- BMM101's default clock uses bold numerals and hides seconds while keeping the date and timezone visible.
 
 ### See the default scenes rotate automatically
 
@@ -22,7 +23,10 @@ provisioned or factory-reset device meaningful content out of the box, before th
 > interaction.
 
 - Automatic scene cycling is enabled by default on all platforms.
-- Each scene shows for 30 seconds and changes with a slide transition.
+- Each scene shows for 30 seconds. BMM101 changes scenes with a fade transition; the other products use a slide
+  transition.
+- BMM101's display refreshes at less than 15 fps and has no double buffering, so sliding causes visible tearing. Fade is
+  the default to make scene changes less distracting on this display.
 
 ### Get mining data without entering credentials
 

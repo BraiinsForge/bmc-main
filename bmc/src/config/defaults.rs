@@ -30,6 +30,7 @@ use super::widget_uuids::{
     BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, CLOCK_UID, MINER_INFO_GEEK_UID,
     MINER_INFO_MINING_UID, MINER_INFO_OVERLOAD_UID, MINING_CLOCK_UID, TICKER_SINGLE_UID,
 };
+use crate::data::{SceneCycling, SceneCyclingTransition};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
@@ -38,7 +39,18 @@ pub(super) fn scenes_for(product: Product) -> IndexMap<SceneId, Scene> {
     match product {
         Product::Bmc100 => bmc100_scenes(),
         Product::Bfm100 => bfm100_scenes(),
-        Product::Bmm100 | Product::Bmm101 => bmm_scenes(),
+        Product::Bmm100 => bmm_scenes(clock_params("digital")),
+        Product::Bmm101 => bmm_scenes(bmm101_clock_params()),
+    }
+}
+
+pub(super) fn scene_cycling_for(product: Product) -> SceneCycling {
+    match product {
+        Product::Bmm101 => SceneCycling {
+            transition: SceneCyclingTransition::Fade,
+            ..SceneCycling::default()
+        },
+        Product::Bmc100 | Product::Bmm100 | Product::Bfm100 => SceneCycling::default(),
     }
 }
 
@@ -52,6 +64,16 @@ fn clock_params(style: &str) -> BTreeMap<ParamKey, ParamValue> {
         ("numbers_font_style", ParamValue::String("semi-bold".into())),
         ("show_date", ParamValue::Boolean(true)),
         ("show_seconds", ParamValue::Boolean(true)),
+        ("show_timezone", ParamValue::Boolean(true)),
+    ])
+}
+
+fn bmm101_clock_params() -> BTreeMap<ParamKey, ParamValue> {
+    params(&[
+        ("clock_style", ParamValue::String("digital".into())),
+        ("numbers_font_style", ParamValue::String("bold".into())),
+        ("show_date", ParamValue::Boolean(true)),
+        ("show_seconds", ParamValue::Boolean(false)),
         ("show_timezone", ParamValue::Boolean(true)),
     ])
 }
@@ -197,10 +219,10 @@ fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
     }
 }
 
-fn bmm_scenes() -> IndexMap<SceneId, Scene> {
+fn bmm_scenes(clock_params: BTreeMap<ParamKey, ParamValue>) -> IndexMap<SceneId, Scene> {
     let rect = ViewportShape::Rectangular;
 
-    let clock = fullscreen(CLOCK_UID, rect, clock_params("digital"));
+    let clock = fullscreen(CLOCK_UID, rect, clock_params);
     let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
     let mining = fullscreen(MINER_INFO_MINING_UID, rect, miner_info_params());
     let geek = fullscreen(MINER_INFO_GEEK_UID, rect, miner_info_params());
@@ -274,6 +296,40 @@ mod tests {
                 scenes
                     .values()
                     .all(|scene| scene.kind == SceneKind::Fullscreen)
+            );
+        }
+    }
+
+    #[test]
+    fn bmm101_clock_uses_bold_numerals_without_seconds() {
+        let clock = scenes_for(Product::Bmm101)
+            .into_values()
+            .flat_map(|scene| scene.widgets.into_values())
+            .find(|widget| widget.widget_type_id == CLOCK_UID)
+            .expect("BUG: BMM101 defaults must contain the clock widget");
+
+        assert_eq!(
+            clock.params["numbers_font_style"],
+            ParamValue::String("bold".into())
+        );
+        assert_eq!(clock.params["show_seconds"], ParamValue::Boolean(false));
+    }
+
+    #[test]
+    fn only_bmm101_defaults_to_fade_scene_cycling() {
+        assert_eq!(
+            crate::config::Config::platform_default(Product::Bmm101)
+                .scene_cycling()
+                .transition,
+            SceneCyclingTransition::Fade
+        );
+        for product in [Product::Bmc100, Product::Bmm100, Product::Bfm100] {
+            assert_eq!(
+                crate::config::Config::platform_default(product)
+                    .scene_cycling()
+                    .transition,
+                SceneCyclingTransition::Slide,
+                "{product:?} transition"
             );
         }
     }

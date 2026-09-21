@@ -463,7 +463,7 @@ impl Config {
         Self {
             version: CONFIG_VERSION,
             scenes: defaults::scenes_for(product),
-            scene_cycling: Some(SceneCycling::default()),
+            scene_cycling: Some(defaults::scene_cycling_for(product)),
             localization: None,
             data_collection: None,
             brightness_pct: None,
