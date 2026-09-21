@@ -103,7 +103,7 @@ impl FamilyAdapter for BosAdapter {
     }
 
     fn login_body(&self, password: &str) -> String {
-        mining::bos::login_body(password)
+        mining::bos::login_body("root", password)
     }
 
     fn parse_login(&self, json: &dyn JsonLookup) -> Option<String> {

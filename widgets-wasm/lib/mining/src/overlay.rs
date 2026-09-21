@@ -23,15 +23,32 @@
 
 use bmc_wasm_sdk::{Node, SystemTime, ViewportShape, with_error_overlay, with_stale_overlay};
 
-pub const AUTH_ERROR_TEXT: &str = "Cannot authenticate";
+use crate::bos::AuthMode;
 
-/// Which mining overlay to show: auth-error banner, stale pill, or a
-/// "failed to load" banner for a source that never loaded and is now failing.
+pub const AUTH_ERROR_TEXT: &str = "Cannot authenticate";
+pub const UNBOUND_TEXT: &str = "Bind a BOS account";
+pub const AMBIGUOUS_TEXT: &str = "Bind one BOS account, not both";
+
+/// Which mining overlay to show: auth-error banner, stale pill,
+/// a "failed to load" banner for a source that never loaded and is now failing,
+/// or a binding prompt when the account slots are not usable.
 #[derive(Clone, Copy, Debug)]
 pub enum OverlayKind {
     Auth,
     Stale(SystemTime),
     Failed(&'static str),
+    Unbound,
+    Ambiguous,
+}
+
+/// The overlay a binding state earns before any data is consulted.
+#[must_use]
+pub fn binding_overlay(mode: &AuthMode) -> Option<OverlayKind> {
+    match mode {
+        AuthMode::Unbound => Some(OverlayKind::Unbound),
+        AuthMode::Ambiguous => Some(OverlayKind::Ambiguous),
+        AuthMode::Local { .. } | AuthMode::Remote { .. } => None,
+    }
 }
 
 /// Float the chosen overlay over a view's root, placed per viewport shape.
@@ -41,6 +58,37 @@ pub fn apply_overlay(root: Node, kind: Option<OverlayKind>, shape: ViewportShape
         Some(OverlayKind::Auth) => with_error_overlay(root, AUTH_ERROR_TEXT, shape),
         Some(OverlayKind::Stale(anchor)) => with_stale_overlay(root, anchor, shape),
         Some(OverlayKind::Failed(reason)) => with_error_overlay(root, reason, shape),
+        Some(OverlayKind::Unbound) => with_error_overlay(root, UNBOUND_TEXT, shape),
+        Some(OverlayKind::Ambiguous) => with_error_overlay(root, AMBIGUOUS_TEXT, shape),
         None => root,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AMBIGUOUS_TEXT, OverlayKind, UNBOUND_TEXT, binding_overlay};
+    use crate::bos::{AuthMode, Placeholders};
+
+    const PLACEHOLDERS: Placeholders = Placeholders {
+        token: "t",
+        username: "u",
+        password: "p",
+    };
+
+    #[test]
+    fn only_a_missing_or_double_binding_yields_an_overlay() {
+        let derive =
+            |local, remote| AuthMode::derive(local, remote, "http://m/api/v1", PLACEHOLDERS);
+        assert!(matches!(
+            binding_overlay(&derive(false, false)),
+            Some(OverlayKind::Unbound)
+        ));
+        assert!(matches!(
+            binding_overlay(&derive(true, true)),
+            Some(OverlayKind::Ambiguous)
+        ));
+        assert!(binding_overlay(&derive(true, false)).is_none());
+        assert!(binding_overlay(&derive(false, true)).is_none());
+        assert_ne!(UNBOUND_TEXT, AMBIGUOUS_TEXT);
     }
 }

@@ -591,7 +591,7 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
         return None;
     }
     let url = endpoint(&params.miner_url, bos::LOGIN_PATH)?;
-    let body = bos::login_body(&params.miner_password);
+    let body = bos::login_body("root", &params.miner_password);
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
