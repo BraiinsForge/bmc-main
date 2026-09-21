@@ -25,7 +25,7 @@ use super::{
     UpgradePhase, UpgradeState,
 };
 
-fn round_trip<T>(json: &serde_json::Value) -> T
+pub(crate) fn round_trip<T>(json: &serde_json::Value) -> T
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
