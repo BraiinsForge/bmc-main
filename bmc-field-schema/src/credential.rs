@@ -33,15 +33,15 @@ use serde::{Deserialize, Serialize};
 use crate::{ParamDefinition, ParamKey, ParamKind, StringFormat};
 
 /// A kind of account a widget can bind, e.g. a Braiins Pool API token.
-/// Each field key is the interpolation variable a widget embeds
-/// as `{{ credential.<slot>.<field_key> }}`.
+/// `fields` are what the user configures; the variables a widget may embed
+/// as `{{ credential.<slot>.<field_key> }}` come from [`Self::spendable_fields`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CredentialType {
     /// Stable id, referenced by widget manifests and accounts.
     pub id: String,
     pub name: String,
     pub description: String,
-    /// Keyed by interpolation variable; secret fields carry [`StringFormat::Password`].
+    /// The configured fields; secret fields carry [`StringFormat::Password`].
     pub fields: IndexMap<ParamKey, ParamDefinition>,
     /// Absent means the secret may be sent anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,6 +49,28 @@ pub struct CredentialType {
     /// Absent means the frontend renders its own generic glyph.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<Icon>,
+}
+
+impl CredentialType {
+    /// The fields a widget may spend through `{{ credential.<slot>.<field> }}`.
+    ///
+    /// For every type but the file-backed one these are the configured fields.
+    /// A local file token configures a `path` and spends the `token` read
+    /// from it, so the path never becomes a placeholder.
+    #[must_use]
+    pub fn spendable_fields(&self) -> Vec<ParamKey> {
+        if matches!(
+            BuiltinType::from_id(&self.id),
+            Some(BuiltinType::LocalFileToken)
+        ) {
+            vec![
+                ParamKey::try_new(FILE_TOKEN_FIELD.to_owned())
+                    .expect("BUG: the token field name is identifier-shaped"),
+            ]
+        } else {
+            self.fields.keys().cloned().collect()
+        }
+    }
 }
 
 /// Artwork carried as bytes rather than as a path or URL.
@@ -246,11 +268,17 @@ pub enum BuiltinType {
     GenericToken,
     GenericUserpass,
     BraiinsPool,
+    LocalFileToken,
 }
 
 impl BuiltinType {
     /// In catalog order: [`builtins`] preserves it, and the picker follows.
-    pub const ALL: [Self; 3] = [Self::GenericToken, Self::GenericUserpass, Self::BraiinsPool];
+    pub const ALL: [Self; 4] = [
+        Self::GenericToken,
+        Self::GenericUserpass,
+        Self::BraiinsPool,
+        Self::LocalFileToken,
+    ];
 
     #[must_use]
     pub fn id(self) -> &'static str {
@@ -258,6 +286,7 @@ impl BuiltinType {
             Self::GenericToken => "generic-token",
             Self::GenericUserpass => "generic-userpass",
             Self::BraiinsPool => "braiins-pool",
+            Self::LocalFileToken => "local-file-token",
         }
     }
 
@@ -272,6 +301,7 @@ impl BuiltinType {
             Self::GenericToken => generic_token(),
             Self::GenericUserpass => generic_userpass(),
             Self::BraiinsPool => braiins_pool(),
+            Self::LocalFileToken => local_file_token(),
         }
     }
 
@@ -311,6 +341,8 @@ static GENERIC_TOKEN_ICON: LazyLock<Icon> =
     LazyLock::new(|| svg_icon(include_str!("../assets/generic-token.svg")));
 static GENERIC_USERPASS_ICON: LazyLock<Icon> =
     LazyLock::new(|| svg_icon(include_str!("../assets/generic-userpass.svg")));
+static LOCAL_FILE_TOKEN_ICON: LazyLock<Icon> =
+    LazyLock::new(|| svg_icon(include_str!("../assets/local-file-token.svg")));
 
 fn secret_field(name: &str, description: &str) -> ParamDefinition {
     string_field(name, description, Some(StringFormat::Password))
@@ -395,6 +427,45 @@ fn braiins_pool() -> CredentialType {
             allow_hosts: vec![BRAIINS_POOL_HOST.to_owned()],
         }),
         icon: Some(BRAIINS_POOL_ICON.clone()),
+    }
+}
+
+/// Where Boser publishes its local API token on a Braiins OS miner.
+pub const LOCAL_BOS_TOKEN_PATH: &str = "/var/run/boser-api.token";
+
+/// The configured field of a local file token: where to read it from.
+pub const FILE_TOKEN_PATH_FIELD: &str = "path";
+
+/// The spendable field of a local file token: what was read.
+pub const FILE_TOKEN_FIELD: &str = "token";
+
+fn local_file_token() -> CredentialType {
+    CredentialType {
+        id: BuiltinType::LocalFileToken.id().to_owned(),
+        name: "Local file token".to_owned(),
+        description: format!(
+            "A token that a service on this device writes to a file.\n\n\
+             Made for miners running Braiins OS. BMC reads the local BOS API token from \
+             `{LOCAL_BOS_TOKEN_PATH}` and widgets use it to talk to the local miner. \
+             A miner password change does not affect them.\n\n\
+             Enter the file path only. The token is read on the device. It is never stored in \
+             the account and never shown."
+        ),
+        fields: field_map([(
+            FILE_TOKEN_PATH_FIELD,
+            string_field(
+                "Token file path",
+                &format!(
+                    "Absolute path to a file with the token on one line, for example \
+                     {LOCAL_BOS_TOKEN_PATH}. The file may appear later; the widget authenticates \
+                     once it exists. Keep it outside /etc and /var/log, which support archives \
+                     collect."
+                ),
+                None,
+            ),
+        )]),
+        egress: None,
+        icon: Some(LOCAL_FILE_TOKEN_ICON.clone()),
     }
 }
 
@@ -594,6 +665,51 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// The file path is what the operator configures; the token is what a
+    /// widget may spend. Showing `PATH` as a placeholder would let a widget
+    /// send the file name instead of its content.
+    #[test]
+    fn a_local_file_token_spends_its_token_not_its_path() {
+        let t = find("local-file-token");
+        let configured: Vec<&str> = t.fields.keys().map(ParamKey::as_str).collect();
+        assert_eq!(configured, [FILE_TOKEN_PATH_FIELD]);
+        let spendable: Vec<String> = t
+            .spendable_fields()
+            .iter()
+            .map(|k| k.as_str().to_owned())
+            .collect();
+        assert_eq!(spendable, [FILE_TOKEN_FIELD]);
+    }
+
+    #[test]
+    fn every_other_type_spends_exactly_what_it_configures() {
+        for builtin in BuiltinType::ALL {
+            if builtin == BuiltinType::LocalFileToken {
+                continue;
+            }
+            let t = builtin.schema();
+            let configured: Vec<ParamKey> = t.fields.keys().cloned().collect();
+            assert_eq!(t.spendable_fields(), configured, "for {:?}", builtin.id());
+        }
+    }
+
+    #[test]
+    fn the_local_file_token_is_not_egress_pinned_and_takes_a_plain_path() {
+        let t = find("local-file-token");
+        assert!(t.egress.is_none());
+        let (_, path) = t.fields.first().expect("BUG: local-file-token has a field");
+        assert!(matches!(&path.kind, ParamKind::String { format: None, .. }));
+    }
+
+    #[test]
+    fn the_type_description_names_the_shared_token_path() {
+        let t = find("local-file-token");
+        assert!(t.description.contains(LOCAL_BOS_TOKEN_PATH));
+        let (_, path) = t.fields.first().expect("BUG: local-file-token has a field");
+        let description = path.description.as_deref().unwrap_or_default();
+        assert!(description.contains(LOCAL_BOS_TOKEN_PATH));
     }
 
     #[test]

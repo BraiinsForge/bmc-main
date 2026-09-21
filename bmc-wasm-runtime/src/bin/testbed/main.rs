@@ -299,8 +299,8 @@ fn placement_for_build(configured: ViewPlacement, recording: bool) -> ViewPlacem
     }
 }
 
-/// The manifest's credential slots, each with the field names its type
-/// defines — what a hand-written secrets file is judged against.
+/// The manifest's credential slots with the field names a widget may spend,
+/// the yardstick for a hand-written secrets file.
 fn declared_slots(
     manifest: &bmc_widget_manifest::Manifest,
 ) -> Vec<bmc_widget_protocol::DeclaredSlot> {
@@ -324,8 +324,8 @@ fn declared_slots(
                     .map(|builtin| {
                         builtin
                             .schema()
-                            .fields
-                            .keys()
+                            .spendable_fields()
+                            .iter()
                             .map(|field| field.as_str().to_owned())
                             .collect()
                     })

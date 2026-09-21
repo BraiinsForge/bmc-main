@@ -700,6 +700,26 @@ mod tests {
         );
     }
 
+    /// The seeded BOS account is pinned to `localhost`, so a widget that
+    /// tried to send the device's own session to another host is refused.
+    #[test]
+    fn a_localhost_pinned_local_file_token_never_leaves_the_device() {
+        let state = host_state_with_account_pin(BuiltinType::LocalFileToken.id(), &["localhost"]);
+        let header = [(
+            "Authorization".to_owned(),
+            "{{ credential.pool.token }}".to_owned(),
+        )];
+
+        assert!(
+            spend(&state, "http://localhost/api/v1/miner/stats", &header, None).is_ok(),
+            "the local API must stay reachable"
+        );
+        assert!(
+            spend(&state, "http://10.0.0.5/api/v1/miner/stats", &header, None).is_err(),
+            "a remote miner must not receive the local token"
+        );
+    }
+
     #[test]
     fn an_account_pin_replaces_the_types_rather_than_narrowing_it() {
         // Reachable only by hand-editing the store, since the API refuses

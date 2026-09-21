@@ -5,16 +5,18 @@ and travel to the frontend inside `CredentialType.icon`, so each file ships in t
 
 ## Third-party
 
-`generic-token.svg` and `generic-userpass.svg` come from the Carbon Design System icon set.
+`generic-token.svg`, `generic-userpass.svg` and `local-file-token.svg` come from the Carbon Design System icon set.
 
 - Source: <https://github.com/carbon-design-system/carbon>, `packages/icons/src/svg/32/`
-- Files used: `password.svg` → `generic-token.svg`, `user.svg` → `generic-userpass.svg`
+- Files used: `password.svg` → `generic-token.svg`, `user.svg` → `generic-userpass.svg`, `document.svg` →
+  `local-file-token.svg`
 - Version: `@carbon/icons` 11.84.0
 - Licence: **Apache-2.0** — Copyright IBM Corp.
 - Retrieved: 2026-07-29
 
-They are the same two glyphs the frontend previously rendered from `@carbon/react/icons`, moved here so the backend
-declares a type's artwork rather than the frontend inferring it from the type id.
+`generic-token.svg` and `generic-userpass.svg` are the same two glyphs the frontend previously rendered from
+`@carbon/react/icons`, moved here so the backend declares a type's artwork rather than the frontend inferring it from
+the type id.
 
 Modified: rescaled from the 32px grid to 24, and placed on an opaque tile with an explicit fill. Both changes exist
 because these travel as bytes and render in an `<img>`, where there is no `currentColor` to inherit — the Carbon

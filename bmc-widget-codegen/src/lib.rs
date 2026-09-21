@@ -59,7 +59,7 @@
 //! emitted file stays small.
 //!
 //! Declared credential slots become a `credentials` module, one nested module per slot, holding a
-//! `&'static str` const per field of the slot's type. Each const carries the
+//! `&'static str` const per spendable field of the slot's type. Each const carries the
 //! `{{ credential.<slot>.<field> }}` placeholder the host substitutes at egress — never a secret.
 //!
 //! ## Determinism
@@ -291,7 +291,7 @@ fn emit_credential_slot(
             )
         })?;
 
-    let mut field_keys: Vec<&ParamKey> = cred_type.fields.keys().collect();
+    let mut field_keys = cred_type.spendable_fields();
     field_keys.sort_by(|a, b| a.as_str().cmp(b.as_str()));
 
     let consts = field_keys.into_iter().map(|field| {
@@ -915,6 +915,22 @@ mod tests {
             src.contains(r#"pub const PASSWORD: &str = "{{ credential.media.password }}""#),
             "{src}"
         );
+    }
+
+    /// A widget must be able to spend the token a file-backed account yields,
+    /// and must have no placeholder for the path that only the operator sees.
+    #[test]
+    fn a_local_file_token_slot_exposes_token_and_never_path() {
+        let manifest = manifest_with_credentials(
+            r#"{"bos_local": {"type": "local-file-token", "label": "Local BOS token"}}"#,
+            "{}",
+        );
+        let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
+        assert!(
+            src.contains(r#"pub const TOKEN: &str = "{{ credential.bos_local.token }}""#),
+            "{src}"
+        );
+        assert!(!src.contains("pub const PATH"), "{src}");
     }
 
     #[test]

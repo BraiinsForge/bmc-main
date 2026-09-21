@@ -32,11 +32,17 @@ to an account, and the name your placeholders use.
 
 `type` names one of the account kinds the firmware provides:
 
-| Type               | Fields                 | Egress                      |
-| ------------------ | ---------------------- | --------------------------- |
-| `generic-token`    | `token`                | anywhere                    |
-| `generic-userpass` | `username`, `password` | anywhere                    |
-| `braiins-pool`     | `token`                | pinned to `api.braiins.com` |
+| Type               | Configured fields      | Spendable fields       | Egress                      |
+| ------------------ | ---------------------- | ---------------------- | --------------------------- |
+| `generic-token`    | `token`                | `token`                | anywhere                    |
+| `generic-userpass` | `username`, `password` | `username`, `password` | anywhere                    |
+| `braiins-pool`     | `token`                | `token`                | pinned to `api.braiins.com` |
+| `local-file-token` | `path`                 | `token`                | anywhere                    |
+
+A slot's placeholders are generated for the **spendable** fields. For `local-file-token` the operator configures a file
+path on the device and bmc reads the token from it (polled every 5 s), so the widget spends `token` and never sees the
+path. While the file is missing or unusable the slot stays bound but its `token` is absent, and a fetch using the
+placeholder is refused like any unknown field.
 
 `label` is what the operator sees in the picker and is required. `description` is optional helper text. `required`
 defaults to `false`; a required slot left unbound warns the operator in the editor but never blocks saving, so your
