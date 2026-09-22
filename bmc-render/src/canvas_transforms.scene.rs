@@ -116,3 +116,39 @@ fn orbit(ctx: &mut SceneCtx, ui: &mut Ui) {
         )
     });
 }
+
+#[scene]
+fn outer_translate(ctx: &mut SceneCtx, ui: &mut Ui) {
+    ui.heading("Outer translate");
+    ui.label("A translate outside Draw::centered moves the centred draw");
+
+    // A zero-width range holds the translate still, so the shot never varies.
+    let held = |draw: Draw, dy: f32| {
+        draw.animate(
+            AnimProperty::TranslateY,
+            dy,
+            dy,
+            1_000,
+            Easing::Linear,
+            LoopMode::Forever,
+        )
+    };
+
+    ctx.node_stage(ui, (200_u32, 100_u32), || {
+        canvas(
+            props!(width: 200, height: 100),
+            [
+                Draw::rect(0.0, 49.0, 200.0, 1.0, GRAY_80),
+                Draw::centered(Draw::rect(-60.0, -6.0, 40.0, 12.0, GRAY_60)),
+                held(
+                    Draw::centered(Draw::rect(-10.0, -6.0, 40.0, 12.0, GREEN_50)),
+                    -28.0,
+                ),
+                Draw::centered(held(Draw::rect(40.0, -6.0, 40.0, 12.0, BLUE_50), -28.0)),
+                Draw::text(20.0, 62.0, "still", style!(size: 10, color: GRAY_50)),
+                Draw::text(70.0, 62.0, "outer", style!(size: 10, color: GRAY_50)),
+                Draw::text(120.0, 62.0, "inner", style!(size: 10, color: GRAY_50)),
+            ],
+        )
+    });
+}

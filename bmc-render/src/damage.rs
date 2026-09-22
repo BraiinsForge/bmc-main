@@ -48,13 +48,18 @@ use bmc_wasm_protocol::{AnimProperty, Easing};
 
 /// The accumulated transform range between the canvas and a leaf draw.
 ///
-/// Mirrors what `render_draw_inner` accumulates on the way down — an offset, a
-/// uniform scale about the leaf's own box, and a rotation about the canvas
-/// centre — except that each is a range rather than this frame's value.
+/// Mirrors what `render_draw_inner` accumulates on the way down —
+/// a canvas-relative placement and a translate range, a uniform scale about
+/// the leaf's own box, and a rotation about the canvas centre —
+/// except that each moving part is a range rather than this frame's value.
 #[derive(Clone, Copy)]
 struct Transform {
-    offset_x: (f32, f32),
-    offset_y: (f32, f32),
+    translate_x: (f32, f32),
+    translate_y: (f32, f32),
+    /// Where an enclosing `Centered`/`Orbit` placed this draw — see
+    /// [`Transform::set_layout`] for why it is not folded into the ranges above.
+    layout_x: f32,
+    layout_y: f32,
     /// Largest scale factor reachable, as the product of every factor that can
     /// enlarge the draw. Magnitudes below 1 shrink the box and so stay inside
     /// it, which is why they contribute nothing.
@@ -82,8 +87,10 @@ enum ScaleAnchor {
 
 impl Transform {
     const IDENTITY: Self = Self {
-        offset_x: (0.0, 0.0),
-        offset_y: (0.0, 0.0),
+        translate_x: (0.0, 0.0),
+        translate_y: (0.0, 0.0),
+        layout_x: 0.0,
+        layout_y: 0.0,
         scale_max: 1.0,
         rotation: None,
         margin: 0.0,
@@ -91,23 +98,22 @@ impl Transform {
 
     /// Compose an additive range onto an existing one — the reachable set of a
     /// sum of independent ranges is the sum of their bounds.
-    fn add_offset(mut self, dx: (f32, f32), dy: (f32, f32)) -> Self {
-        self.offset_x = (self.offset_x.0 + dx.0, self.offset_x.1 + dx.1);
-        self.offset_y = (self.offset_y.0 + dy.0, self.offset_y.1 + dy.1);
+    fn add_translate(mut self, dx: (f32, f32), dy: (f32, f32)) -> Self {
+        self.translate_x = (self.translate_x.0 + dx.0, self.translate_x.1 + dx.1);
+        self.translate_y = (self.translate_y.0 + dy.0, self.translate_y.1 + dy.1);
         self
     }
 
-    /// Replace the accumulated offset, for a draw that positions its inner from
-    /// the canvas rather than from where its parent put it.
+    /// Replace the placement, for a draw positioned against the canvas rather
+    /// than from where its parent put it.
     ///
-    /// `Centered` and `Orbit` compute an absolute offset in the renderer
-    /// (`components/draw.rs`, `new_offset_x`) and pass that down, dropping
-    /// whatever they were handed. Adding here instead predicts a rect the paint
-    /// never touches: the blit restores background somewhere else while the
-    /// dynamic pass compounds alpha over the real draw.
-    fn set_offset(mut self, dx: (f32, f32), dy: (f32, f32)) -> Self {
-        self.offset_x = dx;
-        self.offset_y = dy;
+    /// The renderer's `DrawOffset` (`components/draw.rs`) keeps layout and
+    /// translate apart, and the bound has to agree: replacing the translate
+    /// range here would predict a rect the paint never touches, and adding to
+    /// the layout would double a placement the renderer applies once.
+    fn set_layout(mut self, dx: f32, dy: f32) -> Self {
+        self.layout_x = dx;
+        self.layout_y = dy;
         self
     }
 
@@ -169,14 +175,14 @@ impl Transform {
             ),
         };
         let mut moved = Rect::new(
-            scaled.x + self.offset_x.0,
-            scaled.y + self.offset_y.0,
+            scaled.x + self.layout_x + self.translate_x.0,
+            scaled.y + self.layout_y + self.translate_y.0,
             scaled.w,
             scaled.h,
         );
         moved.union(Rect::new(
-            scaled.x + self.offset_x.1,
-            scaled.y + self.offset_y.1,
+            scaled.x + self.layout_x + self.translate_x.1,
+            scaled.y + self.layout_y + self.translate_y.1,
             scaled.w,
             scaled.h,
         ));
@@ -344,7 +350,7 @@ fn bounded(
             let dy = (canvas.h - ih) / 2.0;
             bounded(
                 inner,
-                transform.set_offset((dx, dx), (dy, dy)),
+                transform.set_layout(dx, dy),
                 canvas,
                 transitions,
                 canvas_index,
@@ -364,7 +370,7 @@ fn bounded(
             let dy = canvas.h / 2.0 + radius * angle.sin() - ih / 2.0;
             bounded(
                 inner,
-                transform.set_offset((dx, dx), (dy, dy)),
+                transform.set_layout(dx, dy),
                 canvas,
                 transitions,
                 canvas_index,
@@ -461,8 +467,8 @@ fn modified_transform(
         let (lo, hi) = animated_range(anim);
         transform = match anim.property {
             AnimProperty::Rotate => transform.add_rotation((lo, hi)),
-            AnimProperty::TranslateX => transform.add_offset((lo, hi), (0.0, 0.0)),
-            AnimProperty::TranslateY => transform.add_offset((0.0, 0.0), (lo, hi)),
+            AnimProperty::TranslateX => transform.add_translate((lo, hi), (0.0, 0.0)),
+            AnimProperty::TranslateY => transform.add_translate((0.0, 0.0), (lo, hi)),
             // The reachable ends are ordered, not ranked by reach.
             // A -2 → 1 scale mirrors past twice the box on its way,
             // so the bound follows the widest magnitude, not the upper end.
@@ -501,7 +507,7 @@ fn modified_transform(
     let (_, widest) = delta_range(arc_delta);
     transform = transform.widen_by(widest.max(0.0) / 2.0);
     transform = transform
-        .add_offset(
+        .add_translate(
             delta_range(from.x - target.x),
             delta_range(from.y - target.y),
         )
@@ -635,10 +641,8 @@ mod tests {
         );
     }
 
-    /// `Centered` drops the offset it was handed, so an outer translate never
-    /// reaches the paint — see [`Transform::set_offset`].
     #[test]
-    fn an_outer_translate_does_not_move_a_centered_draw() {
+    fn an_outer_translate_moves_a_centered_draw() {
         let centred = DrawCommand::Centered {
             inner: Box::new(square(0.0, 0.0, 30.0)),
         };
@@ -662,8 +666,29 @@ mod tests {
 
         assert_eq!(
             (moved.x, moved.y, moved.w, moved.h),
-            (still.x, still.y, still.w, still.h),
-            "the renderer discards the outer offset, so the bound must too"
+            (still.x, still.y + 20.0, still.w, still.h + 20.0),
+            "the bound covers the centred square at both ends of the translate"
+        );
+    }
+
+    #[test]
+    fn a_nested_centered_replaces_its_parents_placement() {
+        let centred = || DrawCommand::Centered {
+            inner: Box::new(square(0.0, 0.0, 30.0)),
+        };
+        let orbited = DrawCommand::Orbit {
+            radius: 50.0,
+            angle: 0.0,
+            inner: Box::new(centred()),
+        };
+
+        let alone = damage(&centred()).expect("BUG: a centred square is bounded");
+        let nested = damage(&orbited).expect("BUG: an orbited centred square is bounded");
+
+        assert_eq!(
+            (nested.x, nested.y, nested.w, nested.h),
+            (alone.x, alone.y, alone.w, alone.h),
+            "the inner Centered positions from the canvas, not from the orbit"
         );
     }
 

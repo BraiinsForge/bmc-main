@@ -196,7 +196,19 @@ pub(crate) fn render_draw_command(
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     render_draw_inner(
-        renderer, draw, cx, cy, cw, ch, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, None, anim_ctx,
+        renderer,
+        draw,
+        cx,
+        cy,
+        cw,
+        ch,
+        DrawOffset::default(),
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        None,
+        anim_ctx,
     );
 }
 
@@ -297,6 +309,37 @@ fn render_qr(
     }
 }
 
+/// The two offsets a draw accumulates on its way down the tree, kept apart.
+///
+/// Folded into one number they spoil each other: a `Centered` under an `Orbit`
+/// would re-centre over its parent's placement, and an outer translate would
+/// die at the `Centered` below it.
+#[derive(Clone, Copy, Default)]
+struct DrawOffset {
+    layout_x: f32,
+    layout_y: f32,
+    translate_x: f32,
+    translate_y: f32,
+}
+
+impl DrawOffset {
+    fn x(self) -> f32 {
+        self.layout_x + self.translate_x
+    }
+
+    fn y(self) -> f32 {
+        self.layout_y + self.translate_y
+    }
+
+    fn with_layout(self, layout_x: f32, layout_y: f32) -> Self {
+        Self {
+            layout_x,
+            layout_y,
+            ..self
+        }
+    }
+}
+
 /// Render a draw command with accumulated transforms and animation modifiers.
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_draw_inner(
@@ -306,8 +349,7 @@ fn render_draw_inner(
     cy: f32,
     cw: f32,
     ch: f32,
-    offset_x: f32,
-    offset_y: f32,
+    offset: DrawOffset,
     rotation: f32,
     scale: f32,
     alpha: f32,
@@ -315,6 +357,7 @@ fn render_draw_inner(
     color_override: Option<Color>,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
+    let (offset_x, offset_y) = (offset.x(), offset.y());
     match draw {
         DrawCommand::Rect { x, y, w, h, fill } => {
             let ew = *w * scale;
@@ -550,8 +593,6 @@ fn render_draw_inner(
         }
         DrawCommand::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
-            let new_offset_x = (cw - iw) / 2.0;
-            let new_offset_y = (ch - ih) / 2.0;
             render_draw_inner(
                 renderer,
                 inner,
@@ -559,8 +600,7 @@ fn render_draw_inner(
                 cy,
                 cw,
                 ch,
-                new_offset_x,
-                new_offset_y,
+                offset.with_layout((cw - iw) / 2.0, (ch - ih) / 2.0),
                 rotation,
                 scale,
                 alpha,
@@ -575,11 +615,9 @@ fn render_draw_inner(
             inner,
         } => {
             let effective_angle = *angle + orbit_angle_offset;
-            let center_offset_x = cw / 2.0;
-            let center_offset_y = ch / 2.0;
             let (iw, ih) = get_draw_bounds(inner);
-            let new_offset_x = center_offset_x + radius * effective_angle.cos() - iw / 2.0;
-            let new_offset_y = center_offset_y + radius * effective_angle.sin() - ih / 2.0;
+            let layout_x = cw / 2.0 + radius * effective_angle.cos() - iw / 2.0;
+            let layout_y = ch / 2.0 + radius * effective_angle.sin() - ih / 2.0;
             render_draw_inner(
                 renderer,
                 inner,
@@ -587,8 +625,7 @@ fn render_draw_inner(
                 cy,
                 cw,
                 ch,
-                new_offset_x,
-                new_offset_y,
+                offset.with_layout(layout_x, layout_y),
                 rotation,
                 scale,
                 alpha,
@@ -605,8 +642,7 @@ fn render_draw_inner(
                 cy,
                 cw,
                 ch,
-                offset_x,
-                offset_y,
+                offset,
                 rotation + angle,
                 scale,
                 alpha,
@@ -634,8 +670,7 @@ fn render_draw_inner(
                     0.0,
                     cw,
                     ch,
-                    offset_x,
-                    offset_y,
+                    offset,
                     rotation,
                     scale,
                     alpha,
@@ -654,8 +689,7 @@ fn render_draw_inner(
             let mut acc_rotation = rotation;
             let mut acc_scale = scale;
             let mut acc_alpha = alpha;
-            let mut acc_offset_x = offset_x;
-            let mut acc_offset_y = offset_y;
+            let mut acc_offset = offset;
             let mut acc_orbit_angle = orbit_angle_offset;
             let mut acc_color: Option<Color> = color_override;
             let mut sphere_override: Option<(f32, f32, f32, f32, f32)> = None;
@@ -684,8 +718,8 @@ fn render_draw_inner(
                     AnimProperty::Rotate => acc_rotation += value,
                     AnimProperty::Scale => acc_scale *= value,
                     AnimProperty::Alpha => acc_alpha *= value,
-                    AnimProperty::TranslateX => acc_offset_x += value,
-                    AnimProperty::TranslateY => acc_offset_y += value,
+                    AnimProperty::TranslateX => acc_offset.translate_x += value,
+                    AnimProperty::TranslateY => acc_offset.translate_y += value,
                     AnimProperty::OrbitAngle => acc_orbit_angle += value,
                     AnimProperty::Color => {
                         let from_color = Color::from_raw(f32::to_bits(anim_def.from));
@@ -777,8 +811,8 @@ fn render_draw_inner(
                             segments: segments.clone(),
                         });
                     } else {
-                        acc_offset_x += interp.x - current_values.x;
-                        acc_offset_y += interp.y - current_values.y;
+                        acc_offset.translate_x += interp.x - current_values.x;
+                        acc_offset.translate_y += interp.y - current_values.y;
                         acc_scale *= if current_values.w > 0.0 {
                             interp.w / current_values.w
                         } else {
@@ -868,8 +902,7 @@ fn render_draw_inner(
                     cy,
                     cw,
                     ch,
-                    acc_offset_x,
-                    acc_offset_y,
+                    acc_offset,
                     acc_rotation,
                     acc_scale,
                     acc_alpha,
@@ -904,8 +937,7 @@ fn render_draw_inner(
                     cy,
                     cw,
                     ch,
-                    acc_offset_x,
-                    acc_offset_y,
+                    acc_offset,
                     acc_rotation,
                     acc_scale,
                     acc_alpha,
@@ -934,8 +966,7 @@ fn render_draw_inner(
                     cy,
                     cw,
                     ch,
-                    acc_offset_x,
-                    acc_offset_y,
+                    acc_offset,
                     acc_rotation,
                     acc_scale,
                     acc_alpha,
@@ -951,8 +982,7 @@ fn render_draw_inner(
                     cy,
                     cw,
                     ch,
-                    acc_offset_x,
-                    acc_offset_y,
+                    acc_offset,
                     acc_rotation,
                     acc_scale,
                     acc_alpha,
@@ -2210,8 +2240,7 @@ mod tests {
         cy: f32,
         cw: f32,
         ch: f32,
-        offset_x: f32,
-        offset_y: f32,
+        offset: DrawOffset,
         rotation: f32,
         scale: f32,
         alpha: f32,
@@ -2227,8 +2256,7 @@ mod tests {
             cy,
             cw,
             ch,
-            offset_x,
-            offset_y,
+            offset,
             rotation,
             scale,
             alpha,
@@ -2236,6 +2264,14 @@ mod tests {
             color_override,
             anim_ctx,
         );
+    }
+
+    fn translated(translate_x: f32, translate_y: f32) -> DrawOffset {
+        DrawOffset {
+            translate_x,
+            translate_y,
+            ..DrawOffset::default()
+        }
     }
 
     fn transition_arc(end_angle: f32, duration_ms: u32) -> DrawCommand {
@@ -2279,8 +2315,7 @@ mod tests {
             0.0,
             100.0,
             100.0,
-            0.0,
-            0.0,
+            DrawOffset::default(),
             0.0,
             1.0,
             1.0,
@@ -2348,8 +2383,7 @@ mod tests {
             0.0,
             100.0,
             100.0,
-            0.0,
-            0.0,
+            DrawOffset::default(),
             0.0,
             1.0,
             1.0,
@@ -2534,8 +2568,7 @@ mod tests {
                 0.0,
                 100.0,
                 100.0,
-                0.0,
-                0.0,
+                DrawOffset::default(),
                 0.0,
                 1.0,
                 1.0,
@@ -2766,8 +2799,7 @@ mod tests {
             20.0,
             100.0,
             80.0,
-            3.0,
-            4.0,
+            translated(3.0, 4.0),
             0.0,
             2.0,
             0.5,
@@ -2802,6 +2834,72 @@ mod tests {
     }
 
     #[test]
+    fn an_outer_translate_moves_a_centered_draw() {
+        fn centre_of(draw: &DrawCommand) -> (f32, f32) {
+            let mut renderer = RecordingRenderer::default();
+            let mut animation_states = HashMap::new();
+            let mut transition_states = HashMap::new();
+            let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+            render_draw_inner_for_test(
+                &mut renderer,
+                draw,
+                0.0,
+                0.0,
+                100.0,
+                80.0,
+                DrawOffset::default(),
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                None,
+                &mut anim_ctx,
+            );
+
+            let [RenderEvent::CurvedText { cx, cy, .. }] = &renderer.events[..] else {
+                panic!("BUG: expected one curved text draw event");
+            };
+            (*cx, *cy)
+        }
+
+        let centred = || DrawCommand::Centered {
+            inner: Box::new(DrawCommand::CurvedText {
+                cx: 0.0,
+                cy: 0.0,
+                radius: 7.0,
+                angle: 0.0,
+                anchor: ArcAnchor::Center,
+                facing: ArcTextFacing::Outward,
+                text: "hashrate".to_owned(),
+                style: TextStyle::default(),
+            }),
+        };
+
+        let still = centre_of(&centred());
+        let moved = centre_of(&DrawCommand::Modified {
+            animations: vec![HostAnimationDef {
+                property: AnimProperty::TranslateY,
+                from: 20.0,
+                to: 20.0,
+                duration_ms: 1_000,
+                delay_ms: 0,
+                easing: Easing::Linear,
+                loop_mode: LoopMode::Forever,
+            }],
+            transition: None,
+            color_space: ColorSpace::default(),
+            inner: Box::new(centred()),
+        });
+
+        assert_eq!(
+            moved,
+            (still.0, still.1 + 20.0),
+            "the translate outside the Centered reaches the paint"
+        );
+    }
+
+    #[test]
     fn curved_text_dispatches_inside_outer_rotation() {
         let mut renderer = RecordingRenderer::default();
         let mut animation_states = HashMap::new();
@@ -2829,8 +2927,7 @@ mod tests {
             20.0,
             100.0,
             80.0,
-            3.0,
-            4.0,
+            translated(3.0, 4.0),
             0.75,
             2.0,
             1.0,
@@ -2896,8 +2993,7 @@ mod tests {
             0.0,
             200.0,
             100.0,
-            0.0,
-            0.0,
+            DrawOffset::default(),
             0.0,
             1.0,
             1.0,

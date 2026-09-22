@@ -5228,6 +5228,39 @@ mod frame_pass_tests {
         }
     }
 
+    /// A centred draw an outer translate moves, so the frame exercises both
+    /// halves of the renderer's offset at once.
+    fn translated_centred_dot() -> TreeNode {
+        use bmc_wasm_protocol::animation::{AnimProperty, ColorSpace, Easing, LoopMode};
+
+        TreeNode::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![super::DrawCommand::Modified {
+                animations: vec![super::HostAnimationDef {
+                    property: AnimProperty::TranslateY,
+                    from: 0.0,
+                    to: 30.0,
+                    duration_ms: 500,
+                    delay_ms: 0,
+                    easing: Easing::Linear,
+                    loop_mode: LoopMode::Forever,
+                }],
+                transition: None,
+                color_space: ColorSpace::default(),
+                inner: Box::new(super::DrawCommand::Centered {
+                    inner: Box::new(super::DrawCommand::Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 12.0,
+                        h: 12.0,
+                        fill: Fill::Solid(Color::from_rgb(9, 9, 9)),
+                    }),
+                }),
+            }],
+        }
+    }
+
     fn within(outer: &[crate::interaction::Rect], inner: crate::interaction::Rect) -> bool {
         outer.iter().any(|o| {
             o.x <= inner.x
@@ -5244,15 +5277,14 @@ mod frame_pass_tests {
     /// The span is two walks wide because the device rotates export buffers:
     /// this frame paints into the buffer the frame *before* last drew, so the
     /// region that one moved is still stale in it.
-    #[test]
-    fn every_dynamic_draw_lands_inside_the_two_walk_damage_span() {
+    fn assert_dynamic_draws_land_inside_span(older: &TreeNode, newer: &TreeNode) {
         let mut renderer = KeyRecordingRenderer::default();
         let mut state = SlotState::default();
 
-        let older = render_once(&mut state, &mut renderer, &moving_dot(10.0));
-        let newer = render_once(&mut state, &mut renderer, &moving_dot(60.0));
+        let older = render_once(&mut state, &mut renderer, older);
+        let newest = render_once(&mut state, &mut renderer, newer);
 
-        let span: Vec<_> = newer
+        let span: Vec<_> = newest
             .dynamic_rects
             .iter()
             .chain(older.dynamic_rects.iter())
@@ -5264,7 +5296,7 @@ mod frame_pass_tests {
         );
 
         renderer.draws.clear();
-        render_dynamic_pass(&mut state, &mut renderer, &moving_dot(60.0), &span);
+        render_dynamic_pass(&mut state, &mut renderer, newer, &span);
 
         assert!(
             !renderer.draws.is_empty(),
@@ -5276,6 +5308,18 @@ mod frame_pass_tests {
                 "draw {draw:?} falls outside the damage span {span:?}, so the scissor drops it"
             );
         }
+    }
+
+    #[test]
+    fn every_dynamic_draw_lands_inside_the_two_walk_damage_span() {
+        assert_dynamic_draws_land_inside_span(&moving_dot(10.0), &moving_dot(60.0));
+    }
+
+    /// An outer translate composes onto the centring in both walks; a bound
+    /// that replaced it instead would scissor the draw away.
+    #[test]
+    fn a_translated_centred_draw_lands_inside_the_two_walk_damage_span() {
+        assert_dynamic_draws_land_inside_span(&translated_centred_dot(), &translated_centred_dot());
     }
 
     /// The backdrop dims the whole surface from outside the walk, so a frame

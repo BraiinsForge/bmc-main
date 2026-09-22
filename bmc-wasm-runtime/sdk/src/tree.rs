@@ -819,6 +819,9 @@ impl Draw {
     }
 
     /// Center any draw command in canvas.
+    ///
+    /// Placement is read off the canvas rather than off an enclosing `centered`
+    /// or `orbit`; a translate applied outside still moves the result.
     #[must_use]
     pub fn centered(inner: Draw) -> Self {
         Self::Centered {
@@ -827,6 +830,9 @@ impl Draw {
     }
 
     /// Position any draw command at orbit around canvas center.
+    ///
+    /// Places from the canvas centre like [`Draw::centered`], with the same
+    /// translate behaviour.
     #[must_use]
     pub fn orbit(radius: f32, angle: f32, inner: Draw) -> Self {
         Self::Orbit {
