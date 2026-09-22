@@ -24,7 +24,8 @@ use super::parts::{header_row, pad_horizontal};
 use super::station::station_line;
 use super::{
     Content, LINE_H, NO_DATA_PLACEHOLDER, Panel, ROUND_BOTTOM_GAP, ROUND_CONTROLS_TOP, ROUND_H_PAD,
-    ROUND_HEADER_WIDTH, ROUND_TOP_GAP, Tier, caption_slot, control_row_nodes,
+    ROUND_HEADER_SIZE, ROUND_HEADER_WIDTH, ROUND_ROW_GAP, ROUND_TOP_GAP, Tier, caption_slot,
+    control_row_nodes,
 };
 use bmc_render::tree::{TreeNode, fixed_height, spacer};
 
@@ -32,14 +33,11 @@ use bmc_render::tree::{TreeNode, fixed_height, spacer};
 /// with the control rows pinned to a fixed top edge.
 #[expect(clippy::cast_precision_loss, reason = "display sizes are small")]
 pub(super) fn round_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
-    let header_h = tier.hostname_size as f32 * LINE_H;
+    let header_h = ROUND_HEADER_SIZE as f32 * LINE_H;
     let mut children = vec![
         fixed_height(ROUND_TOP_GAP),
         pad_horizontal(
-            header_row(
-                content.ip.unwrap_or(NO_DATA_PLACEHOLDER),
-                tier.hostname_size,
-            ),
+            header_row(content.ip.unwrap_or(NO_DATA_PLACEHOLDER), ROUND_HEADER_SIZE),
             (panel.width as f32 - ROUND_HEADER_WIDTH) / 2.0,
         ),
         // Pin the control rows below the chord-safe close target.
@@ -47,11 +45,11 @@ pub(super) fn round_children(content: Content<'_>, panel: Panel, tier: Tier) -> 
     ];
     for row_node in control_row_nodes(content, tier) {
         children.push(pad_horizontal(row_node, ROUND_H_PAD));
-        children.push(fixed_height(tier.row_gap));
+        children.push(fixed_height(ROUND_ROW_GAP));
     }
     children.push(pad_horizontal(caption_slot(content, tier), ROUND_H_PAD));
     children.push(spacer(1.0));
-    children.push(pad_horizontal(station_line(content, tier), ROUND_H_PAD));
+    children.push(pad_horizontal(station_line(content), ROUND_H_PAD));
     children.push(fixed_height(ROUND_BOTTOM_GAP));
     children
 }

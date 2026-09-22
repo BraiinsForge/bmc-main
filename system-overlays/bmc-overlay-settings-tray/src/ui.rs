@@ -222,8 +222,29 @@ const WIDE_WIFI_GAP: f32 = 16.0;
 /// Size of the SETUP badge in the Large tier's WiFi block.
 const WIDE_SETUP_BADGE_SIZE: u32 = 14;
 
+/// Size of the values in the Large tier's info blocks.
+const WIDE_INFO_VALUE_SIZE: u32 = 24;
+
+/// Side of the WiFi signal icon in the Large tier's header.
+const WIDE_WIFI_ICON_SIZE: f32 = 32.0;
+
+/// Gap between the Large tier's control rows.
+const WIDE_ROW_GAP: f32 = 16.0;
+
 /// Line-height factor the renderer applies to text nodes.
 const LINE_H: f32 = 1.4;
+
+/// Size of the address line heading the disc.
+const ROUND_HEADER_SIZE: u32 = 18;
+
+/// Gap between the disc's control rows.
+const ROUND_ROW_GAP: f32 = 8.0;
+
+/// The disc's station line: the WiFi icon's side, and the text beside it.
+/// Keep the icon no taller than the text. Outgrow it and the icon sets the
+/// line height, which busts the vertical budget.
+const ROUND_WIFI_ICON_SIZE: f32 = 20.0;
+const ROUND_WIFI_TEXT_SIZE: u32 = 14;
 
 /// Top edge (px) of the control rows on round panels: below the chord-safe
 /// close target, so control and close hit regions are disjoint
@@ -393,14 +414,8 @@ struct Tier {
     single_w: f32,
     value_size: u32,
     caption_size: u32,
-    hostname_size: u32,
-    wifi_text_size: u32,
-    /// Height/width of the WiFi signal icon in the info section — must not
-    /// exceed the info line's text height on the compact tiers or it, not
-    /// the text, sets the line height and busts the vertical budget.
-    wifi_icon_size: f32,
+    /// Inset of the close target from the panel's corner.
     padding: f32,
-    row_gap: f32,
 }
 
 /// Narrowest panel that takes the Deck's labeled layout; everything below is compact.
@@ -419,11 +434,7 @@ fn tier_for(panel: &Panel) -> Tier {
             single_w: LARGE_SINGLE_W,
             value_size: 24,
             caption_size: 20,
-            hostname_size: 24,
-            wifi_text_size: 22,
-            wifi_icon_size: 32.0,
             padding: 24.0,
-            row_gap: 16.0,
         }
     } else if panel.width <= 320 {
         // BMM100, too narrow to caption three buttons.
@@ -437,11 +448,7 @@ fn tier_for(panel: &Panel) -> Tier {
             single_w: 0.0,
             value_size: 12,
             caption_size: 12,
-            hostname_size: 16,
-            wifi_text_size: 12,
-            wifi_icon_size: 17.0,
             padding: 12.0,
-            row_gap: 6.0,
         }
     } else if matches!(panel.shape, DisplayShape::Rectangular) {
         // BMM101. The 12pt caption is what keeps the widest label on one
@@ -456,11 +463,7 @@ fn tier_for(panel: &Panel) -> Tier {
             single_w: BMM101_SINGLE_W,
             value_size: 14,
             caption_size: 12,
-            hostname_size: 18,
-            wifi_text_size: 14,
-            wifi_icon_size: 20.0,
             padding: 16.0,
-            row_gap: 8.0,
         }
     } else {
         // BFM100. Labeled groups do not fit across the disc, so its
@@ -475,11 +478,7 @@ fn tier_for(panel: &Panel) -> Tier {
             single_w: 0.0,
             value_size: 14,
             caption_size: 14,
-            hostname_size: 18,
-            wifi_text_size: 14,
-            wifi_icon_size: 20.0,
             padding: 16.0,
-            row_gap: 8.0,
         }
     }
 }
@@ -723,19 +722,18 @@ mod tests {
         );
     }
 
-    /// Expected height of [`wide_header`], derived from the same `Tier`
-    /// fields the builder uses so the test cannot drift from the layout
-    /// silently.
+    /// Expected height of [`wide_header`], derived from the same constants
+    /// the builder uses so the test cannot drift from the layout silently.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
-    fn wide_info_height(tier: Tier, setup: bool) -> f32 {
+    fn wide_info_height(setup: bool) -> f32 {
         let header = INFO_HEADER_SIZE as f32 * LINE_H + INFO_HEADER_GAP;
-        let wifi_value = (tier.hostname_size as f32 * LINE_H).max(tier.wifi_icon_size);
+        let wifi_value = (WIDE_INFO_VALUE_SIZE as f32 * LINE_H).max(WIDE_WIFI_ICON_SIZE);
         let wifi = if setup {
             header + wifi_value + 6.0 + INFO_HEADER_SIZE as f32 * LINE_H
         } else {
             header + wifi_value
         };
-        let addresses = 2.0 * (header + tier.hostname_size as f32 * LINE_H) + WIDE_INFO_STACK_GAP;
+        let addresses = 2.0 * (header + WIDE_INFO_VALUE_SIZE as f32 * LINE_H) + WIDE_INFO_STACK_GAP;
         // The QR is the tallest child but renders only with a known IP,
         // so folding it in unconditionally bounds the worst case.
         wifi.max(addresses).max(WIDE_QR_SIZE)
@@ -786,9 +784,9 @@ mod tests {
         }
         if has_unkeyed_canvas(node) {
             return if layout == Layout::Wide {
-                wide_info_height(tier, setup)
+                wide_info_height(setup)
             } else {
-                tier.wifi_icon_size.max(tier.wifi_text_size as f32 * LINE_H)
+                ROUND_WIFI_ICON_SIZE.max(ROUND_WIFI_TEXT_SIZE as f32 * LINE_H)
             };
         }
         let size = max_text_size(node);

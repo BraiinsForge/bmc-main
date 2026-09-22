@@ -23,9 +23,10 @@
 use super::parts::{capped_text, fixed_width, ip_qr, pad_horizontal, text_style, wifi_icon};
 use super::{
     Content, INFO_HEADER_GAP, INFO_HEADER_SIZE, NO_DATA_PLACEHOLDER, Tier, WIDE_HOSTNAME_WIDTH,
-    WIDE_INFO_GAP, WIDE_INFO_LEFT_PAD, WIDE_INFO_RIGHT_PAD, WIDE_INFO_STACK_GAP, WIDE_QR_SIZE,
-    WIDE_SETUP_BADGE_SIZE, WIDE_SSID_WIDTH, WIDE_TOP_PAD, WIDE_WIFI_GAP, WifiIcons, WifiView,
-    caption_slot, control_row_nodes,
+    WIDE_INFO_GAP, WIDE_INFO_LEFT_PAD, WIDE_INFO_RIGHT_PAD, WIDE_INFO_STACK_GAP,
+    WIDE_INFO_VALUE_SIZE, WIDE_QR_SIZE, WIDE_ROW_GAP, WIDE_SETUP_BADGE_SIZE, WIDE_SSID_WIDTH,
+    WIDE_TOP_PAD, WIDE_WIFI_GAP, WIDE_WIFI_ICON_SIZE, WifiIcons, WifiView, caption_slot,
+    control_row_nodes,
 };
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text};
 use bmc_wasm_protocol::colors::{GRAY_50, GREEN_50, WHITE};
@@ -54,10 +55,9 @@ pub(super) fn wide_header(
     icons: WifiIcons,
     wifi_signal: Option<i32>,
     ssid: &str,
-    tier: Tier,
     wifi_view: WifiView<'_>,
 ) -> TreeNode {
-    let value_size = tier.hostname_size;
+    let value_size = WIDE_INFO_VALUE_SIZE;
     let wifi_block = match wifi_view {
         WifiView::Idle => info_block(
             "Wi-Fi Connection",
@@ -68,7 +68,7 @@ pub(super) fn wide_header(
                     ..PropsData::default()
                 },
                 vec![
-                    wifi_icon(icons, wifi_signal, tier.wifi_icon_size),
+                    wifi_icon(icons, wifi_signal, WIDE_WIFI_ICON_SIZE),
                     capped_text(ssid, value_size, WIDE_SSID_WIDTH),
                 ],
             ),
@@ -88,7 +88,7 @@ pub(super) fn wide_header(
                             ..PropsData::default()
                         },
                         vec![
-                            wifi_icon(icons, None, tier.wifi_icon_size),
+                            wifi_icon(icons, None, WIDE_WIFI_ICON_SIZE),
                             text(
                                 "SETUP",
                                 TextStyle {
@@ -160,7 +160,6 @@ fn wide_halves(
     header: TreeNode,
     rows: Vec<TreeNode>,
     caption_node: TreeNode,
-    tier: Tier,
     h_pad: f32,
 ) -> [TreeNode; 2] {
     let half = PropsData {
@@ -170,7 +169,7 @@ fn wide_halves(
     let mut bottom_half: Vec<TreeNode> = Vec::new();
     for row_node in rows {
         bottom_half.push(pad_horizontal(row_node, h_pad));
-        bottom_half.push(fixed_height(tier.row_gap));
+        bottom_half.push(fixed_height(WIDE_ROW_GAP));
     }
     bottom_half.push(pad_horizontal(caption_node, h_pad));
     [
@@ -188,19 +187,17 @@ pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
         content.icons,
         content.wifi_signal,
         content.ssid,
-        tier,
         content.wifi_view,
     );
     let rows = control_row_nodes(content, tier);
     let caption = caption_slot(content, tier);
-    wide_halves(header, rows, caption, tier, tier.padding).into()
+    wide_halves(header, rows, caption, tier.padding).into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::test_support::*;
-    use crate::ui::*;
 
     /// Min-content width of [`wide_header`] at its caps. The structure
     /// is worst-case; the glyph width is only [`HOSTNAME_CHAR_W`]'s estimate.
@@ -208,10 +205,10 @@ mod tests {
     /// which has no badge — some slack. The setup hint is left out: it wraps,
     /// so a single-line glyph budget does not describe it.
     #[expect(clippy::cast_precision_loss, reason = "the caps are a few hundred px")]
-    fn wide_info_width(tier: Tier) -> f32 {
+    fn wide_info_width() -> f32 {
         let addresses =
-            line_width("255.255.255.255", tier.hostname_size).max(WIDE_HOSTNAME_WIDTH as f32);
-        let wifi = tier.wifi_icon_size
+            line_width("255.255.255.255", WIDE_INFO_VALUE_SIZE).max(WIDE_HOSTNAME_WIDTH as f32);
+        let wifi = WIDE_WIFI_ICON_SIZE
             + WIDE_WIFI_GAP
             + line_width("SETUP", WIDE_SETUP_BADGE_SIZE)
             + WIDE_WIFI_GAP
@@ -224,7 +221,7 @@ mod tests {
         let panel = wide_panel();
         #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
         let panel_w = panel.width as f32;
-        let width = wide_info_width(tier_for(&panel));
+        let width = wide_info_width();
         assert!(
             width <= panel_w,
             "header content {width} overflows {panel_w} — the flex spacer \

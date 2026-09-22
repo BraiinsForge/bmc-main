@@ -22,7 +22,7 @@
 //! or the setup AP while provisioning runs.
 
 use super::parts::{text_style, wifi_icon};
-use super::{Content, Tier, WifiIcons, WifiView};
+use super::{Content, ROUND_WIFI_ICON_SIZE, ROUND_WIFI_TEXT_SIZE, WifiIcons, WifiView};
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, row, text};
 use bmc_wasm_protocol::colors::{GREEN_50, WHITE};
 use bmc_wasm_protocol::{CrossAlign, FontWeight, Justify, TextOverflow};
@@ -41,50 +41,50 @@ fn centered_line(children: Vec<TreeNode>) -> TreeNode {
     )
 }
 
-fn ssid_text(ssid: &str, size: u32) -> TreeNode {
+fn ssid_text(ssid: &str) -> TreeNode {
     text(
         ssid,
         TextStyle {
             text_overflow: TextOverflow::Ellipsis,
-            ..text_style(size, WHITE)
+            ..text_style(ROUND_WIFI_TEXT_SIZE, WHITE)
         },
     )
 }
 
 /// Icon and SSID. The address heads the panel instead,
 /// so this line carries only who the device is connected to.
-fn station_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str, tier: Tier) -> TreeNode {
+fn station_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str) -> TreeNode {
     centered_line(vec![
-        wifi_icon(icons, wifi_signal, tier.wifi_icon_size),
-        ssid_text(ssid, tier.wifi_text_size),
+        wifi_icon(icons, wifi_signal, ROUND_WIFI_ICON_SIZE),
+        ssid_text(ssid),
     ])
 }
 
-/// Setup-mode section for the medium/small tiers: icon, badge and SSID,
-/// occupying the same height the idle info line does, so the vertical budgets hold.
-/// The Large tier shows setup mode inside [`wide_header`] instead.
-fn setup_row(icons: WifiIcons, ap_ssid: &str, tier: Tier) -> TreeNode {
+/// One centered line of icon, badge and SSID, as tall as the idle
+/// line it replaces so the vertical budget holds either way.
+fn setup_row(icons: WifiIcons, ap_ssid: &str) -> TreeNode {
+    let badge_size = ROUND_WIFI_TEXT_SIZE;
     let badge = text(
         "SETUP",
         TextStyle {
-            size: tier.wifi_text_size,
+            size: badge_size,
             weight: FontWeight::BOLD,
             color: GREEN_50,
             ..TextStyle::default()
         },
     );
     centered_line(vec![
-        wifi_icon(icons, None, tier.wifi_icon_size),
+        wifi_icon(icons, None, ROUND_WIFI_ICON_SIZE),
         badge,
-        ssid_text(ap_ssid, tier.wifi_text_size),
+        ssid_text(ap_ssid),
     ])
 }
 
 /// The disc's bottom line: the station info, or the setup badge and AP SSID
 /// while setup runs.
-pub(super) fn station_line(content: Content<'_>, tier: Tier) -> TreeNode {
+pub(super) fn station_line(content: Content<'_>) -> TreeNode {
     match content.wifi_view {
-        WifiView::Setup { ap_ssid } => setup_row(content.icons, ap_ssid, tier),
-        WifiView::Idle => station_info(content.icons, content.wifi_signal, content.ssid, tier),
+        WifiView::Setup { ap_ssid } => setup_row(content.icons, ap_ssid),
+        WifiView::Idle => station_info(content.icons, content.wifi_signal, content.ssid),
     }
 }
