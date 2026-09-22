@@ -146,8 +146,8 @@ fn run(mut client: BosClient, shared: &Shared, period: Duration) {
     let mut tracker = StatusTracker::default();
     while !shared.stop.load(Ordering::Relaxed) {
         let started = Instant::now();
-        // AssertUnwindSafe: a panic mid-poll leaves at most a stale token in
-        // the client. The next poll's 401 clears it and the one after logs in.
+        // AssertUnwindSafe: a panic mid-poll leaves at most a stale token in the client,
+        // and the next poll's 401 re-reads the file.
         let poll = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.poll()))
             .unwrap_or_else(|payload| {
                 let message = panic_message(&*payload);
@@ -294,7 +294,7 @@ mod tests {
         let unanswered = crate::bos::unanswered_api_url();
         let thread = std::thread::spawn(move || {
             run(
-                BosClient::new(unanswered),
+                BosClient::new(unanswered, "/nonexistent/boser-api.token"),
                 &thread_shared,
                 Duration::from_millis(10),
             );

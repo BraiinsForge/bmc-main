@@ -1159,6 +1159,7 @@ dependencies = [
  "bmc-wasm-sdk",
  "serde",
  "serde_json",
+ "tempfile",
  "tracing",
  "ureq",
 ]
