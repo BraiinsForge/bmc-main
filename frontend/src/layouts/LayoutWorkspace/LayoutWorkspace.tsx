@@ -165,7 +165,7 @@ class Base extends Component<Props, State> {
         return (
             <div className={cn(boserUi && css.boserLayout, boserUi && links.length > 0 && css.withLinksBar)}>
                 {boserUi && <LinksBar links={links} className={css.linksBar} />}
-                <Header aria-label={this.#txt.name}>
+                <Header aria-label={brand?.name ?? this.#txt.name}>
                     <SkipToContent />
 
                     <HeaderMenuButton
@@ -175,12 +175,12 @@ class Base extends Component<Props, State> {
                         aria-expanded={isSideNavExpanded}
                     />
 
-                    {boserUi && logo ? (
+                    {boserUi && logo && brand ? (
                         <div className={css.headerNameBoser} {...ARIA.button(this.#gotHome)}>
                             <img
                                 src={logo.src}
                                 style={logo.style}
-                                alt={`${brand?.name ?? 'Braiins OS'} logo`}
+                                alt={`${brand.name ?? 'Braiins OS'} logo`}
                                 className={css.brandLogo}
                             />
                         </div>

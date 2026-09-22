@@ -20,22 +20,10 @@
 
 import { describe, expect, test } from '@rstest/core';
 
+import { deckSystemWire } from '@/pages/workspace/Display/capabilities.fixture';
 import { parseSystem } from './system';
 
-const bmc100 = {
-    capabilities: {
-        display: { width: 1280, height: 480, shape: 'Rectangular', dpi: 217 },
-        slot_grid: { columns: 4, rows: 2 },
-        wifi_supported: true,
-        ethernet_supported: false,
-        mining_supported: false,
-        sound_supported: true,
-        led_supported: true,
-        alarm_supported: true,
-        boser_managed: false,
-        product_name: 'Braiins Deck',
-    },
-};
+const bmc100 = deckSystemWire();
 
 describe('parseSystem', () => {
     test('maps the platform fields', () => {
@@ -55,7 +43,7 @@ describe('parseSystem', () => {
     });
 
     test('derives combined scenes from the slot grid', () => {
-        const { capabilities } = parseSystem({ capabilities: { ...bmc100.capabilities, slot_grid: null } });
+        const { capabilities } = parseSystem(deckSystemWire({ slot_grid: null }));
 
         expect(capabilities.combinedScenesSupported).toBe(false);
     });
@@ -65,7 +53,7 @@ describe('parseSystem', () => {
     });
 
     test('throws on a flag of the wrong type', () => {
-        const raw = { capabilities: { ...bmc100.capabilities, boser_managed: 'yes' } };
+        const raw = deckSystemWire({ boser_managed: 'yes' });
 
         expect(() => parseSystem(raw)).toThrow('`capabilities.boser_managed`');
     });

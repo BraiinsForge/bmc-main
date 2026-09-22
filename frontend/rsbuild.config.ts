@@ -19,6 +19,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { readFileSync } from 'node:fs';
+
 import { defineConfig, type ProxyOptions } from '@rsbuild/core';
 import { pluginReact } from '@rsbuild/plugin-react';
 import { pluginSass } from '@rsbuild/plugin-sass';
@@ -87,6 +89,17 @@ export default defineConfig({
     html: {
         template: './src/index.html',
         favicon: './src/icon.png',
+        // A real file rather than inline HTML so Biome lints it and a spec runs it;
+        // it lands in the head after system.js, ahead of the bundle.
+        tags: [
+            {
+                tag: 'script',
+                attrs: { type: 'module' },
+                children: readFileSync(new URL('./src/boser-tab.js', import.meta.url), 'utf8'),
+                head: true,
+                append: false,
+            },
+        ],
     },
 
     output: {

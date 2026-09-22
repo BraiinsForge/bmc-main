@@ -22,11 +22,12 @@ import { StrictMode, type ReactNode } from 'react';
 import { IntlProvider } from 'react-intl';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router';
-import { HelmetProvider, Helmet } from '@dr.pogodin/react-helmet';
+import { HelmetProvider } from '@dr.pogodin/react-helmet';
 
 import router from '@/routes';
 import { store } from '@/store';
 import { BootError } from '@/components';
+import { AppHead } from '@/components/AppHead';
 import '@/styles/carbon/carbon.global.scss';
 
 function boot(rootEl: HTMLElement): void {
@@ -36,7 +37,7 @@ function boot(rootEl: HTMLElement): void {
         store.boot();
         tree = (
             <HelmetProvider>
-                <Helmet defaultTitle="Braiins DECK" titleTemplate="%s | Braiins DECK" />
+                <AppHead />
                 <RouterProvider router={router} />
             </HelmetProvider>
         );
