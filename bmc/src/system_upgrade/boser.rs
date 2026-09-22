@@ -201,11 +201,14 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeDisplayState
 fn display_phase(phase: WirePhase) -> Option<UpgradePhase> {
     match phase {
         WirePhase::Preparing
+        | WirePhase::Unknown
         | WirePhase::Packages(
             PackagePhase::Cleaning
             | PackagePhase::FindingGarbageRoots
-            | PackagePhase::DeterminingGarbageLiveness,
-        ) => None,
+            | PackagePhase::DeterminingGarbageLiveness
+            | PackagePhase::Unknown,
+        )
+        | WirePhase::Firmware(FirmwarePhase::Unknown) => None,
         WirePhase::Firmware(FirmwarePhase::Downloading) => Some(UpgradePhase::FirmwareDownloading),
         WirePhase::Firmware(FirmwarePhase::Verifying) => Some(UpgradePhase::FirmwareVerifying),
         WirePhase::Firmware(FirmwarePhase::Flashing) => Some(UpgradePhase::FirmwareApplying),

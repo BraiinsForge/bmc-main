@@ -421,6 +421,10 @@ fn every_wire_phase_maps_to_its_display_phase() {
             panic!("{wire:?} must present as running");
         };
         assert_eq!(phase, expected, "{wire:?}");
+        assert!(
+            bench.state().is_some_and(|state| state.blocks_restart()),
+            "{wire:?} must keep restart blocked"
+        );
     }
 }
 

@@ -238,6 +238,8 @@ display generation:
 - `NONE`, or a snapshot of another execution, while something is on display ends that execution without an observed
   outcome: the display and the restart block are cleared and the LED animation stops without a flash, then the new
   snapshot is handled as if nothing had been on display;
+- a phase stage, firmware step, or package step newer than this build's copy stays a running presentation without a
+  named phase; the restart block remains held and the compatible snapshot emits no mismatch warning;
 - other valid JSON that does not fit the wire contract — for example a newer state or kind, or a missing required field
   — ends the execution on display the same way and leaves the connection open; it is logged with the raw payload and
   warned once per run of snapshots it cannot decode. Boser replays its retained state on every connection, so dropping

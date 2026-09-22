@@ -24,7 +24,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 pub mod offer_slot;
@@ -63,6 +64,8 @@ pub enum FirmwarePhase {
     Downloading,
     Verifying,
     Flashing,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,14 +78,48 @@ pub enum PackagePhase {
     Cleaning,
     FindingGarbageRoots,
     DeterminingGarbageLiveness,
+    #[serde(other)]
+    Unknown,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "stage", content = "step", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UpgradePhase {
     Preparing,
     Firmware(FirmwarePhase),
     Packages(PackagePhase),
+    Unknown,
+}
+
+#[derive(Deserialize)]
+struct RawUpgradePhase {
+    stage: String,
+    step: Option<serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for UpgradePhase {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // `serde(other)` rejects an unknown adjacent tag when it carries
+        // `step`, so decode the envelope before discarding a future phase.
+        let RawUpgradePhase { stage, step } = RawUpgradePhase::deserialize(deserializer)?;
+        match stage.as_str() {
+            "PREPARING" => Ok(Self::Preparing),
+            "FIRMWARE" => {
+                serde_json::from_value(step.ok_or_else(|| D::Error::missing_field("step"))?)
+                    .map(Self::Firmware)
+                    .map_err(D::Error::custom)
+            }
+            "PACKAGES" => {
+                serde_json::from_value(step.ok_or_else(|| D::Error::missing_field("step"))?)
+                    .map(Self::Packages)
+                    .map_err(D::Error::custom)
+            }
+            _ => Ok(Self::Unknown),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

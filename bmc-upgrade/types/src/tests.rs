@@ -39,21 +39,84 @@ where
 }
 
 #[test]
-fn phase_serializes_as_a_stage_step_object() {
-    assert_eq!(
-        round_trip::<UpgradePhase>(&json!({ "stage": "PREPARING" })),
-        UpgradePhase::Preparing
-    );
-    assert_eq!(
-        round_trip::<UpgradePhase>(&json!({ "stage": "FIRMWARE", "step": "FLASHING" })),
-        UpgradePhase::Firmware(FirmwarePhase::Flashing)
-    );
-    assert_eq!(
-        round_trip::<UpgradePhase>(
-            &json!({ "stage": "PACKAGES", "step": "DETERMINING_GARBAGE_LIVENESS" })
+fn every_known_phase_variant_round_trips_as_a_stage_step_object() {
+    let cases = [
+        (json!({ "stage": "PREPARING" }), UpgradePhase::Preparing),
+        (
+            json!({ "stage": "FIRMWARE", "step": "FLASHING" }),
+            UpgradePhase::Firmware(FirmwarePhase::Flashing),
         ),
-        UpgradePhase::Packages(PackagePhase::DeterminingGarbageLiveness)
-    );
+        (
+            json!({ "stage": "PACKAGES", "step": "DETERMINING_GARBAGE_LIVENESS" }),
+            UpgradePhase::Packages(PackagePhase::DeterminingGarbageLiveness),
+        ),
+    ];
+
+    for (fixture, expected) in cases {
+        let stage = match expected {
+            UpgradePhase::Preparing => "PREPARING",
+            UpgradePhase::Firmware(_) => "FIRMWARE",
+            UpgradePhase::Packages(_) => "PACKAGES",
+            UpgradePhase::Unknown => panic!("BUG: unknown phase is not a known-stage fixture"),
+        };
+        assert_eq!(
+            fixture.get("stage").and_then(serde_json::Value::as_str),
+            Some(stage)
+        );
+        assert_eq!(round_trip::<UpgradePhase>(&fixture), expected);
+    }
+}
+
+#[test]
+fn malformed_known_phase_does_not_become_unknown() {
+    let error = serde_json::from_value::<UpgradePhase>(json!({ "stage": "FIRMWARE" }))
+        .expect_err("a known phase without its step must be rejected");
+
+    assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn unknown_phases_keep_the_running_state_decodable() {
+    let id = ExecutionId::new();
+    let cases = [
+        (
+            json!({ "state": "RUNNING", "id": id.to_string(), "kind": "FIRMWARE",
+                    "phase": { "stage": "FIRMWARE", "step": "SOMETHING_NEW" } }),
+            UpgradeKind::Firmware,
+            UpgradePhase::Firmware(FirmwarePhase::Unknown),
+        ),
+        (
+            json!({ "state": "RUNNING", "id": id.to_string(), "kind": "PACKAGES",
+                    "phase": { "stage": "PACKAGES", "step": "SOMETHING_NEW" } }),
+            UpgradeKind::Packages,
+            UpgradePhase::Packages(PackagePhase::Unknown),
+        ),
+        (
+            json!({ "state": "RUNNING", "id": id.to_string(), "kind": "FIRMWARE",
+                    "phase": { "stage": "SOMETHING_NEW", "step": { "future": true } } }),
+            UpgradeKind::Firmware,
+            UpgradePhase::Unknown,
+        ),
+        (
+            json!({ "state": "RUNNING", "id": id.to_string(), "kind": "FIRMWARE",
+                    "phase": { "stage": "SOMETHING_NEW" } }),
+            UpgradeKind::Firmware,
+            UpgradePhase::Unknown,
+        ),
+    ];
+
+    for (fixture, kind, phase) in cases {
+        assert_eq!(
+            serde_json::from_value::<UpgradeState>(fixture)
+                .expect("BUG: unknown phases must remain a running state"),
+            UpgradeState::Running {
+                id,
+                kind,
+                phase,
+                download: None,
+            }
+        );
+    }
 }
 
 #[test]
