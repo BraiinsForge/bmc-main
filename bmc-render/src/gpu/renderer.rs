@@ -28,7 +28,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU16, NonZeroU32};
 
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
@@ -258,6 +258,60 @@ struct StaticLayer {
     captured: bool,
 }
 
+/// A static layer's size in physical pixels, which also keys its pooled stencil.
+///
+/// `NonZeroU16` because every consumer widens it without a check —
+/// GL's signed `GLsizei` as well as femtovg's `usize` and `u32` —
+/// so the only fallible conversion is the one into this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PhysicalSize {
+    width: NonZeroU16,
+    height: NonZeroU16,
+}
+
+impl PhysicalSize {
+    /// `None` for a size no layer can have: zero, or beyond `u16`.
+    fn new<T>(width: T, height: T) -> Option<Self>
+    where
+        u16: TryFrom<T>,
+    {
+        Some(Self {
+            width: NonZeroU16::new(u16::try_from(width).ok()?)?,
+            height: NonZeroU16::new(u16::try_from(height).ok()?)?,
+        })
+    }
+}
+
+/// What [`FemtoVgRenderer::stencil_pool`] holds for one layer size.
+enum PoolSlot {
+    /// A shared stencil this renderer allocated, and so deletes.
+    Owned {
+        rbo: glow::Renderbuffer,
+        /// Set once a layer framebuffer has it attached.
+        serving: bool,
+    },
+    /// The screen target's own stencil, which the embedder allocated and frees.
+    Borrowed(glow::Renderbuffer),
+    /// The shared stencil failed to attach,
+    /// or the driver called a layer framebuffer incomplete with it attached,
+    /// so layers of this size captured from now on keep femtovg's own.
+    Refused {
+        /// An owned stencil that layers captured before the refusal still draw through.
+        /// It lives until the renderer goes:
+        /// GLES 2.0 leaves a deleted renderbuffer on an unbound framebuffer undefined.
+        kept: Option<glow::Renderbuffer>,
+    },
+}
+
+impl PoolSlot {
+    fn release(self, gl: &glow::Context) {
+        if let Self::Owned { rbo, .. } | Self::Refused { kept: Some(rbo) } = self {
+            // SAFETY: the renderer only releases on its own current context.
+            unsafe { gl.delete_renderbuffer(rbo) };
+        }
+    }
+}
+
 /// Outcome of [`FemtoVgRenderer::probe_render_to_texture`].
 ///
 /// Only [`Self::Working`] means a cached static layer is viable; the rest name
@@ -333,6 +387,13 @@ pub struct FemtoVgRenderer {
     /// Cached static layers, keyed by owning widget instance. One renderer
     /// serves every slot, so these cannot be a single slot-agnostic layer.
     static_layers: HashMap<String, StaticLayer>,
+    /// Stencil renderbuffers shared by the static layers of one physical size,
+    /// standing in for the one femtovg allocates per render-target image.
+    ///
+    /// Keyed by size because GLES 2.0 wants every attachment on a framebuffer to share dimensions.
+    /// Entries live as long as the renderer,
+    /// bounded by the handful of layer sizes a layout produces.
+    stencil_pool: HashMap<PhysicalSize, PoolSlot>,
     /// Probed in [`FemtoVgRenderer::new`]. Anything but
     /// [`RenderTargetProbe::Working`] makes `begin_static_layer` refuse, so a
     /// driver that cannot render into an RGBA8 texture keeps drawing full
@@ -740,6 +801,8 @@ impl FemtoVgRenderer {
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
+    /// If `fbo_id`'s framebuffer carries a stencil renderbuffer, it must stay alive
+    /// for as long as the renderer captures static layers, which borrow it.
     pub unsafe fn new<F>(
         mut load_fn: F,
         width: u32,
@@ -811,12 +874,14 @@ impl FemtoVgRenderer {
             #[cfg(feature = "profiling")]
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
             static_layers: HashMap::new(),
+            stencil_pool: HashMap::new(),
             render_to_texture: RenderTargetProbe::Working,
             solid_texture: None,
             brightness: 1.0,
             raw_blit: None,
         };
         renderer.render_to_texture = renderer.probe_render_to_texture();
+        renderer.adopt_screen_stencil();
         Ok(renderer)
     }
 
@@ -880,11 +945,256 @@ impl FemtoVgRenderer {
         }
         self.bitmap_registry.clear(&mut self.canvas);
     }
+
+    /// Seed the stencil pool with the screen target's own stencil.
+    ///
+    /// The screen target is typically display-sized, so a layer spanning the whole display
+    /// borrows its stencil instead of allocating one.
+    fn adopt_screen_stencil(&mut self) {
+        let Some(fbo) = self.screen_fbo else {
+            tracing::debug!("default framebuffer as the screen target; no stencil to share");
+            return;
+        };
+        // SAFETY: the GL context is current for the renderer's lifetime,
+        // and no frame is in flight at construction whose bindings this could disturb.
+        let adopted = unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            let adopted = self.attached_stencil().map(|rbo| {
+                self.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+                let width = self
+                    .gl
+                    .get_renderbuffer_parameter_i32(glow::RENDERBUFFER, glow::RENDERBUFFER_WIDTH);
+                let height = self
+                    .gl
+                    .get_renderbuffer_parameter_i32(glow::RENDERBUFFER, glow::RENDERBUFFER_HEIGHT);
+                (rbo, width, height)
+            });
+            self.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            adopted
+        };
+        // Either miss costs display-sized layers a full-size stencil of their own,
+        // which nothing else in the log shows.
+        let Some((rbo, width, height)) = adopted else {
+            tracing::warn!(
+                "screen target has no stencil renderbuffer to share; \
+                 display-sized layers pool one of their own"
+            );
+            return;
+        };
+        let Some(size) = PhysicalSize::new(width, height) else {
+            tracing::warn!(
+                width,
+                height,
+                "screen stencil size cannot key the pool; leaving it unshared"
+            );
+            return;
+        };
+        self.stencil_pool.insert(size, PoolSlot::Borrowed(rbo));
+        tracing::debug!(
+            width = size.width,
+            height = size.height,
+            "static layers share the screen stencil"
+        );
+    }
+
+    /// The renderbuffer attached as the bound framebuffer's stencil, if any.
+    ///
+    /// # Safety
+    /// The GL context must be current and the framebuffer of interest bound.
+    unsafe fn attached_stencil(&self) -> Option<glow::Renderbuffer> {
+        let kind = unsafe {
+            self.gl.get_framebuffer_attachment_parameter_i32(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+            )
+        };
+        if gl_uint(kind) != glow::RENDERBUFFER {
+            return None;
+        }
+        let name = unsafe {
+            self.gl.get_framebuffer_attachment_parameter_i32(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+            )
+        };
+        gl_name(name).map(glow::NativeRenderbuffer)
+    }
+
+    /// The stencil renderbuffer shared by static layers of `size`,
+    /// allocating one on first use. `None` for a refused size or a failed allocation.
+    fn pooled_stencil(&mut self, size: PhysicalSize) -> Option<glow::Renderbuffer> {
+        match self.stencil_pool.get(&size) {
+            Some(PoolSlot::Owned { rbo, .. } | PoolSlot::Borrowed(rbo)) => return Some(*rbo),
+            Some(PoolSlot::Refused { .. }) => return None,
+            None => {}
+        }
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        let rbo = unsafe {
+            let rbo = self.gl.create_renderbuffer().ok()?;
+            self.drain_gl_errors();
+            self.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+            self.gl.renderbuffer_storage(
+                glow::RENDERBUFFER,
+                glow::STENCIL_INDEX8,
+                i32::from(size.width.get()),
+                i32::from(size.height.get()),
+            );
+            let storage_error = self.gl.get_error();
+            self.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            if storage_error != glow::NO_ERROR {
+                // Deliberately not pooled: a renderbuffer without storage
+                // fails completeness for every later layer of this size,
+                // and the error left queued would surface against an unrelated call.
+                self.gl.delete_renderbuffer(rbo);
+                tracing::warn!(
+                    width = size.width,
+                    height = size.height,
+                    storage_error,
+                    "static-layer stencil allocation failed"
+                );
+                return None;
+            }
+            rbo
+        };
+        self.stencil_pool.insert(
+            size,
+            PoolSlot::Owned {
+                rbo,
+                serving: false,
+            },
+        );
+        tracing::debug!(
+            width = size.width,
+            height = size.height,
+            "allocated a shared static-layer stencil"
+        );
+        Some(rbo)
+    }
+
+    /// Put the pooled stencil on the bound layer framebuffer
+    /// in place of the one femtovg allocated for it, and shrink femtovg's to 1×1.
+    ///
+    /// femtovg gives every render-target image a `STENCIL_INDEX8` renderbuffer
+    /// of its own, costing a full-slot layer about what its RGBA8 texture does.
+    /// Sharing is safe because nothing lives in a stencil between draw commands:
+    /// every fill femtovg runs leaves the region it used zeroed.
+    ///
+    /// # Safety
+    /// The GL context must be current and the layer's framebuffer bound:
+    /// the swap rewrites the stencil of whichever framebuffer is bound.
+    unsafe fn share_layer_stencil(&mut self, size: PhysicalSize) {
+        // SAFETY: guaranteed by the caller.
+        let Some(attached) = (unsafe { self.attached_stencil() }) else {
+            return;
+        };
+        let Some(shared) = self.pooled_stencil(size) else {
+            return;
+        };
+        if attached == shared {
+            return;
+        }
+        let femtovg_rbo = attached;
+        // SAFETY: as above.
+        unsafe {
+            // An incomplete framebuffer would fail the check below
+            // for reasons that have nothing to do with the stencil,
+            // and refusing the size on its account
+            // would give up sharing for every later layer of it.
+            let before = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            if before != glow::FRAMEBUFFER_COMPLETE {
+                tracing::warn!(
+                    status = before,
+                    width = size.width,
+                    height = size.height,
+                    "layer framebuffer incomplete before the stencil swap; leaving it alone"
+                );
+                return;
+            }
+            self.drain_gl_errors();
+            self.gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(shared),
+            );
+            // A stale name fails the attach but leaves femtovg's stencil attached,
+            // which the status check alone would read as complete.
+            let attach_error = self.gl.get_error();
+            let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            if attach_error != glow::NO_ERROR || status != glow::FRAMEBUFFER_COMPLETE {
+                self.gl.framebuffer_renderbuffer(
+                    glow::FRAMEBUFFER,
+                    glow::STENCIL_ATTACHMENT,
+                    glow::RENDERBUFFER,
+                    Some(femtovg_rbo),
+                );
+                self.refuse_stencil_size(size);
+                if attach_error == glow::NO_ERROR {
+                    tracing::warn!(
+                        status,
+                        width = size.width,
+                        height = size.height,
+                        "driver refused a shared layer stencil; \
+                         layers of this size keep femtovg's own"
+                    );
+                } else {
+                    tracing::warn!(
+                        attach_error,
+                        width = size.width,
+                        height = size.height,
+                        "shared layer stencil failed to attach; \
+                         layers of this size keep femtovg's own"
+                    );
+                }
+                return;
+            }
+            // Shrunk rather than deleted: femtovg deletes this name
+            // with the image's framebuffer, and a driver may hand the freed name
+            // to a later allocation that the delete would then take out.
+            self.gl
+                .bind_renderbuffer(glow::RENDERBUFFER, Some(femtovg_rbo));
+            self.gl
+                .renderbuffer_storage(glow::RENDERBUFFER, glow::STENCIL_INDEX8, 1, 1);
+            self.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+        }
+        if let Some(PoolSlot::Owned { serving, .. }) = self.stencil_pool.get_mut(&size) {
+            *serving = true;
+        }
+    }
+
+    /// Stop offering the pool to layers of `size`.
+    fn refuse_stencil_size(&mut self, size: PhysicalSize) {
+        let kept = match self.stencil_pool.remove(&size) {
+            Some(PoolSlot::Owned { rbo, serving: true }) => Some(rbo),
+            Some(PoolSlot::Refused { kept }) => kept,
+            Some(previous @ (PoolSlot::Owned { serving: false, .. } | PoolSlot::Borrowed(_))) => {
+                previous.release(&self.gl);
+                None
+            }
+            None => None,
+        };
+        self.stencil_pool.insert(size, PoolSlot::Refused { kept });
+    }
+
+    /// Delete the pooled stencils this renderer allocated.
+    fn release_pooled_stencils(&mut self) {
+        for (_, slot) in self.stencil_pool.drain() {
+            slot.release(&self.gl);
+        }
+    }
 }
 
 impl Drop for FemtoVgRenderer {
     fn drop(&mut self) {
         self.release_gpu_assets();
+        // Layer framebuffers go first, so no pooled stencil is deleted while still attached.
+        for (_, layer) in self.static_layers.drain() {
+            self.canvas.delete_image(layer.image);
+        }
+        self.release_pooled_stencils();
     }
 }
 
@@ -2336,6 +2646,11 @@ impl Renderer for FemtoVgRenderer {
             return false;
         }
         let dpi_scale = self.dpi_scale;
+        let Some(size) = physical_size(width, height, dpi_scale) else {
+            // No layer can have this size, so whatever the key held is stale.
+            self.invalidate_static_layer(key);
+            return false;
+        };
         let fits = self.static_layers.get(key).is_some_and(|layer| {
             layer.width == width
                 && layer.height == height
@@ -2344,14 +2659,13 @@ impl Renderer for FemtoVgRenderer {
         if !fits {
             // A geometry change makes the existing texture the wrong shape.
             self.invalidate_static_layer(key);
-            let (pw, ph) = physical_size(width, height, dpi_scale);
             // FLIP_Y, not a canvas transform: femtovg's cheap
             // `is_straight_tinted_image` path ignores the canvas transform,
             // while `FLIP_Y` folds into the paint's inverse transform and so
             // survives it.
             let Ok(image) = self.canvas.create_image_empty(
-                pw,
-                ph,
+                usize::from(size.width.get()),
+                usize::from(size.height.get()),
                 femtovg::PixelFormat::Rgba8,
                 femtovg::ImageFlags::FLIP_Y,
             ) else {
@@ -2391,11 +2705,10 @@ impl Renderer for FemtoVgRenderer {
         // own target and the check reads as a failure on every capture.
         self.canvas.flush();
         // SAFETY: the renderer's GL context is current for the whole frame.
-        let bound = unsafe { self.gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING) };
-        let screen = self
-            .screen_fbo
-            .map_or(0, |fbo| i32::try_from(fbo.0.get()).unwrap_or(i32::MAX));
-        if bound == screen {
+        let bound = unsafe { self.gl.get_parameter_framebuffer(glow::FRAMEBUFFER_BINDING) };
+        // femtovg never renders a layer into the default framebuffer,
+        // so finding that bound is as much a failed retarget as finding the screen's.
+        if bound.is_none_or(|fbo| Some(fbo) == self.screen_fbo) {
             tracing::error!(
                 key,
                 "static layer retarget failed; falling back to a full pass"
@@ -2404,6 +2717,11 @@ impl Renderer for FemtoVgRenderer {
             self.invalidate_static_layer(key);
             return false;
         }
+        // femtovg builds the layer's framebuffer during the retarget above,
+        // so the swap has nothing to act on any earlier than here.
+        // SAFETY: the context is current for the frame, and the check above
+        // found the layer's framebuffer bound.
+        unsafe { self.share_layer_stencil(size) };
         // `drop_shadow` restores `frame_target` after its offscreen pass, so the
         // capture has to own it: a shadowed *static* draw sits in `Band::Below`
         // and is emitted here, and leaving this on `Screen` would send that
@@ -2420,16 +2738,11 @@ impl Renderer for FemtoVgRenderer {
         // static content against transparency and compositing it later blends
         // those edges twice, which shows as antialiasing drift on thin geometry
         // and text. Opaque makes the blit a copy rather than a blend.
-        let (pw, ph) = physical_size(width, height, dpi_scale);
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "physical_size returns small positive values"
-        )]
         self.canvas.clear_rect(
             0,
             0,
-            pw as u32,
-            ph as u32,
+            u32::from(size.width.get()),
+            u32::from(size.height.get()),
             femtovg::Color::rgbf(0.0, 0.0, 0.0),
         );
         true
@@ -2608,15 +2921,33 @@ fn scissor_box(rect: Rect, dpi: f32, width_px: i32, height_px: i32) -> (i32, i32
     (left, height_px - bottom, right - left, bottom - top)
 }
 
+/// An unsigned value — a `GLuint` name or a `GLenum` —
+/// that a GL query returns through a `GLint`.
+///
+/// The bits are reinterpreted rather than range-checked:
+/// a value past `i32::MAX` arrives negative. glow's own name getters do the same.
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "GL returns unsigned values through a GLint"
+)]
+fn gl_uint(value: i32) -> u32 {
+    value as u32
+}
+
+/// The object name a GL query returns through a `GLint`; zero is "no object".
+fn gl_name(value: i32) -> Option<NonZeroU32> {
+    NonZeroU32::new(gl_uint(value))
+}
+
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "surface dimensions are small positive values"
+    reason = "a float-to-int `as` saturates, and `PhysicalSize::new` rejects the extremes"
 )]
-fn physical_size(width: u32, height: u32, dpi_scale: f32) -> (usize, usize) {
-    (
-        (width as f32 * dpi_scale) as usize,
-        (height as f32 * dpi_scale) as usize,
+fn physical_size(width: u32, height: u32, dpi_scale: f32) -> Option<PhysicalSize> {
+    PhysicalSize::new(
+        (width as f32 * dpi_scale) as u32,
+        (height as f32 * dpi_scale) as u32,
     )
 }
 
@@ -2804,10 +3135,17 @@ fn build_femtovg_path(points: &[(f32, f32)], closed: bool, smooth: bool) -> Path
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
-    use super::{FemtoVgRenderer, RenderTargetProbe, SphereRendererState, femtovg_baseline};
+    use super::{
+        FemtoVgRenderer, PhysicalSize, PoolSlot, RenderTargetProbe, SphereRendererState,
+        femtovg_baseline, gl_name,
+    };
     use crate::renderer::{AssetSuspendResult, AssetTagState, Renderer};
-    use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
+    use crate::test_harness::{
+        GlHarness, create_colour_only_fbo, create_readback_fbo, read_pixels_top_down,
+    };
+    use crate::test_tracing::counting_warns;
     use crate::tree::VerticalAlign;
+    use bmc_wasm_protocol::{Color, Fill};
     use glow::HasContext;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
     use std::io::Cursor;
@@ -2850,6 +3188,599 @@ mod tests {
             !renderer.blit_static_layer("widget:static"),
             "nothing was captured, so nothing may be blitted"
         );
+    }
+
+    #[test]
+    fn a_gl_name_past_i32_max_is_reinterpreted_not_dropped() {
+        assert_eq!(
+            gl_name(-1),
+            std::num::NonZeroU32::new(u32::MAX),
+            "a name GL returned as a negative GLint is still that name"
+        );
+        assert_eq!(gl_name(0), None, "zero is GL's \"no object\"");
+    }
+
+    #[test]
+    fn a_physical_size_rejects_what_no_layer_can_be() {
+        assert!(
+            PhysicalSize::new(1280_u32, 480).is_some(),
+            "the display size must pool"
+        );
+        assert!(
+            PhysicalSize::new(0_u32, 480).is_none(),
+            "a zero-width stencil serves nothing"
+        );
+        assert!(
+            PhysicalSize::new(-1_i32, 480).is_none(),
+            "GL's signed sizes must not wrap into a key"
+        );
+        assert!(
+            PhysicalSize::new(65_536_u32, 480).is_none(),
+            "a size past u16 must not truncate into a smaller key"
+        );
+    }
+
+    #[test]
+    fn static_layers_land_on_the_screen_targets_stencil() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        let screen = Some(screen_stencil(&harness.gl, fbo, &renderer));
+
+        let first = capture_layer_stencil(&mut renderer, "widget:one", SIZE, SIZE);
+        let second = capture_layer_stencil(&mut renderer, "widget:two", SIZE, SIZE);
+
+        assert_eq!(first, screen, "the first layer kept a stencil of its own");
+        assert_eq!(second, screen, "the second layer kept a stencil of its own");
+        assert_eq!(
+            renderer.stencil_pool.len(),
+            1,
+            "two layers of one size must not pool two stencils"
+        );
+    }
+
+    /// A recapture finds the layer already on the shared stencil.
+    /// Running the swap again there would shrink the shared stencil itself,
+    /// which for a display-sized layer is the screen target's own.
+    #[test]
+    fn recapturing_a_shared_layer_leaves_the_shared_stencil_alone() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        let screen = screen_stencil(&harness.gl, fbo, &renderer);
+
+        capture_layer_stencil(&mut renderer, "widget:again", SIZE, SIZE);
+        let attached = capture_layer_stencil(&mut renderer, "widget:again", SIZE, SIZE);
+
+        assert_eq!(
+            attached,
+            Some(screen),
+            "the recaptured layer must stay on the shared stencil"
+        );
+        assert_eq!(
+            renderbuffer_size(&harness.gl, screen),
+            physical(SIZE, SIZE),
+            "a recapture shrank the screen target's stencil"
+        );
+    }
+
+    #[test]
+    fn the_swap_shrinks_the_stencil_femtovg_allocated() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+
+        bind_new_layer_framebuffer(&mut renderer, SIZE);
+        // SAFETY: the harness context is current and the retarget has run.
+        let femtovg_stencil = unsafe { renderer.attached_stencil() }
+            .expect("BUG: femtovg allocates a stencil with the framebuffer");
+        assert_eq!(
+            renderbuffer_size(&harness.gl, femtovg_stencil),
+            physical(SIZE, SIZE),
+            "BUG: femtovg's per-image stencil is no longer full size, \
+             so there is nothing left to save by sharing"
+        );
+
+        // SAFETY: the harness context is current,
+        // and the retarget above left the layer's framebuffer bound.
+        unsafe { renderer.share_layer_stencil(physical(SIZE, SIZE)) };
+
+        assert_eq!(
+            renderbuffer_size(&harness.gl, femtovg_stencil),
+            physical(1, 1),
+            "the displaced stencil still holds its memory, so nothing was saved"
+        );
+    }
+
+    #[test]
+    fn an_already_incomplete_layer_does_not_refuse_its_size() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        bind_new_layer_framebuffer(&mut renderer, SIZE);
+        // A colour format on the depth attachment is incomplete on any GL.
+        let side = i32::try_from(SIZE).expect("BUG: the test size fits GLsizei");
+        // SAFETY: the harness context is current, with the layer's framebuffer bound.
+        unsafe {
+            let colour = harness
+                .gl
+                .create_renderbuffer()
+                .expect("BUG: create_renderbuffer failed");
+            harness
+                .gl
+                .bind_renderbuffer(glow::RENDERBUFFER, Some(colour));
+            harness
+                .gl
+                .renderbuffer_storage(glow::RENDERBUFFER, glow::RGBA8, side, side);
+            harness.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            harness.gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::DEPTH_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(colour),
+            );
+        }
+
+        // SAFETY: as above.
+        unsafe { renderer.share_layer_stencil(physical(SIZE, SIZE)) };
+
+        assert!(
+            matches!(
+                renderer.stencil_pool.get(&physical(SIZE, SIZE)),
+                Some(PoolSlot::Borrowed(_))
+            ),
+            "an incomplete layer must not cost its size the shared stencil"
+        );
+    }
+
+    /// The path every widget narrower than the display takes.
+    #[test]
+    fn a_layer_the_screen_stencil_cannot_serve_pools_its_own() {
+        const FRAME: u32 = 64;
+        const LAYER: u32 = 32;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, FRAME, FRAME);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), FRAME, FRAME, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        let screen = screen_stencil(&harness.gl, fbo, &renderer);
+
+        let pooled = capture_layer_stencil(&mut renderer, "widget:small", FRAME, LAYER)
+            .expect("BUG: the layer framebuffer must carry a stencil");
+
+        assert_ne!(
+            pooled, screen,
+            "a 32x32 layer cannot share the 64x64 screen stencil"
+        );
+        assert_eq!(
+            renderbuffer_size(&harness.gl, pooled),
+            physical(LAYER, LAYER),
+            "the pooled stencil must match the layer it serves"
+        );
+        assert_eq!(
+            renderer.stencil_pool.len(),
+            2,
+            "screen size plus layer size"
+        );
+
+        drop(renderer);
+        // SAFETY: the harness context is current on this thread.
+        unsafe {
+            assert!(
+                !harness.gl.is_renderbuffer(pooled),
+                "the renderer must free the stencil it allocated"
+            );
+            assert!(
+                harness.gl.is_renderbuffer(screen),
+                "the screen target's stencil belongs to the embedder"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_size_frees_its_stencil_and_is_not_offered_again() {
+        const FRAME: u32 = 64;
+        const LAYER: u32 = 32;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, FRAME, FRAME);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), FRAME, FRAME, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        // A colour format on the stencil attachment is incomplete on any GL,
+        // which stands in for a driver refusing the swap.
+        let side = i32::try_from(LAYER).expect("BUG: the test size fits GLsizei");
+        // SAFETY: the harness context is current on this thread.
+        let unusable = unsafe {
+            let rbo = harness
+                .gl
+                .create_renderbuffer()
+                .expect("BUG: create_renderbuffer failed");
+            harness.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+            harness
+                .gl
+                .renderbuffer_storage(glow::RENDERBUFFER, glow::RGBA8, side, side);
+            harness.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            rbo
+        };
+        renderer.stencil_pool.insert(
+            physical(LAYER, LAYER),
+            PoolSlot::Owned {
+                rbo: unusable,
+                serving: false,
+            },
+        );
+
+        let (first, warns) =
+            counting_warns(|_| capture_layer_stencil(&mut renderer, "widget:first", FRAME, LAYER));
+        let first = first.expect("BUG: the layer framebuffer must carry a stencil");
+
+        assert_eq!(
+            warns, 1,
+            "a refusal gives up the saving for that size and must be reported"
+        );
+        assert_ne!(
+            first, unusable,
+            "the refused layer must be back on femtovg's stencil"
+        );
+        // SAFETY: the harness context is current on this thread.
+        assert!(
+            !unsafe { harness.gl.is_renderbuffer(unusable) },
+            "a refused stencil must be freed, not left allocated with nothing attached"
+        );
+        assert!(
+            matches!(
+                renderer.stencil_pool.get(&physical(LAYER, LAYER)),
+                Some(PoolSlot::Refused { kept: None })
+            ),
+            "the refusal must be remembered for that size"
+        );
+
+        capture_layer_stencil(&mut renderer, "widget:second", FRAME, LAYER);
+
+        assert!(
+            matches!(
+                renderer.stencil_pool.get(&physical(LAYER, LAYER)),
+                Some(PoolSlot::Refused { kept: None })
+            ),
+            "a later layer of a refused size must not allocate and retry the swap"
+        );
+    }
+
+    #[test]
+    fn a_refusal_keeps_the_stencil_earlier_layers_draw_through() {
+        const FRAME: u32 = 64;
+        const LAYER: u32 = 32;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, FRAME, FRAME);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), FRAME, FRAME, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        let shared = capture_layer_stencil(&mut renderer, "widget:shared", FRAME, LAYER)
+            .expect("BUG: the layer framebuffer must carry a stencil");
+        // A colour format makes the next swap incomplete, as a driver refusing it would.
+        let side = i32::try_from(LAYER).expect("BUG: the test size fits GLsizei");
+        // SAFETY: the harness context is current on this thread.
+        unsafe {
+            harness
+                .gl
+                .bind_renderbuffer(glow::RENDERBUFFER, Some(shared));
+            harness
+                .gl
+                .renderbuffer_storage(glow::RENDERBUFFER, glow::RGBA8, side, side);
+            harness.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+        }
+
+        capture_layer_stencil(&mut renderer, "widget:refused", FRAME, LAYER);
+
+        assert!(
+            matches!(
+                renderer.stencil_pool.get(&physical(LAYER, LAYER)),
+                Some(PoolSlot::Refused { kept: Some(rbo) }) if *rbo == shared
+            ),
+            "the refusal must keep the stencil the first layer is still attached to"
+        );
+        // SAFETY: the harness context is current on this thread.
+        assert!(
+            unsafe { harness.gl.is_renderbuffer(shared) },
+            "a stencil a layer still draws through must not be freed"
+        );
+
+        drop(renderer);
+        // SAFETY: the harness context is current on this thread.
+        assert!(
+            !unsafe { harness.gl.is_renderbuffer(shared) },
+            "the kept stencil must be freed with the renderer"
+        );
+    }
+
+    #[test]
+    fn refusing_a_size_again_keeps_the_stencil_it_kept() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        // SAFETY: the harness context is current on this thread.
+        let kept = unsafe {
+            let rbo = harness
+                .gl
+                .create_renderbuffer()
+                .expect("BUG: create_renderbuffer failed");
+            harness.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+            harness.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            rbo
+        };
+        renderer
+            .stencil_pool
+            .insert(physical(SIZE, SIZE), PoolSlot::Refused { kept: Some(kept) });
+
+        renderer.refuse_stencil_size(physical(SIZE, SIZE));
+
+        assert!(
+            matches!(
+                renderer.stencil_pool.get(&physical(SIZE, SIZE)),
+                Some(PoolSlot::Refused { kept: Some(rbo) }) if *rbo == kept
+            ),
+            "a second refusal must carry the kept stencil over"
+        );
+        // SAFETY: the harness context is current on this thread.
+        assert!(
+            unsafe { harness.gl.is_renderbuffer(kept) },
+            "a second refusal freed a stencil earlier layers still draw through"
+        );
+    }
+
+    #[test]
+    fn a_stale_shared_stencil_leaves_the_layer_on_femtovgs() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        // A name GL never generated fails the attach exactly as a deleted one does.
+        // A real deleted renderbuffer cannot stand in for it:
+        // Mesa hands the freed name straight to femtovg's next stencil.
+        let stale = glow::NativeRenderbuffer(
+            std::num::NonZeroU32::new(u32::MAX).expect("BUG: u32::MAX is non-zero"),
+        );
+        renderer
+            .stencil_pool
+            .insert(physical(SIZE, SIZE), PoolSlot::Borrowed(stale));
+
+        let attached = capture_layer_stencil(&mut renderer, "widget:stale", SIZE, SIZE)
+            .expect("BUG: the layer framebuffer must carry a stencil");
+
+        assert_eq!(
+            renderbuffer_size(&harness.gl, attached),
+            physical(SIZE, SIZE),
+            "the stencil the layer still uses was shrunk out from under it"
+        );
+        assert!(
+            matches!(
+                renderer.stencil_pool.get(&physical(SIZE, SIZE)),
+                Some(PoolSlot::Refused { kept: None })
+            ),
+            "a size whose shared stencil cannot attach must not be offered again"
+        );
+        // SAFETY: the harness context is current on this thread.
+        assert_eq!(
+            unsafe { harness.gl.get_error() },
+            glow::NO_ERROR,
+            "the failed attach must not leave its error for an unrelated call"
+        );
+    }
+
+    #[test]
+    fn a_layer_the_pool_could_not_serve_is_shared_on_a_later_capture() {
+        const FRAME: u32 = 64;
+        const LAYER: u32 = 32;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, FRAME, FRAME);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), FRAME, FRAME, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        // llvmpipe won't fail the allocation,
+        // so `Refused` stands in only to make the pool come up empty.
+        // In production it never clears:
+        // a failed allocation inserts nothing, which the removal below mimics.
+        renderer
+            .stencil_pool
+            .insert(physical(LAYER, LAYER), PoolSlot::Refused { kept: None });
+        let femtovg_stencil = capture_layer_stencil(&mut renderer, "widget:retry", FRAME, LAYER)
+            .expect("BUG: the layer framebuffer must carry a stencil");
+        assert_eq!(
+            renderbuffer_size(&harness.gl, femtovg_stencil),
+            physical(LAYER, LAYER),
+            "BUG: with nothing to offer, the first capture must keep femtovg's stencil"
+        );
+
+        renderer.stencil_pool.remove(&physical(LAYER, LAYER));
+        let attached = capture_layer_stencil(&mut renderer, "widget:retry", FRAME, LAYER)
+            .expect("BUG: the layer framebuffer must carry a stencil");
+
+        assert_ne!(
+            attached, femtovg_stencil,
+            "a later capture must offer the shared stencil again"
+        );
+        assert_eq!(
+            renderbuffer_size(&harness.gl, femtovg_stencil),
+            physical(1, 1),
+            "once shared, femtovg's stencil must give its memory back"
+        );
+    }
+
+    #[test]
+    fn display_sized_layers_share_one_stencil_without_a_screen_stencil() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_colour_only_fbo(&harness.gl, SIZE, SIZE);
+        let (mut renderer, warns) = counting_warns(|_| {
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed")
+        });
+        assert_eq!(
+            warns, 1,
+            "a missing screen stencil costs a full-size stencil and must be reported"
+        );
+        assert!(
+            renderer.stencil_pool.is_empty(),
+            "BUG: nothing was adopted, so nothing may be pooled"
+        );
+
+        let first = capture_layer_stencil(&mut renderer, "widget:one", SIZE, SIZE);
+        let second = capture_layer_stencil(&mut renderer, "widget:two", SIZE, SIZE);
+
+        assert!(
+            matches!(
+                renderer.stencil_pool.get(&physical(SIZE, SIZE)),
+                Some(PoolSlot::Owned { rbo, serving: true })
+                    if first == Some(*rbo) && second == Some(*rbo)
+            ),
+            "with no screen stencil to borrow, both layers must share one pooled stencil"
+        );
+    }
+
+    /// The shared stencil has to be a working stencil:
+    /// a concave fill reading one that is stale, unattached or the wrong size
+    /// covers its own notch.
+    #[test]
+    fn a_layer_on_the_shared_stencil_still_fills_a_concave_path() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        let screen = screen_stencil(&harness.gl, fbo, &renderer);
+
+        let attached = capture_layer_drawing(&mut renderer, "widget:concave", SIZE, SIZE, |r| {
+            r.fill_path_paint(
+                &[
+                    (8.0, 8.0),
+                    (56.0, 8.0),
+                    (56.0, 24.0),
+                    (24.0, 24.0),
+                    (24.0, 56.0),
+                    (8.0, 56.0),
+                ],
+                &Fill::Solid(Color::from_rgb(0, 255, 0)),
+                false,
+            );
+        });
+        assert_eq!(
+            attached,
+            Some(screen),
+            "the L must go through the shared stencil, not femtovg's own"
+        );
+
+        renderer.begin_frame(SIZE, SIZE, 1.0);
+        assert!(
+            renderer.blit_static_layer("widget:concave"),
+            "BUG: the captured layer must be blittable"
+        );
+        renderer.flush();
+
+        let pixels = read_pixels_top_down(&harness.gl, fbo, SIZE, SIZE);
+        let at = |x: usize, y: usize| pixels[y * SIZE as usize + x];
+        assert!(at(48, 16)[1] > 200, "the arm of the L is missing");
+        assert!(at(16, 48)[1] > 200, "the leg of the L is missing");
+        assert!(at(48, 48)[1] < 40, "the notch of the L was filled in");
+    }
+
+    /// Capture an empty layer under `key`
+    /// and report the stencil renderbuffer its framebuffer ends up with,
+    /// read while the capture holds it bound.
+    fn capture_layer_stencil(
+        renderer: &mut FemtoVgRenderer,
+        key: &str,
+        frame: u32,
+        layer: u32,
+    ) -> Option<glow::Renderbuffer> {
+        capture_layer_drawing(renderer, key, frame, layer, |_| {})
+    }
+
+    /// [`capture_layer_stencil`], with `draw` run inside the capture.
+    fn capture_layer_drawing(
+        renderer: &mut FemtoVgRenderer,
+        key: &str,
+        frame: u32,
+        layer: u32,
+        draw: impl FnOnce(&mut FemtoVgRenderer),
+    ) -> Option<glow::Renderbuffer> {
+        renderer.begin_frame(frame, frame, 1.0);
+        assert!(
+            renderer.begin_static_layer(key, layer, layer),
+            "BUG: the layer must be allocatable on the test driver"
+        );
+        // SAFETY: the capture in progress leaves its own framebuffer bound.
+        let stencil = unsafe { renderer.attached_stencil() };
+        draw(renderer);
+        renderer.end_static_layer(key);
+        renderer.flush();
+        stencil
+    }
+
+    /// Retarget to a fresh render-target image, which is what makes femtovg build its framebuffer,
+    /// as `begin_static_layer` does before the swap.
+    fn bind_new_layer_framebuffer(renderer: &mut FemtoVgRenderer, size: u32) {
+        let image = renderer
+            .canvas
+            .create_image_empty(
+                size as usize,
+                size as usize,
+                femtovg::PixelFormat::Rgba8,
+                femtovg::ImageFlags::FLIP_Y,
+            )
+            .expect("BUG: render target image allocation failed");
+        renderer
+            .canvas
+            .set_render_target(femtovg::RenderTarget::Image(image));
+        renderer.canvas.flush();
+    }
+
+    fn screen_stencil(
+        gl: &glow::Context,
+        fbo: glow::Framebuffer,
+        renderer: &FemtoVgRenderer,
+    ) -> glow::Renderbuffer {
+        // SAFETY: the harness context is current on this thread.
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            renderer.attached_stencil()
+        }
+        .expect("BUG: the harness screen target must carry a stencil")
+    }
+
+    fn physical(width: u32, height: u32) -> PhysicalSize {
+        PhysicalSize::new(width, height).expect("BUG: test sizes fit a stencil")
+    }
+
+    fn renderbuffer_size(gl: &glow::Context, rbo: glow::Renderbuffer) -> PhysicalSize {
+        // SAFETY: the harness context is current on this thread.
+        let size = unsafe {
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+            let size = PhysicalSize::new(
+                gl.get_renderbuffer_parameter_i32(glow::RENDERBUFFER, glow::RENDERBUFFER_WIDTH),
+                gl.get_renderbuffer_parameter_i32(glow::RENDERBUFFER, glow::RENDERBUFFER_HEIGHT),
+            );
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            size
+        };
+        size.expect("BUG: GL reported a size no stencil can have")
     }
 
     /// The gate is only safe if the probe itself is right: a false negative

@@ -72,6 +72,10 @@ impl SharedHost {
         let egl = EglContext::new()?;
         let gl_sync_support = Self::detect_gl_sync_support(&egl);
         let scratch = SharedRenderScratch::new(&egl, display_max_w, display_max_h)?;
+        // SAFETY: `EglContext::new` made its context current on this thread,
+        // and `get_proc_address` resolves against it.
+        // The staging stencil lives in `EglContext::stencil_pool`, which never frees an entry,
+        // so it outlives every static-layer capture.
         let renderer = unsafe {
             FemtoVgRenderer::new(
                 |sym: &str| EglContext::get_proc_address(sym),

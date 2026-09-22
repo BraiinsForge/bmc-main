@@ -429,6 +429,8 @@ fn create_standalone_renderer(
 ) -> anyhow::Result<FemtoVgRenderer> {
     // SAFETY: the standalone process renders on one thread with the current EGL
     // context, and `scratch` owns the FBO id used as the renderer target.
+    // Its stencil lives in `EglContext::stencil_pool`, which never frees an entry,
+    // so it outlives every static-layer capture.
     unsafe {
         FemtoVgRenderer::new(
             EglContext::get_proc_address,

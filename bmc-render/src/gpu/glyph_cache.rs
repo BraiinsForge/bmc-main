@@ -1255,10 +1255,9 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::test_tracing::counting_warns;
     use cosmic_text::SubpixelBin;
 
     const SANS: &str = "Braiins Sans";
@@ -2282,41 +2281,6 @@ mod tests {
         assert_eq!(backend.pages_created, MAX_NORMAL_PAGES + 1);
     }
 
-    /// Counts WARN records without a `tracing-subscriber` dev dependency.
-    /// The diagnostic's whole point is that it fires once per interval
-    /// however many glyphs suffered, and only a subscriber can witness it.
-    #[derive(Clone, Default)]
-    struct WarnCounter(Arc<AtomicUsize>);
-
-    impl WarnCounter {
-        fn count(&self) -> usize {
-            self.0.load(Ordering::Relaxed)
-        }
-
-        fn reset(&self) {
-            self.0.store(0, Ordering::Relaxed);
-        }
-    }
-
-    impl tracing::Subscriber for WarnCounter {
-        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-            *metadata.level() == tracing::Level::WARN
-        }
-
-        fn event(&self, _: &tracing::Event<'_>) {
-            self.0.fetch_add(1, Ordering::Relaxed);
-        }
-
-        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-            tracing::span::Id::from_u64(1)
-        }
-
-        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-        fn enter(&self, _: &tracing::span::Id) {}
-        fn exit(&self, _: &tracing::span::Id) {}
-    }
-
     /// Reaches the diagnostic's callsite from a thread that has a subscriber
     /// installed, then rebuilds the interest cache.
     ///
@@ -2330,23 +2294,14 @@ mod tests {
         tracing::callsite::rebuild_interest_cache();
     }
 
-    /// Runs `scenario` with a WARN counter installed and reports what it saw.
-    fn counting_warns(scenario: impl FnOnce(&WarnCounter)) -> usize {
-        let warns = WarnCounter::default();
-        tracing::subscriber::with_default(warns.clone(), || {
-            arm_pressure_callsite();
-            warns.reset();
-            scenario(&warns);
-        });
-        warns.count()
-    }
-
     #[test]
     fn repeated_failing_frames_log_once_per_interval() {
         let mut backend = test_support::MockBackend::default();
         let mut cache = GlyphCache::new();
 
-        let records = counting_warns(|_| {
+        let ((), records) = counting_warns(|warns| {
+            arm_pressure_callsite();
+            warns.reset();
             for frame in 0..3 {
                 backend.fail_next_upload = Some(PageFaultKind::Transient);
                 assert_eq!(
@@ -2368,7 +2323,9 @@ mod tests {
         let mut backend = test_support::MockBackend::default();
         let mut cache = GlyphCache::new();
 
-        let records = counting_warns(|warns| {
+        let ((), records) = counting_warns(|warns| {
+            arm_pressure_callsite();
+            warns.reset();
             fill_cold_pages(&mut cache, &mut backend);
             assert_eq!(warns.count(), 0, "quiet frames must stay silent");
 

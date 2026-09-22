@@ -82,6 +82,9 @@ pub use renderer::RendererAssetResolver;
 )]
 pub mod test_harness;
 
+#[cfg(test)]
+mod test_tracing;
+
 // Re-export colors and color macro from protocol crate
 pub mod colors {
     pub use bmc_wasm_protocol::colors::*;

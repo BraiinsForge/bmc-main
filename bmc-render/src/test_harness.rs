@@ -181,6 +181,57 @@ pub fn create_readback_fbo(
     height: u32,
 ) -> (glow::Framebuffer, u32) {
     use glow::HasContext as _;
+    let fbo = create_colour_fbo(gl, width, height);
+    unsafe {
+        // FemtoVG needs a stencil attachment for concave fills.
+        let rbo = gl
+            .create_renderbuffer()
+            .expect("BUG: create_renderbuffer failed");
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+        gl.renderbuffer_storage(
+            glow::RENDERBUFFER,
+            glow::DEPTH24_STENCIL8,
+            width as i32,
+            height as i32,
+        );
+        gl.framebuffer_renderbuffer(
+            glow::FRAMEBUFFER,
+            glow::DEPTH_STENCIL_ATTACHMENT,
+            glow::RENDERBUFFER,
+            Some(rbo),
+        );
+        gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+    }
+    assert_complete(gl);
+    (fbo, fbo.0.get())
+}
+
+/// [`create_readback_fbo`] without the stencil,
+/// for a screen target that has none to share.
+pub fn create_colour_only_fbo(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+) -> (glow::Framebuffer, u32) {
+    let fbo = create_colour_fbo(gl, width, height);
+    assert_complete(gl);
+    (fbo, fbo.0.get())
+}
+
+fn assert_complete(gl: &glow::Context) {
+    use glow::HasContext as _;
+    let status = unsafe { gl.check_framebuffer_status(glow::FRAMEBUFFER) };
+    assert_eq!(
+        status,
+        glow::FRAMEBUFFER_COMPLETE,
+        "FBO incomplete: {status:#x}"
+    );
+}
+
+/// A framebuffer with an RGBA8 colour texture attached, left bound.
+#[expect(clippy::cast_possible_wrap)]
+fn create_colour_fbo(gl: &glow::Context, width: u32, height: u32) -> glow::Framebuffer {
+    use glow::HasContext as _;
     unsafe {
         let texture = gl.create_texture().expect("BUG: create_texture failed");
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
@@ -216,31 +267,7 @@ pub fn create_readback_fbo(
             Some(texture),
             0,
         );
-        // FemtoVG needs a stencil attachment for concave fills.
-        let rbo = gl
-            .create_renderbuffer()
-            .expect("BUG: create_renderbuffer failed");
-        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
-        gl.renderbuffer_storage(
-            glow::RENDERBUFFER,
-            glow::DEPTH24_STENCIL8,
-            width as i32,
-            height as i32,
-        );
-        gl.framebuffer_renderbuffer(
-            glow::FRAMEBUFFER,
-            glow::DEPTH_STENCIL_ATTACHMENT,
-            glow::RENDERBUFFER,
-            Some(rbo),
-        );
-        gl.bind_renderbuffer(glow::RENDERBUFFER, None);
-        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-        assert_eq!(
-            status,
-            glow::FRAMEBUFFER_COMPLETE,
-            "FBO incomplete: {status:#x}"
-        );
-        (fbo, fbo.0.get())
+        fbo
     }
 }
 

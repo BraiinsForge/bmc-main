@@ -163,10 +163,9 @@ pub struct EglContext {
     gl_image_target_texture: GlEglImageTargetTexture2DOes,
     /// Stencil renderbuffers shared by every export buffer of a given size.
     ///
-    /// femtovg needs a stencil attachment but keeps nothing in it between
-    /// frames, and the cross-process GPU lock serialises renders, so no two
-    /// buffers hold one attached at once — one per size serves every buffer of
-    /// that viewport.
+    /// femtovg needs a stencil attachment but keeps nothing in it between draws,
+    /// and the cross-process GPU lock serialises renders,
+    /// so one per size serves every framebuffer of that size that attaches it.
     ///
     /// Keyed by size because GLES 2.0 requires every attachment on a framebuffer
     /// to share dimensions, which makes a mismatch impossible by construction.
