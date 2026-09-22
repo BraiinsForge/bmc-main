@@ -211,9 +211,14 @@ class Base extends Component<Props, State> {
                             onClick={() => window.open(URLS.external.academy, '_blank')}
                             withInlineLabel
                         />
-                        {hasPassword && (
-                            <HeaderActionButton label={this.#txt.logout} icon={IconLogout} onClick={store.logout} />
-                        )}
+                        {/* Next to boser the login is boser's, and it shows its logout even without a password. */}
+                        {boserUi || hasPassword ? (
+                            <HeaderActionButton
+                                label={this.#txt.logout}
+                                icon={IconLogout}
+                                onClick={boserUi ? store.logoutToBoser : store.logout}
+                            />
+                        ) : null}
                     </HeaderGlobalBar>
                 </Header>
 

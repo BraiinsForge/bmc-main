@@ -20,6 +20,7 @@
 
 import { useState, useEffect } from 'react';
 import * as pb from '@/proto';
+import { URLS } from '@/constants';
 import { boserChrome } from '@/lib/capabilities';
 import { readBrand, type Brand } from '@/lib/brand';
 import { readSystem, type Capabilities } from '@/lib/system';
@@ -87,6 +88,15 @@ class Store {
             // Nothing to do here
         }
         this.fetchSessionInfo();
+    };
+    /** Ends the session boser shares with us and leaves for boser's login page instead of ours. */
+    logoutToBoser = async (): Promise<void> => {
+        try {
+            await pb.rpc.auth.logout({});
+        } catch {
+            // The login page is where we go either way
+        }
+        window.location.assign(URLS.boser.login);
     };
 
     #fetchSessionInfoAbort = pb.abort.get();

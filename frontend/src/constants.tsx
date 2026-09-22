@@ -56,5 +56,6 @@ export const URLS = {
         dashboard: '/bos',
         configuration: '/bos/settings',
         system: '/bos/system',
+        login: '/bos/login',
     },
 } as const;
