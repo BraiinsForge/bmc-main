@@ -61,6 +61,7 @@ normally shows nothing, so an empty corner means all is well.
 - The status is derived from the tuner state and the boards' hashrates only. Pool liveness and the license are not
   checked; a limited or expired license shows only if the miner stops hashing, which the hashrate reports about a minute
   late.
-- The BMC application reads the miner's local API every five seconds with the miner's factory credentials. A user who
-  changed the miner's password gets a red pickaxe after the five failed readings, until Boser issues on-device clients a
-  credential of their own.
+- The BMC application reads the miner's local API every five seconds as the bearer of the local API token Boser issues
+  to on-device clients, so setting or changing the miner password never affects the indicator. A Boser restart issues a
+  new token; the indicator picks it up on its next reading. While Boser is down and the token is unavailable, the
+  readings fail and the five-failed-readings rule above applies.

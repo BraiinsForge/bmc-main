@@ -211,15 +211,19 @@ overlay opts into that protocol (`uses_platform`), and `on_platform_capabilities
 is set; on a Deck the thread never starts and the corner is the chip alone. The gate is inside the overlay rather than
 in the host's registry because the surface has to exist everywhere for the chip.
 
-The thread (`poller.rs`) reads the local boser's REST API every 5 s with a 1 s request cap, over the login mechanism the
-miner-info widget also uses: a token from `POST /api/v1/auth/login`, sent bare in the `Authorization` header. The widget
-asks the user for the BOS password and polls nothing until it has one; the overlay has nobody to ask and logs in as
-`root`/`root`. (A user who changed the BOS password gets 401s here and a red pickaxe, until boser issues on-device
-clients a local token file and the constant goes. A refused login is retried on the widget's doubling delay, 10 s up to
-5 min, so the polls keep counting against the budget without hitting boser's auth log every 5 s.)
-`GET /api/v1/performance/tuner-state` and `GET /api/v1/miner/hw/hashboards` are the only two reads (`bos.rs`); bosminer
-IPC and gRPC are not involved. `BMC_MINING_API_URL` points the poller at a `bmc-netsim` instance during development
-(`just netsim::run mining-status` serves one miner per state on pinned ports).
+The thread (`poller.rs`) reads the local boser's REST API every 5 s with a 1 s request cap, as the bearer of the local
+API token boser issues to on-device clients: one line at `/var/run/boser-api.token`, written root-only on every boser
+start and independent of the miner password. The miner-info widget asks the user for that password and logs in with it;
+the overlay has nobody to ask, and the token spares it the question, so a user changing the password never touches the
+pickaxe. The token is read on the first poll and kept. A 401 re-reads the file, and when it holds a different token
+(boser restarted and issued a new one) the read is repeated once with it, so a restart costs no failed poll; the same
+token refused again is dropped, and the next poll reads the file afresh. A file that is missing, empty or not a single
+line is an ordinary poll failure against the budget below, read again on every poll, so the pickaxe recovers as soon as
+boser is up and the file is there. The overlay never logs the token: failures name the path and the OS error only, and
+the client's `Debug` output redacts it. `GET /api/v1/performance/tuner-state` and `GET /api/v1/miner/hw/hashboards` are
+the only two reads (`bos.rs`); bosminer IPC and gRPC are not involved. `BMC_MINING_API_URL` points the poller at a
+`bmc-netsim` instance during development (`just netsim::run mining-status` serves one miner per state on pinned ports),
+and `BMC_MINING_API_TOKEN_FILE` at any file holding a line for it to send, since netsim checks no token.
 
 The status rule (`mining.rs`) reads the tuner state and the hashboards, and nothing else:
 
@@ -230,7 +234,7 @@ The status rule (`mining.rs`) reads the tuner state and the hashboards, and noth
 - **Low** (red) otherwise, including a tuning stage with no board hashing, which is how a miner paused mid-tune reads
   once its 1-minute rate has drained. Disabled boards are ignored, so one left off never holds the corner red.
 
-Any failed poll — no answer, a login refusal, a non-2xx read (boser sends 412 while bosminer is down), a body that does
+Any failed poll — no answer, no token to send, a non-2xx read (boser sends 412 while bosminer is down), a body that does
 not parse — keeps the last answer for 5 consecutive failures and then shows Low. Before the first success there is
 nothing to keep, so the pickaxe stays hidden until the budget runs out. A success resets the budget at once. The failure
 that uses up the budget is logged once at `warn` with its cause, and the success that ends the outage once at `info`;
