@@ -342,3 +342,360 @@ pub(super) fn shared_caption(tier: Tier, controls: &Controls<'_>) -> Option<Tree
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use bmc_render::tree::DrawCommand;
+    use bmc_wasm_protocol::colors::{GRAY_50, TRANSPARENT, WHITE};
+    use bmc_wasm_protocol::{Color, Fill};
+
+    use super::*;
+    use crate::ui::test_support::*;
+    use crate::ui::*;
+
+    /// BMM101 is wide enough to caption its buttons. BMM100 is not, and the
+    /// disc spends its room on the chord-safe band.
+    #[test]
+    fn only_the_labeled_tiers_caption_their_buttons() {
+        for (panel, labeled) in [
+            (wide_panel(), true),
+            (narrow_panel(), true),
+            (small_panel(), false),
+            (round_panel(), false),
+        ] {
+            let mut texts = Vec::new();
+            collect_texts(&build_with_controls(panel, all_controls()), &mut texts);
+            assert_eq!(
+                texts.iter().any(|t| t == "Restart"),
+                labeled,
+                "{panel:?}: the restart button's own label"
+            );
+            assert_eq!(
+                texts.iter().any(|t| t == "Reconfigure Wi-Fi"),
+                labeled,
+                "{panel:?}: the WiFi button's own label"
+            );
+        }
+    }
+
+    /// Labels render verbatim, so the widest must fit its group.
+    /// A wrapped label costs a line the 320px stack cannot spare,
+    /// which is why BMM101 captions at 12pt and not at 14.
+    ///
+    /// The Deck goes unchecked: the same estimate says its 20pt label
+    /// overruns 180px, and it ships that way, so either the glyphs are
+    /// narrower than the estimate or the label wraps and nobody minds.
+    #[test]
+    fn the_widest_label_fits_a_bmm101_group() {
+        let tier = tier_for(&narrow_panel());
+        let width = line_width("Reconfigure Wi-Fi", tier.caption_size);
+        assert!(
+            width <= tier.single_w,
+            "the label needs {width} of {}",
+            tier.single_w
+        );
+    }
+
+    #[test]
+    fn gating_decides_which_buttons_exist() {
+        let keys = |panel: Panel, view: WifiView<'_>, controls: Controls<'_>| {
+            let mut out = Vec::new();
+            canvas_keys(
+                &build_tree(
+                    Some("braiins-deck"),
+                    Some("10.0.0.2"),
+                    Some(-55),
+                    Some("MyWifi"),
+                    WifiIcons::default(),
+                    panel,
+                    view,
+                    ControlIcons::default(),
+                    controls,
+                ),
+                &mut out,
+            );
+            out
+        };
+
+        let minimal = keys(wide_panel(), WifiView::Idle, Controls::default());
+        assert!(
+            minimal.iter().any(|k| k == CLOSE_KEY),
+            "{CLOSE_KEY} always renders"
+        );
+        for key in [
+            BRIGHTNESS_DOWN_KEY,
+            BRIGHTNESS_UP_KEY,
+            VOLUME_DOWN_KEY,
+            VOLUME_UP_KEY,
+            NIGHT_MODE_KEY,
+            RESTART_KEY,
+        ] {
+            assert!(!minimal.iter().any(|k| k == key), "{key} is gated off");
+        }
+        assert!(
+            minimal.iter().any(|k| k == WIFI_RECONFIG_KEY),
+            "wifi button renders when the panel supports it"
+        );
+
+        let full = keys(wide_panel(), WifiView::Idle, all_controls());
+        for key in [
+            BRIGHTNESS_DOWN_KEY,
+            BRIGHTNESS_UP_KEY,
+            VOLUME_DOWN_KEY,
+            VOLUME_UP_KEY,
+            NIGHT_MODE_KEY,
+            RESTART_KEY,
+            WIFI_RECONFIG_KEY,
+            CLOSE_KEY,
+        ] {
+            assert!(full.iter().any(|k| k == key), "{key} renders when enabled");
+        }
+
+        let mut no_wifi_panel = wide_panel();
+        no_wifi_panel.wifi_button = false;
+        let no_wifi = keys(no_wifi_panel, WifiView::Idle, all_controls());
+        assert!(!no_wifi.iter().any(|k| k == WIFI_RECONFIG_KEY));
+
+        let setup = keys(
+            wide_panel(),
+            WifiView::Setup {
+                ap_ssid: "Deck ABCD",
+            },
+            all_controls(),
+        );
+        assert!(!setup.iter().any(|k| k == WIFI_RECONFIG_KEY));
+        assert!(setup.iter().any(|k| k == CLOSE_KEY));
+    }
+
+    /// The night button's circle fill and icon tint.
+    fn night_colors(controls: Controls<'_>) -> (Color, Color) {
+        let tree = build_with_controls(wide_panel(), controls);
+        let draws = find_canvas(&tree, NIGHT_MODE_KEY).expect("BUG: night canvas must exist");
+        let DrawCommand::Circle {
+            fill: Fill::Solid(fill),
+            ..
+        } = draws[0]
+        else {
+            panic!("expected Circle")
+        };
+        let DrawCommand::Svg { color, .. } = draws[draws.len() - 1] else {
+            panic!("expected Svg")
+        };
+        (fill, color)
+    }
+
+    #[test]
+    fn night_mode_active_fills_blue_and_never_inverts() {
+        let night = |active| Controls {
+            night_mode: Some(NightMode {
+                active,
+                until: Some("06:30"),
+            }),
+            ..Controls::default()
+        };
+        assert_eq!(night_colors(night(true)), (NIGHT_ACTIVE, TRANSPARENT));
+        assert_eq!(night_colors(night(false)), (CIRCLE_FILL, TRANSPARENT));
+
+        let pressed_active = Controls {
+            pressed: Some(NIGHT_MODE_KEY),
+            ..night(true)
+        };
+        assert_eq!(
+            night_colors(pressed_active),
+            (NIGHT_ACTIVE, TRANSPARENT),
+            "a pressed active night button must not invert"
+        );
+        let pressed_inactive = Controls {
+            pressed: Some(NIGHT_MODE_KEY),
+            ..night(false)
+        };
+        assert_eq!(
+            night_colors(pressed_inactive),
+            (CIRCLE_FILL, TRANSPARENT),
+            "a pressed inactive night button must not invert either"
+        );
+    }
+
+    #[test]
+    fn pressed_step_button_inverts() {
+        let controls = Controls {
+            volume: Some(40),
+            pressed: Some(VOLUME_UP_KEY),
+            ..Controls::default()
+        };
+        let tree = build_with_controls(wide_panel(), controls);
+        let draws = find_canvas(&tree, VOLUME_UP_KEY).expect("BUG: volume-up canvas must exist");
+        let DrawCommand::Circle {
+            fill: Fill::Solid(fill),
+            ..
+        } = draws[0]
+        else {
+            panic!("expected Circle")
+        };
+        assert_eq!(fill, CIRCLE_PRESSED);
+        let DrawCommand::Svg { color, .. } = draws[draws.len() - 1] else {
+            panic!("expected Svg")
+        };
+        assert_eq!(color, ICON_PRESSED_TINT);
+
+        let unpressed =
+            find_canvas(&tree, VOLUME_DOWN_KEY).expect("BUG: volume-down canvas must exist");
+        let DrawCommand::Circle {
+            fill: Fill::Solid(fill),
+            ..
+        } = unpressed[0]
+        else {
+            panic!("expected Circle")
+        };
+        assert_eq!(fill, CIRCLE_FILL, "only the pressed button inverts");
+    }
+
+    #[test]
+    fn large_tier_hold_hint_stays_legible_over_the_progress_circle() {
+        let controls = Controls {
+            restart: Some(HoldControl {
+                caption: None,
+                progress: 0.15,
+            }),
+            ..Controls::default()
+        };
+        assert_eq!(
+            text_color(
+                &build_with_controls(wide_panel(), controls),
+                "hold 5 seconds",
+            ),
+            Some(WHITE),
+        );
+
+        let resting = Controls {
+            restart: Some(HoldControl::default()),
+            ..Controls::default()
+        };
+        assert_eq!(
+            text_color(
+                &build_with_controls(wide_panel(), resting),
+                "hold 5 seconds",
+            ),
+            Some(GRAY_50),
+        );
+    }
+
+    /// The disc is the only layout left with a caption line. The wide one
+    /// carries the same copy in its labeled groups, and the compact one
+    /// renders bare buttons with nothing beneath them.
+    #[test]
+    fn caption_precedence_and_prefixes() {
+        let caption_texts = |panel: Panel, controls: Controls<'_>| {
+            let mut texts = Vec::new();
+            collect_texts(&build_with_controls(panel, controls), &mut texts);
+            texts
+        };
+        let holding = HoldControl {
+            caption: Some("Keep holding…"),
+            progress: 0.2,
+        };
+
+        let all = Controls {
+            restart: Some(holding),
+            wifi_reconfig: holding,
+            ..Controls::default()
+        };
+        let all_texts = caption_texts(round_panel(), all);
+        assert!(
+            all_texts.iter().any(|t| t == "Restart: Keep holding…"),
+            "restart beats the wifi caption"
+        );
+        assert!(
+            !all_texts
+                .iter()
+                .any(|t| t.starts_with("Reconfigure Wi-Fi:")),
+            "the losing caption must not render alongside the winner"
+        );
+
+        let wifi_only = Controls {
+            wifi_reconfig: holding,
+            ..Controls::default()
+        };
+        assert!(
+            caption_texts(round_panel(), wifi_only)
+                .iter()
+                .any(|t| t == "Reconfigure Wi-Fi: Keep holding…"),
+            "reconfigure surfaces its own caption when it is the only hold"
+        );
+
+        let night = Controls {
+            night_mode: Some(NightMode {
+                active: true,
+                until: Some("22:00"),
+            }),
+            ..Controls::default()
+        };
+        assert!(
+            caption_texts(round_panel(), night)
+                .iter()
+                .any(|t| t == "Night mode on until 22:00"),
+            "the round layout surfaces the night end time on the caption line"
+        );
+        assert!(
+            !caption_texts(wide_panel(), night)
+                .iter()
+                .any(|t| t.starts_with("Night mode on until")),
+            "the Large tier shows the end time in the night group instead"
+        );
+        assert!(
+            caption_texts(wide_panel(), night)
+                .iter()
+                .any(|t| t == "Until 22:00")
+        );
+    }
+
+    fn assert_control_rows_fit(controls: Controls<'_>) {
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            let tree = build_tree(
+                Some("braiins-deck"),
+                Some("10.0.0.2"),
+                Some(-55),
+                Some("MyWifi"),
+                WifiIcons::default(),
+                panel,
+                WifiView::Idle,
+                ControlIcons::default(),
+                controls,
+            );
+            #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
+            let panel_w = panel.width as f32;
+            let kids = children(&tree).expect("BUG: root must be a container");
+
+            let mut rows = 0;
+            for kid in kids {
+                let mut keys = Vec::new();
+                canvas_keys(kid, &mut keys);
+                if !keys.iter().any(|k| is_control_key(k)) {
+                    continue;
+                }
+                rows += 1;
+                let width = min_content_width(kid);
+                assert!(
+                    width <= panel_w,
+                    "{panel:?}: control row of {width} overflows {panel_w} — \
+                     the buttons run off the panel edge"
+                );
+            }
+            assert!(rows > 0, "{panel:?}: control rows must render");
+        }
+    }
+
+    #[test]
+    fn control_rows_fit_the_panel_width() {
+        assert_control_rows_fit(all_controls());
+        let held = HoldControl {
+            caption: Some("Keep holding…"),
+            progress: 0.5,
+        };
+        assert_control_rows_fit(Controls {
+            restart: Some(held),
+            wifi_reconfig: held,
+            ..all_controls()
+        });
+    }
+}

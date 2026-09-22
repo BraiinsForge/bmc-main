@@ -195,3 +195,40 @@ pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     let caption = caption_slot(content, tier);
     wide_halves(header, rows, caption, tier, tier.padding).into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::test_support::*;
+    use crate::ui::*;
+
+    /// Min-content width of [`wide_header`] at its caps. The structure
+    /// is worst-case; the glyph width is only [`HOSTNAME_CHAR_W`]'s estimate.
+    /// Including the SETUP badge bounds both WiFi views, leaving idle mode —
+    /// which has no badge — some slack. The setup hint is left out: it wraps,
+    /// so a single-line glyph budget does not describe it.
+    #[expect(clippy::cast_precision_loss, reason = "the caps are a few hundred px")]
+    fn wide_info_width(tier: Tier) -> f32 {
+        let addresses =
+            line_width("255.255.255.255", tier.hostname_size).max(WIDE_HOSTNAME_WIDTH as f32);
+        let wifi = tier.wifi_icon_size
+            + WIDE_WIFI_GAP
+            + line_width("SETUP", WIDE_SETUP_BADGE_SIZE)
+            + WIDE_WIFI_GAP
+            + WIDE_SSID_WIDTH as f32;
+        WIDE_INFO_LEFT_PAD + WIDE_QR_SIZE + WIDE_INFO_GAP + addresses + wifi + WIDE_INFO_RIGHT_PAD
+    }
+
+    #[test]
+    fn wide_header_fits_the_panel_width() {
+        let panel = wide_panel();
+        #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
+        let panel_w = panel.width as f32;
+        let width = wide_info_width(tier_for(&panel));
+        assert!(
+            width <= panel_w,
+            "header content {width} overflows {panel_w} — the flex spacer \
+             collapses and the WiFi block runs off the right edge"
+        );
+    }
+}

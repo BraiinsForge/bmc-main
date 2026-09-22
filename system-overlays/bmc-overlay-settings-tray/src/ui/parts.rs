@@ -318,3 +318,235 @@ pub(super) fn ip_qr(ip: &str, size: f32) -> TreeNode {
         }],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bmc_render::tree::{DrawCommand, TreeNode};
+    use bmc_wasm_protocol::Fill;
+    use bmc_wasm_protocol::colors::TRANSPARENT;
+
+    use super::*;
+    use crate::ui::test_support::*;
+    use crate::ui::*;
+
+    #[test]
+    fn hold_circle_is_drawn_behind_the_button() {
+        let btn = round_button(
+            "k",
+            ButtonIcon::square(None),
+            112.0,
+            48.0,
+            CIRCLE_FILL,
+            TRANSPARENT,
+            Some(0.5),
+        );
+        let TreeNode::Column(_, children) = btn else {
+            panic!("expected layered hold button")
+        };
+        let [
+            TreeNode::Canvas { draws, .. },
+            TreeNode::Canvas {
+                draws: touch_draws,
+                touch_key,
+                ..
+            },
+        ] = children.as_slice()
+        else {
+            panic!("expected visual and touch canvases")
+        };
+        assert_eq!(touch_key.as_deref(), Some("k"));
+        assert!(touch_draws.is_empty());
+        let DrawCommand::Circle {
+            fill: Fill::Solid(hold_fill),
+            r: hold_radius,
+            ..
+        } = &draws[0]
+        else {
+            panic!("expected hold Circle")
+        };
+        let DrawCommand::Circle {
+            fill: Fill::Solid(circle),
+            r,
+            ..
+        } = &draws[1]
+        else {
+            panic!("expected button Circle")
+        };
+        assert_close(*hold_radius, 84.0, "half hold shrinks the circle halfway");
+        assert_eq!(*hold_fill, HOLD_FILL, "half hold is fully opaque");
+        assert_eq!(
+            *circle,
+            CIRCLE_FILL.with_alpha(1.0),
+            "the held button masks the progress circle underneath",
+        );
+        assert_close(*r, 56.0, "a hold button keeps the full fill radius");
+        let DrawCommand::Svg { color, .. } = draws[2] else {
+            panic!("expected icon after both circles")
+        };
+        assert_eq!(
+            color, ICON_PRESSED_TINT,
+            "the held-button icon remains visible above both circles",
+        );
+    }
+
+    #[test]
+    fn hold_circle_shrinks_to_the_button_over_the_hold() {
+        let radii = |progress| {
+            let btn = round_button(
+                "k",
+                ButtonIcon::square(None),
+                112.0,
+                48.0,
+                CIRCLE_FILL,
+                TRANSPARENT,
+                Some(progress),
+            );
+            let TreeNode::Column(_, children) = btn else {
+                panic!("expected layered hold button")
+            };
+            let [TreeNode::Canvas { draws, .. }, TreeNode::Canvas { .. }] = children.as_slice()
+            else {
+                panic!("expected visual and touch canvases")
+            };
+            let DrawCommand::Circle { r: hold, .. } = &draws[0] else {
+                panic!("expected hold Circle")
+            };
+            let DrawCommand::Circle { r: button, .. } = &draws[1] else {
+                panic!("expected button Circle")
+            };
+            (*button, *hold)
+        };
+
+        let (button, started) = radii(f32::MIN_POSITIVE);
+        let (_, half) = radii(0.5);
+        let (_, full) = radii(1.0);
+        assert_close(
+            started,
+            button * 2.0,
+            "the circle starts at twice the button radius",
+        );
+        assert_close(
+            half,
+            button * 1.5,
+            "the circle is halfway shrunk at half hold",
+        );
+        assert_close(full, button, "the circle meets the button at full hold");
+        assert!(
+            started > half && half > full,
+            "the circle radius shrinks monotonically with hold progress"
+        );
+    }
+
+    #[test]
+    fn unheld_button_fills_the_whole_diameter() {
+        let btn = round_button(
+            "k",
+            ButtonIcon::square(None),
+            112.0,
+            48.0,
+            CIRCLE_FILL,
+            TRANSPARENT,
+            None,
+        );
+        let TreeNode::Canvas { draws, .. } = btn else {
+            panic!("expected Canvas")
+        };
+        let DrawCommand::Circle { r, .. } = &draws[0] else {
+            panic!("expected Circle")
+        };
+        assert_close(*r, 56.0, "the fill spans the tier diameter");
+    }
+
+    #[test]
+    fn hold_circle_canvas_is_centered_behind_the_button() {
+        let btn = round_button(
+            "k",
+            ButtonIcon::square(None),
+            64.0,
+            32.0,
+            CIRCLE_FILL,
+            TRANSPARENT,
+            Some(0.5),
+        );
+        let TreeNode::Column(props, children) = btn else {
+            panic!("expected a fixed-size layered hold button")
+        };
+        assert_close(props.width, 64.0, "hold button keeps its layout width");
+        assert_close(props.height, 64.0, "hold button keeps its layout height");
+        let [
+            TreeNode::Canvas {
+                props: visual_props,
+                touch_key: None,
+                draws,
+            },
+            TreeNode::Canvas {
+                props: touch_props,
+                touch_key: Some(touch_key),
+                draws: touch_draws,
+            },
+        ] = children.as_slice()
+        else {
+            panic!("expected a visual canvas behind the touch target")
+        };
+        assert_close(visual_props.width, 128.0, "visual canvas width");
+        assert_close(visual_props.height, 128.0, "visual canvas height");
+        assert_close(visual_props.inset_top, -32.0, "visual canvas top inset");
+        assert_close(visual_props.inset_left, -32.0, "visual canvas left inset");
+        assert_eq!(touch_key, "k");
+        assert_close(touch_props.width, 64.0, "touch target width");
+        assert_close(touch_props.height, 64.0, "touch target height");
+        assert!(touch_draws.is_empty());
+        let DrawCommand::Circle { r, .. } = &draws[0] else {
+            panic!("expected hold circle")
+        };
+        assert_close(*r, 48.0, "half-hold circle radius");
+        let DrawCommand::Circle { r, .. } = &draws[1] else {
+            panic!("expected full-size button fill")
+        };
+        assert_close(*r, 32.0, "hold button fill radius");
+    }
+
+    #[test]
+    fn hold_circle_fades_in_over_the_start_of_the_hold() {
+        let hold_circle_of = |progress| {
+            let controls = Controls {
+                restart: Some(HoldControl {
+                    caption: None,
+                    progress,
+                }),
+                ..Controls::default()
+            };
+            let tree = build_with_controls(wide_panel(), controls);
+            assert!(
+                find_canvas(&tree, RESTART_KEY).is_some(),
+                "the restart button remains present at every hold progress",
+            );
+            find_hold_circle_for_key(&tree, RESTART_KEY)
+        };
+        assert_eq!(
+            hold_circle_of(0.0),
+            None,
+            "an unheld button carries no hold circle"
+        );
+        assert_eq!(
+            hold_circle_of(f32::MIN_POSITIVE).map(|(_, color)| color),
+            Some(HOLD_FILL.scale_alpha(0.0)),
+            "the circle starts transparent",
+        );
+        assert_eq!(
+            hold_circle_of(HOLD_ALPHA_FULL_AT / 2.0).map(|(_, color)| color),
+            Some(HOLD_FILL.scale_alpha(0.5)),
+            "the circle reaches half opacity midway through its fade",
+        );
+        assert_eq!(
+            hold_circle_of(HOLD_ALPHA_FULL_AT).map(|(_, color)| color),
+            Some(HOLD_FILL),
+            "the circle reaches full opacity partway in, while it is still shrinking",
+        );
+        assert_eq!(
+            hold_circle_of(1.0).map(|(_, color)| color),
+            Some(HOLD_FILL),
+            "the circle stays opaque for the rest of the hold",
+        );
+    }
+}

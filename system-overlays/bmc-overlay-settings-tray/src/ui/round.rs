@@ -55,3 +55,32 @@ pub(super) fn round_children(content: Content<'_>, panel: Panel, tier: Tier) -> 
     children.push(fixed_height(ROUND_BOTTOM_GAP));
     children
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::parts::close_origin;
+    use crate::ui::test_support::*;
+    use crate::ui::*;
+
+    #[test]
+    fn round_close_target_stays_inside_the_disc_and_above_the_controls() {
+        // Round-panel chord safety: the far corner of the close target must
+        // stay inside the disc.
+        let panel = round_panel();
+        let tier = tier_for(&panel);
+        let (left, top) = close_origin(&panel, tier);
+        let r = 240.0_f32;
+        let far_x = left + CLOSE_TARGET - r;
+        let far_y = top - r;
+        let dist = (far_x * far_x + far_y * far_y).sqrt();
+        assert!(
+            dist < r,
+            "close target far corner at {dist} must stay inside the 240px disc"
+        );
+        assert!(
+            ROUND_CONTROLS_TOP >= top + CLOSE_TARGET,
+            "round control rows start below the close target"
+        );
+    }
+}
