@@ -998,6 +998,47 @@
           "required": [
             "device"
           ]
+        },
+        {
+          "description": "A Nexus weather deployment — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "weather"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/WeatherParams"
+            },
+            "port": {
+              "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "device"
+          ]
         }
       ]
     },
@@ -1054,6 +1095,40 @@
           "type": "integer",
           "format": "uint64",
           "default": 187020,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "WeatherParams": {
+      "description": "Scenario controls for the simulated Nexus weather endpoint.",
+      "type": "object",
+      "properties": {
+        "fail_after_secs": {
+          "description": "Answer 200 before this point, then switch to `status`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "status": {
+          "description": "HTTP status returned after startup, or after `fail_after_secs`; `404` is a location miss.",
+          "$ref": "#/$defs/HttpStatus"
+        },
+        "temperature_offset_c": {
+          "description": "Degrees Celsius added to every temperature in the forecast.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "warmup_secs": {
+          "description": "Answer 503 until this many seconds of scenario time have elapsed.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
           "minimum": 0
         }
       },
