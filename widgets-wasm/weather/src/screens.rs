@@ -18,23 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Weather widget — current conditions and forecast, four sizes.
-//! Ported from `deckfeeder/assets/widgets/weather/` (a JS/HTML widget).
-//!
-//! - `api` — the Nexus endpoint, its reply statuses and the envelope read into a forecast
-//! - `model` — the size buckets, the forecast and what the widget holds of it
-//! - `display` — the forecast's figures and times as text
-//! - `screens` — the views, their shared parts and the fixtures that stage them
-//! - `live` — the widget entry points the host calls
+mod bar;
+mod common;
+pub mod fixtures;
+mod full;
+mod icons;
+mod large;
+mod medium;
+mod small;
+mod view;
 
-pub mod api;
-pub mod display;
-#[cfg(target_arch = "wasm32")]
-mod live;
-mod manifest_params;
-pub mod model;
-pub mod screens;
-pub mod weather_code;
-pub mod wind;
-
-pub use manifest_params::{Params, TimeZone};
+pub use view::{ViewData, weather_view};

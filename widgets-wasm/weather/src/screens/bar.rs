@@ -19,7 +19,7 @@
 // the grant above.
 
 use crate::model::ForecastRange;
-use crate::render::common::TEXT_PRIMARY;
+use crate::screens::common::TEXT_PRIMARY;
 use units::units::DegreeCelsius;
 
 #[expect(

@@ -20,7 +20,7 @@
 
 use crate::{
     display,
-    render::{
+    screens::{
         common::{self, BORDER, HourStyle, TEXT_PRIMARY, TEXT_SECONDARY},
         icons,
     },
@@ -41,12 +41,12 @@ const HOUR_STYLE: HourStyle = HourStyle {
     temp_weight: FontWeight::REGULAR,
 };
 
-fn sun_item(svg: &'static Svg, rfc3339: &str, tz: Option<&Tz>) -> Node {
+fn sun_item(svg: &'static Svg, at: Option<SystemTime>, tz: Option<&Tz>) -> Node {
     row(
         props!(cross_align: CrossAlign::Center, gap: 8.0),
         [
             common::glyph(svg, 28.0, TEXT_SECONDARY),
-            common::time_with_meridiem(rfc3339, tz, 32, 20, FontWeight::REGULAR),
+            common::time_with_meridiem(at, tz, 32, 20, FontWeight::REGULAR),
         ],
     )
 }
@@ -120,8 +120,8 @@ fn weather_info(weather: &crate::model::Weather, tz: Option<&Tz>) -> Node {
         children.push(row(
             props!(cross_align: CrossAlign::Center, gap: 24.0),
             [
-                sun_item(&icons::SUNRISE, &daily.today_sunrise, tz),
-                sun_item(&icons::SUNSET, &daily.today_sunset, tz),
+                sun_item(&icons::SUNRISE, daily.today_sunrise, tz),
+                sun_item(&icons::SUNSET, daily.today_sunset, tz),
             ],
         ));
     }

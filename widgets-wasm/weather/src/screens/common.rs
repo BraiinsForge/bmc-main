@@ -20,7 +20,7 @@
 
 use crate::{
     display,
-    render::{bar, icons},
+    screens::{bar, icons},
     weather_code,
 };
 use units::units::DegreeCelsius;
@@ -128,7 +128,7 @@ pub fn hour_cell(entry: &crate::model::HourEntry, tz: Option<&Tz>, style: HourSt
         props!(cross_align: CrossAlign::Center, gap: style.gap),
         [
             txt(
-                display::forecast_hour_label(&entry.time_rfc3339, tz),
+                display::forecast_hour_label(entry.at, tz),
                 style.label_size,
                 FontWeight::REGULAR,
                 TEXT_SECONDARY,
@@ -149,19 +149,19 @@ pub fn hour_cell(entry: &crate::model::HourEntry, tz: Option<&Tz>, style: HourSt
 /// carries AM/PM, so a bare "9:04" would otherwise be ambiguous).
 #[must_use]
 pub(super) fn time_with_meridiem(
-    rfc3339: &str,
+    at: Option<SystemTime>,
     tz: Option<&Tz>,
     time_size: u32,
     meridiem_size: u32,
     weight: FontWeight,
 ) -> Node {
     let mut children = vec![txt(
-        display::hour_label(rfc3339, tz.cloned()),
+        display::hour_label(at, tz),
         time_size,
         weight,
         TEXT_PRIMARY,
     )];
-    if let Some(m) = display::clock_meridiem(rfc3339, tz) {
+    if let Some(m) = display::clock_meridiem(at, tz) {
         children.push(txt(m, meridiem_size, FontWeight::REGULAR, TEXT_SECONDARY));
     }
     row(props!(cross_align: CrossAlign::Center, gap: 4.0), children)

@@ -20,7 +20,7 @@
 
 use crate::{
     display,
-    render::common::{self, TEXT_PRIMARY, TEXT_SECONDARY},
+    screens::common::{self, TEXT_PRIMARY, TEXT_SECONDARY},
     weather_code,
 };
 

@@ -18,10 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[cfg(any(target_arch = "wasm32", test))]
-#[expect(clippy::wildcard_imports, reason = "widget code uses many SDK exports")]
-use bmc_wasm_sdk::*;
+use bmc_wasm_sdk::{FormatTimeOpts, SystemTime, Tz, format, format_time};
 use units::units::{DegreeCelsius, KilometerPerHour};
+
+use crate::manifest_params::TimeZone;
 
 pub const NOT_AVAILABLE: &str = "--";
 pub const ENTER_LOCATION: &str = "Enter location";
@@ -63,79 +63,45 @@ pub fn wind_speed(value: KilometerPerHour) -> String {
     units::format::speed(value, 1)
 }
 
-#[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn select_tz(mode: crate::manifest_params::TimeZone, location_tz: &str) -> Option<Tz> {
-    use crate::manifest_params::TimeZone;
+pub fn select_tz(mode: TimeZone, location_tz: &str) -> Option<Tz> {
     match mode {
         TimeZone::Location => Some(Tz::from_runtime(location_tz)),
         TimeZone::System => None,
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
 #[must_use]
-pub fn select_tz(_mode: crate::manifest_params::TimeZone, _location_tz: &str) -> Option<Tz> {
-    None
-}
-
-#[cfg(target_arch = "wasm32")]
-#[must_use]
-pub fn hour_label(rfc3339: &str, tz: Option<Tz>) -> String {
-    let Some(unix_secs) = parse_datetime(rfc3339) else {
+pub fn hour_label(at: Option<SystemTime>, tz: Option<&Tz>) -> String {
+    let Some(at) = at else {
         return NOT_AVAILABLE.to_string();
     };
     format_time(
-        SystemTime { unix_secs },
+        at,
         FormatTimeOpts {
-            timezone: tz,
+            timezone: tz.cloned(),
             ..FormatTimeOpts::default()
         },
     )
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
-#[must_use]
-pub fn hour_label(rfc3339: &str, _tz: Option<Tz>) -> String {
-    rfc3339
-        .get(11..16)
-        .map_or_else(|| NOT_AVAILABLE.to_string(), ToString::to_string)
-}
-
 /// Hour-only label ("20", "8PM") for the dense hourly strip, whose entries
 /// always fall on the hour. Delegates to the SDK so the 12-hour form carries a
 /// meridiem. Sunrise and sunset keep their minutes via [`hour_label`].
-#[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn forecast_hour_label(rfc3339: &str, tz: Option<&Tz>) -> String {
-    let Some(unix_secs) = parse_datetime(rfc3339) else {
-        return NOT_AVAILABLE.to_string();
-    };
-    format::format_hour(SystemTime { unix_secs }, tz)
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-#[must_use]
-pub fn forecast_hour_label(rfc3339: &str, _tz: Option<&Tz>) -> String {
-    rfc3339
-        .get(11..13)
-        .map_or_else(|| NOT_AVAILABLE.to_string(), ToString::to_string)
+pub fn forecast_hour_label(at: Option<SystemTime>, tz: Option<&Tz>) -> String {
+    at.map_or_else(
+        || NOT_AVAILABLE.to_string(),
+        |at| format::format_hour(at, tz),
+    )
 }
 
 /// The AM/PM marker for a sunrise/sunset time, or `None` in 24-hour mode.
 /// Rendered as a separate element beside [`hour_label`] so a 12-hour reading
 /// is unambiguous.
-#[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn clock_meridiem(rfc3339: &str, tz: Option<&Tz>) -> Option<String> {
-    let unix_secs = parse_datetime(rfc3339)?;
-    format::meridiem(SystemTime { unix_secs }, tz)
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-#[must_use]
-pub fn clock_meridiem(_rfc3339: &str, _tz: Option<&Tz>) -> Option<String> {
-    None
+pub fn clock_meridiem(at: Option<SystemTime>, tz: Option<&Tz>) -> Option<String> {
+    format::meridiem(at?, tz)
 }
 
 #[cfg(test)]

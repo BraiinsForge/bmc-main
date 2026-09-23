@@ -18,16 +18,91 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[cfg(target_arch = "wasm32")]
-use bmc_wasm_sdk::JsonDoc;
+//! Which layout a viewport gets, and the forecast the layouts draw.
+
+use bmc_wasm_sdk::{SizeVariant, SystemTime, WidgetSize, WidgetViewport};
 use units::availability::Availability;
 use units::units::{Degree, DegreeCelsius, KilometerPerHour, Quantity};
 
+/// The frames a layout is picked for: the four BMC100 slots and BMM101's 480×320.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeBucket {
+    Full,
+    Large,
+    Medium,
+    Small,
+    Bmm101,
+}
+
+impl SizeBucket {
+    #[must_use]
+    pub const fn design_size(self) -> (u32, u32) {
+        match self {
+            Self::Full => (1_280, 480),
+            Self::Large => (638, 480),
+            Self::Medium => (638, 238),
+            Self::Small => (317, 238),
+            Self::Bmm101 => (480, 320),
+        }
+    }
+}
+
+/// A rectangular viewport classified once for every layout:
+/// its pixels with their closest BMC100 variant, and the bucket that picks the layout.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    pub size: WidgetSize,
+    pub bucket: SizeBucket,
+}
+
+impl Frame {
+    #[must_use]
+    pub fn of(viewport: WidgetViewport) -> Self {
+        Self {
+            size: WidgetSize::from_dimensions(viewport.width, viewport.height),
+            bucket: size_bucket(viewport.width, viewport.height),
+        }
+    }
+}
+
+/// The two BMM frames the narrow bucket has to tell apart.
+const BMM100_HEIGHT: u32 = 240;
+const BMM101_HEIGHT: u32 = 320;
+/// Split at their midpoint, so either frame keeps its bucket a few pixels either way.
+const BMM101_MIN_HEIGHT: u32 = u32::midpoint(BMM100_HEIGHT, BMM101_HEIGHT);
+const BMM101_MAX_WIDTH: u32 = 480;
+
+/// A landscape frame no wider than BMM101 and at least as tall as the BMM split
+/// is BMM101; everything else takes the closest BMC100 variant, as the SDK does.
+#[must_use]
+pub fn size_bucket(width: u32, height: u32) -> SizeBucket {
+    if width <= BMM101_MAX_WIDTH && height < width && height >= BMM101_MIN_HEIGHT {
+        return SizeBucket::Bmm101;
+    }
+    match SizeVariant::closest(width, height) {
+        SizeVariant::Full => SizeBucket::Full,
+        SizeVariant::Large => SizeBucket::Large,
+        SizeVariant::Medium => SizeBucket::Medium,
+        SizeVariant::Small => SizeBucket::Small,
+    }
+}
+
+/// What the widget holds for its location.
+#[derive(Clone, Debug)]
+pub enum State {
+    Loading,
+    Loaded(Weather),
+    BadLocation,
+    Error,
+}
+
+#[derive(Clone, Debug)]
 pub struct Location {
     pub display_name: String,
     pub timezone: String,
 }
 
+#[derive(Clone, Debug)]
 pub struct Current {
     pub temperature: DegreeCelsius,
     pub weather_code: i64,
@@ -36,13 +111,16 @@ pub struct Current {
     pub is_day: bool,
 }
 
+#[derive(Clone, Debug)]
 pub struct HourEntry {
-    pub time_rfc3339: String,
+    /// `None` when the payload's time does not parse.
+    pub at: Option<SystemTime>,
     pub temperature: DegreeCelsius,
     pub weather_code: i64,
     pub is_day: bool,
 }
 
+#[derive(Clone, Debug)]
 pub struct Hourly {
     pub entries: Vec<HourEntry>,
     /// Index of the first entry at or after the current time — the strips
@@ -50,21 +128,19 @@ pub struct Hourly {
     pub start_index: usize,
 }
 
-/// First hourly entry at or after `current_time_rfc3339`, else 0. Mirrors
-/// deckfeeder's `getCurrentHourIndex`. Compares parsed instants, not strings:
-/// a forecast array can change UTC offset mid-run across a DST transition, and
-/// a lexicographic compare would then order those hours wrong.
+/// First hourly entry at or after `now`, else 0. Mirrors deckfeeder's `getCurrentHourIndex`.
 #[must_use]
-pub fn hourly_start_index(entries: &[HourEntry], current_time_rfc3339: &str) -> usize {
-    let Some(now) = rfc3339_to_unix(current_time_rfc3339) else {
+pub fn hourly_start_index(entries: &[HourEntry], now: Option<SystemTime>) -> usize {
+    let Some(now) = now else {
         return 0;
     };
     entries
         .iter()
-        .position(|e| rfc3339_to_unix(&e.time_rfc3339).is_some_and(|t| t >= now))
+        .position(|e| e.at.is_some_and(|at| at.unix_secs >= now.unix_secs))
         .unwrap_or(0)
 }
 
+#[derive(Clone, Debug)]
 pub struct DayForecast {
     pub time_rfc3339: String,
     pub weather_code: i64,
@@ -72,11 +148,12 @@ pub struct DayForecast {
     pub max: DegreeCelsius,
 }
 
+#[derive(Clone, Debug)]
 pub struct Daily {
     pub days: Vec<DayForecast>,
     pub today_index: usize,
-    pub today_sunrise: String,
-    pub today_sunset: String,
+    pub today_sunrise: Option<SystemTime>,
+    pub today_sunset: Option<SystemTime>,
 }
 
 impl Daily {
@@ -89,39 +166,12 @@ impl Daily {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Weather {
     pub location: Location,
     pub current: Option<Current>,
     pub hourly: Option<Hourly>,
     pub daily: Option<Daily>,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WeatherParseError {
-    InvalidDocument,
-    MissingRequiredField(&'static str),
-}
-
-/// Parse an RFC3339 timestamp (`YYYY-MM-DDTHH:MM:SS` followed by `Z` or
-/// `±HH:MM`) to a UTC unix timestamp in seconds. Pure and panic-free: it
-/// reads fixed byte positions and returns `None` for anything malformed, so a
-/// garbage API value can never panic the render path.
-#[must_use]
-pub fn rfc3339_to_unix(rfc3339: &str) -> Option<i64> {
-    let b = rfc3339.as_bytes();
-    if b.len() < 19 {
-        return None;
-    }
-    let year = parse_digits(&b[0..4])?;
-    let month = parse_digits(&b[5..7])?;
-    let day = parse_digits(&b[8..10])?;
-    let hour = parse_digits(&b[11..13])?;
-    let minute = parse_digits(&b[14..16])?;
-    let second = parse_digits(&b[17..19])?;
-    let days = days_from_civil(year, month, day)?;
-    let local = days * 86_400 + hour * 3_600 + minute * 60 + second;
-    Some(local - tz_offset_seconds(b))
 }
 
 /// English weekday name for the calendar date in `rfc3339`. Reads only the
@@ -180,41 +230,14 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     Some(era * 146_097 + doe - 719_468)
 }
 
-/// UTC offset in seconds from an RFC3339 byte tail: `Z` → 0, `±HH:MM` → signed
-/// seconds. Returns 0 for anything unrecognised (e.g. a naive timestamp).
-fn tz_offset_seconds(b: &[u8]) -> i64 {
-    if b.last() == Some(&b'Z') {
-        return 0;
-    }
-    if b.len() < 6 {
-        return 0;
-    }
-    let tail = &b[b.len() - 6..];
-    let sign: i64 = match tail[0] {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return 0,
-    };
-    if tail[3] != b':' {
-        return 0;
-    }
-    let hh = parse_digits(&tail[1..3]).unwrap_or(0);
-    let mm = parse_digits(&tail[4..6]).unwrap_or(0);
-    sign * (hh * 3_600 + mm * 60)
-}
-
+/// Whether the hour the strip starts at is daylight; day when there is no hour to go by.
 #[must_use]
-pub fn current_is_day(hourly: Option<&Hourly>, current_time_rfc3339: &str) -> bool {
-    let Some(hourly) = hourly else { return true };
-    let pick = rfc3339_to_unix(current_time_rfc3339)
-        .and_then(|now| {
-            hourly
-                .entries
-                .iter()
-                .find(|e| rfc3339_to_unix(&e.time_rfc3339).is_some_and(|t| t >= now))
-        })
-        .or_else(|| hourly.entries.first());
-    pick.is_none_or(|e| e.is_day)
+pub fn current_is_day(hourly: Option<&Hourly>, now: Option<SystemTime>) -> bool {
+    hourly.is_none_or(|h| {
+        h.entries
+            .get(hourly_start_index(&h.entries, now))
+            .is_none_or(|e| e.is_day)
+    })
 }
 
 pub struct ForecastRange {
@@ -257,177 +280,9 @@ impl ForecastRange {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-impl TryFrom<&JsonDoc> for Weather {
-    type Error = WeatherParseError;
-
-    fn try_from(doc: &JsonDoc) -> Result<Self, Self::Error> {
-        if !doc.is_valid() {
-            return Err(WeatherParseError::InvalidDocument);
-        }
-        let display_name = doc.str("/data/location/display_name").ok_or(
-            WeatherParseError::MissingRequiredField("/data/location/display_name"),
-        )?;
-        let timezone =
-            doc.str("/data/location/timezone")
-                .ok_or(WeatherParseError::MissingRequiredField(
-                    "/data/location/timezone",
-                ))?;
-        let location = Location {
-            display_name,
-            timezone,
-        };
-
-        let current_time = doc.str("/data/current/time").unwrap_or_default();
-        let mut hourly = parse_hourly(doc);
-        if let Some(h) = hourly.as_mut() {
-            h.start_index = hourly_start_index(&h.entries, &current_time);
-        }
-        let current = parse_current(doc, hourly.as_ref(), &current_time);
-        let daily = parse_daily(doc);
-
-        Ok(Weather {
-            location,
-            current,
-            hourly,
-            daily,
-        })
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn parse_current(doc: &JsonDoc, hourly: Option<&Hourly>, current_time: &str) -> Option<Current> {
-    let temperature = DegreeCelsius(doc.f64("/data/current/temperature")?);
-    let weather_code = doc.i64("/data/current/weather_code")?;
-    Some(Current {
-        temperature,
-        weather_code,
-        wind_speed: doc
-            .f64("/data/current/wind_speed")
-            .map(KilometerPerHour)
-            .into(),
-        wind_direction: doc
-            .f64("/data/current/wind_direction_degrees")
-            .map(Degree)
-            .into(),
-        is_day: current_is_day(hourly, current_time),
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn parse_hourly(doc: &JsonDoc) -> Option<Hourly> {
-    use bmc_wasm_sdk::ufmt;
-    let mut entries = Vec::new();
-    for i in 0..256_usize {
-        let Some(time_rfc3339) = doc.str(&bmc_wasm_sdk::fmt!("/data/hourly/time/{}", i)) else {
-            break;
-        };
-        let temperature_c = doc.f64(&bmc_wasm_sdk::fmt!("/data/hourly/temperature/{}", i));
-        let weather_code = doc.i64(&bmc_wasm_sdk::fmt!("/data/hourly/weather_code/{}", i));
-        let is_day = doc.bool(&bmc_wasm_sdk::fmt!("/data/hourly/is_day/{}", i));
-        let (Some(temperature_c), Some(weather_code), Some(is_day)) =
-            (temperature_c, weather_code, is_day)
-        else {
-            bmc_wasm_sdk::log_warn!(
-                "weather: hourly entry {} incomplete, truncating strip at {} entries",
-                i,
-                entries.len()
-            );
-            break;
-        };
-        entries.push(HourEntry {
-            time_rfc3339,
-            temperature: DegreeCelsius(temperature_c),
-            weather_code,
-            is_day,
-        });
-    }
-    if entries.is_empty() {
-        None
-    } else {
-        Some(Hourly {
-            entries,
-            start_index: 0,
-        })
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn parse_daily(doc: &JsonDoc) -> Option<Daily> {
-    use bmc_wasm_sdk::ufmt;
-    let mut days = Vec::new();
-    for i in 0..256_usize {
-        let Some(time_rfc3339) = doc.str(&bmc_wasm_sdk::fmt!("/data/daily/time/{}", i)) else {
-            break;
-        };
-        let weather_code = doc.i64(&bmc_wasm_sdk::fmt!("/data/daily/weather_code/{}", i));
-        let min_c = doc.f64(&bmc_wasm_sdk::fmt!("/data/daily/temperature_min/{}", i));
-        let max_c = doc.f64(&bmc_wasm_sdk::fmt!("/data/daily/temperature_max/{}", i));
-        let (Some(weather_code), Some(min_c), Some(max_c)) = (weather_code, min_c, max_c) else {
-            bmc_wasm_sdk::log_warn!(
-                "weather: daily entry {} incomplete, truncating forecast at {} days",
-                i,
-                days.len()
-            );
-            break;
-        };
-        days.push(DayForecast {
-            time_rfc3339,
-            weather_code,
-            min: DegreeCelsius(min_c),
-            max: DegreeCelsius(max_c),
-        });
-    }
-    if days.is_empty() {
-        return None;
-    }
-    let today_index = doc
-        .i64("/data/daily/today/index")
-        .and_then(|v| usize::try_from(v).ok())
-        .unwrap_or(0)
-        .min(days.len().saturating_sub(1));
-    let today_sunrise = doc.str("/data/daily/today/sunrise").unwrap_or_default();
-    let today_sunset = doc.str("/data/daily/today/sunset").unwrap_or_default();
-    Some(Daily {
-        days,
-        today_index,
-        today_sunrise,
-        today_sunset,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rfc3339_to_unix_matches_known_epochs() {
-        assert_eq!(rfc3339_to_unix("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(rfc3339_to_unix("2000-01-01T00:00:00Z"), Some(946_684_800));
-    }
-
-    #[test]
-    fn rfc3339_to_unix_applies_the_offset() {
-        // Same wall time, different zone: the more-positive offset is the
-        // earlier instant, so the Z reading is later by exactly the offset.
-        let plus2 = rfc3339_to_unix("2026-06-03T12:00:00+02:00")
-            .expect("BUG: test timestamp with +02:00 offset is valid RFC3339");
-        let utc = rfc3339_to_unix("2026-06-03T12:00:00Z")
-            .expect("BUG: test timestamp with UTC offset is valid RFC3339");
-        let minus0530 = rfc3339_to_unix("2026-06-03T12:00:00-05:30")
-            .expect("BUG: test timestamp with -05:30 offset is valid RFC3339");
-        assert_eq!(utc - plus2, 7_200);
-        assert_eq!(minus0530 - utc, 19_800);
-    }
-
-    #[test]
-    fn rfc3339_to_unix_is_none_on_garbage_and_never_panics() {
-        assert_eq!(rfc3339_to_unix("garbage"), None);
-        assert_eq!(rfc3339_to_unix(""), None);
-        assert_eq!(rfc3339_to_unix("2026-13-03T00:00:00Z"), None);
-        // A multibyte tail must not panic a byte-index slice; just no offset.
-        assert!(rfc3339_to_unix("2026-06-03T00:00:00€€").is_some());
-    }
 
     #[test]
     fn weekday_name_uses_local_date_not_the_utc_instant() {
@@ -442,9 +297,17 @@ mod tests {
         assert_eq!(weekday_name("nope"), None);
     }
 
-    fn hour(time: &str, is_day: bool) -> HourEntry {
+    /// 3 June 2026, 18:00 UTC; the hours below are staged around it.
+    const EVENING: i64 = 1_780_509_600;
+    const HOUR: i64 = 3_600;
+
+    fn at(unix_secs: i64) -> Option<SystemTime> {
+        Some(SystemTime { unix_secs })
+    }
+
+    fn hour(unix_secs: i64, is_day: bool) -> HourEntry {
         HourEntry {
-            time_rfc3339: time.to_string(),
+            at: at(unix_secs),
             temperature: DegreeCelsius(10.0),
             weather_code: 1,
             is_day,
@@ -452,51 +315,54 @@ mod tests {
     }
 
     #[test]
-    fn current_is_day_picks_first_hour_at_or_after_now() {
-        let h = Hourly {
-            entries: vec![
-                hour("2026-06-03T18:00:00+02:00", true),
-                hour("2026-06-03T21:00:00+02:00", false),
-            ],
-            start_index: 0,
-        };
-        assert!(!current_is_day(Some(&h), "2026-06-03T19:30:00+02:00"));
-        assert!(current_is_day(Some(&h), "2026-06-03T17:00:00+02:00"));
-    }
-
-    #[test]
     fn hourly_start_index_finds_first_hour_at_or_after_now() {
         let entries = vec![
-            hour("2026-06-03T00:00:00+02:00", true),
-            hour("2026-06-03T18:00:00+02:00", true),
-            hour("2026-06-03T19:00:00+02:00", false),
+            hour(EVENING - 18 * HOUR, true),
+            hour(EVENING, true),
+            hour(EVENING + HOUR, false),
         ];
-        // 18:30 -> first entry >= it is the 19:00 one at index 2.
-        assert_eq!(hourly_start_index(&entries, "2026-06-03T18:30:00+02:00"), 2);
-        // Exact match returns that index, not the next.
-        assert_eq!(hourly_start_index(&entries, "2026-06-03T18:00:00+02:00"), 1);
-        // Past the last entry -> falls back to 0.
-        assert_eq!(hourly_start_index(&entries, "2026-06-04T00:00:00+02:00"), 0);
+        assert_eq!(hourly_start_index(&entries, at(EVENING + HOUR / 2)), 2);
+        assert_eq!(
+            hourly_start_index(&entries, at(EVENING)),
+            1,
+            "an exact match starts at that hour"
+        );
+        assert_eq!(
+            hourly_start_index(&entries, at(EVENING + 6 * HOUR)),
+            0,
+            "past the last hour falls back to the first"
+        );
     }
 
     #[test]
-    fn hourly_start_index_orders_by_instant_across_dst() {
-        // Autumn fall-back: the offset drops +02:00 -> +01:00 mid-array, so
-        // the +01:00 entries are the chronologically later ones even though
-        // "+01:00" sorts before "+02:00" lexically.
-        let entries = vec![
-            hour("2026-10-25T02:00:00+02:00", true),  // 00:00Z
-            hour("2026-10-25T02:00:00+01:00", true),  // 01:00Z
-            hour("2026-10-25T03:00:00+01:00", false), // 02:00Z
-        ];
-        // now = 00:30Z. By instant the first entry at/after is the 01:00Z one
-        // at index 1; a string compare would wrongly pick index 2.
-        assert_eq!(hourly_start_index(&entries, "2026-10-25T02:30:00+02:00"), 1);
+    fn hourly_start_index_passes_over_an_hour_that_did_not_parse() {
+        let unparsed = HourEntry {
+            at: None,
+            ..hour(EVENING, true)
+        };
+        let entries = vec![unparsed, hour(EVENING + HOUR, true)];
+        assert_eq!(hourly_start_index(&entries, at(EVENING)), 1);
+    }
+
+    #[test]
+    fn hourly_start_index_starts_at_the_first_hour_without_a_current_time() {
+        let entries = vec![hour(EVENING, true), hour(EVENING + HOUR, false)];
+        assert_eq!(hourly_start_index(&entries, None), 0);
+    }
+
+    #[test]
+    fn current_is_day_reads_the_hour_the_strip_starts_at() {
+        let h = Hourly {
+            entries: vec![hour(EVENING, true), hour(EVENING + 3 * HOUR, false)],
+            start_index: 0,
+        };
+        assert!(!current_is_day(Some(&h), at(EVENING + HOUR)));
+        assert!(current_is_day(Some(&h), at(EVENING - HOUR)));
     }
 
     #[test]
     fn current_is_day_defaults_true_without_hourly() {
-        assert!(current_is_day(None, "2026-06-03T19:30:00+02:00"));
+        assert!(current_is_day(None, at(EVENING)));
     }
 
     fn day(min_c: f64, max_c: f64) -> DayForecast {
@@ -539,8 +405,8 @@ mod tests {
         let daily = Daily {
             days: vec![day(1.0, 2.0), day(3.0, 4.0), day(5.0, 6.0)],
             today_index: 1,
-            today_sunrise: String::new(),
-            today_sunset: String::new(),
+            today_sunrise: None,
+            today_sunset: None,
         };
         // The window begins at today (index 1), never the leading past day,
         // so the Today label and current-temperature marker land on row 0.
@@ -556,8 +422,8 @@ mod tests {
         let daily = Daily {
             days: vec![day(10.9, 25.8)],
             today_index: 0,
-            today_sunrise: String::new(),
-            today_sunset: String::new(),
+            today_sunrise: None,
+            today_sunset: None,
         };
         let w = Weather {
             current: None,
@@ -567,5 +433,28 @@ mod tests {
         };
         assert!(w.current.is_none());
         assert!(w.daily.is_some());
+    }
+
+    #[test]
+    fn every_design_size_lands_in_its_own_bucket() {
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+            SizeBucket::Bmm101,
+        ] {
+            let (width, height) = bucket.design_size();
+            assert_eq!(size_bucket(width, height), bucket, "{width}x{height}");
+        }
+    }
+
+    /// A frame that misses the BMM101 rule by a pixel falls to the SDK's closest variant.
+    #[test]
+    fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
+        assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
+        assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
+        assert_eq!(size_bucket(480, 279), SizeBucket::Medium);
+        assert_eq!(size_bucket(481, 320), SizeBucket::Large);
     }
 }

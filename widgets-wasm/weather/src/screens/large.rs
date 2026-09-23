@@ -20,7 +20,7 @@
 
 use crate::{
     display,
-    render::{
+    screens::{
         common::{self, BORDER, TEXT_PRIMARY, TEXT_SECONDARY},
         icons,
     },
@@ -281,7 +281,7 @@ fn stats_panel(weather: &crate::model::Weather, tz: Option<&Tz>, metrics: LargeM
                         &icons::SUNRISE,
                         "Sunrise",
                         common::time_with_meridiem(
-                            &daily.today_sunrise,
+                            daily.today_sunrise,
                             tz,
                             metrics.stat_value_font_size,
                             metrics.stat_meridiem_font_size,
@@ -293,7 +293,7 @@ fn stats_panel(weather: &crate::model::Weather, tz: Option<&Tz>, metrics: LargeM
                         &icons::SUNSET,
                         "Sunset",
                         common::time_with_meridiem(
-                            &daily.today_sunset,
+                            daily.today_sunset,
                             tz,
                             metrics.stat_value_font_size,
                             metrics.stat_meridiem_font_size,
@@ -378,7 +378,7 @@ mod tests {
         model::{Current, Daily, DayForecast, Location, Weather},
     };
     use bmc_wasm_sdk::assets::init_test_registrars;
-    use bmc_wasm_sdk::{Node, TextOverflow, WidgetSize};
+    use bmc_wasm_sdk::{Node, SystemTime, TextOverflow, WidgetSize};
     use units::{availability::Availability, units::DegreeCelsius};
 
     #[test]
@@ -535,8 +535,12 @@ mod tests {
             hourly: None,
             daily: Some(Daily {
                 today_index: 0,
-                today_sunrise: "2026-06-05T05:02:00+02:00".to_string(),
-                today_sunset: "2026-06-05T21:04:00+02:00".to_string(),
+                today_sunrise: Some(SystemTime {
+                    unix_secs: 1_780_628_520,
+                }),
+                today_sunset: Some(SystemTime {
+                    unix_secs: 1_780_686_240,
+                }),
                 days: vec![
                     DayForecast {
                         time_rfc3339: "2026-06-05T12:00:00+02:00".to_string(),
