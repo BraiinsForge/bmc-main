@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Weather widget — current conditions and forecast, four sizes.
+//! Weather widget — current conditions and forecast, four sizes and BMM101's own frame.
 //! Ported from `deckfeeder/assets/widgets/weather/` (a JS/HTML widget).
 //!
 //! - `api` — the Nexus endpoint, its reply statuses and the envelope read into a forecast

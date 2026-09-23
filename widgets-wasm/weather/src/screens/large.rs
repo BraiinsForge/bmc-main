@@ -375,7 +375,7 @@ mod tests {
     use units::{availability::Availability, units::DegreeCelsius};
 
     #[test]
-    fn bmm101_large_metrics_scale_by_fit() {
+    fn a_short_large_frame_scales_its_metrics_by_fit() {
         let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(480, 320));
 
         assert_eq!(metrics.location_font_size, 16);
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn bmm101_forecast_row_style_scales_large_metrics() {
+    fn a_short_large_frame_scales_its_forecast_rows() {
         let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(480, 320));
         let style = metrics.forecast_row_style();
 
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn bmm101_short_large_height_tightens_vertical_gaps() {
+    fn a_short_large_frame_tightens_its_vertical_gaps() {
         let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(480, 320));
 
         assert_eq!(metrics.root_gap, 10.666_667);
@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn bmm101_current_condition_moves_right_of_icon() {
+    fn a_short_large_frame_sets_the_condition_beside_the_icon() {
         let size = WidgetSize::from_dimensions(480, 320);
         init_test_registrars();
         let params = Params {
@@ -485,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn bmm101_location_uses_full_non_wrapping_row() {
+    fn a_short_large_frame_keeps_the_location_on_one_clipped_row() {
         let size = WidgetSize::from_dimensions(480, 320);
         init_test_registrars();
         let metrics = LargeMetrics::for_size(size);

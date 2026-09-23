@@ -32,8 +32,8 @@ use bmc_wasm_sdk::*;
 
 use crate::display;
 use crate::manifest_params::Params;
-use crate::model::{Frame, Location, State, Weather};
-use crate::screens::{common, full, large, medium, small};
+use crate::model::{Frame, Location, SizeBucket, State, Weather};
+use crate::screens::{bmm101, common, full, large, medium, small};
 
 /// What the widget holds, the viewport it is drawn into, the operator's params,
 /// and the last good load while a refresh keeps failing past its grace.
@@ -79,6 +79,9 @@ fn not_loaded() -> Weather {
 }
 
 fn layout(weather: &Weather, params: &Params, frame: Frame) -> Node {
+    if frame.bucket == SizeBucket::Bmm101 {
+        return bmm101::bmm101(weather, params);
+    }
     let size = frame.size;
     match size.variant {
         SizeVariant::Full => full::full(weather, params, size),
@@ -107,9 +110,10 @@ fn message_view(message: &str) -> Node {
 mod tests {
     use bmc_wasm_sdk::system::{SnapshotBuilder, TimeFormat};
 
+    use units::units::DegreeCelsius;
+
     use super::*;
     use crate::manifest_params::TimeZone;
-    use crate::model::SizeBucket;
     use crate::screens::fixtures;
 
     fn install(timezone: &str) {
@@ -185,6 +189,45 @@ mod tests {
                 "{bucket:?}: {texts:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_bmm101_frame_reads_top_down_as_designed() {
+        install("Europe/Prague");
+        let degrees = |celsius| display::temperature(DegreeCelsius(celsius));
+        let bare = |celsius| display::temperature_bare(DegreeCelsius(celsius));
+        assert_eq!(
+            at(
+                SizeBucket::Bmm101,
+                fixtures::healthy,
+                fixtures::default_params()
+            ),
+            [
+                "Prague, Czech Republic".to_owned(),
+                degrees(21.4),
+                "Partly Cloudy".to_owned(),
+                "Low T.".to_owned(),
+                degrees(12.5),
+                "High T.".to_owned(),
+                degrees(24.1),
+                "Sunrise".to_owned(),
+                "04:51".to_owned(),
+                "Sunset".to_owned(),
+                "21:08".to_owned(),
+                "Today".to_owned(),
+                bare(12.5),
+                bare(24.1),
+                "Tuesday".to_owned(),
+                bare(13.0),
+                bare(22.4),
+                "Wednesday".to_owned(),
+                bare(11.8),
+                bare(19.6),
+                "Thursday".to_owned(),
+                bare(10.2),
+                bare(18.0),
+            ]
+        );
     }
 
     #[test]

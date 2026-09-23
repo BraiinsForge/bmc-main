@@ -19,6 +19,7 @@
 // the grant above.
 
 mod bar;
+mod bmm101;
 mod common;
 pub mod fixtures;
 mod full;
