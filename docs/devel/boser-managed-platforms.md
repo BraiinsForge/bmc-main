@@ -54,8 +54,11 @@ so a management client cannot compete with Boser.
 
 The frontend reads the fixed `boser_managed` capability at startup. On managed products, it uses Boser's header and
 navigation, hides the Network Configuration page, and redirects direct visits to that page. In System Settings, it hides
-the Security and Upgrades tabs, skips the upgrade-feed request, omits the timezone editor, and replaces the local
-reboot, support-archive, and factory-reset controls with a link to Boser's System page.
+the Security and Upgrades tabs, skips the upgrade-feed request, omits the timezone editor, and hides the System Actions
+section; Boser's System page owns reboot, support archive and factory reset, and its navigation already leads there. The
+browser tab takes Boser's brand name and favicon, and the header always offers logout, which ends the BMC session.
+Logout, an expired session, an authentication error and a visit to the frontend's own login page all land on Boser's
+login page.
 
 These visibility rules keep unavailable operations out of the normal UI. The server-side ownership interceptor remains
 authoritative for direct or older clients.
