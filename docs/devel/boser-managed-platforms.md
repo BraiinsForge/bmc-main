@@ -1,22 +1,23 @@
 # Boser-managed platform ownership
 
 Products whose `HardwareCapabilities::boser_managed` flag is set use Boser as the owner of system configuration and
-maintenance after initial setup completes. The capability comes from the hardware profile and is fixed for the BMC
-process lifetime, but its ownership boundary applies only after setup. Self-managed products retain the normal BMC
-behavior.
+maintenance after initial setup completes. The capability comes from the hardware profile and is fixed for the lifetime
+of the BMC application process, but its ownership boundary applies only after setup. Self-managed products retain the
+normal behavior of the BMC application.
 
-`HardwareCapabilities::reset_button_owner` resolves who handles the reset button: BMC in `FactoryDefault` and
-`SetupPending`, because Boser stays stopped during initial setup, and Boser in other states on managed products,
-including Wi-Fi reconfiguration. Self-managed products handle it in BMC in every state, without a provisioning query. It
-governs only the reset button; the fixed `boser_managed` capability still governs API routing and local maintenance as
-described below.
+`HardwareCapabilities::reset_button_owner` resolves who handles the reset button: the BMC application in
+`FactoryDefault` and `SetupPending`, because Boser stays stopped during initial setup, and Boser in other states on
+managed products, including Wi-Fi reconfiguration. Self-managed products handle it in the BMC application in every
+state, without a provisioning query. It governs only the reset button; the fixed `boser_managed` capability still
+governs API routing and local maintenance as described below.
 
-Initial setup is BMC-owned on every product. BMC has full control of the system during setup, including the system
-timezone, network configuration, and credentials. On mining products it starts `boser` and `bosminer` only after those
-settings and provisioning have been applied. From that point, `boser_managed` transfers the listed runtime operations to
-Boser. Native Wi-Fi reconfiguration remains BMC-owned because only BMC drives the setup access point and captive portal.
-`UpgradeService` is Boser-owned on managed products: every method answers `Unimplemented`, and bmc observes Boser's
-upgrade state instead of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade Observation").
+Initial setup is owned by the BMC application on every product. The BMC application has full control of the system
+during setup, including the system timezone, network configuration, and credentials. On mining products it starts
+`boser` and `bosminer` only after those settings and provisioning have been applied. From that point, `boser_managed`
+transfers the listed runtime operations to Boser. Native Wi-Fi reconfiguration remains owned by the BMC application
+because only the BMC application drives the setup access point and captive portal. `UpgradeService` is Boser-owned on
+managed products: every method answers `Unimplemented`, and the BMC application observes Boser's upgrade state instead
+of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade Observation").
 
 ## gRPC boundary
 
@@ -45,9 +46,9 @@ backend. Matching is deliberately limited to the canonical service and method pa
 another service is unaffected.
 
 Read-only network and system methods remain available. The native tray `Restart` and `ReconfigureWifi` commands also
-remain BMC-owned. Restart is an explicitly confirmed local action, while Wi-Fi reconfiguration starts the BMC-owned
-setup access point and captive portal. The remote reboot and network-setting methods are blocked so a management client
-cannot compete with Boser.
+remain owned by the BMC application. Restart is an explicitly confirmed local action, while Wi-Fi reconfiguration starts
+the BMC application's setup access point and captive portal. The remote reboot and network-setting methods are blocked
+so a management client cannot compete with Boser.
 
 ## Frontend boundary
 
@@ -63,45 +64,46 @@ authoritative for direct or older clients.
 
 Every mutating web gRPC service has an explicit managed-product owner:
 
-| Service                    | Owned methods                                                                                                                                                                     | Owner on managed products | Handling                                                                     |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
-| `AuthenticationService`    | `Login`, `Logout`                                                                                                                                                                 | BMC                       | operate BMC web sessions                                                     |
-| `AccountManagementService` | `UpsertAccount`, `RemoveAccount`                                                                                                                                                  | BMC                       | manage widget account bindings and secrets                                   |
-| `AlarmService`             | `AddAlarm`, `SetAlarm`, `DeleteAlarm`, `SetAlarmEnabled`                                                                                                                          | BMC                       | manage alarm state                                                           |
-| `ConfigurationService`     | all `Set*`, `ShowSecondsInStatusBar`, `PlaySound`                                                                                                                                 | BMC                       | manage display, sound, localization, telemetry, and presentation preferences |
-| `InitialSetupService`      | `SetWifi`, `SkipWifi`, `SetupDevice`                                                                                                                                              | BMC setup and recovery    | retain provisioning checks                                                   |
-| `LedTestService`           | `SetEffect`, `SetBrightness`, `Disable`, `Enable`                                                                                                                                 | BMC                       | control presentation hardware                                                |
-| `NetworkService`           | `SetNetworkConfig`, `SetWifi`                                                                                                                                                     | Boser                     | reject in `BoserOwnershipInterceptor` after authentication                   |
-| `SceneManagementService`   | `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`, `MoveScene`, `CloneScene`, `RemoveScene`, `PreviewScene`, `AddWidget`, `UpdateWidget`, `RemoveWidget`, `SetSceneCycling` | BMC                       | manage scenes, widgets, and presentation state                               |
-| `SystemService`            | `CreatePassword`, `ChangePassword`, `RemovePassword`, `SetTimezone`, `FactoryReset`, `Reboot`                                                                                     | Boser                     | reject in `BoserOwnershipInterceptor` after authentication                   |
-| `UpgradeService`           | `CheckForUpgrade`, `GetInstallableWidgets`, `StartUpgrade`, `SetAutoUpgrade`, `GetAutoUpgrade`                                                                                    | Boser                     | reject in `BoserOwnershipInterceptor` after authentication                   |
+| Service                    | Owned methods                                                                                                                                                                     | Owner on managed products          | Handling                                                                     |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| `AuthenticationService`    | `Login`, `Logout`                                                                                                                                                                 | BMC application                    | operate the BMC application's web sessions                                   |
+| `AccountManagementService` | `UpsertAccount`, `RemoveAccount`                                                                                                                                                  | BMC application                    | manage widget account bindings and secrets                                   |
+| `AlarmService`             | `AddAlarm`, `SetAlarm`, `DeleteAlarm`, `SetAlarmEnabled`                                                                                                                          | BMC application                    | manage alarm state                                                           |
+| `ConfigurationService`     | all `Set*`, `ShowSecondsInStatusBar`, `PlaySound`                                                                                                                                 | BMC application                    | manage display, sound, localization, telemetry, and presentation preferences |
+| `InitialSetupService`      | `SetWifi`, `SkipWifi`, `SetupDevice`                                                                                                                                              | BMC application setup and recovery | retain provisioning checks                                                   |
+| `LedTestService`           | `SetEffect`, `SetBrightness`, `Disable`, `Enable`                                                                                                                                 | BMC application                    | control presentation hardware                                                |
+| `NetworkService`           | `SetNetworkConfig`, `SetWifi`                                                                                                                                                     | Boser                              | reject in `BoserOwnershipInterceptor` after authentication                   |
+| `SceneManagementService`   | `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`, `MoveScene`, `CloneScene`, `RemoveScene`, `PreviewScene`, `AddWidget`, `UpdateWidget`, `RemoveWidget`, `SetSceneCycling` | BMC application                    | manage scenes, widgets, and presentation state                               |
+| `SystemService`            | `CreatePassword`, `ChangePassword`, `RemovePassword`, `SetTimezone`, `FactoryReset`, `Reboot`                                                                                     | Boser                              | reject in `BoserOwnershipInterceptor` after authentication                   |
+| `UpgradeService`           | `CheckForUpgrade`, `GetInstallableWidgets`, `StartUpgrade`, `SetAutoUpgrade`, `GetAutoUpgrade`                                                                                    | Boser                              | reject in `BoserOwnershipInterceptor` after authentication                   |
 
 `CredentialManagementService`, `MetadataService`, and the remaining methods on the listed services are read-only.
 
 ## Initial setup and Wi-Fi recovery
 
 `InitialSetupService` is structurally outside both `AuthInterceptor` and `BoserOwnershipInterceptor`. `SetupDevice`
-remains restricted to `SetupPending` and can set network, timezone, password, and BMC presentation preferences directly.
-On mining products, it also writes the pool seed Boser consumes on first boot, applies the hostname with the network
-settings, advances provisioning, and only then starts `boser` and `bosminer`. Consequently, `boser_managed` must not
-suppress any initial-setup operation: BMC owns and configures the entire system until setup completes. Factory-default
-Wi-Fi setup remains available as well.
+remains restricted to `SetupPending` and can set network, timezone, password, and the BMC application's presentation
+preferences directly. On mining products, it also writes the pool seed Boser consumes on first boot, applies the
+hostname with the network settings, advances provisioning, and only then starts `boser` and `bosminer`. Consequently,
+`boser_managed` must not suppress any initial-setup operation: the BMC application owns and configures the entire system
+until setup completes. Factory-default Wi-Fi setup remains available as well.
 
 The service also accepts Wi-Fi changes in a persisted `WifiReconfiguration` state. The native settings command is the
-fresh transition into that state outside failure recovery and remains BMC-owned on every platform because only BMC can
-start the setup access point and captive portal. It may enter Wi-Fi reconfiguration from `Operational` and is
-deliberately independent of `HardwareCapabilities::boser_managed`.
+fresh transition into that state outside failure recovery and remains owned by the BMC application on every platform
+because only the BMC application can start the setup access point and captive portal. It may enter Wi-Fi reconfiguration
+from `Operational` and is deliberately independent of `HardwareCapabilities::boser_managed`.
 
-This recovery operation is distinct from `NetworkService.SetWifi`: the native command starts BMC's provisioning flow,
-while the gRPC method changes saved networks and the active uplink and remains Boser-owned after setup.
+This recovery operation is distinct from `NetworkService.SetWifi`: the native command starts the BMC application's
+provisioning flow, while the gRPC method changes saved networks and the active uplink and remains Boser-owned after
+setup.
 
 ## Upgrades and local maintenance
 
 Every `UpgradeService` method nests `BoserOwnershipInterceptor` inside `AuthInterceptor` and answers `Unimplemented` on
 managed products, the read-only `GetAutoUpgrade` included: Boser owns package and firmware upgrades and their
 automatic-upgrade configuration there. The frontend hides the Upgrades tab and skips its upgrade-feed request on managed
-products. bmc still presents Boser's upgrades on the display and blocks tray restarts while one runs; the observer
-behind that is described in [`upgrades.md`](upgrades.md).
+products. The BMC application still presents Boser's upgrades on the display and blocks tray restarts while one runs;
+the observer behind that is described in [`upgrades.md`](upgrades.md).
 
 `SystemUpgradeService` nevertheless prevents managed products from running competing local maintenance:
 
@@ -116,11 +118,12 @@ remains non-collecting; Boser is responsible for managed store reclamation.
 
 ## Timezone visibility
 
-BMC seeds its timezone watch from the operating system at process start. The Boser observer also starts with BMC on
-managed products and reconnects until Boser is available. During initial setup, BMC writes the selected timezone to the
-operating system before starting Boser. Once Boser is running, the observer publishes its current timezone and later
-updates through BMC's existing timezone watch, so the compositor and widgets receive updates without restarting BMC. An
-invalid event, contract mismatch, or lost stream retains the last usable timezone.
+The BMC application seeds its timezone watch from the operating system at process start. The Boser observer also starts
+with the BMC application on managed products and reconnects until Boser is available. During initial setup, the BMC
+application writes the selected timezone to the operating system before starting Boser. Once Boser is running, the
+observer publishes its current timezone and later updates through the BMC application's existing timezone watch, so the
+compositor and widgets receive updates without restarting the BMC application. An invalid event, contract mismatch, or
+lost stream retains the last usable timezone.
 
 ## Extending the API
 
@@ -128,5 +131,5 @@ Adding any `SystemService`, `NetworkService` or `UpgradeService` method requires
 `ManagedRpcOwner` value. `every_ownership_intercepted_service_method_has_the_expected_owner` compares those decisions
 with the generated descriptor set, so an unclassified addition fails the test suite. A Boser-owned mutation on another
 service must also nest `BoserOwnershipInterceptor` inside `AuthInterceptor` and extend the completeness test. Adding a
-BMC-owned mutation requires an explicit decision in the audit above. Keep the corresponding frontend capability
-predicates aligned with that decision while retaining server-side enforcement for direct and older clients.
+mutation owned by the BMC application requires an explicit decision in the audit above. Keep the corresponding frontend
+capability predicates aligned with that decision while retaining server-side enforcement for direct and older clients.
