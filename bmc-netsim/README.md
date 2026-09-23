@@ -81,6 +81,7 @@ drifts around `hashrate_ths`.
 | `axeos`              | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                                                                                |
 | `braiins-pool`       | — (cloud, not announced)       | FPPS `/pool/v2/user/{hashrate,workers}/{current,history}`, `rewards/latest`, `financials`, `payouts/recent`                       |
 | `braiins-public-api` | — (cloud, not announced)       | `/v1/{price-stats, difficulty-stats, price-history}`, `/v2/{blocks, hashrate-stats}`                                              |
+| `halving-countdown`  | — (cloud, not announced)       | Nexus `/api/v1/data/bitcoin/halving-prediction`                                                                                   |
 
 Each device's params — `model_name`, `hashrate_ths`, `power_w`, `temp_c`, `uptime_s`, `status` — live in its module and
 appear in the schema under `BosParams` / `UbosParams` / `AxeosParams` / `BraiinsPoolParams` / `BraiinsPublicApiParams`.

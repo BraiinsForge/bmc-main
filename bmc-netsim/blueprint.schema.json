@@ -556,6 +556,54 @@
       },
       "additionalProperties": false
     },
+    "HalvingCountdownParams": {
+      "description": "Scenario controls and the prediction returned by the simulated Nexus endpoint.",
+      "type": "object",
+      "properties": {
+        "block_height": {
+          "description": "Bitcoin block height at scenario start; the halving is the next multiple of 210 000.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 959131,
+          "minimum": 0
+        },
+        "cache_age_secs": {
+          "description": "Cache age advertised in the Nexus response envelope.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "fail_after_secs": {
+          "description": "Answer 200 before this point, then switch to `status`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "halving_in_secs": {
+          "description": "Seconds from scenario start to the predicted halving.",
+          "type": "integer",
+          "format": "int64",
+          "default": 54521099
+        },
+        "status": {
+          "description": "HTTP status returned after startup, or after `fail_after_secs`.",
+          "$ref": "#/$defs/HttpStatus"
+        },
+        "warmup_secs": {
+          "description": "Answer 503 until this many seconds of scenario time have elapsed.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
     "HttpStatus": {
       "description": "HTTP status this endpoint returns, e.g. 200, 401 or 503",
       "type": "integer",
@@ -893,6 +941,47 @@
             },
             "params": {
               "$ref": "#/$defs/Formula1Params"
+            },
+            "port": {
+              "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "device"
+          ]
+        },
+        {
+          "description": "A Nexus halving prediction deployment — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "halving-countdown"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/HalvingCountdownParams"
             },
             "port": {
               "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",

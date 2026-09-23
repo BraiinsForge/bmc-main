@@ -35,7 +35,8 @@ use serde_json::Value as Json;
 
 use crate::cache::Cache;
 use crate::devices::{
-    axeos, bitcoin_mining_data, bos, braiins_pool, braiins_public_api, formula_1, ubos,
+    axeos, bitcoin_mining_data, bos, braiins_pool, braiins_public_api, formula_1,
+    halving_countdown, ubos,
 };
 use crate::http_status::HttpStatus;
 use crate::value::Value;
@@ -167,6 +168,21 @@ pub enum Instance {
         #[serde(default)]
         port: Option<u16>,
     },
+    /// A Nexus halving prediction deployment — a cloud API on its port, never announced.
+    #[serde(rename = "halving-countdown")]
+    HalvingCountdown {
+        /// Human label describing this entry's scenario, shown in the readout.
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        params: halving_countdown::Params,
+        #[serde(default = "one")]
+        count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
+    },
 }
 
 fn one() -> usize {
@@ -182,6 +198,7 @@ const DEVICE_KEYS: &[&str] = &[
     "bitcoin-mining-data",
     "braiins-public-api",
     "formula-1",
+    "halving-countdown",
 ];
 const INSTANCE_FIELDS: &[&str] = &["device", "label", "params", "count", "port"];
 
@@ -194,6 +211,7 @@ enum DeviceParams {
     BitcoinMiningData(bitcoin_mining_data::Params),
     BraiinsPublicApi(braiins_public_api::Params),
     Formula1(formula_1::Params),
+    HalvingCountdown(halving_countdown::Params),
 }
 
 impl DeviceParams {
@@ -208,6 +226,7 @@ impl DeviceParams {
             "bitcoin-mining-data" => DeviceParams::BitcoinMiningData(map.next_value()?),
             "braiins-public-api" => DeviceParams::BraiinsPublicApi(map.next_value()?),
             "formula-1" => DeviceParams::Formula1(map.next_value()?),
+            "halving-countdown" => DeviceParams::HalvingCountdown(map.next_value()?),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -230,6 +249,9 @@ impl DeviceParams {
                 DeviceParams::BraiinsPublicApi(serde_json::from_value(json).map_err(E::custom)?)
             }
             "formula-1" => DeviceParams::Formula1(serde_json::from_value(json).map_err(E::custom)?),
+            "halving-countdown" => {
+                DeviceParams::HalvingCountdown(serde_json::from_value(json).map_err(E::custom)?)
+            }
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -247,6 +269,9 @@ impl DeviceParams {
                 DeviceParams::BraiinsPublicApi(braiins_public_api::Params::default())
             }
             "formula-1" => DeviceParams::Formula1(formula_1::Params::default()),
+            "halving-countdown" => {
+                DeviceParams::HalvingCountdown(halving_countdown::Params::default())
+            }
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -290,6 +315,12 @@ impl DeviceParams {
                 port,
             },
             DeviceParams::Formula1(params) => Instance::Formula1 {
+                label,
+                params,
+                count,
+                port,
+            },
+            DeviceParams::HalvingCountdown(params) => Instance::HalvingCountdown {
                 label,
                 params,
                 count,
@@ -391,6 +422,7 @@ impl Instance {
             Instance::BitcoinMiningData { .. } => "bitcoin-mining-data",
             Instance::BraiinsPublicApi { .. } => "braiins-public-api",
             Instance::Formula1 { .. } => "formula-1",
+            Instance::HalvingCountdown { .. } => "halving-countdown",
         }
     }
 
@@ -404,7 +436,8 @@ impl Instance {
             | Instance::BraiinsPool { count, .. }
             | Instance::BitcoinMiningData { count, .. }
             | Instance::BraiinsPublicApi { count, .. }
-            | Instance::Formula1 { count, .. } => *count,
+            | Instance::Formula1 { count, .. }
+            | Instance::HalvingCountdown { count, .. } => *count,
         }
     }
 
@@ -418,7 +451,8 @@ impl Instance {
             | Instance::BraiinsPool { label, .. }
             | Instance::BitcoinMiningData { label, .. }
             | Instance::BraiinsPublicApi { label, .. }
-            | Instance::Formula1 { label, .. } => label.as_deref(),
+            | Instance::Formula1 { label, .. }
+            | Instance::HalvingCountdown { label, .. } => label.as_deref(),
         }
     }
 
@@ -432,7 +466,8 @@ impl Instance {
             | Instance::BraiinsPool { port, .. }
             | Instance::BitcoinMiningData { port, .. }
             | Instance::BraiinsPublicApi { port, .. }
-            | Instance::Formula1 { port, .. } => *port,
+            | Instance::Formula1 { port, .. }
+            | Instance::HalvingCountdown { port, .. } => *port,
         }
     }
 
@@ -447,6 +482,7 @@ impl Instance {
             Instance::BitcoinMiningData { params, .. } => params.resource(name, port),
             Instance::BraiinsPublicApi { params, .. } => params.resource(name, port),
             Instance::Formula1 { params, .. } => params.resource(name, port),
+            Instance::HalvingCountdown { params, .. } => params.resource(name, port),
         }
     }
 }
