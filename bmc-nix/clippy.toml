@@ -1,0 +1,3 @@
+disallowed-methods = [
+    { path = "tokio::process::Command::new", reason = "use store::command_without_stdio_preload; procd's LD_PRELOAD makes Nix binaries exit 127 on a musl host" },
+]

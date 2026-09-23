@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 # nix source filter keeps only rust/toml/lock per crate otherwise.
 [package.metadata.nix]
 include = [
+    "clippy.toml",
     "../bmc-nix-init/servers.json",
     "../nix/pkgs/core/default.nix",
 ]

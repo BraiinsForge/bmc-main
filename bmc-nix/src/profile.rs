@@ -445,7 +445,7 @@ async fn run_activation_entrypoint(
         "executing activation entrypoint"
     );
 
-    let mut command = tokio::process::Command::new(&entrypoint);
+    let mut command = crate::store::command_without_stdio_preload(&entrypoint);
     command
         .env("PROFILE_NEW_GENERATION", generation_path)
         .env(

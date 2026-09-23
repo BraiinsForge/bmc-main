@@ -149,7 +149,7 @@ pub async fn run_hooks(
     for (hook_name, hook_path) in entries {
         info!(?hook_path, "executing hook");
 
-        let mut command = tokio::process::Command::new(&hook_path);
+        let mut command = crate::store::command_without_stdio_preload(&hook_path);
         command.env("PROFILE_NEW_GENERATION", new_gen_path);
         let output = crate::store::output_bounded(command)
             .await

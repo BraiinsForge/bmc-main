@@ -78,6 +78,22 @@ fn append_bounded_stderr(buf: &mut Vec<u8>, line: &str, cap: usize) {
     }
 }
 
+/// A command that runs without procd's stdio preload, `LD_PRELOAD=/lib/libsetlbf.so`.
+/// On a musl host its `libc.so` resolves to the Nix glibc linker script,
+/// so every Nix binary exits 127 before `main`.
+/// The line buffering it adds is moot for output captured here.
+pub(crate) fn command_without_stdio_preload(
+    program: impl AsRef<std::ffi::OsStr>,
+) -> tokio::process::Command {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place a bmc-nix child is built"
+    )]
+    let mut command = tokio::process::Command::new(program);
+    command.env_remove("LD_PRELOAD");
+    command
+}
+
 /// Run `command` to completion, retaining at most
 /// [`MAX_RETAINED_STDERR_BYTES`] of stdout and of stderr. Both pipes are
 /// drained concurrently and in full, so a child that dumps a large log on
@@ -179,7 +195,7 @@ impl CommandRunner for TokioCommandRunner {
         program: &str,
         args: &[&str],
     ) -> Result<std::process::Output, std::io::Error> {
-        tokio::process::Command::new(program)
+        command_without_stdio_preload(program)
             .args(args)
             .output()
             .await
@@ -197,7 +213,7 @@ impl CommandRunner for TokioCommandRunner {
         use tokio::io::AsyncBufReadExt as _;
         use tokio::io::AsyncReadExt as _;
 
-        let mut child = tokio::process::Command::new(program)
+        let mut child = command_without_stdio_preload(program)
             .args(args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -840,7 +856,7 @@ async fn extract_staged(tarball_path: &Path, stage_dir: &Path) -> Result<(), Ini
     })?;
 
     let result = async {
-        let output = tokio::process::Command::new("tar")
+        let output = command_without_stdio_preload("tar")
             .arg("xzf")
             .arg(tarball_path)
             .arg("-C")
@@ -1219,6 +1235,20 @@ mod tests {
 
     use super::*;
     use crate::types::InstalledBy;
+
+    #[test]
+    fn command_drops_the_procd_stdio_preload() {
+        let command = command_without_stdio_preload("nix-store");
+        let preload = command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == "LD_PRELOAD");
+        assert_eq!(
+            preload,
+            Some((std::ffi::OsStr::new("LD_PRELOAD"), None)),
+            "a musl host's LD_PRELOAD must not reach a glibc Nix binary"
+        );
+    }
 
     #[test]
     fn headroom_scales_with_the_estimate_and_cannot_wrap() {
