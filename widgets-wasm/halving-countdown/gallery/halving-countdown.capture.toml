@@ -1,0 +1,250 @@
+# The prediction at every design size and on the two panels without a bucket of their own;
+# each status over the tiled, BMM101 and round layouts;
+# the widest numerals everywhere; and the settings that reshape a value.
+
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "healthy-full"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "healthy-large"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "healthy-medium"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "healthy-small"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "healthy-bmm101"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "healthy-bmm100"
+scene = "bmc_gallery::halving_countdown::BMM100"
+frames = 24
+
+[[shot]]
+name = "healthy-bfm100"
+scene = "bmc_gallery::halving_countdown::BFM100"
+frames = 24
+
+# A half-hour zone, a 12-hour clock and a month-first date,
+# all three of which reach the predicted-moment tile.
+[[shot]]
+name = "healthy-full-12h-kolkata"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Clock = "12-hour"
+Dates = "12/31/2026"
+Timezone = "Kolkata"
+
+[[shot]]
+name = "healthy-full-grouping"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1,234.5"
+
+[[shot]]
+name = "healthy-full-regular"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numerals = "Regular"
+
+[[shot]]
+name = "healthy-full-semi-bold"
+scene = "bmc_gallery::halving_countdown::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numerals = "Semi-bold"
+
+[[shot]]
+name = "loading-full"
+scene = "bmc_gallery::halving_countdown::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "loading-bmm101"
+scene = "bmc_gallery::halving_countdown::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "failed-full"
+scene = "bmc_gallery::halving_countdown::Failed"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "failed-bmm101"
+scene = "bmc_gallery::halving_countdown::Failed"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "failed-bfm100"
+scene = "bmc_gallery::halving_countdown::BFM100"
+frames = 24
+
+[shot.knobs]
+State = "Failed"
+
+[[shot]]
+name = "stale-full"
+scene = "bmc_gallery::halving_countdown::Stale"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "stale-bmm101"
+scene = "bmc_gallery::halving_countdown::Stale"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "stale-bfm100"
+scene = "bmc_gallery::halving_countdown::BFM100"
+frames = 24
+
+[shot.knobs]
+State = "Stale"
+
+[[shot]]
+name = "rate-limited-full"
+scene = "bmc_gallery::halving_countdown::Rate Limited"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "rate-limited-bmm101"
+scene = "bmc_gallery::halving_countdown::Rate Limited"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "era-start-full"
+scene = "bmc_gallery::halving_countdown::Era Start"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "era-start-large"
+scene = "bmc_gallery::halving_countdown::Era Start"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "era-start-medium"
+scene = "bmc_gallery::halving_countdown::Era Start"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "era-start-small"
+scene = "bmc_gallery::halving_countdown::Era Start"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "era-start-bmm101"
+scene = "bmc_gallery::halving_countdown::Era Start"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "era-start-bmm100"
+scene = "bmc_gallery::halving_countdown::BMM100"
+frames = 24
+
+[shot.knobs]
+State = "Era Start"
+
+[[shot]]
+name = "era-start-bfm100"
+scene = "bmc_gallery::halving_countdown::BFM100"
+frames = 24
+
+[shot.knobs]
+State = "Era Start"
+
+[[shot]]
+name = "imminent-full"
+scene = "bmc_gallery::halving_countdown::Imminent"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "imminent-bmm101"
+scene = "bmc_gallery::halving_countdown::Imminent"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"

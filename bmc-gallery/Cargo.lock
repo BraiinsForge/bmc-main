@@ -703,6 +703,7 @@ dependencies = [
  "formula-1",
  "gallery",
  "gallery-build",
+ "halving-countdown",
  "miner-info",
  "prices",
  "rodio",
@@ -2911,6 +2912,15 @@ dependencies = [
  "crunchy",
  "num-traits",
  "zerocopy",
+]
+
+[[package]]
+name = "halving-countdown"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "mining",
+ "units",
 ]
 
 [[package]]

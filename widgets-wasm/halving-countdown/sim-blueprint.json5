@@ -1,0 +1,47 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  instances: [
+    {
+      device: "halving-countdown",
+      label: "Healthy Nexus halving prediction",
+      port: 20400,
+    },
+    {
+      device: "halving-countdown",
+      label: "Warming up — 503 until a minute in",
+      port: 20401,
+      params: { warmup_secs: 60 },
+    },
+    {
+      device: "halving-countdown",
+      label: "Initial hard failure",
+      port: 20402,
+      params: { status: 503 },
+    },
+    {
+      device: "halving-countdown",
+      label: "Stale cached Nexus data",
+      port: 20403,
+      params: { cache_age_secs: 1200 },
+    },
+    {
+      device: "halving-countdown",
+      label: "Rate limited",
+      port: 20404,
+      params: { status: 429 },
+    },
+    {
+      device: "halving-countdown",
+      label: "First block of an era — four-digit days",
+      port: 20405,
+      params: { block_height: 840001, halving_in_secs: 125999400 },
+    },
+    {
+      device: "halving-countdown",
+      label: "Two blocks out",
+      port: 20406,
+      params: { block_height: 1049998, halving_in_secs: 1020 },
+    },
+  ],
+}
