@@ -57,6 +57,7 @@ pub(crate) struct RecordingCompositor {
     pub(crate) connected: Mutex<BTreeSet<InstanceId>>,
     credential_pushes: Mutex<Vec<CredentialPush>>,
     widget_calls: Mutex<Vec<String>>,
+    settings: Mutex<Vec<SettingUpdate>>,
     retained_modes: Mutex<BTreeMap<WidgetInstanceKey, WidgetConnectionMode>>,
     retained_sizes: Mutex<BTreeMap<WidgetInstanceKey, Size>>,
     retained_params: Mutex<BTreeMap<WidgetInstanceKey, serde_json::Map<String, serde_json::Value>>>,
@@ -91,6 +92,21 @@ impl RecordingCompositor {
             .lock()
             .expect("BUG: recording compositor lock must not be poisoned")
             .clone()
+    }
+
+    pub(crate) async fn wait_for_setting(&self, expected: &SettingUpdate) {
+        tokio::time::timeout(ASYNC_TEST_TIMEOUT, async {
+            while !self
+                .settings
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .contains(expected)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{expected:?} was never broadcast"));
     }
 
     pub(crate) fn shutdown_call_count(&self) -> usize {
@@ -417,7 +433,11 @@ impl Compositor for RecordingCompositor {
         Ok(())
     }
 
-    fn broadcast_setting(&self, _setting: SettingUpdate) -> Result<(), CompositorError> {
+    fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError> {
+        self.settings
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .push(setting);
         Ok(())
     }
 

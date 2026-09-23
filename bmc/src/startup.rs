@@ -669,6 +669,7 @@ where
     widget_shutdown_config: Arc<RwLock<ConfigHandle>>,
     widget_coordinator: Arc<Coordinator>,
     web_service: WebService<T, T::SessionManager, V, U>,
+    alarm_backend: AlarmBackend,
 }
 
 async fn abort_background_task(name: &str, task: tokio::task::JoinHandle<()>) {
@@ -704,6 +705,7 @@ where
         self.widget_coordinator
             .stop_all(&self.widget_shutdown_config)
             .await;
+        drop(self.alarm_backend);
         server_result?;
         Ok(())
     }
@@ -1165,11 +1167,12 @@ where
             widget_shutdown_config,
             widget_coordinator,
             web_service,
+            alarm_backend: self.alarm_backend,
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
+    fn into_quiet_server(self) -> AppServer<T, U, V> {
         let server = self.into_server();
         server.widget_reload_task.abort();
         server.file_token_poller.abort();
@@ -1179,7 +1182,25 @@ where
         if let Some(observer) = &server.boser_timezone_observer {
             observer.abort();
         }
-        server.web_service.build_grpc_routes()
+        server
+    }
+
+    #[cfg(test)]
+    pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
+        self.into_quiet_server().web_service.build_grpc_routes()
+    }
+
+    /// Everything startup keeps alive, without serving connections.
+    #[cfg(test)]
+    pub(crate) fn into_idle_server(self) -> impl Sized {
+        self.into_quiet_server()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subscribe_next_alarm(
+        &self,
+    ) -> watch::Receiver<Option<bmc_widget_protocol::NextAlarm>> {
+        self.alarm_backend.subscribe_next_alarm()
     }
 
     pub fn port(&self) -> Result<u16> {

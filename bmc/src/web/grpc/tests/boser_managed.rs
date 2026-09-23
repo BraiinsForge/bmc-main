@@ -21,6 +21,7 @@
 use super::super::*;
 use crate::backlight::DisplayBacklightDriver;
 use crate::bootloader_config::BootloaderConfig;
+use crate::compositor::SettingUpdate;
 use crate::compositor::testing::RecordingCompositor;
 use crate::session;
 use crate::{App, BmcManager, Configuration, UpgradeError, UpgradeMarker};
@@ -51,6 +52,7 @@ use prost::Message;
 use reqwest::Client;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{Mutex, watch};
 use tonic::{Code, Response};
@@ -475,6 +477,23 @@ fn authenticated<T>(message: T) -> tonic::Request<T> {
 }
 
 async fn production_routes(product: Product) -> (tempfile::TempDir, Routes) {
+    let (tempdir, app) = production_app(
+        Arc::new(StubBmcManager::default()),
+        Arc::new(RecordingCompositor::with_hardware_capabilities(
+            capabilities(product),
+        )),
+    )
+    .await;
+    (tempdir, app.build_grpc_routes())
+}
+
+async fn production_app(
+    manager: Arc<StubBmcManager>,
+    compositor: Arc<RecordingCompositor>,
+) -> (
+    tempfile::TempDir,
+    App<StubBmcManager, StubBacklightDriver, StubFirmwareIndex>,
+) {
     let tempdir = tempfile::tempdir().expect("BUG: test tempdir creation must succeed");
     let config = Configuration {
         address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
@@ -488,7 +507,6 @@ async fn production_routes(product: Product) -> (tempfile::TempDir, Routes) {
         pending_install_path: tempdir.path().join("pending-install.json"),
         ..Configuration::default()
     };
-    let manager = Arc::new(StubBmcManager::default());
     let (command_sender, _command_receiver) = tokio::sync::mpsc::channel(4);
     let app = App::init(
         config,
@@ -499,15 +517,39 @@ async fn production_routes(product: Product) -> (tempfile::TempDir, Routes) {
         StubFirmwareIndex,
         Arc::new(StubPackageBackend),
         Arc::new(Box::new(StubButtons)),
-        Arc::new(RecordingCompositor::with_hardware_capabilities(
-            capabilities(product),
-        )),
+        compositor,
         None,
     )
     .await
     .expect("managed test application must initialize");
 
-    (tempdir, app.build_grpc_routes())
+    (tempdir, app)
+}
+
+#[tokio::test]
+async fn timezone_changes_reach_widgets_without_alarm_support() {
+    let manager = Arc::new(StubBmcManager::default());
+    let compositor = Arc::new(RecordingCompositor::with_hardware_capabilities(
+        capabilities(Product::Bmm101),
+    ));
+    assert!(
+        !capabilities(Product::Bmm101).alarm_supported,
+        "the test needs a product whose alarm backend is unsupported"
+    );
+    let (_tempdir, app) = production_app(Arc::clone(&manager), Arc::clone(&compositor)).await;
+    let next_alarm = app.subscribe_next_alarm();
+    let _server = app.into_idle_server();
+    assert!(
+        next_alarm.has_changed().is_ok(),
+        "the settings listener exits once the next-alarm channel closes"
+    );
+
+    let prague = Timezone::from_str("Europe/Prague").expect("BUG: valid test timezone");
+    manager.timezone_sender.send_replace(prague);
+
+    compositor
+        .wait_for_setting(&SettingUpdate::Timezone("Europe/Prague".to_owned()))
+        .await;
 }
 
 fn ownership_intercepted_routes(
