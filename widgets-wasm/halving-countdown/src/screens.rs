@@ -18,17 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Halving Countdown widget: the countdown to the next Bitcoin halving,
-//! plus the predicted date and blocks remaining.
-//!
-//! The data is nexus's server-computed `bitcoin/halving-prediction`, so the
-//! widget just renders the prediction and carries no halving math of its own.
+//! The views, their shared parts and the fixtures that stage them.
 
-pub mod api;
-#[cfg(target_arch = "wasm32")]
-mod live;
-mod manifest_params;
-pub mod model;
-pub mod screens;
+pub mod fixtures;
+mod parts;
+mod view;
 
-pub use manifest_params::{NumbersFontStyle, Params};
+pub use view::{ViewData, halving_view};

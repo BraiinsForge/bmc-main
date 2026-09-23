@@ -8,11 +8,15 @@ license = "GPL-3.0-or-later"
 [package.metadata.nix]
 include = ["assets/**"]
 
+# `lib` (native rlib) beside the wasm `cdylib`, so the gallery
+# and the tests can render the layouts off-device.
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+mining = { path = "../lib/mining" }
+units = { path = "../lib/units" }
 
 [lints]
 workspace = true
