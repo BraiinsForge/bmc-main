@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Disruption, ExecutionId, InstallablePackage, PackagesPreview, UpgradeKind};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct CheckUpgradeRequest {
     /// Packages to install on top of the upgrade;
     /// empty requests firmware plus the packages already installed.
@@ -33,6 +34,7 @@ pub struct CheckUpgradeRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct CheckUpgradeResponse {
     pub offer: Option<Offer>,
     pub firmware: Option<FirmwareUpgrade>,
@@ -41,6 +43,7 @@ pub struct CheckUpgradeResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct Offer {
     pub id: ExecutionId,
     pub kind: UpgradeKind,
@@ -48,6 +51,7 @@ pub struct Offer {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct FirmwareUpgrade {
     pub version: String,
     pub hash: String,
@@ -59,12 +63,14 @@ pub struct FirmwareUpgrade {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct PreviousRelease {
     pub version: String,
     pub description: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(tag = "status", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PackageCapability {
     Ready,
@@ -74,21 +80,25 @@ pub enum PackageCapability {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct StartUpgradeRequest {
     pub offer_id: ExecutionId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct InstallablePackages {
     pub packages: Vec<InstallablePackage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct AutoUpgradeStatus {
     pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct AutoUpgradeUpdate {
     pub enabled: bool,
 }
@@ -97,6 +107,7 @@ pub struct AutoUpgradeUpdate {
 /// Boser serialises it from its own `ErrorResponse` in `open/boser/boser/src/api/rest/utils.rs`,
 /// so this mirror exists for bmc to parse the body and the two must be kept in step by hand.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct ErrorBody {
     pub error: String,
     pub message: String,

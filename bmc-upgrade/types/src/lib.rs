@@ -34,6 +34,7 @@ pub mod wire;
 pub use offer_slot::OfferSlot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UpgradeKind {
     Firmware,
@@ -52,6 +53,7 @@ impl UpgradeKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Disruption {
     Reboot,
@@ -59,6 +61,7 @@ pub enum Disruption {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FirmwarePhase {
     Downloading,
@@ -69,6 +72,7 @@ pub enum FirmwarePhase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PackagePhase {
     Realizing,
@@ -83,6 +87,7 @@ pub enum PackagePhase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(tag = "stage", content = "step", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UpgradePhase {
     Preparing,
@@ -123,6 +128,7 @@ impl<'de> Deserialize<'de> for UpgradePhase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(transparent)]
 pub struct ExecutionId(Uuid);
 
@@ -154,6 +160,7 @@ impl FromStr for ExecutionId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(tag = "state", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UpgradeState {
     None,
@@ -187,12 +194,14 @@ pub enum UpgradeState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct DownloadProgress {
     pub downloaded_bytes: u64,
     pub total_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct PackagesPreview {
     pub changes: Vec<PackageChange>,
     pub download_size_bytes: Option<u64>,
@@ -203,6 +212,7 @@ pub struct PackagesPreview {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct PackageChange {
     pub name: String,
     pub version_from: Option<String>,
@@ -212,6 +222,7 @@ pub struct PackageChange {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct InstallablePackage {
     pub name: String,
     pub version: String,
