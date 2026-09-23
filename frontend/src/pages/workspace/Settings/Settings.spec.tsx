@@ -332,6 +332,8 @@ describe('Settings tabs on a boser-managed device (BOS-3948)', () => {
         expect(tabLabels()).toEqual(['General', 'Display', 'Sound & Light']);
         expect(generalTabOpen()).toBe(true);
         expect(window.location.hash).toBe('#general');
+        expect(screen.queryByRole('heading', { name: 'System Actions' })).toBeNull();
+        expect(screen.queryByText('Braiins OS Interface')).toBeNull();
     });
 });
 

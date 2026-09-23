@@ -19,10 +19,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component, Fragment } from 'react';
+import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 
-import { URLS } from '@/constants';
 import * as pb from '@/proto';
 import { getID } from '../../const';
 import { Form, type iField } from '@/lib/form';
@@ -43,7 +42,7 @@ import {
     ComboBox,
     type ComboBoxProps,
 } from '@carbon/react';
-import { Download as IconDownload, Launch as IconLaunch, Restart as IconRestart } from '@carbon/react/icons';
+import { Download as IconDownload, Restart as IconRestart } from '@carbon/react/icons';
 
 // Styles
 import css from './SectionGeneral.scss';
@@ -344,69 +343,50 @@ class View extends Component<Props> {
                     </Field>
                 </FieldSet>
 
-                <FieldSet title={formatMessage({ defaultMessage: 'System Actions' })}>
-                    {/* boser's UI is mounted beside ours by the display proxy.
-                        Opening it from here carries the session cookie, so no second login is needed.
-                        Its System tab owns reboot, support archive and factory reset on such a device. */}
-                    {systemActionsOwned ? (
+                {/* boser's System tab owns reboot, support archive and factory reset on a device it manages. */}
+                {systemActionsOwned ? null : (
+                    <FieldSet title={formatMessage({ defaultMessage: 'System Actions' })}>
+                        <Field title={formatMessage({ defaultMessage: 'Reboot Device' })}>
+                            <Button
+                                id={$('system-reboot')}
+                                kind="tertiary"
+                                icon={IconRestart}
+                                children={formatMessage({ defaultMessage: 'Reboot' })}
+                                onClick={this.#reboot}
+                            />
+                        </Field>
+
                         <Field
-                            title={formatMessage({ defaultMessage: 'Braiins OS Interface' })}
+                            title={formatMessage({ defaultMessage: 'Download Support Archive' })}
                             description={formatMessage({
-                                defaultMessage: 'Open the miner interface served alongside this one.',
+                                defaultMessage: 'Download system diagnostics and logs for troubleshooting.',
                             })}
                         >
                             <Button
-                                id={$('open-boser-frontend')}
+                                id={$('download-support-archive')}
                                 kind="tertiary"
-                                icon={IconLaunch}
-                                children={formatMessage({ defaultMessage: 'Open' })}
-                                href={URLS.boser.system}
+                                icon={IconDownload}
+                                children={formatMessage({ defaultMessage: 'Download' })}
+                                onClick={onDownloadSupportArchive}
                             />
                         </Field>
-                    ) : (
-                        <Fragment>
-                            <Field title={formatMessage({ defaultMessage: 'Reboot Device' })}>
-                                <Button
-                                    id={$('system-reboot')}
-                                    kind="tertiary"
-                                    icon={IconRestart}
-                                    children={formatMessage({ defaultMessage: 'Reboot' })}
-                                    onClick={this.#reboot}
-                                />
-                            </Field>
 
-                            <Field
-                                title={formatMessage({ defaultMessage: 'Download Support Archive' })}
-                                description={formatMessage({
-                                    defaultMessage: 'Download system diagnostics and logs for troubleshooting.',
-                                })}
-                            >
-                                <Button
-                                    id={$('download-support-archive')}
-                                    kind="tertiary"
-                                    icon={IconDownload}
-                                    children={formatMessage({ defaultMessage: 'Download' })}
-                                    onClick={onDownloadSupportArchive}
-                                />
-                            </Field>
-
-                            <Field
-                                title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
-                                description={formatMessage({
-                                    defaultMessage:
-                                        'Warning: This will delete all your custom configurations and display widgets.',
-                                })}
-                            >
-                                <Button
-                                    id={$('factory-reset')}
-                                    kind="danger--tertiary"
-                                    children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
-                                    onClick={this.#reset}
-                                />
-                            </Field>
-                        </Fragment>
-                    )}
-                </FieldSet>
+                        <Field
+                            title={formatMessage({ defaultMessage: 'Reset to Factory Defaults' })}
+                            description={formatMessage({
+                                defaultMessage:
+                                    'Warning: This will delete all your custom configurations and display widgets.',
+                            })}
+                        >
+                            <Button
+                                id={$('factory-reset')}
+                                kind="danger--tertiary"
+                                children={formatMessage({ defaultMessage: 'Reset to Defaults' })}
+                                onClick={this.#reset}
+                            />
+                        </Field>
+                    </FieldSet>
+                )}
 
                 {/*}
                 <FieldSet title={formatMessage({ defaultMessage: 'Usage Data' })}>
