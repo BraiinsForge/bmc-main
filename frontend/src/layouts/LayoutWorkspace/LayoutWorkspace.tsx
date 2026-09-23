@@ -213,11 +213,7 @@ class Base extends Component<Props, State> {
                         />
                         {/* Next to boser the login is boser's, and it shows its logout even without a password. */}
                         {boserUi || hasPassword ? (
-                            <HeaderActionButton
-                                label={this.#txt.logout}
-                                icon={IconLogout}
-                                onClick={boserUi ? store.logoutToBoser : store.logout}
-                            />
+                            <HeaderActionButton label={this.#txt.logout} icon={IconLogout} onClick={store.logout} />
                         ) : null}
                     </HeaderGlobalBar>
                 </Header>

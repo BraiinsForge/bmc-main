@@ -18,10 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { afterEach, describe, expect, test } from '@rstest/core';
+import { afterEach, describe, expect, rstest, test } from '@rstest/core';
 
 import { store } from '@/store';
+import { stubLocation } from '@/mocks/location';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
+
+// The real routes pull in every page; the store only needs their navigate.
+rstest.mock('@/routes', () => ({ default: { navigate: rstest.fn() } }));
 
 afterEach(() => {
     store.setHardwareCapabilities(null);
@@ -51,5 +55,26 @@ describe('store.state', () => {
         store.setHardwareCapabilities(deckCapabilities());
 
         expect(Object.isFrozen(store.state)).toBe(true);
+    });
+});
+
+describe('store.goToLogin', () => {
+    test("a boser-managed device leaves for boser's login", () => {
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: true }));
+        const assign = rstest.fn();
+        stubLocation({ assign });
+
+        store.goToLogin();
+
+        expect(assign).toHaveBeenCalledWith('/bos/login');
+    });
+
+    test('a standalone Deck goes to its own login', async () => {
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+        const { default: router } = await import('@/routes');
+
+        store.goToLogin();
+
+        await rstest.waitFor(() => expect(router.navigate).toHaveBeenCalledWith('/login'));
     });
 });

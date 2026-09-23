@@ -21,18 +21,19 @@
 import { afterEach, describe, expect, rstest, test } from '@rstest/core';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
 import { IntlProvider } from 'react-intl';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes } from 'react-router';
 
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
+import { stubLocation } from '@/mocks/location';
 import { store } from '@/store';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
+import Root from '@/pages/Root';
 import { LayoutWorkspace } from './LayoutWorkspace';
 
-// jsdom has no matchMedia, which Carbon's SideNav queries for its breakpoint.
-window.matchMedia ??= (query: string) =>
-    ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList;
+// The real routes pull in every page; logout only needs their navigate.
+rstest.mock('@/routes', () => ({ default: { navigate: rstest.fn() } }));
 
 // `mocks.service` wants every method typed; at runtime it only registers what we pass.
 type AnyService = Parameters<typeof mocks.service>[0];
@@ -40,39 +41,48 @@ function registerMocks<S extends AnyService>(service: S, methods: Partial<Servic
     mocks.service(service, methods as ServiceMocks<S>);
 }
 
+// The store is shared between tests, so each one signs in with the password state it is about.
+// Logging out ends the session only where there is a password, as on the device.
+async function signIn(hasPassword: boolean): Promise<ReturnType<typeof rstest.fn>> {
+    let authenticated = true;
+    const logout = rstest.fn(() => {
+        if (hasPassword) authenticated = false;
+        return {};
+    });
+    registerMocks(pb.services.AuthenticationService, { logout, isAuthenticated: () => ({ value: authenticated }) });
+    registerMocks(pb.services.SystemService, { hasPassword: () => ({ value: hasPassword }) });
+    await store.fetchSessionInfo();
+    return logout;
+}
+
+// Under Root, as in the app: it is what redirects once the session ends.
 function renderLayout() {
     return render(
         <IntlProvider locale="en">
-            <MemoryRouter>
-                <LayoutWorkspace children={null} />
+            <MemoryRouter initialEntries={['/display']}>
+                <Routes>
+                    <Route element={<Root />}>
+                        <Route path="*" element={<LayoutWorkspace children={null} />} />
+                    </Route>
+                </Routes>
             </MemoryRouter>
         </IntlProvider>,
     );
 }
 
-// jsdom won't let us spy on location.assign directly; swap the whole location.
-const REAL_LOCATION = window.location;
-function stubAssign(): ReturnType<typeof rstest.fn> {
-    const assign = rstest.fn();
-    Object.defineProperty(window, 'location', {
-        configurable: true,
-        value: Object.assign(new URL(window.location.href), { assign }),
-    });
-    return assign;
-}
-
 afterEach(() => {
     cleanup();
     mocks.clear();
-    Object.defineProperty(window, 'location', { configurable: true, value: REAL_LOCATION });
+    rstest.clearAllMocks();
 });
 
 describe('LayoutWorkspace logout', () => {
     test("next to boser, logout shows without a password and leaves for boser's login", async () => {
         store.setHardwareCapabilities(deckCapabilities({ boserManaged: true }));
-        const logout = rstest.fn(() => ({}));
-        registerMocks(pb.services.AuthenticationService, { logout });
-        const assign = stubAssign();
+        // Without a password the session survives the logout.
+        const logout = await signIn(false);
+        const assign = rstest.fn();
+        stubLocation({ assign });
         renderLayout();
 
         fireEvent.click(screen.getByRole('button', { name: 'Logout' }));
@@ -81,10 +91,27 @@ describe('LayoutWorkspace logout', () => {
         expect(logout).toHaveBeenCalledOnce();
     });
 
-    test('a standalone Deck without a password offers no logout', () => {
+    test('a standalone Deck without a password offers no logout', async () => {
         store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+        await signIn(false);
         renderLayout();
 
         expect(screen.queryByRole('button', { name: 'Logout' })).toBeNull();
+    });
+
+    test('a standalone Deck with a password logs out to its own login', async () => {
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+        const logout = await signIn(true);
+        const assign = rstest.fn();
+        stubLocation({ assign });
+        const { default: router } = await import('@/routes');
+        renderLayout();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Logout' }));
+
+        await waitFor(() => expect(router.navigate).toHaveBeenCalledWith('/login'));
+        expect(router.navigate).toHaveBeenCalledOnce();
+        expect(logout).toHaveBeenCalledOnce();
+        expect(assign).not.toHaveBeenCalled();
     });
 });

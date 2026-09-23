@@ -49,3 +49,7 @@ globalThis.ResizeObserver ??= NoopResizeObserver;
 
 // Nor a scrollIntoView, which Carbon's Dropdown calls on its highlighted option.
 Element.prototype.scrollIntoView ??= function scrollIntoView(): void {};
+
+// Nor a matchMedia, which Carbon's SideNav and our `useIsTouchDevice` query; nothing here ever matches.
+window.matchMedia ??= (query: string) =>
+    ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList;

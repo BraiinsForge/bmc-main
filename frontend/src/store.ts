@@ -21,7 +21,7 @@
 import { useState, useEffect } from 'react';
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
-import { boserChrome } from '@/lib/capabilities';
+import { boserChrome, loginOwned } from '@/lib/capabilities';
 import { readBrand, type Brand } from '@/lib/brand';
 import { readSystem, type Capabilities } from '@/lib/system';
 
@@ -81,22 +81,24 @@ class Store {
         await pb.rpc.auth.login({ password }, { signal });
         await this.fetchSessionInfo();
     };
-    logout = async (): Promise<void | pb.RpcStatus> => {
-        try {
-            await pb.rpc.auth.logout({});
-        } catch {
-            // Nothing to do here
-        }
-        this.fetchSessionInfo();
-    };
-    /** Ends the session boser shares with us and leaves for boser's login page instead of ours. */
-    logoutToBoser = async (): Promise<void> => {
+    logout = async (): Promise<void> => {
         try {
             await pb.rpc.auth.logout({});
         } catch {
             // The login page is where we go either way
         }
-        window.location.assign(URLS.boser.login);
+        await this.fetchSessionInfo();
+        // Root leaves once the session ends; without a password it never does, so leave from here.
+        if (this.state.sessionInfo.isAuthenticated) this.goToLogin();
+    };
+    /** The login is boser's on a device it manages; ours would only let the user past our own session. */
+    goToLogin = (): void => {
+        if (loginOwned(this.state.hardwareCapabilities)) {
+            window.location.assign(URLS.boser.login);
+            return;
+        }
+        // Lazy: the routes import Root, which imports the store.
+        import('@/routes').then(({ default: router }) => router.navigate(URLS.auth.login));
     };
 
     #fetchSessionInfoAbort = pb.abort.get();

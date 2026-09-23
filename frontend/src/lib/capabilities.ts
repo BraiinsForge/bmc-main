@@ -71,6 +71,10 @@ export function systemActionsOwned(caps: Capabilities): boolean {
     return boserManaged(caps);
 }
 
+export function loginOwned(caps: Capabilities): boolean {
+    return boserManaged(caps);
+}
+
 export function boserChrome(caps: Capabilities): boolean {
     return boserManaged(caps);
 }

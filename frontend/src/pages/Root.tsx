@@ -29,7 +29,8 @@ import { Toaster } from '@/lib/toast';
 // App
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
-import { useStore } from '@/store';
+import { store, useStore } from '@/store';
+import { loginOwned } from '@/lib/capabilities';
 import AppContext, { getAppContextDefault, type AppContextType, type ConfirmationDescriptor } from '@/context';
 
 // Components
@@ -43,6 +44,7 @@ interface Props {
     navigate: NavigateFunction;
     isRootPath: boolean;
     isAuthenticated: null | boolean;
+    boserLogin: boolean;
 }
 
 interface Confirmation extends ConfirmationDescriptor {
@@ -89,7 +91,11 @@ class View extends Component<Props, State> {
         const { isRootPath, isAuthenticated } = this.props;
         // Since there is nothing usefull on the roo path,
         // we have to always redirect it to "somthing"
-        if (prevProps.isAuthenticated !== isAuthenticated || isRootPath) this.#maybeRedirect();
+        if (prevProps.isAuthenticated !== isAuthenticated || isRootPath) {
+            // This already runs the mount's check with fresher props; letting it fire too redirects twice.
+            this.#mount.cancel();
+            this.#maybeRedirect();
+        }
     }
 
     /**
@@ -101,16 +107,15 @@ class View extends Component<Props, State> {
         this.#maybeRedirect();
     }, 150);
     #maybeRedirect = async (): Promise<void> => {
-        const { navigate, pathname, isAuthenticated, isRootPath } = this.props;
-        const { login } = URLS.auth;
+        const { navigate, pathname, isAuthenticated, isRootPath, boserLogin } = this.props;
 
         const isPublicPage: boolean = Object.values(URLS.auth).some(x => pathname.startsWith(x));
 
         // Redirects based on authentication status
         //  - redirect to dashboard "from login / signup" if switched to authenticated
-        //  - redirect to login if switched to UNauthenticated
+        //  - redirect to login if switched to UNauthenticated, on a BMM even from our own login page
         if (isAuthenticated === true && (isPublicPage || isRootPath)) return navigate(URLS.defaultScreen);
-        if (isAuthenticated === false && !isPublicPage) return navigate(login);
+        if (isAuthenticated === false && (!isPublicPage || boserLogin)) return store.goToLogin();
     };
 
     //
@@ -238,5 +243,14 @@ export default function Root() {
     const navigate = useNavigate();
     const isRootPath: boolean = pathname === '/';
     const isAuthenticated = useStore(x => x.state.sessionInfo.isAuthenticated);
-    return <View navigate={navigate} pathname={pathname} isAuthenticated={isAuthenticated} isRootPath={isRootPath} />;
+    const boserLogin = useStore(x => loginOwned(x.state.hardwareCapabilities));
+    return (
+        <View
+            navigate={navigate}
+            pathname={pathname}
+            isAuthenticated={isAuthenticated}
+            isRootPath={isRootPath}
+            boserLogin={boserLogin}
+        />
+    );
 }
