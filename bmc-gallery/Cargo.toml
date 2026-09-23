@@ -111,6 +111,7 @@ miner-info = { path = "../widgets-wasm/lib/miner-info" }
 prices = { path = "../widgets-wasm/lib/prices" }
 ticker-list = { path = "../widgets-wasm/ticker-list", features = ["scene"] }
 ticker-single = { path = "../widgets-wasm/ticker-single", features = ["scene"] }
+weather = { path = "../widgets-wasm/weather" }
 
 # Keep in step with the root manifest; see it for why the fork exists.
 femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19d18b0b444aca195a3fd13b2fb83bc525" }
@@ -151,6 +152,7 @@ ignored = [
     "prices",
     "ticker-single",
     "ticker-list",
+    "weather",
 ]
 
 # rustc 1.97.1 aborts (SIGABRT, no diagnostic) generating code for this dylib

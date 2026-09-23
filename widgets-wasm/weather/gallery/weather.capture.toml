@@ -1,0 +1,215 @@
+# The recorded forecast at every design size and on BMM100;
+# each state over the Large and BMM101 layouts;
+# the widest temperatures everywhere; and the settings that reshape a value.
+
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "healthy-full"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "healthy-large"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "healthy-medium"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "healthy-small"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "healthy-bmm101"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "healthy-bmm100"
+scene = "bmc_gallery::weather::BMM100"
+frames = 24
+
+# A 12-hour clock, Fahrenheit and imperial wind, all of which reach the full layout.
+[[shot]]
+name = "healthy-full-12h-imperial"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Units = "Imperial"
+Clock = "12-hour"
+Temperature = "Fahrenheit"
+
+[[shot]]
+name = "healthy-bmm101-12h-imperial"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+Units = "Imperial"
+Clock = "12-hour"
+Temperature = "Fahrenheit"
+
+# Times follow the system zone instead of Prague's.
+[[shot]]
+name = "healthy-large-system-zone"
+scene = "bmc_gallery::weather::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+"Time zone" = "System"
+Timezone = "Kolkata"
+
+[[shot]]
+name = "loading-large"
+scene = "bmc_gallery::weather::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "loading-bmm101"
+scene = "bmc_gallery::weather::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "failed-large"
+scene = "bmc_gallery::weather::Failed"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "failed-bmm101"
+scene = "bmc_gallery::weather::Failed"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "stale-large"
+scene = "bmc_gallery::weather::Stale"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "stale-bmm101"
+scene = "bmc_gallery::weather::Stale"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "location-not-found-bmm101"
+scene = "bmc_gallery::weather::Location Not Found"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "no-location-bmm101"
+scene = "bmc_gallery::weather::No Location"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "frost-full"
+scene = "bmc_gallery::weather::Frost"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "frost-large"
+scene = "bmc_gallery::weather::Frost"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "frost-medium"
+scene = "bmc_gallery::weather::Frost"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "frost-small"
+scene = "bmc_gallery::weather::Frost"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "frost-bmm101"
+scene = "bmc_gallery::weather::Frost"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "frost-bmm100"
+scene = "bmc_gallery::weather::BMM100"
+frames = 24
+
+[shot.knobs]
+State = "Frost"
+
+[[shot]]
+name = "long-location-large"
+scene = "bmc_gallery::weather::Long Location"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "long-location-bmm101"
+scene = "bmc_gallery::weather::Long Location"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"

@@ -1,0 +1,41 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  instances: [
+    {
+      device: "weather",
+      label: "Healthy Nexus forecast",
+      port: 20500,
+    },
+    {
+      device: "weather",
+      label: "Warming up — 503 until a minute in",
+      port: 20501,
+      params: { warmup_secs: 60 },
+    },
+    {
+      device: "weather",
+      label: "Location not found",
+      port: 20502,
+      params: { status: 404 },
+    },
+    {
+      device: "weather",
+      label: "Initial hard failure",
+      port: 20503,
+      params: { status: 503 },
+    },
+    {
+      device: "weather",
+      label: "Failing after a minute — stale once the held forecast outlives the poll's grace",
+      port: 20504,
+      params: { status: 503, fail_after_secs: 60 },
+    },
+    {
+      device: "weather",
+      label: "Frost — every temperature 25 °C lower",
+      port: 20505,
+      params: { temperature_offset_c: -25 },
+    },
+  ],
+}
