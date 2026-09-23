@@ -227,15 +227,8 @@ fn current_left(weather: &crate::model::Weather, metrics: LargeMetrics) -> Node 
 }
 
 fn stats_panel(weather: &crate::model::Weather, tz: Option<&Tz>, metrics: LargeMetrics) -> Node {
-    let Some(daily) = &weather.daily else {
-        return common::txt(
-            display::NOT_AVAILABLE.to_string(),
-            metrics.condition_font_size,
-            FontWeight::REGULAR,
-            TEXT_SECONDARY,
-        );
-    };
-    let today = daily.days.get(daily.today_index);
+    let daily = weather.daily.as_ref();
+    let today = daily.and_then(|d| d.days.get(d.today_index));
     let low = today.map_or_else(
         || display::NOT_AVAILABLE.to_string(),
         |d| display::temperature(d.min),
@@ -281,7 +274,7 @@ fn stats_panel(weather: &crate::model::Weather, tz: Option<&Tz>, metrics: LargeM
                         &icons::SUNRISE,
                         "Sunrise",
                         common::time_with_meridiem(
-                            daily.today_sunrise,
+                            daily.and_then(|d| d.today_sunrise),
                             tz,
                             metrics.stat_value_font_size,
                             metrics.stat_meridiem_font_size,
@@ -293,7 +286,7 @@ fn stats_panel(weather: &crate::model::Weather, tz: Option<&Tz>, metrics: LargeM
                         &icons::SUNSET,
                         "Sunset",
                         common::time_with_meridiem(
-                            daily.today_sunset,
+                            daily.and_then(|d| d.today_sunset),
                             tz,
                             metrics.stat_value_font_size,
                             metrics.stat_meridiem_font_size,

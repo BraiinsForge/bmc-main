@@ -32,7 +32,7 @@ use bmc_wasm_sdk::*;
 
 use crate::display;
 use crate::manifest_params::Params;
-use crate::model::{Frame, State, Weather};
+use crate::model::{Frame, Location, State, Weather};
 use crate::screens::{common, full, large, medium, small};
 
 /// What the widget holds, the viewport it is drawn into, the operator's params,
@@ -50,17 +50,31 @@ pub fn weather_view(view: &ViewData) -> Node {
     if view.params.location.trim().is_empty() {
         return message_view(display::ENTER_LOCATION);
     }
+    let frame = Frame::of(view.viewport);
     match &view.state {
         State::Loaded(weather) => {
-            let root = layout(weather, &view.params, Frame::of(view.viewport));
+            let root = layout(weather, &view.params, frame);
             match view.stale_since {
                 Some(anchor) => with_stale_overlay(root, anchor, view.viewport.shape),
                 None => root,
             }
         }
+        State::Loading => layout(&not_loaded(), &view.params, frame),
         State::BadLocation => message_view("Location not found"),
-        State::Loading => message_view(display::LOADING),
         State::Error => message_view(display::CANNOT_LOAD),
+    }
+}
+
+/// Nothing fetched yet, so every value the layout draws reads `--`.
+fn not_loaded() -> Weather {
+    Weather {
+        location: Location {
+            display_name: display::NOT_AVAILABLE.to_owned(),
+            timezone: String::new(),
+        },
+        current: None,
+        hourly: None,
+        daily: None,
     }
 }
 
@@ -170,6 +184,41 @@ mod tests {
                 texts.contains(&"Prague, Czech Republic".to_owned()),
                 "{bucket:?}: {texts:?}"
             );
+        }
+    }
+
+    #[test]
+    fn loading_draws_every_layout_with_each_value_as_a_dash() {
+        install("Europe/Prague");
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+            SizeBucket::Bmm101,
+        ] {
+            let texts = at(bucket, fixtures::loading, fixtures::default_params());
+            let dashes = texts
+                .iter()
+                .filter(|text| *text == display::NOT_AVAILABLE)
+                .count();
+            assert!(
+                dashes >= 3,
+                "location, temperature and condition at least, {bucket:?}: {texts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_stat_labels_stay_while_their_values_load() {
+        install("Europe/Prague");
+        let texts = at(
+            SizeBucket::Large,
+            fixtures::loading,
+            fixtures::default_params(),
+        );
+        for label in ["Low T.", "High T.", "Sunrise", "Sunset"] {
+            assert!(texts.contains(&label.to_owned()), "{label}: {texts:?}");
         }
     }
 

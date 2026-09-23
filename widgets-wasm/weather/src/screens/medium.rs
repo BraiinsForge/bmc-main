@@ -95,10 +95,7 @@ pub fn medium(
                 TEXT_SECONDARY,
             ),
             col(props!(height: 1.0, background: BORDER), []),
-            row(
-                props!(cross_align: CrossAlign::Center),
-                common::spread(hour_cells),
-            ),
+            common::hour_strip(hour_cells),
         ],
     );
 

@@ -1,5 +1,5 @@
 # The recorded forecast at every design size and on BMM100;
-# each state over the Large and BMM101 layouts;
+# each state over the Large and BMM101 layouts, loading at every size;
 # the widest temperatures everywhere; and the settings that reshape a value.
 
 size = "1280x560"
@@ -87,12 +87,36 @@ Size = "Large"
 Timezone = "Kolkata"
 
 [[shot]]
+name = "loading-full"
+scene = "bmc_gallery::weather::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
 name = "loading-large"
 scene = "bmc_gallery::weather::Loading"
 frames = 24
 
 [shot.knobs]
 Size = "Large"
+
+[[shot]]
+name = "loading-medium"
+scene = "bmc_gallery::weather::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "loading-small"
+scene = "bmc_gallery::weather::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
 
 [[shot]]
 name = "loading-bmm101"

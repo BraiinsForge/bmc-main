@@ -25,7 +25,6 @@ use crate::manifest_params::TimeZone;
 
 pub const NOT_AVAILABLE: &str = "--";
 pub const ENTER_LOCATION: &str = "Enter location";
-pub const LOADING: &str = "Loading…";
 pub const CANNOT_LOAD: &str = "Cannot load data";
 
 #[must_use]

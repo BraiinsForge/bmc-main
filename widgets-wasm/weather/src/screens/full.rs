@@ -116,15 +116,14 @@ fn weather_info(weather: &crate::model::Weather, tz: Option<&Tz>) -> Node {
         None => children.push(spacer(1.0)),
     }
 
-    if let Some(daily) = &weather.daily {
-        children.push(row(
-            props!(cross_align: CrossAlign::Center, gap: 24.0),
-            [
-                sun_item(&icons::SUNRISE, daily.today_sunrise, tz),
-                sun_item(&icons::SUNSET, daily.today_sunset, tz),
-            ],
-        ));
-    }
+    let daily = weather.daily.as_ref();
+    children.push(row(
+        props!(cross_align: CrossAlign::Center, gap: 24.0),
+        [
+            sun_item(&icons::SUNRISE, daily.and_then(|d| d.today_sunrise), tz),
+            sun_item(&icons::SUNSET, daily.and_then(|d| d.today_sunset), tz),
+        ],
+    ));
 
     col(
         props!(gap: 12.0),
@@ -159,10 +158,7 @@ pub fn full(
     let hourly_section = col(
         props!(flex: 1.0, gap: 16.0),
         [
-            row(
-                props!(cross_align: CrossAlign::Center),
-                common::spread(strip),
-            ),
+            common::hour_strip(strip),
             weather_info(weather, tz.as_ref()),
         ],
     );

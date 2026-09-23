@@ -99,8 +99,7 @@ fn temp_box(value: String, align_right: bool, style: ForecastRowStyle) -> Node {
 
 /// Distribute nodes across the main axis with equal flexible gaps between
 /// them, emulating CSS `justify-content: space-between`.
-#[must_use]
-pub(super) fn spread(cells: Vec<Node>) -> Vec<Node> {
+fn spread(cells: Vec<Node>) -> Vec<Node> {
     let last = cells.len().saturating_sub(1);
     let mut out: Vec<Node> = Vec::new();
     for (i, cell) in cells.into_iter().enumerate() {
@@ -110,6 +109,22 @@ pub(super) fn spread(cells: Vec<Node>) -> Vec<Node> {
         }
     }
     out
+}
+
+/// The hour cells spread across the strip, or `--` when the forecast has none.
+#[must_use]
+pub(super) fn hour_strip(cells: Vec<Node>) -> Node {
+    let children = if cells.is_empty() {
+        vec![txt(
+            display::NOT_AVAILABLE.to_string(),
+            24,
+            FontWeight::REGULAR,
+            TEXT_SECONDARY,
+        )]
+    } else {
+        spread(cells)
+    };
+    row(props!(cross_align: CrossAlign::Center), children)
 }
 
 #[derive(Clone, Copy)]
