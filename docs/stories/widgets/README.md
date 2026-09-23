@@ -51,7 +51,7 @@ circuit's clock or the deck's. Renders at all four widget sizes on rectangular v
 A widget that counts down to the next Bitcoin halving — days, hours, and minutes remaining — and, on the larger sizes,
 shows the predicted halving date and the blocks remaining with the target block height. Reads a server-computed
 prediction from the Braiins Forge Nexus, follows device localization and timezone, and offers a configurable numeral
-weight. Renders at all four widget sizes and on the round BFM100 face.
+weight. Renders at all four widget sizes, in BMM101's own frame, and on the round BFM100 face.
 
 ### [ISS Position Widget](iss-position.md)
 
