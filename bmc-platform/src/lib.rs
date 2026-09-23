@@ -27,10 +27,12 @@ pub mod generic_backlight_driver;
 pub mod linux_input;
 pub mod serial_number;
 
+use bmc_net_types::network::BmcState;
 use index_bmc::BmcPlatform as IndexBmcPlatform;
 use serde::Serialize;
 use serial_number::{BoardSerial, PcbVersion};
 use std::fmt::Display;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, io};
@@ -254,6 +256,30 @@ pub struct HardwareCapabilities {
     pub mining_supported: bool,
     pub boser_managed: bool,
     pub product_name: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetButtonOwner {
+    Bmc,
+    Boser,
+}
+
+impl HardwareCapabilities {
+    /// BMC owns the reset button during initial setup, when boser stays stopped.
+    pub async fn reset_button_owner(
+        &self,
+        state: impl Future<Output = BmcState>,
+    ) -> ResetButtonOwner {
+        if !self.boser_managed {
+            return ResetButtonOwner::Bmc;
+        }
+        match state.await {
+            BmcState::FactoryDefault | BmcState::SetupPending => ResetButtonOwner::Bmc,
+            BmcState::Operational | BmcState::WifiReconfiguration | BmcState::Unsupported => {
+                ResetButtonOwner::Boser
+            }
+        }
+    }
 }
 
 /// ESP32 WiFi over SDIO (BMM101): a mac80211 device on the STM32 SD/MMC controller.
@@ -678,6 +704,42 @@ mod test {
             assert_eq!(caps.mining_supported, mining, "{product:?}: mining");
             assert_eq!(caps.boser_managed, boser, "{product:?}: boser");
         }
+    }
+
+    #[tokio::test]
+    async fn reset_button_ownership_follows_provisioning_on_every_product() {
+        for (product, after_setup) in [
+            (Product::Bmc100, ResetButtonOwner::Bmc),
+            (Product::Bmm100, ResetButtonOwner::Boser),
+            (Product::Bmm101, ResetButtonOwner::Boser),
+            (Product::Bfm100, ResetButtonOwner::Boser),
+        ] {
+            let caps = HardwareProfile::for_product(product).capabilities();
+            for (state, expected) in [
+                (BmcState::FactoryDefault, ResetButtonOwner::Bmc),
+                (BmcState::SetupPending, ResetButtonOwner::Bmc),
+                (BmcState::Operational, after_setup),
+                (BmcState::WifiReconfiguration, after_setup),
+                (BmcState::Unsupported, after_setup),
+            ] {
+                assert_eq!(
+                    caps.reset_button_owner(std::future::ready(state)).await,
+                    expected,
+                    "{product:?} in {state:?}: BMC owns initial setup; the configured owner handles other states"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn self_managed_reset_button_never_reads_provisioning() {
+        let caps = HardwareProfile::for_product(Product::Bmc100).capabilities();
+        let owner = caps
+            .reset_button_owner(async {
+                panic!("self-managed reset must not depend on a provisioning read")
+            })
+            .await;
+        assert_eq!(owner, ResetButtonOwner::Bmc);
     }
 
     #[test]

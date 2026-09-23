@@ -1197,12 +1197,14 @@ name = "bmc-platform"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-net-types",
  "index-bmc",
  "packed_struct",
  "serde",
  "strum",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 

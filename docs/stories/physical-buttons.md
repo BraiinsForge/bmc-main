@@ -52,14 +52,15 @@ buttons a product carries, and which of them the BMC application answers to, dep
 - A hold of five seconds or longer factory-resets it: the device wipes its configuration and comes back up in setup,
   showing its setup network. The installed firmware stays.
 - A release between two and five seconds does nothing, so a hesitant hold cannot pick either action by accident.
-- Where Boser owns the board's buttons, the reset button is its alone: the BMC application ignores the press, so the two
-  never act on the same reset. Today Boser owns the buttons on BMM100, BMM101 and BFM100; BMC100 does not run Boser and
-  answers the button itself.
+- BMC100 answers the reset button itself in every state.
+- On every Boser-managed product (BMM100, BMM101 and BFM100), the BMC application handles reset while the device is
+  factory-default or setup-pending, using the timings above. Boser is stopped during initial setup. Outside those two
+  states, including Wi-Fi reconfiguration, the BMC application ignores reset and assumes Boser handles it.
 
 ## Constraints
 
 - Buttons arrive as kernel button events. The IP-report button is handled wherever the kernel reports it; the reset
-  button only where Boser does not own the buttons. BMM100 and BMM101 carry an IP-report button today.
+  button follows the product and setup-state rules above. BMM100 and BMM101 carry an IP-report button today.
 - Boser reads the same IP-report button and sends the IP-report network packet on the same short press; the one-second
   bound is its own, so the press that shows the address is the press that sends the packet. Neither application relays
   the button to the other, and the BMC application never sends the packet itself.
@@ -67,4 +68,4 @@ buttons a product carries, and which of them the BMC application answers to, dep
   [Device Setup & Connect Screens](device-setup-screens.md): a tap dismisses it where the device has touch, and a firing
   alarm, the upgrade screens and the settings tray draw above it.
 - Button presses the BMC application answers to count as activity for [Night Mode](night-mode.md)'s screen auto-off:
-  they wake a dark screen and restart its timeout. A reset press on a board Boser owns does neither.
+  they wake a dark screen and restart its timeout. A reset press the BMC application ignores does neither.

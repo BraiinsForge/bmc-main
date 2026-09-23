@@ -4,6 +4,12 @@ Products whose `HardwareCapabilities::boser_managed` flag is set use Boser as th
 configuration and maintenance. The capability comes from the hardware profile and is fixed for the BMC process lifetime.
 Self-managed products retain the normal BMC behavior.
 
+`HardwareCapabilities::reset_button_owner` resolves who handles the reset button: BMC in `FactoryDefault` and
+`SetupPending`, because Boser stays stopped during initial setup, and Boser in other states on managed products,
+including Wi-Fi reconfiguration. Self-managed products handle it in BMC in every state, without a provisioning query. It
+governs only the reset button; the fixed `boser_managed` capability still governs API routing and local maintenance as
+described below.
+
 Initial setup and native Wi-Fi reconfiguration remain BMC-owned on every product. Only BMC drives the setup access point
 and captive portal. `UpgradeService` is Boser-owned on managed products: every method answers `Unimplemented`, and bmc
 observes Boser's upgrade state instead of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade

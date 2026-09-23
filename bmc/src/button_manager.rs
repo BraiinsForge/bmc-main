@@ -25,7 +25,7 @@ use crate::compositor::Compositor;
 use crate::manager::BmcManager;
 use crate::system_manager::ScreenRequest;
 use bmc_button::{ButtonEvent, ButtonId, Buttons};
-use bmc_platform::HardwareCapabilities;
+use bmc_platform::{HardwareCapabilities, ResetButtonOwner};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -106,10 +106,20 @@ where
         }
     }
 
-    fn handles(&self, button: &ButtonId) -> bool {
+    async fn handles(&self, button: &ButtonId) -> bool {
         match button {
-            // Acting on it here too would race boser's own reboot or factory reset.
-            ButtonId::Reset => !self.capabilities.boser_managed,
+            ButtonId::Reset => {
+                self.capabilities
+                    .reset_button_owner(async {
+                        self.bmc_manager
+                            .network_manager()
+                            .provisioning()
+                            .device_state()
+                            .await
+                    })
+                    .await
+                    == ResetButtonOwner::Bmc
+            }
             ButtonId::IpReport => true,
         }
     }
@@ -155,9 +165,9 @@ where
             let button = match &inner {
                 ButtonEvent::Pressed(button) | ButtonEvent::Released(button) => button,
             };
-            if !self.handles(button) {
+            if !self.handles(button).await {
                 info!(
-                    "Ignoring {inner:?}: not handled on {}",
+                    "Ignoring {inner:?}: not handled on {} in the current state",
                     self.capabilities.product_name
                 );
                 continue;
@@ -267,10 +277,11 @@ mod tests {
     use super::*;
     use crate::bootloader_config::BootloaderConfig;
     use crate::compositor::testing::RecordingCompositor;
-    use crate::manager::{UpgradeError, UpgradeMarker};
+    use crate::manager::{BmcState, UpgradeError, UpgradeMarker};
     use crate::test_support::StubSessionManager;
     use bmc_button::ButtonEventStream;
-    use bmc_platform::{BosPlatform, BosVersion, HardwareProfile, Product};
+    use bmc_net::mock::MockNetworkManager;
+    use bmc_platform::{BosPlatform, BosVersion, HardwareProfile};
     use bmc_shared_time::time::Timezone;
     use futures::StreamExt as _;
     use std::path::Path;
@@ -312,9 +323,10 @@ mod tests {
         FactoryReset { hard: bool },
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     struct StubManager {
         calls: Mutex<Vec<Call>>,
+        network: MockNetworkManager,
     }
 
     impl StubManager {
@@ -335,7 +347,7 @@ mod tests {
             unimplemented!("{UNREACHABLE}")
         }
         fn network_manager(&self) -> &dyn bmc_net::NetworkManager {
-            unimplemented!("{UNREACHABLE}")
+            &self.network
         }
         async fn upgrade(
             &self,
@@ -416,17 +428,28 @@ mod tests {
     const BOSER_OWNS_THE_BUTTON: bool = true;
     const BMC_OWNS_THE_BUTTON: bool = false;
 
-    /// `boser_managed` is the only field the button manager reads; the rest is filler
-    /// borrowed from a real profile so no assertion depends on it.
-    fn capabilities(boser_managed: bool) -> HardwareCapabilities {
-        HardwareCapabilities {
-            boser_managed,
-            ..HardwareProfile::for_product(Product::Bmc100).capabilities()
-        }
+    fn harness(boser_managed: bool, events: Vec<DelayedEvent>) -> Harness {
+        let platform = if boser_managed {
+            BosPlatform::Am2
+        } else {
+            BosPlatform::Bmc1
+        };
+        harness_with_provisioning(
+            platform,
+            MockNetworkManager::with_provisioning(false, false),
+            events,
+        )
     }
 
-    fn harness(boser_managed: bool, events: Vec<DelayedEvent>) -> Harness {
-        let manager = Arc::new(StubManager::default());
+    fn harness_with_provisioning(
+        platform: BosPlatform,
+        network: MockNetworkManager,
+        events: Vec<DelayedEvent>,
+    ) -> Harness {
+        let manager = Arc::new(StubManager {
+            calls: Mutex::new(Vec::new()),
+            network,
+        });
         let (screen_request, _) = watch::channel(ScreenRequest::Wake);
         let pulled = Arc::new(AtomicUsize::new(0));
         let compositor = Arc::new(RecordingCompositor::default());
@@ -438,7 +461,7 @@ mod tests {
             manager.clone(),
             screen_request.clone(),
             compositor.clone(),
-            capabilities(boser_managed),
+            HardwareProfile::for_product(platform.product()).capabilities(),
         );
         Harness {
             button_manager,
@@ -552,7 +575,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_boser_managed_board_leaves_the_reset_button_alone() {
+    async fn a_boser_managed_board_leaves_the_reset_button_alone_after_setup() {
         let outcome = drive(BOSER_OWNS_THE_BUTTON, press_and_release()).await;
         assert_eq!(outcome.calls, [], "BMC acted on the reset button");
         assert_eq!(
@@ -563,6 +586,110 @@ mod tests {
             !recorded_a_press(outcome.reset_state.as_ref()),
             "BMC recorded the press, so the filter sits below the state write"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reset_works_in_both_initial_setup_states_on_every_product() {
+        for platform in [
+            BosPlatform::Bmc1,
+            BosPlatform::Am2,
+            BosPlatform::Bmm1,
+            BosPlatform::Bfm1,
+        ] {
+            for state in [BmcState::FactoryDefault, BmcState::SetupPending] {
+                for (held, expected) in [
+                    (REBOOT_MAX_HOLD_DURATION, vec![Call::Reboot]),
+                    (REBOOT_MAX_HOLD_DURATION + Duration::from_secs(1), vec![]),
+                    (
+                        FACTORY_RESET_MIN_HOLD_DURATION,
+                        vec![Call::FactoryReset { hard: false }],
+                    ),
+                ] {
+                    let mut harness = harness_with_provisioning(
+                        platform,
+                        MockNetworkManager::with_provisioning(
+                            state == BmcState::FactoryDefault,
+                            true,
+                        ),
+                        press_and_hold(ButtonId::Reset, held),
+                    );
+                    let requests = harness.screen_request.subscribe();
+
+                    harness.button_manager.manage_buttons().await;
+
+                    assert_eq!(
+                        harness.manager.calls(),
+                        expected,
+                        "{platform} must retain the existing reset actions in {state:?} for {held:?}"
+                    );
+                    assert!(
+                        requests
+                            .has_changed()
+                            .expect("BUG: harness holds the sender"),
+                        "a reset press on {platform} during {state:?} must wake the display"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn wifi_reconfiguration_leaves_reset_to_boser_on_managed_products() {
+        for platform in [BosPlatform::Am2, BosPlatform::Bmm1, BosPlatform::Bfm1] {
+            let mut harness = harness_with_provisioning(
+                platform,
+                MockNetworkManager::default(),
+                press_and_hold(ButtonId::Reset, FACTORY_RESET_MIN_HOLD_DURATION),
+            );
+            harness
+                .manager
+                .network_manager()
+                .provisioning()
+                .mark_wifi_reconfig()
+                .await
+                .expect("BUG: mock provisioning transition cannot fail");
+            let requests = harness.screen_request.subscribe();
+
+            harness.button_manager.manage_buttons().await;
+
+            assert!(
+                harness.manager.calls().is_empty(),
+                "BMC acted on reset during Wi-Fi reconfiguration on {platform}"
+            );
+            assert!(
+                !requests
+                    .has_changed()
+                    .expect("BUG: harness holds the sender"),
+                "BMC woke the screen for a reset press boser owns on {platform}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn leaving_setup_disables_bmc_reset_handling_on_managed_products() {
+        for platform in [BosPlatform::Am2, BosPlatform::Bmm1, BosPlatform::Bfm1] {
+            let mut harness = harness_with_provisioning(
+                platform,
+                MockNetworkManager::with_provisioning(false, true),
+                press_and_release(),
+            );
+            harness.button_manager.manage_buttons().await;
+            harness
+                .manager
+                .network_manager()
+                .provisioning()
+                .advance()
+                .await
+                .expect("BUG: mock provisioning transition cannot fail");
+
+            harness.button_manager.manage_buttons().await;
+
+            assert_eq!(
+                harness.manager.calls(),
+                [Call::Reboot],
+                "only the press made while setup was pending must reboot {platform}"
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -595,7 +722,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_boser_managed_board_ignores_a_factory_reset_length_hold() {
+    async fn a_boser_managed_board_ignores_a_factory_reset_length_hold_after_setup() {
         let outcome = drive(
             BOSER_OWNS_THE_BUTTON,
             press_and_hold(ButtonId::Reset, FACTORY_RESET_MIN_HOLD_DURATION),
