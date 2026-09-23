@@ -15,8 +15,9 @@ timezone or the device timezone.
 - The widget shows the current temperature, weather condition, condition icon, and location name.
 - The `small` size focuses on current conditions only.
 - The `medium`, `large`, and `full` sizes keep the same current-condition information while adding forecast detail.
-- While weather data is still loading, or when no usable data has been received yet because fetches keep failing, it
-  reads as `--`; failed fetches retry on their own without user action.
+- While weather data is still loading, every size draws its layout with each value reading as `--`.
+- If the first fetch fails before any weather has loaded, the widget shows `Cannot load data`; failed fetches retry on
+  their own without user action.
 
 ### Choose the forecast location
 
@@ -43,8 +44,10 @@ timezone or the device timezone.
 > As a user, I want today's low, high, sunrise, and sunset so I can plan around the day.
 
 - The `large` size shows current conditions, today's low and high temperatures, and today's sunrise and sunset times.
-- On shorter Large viewports such as BMM101, the Large layout keeps the same information but moves the temperature and
-  condition text to the right of the current-condition icon to save vertical space.
+- On shorter Large viewports, the Large layout keeps the same information but moves the temperature and condition text
+  to the right of the current-condition icon to save vertical space.
+- BMM101 shows the same details in its own 480x320 frame: the current conditions beside today's low, high, sunrise and
+  sunset, over the daily forecast.
 - The `full` size shows sunrise and sunset times alongside the current conditions and hourly strip.
 - Times can follow either the weather location's timezone or the device timezone.
 
@@ -52,7 +55,7 @@ timezone or the device timezone.
 
 > As a user, I want the Deck to show a short forecast so I can compare the next few days quickly.
 
-- The `large` size shows up to four daily forecast rows.
+- The `large` size and BMM101 show up to four daily forecast rows.
 - The `full` size shows up to eight daily forecast rows, split into two columns.
 - Each row shows the day label, condition icon, low temperature, high temperature, and a min-to-max range bar.
 - Today's row is labelled `Today` and can mark the current temperature on the range bar.
@@ -70,9 +73,9 @@ timezone or the device timezone.
 ## Constraints
 
 - The widget renders at the shared `small`, `medium`, `large`, and `full` sizes on rectangular viewports from 317x238 up
-  to 1280x480.
-- Non-canonical rectangular viewports keep the closest shared size classification. BMM101's 480x320 fullscreen viewport
-  uses the `large` weather layout scaled by the widget fit factor, rather than falling back to `small`.
+  to 1280x480, and in the BMM101 panel's own frame.
+- Other non-canonical rectangular viewports keep the closest shared size classification; BMM100's 320x240 renders the
+  `small` layout.
 - The `large` location label uses the full padded widget width, does not wrap, and clips if the API display name is
   still too wide.
 - *Location* and *Time zone* are manifest-driven widget parameters, configurable from the web UI.

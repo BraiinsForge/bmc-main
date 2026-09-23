@@ -115,8 +115,9 @@ sizes on rectangular viewports.
 ### [Weather Widget](weather.md)
 
 A widget that shows current weather and forecast data for a chosen location, with hourly and daily forecast layouts
-across the shared rectangular widget sizes. Reads weather data from the Braiins Forge Nexus API, follows device
-localization and timezone settings, and lets users choose whether forecast times use the location or device timezone.
+across the shared rectangular widget sizes and in BMM101's own frame. Reads weather data from the Braiins Forge Nexus
+API, follows device localization and timezone settings, and lets users choose whether forecast times use the location or
+device timezone.
 
 ### [Ticker List Widget](ticker-list.md)
 
