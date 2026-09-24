@@ -18,10 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Host-pure per-row data model and the company-name truncation. No SDK draw
-//! types, so it all unit-tests on the host.
+//! Host-pure per-row data model. No SDK draw types, so it all unit-tests on the host.
 
-use bmc_wasm_sdk::typography::ELLIPSIS;
 use prices::candle::Candles;
 use prices::fetch::PriceMiss;
 
@@ -99,19 +97,6 @@ impl TickerRow {
     pub fn is_closed_marked(&self) -> bool {
         !self.market_open && !self.symbol.starts_with('^')
     }
-}
-
-/// Truncate a company name to `max_chars` characters, appending an ellipsis
-/// when it overflows (the SDK has no text-overflow ellipsis). Unicode-safe.
-#[must_use]
-pub fn truncate_name(name: &str, max_chars: usize) -> String {
-    if name.chars().count() <= max_chars {
-        return name.to_owned();
-    }
-    let keep = max_chars.saturating_sub(1);
-    let mut out: String = name.chars().take(keep).collect();
-    out.push_str(ELLIPSIS);
-    out
 }
 
 #[cfg(test)]
@@ -246,15 +231,5 @@ mod tests {
             .expect("BUG: candles build a row");
         idx.set_market_open(Some(false));
         assert!(!idx.is_closed_marked());
-    }
-
-    #[test]
-    fn truncate_appends_ellipsis_only_when_overflowing() {
-        assert_eq!(truncate_name("Apple Inc.", 20), "Apple Inc.");
-        assert_eq!(
-            truncate_name("Advanced Micro Devices, Inc.", 18),
-            format!("Advanced Micro De{ELLIPSIS}")
-        );
-        assert_eq!(truncate_name("", 5), "");
     }
 }

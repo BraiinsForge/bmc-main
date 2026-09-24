@@ -32,7 +32,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::layout::{Band, band_for};
-use crate::model::{RowState, TickerRow, truncate_name};
+use crate::model::{RowState, TickerRow};
 use prices::chart;
 use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
 use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
@@ -172,14 +172,14 @@ fn resolved_row(
         TREND_DOWN
     };
     let closed = row_data.is_closed_marked();
-    let company = name
-        .map(|n| truncate_name(n, band.company_chars))
-        .unwrap_or_default();
     let left = col(
         props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
         [
             symbol_line(&row_data.symbol, PRIMARY, band, closed, stale),
-            text(company, style!(size: band.company_font, color: SECONDARY)),
+            text(
+                name.unwrap_or_default(),
+                style!(size: band.company_font, color: SECONDARY, text_overflow: TextOverflow::Ellipsis),
+            ),
         ],
     );
     let price = match price_precision(&row_data.symbol, row_data.price) {
@@ -419,5 +419,42 @@ mod tests {
             sparkline_stroke_color(sparkline_node(&series, TREND_UP, true, &band)),
             SECONDARY.with_alpha(CLOSED_CHART_ALPHA)
         );
+    }
+
+    #[test]
+    fn a_company_name_reaches_the_renderer_whole_to_be_ellipsized() {
+        use prices::candle::{CandleBar, Candles};
+
+        const NAME: &str = "Grayscale Bitcoin Mini Trust ETF, longer than any row seats";
+        let bar = |t_secs| CandleBar {
+            t_secs,
+            open: 1.0,
+            high: 1.0,
+            low: 1.0,
+            close: 1.0,
+            volume: None,
+        };
+        let candles = Candles {
+            bars: vec![bar(0), bar(3_600)],
+            quote_currency: None,
+        };
+        let row_data = TickerRow::from_candles("BTC", &candles).expect("BUG: candles build a row");
+
+        let Node::Row(_, children) =
+            resolved_row(&row_data, Some(NAME), None, &band_for(SizeVariant::Small))
+        else {
+            panic!("BUG: a resolved row is a row");
+        };
+        let Some(Node::Column(_, left)) = children.first() else {
+            panic!("BUG: the name column leads the row");
+        };
+        let Some(Node::Paragraph {
+            base_style, spans, ..
+        }) = left.get(1)
+        else {
+            panic!("BUG: the company name follows the symbol line");
+        };
+        assert_eq!(spans[0].text, NAME);
+        assert_eq!(base_style.text_overflow, TextOverflow::Ellipsis);
     }
 }

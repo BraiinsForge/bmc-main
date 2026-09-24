@@ -37,8 +37,6 @@ pub struct Band {
     pub badge_padding: f32,
     pub row_padding: f32,
     pub row_gap: f32,
-    /// Character budget for the (ellipsized) company name.
-    pub company_chars: usize,
     /// Maximum rows rendered (and the fetch capacity).
     pub rows: usize,
     /// 2 at Full, 1 otherwise.
@@ -61,7 +59,6 @@ const FULL: Band = Band {
     badge_padding: 4.0,
     row_padding: 12.0,
     row_gap: 4.0,
-    company_chars: 24,
     rows: 8,
     columns: 2,
     show_sparkline: true,
@@ -86,7 +83,6 @@ const MEDIUM: Band = Band {
 
 const SMALL: Band = Band {
     chart_height: 0.0,
-    company_chars: 12,
     rows: 2,
     columns: 1,
     show_sparkline: false,
@@ -95,8 +91,8 @@ const SMALL: Band = Band {
 };
 
 impl Band {
-    /// Multiply fonts and geometry by `fit`; counts, columns, the sparkline
-    /// flag, and the char budget are structure and pass through unscaled.
+    /// Multiply fonts and geometry by `fit`; counts, columns and the sparkline
+    /// flag are structure and pass through unscaled.
     #[must_use]
     pub fn scaled(self, fit: f32) -> Self {
         Self {
@@ -159,6 +155,5 @@ mod tests {
         assert_eq!(scaled.symbol_font, 16);
         assert!((scaled.chart_height - 25.0).abs() < 1e-3);
         assert_eq!(scaled.rows, 4);
-        assert_eq!(scaled.company_chars, 24);
     }
 }
