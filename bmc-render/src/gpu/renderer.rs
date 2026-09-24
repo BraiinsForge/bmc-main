@@ -54,7 +54,9 @@ use super::text::{
 use crate::renderer::{
     AssetSuspendResult, AssetTagState, FrameClear, GlyphCacheCounters, Renderer, TextLayoutCounters,
 };
-use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle, VerticalAlign};
+use crate::tree::{
+    AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextOverflow, TextStyle, VerticalAlign,
+};
 
 use crate::interaction::Rect;
 
@@ -1566,6 +1568,11 @@ impl Renderer for FemtoVgRenderer {
         if text.is_empty() || box_width <= 0.0 || box_height <= 0.0 {
             return;
         }
+        // Autofit fits by wrapping, and canvas text ignores the overflow mode.
+        let style = &TextStyle {
+            text_overflow: TextOverflow::Wrap,
+            ..*style
+        };
         let spans = [SpanData {
             text: text.to_string(),
             weight: None,
@@ -3561,15 +3568,15 @@ mod multiline_text_tests {
     use crate::tree::{SpanData, TextStyle};
     use bmc_wasm_protocol::{AutoFit, Color};
 
-    const W: u32 = 240;
-    const H: u32 = 110;
+    pub(super) const W: u32 = 240;
+    pub(super) const H: u32 = 110;
     /// Text origin of every render below. The box is inset by this much on all
     /// four sides, giving `MAX_W` × `BOX_H`.
     const TEXT_INSET: f32 = 2.0;
     const MAX_W: f32 = 236.0;
     const BOX_H: f32 = 106.0;
 
-    fn span(text: &str, color: Option<Color>) -> SpanData {
+    pub(super) fn span(text: &str, color: Option<Color>) -> SpanData {
         SpanData {
             text: text.to_owned(),
             weight: None,
@@ -3617,7 +3624,7 @@ mod multiline_text_tests {
     /// Run `draw` against a fresh headless renderer targeting an offscreen FBO
     /// and return the rendered pixels (row 0 = top). Each call is a full,
     /// independent GL context — deterministic under Mesa llvmpipe.
-    fn render(draw: impl FnOnce(&mut FemtoVgRenderer)) -> Vec<[u8; 4]> {
+    pub(super) fn render(draw: impl FnOnce(&mut FemtoVgRenderer)) -> Vec<[u8; 4]> {
         let harness = GlHarness::new().expect("BUG: headless GL setup failed");
         let (fbo, fbo_id) = create_readback_fbo(&harness.gl, W, H);
         let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), W, H, fbo_id, 0) }
@@ -3752,7 +3759,7 @@ mod multiline_text_tests {
         );
     }
 
-    fn lit(px: [u8; 4]) -> bool {
+    pub(super) fn lit(px: [u8; 4]) -> bool {
         u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2]) > 96
     }
 
@@ -3882,6 +3889,193 @@ mod multiline_text_tests {
         assert_eq!(
             leaked, 0,
             "BUG: second line leaked the first span's red color ({leaked} px)",
+        );
+    }
+}
+
+/// `Clip` and `Ellipsis` through the real GL path:
+/// what gets cut, and what the cut must leave alone.
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "pixel coordinates of a 240×110 target"
+)]
+mod text_overflow_pixel_tests {
+    use std::collections::HashMap;
+
+    use super::multiline_text_tests::{H, W, lit, render, span};
+    use crate::FrameTimings;
+    use crate::interaction::InteractionState;
+    use crate::renderer::Renderer;
+    use crate::tree::{
+        EmitMode, LayerUse, ProcessContext, PropsData, TextAlign, TextOverflow, TextStyle,
+        TreeNode, layout_and_render,
+    };
+    use bmc_wasm_protocol::Color;
+    use taffy::prelude::TaffyTree;
+
+    const X: f32 = 10.0;
+    const Y: f32 = 10.0;
+    const BOX_W: f32 = 80.0;
+    const OVERWIDE: &str = "Grayscale Bitcoin Mini Trust ETF";
+
+    fn style(text_overflow: TextOverflow, align: TextAlign) -> TextStyle {
+        TextStyle {
+            size: 28,
+            color: Color::from_rgb(255, 255, 255),
+            align,
+            text_overflow,
+            ..TextStyle::default()
+        }
+    }
+
+    fn lit_from_column(px: &[[u8; 4]], x0: usize) -> usize {
+        px.chunks(W as usize)
+            .map(|row| row[x0..].iter().filter(|p| lit(**p)).count())
+            .sum()
+    }
+
+    fn lit_from_row(px: &[[u8; 4]], y0: usize) -> usize {
+        px[y0 * W as usize..].iter().filter(|p| lit(**p)).count()
+    }
+
+    /// The first row a second line would ink:
+    /// one line box down, past the first line's descenders.
+    fn second_line_row(style: &TextStyle) -> usize {
+        (Y + style.size as f32 * (style.line_height + 0.2)) as usize
+    }
+
+    /// The scissor's edge is anti-aliased across one pixel.
+    fn past_box() -> usize {
+        (X + BOX_W) as usize + 1
+    }
+
+    #[test]
+    fn a_clipped_line_leaves_no_ink_past_its_box_or_below_it() {
+        let style = style(TextOverflow::Clip, TextAlign::Left);
+        let spans = [span(OVERWIDE, None)];
+        let px = render(|r| r.draw_paragraph_clipped(&style, &spans, X, Y, BOX_W, 0.0, H as f32));
+
+        assert!(lit_from_column(&px, 0) > 100, "BUG: the line drew nothing");
+        assert_eq!(lit_from_column(&px, past_box()), 0, "ink past the box");
+        assert_eq!(
+            lit_from_row(&px, second_line_row(&style)),
+            0,
+            "the line wrapped"
+        );
+    }
+
+    #[test]
+    fn an_ellipsized_line_stays_inside_its_box() {
+        let style = style(TextOverflow::Ellipsis, TextAlign::Left);
+        let spans = [span(OVERWIDE, None)];
+        let px = render(|r| r.draw_paragraph(&style, &spans, X, Y, BOX_W));
+
+        assert!(lit_from_column(&px, 0) > 100, "BUG: the line drew nothing");
+        assert_eq!(lit_from_column(&px, past_box()), 0, "ink past the box");
+        assert_eq!(
+            lit_from_row(&px, second_line_row(&style)),
+            0,
+            "the line wrapped"
+        );
+    }
+
+    /// A line that fits draws exactly as it would wrapped, in every alignment,
+    /// so switching a fitting label to `Clip` moves no pixels.
+    #[test]
+    fn a_fitting_clip_draws_as_wrap_does() {
+        let spans = [span("Hash", None)];
+        for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+            let draw = |overflow| {
+                let style = style(overflow, align);
+                render(|r| r.draw_paragraph(&style, &spans, X, Y, 200.0))
+            };
+            let wrapped = draw(TextOverflow::Wrap);
+
+            assert!(
+                lit_from_column(&wrapped, 0) > 100,
+                "BUG: the line drew nothing"
+            );
+            assert!(
+                draw(TextOverflow::Clip) == wrapped,
+                "{align:?} moved pixels"
+            );
+        }
+    }
+
+    /// At `line_height: 1.0` descenders hang below the line box,
+    /// and the cut through the tree takes only what overruns sideways.
+    #[test]
+    fn a_clipped_row_keeps_its_descenders() {
+        let style = TextStyle {
+            size: 48,
+            line_height: 1.0,
+            ..style(TextOverflow::Clip, TextAlign::Left)
+        };
+        let spans = vec![span("gjpqy gjpqy", None)];
+        let line_box_bottom = style.size as usize;
+
+        let unscissored = render(|r| r.draw_paragraph(&style, &spans, 0.0, 0.0, W as f32));
+        assert!(
+            lit_from_row(&unscissored, line_box_bottom) > 0,
+            "BUG: these descenders stay inside the line box, so nothing here is tested"
+        );
+
+        // Under a root column: the root itself is pinned to the whole frame.
+        let row = TreeNode::Row(
+            PropsData {
+                width: BOX_W,
+                ..PropsData::default()
+            },
+            vec![TreeNode::Paragraph {
+                props: PropsData::default(),
+                base_style: style,
+                spans,
+            }],
+        );
+        let tree = TreeNode::Column(PropsData::default(), vec![row]);
+        let px = render(|r| {
+            let mut interaction = InteractionState::new();
+            let (mut modal_states, mut scroll_states) = (HashMap::new(), HashMap::new());
+            let (mut animation_states, mut transition_states) = (HashMap::new(), HashMap::new());
+            let mut taffy = TaffyTree::new();
+            let mut ctx = ProcessContext {
+                interaction: &mut interaction,
+                modal_states: &mut modal_states,
+                scroll_states: &mut scroll_states,
+                animation_states: &mut animation_states,
+                transition_states: &mut transition_states,
+                taffy: &mut taffy,
+                frame_counter: 1,
+                delta_ms: 16,
+                now_unix_secs: 0,
+                emit: EmitMode::All,
+                static_layer: LayerUse::Ignore,
+                static_layer_key: "text-overflow-pixels",
+                damage_rects: &[],
+            };
+            layout_and_render(
+                &tree,
+                W as f32,
+                H as f32,
+                r,
+                &mut FrameTimings::default(),
+                &mut ctx,
+            )
+            .expect("BUG: laying out a text row must succeed");
+        });
+
+        assert!(
+            lit_from_row(&px, line_box_bottom) > 0,
+            "the descenders were cut at the line box"
+        );
+        assert_eq!(
+            lit_from_column(&px, BOX_W as usize + 1),
+            0,
+            "ink past the box"
         );
     }
 }

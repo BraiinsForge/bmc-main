@@ -20,7 +20,7 @@
 
 //! A [`Renderer`] double that shapes text exactly as the GPU renderer does.
 //!
-//! Its [`Renderer::measure_text`] runs the layout
+//! Its [`Renderer::measure_text`] and [`Renderer::measure_paragraph`] run the layout
 //! [`crate::gpu::FemtoVgRenderer`] runs, rather than returning a canned width:
 //! a canned width keeps every geometry assertion passing across a shaper swap,
 //! which is what these tests exist to catch. Draws are recorded or discarded;
@@ -46,6 +46,17 @@ pub struct DrawnText {
     pub size: f32,
 }
 
+/// One recorded paragraph draw, its span texts joined.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnParagraph {
+    pub text: String,
+    pub x: f32,
+    pub y: f32,
+    pub max_width: f32,
+    /// `(clip_top, clip_bottom)` of a [`Renderer::draw_paragraph_clipped`] call.
+    pub clip: Option<(f32, f32)>,
+}
+
 /// One recorded [`Renderer::fill_rect`] call.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrawnRect {
@@ -58,6 +69,7 @@ pub struct DrawnRect {
 /// Records draw calls while measuring text through the production shaper.
 pub struct ShapingRecorder {
     pub texts: Vec<DrawnText>,
+    pub paragraphs: Vec<DrawnParagraph>,
     pub rects: Vec<DrawnRect>,
     pub rounded_rects: Vec<DrawnRect>,
     font_system: cosmic_text::FontSystem,
@@ -71,6 +83,7 @@ impl ShapingRecorder {
     pub fn new(width: f32, height: f32) -> Self {
         Self {
             texts: Vec::new(),
+            paragraphs: Vec::new(),
             rects: Vec::new(),
             rounded_rects: Vec::new(),
             font_system: build_font_system(),
@@ -101,6 +114,7 @@ impl std::fmt::Debug for ShapingRecorder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ShapingRecorder")
             .field("texts", &self.texts)
+            .field("paragraphs", &self.paragraphs)
             .field("rects", &self.rects)
             .field("rounded_rects", &self.rounded_rects)
             .finish_non_exhaustive()
@@ -196,33 +210,48 @@ impl Renderer for ShapingRecorder {
 
     fn measure_paragraph(
         &mut self,
-        _style: &TextStyle,
-        _spans: &[SpanData],
-        _max_width: Option<f32>,
+        style: &TextStyle,
+        spans: &[SpanData],
+        max_width: Option<f32>,
     ) -> (f32, f32) {
-        (0.0, 0.0)
+        self.layouts
+            .measure(&mut self.font_system, style, spans, max_width)
     }
 
     fn draw_paragraph(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
-        _x: f32,
-        _y: f32,
-        _max_width: f32,
+        spans: &[SpanData],
+        x: f32,
+        y: f32,
+        max_width: f32,
     ) {
+        self.paragraphs.push(DrawnParagraph {
+            text: spans.iter().map(|span| span.text.as_str()).collect(),
+            x,
+            y,
+            max_width,
+            clip: None,
+        });
     }
 
     fn draw_paragraph_clipped(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
-        _x: f32,
-        _y: f32,
-        _max_width: f32,
-        _clip_top: f32,
-        _clip_bottom: f32,
+        spans: &[SpanData],
+        x: f32,
+        y: f32,
+        max_width: f32,
+        clip_top: f32,
+        clip_bottom: f32,
     ) {
+        self.paragraphs.push(DrawnParagraph {
+            text: spans.iter().map(|span| span.text.as_str()).collect(),
+            x,
+            y,
+            max_width,
+            clip: Some((clip_top, clip_bottom)),
+        });
     }
 
     fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {

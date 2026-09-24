@@ -166,7 +166,7 @@ fn location_row(weather: &crate::model::Weather, size: WidgetSize, metrics: Larg
             color: TEXT_SECONDARY,
             line_height: 1.0,
             max_width: metrics.location_max_width(size),
-            text_overflow: TextOverflow::Clip,
+            text_overflow: TextOverflow::Ellipsis,
         ),
     )
 }
@@ -514,7 +514,7 @@ mod tests {
 
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "Prague, Czech Republic");
-        assert_eq!(base_style.text_overflow, TextOverflow::Clip);
+        assert_eq!(base_style.text_overflow, TextOverflow::Ellipsis);
         assert_eq!(base_style.max_width, metrics.location_max_width(size));
         assert_eq!(base_style.size, metrics.location_font_size);
     }

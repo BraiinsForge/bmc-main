@@ -84,11 +84,11 @@ fn primary_value<T>(
 ) -> Node {
     let content = match availability_value(source, render) {
         DisplayValue::Value(Quantity { number, unit }) => {
-            parts::quantity(number, &unit, sizes, color::VALUE)
+            parts::quantity(&number, &unit, sizes, color::VALUE)
         }
         DisplayValue::Loading => {
             let (text, color) = DisplayValue::<String>::Loading.into_text_and_color();
-            parts::primary(text, sizes.number, color)
+            parts::primary(&text, sizes.number, color)
         }
         DisplayValue::Absent => parts::unavailable(sizes.number),
     };
@@ -104,7 +104,7 @@ fn stat_row<T>(
     render: impl FnOnce(&T) -> Option<String>,
 ) -> Node {
     let (value, value_color) = availability_value(source, render).into_text_and_color();
-    parts::stat_row(label, value, value_color)
+    parts::stat_row(label, &value, value_color)
 }
 
 fn chart_or_status<'a, T>(
@@ -157,7 +157,9 @@ type AdjustmentSizes = (u32, u32, u32);
 fn adjustment_sizes(bucket: SizeBucket) -> AdjustmentSizes {
     match bucket {
         SizeBucket::Full => (24, 16, 24),
-        SizeBucket::Large | SizeBucket::Medium => (20, 16, 20),
+        SizeBucket::Large => (20, 16, 20),
+        // The card is half Large's width, and Large's sizes overrun it.
+        SizeBucket::Medium => (18, 14, 18),
         SizeBucket::Bmm101 => (20, 20, 20),
         SizeBucket::Small => (16, 12, 16),
     }
@@ -177,7 +179,7 @@ fn previous_adjustment_row(view: &ViewData, sizes: AdjustmentSizes) -> Node {
     .into_text_and_color();
     parts::adjustment_row(
         "Prev Adjust",
-        when,
+        &when,
         stats.and_then(|stats| stats.previous_adjustment_percent),
         label_size,
         time_size,
@@ -197,7 +199,7 @@ fn next_adjustment_row(view: &ViewData, sizes: AdjustmentSizes) -> Node {
     .into_text_and_color();
     parts::adjustment_row(
         "Next Adjust",
-        when,
+        &when,
         stats.and_then(|stats| stats.estimated_adjustment_percent),
         label_size,
         time_size,
@@ -702,7 +704,11 @@ mod tests {
         assert_eq!((spans[0].text.as_str(), spans[0].size), ("56.20", None));
         assert_eq!(
             (spans[1].text.as_str(), spans[1].size, spans[1].color),
-            (" USD/PH/Day", Some(20), Some(color::LABEL))
+            (
+                format!("{}USD/PH/Day", typography::NBSP).as_str(),
+                Some(20),
+                Some(color::LABEL)
+            )
         );
     }
 
@@ -769,10 +775,13 @@ mod tests {
         );
     }
 
-    /// The first run of text under `node`, in tree order — a block's label.
+    /// The first run of text under `node`, in tree order — a block's label,
+    /// with its non-breaking spaces read as plain ones.
     fn first_text(node: &Node) -> Option<String> {
         match node {
-            Node::Paragraph { spans, .. } => spans.first().map(|span| span.text.clone()),
+            Node::Paragraph { spans, .. } => spans
+                .first()
+                .map(|span| span.text.replace(typography::NBSP, " ")),
             Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
                 children.iter().find_map(first_text)
             }

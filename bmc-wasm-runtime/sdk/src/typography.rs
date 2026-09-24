@@ -36,3 +36,22 @@ pub const DEGREE: &str = "\u{b0}";
 pub const PRIME: &str = "\u{2032}";
 pub const DOUBLE_PRIME: &str = "\u{2033}";
 pub const BITCOIN: &str = "\u{20bf}";
+
+/// Text that cannot wrap, so a row never shrinks it below the whole line.
+#[must_use]
+pub fn unbroken(text: impl AsRef<str>) -> String {
+    text.as_ref().replace(' ', NBSP)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NBSP, unbroken};
+
+    #[test]
+    fn every_space_becomes_a_non_breaking_one() {
+        assert_eq!(
+            unbroken("Prev Adjust 8"),
+            format!("Prev{NBSP}Adjust{NBSP}8")
+        );
+    }
+}

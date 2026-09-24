@@ -2494,6 +2494,13 @@ fn build_taffy_node_inner(
                 },
                 padding: padding_uniform(props.padding),
                 margin: margin_uniform(props.margin),
+                // The cap bounds the text, and taffy's max size the border box,
+                // so a stretching parent can't lay the text out any wider.
+                max_size: Size {
+                    width: paragraph_width_cap(base_style)
+                        .map_or(Dimension::auto(), |cap| length(cap + 2.0 * props.padding)),
+                    height: Dimension::auto(),
+                },
                 flex_grow: props.flex,
                 // Let measure function determine size based on available width
                 ..Default::default()
@@ -2970,6 +2977,46 @@ pub(crate) fn min_content_paragraph_width(
     min_width
 }
 
+/// The width a paragraph's own style caps it at, whatever box it lands in.
+fn paragraph_width_cap(style: &TextStyle) -> Option<f32> {
+    (style.max_width > 0).then_some(style.max_width as f32)
+}
+
+/// Draw a paragraph node into its laid-out box.
+///
+/// A `Clip` or `Ellipsis` line that still overflows the box is scissored
+/// at its inline edges only: at a `line_height` near 1.0, ascenders
+/// and descenders sit outside the box, and a vertical cut would take them too.
+fn draw_paragraph_node(
+    renderer: &mut RenderTarget<'_, '_, '_>,
+    para: &ParagraphData,
+    x: f32,
+    y: f32,
+    width: f32,
+) {
+    let (style, spans) = (&para.base_style, para.spans.as_slice());
+    let ellipsized = match style.text_overflow {
+        TextOverflow::Wrap => {
+            renderer.draw_paragraph(style, spans, x, y, width);
+            return;
+        }
+        TextOverflow::Clip => false,
+        TextOverflow::Ellipsis => true,
+    };
+    if width <= 0.0 {
+        return;
+    }
+    // Measure and draw widths can differ by taffy's rounding,
+    // so the overflow check shapes at the width actually drawn.
+    let (shaped_width, _) = renderer.measure_paragraph(style, spans, ellipsized.then_some(width));
+    if shaped_width > width {
+        let clip_bottom = renderer.height();
+        renderer.draw_paragraph_clipped(style, spans, x, y, width, 0.0, clip_bottom);
+    } else {
+        renderer.draw_paragraph(style, spans, x, y, width);
+    }
+}
+
 /// Compute taffy layout with the standard measure function for paragraphs,
 /// notifications, and buttons.
 pub(crate) fn compute_taffy_layout(
@@ -2990,34 +3037,38 @@ pub(crate) fn compute_taffy_layout(
 
             if let Some(ctx) = node_context {
                 if let Some(ref para) = ctx.paragraph {
+                    let style = &para.base_style;
                     // A min-content probe wraps at the widest single word.
-                    // Probing at max_width 0 instead breaks per glyph into an
-                    // absurdly tall tower whose height becomes the min-size
-                    // floor of every ancestor, freezing flex containers at
-                    // bogus minimums; probing unwrapped inflates the min
-                    // width to the whole line, so shrinkable panels blow out
-                    // their row instead of wrapping.
+                    //
+                    // Probing at max_width 0 instead breaks per glyph into an absurdly tall tower
+                    // whose height becomes the min-size floor of every ancestor, freezing flex containers
+                    // at bogus minimums; probing unwrapped inflates the min width to the whole line,
+                    // so shrinkable panels blow out their row instead of wrapping.
                     let available_width = known_dimensions.width.or(match available_space.width {
                         AvailableSpace::Definite(w) => Some(w),
-                        AvailableSpace::MinContent => Some(min_content_paragraph_width(
-                            renderer,
-                            &para.base_style,
-                            &para.spans,
-                        )),
+                        AvailableSpace::MinContent if style.text_overflow == TextOverflow::Wrap => {
+                            Some(min_content_paragraph_width(renderer, style, &para.spans))
+                        }
+                        // A line that is cut rather than wrapped can give up
+                        // its whole width, which is what lets it shrink in a row.
+                        AvailableSpace::MinContent => Some(0.0),
                         AvailableSpace::MaxContent => None,
                     });
-                    let max_width = if para.base_style.text_overflow != TextOverflow::Wrap {
-                        None
-                    } else if para.base_style.max_width > 0 {
-                        Some(
-                            (para.base_style.max_width as f32)
-                                .min(available_width.unwrap_or(f32::MAX)),
-                        )
-                    } else {
-                        available_width
+                    let max_width = match (available_width, paragraph_width_cap(style)) {
+                        (Some(w), Some(cap)) => Some(w.min(cap)),
+                        (w, cap) => w.or(cap),
                     };
-                    let (w, h) =
-                        renderer.measure_paragraph(&para.base_style, &para.spans, max_width);
+                    let (w, h) = match style.text_overflow {
+                        TextOverflow::Wrap | TextOverflow::Ellipsis => {
+                            renderer.measure_paragraph(style, &para.spans, max_width)
+                        }
+                        // The width only aligns an unwrapped line,
+                        // so one unbounded shaping serves every box.
+                        TextOverflow::Clip => {
+                            let (natural, h) = renderer.measure_paragraph(style, &para.spans, None);
+                            (max_width.map_or(natural, |b| natural.min(b)), h)
+                        }
+                    };
                     return Size {
                         width: known_dimensions.width.unwrap_or(w),
                         height: known_dimensions.height.unwrap_or(h),
@@ -3144,7 +3195,7 @@ pub(crate) fn render_taffy_node(
         }
 
         if emits && let Some(ref para) = ctx.paragraph {
-            renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
+            draw_paragraph_node(renderer, para, x, y, w);
         }
 
         // Registration is unconditional, only the painting is gated: a button
@@ -3927,6 +3978,268 @@ mod intrinsic_button_width_tests {
             (laid_out.size.width - (label_w + size.h_padding() * 2.0)).abs() < 0.5,
             "a label-only button must be as wide as its shaped label plus padding, got {}",
             laid_out.size.width
+        );
+    }
+}
+
+#[cfg(test)]
+mod text_overflow_layout_tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::FrameTimings;
+    use crate::interaction::InteractionState;
+    use crate::renderer::test_support::{DrawnParagraph, ShapingRecorder};
+
+    const FRAME_W: f32 = 400.0;
+    const FRAME_H: f32 = 200.0;
+    const OVERWIDE: &str = "Grayscale Bitcoin Mini Trust ETF";
+
+    fn style(text_overflow: TextOverflow) -> TextStyle {
+        TextStyle {
+            size: 20,
+            text_overflow,
+            ..TextStyle::default()
+        }
+    }
+
+    fn span(text: &str) -> SpanData {
+        SpanData {
+            text: text.to_owned(),
+            weight: None,
+            color: None,
+            size: None,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }
+    }
+
+    fn para(base_style: TextStyle, text: &str) -> TreeNode {
+        TreeNode::Paragraph {
+            props: PropsData::default(),
+            base_style,
+            spans: vec![span(text)],
+        }
+    }
+
+    fn sized(width: f32) -> PropsData {
+        PropsData {
+            width,
+            ..PropsData::default()
+        }
+    }
+
+    /// Lay `tree` out in a fresh frame, returning every paragraph drawn.
+    ///
+    /// The frame's root takes the whole frame whatever its props say,
+    /// so `tree` goes under one for its own width to hold.
+    fn render(tree: &TreeNode) -> Vec<DrawnParagraph> {
+        let root = TreeNode::Column(PropsData::default(), vec![tree.clone()]);
+        let mut recorder = ShapingRecorder::new(FRAME_W, FRAME_H);
+        let mut interaction = InteractionState::new();
+        let (mut modal_states, mut scroll_states) = (HashMap::new(), HashMap::new());
+        let (mut animation_states, mut transition_states) = (HashMap::new(), HashMap::new());
+        let mut taffy = TaffyTree::new();
+        let mut ctx = ProcessContext {
+            interaction: &mut interaction,
+            modal_states: &mut modal_states,
+            scroll_states: &mut scroll_states,
+            animation_states: &mut animation_states,
+            transition_states: &mut transition_states,
+            taffy: &mut taffy,
+            frame_counter: 1,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit: EmitMode::All,
+            static_layer: LayerUse::Ignore,
+            static_layer_key: "text-overflow-test",
+            damage_rects: &[],
+        };
+        let mut timings = FrameTimings::default();
+        layout_and_render(
+            &root,
+            FRAME_W,
+            FRAME_H,
+            &mut recorder,
+            &mut timings,
+            &mut ctx,
+        )
+        .expect("BUG: laying out a text row must succeed");
+        recorder.paragraphs
+    }
+
+    fn natural_width(base_style: TextStyle, text: &str) -> f32 {
+        ShapingRecorder::default()
+            .measure_paragraph(&base_style, &[span(text)], None)
+            .0
+    }
+
+    const FULL_HEIGHT: Option<(f32, f32)> = Some((0.0, FRAME_H));
+
+    #[test]
+    fn an_overwide_clip_shrinks_to_its_row_and_is_clipped() {
+        let drawn = render(&TreeNode::Row(
+            sized(100.0),
+            vec![para(style(TextOverflow::Clip), OVERWIDE)],
+        ));
+
+        assert!(
+            drawn[0].max_width <= 100.0,
+            "drawn {} wide",
+            drawn[0].max_width
+        );
+        assert_eq!(drawn[0].clip, FULL_HEIGHT, "the overflow was not cut");
+    }
+
+    #[test]
+    fn a_clip_that_fits_is_drawn_unclipped() {
+        let base_style = style(TextOverflow::Clip);
+        let drawn = render(&TreeNode::Row(
+            sized(FRAME_W),
+            vec![para(base_style, "Hash")],
+        ));
+
+        assert!(
+            (drawn[0].max_width - natural_width(base_style, "Hash")).abs() < 0.5,
+            "a fitting line takes its own width, got {}",
+            drawn[0].max_width
+        );
+        assert_eq!(drawn[0].clip, None);
+    }
+
+    #[test]
+    fn two_clipped_siblings_share_the_shrink() {
+        let base_style = style(TextOverflow::Clip);
+        let drawn = render(&TreeNode::Row(
+            sized(100.0),
+            vec![para(base_style, OVERWIDE), para(base_style, OVERWIDE)],
+        ));
+
+        assert!(
+            drawn[0].max_width + drawn[1].max_width <= 101.0,
+            "the pair overruns its row: {} + {}",
+            drawn[0].max_width,
+            drawn[1].max_width
+        );
+        assert!(
+            drawn
+                .iter()
+                .all(|p| p.max_width > 0.0 && p.clip == FULL_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn max_width_caps_a_clip_stretched_across_a_column() {
+        let base_style = TextStyle {
+            max_width: 80,
+            ..style(TextOverflow::Clip)
+        };
+        let drawn = render(&TreeNode::Column(
+            sized(300.0),
+            vec![para(base_style, OVERWIDE)],
+        ));
+
+        assert!(
+            (drawn[0].max_width - 80.0).abs() < 0.5,
+            "drawn {} wide",
+            drawn[0].max_width
+        );
+        assert_eq!(drawn[0].clip, FULL_HEIGHT);
+    }
+
+    /// The cap narrows the box a stretching column lays the text into,
+    /// so every mode aligns a fitting line inside that same box.
+    #[test]
+    fn a_capped_right_aligned_line_lands_in_one_box_under_every_mode() {
+        let boxes: Vec<(f32, f32)> = [
+            TextOverflow::Wrap,
+            TextOverflow::Clip,
+            TextOverflow::Ellipsis,
+        ]
+        .into_iter()
+        .map(|text_overflow| {
+            let base_style = TextStyle {
+                max_width: 120,
+                align: TextAlign::Right,
+                ..style(text_overflow)
+            };
+            let drawn = render(&TreeNode::Column(
+                sized(300.0),
+                vec![para(base_style, "Hash")],
+            ));
+            (drawn[0].x, drawn[0].max_width)
+        })
+        .collect();
+
+        assert_eq!(boxes, [(0.0, 120.0); 3]);
+    }
+
+    #[test]
+    fn the_shrink_reaches_through_a_column_in_a_row() {
+        let drawn = render(&TreeNode::Row(
+            sized(100.0),
+            vec![TreeNode::Column(
+                PropsData::default(),
+                vec![para(style(TextOverflow::Ellipsis), OVERWIDE)],
+            )],
+        ));
+
+        assert!(
+            drawn[0].max_width <= 100.0,
+            "drawn {} wide",
+            drawn[0].max_width
+        );
+    }
+
+    #[test]
+    fn a_clipped_paragraph_stays_one_line_tall() {
+        let base_style = style(TextOverflow::Clip);
+        let drawn = render(&TreeNode::Column(
+            sized(100.0),
+            vec![
+                para(base_style, OVERWIDE),
+                para(style(TextOverflow::Wrap), "after"),
+            ],
+        ));
+        let (_, one_line) =
+            ShapingRecorder::default().measure_paragraph(&base_style, &[span("Hash")], None);
+
+        assert!(
+            (drawn[1].y - drawn[0].y - one_line).abs() < 0.5,
+            "the next paragraph starts {} below, not one line ({one_line})",
+            drawn[1].y - drawn[0].y
+        );
+    }
+
+    #[test]
+    fn an_ellipsis_squeezed_to_nothing_keeps_its_ellipsis() {
+        let base_style = style(TextOverflow::Ellipsis);
+        let (ellipsis_only, _) =
+            ShapingRecorder::default().measure_paragraph(&base_style, &[span(OVERWIDE)], Some(0.0));
+        let drawn = render(&TreeNode::Row(sized(1.0), vec![para(base_style, OVERWIDE)]));
+
+        assert!(
+            (drawn[0].max_width - ellipsis_only).abs() < 0.5,
+            "drawn {} wide, not the ellipsis's {ellipsis_only}",
+            drawn[0].max_width
+        );
+    }
+
+    #[test]
+    fn wrap_still_wraps() {
+        let base_style = style(TextOverflow::Wrap);
+        let drawn = render(&TreeNode::Column(
+            sized(100.0),
+            vec![para(base_style, OVERWIDE), para(base_style, "after")],
+        ));
+        let (_, one_line) =
+            ShapingRecorder::default().measure_paragraph(&base_style, &[span("Hash")], None);
+
+        assert_eq!(drawn[0].clip, None);
+        assert!(
+            drawn[1].y - drawn[0].y > one_line * 1.5,
+            "the wrapped paragraph kept to one line"
         );
     }
 }

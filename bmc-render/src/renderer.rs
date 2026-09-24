@@ -182,6 +182,8 @@ pub trait Renderer {
 
     // -- Rich text paragraphs --
 
+    /// Measure a paragraph laid out as `style.text_overflow` asks:
+    /// wrapped at `max_width`, or one line per hard break, ellipsized to it.
     fn measure_paragraph(
         &mut self,
         style: &TextStyle,
@@ -198,6 +200,8 @@ pub trait Renderer {
         max_width: f32,
     );
 
+    /// [`Self::draw_paragraph`], scissored to `x..x + max_width`
+    /// horizontally and `clip_top..clip_bottom` vertically.
     #[expect(clippy::too_many_arguments)]
     fn draw_paragraph_clipped(
         &mut self,

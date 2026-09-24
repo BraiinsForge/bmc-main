@@ -244,16 +244,27 @@ impl LayoutFlags {
     }
 }
 
-/// Text overflow behavior for single-line text
+/// What a paragraph does with a line wider than its box.
+///
+/// `Clip` and `Ellipsis` never wrap a line, though a hard break still starts a new one,
+/// and each line is cut on its own.
+/// In a row, such text gives way when space runs out:
+/// down to nothing under `Clip`, down to the "…" under `Ellipsis`.
+/// Both also stop at [`TextStyle::max_width`].
+/// Canvas text draws ignore the mode.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TextOverflow {
-    /// Normal line wrapping (default)
+    /// Break lines between words (default).
     #[default]
     Wrap = 0,
-    /// Single line, hard clip at container edge
+    /// Cut the line at the box's left and right edges;
+    /// ascenders and descenders reaching past the line box are kept.
+    /// A line that overflows starts at the left whatever its `align`,
+    /// so right-aligned text loses its right end.
     Clip = 1,
-    /// Single line, truncate with "…"
+    /// End the line in "…" where it would overrun the box.
+    /// The "…" takes the style of the span its line starts in.
     Ellipsis = 2,
 }
 

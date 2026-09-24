@@ -2896,8 +2896,8 @@ fn render_progress(media: &MediaState) -> Node {
         [
             progress_bar_node(media),
             text(
-                time_str,
-                style!(size: 12, color: GRAY_40, text_overflow: TextOverflow::Clip),
+                typography::unbroken(time_str),
+                style!(size: 12, color: GRAY_40),
             ),
         ],
     )

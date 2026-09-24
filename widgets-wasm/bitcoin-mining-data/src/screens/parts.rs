@@ -24,6 +24,8 @@
 )]
 use bmc_wasm_sdk::*;
 
+use bmc_wasm_sdk::typography::unbroken;
+
 use crate::chart;
 use crate::model::Series;
 
@@ -87,8 +89,8 @@ pub fn title(
             [Draw::svg_contain(icon, size.icon, icon_color).with_anti_alias()],
         ),
         text(
-            label,
-            style!(size: size.label, weight: FontWeight::SEMIBOLD, color: color::LABEL, line_height: 1.0, text_overflow: TextOverflow::Clip),
+            unbroken(label),
+            style!(size: size.label, weight: FontWeight::SEMIBOLD, color: color::LABEL, line_height: 1.0),
         ),
     ];
     children.push(spacer(1.0));
@@ -99,10 +101,10 @@ pub fn title(
 }
 
 #[must_use]
-pub fn primary(value: String, size: u32, value_color: Color) -> Node {
+pub fn primary(value: &str, size: u32, value_color: Color) -> Node {
     text(
-        value,
-        style!(size: size, weight: FontWeight::SEMIBOLD, color: value_color, line_height: 1.0, text_overflow: TextOverflow::Clip),
+        unbroken(value),
+        style!(size: size, weight: FontWeight::SEMIBOLD, color: value_color, line_height: 1.0),
     )
 }
 
@@ -118,13 +120,13 @@ pub struct ValueSizes {
 /// One paragraph, so the unit sits on the number's baseline;
 /// two nodes could not, `CrossAlign` having no baseline option.
 #[must_use]
-pub fn quantity(number: String, unit: &str, sizes: ValueSizes, value_color: Color) -> Node {
+pub fn quantity(number: &str, unit: &str, sizes: ValueSizes, value_color: Color) -> Node {
     paragraph(
-        style!(size: sizes.number, weight: FontWeight::SEMIBOLD, color: value_color, line_height: 1.0, text_overflow: TextOverflow::Clip),
+        style!(size: sizes.number, weight: FontWeight::SEMIBOLD, color: value_color, line_height: 1.0),
         [
-            span(number, ()),
+            span(unbroken(number), ()),
             span(
-                fmt!(" {unit}"),
+                unbroken(&fmt!(" {unit}")),
                 style!(size: sizes.unit, color: color::LABEL),
             ),
         ],
@@ -135,15 +137,15 @@ pub fn quantity(number: String, unit: &str, sizes: ValueSizes, value_color: Colo
 pub fn unavailable(size: u32) -> Node {
     text(
         NOT_AVAILABLE,
-        style!(size: size, color: color::ABSENT, line_height: 1.0, text_overflow: TextOverflow::Clip),
+        style!(size: size, color: color::ABSENT, line_height: 1.0),
     )
 }
 
 #[must_use]
 pub fn muted(value: &str, size: u32) -> Node {
     text(
-        value,
-        style!(size: size, color: color::LABEL, line_height: 1.0, text_overflow: TextOverflow::Clip),
+        unbroken(value),
+        style!(size: size, color: color::LABEL, line_height: 1.0),
     )
 }
 
@@ -187,7 +189,7 @@ pub fn percent_badge(value: Option<f64>, font_size: u32) -> Node {
             spacer(4.0),
             text(
                 percent_label(value),
-                style!(size: font_size, weight: FontWeight::SEMIBOLD, color: foreground, line_height: 1.0, text_overflow: TextOverflow::Clip),
+                style!(size: font_size, weight: FontWeight::SEMIBOLD, color: foreground, line_height: 1.0),
             ),
             spacer(4.0),
         ],
@@ -205,17 +207,17 @@ pub fn trend(value: Option<f64>, show_24h: bool, font_size: u32) -> Node {
 }
 
 #[must_use]
-pub fn stat_row(label: &str, value: String, value_color: Color) -> Node {
+pub fn stat_row(label: &str, value: &str, value_color: Color) -> Node {
     row(
         props!(cross_align: CrossAlign::Center, gap: GAP),
         [
             text(
-                label,
-                style!(size: 24, color: color::LABEL, flex: 1.0, line_height: 1.0, text_overflow: TextOverflow::Clip),
+                unbroken(label),
+                style!(size: 24, color: color::LABEL, flex: 1.0, line_height: 1.0),
             ),
             text(
-                value,
-                style!(size: 24, weight: FontWeight::SEMIBOLD, color: value_color, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Clip),
+                unbroken(value),
+                style!(size: 24, weight: FontWeight::SEMIBOLD, color: value_color, align: TextAlign::Right, line_height: 1.0),
             ),
         ],
     )
@@ -224,24 +226,26 @@ pub fn stat_row(label: &str, value: String, value_color: Color) -> Node {
 #[must_use]
 pub fn adjustment_row(
     label: &str,
-    when: String,
+    when: &str,
     percent: Option<f64>,
     label_size: u32,
     time_size: u32,
     badge_size: u32,
     when_color: Color,
 ) -> Node {
+    // The time and the percentage are the row's data, so they hold their width;
+    // the label gives way if the row runs out.
     row(
         props!(cross_align: CrossAlign::Center, gap: GAP),
         [
             text(
                 label,
-                style!(size: label_size, color: color::LABEL, line_height: 1.0, text_overflow: TextOverflow::Clip),
+                style!(size: label_size, color: color::LABEL, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
             ),
             spacer(1.0),
             text(
-                when,
-                style!(size: time_size, color: when_color, line_height: 1.0, text_overflow: TextOverflow::Clip),
+                unbroken(when),
+                style!(size: time_size, color: when_color, line_height: 1.0),
             ),
             percent_badge(percent, badge_size),
         ],

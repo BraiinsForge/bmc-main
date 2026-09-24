@@ -404,8 +404,9 @@ fn render_entities(size: WidgetSize, entities: &[EntityState]) -> Node {
     )
 }
 
-/// Fixed width for the right-hand value/gauge column.
-const VALUE_COL_W: f32 = 140.0;
+/// Fixed width for the right-hand value/gauge column,
+/// wide enough for a date and time set at 14 px bold.
+const VALUE_COL_W: f32 = 150.0;
 
 fn entity_row(entity: &EntityState, variant: SizeVariant) -> Node {
     let font_size = match variant {
@@ -458,7 +459,7 @@ fn entity_row(entity: &EntityState, variant: SizeVariant) -> Node {
                     spacer(1.0),
                     text(
                         &display_value,
-                        style!(size: font_size, weight: FontWeight::BOLD, color: state_color, text_overflow: TextOverflow::Clip),
+                        style!(size: font_size, weight: FontWeight::BOLD, color: state_color, text_overflow: TextOverflow::Ellipsis),
                     ),
                 ],
             ),

@@ -283,19 +283,23 @@ fn sector_time(seconds: f32) -> String {
     fmt!("{}.{}{}", whole, lead, millis)
 }
 
-/// One line per cell: `+1 LAP` would otherwise break at its space and
-/// take the row's baseline with it. The renderer reads this as no-wrap.
+/// A cell's text as one unbreakable line, which its column is never narrower than:
+/// `+1 LAP` would otherwise break at its space and take the row's baseline with it.
+fn unbroken(content: impl Into<String>) -> String {
+    content.into().replace(' ', typography::NBSP)
+}
+
 fn plain(content: impl Into<String>, size: u32, tone: Color) -> Node {
     text(
-        content,
-        style!(size: size, color: tone, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+        unbroken(content),
+        style!(size: size, color: tone, line_height: 1.0),
     )
 }
 
 fn value(content: impl Into<String>, size: u32, tone: Color) -> Node {
     text(
-        content,
-        style!(size: size, color: tone, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+        unbroken(content),
+        style!(size: size, color: tone, align: TextAlign::Right, line_height: 1.0),
     )
 }
 

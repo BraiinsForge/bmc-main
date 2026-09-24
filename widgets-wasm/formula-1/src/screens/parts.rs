@@ -31,7 +31,7 @@
 use bmc_wasm_sdk::*;
 
 use bmc_wasm_sdk::system::{self, DateFormat, TimeFormat};
-use bmc_wasm_sdk::typography::{ELLIPSIS, ENDASH};
+use bmc_wasm_sdk::typography::{ELLIPSIS, ENDASH, NBSP};
 
 use crate::images::{self, ImageKind};
 use crate::model::{ImageUrl, SizeBucket};
@@ -231,9 +231,8 @@ fn stat_value(value: Option<&str>, value_chars: usize, size: u32) -> Node {
 
 /// A label and its value, pushed to opposite edges of the row.
 ///
-/// `value_chars` cuts the value, which every caller sources from the
-/// server. `TextOverflow::Ellipsis` reads like it would do this, but the
-/// renderer only takes it to mean "do not wrap" — see [`truncate`].
+/// Both stay on one line. The label holds its whole width,
+/// and the value, which every caller sources from the server, gives way.
 #[must_use]
 pub fn stat_row(
     label: &str,
@@ -242,18 +241,15 @@ pub fn stat_row(
     size: u32,
     weight: LabelWeight,
 ) -> Node {
-    // Both halves stay on one line.
-    // A flex item will not shrink below its own content, so either half
-    // wrapping would floor the row at two lines,
-    // and the column it sits in would overrun its frame.
+    let label = label.replace(' ', NBSP);
     let label = match weight {
         LabelWeight::Strong => text(
             label,
-            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
         ),
         LabelWeight::Muted => text(
             label,
-            style!(size: size, color: color::TEXT_MUTED, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+            style!(size: size, color: color::TEXT_MUTED, line_height: 1.0),
         ),
     };
     row(

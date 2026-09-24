@@ -782,7 +782,8 @@ macro_rules! fmt {
 ///  - line_height
 ///  - align
 ///  - max_width
-///  - text_overflow (`TextOverflow::Clip`, `TextOverflow::Ellipsis`)
+///  - text_overflow: `TextOverflow::Clip` or `TextOverflow::Ellipsis`
+///    cut a line instead of wrapping it; see [`TextOverflow`](crate::TextOverflow)
 ///  - outline_color, outline_width
 ///
 /// Layout fields: padding, margin, gap, flex, width, height, background
