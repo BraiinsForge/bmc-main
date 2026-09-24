@@ -28,6 +28,7 @@
 //! Provides `include_svg!`, `include_bitmap!`, `include_mesh!`,
 //! `include_nine_patch!`, `include_skin!`, and `include_audio!`.
 
+mod etc1;
 mod mesh;
 
 use std::path::{Path, PathBuf};

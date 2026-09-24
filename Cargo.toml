@@ -103,6 +103,14 @@ opt-level = "s"
 opt-level = 3
 strip = true
 
+# A proc macro builds at opt-level 0 whatever the profile's own `opt-level`,
+# and `include_mesh!` encodes ETC1 as it expands — see `widgets-wasm-examples/Cargo.toml`.
+[profile.dev.package.bmc-render-macros]
+opt-level = 3
+
+[profile.release.package.bmc-render-macros]
+opt-level = 3
+
 [profile.profiling]
 inherits = "release"
 debug = true
@@ -339,7 +347,6 @@ indexmap = { version = "2.10.0", default-features = false, features = ["serde", 
 indoc = "2"
 infer = "0.19.0"
 input = "0.10.0"
-intel_tex_2 = "0.5"
 inventory = "0.3"
 ipnet = "2.11"
 itertools = "0.14.0"

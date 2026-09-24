@@ -53,6 +53,15 @@ opt-level = "z"
 panic = "abort"
 strip = true
 
+# `include_mesh!` encodes textures to ETC1 while it expands,
+# and proc macros build at opt-level 0 by default:
+# mesh-demo's 512² texture takes 3.3 s there, 0.18 s here.
+[profile.dev.package.bmc-render-macros]
+opt-level = 3
+
+[profile.release.package.bmc-render-macros]
+opt-level = 3
+
 # Release optimization but keeps the wasm `name` section for profiling tools.
 [profile.profiling]
 inherits = "release"

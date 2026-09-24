@@ -26,11 +26,10 @@
 //!
 //! # First-party assets only
 //!
-//! `include_mesh!` runs `gltf` parsing and the `intel_tex_2` Intel ISPC
-//! ETC1 encoder (a vendored C++ encoder) on whatever bytes the input file
+//! `include_mesh!` runs `gltf` parsing on whatever bytes the input file
 //! contains, inside the developer's `cargo build`. Any crafted input that
-//! triggers a parser bug in `gltf` or a memory-safety bug in ISPC executes
-//! with the developer's privileges at build time — there is no sandbox.
+//! triggers a parser bug in `gltf` executes with the developer's privileges
+//! at build time — there is no sandbox.
 //!
 //! Therefore: **only invoke `include_mesh!` with `.glb` files (and their
 //! optional `<stem>.msdf.{png,json}` sidecars) that are checked into this
@@ -56,6 +55,9 @@ use bmc_wasm_protocol::mesh::{
     FLAG_HAS_NORMAL_MAP, FLAG_HAS_TANGENTS, FLAG_HAS_TEXTURE, FLAG_HAS_UVS, HEADER_SIZE,
     MAX_TEXTURE_SIZE, MAX_TRIANGLES, MAX_VERTICES, MESH_MAGIC,
 };
+
+/// The smallest side an ETC1 texture can have: the codec packs whole 4×4 blocks.
+const MIN_TEXTURE_SIDE: u32 = 4;
 
 /// Construct a `syn::Error` at the macro invocation span. Used in place of
 /// `panic!` so failures surface as `compile_error!` pointing at the user's
@@ -550,6 +552,14 @@ fn extract_texture(
         ));
     }
 
+    if width < MIN_TEXTURE_SIDE || height < MIN_TEXTURE_SIDE {
+        return Err(mesh_err!(
+            span,
+            "mesh `{}` texture is {width}x{height} (min {MIN_TEXTURE_SIDE}x{MIN_TEXTURE_SIDE}) — resize in Blender",
+            glb_path.display(),
+        ));
+    }
+
     // Convert to RGBA8 regardless of source format
     let rgba_data = match image.format {
         gltf::image::Format::R8G8B8A8 => image.pixels.clone(),
@@ -629,6 +639,14 @@ fn extract_normal_map(
         ));
     }
 
+    if width < MIN_TEXTURE_SIDE || height < MIN_TEXTURE_SIDE {
+        return Err(mesh_err!(
+            span,
+            "mesh `{}` normal map is {width}x{height} (min {MIN_TEXTURE_SIDE}x{MIN_TEXTURE_SIDE})",
+            glb_path.display(),
+        ));
+    }
+
     // Normal maps are typically RGB
     let rgba_data = match image.format {
         gltf::image::Format::R8G8B8A8 => image.pixels.clone(),
@@ -693,15 +711,8 @@ fn extract_face_normals(document: &gltf::Document) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// Compress RGBA8 texture data to ETC1 using Intel ISPC encoder.
 fn compress_to_etc1(tex: &TextureData) -> Vec<u8> {
-    let surface = intel_tex_2::RgbaSurface {
-        data: &tex.data,
-        width: tex.width,
-        height: tex.height,
-        stride: tex.width * 4,
-    };
-    intel_tex_2::etc1::compress_blocks(&intel_tex_2::etc1::slow_settings(), &surface)
+    crate::etc1::compress(&tex.data, tex.width as usize, tex.height as usize)
 }
 
 fn compute_aabb(positions: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {

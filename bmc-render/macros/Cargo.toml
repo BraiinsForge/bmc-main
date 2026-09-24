@@ -14,7 +14,6 @@ bmc-wasm-assets = { path = "../../bmc-wasm-assets", default-features = false }
 bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
 gltf = { workspace = true, features = ["extras"] }
 image = { workspace = true, default-features = false, features = ["png"] }
-intel_tex_2 = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 serde_json = { workspace = true }

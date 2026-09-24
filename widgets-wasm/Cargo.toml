@@ -72,6 +72,14 @@ opt-level = "z"
 panic = "abort"
 strip = true
 
+# A proc macro builds at opt-level 0 whatever the profile's own `opt-level`,
+# and `include_mesh!` encodes ETC1 as it expands — see `widgets-wasm-examples/Cargo.toml`.
+[profile.dev.package.bmc-render-macros]
+opt-level = 3
+
+[profile.release.package.bmc-render-macros]
+opt-level = 3
+
 # Release optimization but keeps the wasm `name` section for profiling tools.
 [profile.profiling]
 inherits = "release"
