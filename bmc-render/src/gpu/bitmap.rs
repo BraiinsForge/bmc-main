@@ -520,7 +520,8 @@ fn jpeg_to_rgba(pixels: &[u8], format: jpeg_decoder::PixelFormat) -> anyhow::Res
 }
 
 /// Draw a sub-rectangle of a bitmap: sample from `(sx, sy, sw, sh)`
-/// in the source and render it into `(dx, dy, dw, dh)` on the canvas.
+/// in the source and render it into `(dx, dy, dw, dh)` on the canvas,
+/// each texel multiplied by `tint`.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_bitmap_subrect(
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
@@ -535,6 +536,7 @@ pub fn draw_bitmap_subrect(
     dy: f32,
     dw: f32,
     dh: f32,
+    tint: femtovg::Color,
 ) {
     if dw <= 0.0 || dh <= 0.0 || sw <= 0.0 || sh <= 0.0 {
         return;
@@ -549,7 +551,7 @@ pub fn draw_bitmap_subrect(
     let ow = src_w * scale_x;
     let oh = src_h * scale_y;
 
-    let paint = Paint::image(image_id, ox, oy, ow, oh, 0.0, 1.0).with_anti_alias(false);
+    let paint = Paint::image_tint(image_id, ox, oy, ow, oh, 0.0, tint).with_anti_alias(false);
     let mut path = Path::new();
     path.rect(dx, dy, dw, dh);
     canvas.fill_path(&path, &paint);
@@ -575,6 +577,7 @@ pub fn draw_nine_patch(
     top: f32,
     right: f32,
     bottom: f32,
+    tint: femtovg::Color,
 ) {
     // Source regions
     let src_center_w = src_w - left - right;
@@ -664,12 +667,13 @@ pub fn draw_nine_patch(
 
     for &(sx, sy, sw, sh, dx, dy, dw, dh) in &quads {
         draw_bitmap_subrect(
-            canvas, image_id, src_w, src_h, sx, sy, sw, sh, dx, dy, dw, dh,
+            canvas, image_id, src_w, src_h, sx, sy, sw, sh, dx, dy, dw, dh, tint,
         );
     }
 }
 
-/// Render a registered bitmap onto the canvas at the given rect.
+/// Render a registered bitmap onto the canvas at the given rect,
+/// each texel multiplied by `tint`.
 pub fn draw_bitmap(
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
     image_id: ImageId,
@@ -677,8 +681,9 @@ pub fn draw_bitmap(
     y: f32,
     w: f32,
     h: f32,
+    tint: femtovg::Color,
 ) {
-    let paint = Paint::image(image_id, x, y, w, h, 0.0, 1.0).with_anti_alias(false);
+    let paint = Paint::image_tint(image_id, x, y, w, h, 0.0, tint).with_anti_alias(false);
     let mut path = Path::new();
     path.rect(x, y, w, h);
     canvas.fill_path(&path, &paint);

@@ -120,6 +120,10 @@ impl Renderer for ProbeRenderer {
     fn rotate(&mut self, _angle_radians: f32) {}
     fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
     fn pop_scissor(&mut self) {}
+    fn brightness(&self) -> f32 {
+        1.0
+    }
+    fn set_brightness(&mut self, _brightness: f32) {}
     fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
     fn measure_text(&mut self, text: &str, size: f32) -> f32 {
         text.chars().count() as f32 * size * 0.6

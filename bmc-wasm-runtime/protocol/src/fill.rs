@@ -86,6 +86,24 @@ impl Fill {
         }
     }
 
+    /// Scale the RGB of every colour stop by `scale`, alpha kept
+    /// (see [`Color::brightness`]).
+    #[must_use]
+    pub fn brightness(self, scale: f32) -> Self {
+        match self {
+            Fill::Solid(c) => Fill::Solid(c.brightness(scale)),
+            Fill::Linear { angle, start, end } => Fill::Linear {
+                angle,
+                start: start.brightness(scale),
+                end: end.brightness(scale),
+            },
+            Fill::Radial { inner, outer } => Fill::Radial {
+                inner: inner.brightness(scale),
+                outer: outer.brightness(scale),
+            },
+        }
+    }
+
     /// A single representative colour, for systems that interpolate one colour
     /// (e.g. host transitions): the solid colour, the linear `start`, or the
     /// radial `inner`.

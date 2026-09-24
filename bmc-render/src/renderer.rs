@@ -175,6 +175,16 @@ pub trait Renderer {
     fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32);
     fn pop_scissor(&mut self);
 
+    // -- Brightness --
+
+    /// The factor every colour drawn from here on is scaled by,
+    /// as [`Color::brightness`] scales one: RGB only, alpha kept.
+    /// `1.0` draws colours as given, and each frame starts there.
+    fn brightness(&self) -> f32;
+    /// `brightness` lies in `0.0..=1.0`: it only dims.
+    /// No default: an implementor that ignored it would draw dimmed content lit.
+    fn set_brightness(&mut self, brightness: f32);
+
     // -- Simple text --
 
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color);
@@ -734,6 +744,14 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn pop_scissor(&mut self) {
         self.renderer.pop_scissor();
+    }
+
+    fn brightness(&self) -> f32 {
+        self.renderer.brightness()
+    }
+
+    fn set_brightness(&mut self, brightness: f32) {
+        self.renderer.set_brightness(brightness);
     }
 
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {

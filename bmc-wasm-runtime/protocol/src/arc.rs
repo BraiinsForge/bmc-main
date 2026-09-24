@@ -96,6 +96,19 @@ impl ArcFill {
         }
     }
 
+    /// Scale the RGB of every colour stop by `scale`, alpha kept
+    /// (see [`Color::brightness`]).
+    #[must_use]
+    pub fn brightness(self, scale: f32) -> Self {
+        match self {
+            ArcFill::Solid(c) => ArcFill::Solid(c.brightness(scale)),
+            ArcFill::Gradient { start, end } => ArcFill::Gradient {
+                start: start.brightness(scale),
+                end: end.brightness(scale),
+            },
+        }
+    }
+
     /// A single representative colour for one-colour interpolators (host
     /// transitions): the solid colour or the gradient `start`.
     #[must_use]

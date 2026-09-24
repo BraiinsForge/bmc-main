@@ -107,6 +107,12 @@ impl Renderer for TestRenderer {
 
     fn pop_scissor(&mut self) {}
 
+    fn brightness(&self) -> f32 {
+        1.0
+    }
+
+    fn set_brightness(&mut self, _brightness: f32) {}
+
     fn draw_text(&mut self, text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {
         self.text = Some(text.to_owned());
     }

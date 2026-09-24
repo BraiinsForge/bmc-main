@@ -25,6 +25,7 @@
 
 #![expect(clippy::cast_precision_loss)]
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::num::NonZeroU32;
@@ -340,6 +341,9 @@ pub struct FemtoVgRenderer {
     /// 1x1 opaque white texture, tinted to paint solid rectangles through
     /// femtovg's texture-copy fast path. See [`FemtoVgRenderer::solid_texture`].
     solid_texture: Option<femtovg::ImageId>,
+    /// See [`Renderer::brightness`]. Applied as each paint is built,
+    /// so bitmaps and an SVG's own colours dim with everything else.
+    brightness: f32,
     /// Minimal textured-quad program used to composite the static layer
     /// without going through femtovg. See [`FemtoVgRenderer::raw_blit`].
     raw_blit: Option<RawBlit>,
@@ -568,6 +572,7 @@ impl FemtoVgRenderer {
             .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
         self.scale_to_logical(dpi_scale);
         self.paragraph_cache.begin_frame();
+        self.brightness = 1.0;
     }
 
     /// Put the canvas back into logical coordinates for the frame ahead.
@@ -808,6 +813,7 @@ impl FemtoVgRenderer {
             static_layers: HashMap::new(),
             render_to_texture: RenderTargetProbe::Working,
             solid_texture: None,
+            brightness: 1.0,
             raw_blit: None,
         };
         renderer.render_to_texture = renderer.probe_render_to_texture();
@@ -1100,11 +1106,46 @@ impl FemtoVgRenderer {
     /// Gating on an axis-aligned transform would close the first; the second
     /// needs whole-device-pixel placement too.
     fn solid_paint(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) -> Paint {
+        let tint = self.paint_color(color);
         let Some(texture) = self.solid_texture() else {
-            return Paint::color(to_femtovg_color(color.to_u32()));
+            return Paint::color(tint);
         };
-        Paint::image_tint(texture, x, y, w, h, 0.0, to_femtovg_color(color.to_u32()))
-            .with_anti_alias(false)
+        Paint::image_tint(texture, x, y, w, h, 0.0, tint).with_anti_alias(false)
+    }
+
+    fn dim(&self, color: Color) -> Color {
+        color.brightness(self.brightness)
+    }
+
+    fn paint_color(&self, color: Color) -> femtovg::Color {
+        to_femtovg_color(self.dim(color).to_u32())
+    }
+
+    /// What an image paint multiplies each texel by.
+    fn image_tint(&self) -> femtovg::Color {
+        femtovg::Color::rgbf(self.brightness, self.brightness, self.brightness)
+    }
+
+    fn dim_style(&self, style: &TextStyle) -> TextStyle {
+        TextStyle {
+            color: self.dim(style.color),
+            outline_color: self.dim(style.outline_color),
+            ..*style
+        }
+    }
+
+    /// Borrowed while nothing dims, so a lit paragraph clones no spans.
+    fn dim_spans<'s>(&self, spans: &'s [SpanData]) -> Cow<'s, [SpanData]> {
+        if self.brightness >= 1.0 {
+            return Cow::Borrowed(spans);
+        }
+        spans
+            .iter()
+            .map(|span| SpanData {
+                color: span.color.map(|c| self.dim(c)),
+                ..span.clone()
+            })
+            .collect()
     }
 
     /// The shared 1x1 white texture, allocated on first use.
@@ -1141,15 +1182,15 @@ impl Renderer for FemtoVgRenderer {
     fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: Color) {
         let mut path = Path::new();
         path.rounded_rect(x, y, w, h, radius);
-        self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+        let paint = Paint::color(self.paint_color(color));
+        self.canvas.fill_path(&path, &paint);
     }
 
     fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color) {
         let mut path = Path::new();
         path.circle(cx, cy, r);
-        self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+        let paint = Paint::color(self.paint_color(color));
+        self.canvas.fill_path(&path, &paint);
     }
 
     fn fill_rect_paint(&mut self, x: f32, y: f32, w: f32, h: f32, fill: &Fill) {
@@ -1160,7 +1201,7 @@ impl Renderer for FemtoVgRenderer {
         let paint = match fill {
             Fill::Solid(color) => self.solid_paint(x, y, w, h, *color),
             Fill::Linear { .. } | Fill::Radial { .. } => paint_for_fill(
-                fill,
+                &fill.brightness(self.brightness),
                 (x, y, w, h),
                 (x + w / 2.0, y + h / 2.0, (w / 2.0).hypot(h / 2.0)),
             ),
@@ -1171,7 +1212,11 @@ impl Renderer for FemtoVgRenderer {
     fn fill_circle_paint(&mut self, cx: f32, cy: f32, r: f32, fill: &Fill) {
         let mut path = Path::new();
         path.circle(cx, cy, r);
-        let paint = paint_for_fill(fill, (cx - r, cy - r, 2.0 * r, 2.0 * r), (cx, cy, r));
+        let paint = paint_for_fill(
+            &fill.brightness(self.brightness),
+            (cx - r, cy - r, 2.0 * r, 2.0 * r),
+            (cx, cy, r),
+        );
         self.canvas.fill_path(&path, &paint);
     }
 
@@ -1220,8 +1265,8 @@ impl Renderer for FemtoVgRenderer {
                     p0.1,
                     p1.0,
                     p1.1,
-                    to_femtovg_color(c0.to_u32()),
-                    to_femtovg_color(c1.to_u32()),
+                    self.paint_color(c0),
+                    self.paint_color(c1),
                 );
                 paint.set_line_width(width);
                 paint.set_line_cap(LineCap::Butt);
@@ -1239,7 +1284,7 @@ impl Renderer for FemtoVgRenderer {
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color) {
         let mut path = Path::new();
         path.rect(x, y, w, h);
-        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        let mut paint = Paint::color(self.paint_color(color));
         paint.set_line_width(border_width);
         self.canvas.stroke_path(&path, &paint);
     }
@@ -1256,7 +1301,7 @@ impl Renderer for FemtoVgRenderer {
     ) {
         let mut path = Path::new();
         path.rounded_rect(x, y, w, h, radius);
-        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        let mut paint = Paint::color(self.paint_color(color));
         paint.set_line_width(border_width);
         self.canvas.stroke_path(&path, &paint);
     }
@@ -1265,7 +1310,7 @@ impl Renderer for FemtoVgRenderer {
         let mut path = Path::new();
         path.move_to(x1, y1);
         path.line_to(x2, y2);
-        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        let mut paint = Paint::color(self.paint_color(color));
         paint.set_line_width(width);
         self.canvas.stroke_path(&path, &paint);
     }
@@ -1284,7 +1329,7 @@ impl Renderer for FemtoVgRenderer {
             return;
         }
         let path = build_femtovg_path(points, closed, smooth);
-        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        let mut paint = Paint::color(self.paint_color(color));
         paint.set_line_width(stroke_width);
         paint.set_line_cap(femtovg::LineCap::Round);
         paint.set_line_join(femtovg::LineJoin::Round);
@@ -1308,7 +1353,7 @@ impl Renderer for FemtoVgRenderer {
         let (w, h) = (max_x - min_x, max_y - min_y);
         let radius = (w / 2.0).hypot(h / 2.0);
         let paint = paint_for_fill(
-            fill,
+            &fill.brightness(self.brightness),
             (min_x, min_y, w, h),
             (min_x + w / 2.0, min_y + h / 2.0, radius),
         );
@@ -1346,9 +1391,24 @@ impl Renderer for FemtoVgRenderer {
         self.canvas.restore();
     }
 
+    // -- Brightness --
+
+    fn brightness(&self) -> f32 {
+        self.brightness
+    }
+
+    fn set_brightness(&mut self, brightness: f32) {
+        debug_assert!(
+            (0.0..=1.0).contains(&brightness),
+            "BUG: brightness only dims, got {brightness}"
+        );
+        self.brightness = brightness;
+    }
+
     // -- Simple text --
 
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
+        let paint = Paint::color(self.paint_color(color));
         let Self {
             canvas,
             font_system,
@@ -1359,7 +1419,6 @@ impl Renderer for FemtoVgRenderer {
             ..
         } = self;
         let entry = paragraph_cache.layout_single_line(font_system, sans_line_style(size), text);
-        let paint = Paint::color(to_femtovg_color(color.to_u32()));
         draw_anchored_lines(
             canvas,
             glyph_cache,
@@ -1386,6 +1445,8 @@ impl Renderer for FemtoVgRenderer {
     fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
         let size = style.size as f32;
         let baseline = femtovg_baseline(style.vertical_align);
+        let paint = Paint::color(self.paint_color(style.color));
+        let outline_paint = Paint::color(self.paint_color(style.outline_color));
         let (width, draw_x) = {
             let Self {
                 canvas,
@@ -1405,9 +1466,7 @@ impl Renderer for FemtoVgRenderer {
                 TextAlign::Right => x - width,
             };
 
-            let paint = Paint::color(to_femtovg_color(style.color.to_u32()));
             if style.outline_color != crate::colors::TRANSPARENT && style.outline_width > 0.0 {
-                let outline_paint = Paint::color(to_femtovg_color(style.outline_color.to_u32()));
                 #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let rings = style.outline_width.ceil() as u32;
                 draw_anchored_lines_with_outline(
@@ -1474,6 +1533,7 @@ impl Renderer for FemtoVgRenderer {
         }
 
         let size = style.size as f32;
+        let paint = Paint::color(self.paint_color(style.color));
         // Shaped as one string, never glyph by glyph: per-character layouts
         // would break clusters and ligatures and lose every kern between
         // neighbours, which is exactly what the arc advances are made of.
@@ -1491,7 +1551,6 @@ impl Renderer for FemtoVgRenderer {
             return;
         };
 
-        let paint = Paint::color(to_femtovg_color(style.color.to_u32()));
         let widths: Vec<f32> = line.glyphs.iter().map(|glyph| glyph.w).collect();
         let alphabetic_y = baseline_to_alphabetic(
             0.0,
@@ -1604,7 +1663,7 @@ impl Renderer for FemtoVgRenderer {
 
         let sized = TextStyle {
             size: fitted,
-            ..*style
+            ..self.dim_style(style)
         };
         let (_, block_h) =
             self.paragraph_cache
@@ -1653,14 +1712,16 @@ impl Renderer for FemtoVgRenderer {
         y: f32,
         max_width: f32,
     ) {
+        let style = self.dim_style(style);
+        let spans = self.dim_spans(spans);
         self.paragraph_cache.draw(
             &mut self.font_system,
             &mut self.canvas,
             &mut self.glyph_cache,
             &mut self.swash,
             &self.font_table,
-            style,
-            spans,
+            &style,
+            &spans,
             x,
             y,
             max_width,
@@ -1712,7 +1773,18 @@ impl Renderer for FemtoVgRenderer {
         fills: &[(String, Color)],
     ) {
         if let Some(icon) = self.icon_registry.get(icon_id) {
-            super::svg::draw_svg(&mut self.canvas, icon, x, y, w, h, color, anti_alias, fills);
+            super::svg::draw_svg(
+                &mut self.canvas,
+                icon,
+                x,
+                y,
+                w,
+                h,
+                color,
+                anti_alias,
+                fills,
+                self.brightness,
+            );
         }
     }
 
@@ -1795,8 +1867,9 @@ impl Renderer for FemtoVgRenderer {
     }
 
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId) {
+        let tint = self.image_tint();
         if let Some(image_id) = self.bitmap_registry.get(bitmap_id) {
-            super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
+            super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h, tint);
         }
     }
 
@@ -1812,6 +1885,7 @@ impl Renderer for FemtoVgRenderer {
         right: u16,
         bottom: u16,
     ) {
+        let tint = self.image_tint();
         if let Some((image_id, src_w, src_h)) = self.bitmap_registry.get_with_size(bitmap_id) {
             super::bitmap::draw_nine_patch(
                 &mut self.canvas,
@@ -1826,6 +1900,7 @@ impl Renderer for FemtoVgRenderer {
                 f32::from(top),
                 f32::from(right),
                 f32::from(bottom),
+                tint,
             );
         }
     }
@@ -1876,6 +1951,7 @@ impl Renderer for FemtoVgRenderer {
         mesh_id: MeshId,
         args: MeshDrawArgs,
     ) {
+        let tint = self.image_tint();
         self.lazy_init_mesh_renderer();
         let Some(renderer) = self.mesh_renderer.as_mut() else {
             return;
@@ -1905,6 +1981,7 @@ impl Renderer for FemtoVgRenderer {
             y,
             w,
             h,
+            tint,
         );
     }
 
@@ -1923,6 +2000,7 @@ impl Renderer for FemtoVgRenderer {
         light_lon: f32,
         atmosphere: bool,
     ) {
+        let tint = self.image_tint();
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let (width, height) = (w as u32, h as u32);
         if width == 0 || height == 0 {
@@ -1986,7 +2064,7 @@ impl Renderer for FemtoVgRenderer {
         };
 
         // Draw the FBO texture via femtovg
-        super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
+        super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h, tint);
     }
 
     // -- Drop shadow --
@@ -2065,6 +2143,7 @@ impl Renderer for FemtoVgRenderer {
         self.canvas.restore();
 
         let composite_src = if sigma > 0.0 { blurred } else { unblurred };
+        // Not dimmed: the tint multiplies the inner draw, which already was.
         let tint = to_femtovg_color(color.to_u32());
         let fbo_w_f = fbo_w as f32;
         let fbo_h_f = fbo_h as f32;
@@ -2138,6 +2217,7 @@ impl Renderer for FemtoVgRenderer {
         }
         self.scale_to_logical(dpi_scale);
         self.paragraph_cache.begin_frame();
+        self.brightness = 1.0;
     }
 
     fn flush(&mut self) {
@@ -4079,6 +4159,9 @@ mod text_overflow_pixel_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod brightness_tests;
 
 #[cfg(test)]
 mod scissor_tests {

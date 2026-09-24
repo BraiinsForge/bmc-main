@@ -254,6 +254,8 @@ impl SvgRegistry {
 ///    and stroke with that single colour;
 /// 3. otherwise the path's stored SVG colours are used.
 ///
+/// Whichever wins is then scaled by `brightness`, as [`Color::brightness`] would.
+///
 /// `fills` is small (typically 1–4 entries per draw) so a linear
 /// lookup per path is faster than hashing in practice and keeps
 /// the guest from caring about hash collisions.
@@ -268,6 +270,7 @@ pub fn draw_svg(
     color: Color,
     anti_alias: bool,
     fills: &[(String, Color)],
+    brightness: f32,
 ) {
     if icon.viewbox_w <= 0.0 || icon.viewbox_h <= 0.0 {
         return;
@@ -280,6 +283,9 @@ pub fn draw_svg(
     canvas.translate(x, y);
     canvas.scale(scale_x, scale_y);
 
+    let dim = |c: femtovg::Color| {
+        femtovg::Color::rgbaf(c.r * brightness, c.g * brightness, c.b * brightness, c.a)
+    };
     let tint = if color == bmc_wasm_protocol::colors::TRANSPARENT {
         None
     } else {
@@ -304,7 +310,7 @@ pub fn draw_svg(
             let paint_color = path_override
                 .or(tint)
                 .unwrap_or_else(|| to_femtovg_color(fill_color));
-            let mut paint = Paint::color(paint_color);
+            let mut paint = Paint::color(dim(paint_color));
             paint.set_anti_alias(anti_alias);
             if icon_path.is_evenodd {
                 paint.set_fill_rule(FillRule::EvenOdd);
@@ -315,7 +321,7 @@ pub fn draw_svg(
             let paint_color = path_override
                 .or(tint)
                 .unwrap_or_else(|| to_femtovg_color(stroke_color));
-            let mut paint = Paint::color(paint_color);
+            let mut paint = Paint::color(dim(paint_color));
             paint.set_anti_alias(anti_alias);
             paint.set_line_width(icon_path.stroke_width);
             canvas.stroke_path(&icon_path.path, &paint);

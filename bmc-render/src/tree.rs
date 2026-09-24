@@ -4395,6 +4395,12 @@ mod frame_pass_tests {
 
         fn pop_scissor(&mut self) {}
 
+        fn brightness(&self) -> f32 {
+            1.0
+        }
+
+        fn set_brightness(&mut self, _brightness: f32) {}
+
         fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
 
         fn measure_text(&mut self, _text: &str, _size: f32) -> f32 {

@@ -208,6 +208,12 @@ impl Renderer for ShapingRecorder {
 
     fn pop_scissor(&mut self) {}
 
+    fn brightness(&self) -> f32 {
+        1.0
+    }
+
+    fn set_brightness(&mut self, _brightness: f32) {}
+
     fn measure_paragraph(
         &mut self,
         style: &TextStyle,
