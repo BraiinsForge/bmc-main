@@ -31,6 +31,7 @@ export default defineConfig({
     testEnvironment: 'jsdom',
     setupFiles: ['./rstest.setup.ts'],
     root: '.',
+    silent: 'passed-only',
 
     plugins,
     resolve,
