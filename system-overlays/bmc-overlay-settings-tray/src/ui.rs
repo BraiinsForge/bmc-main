@@ -27,7 +27,9 @@ use bmc_render::tree::{
     DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
 };
 use bmc_wasm_protocol::colors::{BLACK, GRAY_50, GREEN_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign};
+use bmc_wasm_protocol::{
+    Color, CrossAlign, Fill, FontWeight, Justify, SvgId, TextAlign, TextOverflow,
+};
 
 /// Stable touch key for the WiFi reconfiguration hold button.
 pub const WIFI_RECONFIG_KEY: &str = "wifi_reconfig";
@@ -95,7 +97,7 @@ const CLOSE_GLYPH: f32 = 24.0;
 const STEP_GAP_LARGE: f32 = 12.0;
 
 /// Fixed text-block widths on the Large tier so caption swaps never shift
-/// the centered-row math (bmc-render cannot ellipsize; strings are fitted).
+/// the centered-row math.
 const LARGE_PAIR_W: f32 = 236.0;
 const LARGE_SINGLE_W: f32 = 180.0;
 
@@ -112,9 +114,9 @@ const INFO_HEADER_SIZE: u32 = 16;
 /// Gap between an info header and its value.
 const INFO_HEADER_GAP: f32 = 4.0;
 
-/// Fit budgets for the runtime strings in the Large tier's info blocks.
-const WIDE_HOSTNAME_WIDTH: f32 = 320.0;
-const WIDE_SSID_WIDTH: f32 = 400.0;
+/// Widths past which the runtime strings in the Large tier's info blocks end in "…".
+const WIDE_HOSTNAME_WIDTH: u32 = 320;
+const WIDE_SSID_WIDTH: u32 = 400;
 
 /// Edge length of the IP QR code, and of the canvas it is drawn on.
 /// An `http://<ipv4>` payload fits the 26 bytes a version-2 symbol holds
@@ -165,14 +167,6 @@ const ROUND_H_PAD: f32 = 48.0;
 /// near the top curve is narrower than the full width, so the centered header
 /// is budgeted against that chord, not the panel width.
 const ROUND_HEADER_WIDTH: f32 = 256.0;
-
-/// Per-glyph advance (px) used to budget 24px single-line strings.
-/// This is an average, not a bound: BraiinsSans-Bold's widest ASCII glyph
-/// advances 23.4px, so a run of wide capitals overflows after fitting.
-/// Digits and dots stay far under it, which is what the IP header relies on.
-/// The renderer has no single-line ellipsis, so [`fit_line`] enforces the fit
-/// on the string instead.
-const HOSTNAME_CHAR_W: f32 = 16.0;
 
 /// What to show in the WiFi/reconfig area of the overlay.
 #[derive(Debug, Clone, Copy)]
@@ -374,32 +368,24 @@ fn tier_for(panel: &Panel) -> Tier {
     }
 }
 
-/// Generic width-fitting for single-line UI strings, on the per-glyph budget
-/// [`HOSTNAME_CHAR_W`] estimates. The renderer cannot ellipsize,
-/// so overlong strings are truncated here.
-#[must_use]
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "max_chars is a small non-negative count; text sizes are small"
-)]
-fn fit_line(s: &str, width_px: f32, size: u32) -> String {
-    let glyph = HOSTNAME_CHAR_W * (size as f32) / 24.0;
-    let max_chars = (width_px / glyph).floor().max(1.0) as usize;
-    if s.chars().count() <= max_chars {
-        return s.to_owned();
-    }
-    let kept: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-    format!("{kept}…")
-}
-
 fn text_style(size: u32, color: Color) -> TextStyle {
     TextStyle {
         size,
         color,
         ..TextStyle::default()
     }
+}
+
+/// A runtime string on one line, ending in "…" past `max_width` px.
+fn capped_text(s: &str, size: u32, max_width: u32) -> TreeNode {
+    text(
+        s,
+        TextStyle {
+            max_width,
+            text_overflow: TextOverflow::Ellipsis,
+            ..text_style(size, WHITE)
+        },
+    )
 }
 
 fn fixed_width(width: f32) -> TreeNode {
@@ -434,10 +420,9 @@ fn pad_horizontal(node: TreeNode, padding: f32) -> TreeNode {
     )
 }
 
-/// Centered header row. The string is pre-fitted by [`fit_line`],
-/// so it is laid out on a single line without wrapping. The centering column
-/// is what actually centers the text node; a bare paragraph with
-/// `align: Center` does not center under a stretching parent.
+/// Centered header row, on one line that ends in "…" if its column is too narrow.
+/// The centering column is what actually centers the text node; a bare paragraph
+/// with `align: Center` does not center under a stretching parent.
 fn header_row(header: &str, size: u32) -> TreeNode {
     col(
         PropsData {
@@ -451,6 +436,7 @@ fn header_row(header: &str, size: u32) -> TreeNode {
                 weight: FontWeight::BOLD,
                 color: WHITE,
                 align: TextAlign::Center,
+                text_overflow: TextOverflow::Ellipsis,
                 ..TextStyle::default()
             },
         )],
@@ -701,8 +687,7 @@ fn single_group(
         return btn;
     }
     // The label/sublabel copy is fixed at compile time ("Night Mode: Off",
-    // "hold 5 seconds", …) and sized to its column; the `fit_line` budget
-    // would truncate it, so it is rendered verbatim.
+    // "hold 5 seconds", …) and sized to its column, so it is never cut.
     let mut kids = vec![btn, fixed_height(8.0)];
     kids.push(text(
         label,
@@ -875,7 +860,7 @@ fn control_rows(tier: Tier, pairs: Vec<TreeNode>, singles: Vec<TreeNode>) -> Vec
 /// reconfigure > night-mode-until (medium/small only) > none.
 /// Prefixed with the control name so unlabeled small-tier buttons stay
 /// attributable.
-fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<TreeNode> {
+fn shared_caption(tier: Tier, controls: &Controls<'_>) -> Option<TreeNode> {
     let raw = if let Some(c) = controls.restart.and_then(|r| r.caption) {
         Some(format!("Restart: {c}"))
     } else if let Some(c) = controls.wifi_reconfig.caption {
@@ -899,11 +884,12 @@ fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<Tr
                 ..PropsData::default()
             },
             vec![text(
-                fit_line(&s, usable, tier.caption_size),
+                &s,
                 TextStyle {
                     size: tier.caption_size,
                     color: GRAY_50,
                     align: TextAlign::Center,
+                    text_overflow: TextOverflow::Ellipsis,
                     ..TextStyle::default()
                 },
             )],
@@ -1020,10 +1006,7 @@ fn wide_header(
                 },
                 vec![
                     wifi_icon(icons, wifi_signal, tier.wifi_icon_size),
-                    text(
-                        fit_line(ssid, WIDE_SSID_WIDTH, value_size),
-                        text_style(value_size, WHITE),
-                    ),
+                    capped_text(ssid, value_size, WIDE_SSID_WIDTH),
                 ],
             ),
         ),
@@ -1052,10 +1035,7 @@ fn wide_header(
                                     ..TextStyle::default()
                                 },
                             ),
-                            text(
-                                fit_line(ap_ssid, WIDE_SSID_WIDTH, value_size),
-                                text_style(value_size, WHITE),
-                            ),
+                            capped_text(ap_ssid, value_size, WIDE_SSID_WIDTH),
                         ],
                     ),
                     text(
@@ -1079,10 +1059,7 @@ fn wide_header(
             ),
             info_block(
                 "Hostname",
-                text(
-                    fit_line(hostname, WIDE_HOSTNAME_WIDTH, value_size),
-                    text_style(value_size, WHITE),
-                ),
+                capped_text(hostname, value_size, WIDE_HOSTNAME_WIDTH),
             ),
         ],
     );
@@ -1136,79 +1113,57 @@ fn wide_halves(
     ]
 }
 
-/// Compact station info for the medium/small tiers: one centered line of
-/// icon + fitted SSID. The address heads the panel instead.
-fn compact_info(
-    icons: WifiIcons,
-    wifi_signal: Option<i32>,
-    ssid: &str,
-    tier: Tier,
-    usable: f32,
-) -> TreeNode {
-    let gap = 12.0;
-    let ssid_budget = usable - tier.wifi_icon_size - gap;
-    col(
+/// One centered line of the medium/small tiers' station info,
+/// stretched across its column so only the SSID gives way when it runs out.
+fn centered_line(children: Vec<TreeNode>) -> TreeNode {
+    row(
         PropsData {
             cross_align: CrossAlign::Center,
+            justify_content: Justify::Center,
+            gap: 12.0,
             ..PropsData::default()
         },
-        vec![row(
-            PropsData {
-                cross_align: CrossAlign::Center,
-                gap,
-                ..PropsData::default()
-            },
-            vec![
-                wifi_icon(icons, wifi_signal, tier.wifi_icon_size),
-                text(
-                    fit_line(ssid, ssid_budget, tier.wifi_text_size),
-                    text_style(tier.wifi_text_size, WHITE),
-                ),
-            ],
-        )],
+        children,
     )
 }
 
-/// Setup-mode section for the medium/small tiers: one centered line — icon,
-/// badge, fitted SSID — occupying the same height the idle info line does,
-/// so the vertical budgets hold. The Large tier shows setup mode inside
-/// [`wide_header`] instead.
-fn setup_row(icons: WifiIcons, ap_ssid: &str, tier: Tier, usable: f32) -> TreeNode {
-    let gap = 12.0;
-    let badge_size = tier.wifi_text_size;
+fn ssid_text(ssid: &str, size: u32) -> TreeNode {
+    text(
+        ssid,
+        TextStyle {
+            text_overflow: TextOverflow::Ellipsis,
+            ..text_style(size, WHITE)
+        },
+    )
+}
+
+/// Compact station info for the medium/small tiers: icon and SSID.
+/// The address heads the panel instead.
+fn compact_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str, tier: Tier) -> TreeNode {
+    centered_line(vec![
+        wifi_icon(icons, wifi_signal, tier.wifi_icon_size),
+        ssid_text(ssid, tier.wifi_text_size),
+    ])
+}
+
+/// Setup-mode section for the medium/small tiers: icon, badge and SSID,
+/// occupying the same height the idle info line does, so the vertical budgets hold.
+/// The Large tier shows setup mode inside [`wide_header`] instead.
+fn setup_row(icons: WifiIcons, ap_ssid: &str, tier: Tier) -> TreeNode {
     let badge = text(
         "SETUP",
         TextStyle {
-            size: badge_size,
+            size: tier.wifi_text_size,
             weight: FontWeight::BOLD,
             color: GREEN_50,
             ..TextStyle::default()
         },
     );
-    #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
-    let badge_w = HOSTNAME_CHAR_W * (badge_size as f32) / 24.0 * 5.0;
-    let ssid_budget = usable - tier.wifi_icon_size - badge_w - 2.0 * gap;
-    col(
-        PropsData {
-            cross_align: CrossAlign::Center,
-            ..PropsData::default()
-        },
-        vec![row(
-            PropsData {
-                cross_align: CrossAlign::Center,
-                gap,
-                ..PropsData::default()
-            },
-            vec![
-                wifi_icon(icons, None, tier.wifi_icon_size),
-                badge,
-                text(
-                    fit_line(ap_ssid, ssid_budget, tier.wifi_text_size),
-                    text_style(tier.wifi_text_size, WHITE),
-                ),
-            ],
-        )],
-    )
+    centered_line(vec![
+        wifi_icon(icons, None, tier.wifi_icon_size),
+        badge,
+        ssid_text(ap_ssid, tier.wifi_text_size),
+    ])
 }
 
 /// Build the overlay UI tree for the current state.
@@ -1242,21 +1197,20 @@ pub fn build_tree(
 
     let header_h = tier.hostname_size as f32 * LINE_H;
     let caption_h = tier.caption_size as f32 * LINE_H;
-    let (usable, h_pad) = match panel.shape {
-        DisplayShape::Round => (w - 2.0 * ROUND_H_PAD, ROUND_H_PAD),
-        DisplayShape::Rectangular => (w - 2.0 * tier.padding, tier.padding),
+    let h_pad = match panel.shape {
+        DisplayShape::Round => ROUND_H_PAD,
+        DisplayShape::Rectangular => tier.padding,
     };
 
     // The caption slot always occupies its line height so captions appearing
     // and disappearing never shift the control rows.
-    let caption_node =
-        shared_caption(tier, &controls, usable).unwrap_or_else(|| fixed_height(caption_h));
+    let caption_node = shared_caption(tier, &controls).unwrap_or_else(|| fixed_height(caption_h));
 
     // The wide panel folds the station/setup info into its top header; only
     // the compact tiers keep a dedicated info line at the bottom.
     let compact_wifi_node = || match wifi_view {
-        WifiView::Setup { ap_ssid } => setup_row(icons, ap_ssid, tier, usable),
-        WifiView::Idle => compact_info(icons, wifi_signal, ssid_str, tier, usable),
+        WifiView::Setup { ap_ssid } => setup_row(icons, ap_ssid, tier),
+        WifiView::Idle => compact_info(icons, wifi_signal, ssid_str, tier),
     };
 
     let mut children: Vec<TreeNode> = Vec::new();
@@ -1274,16 +1228,11 @@ pub fn build_tree(
             children.extend(wide_halves(header, rows, caption_node, tier, h_pad));
         }
         DisplayShape::Rectangular => {
-            let header_str = fit_line(
-                ip.unwrap_or("---"),
-                w - 2.0 * (CLOSE_TARGET + tier.padding),
-                tier.hostname_size,
-            );
             // Top padding is an explicit spacer (not container padding) so the
             // close button's absolute insets resolve against the panel box.
             children.push(fixed_height(tier.padding));
             children.push(pad_horizontal(
-                header_row(&header_str, tier.hostname_size),
+                header_row(ip.unwrap_or("---"), tier.hostname_size),
                 CLOSE_TARGET + tier.padding,
             ));
             // Pin the first control row below the close target's bottom edge
@@ -1300,9 +1249,11 @@ pub fn build_tree(
             children.push(fixed_height(tier.padding));
         }
         DisplayShape::Round => {
-            let header_str = fit_line(ip.unwrap_or("---"), ROUND_HEADER_WIDTH, tier.hostname_size);
             children.push(fixed_height(ROUND_TOP_GAP));
-            children.push(header_row(&header_str, tier.hostname_size));
+            children.push(pad_horizontal(
+                header_row(ip.unwrap_or("---"), tier.hostname_size),
+                (w - ROUND_HEADER_WIDTH) / 2.0,
+            ));
             // Pin the control rows to a fixed top edge below the chord-safe
             // close target.
             children.push(fixed_height(ROUND_CONTROLS_TOP - ROUND_TOP_GAP - header_h));
@@ -1556,17 +1507,22 @@ mod tests {
         }
     }
 
-    fn text_color(node: &TreeNode, needle: &str) -> Option<Color> {
+    /// The style of the paragraph holding `needle`.
+    fn style_of(node: &TreeNode, needle: &str) -> Option<TextStyle> {
         if let TreeNode::Paragraph {
             base_style, spans, ..
         } = node
             && spans.iter().any(|span| span.text == needle)
         {
-            return Some(base_style.color);
+            return Some(*base_style);
         }
         children(node)?
             .iter()
-            .find_map(|child| text_color(child, needle))
+            .find_map(|child| style_of(child, needle))
+    }
+
+    fn text_color(node: &TreeNode, needle: &str) -> Option<Color> {
+        style_of(node, needle).map(|style| style.color)
     }
 
     /// Largest text size in the subtree — the line height driver of a text
@@ -2355,25 +2311,33 @@ mod tests {
         }
     }
 
-    /// Width of a single-line string on the per-glyph budget
-    /// [`fit_line`] truncates against — an estimate, not a bound.
+    /// Per-glyph advance (px) used to estimate 24px single-line strings.
+    /// This is an average, not a bound: BraiinsSans-Bold's widest ASCII glyph
+    /// advances 23.4px, so a run of wide capitals measures wider.
+    /// Digits and dots stay far under it, which is what the IP header relies on.
+    const HOSTNAME_CHAR_W: f32 = 16.0;
+
+    /// Width of a single-line string at [`HOSTNAME_CHAR_W`] a glyph —
+    /// an estimate, not a bound.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
     fn line_width(s: &str, size: u32) -> f32 {
         s.chars().count() as f32 * HOSTNAME_CHAR_W * (size as f32) / 24.0
     }
 
-    /// Min-content width of [`wide_header`] at its fit budgets. The structure
+    /// Min-content width of [`wide_header`] at its caps. The structure
     /// is worst-case; the glyph width is only [`HOSTNAME_CHAR_W`]'s estimate.
     /// Including the SETUP badge bounds both WiFi views, leaving idle mode —
     /// which has no badge — some slack. The setup hint is left out: it wraps,
     /// so a single-line glyph budget does not describe it.
+    #[expect(clippy::cast_precision_loss, reason = "the caps are a few hundred px")]
     fn wide_info_width(tier: Tier) -> f32 {
-        let addresses = line_width("255.255.255.255", tier.hostname_size).max(WIDE_HOSTNAME_WIDTH);
+        let addresses =
+            line_width("255.255.255.255", tier.hostname_size).max(WIDE_HOSTNAME_WIDTH as f32);
         let wifi = tier.wifi_icon_size
             + WIDE_WIFI_GAP
             + line_width("SETUP", WIDE_SETUP_BADGE_SIZE)
             + WIDE_WIFI_GAP
-            + WIDE_SSID_WIDTH;
+            + WIDE_SSID_WIDTH as f32;
         WIDE_INFO_LEFT_PAD + WIDE_QR_SIZE + WIDE_INFO_GAP + addresses + wifi + WIDE_INFO_RIGHT_PAD
     }
 
@@ -2586,28 +2550,52 @@ mod tests {
         ));
     }
 
+    /// Runtime strings reach the renderer whole and are ellipsized there,
+    /// at their slot's width or at a cap where nothing else bounds them.
     #[test]
-    fn short_line_is_unchanged() {
-        assert_eq!(
-            fit_line("braiins-deck", ROUND_HEADER_WIDTH, 24),
-            "braiins-deck"
-        );
-    }
+    fn long_runtime_strings_are_left_for_the_renderer_to_cut() {
+        let hostname = "braiins-deck-".repeat(6);
+        let ssid = "a-network-name-".repeat(5);
+        let ip = "10.0.0.2";
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            let tree = build_tree(
+                Some(&hostname),
+                Some(ip),
+                Some(-55),
+                Some(&ssid),
+                WifiIcons::default(),
+                panel,
+                WifiView::Idle,
+                ControlIcons::default(),
+                Controls::default(),
+            );
+            let large = tier_for(&panel).large_text;
 
-    #[test]
-    fn long_line_is_truncated_with_ellipsis() {
-        let long = "braiins-deck-extremely-long-hostname-xyz";
-        let fitted = fit_line(long, ROUND_HEADER_WIDTH, 24);
-        assert!(fitted.ends_with('…'));
-        assert!(fitted.chars().count() < long.chars().count());
-    }
-
-    #[test]
-    fn smaller_text_fits_more_characters() {
-        let s = "a-string-that-is-fairly-long-indeed";
-        let at_24 = fit_line(s, 256.0, 24);
-        let at_12 = fit_line(s, 256.0, 12);
-        assert!(at_12.chars().count() > at_24.chars().count());
+            let ssid_style = style_of(&tree, &ssid)
+                .unwrap_or_else(|| panic!("{panel:?}: the SSID must reach the tree whole"));
+            assert_eq!(
+                ssid_style.text_overflow,
+                TextOverflow::Ellipsis,
+                "{panel:?}"
+            );
+            if large {
+                let hostname_style =
+                    style_of(&tree, &hostname).expect("BUG: the wide tier shows the hostname");
+                assert_eq!(
+                    (hostname_style.max_width, hostname_style.text_overflow),
+                    (WIDE_HOSTNAME_WIDTH, TextOverflow::Ellipsis)
+                );
+                assert_eq!(ssid_style.max_width, WIDE_SSID_WIDTH);
+            } else {
+                let header_style = style_of(&tree, ip)
+                    .unwrap_or_else(|| panic!("{panel:?}: the address heads the panel"));
+                assert_eq!(
+                    header_style.text_overflow,
+                    TextOverflow::Ellipsis,
+                    "{panel:?}"
+                );
+            }
+        }
     }
 
     fn distinct_icons() -> WifiIcons {

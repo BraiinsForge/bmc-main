@@ -28,6 +28,9 @@
 //! per-glyph tower far taller than the panel — the floor then froze the
 //! bottom half at the tower height and collapsed the top one. Mock measures
 //! that never wrap cannot catch this.
+//!
+//! A `Clip` or `Ellipsis` line never wraps, as in the renderer,
+//! and probed that narrow an `Ellipsis` one keeps its "…".
 
 #![expect(
     clippy::cast_precision_loss,
@@ -41,7 +44,7 @@ use bmc_overlay_settings_tray::{
 };
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::{FrameClear, Renderer};
-use bmc_render::tree::{AutoFit, SpanData, TextStyle};
+use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
@@ -131,6 +134,18 @@ impl Renderer for ProbeRenderer {
         let char_w = style.size as f32 * 0.6;
         let line_h = style.size as f32 * style.line_height;
         let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+        if style.text_overflow != TextOverflow::Wrap {
+            let lines = text.split('\n');
+            let line_count = lines.clone().count() as f32;
+            let widest = lines
+                .map(|line| line.chars().count() as f32 * char_w)
+                .fold(0.0, f32::max);
+            let width = match (style.text_overflow, max_width) {
+                (TextOverflow::Ellipsis, Some(limit)) if limit < widest => limit.max(char_w),
+                _ => widest,
+            };
+            return (width, line_count * line_h);
+        }
         let word_chars: Vec<f32> = text
             .split_whitespace()
             .map(|w| w.chars().count() as f32)
@@ -353,11 +368,20 @@ impl Renderer for ProbeRenderer {
 
 #[test]
 fn large_tier_controls_sit_in_the_bottom_half() {
+    assert_controls_in_the_bottom_half("braiins-deck", "Braiins-WiFi");
+}
+
+#[test]
+fn a_long_hostname_and_ssid_keep_the_controls_in_the_bottom_half() {
+    assert_controls_in_the_bottom_half(&"braiins-deck-".repeat(6), &"a-network-name-".repeat(5));
+}
+
+fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
     let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmc100);
-    view.hostname = Some("braiins-deck".to_owned());
+    view.hostname = Some(hostname.to_owned());
     view.ip = Some("192.168.1.42".to_owned());
     view.wifi_signal = Some(-52);
-    view.ssid = Some("Braiins-WiFi".to_owned());
+    view.ssid = Some(ssid.to_owned());
 
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);
