@@ -580,6 +580,23 @@ test('shows running widget capacity reported by the backend', async () => {
     expect(screen.getByText('Running widgets: 1 / 56')).toBeTruthy();
 });
 
+describe('scene write timeouts', () => {
+    test('a timed-out clone tells the user it timed out', async () => {
+        registerMocks(pb.services.SceneManagementService, {
+            cloneScene: () => {
+                throw new ConnectError('deadline exceeded', Code.DeadlineExceeded);
+            },
+        });
+        const { container } = renderPage();
+        await flush();
+
+        clickFirstClone(container);
+        await flush();
+
+        expect(document.body.textContent).toContain("The device didn't answer in time.");
+    });
+});
+
 describe('list actions in quick succession', () => {
     test('deletes queued behind one still in flight all reach the device', async () => {
         server = [makeScene('A'), makeScene('B'), makeScene('C')];

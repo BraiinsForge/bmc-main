@@ -39,7 +39,10 @@ import {
     credentialBindingsValid,
     credentialBindingsFor,
     withoutDeletedAccounts,
+    explainTimeout,
 } from './fn';
+import { Code, ConnectError } from '@connectrpc/connect';
+import { fakeIntlProp } from '@/mocks/intl';
 import { paramDef } from './test-helpers';
 
 const emptyParams = pb.create(pb.WidgetDataStructSchema, { fields: {} });
@@ -1013,5 +1016,17 @@ describe('credential bindings', () => {
         expect(credentialBindingsFor('preview', session)).toEqual({ bindings: { pool: '' } });
         expect(credentialBindingsFor('cancel', session)).toEqual({ bindings: { pool: 'pool-a' } });
         expect(credentialBindingsFor('done', session)).toEqual({ bindings: { pool: '' } });
+    });
+});
+
+describe('explainTimeout', () => {
+    test('a timeout gets a message the page can show as it is', () => {
+        const explained = explainTimeout(new ConnectError('deadline exceeded', Code.DeadlineExceeded), fakeIntlProp);
+        expect(ConnectError.from(explained).rawMessage).toBe("The device didn't answer in time.");
+    });
+
+    test('any other error passes through unchanged', () => {
+        const refused = new ConnectError('refused', Code.FailedPrecondition);
+        expect(explainTimeout(refused, fakeIntlProp)).toBe(refused);
     });
 });

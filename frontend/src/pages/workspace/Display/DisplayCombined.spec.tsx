@@ -757,6 +757,17 @@ describe('editing a placed widget', () => {
             expect(applied).toEqual([8, 9]);
         });
 
+        test('a timed-out write tells the user it timed out', async () => {
+            mockServer(() => {
+                throw new ConnectError('deadline exceeded', Code.DeadlineExceeded);
+            });
+
+            await openEditor();
+            fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
+
+            await waitFor(() => expect(document.body.textContent).toContain("The device didn't answer in time."));
+        });
+
         test('a widget added right after Cancel waits for the writes before it', async () => {
             const previewHeld = deferred<void>();
             const requested: Array<number | undefined> = [];

@@ -37,6 +37,25 @@ export function runningWidgetLimitErrorMessage(error: unknown, intl: IntlShape):
     return intl.formatMessage({ defaultMessage: 'Running widget limit reached.' });
 }
 
+// A hung write would hold up every write queued behind it,
+// so each one gives up after this long.
+//
+// A resize answers only once the replaced widget has exited,
+// which the server allows up to 10s (`GRACEFUL_SHUTDOWN_TIMEOUT`
+// in `bmc/src/widget/manager.rs`); three times that means
+// a dead connection rather than a slow device.
+export const SCENE_WRITE_TIMEOUT_MS = 30_000;
+
+/**
+ * `error` as it was, unless it is a timeout,
+ * which gets a message the page can show as it is.
+ */
+export function explainTimeout(error: unknown, intl: IntlShape): unknown {
+    if (ConnectError.from(error).code !== Code.DeadlineExceeded) return error;
+    const message = intl.formatMessage({ defaultMessage: "The device didn't answer in time." });
+    return new ConnectError(message, Code.DeadlineExceeded);
+}
+
 /**
  * To allow the user to:
  *  - add new widgets where there are none
