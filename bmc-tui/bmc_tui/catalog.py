@@ -733,20 +733,27 @@ def start_compositor(dev: Device) -> None:
     dev.run("service bmc-compositor start")
 
 
-def _await_orchestrator(dev: Device, timeout: int = _ORCHESTRATOR_TIMEOUT) -> None:
+def _await_orchestrator(
+    dev: Device,
+    *,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+    timeout: int = _ORCHESTRATOR_TIMEOUT,
+) -> None:
     """Block while the post-activation service reconciliation is still running.
 
     It is spawned detached and waits on the profile lock.
-    That lets it bounce the compositor after `add-packages` has returned,
+    That lets it bounce services after `add-packages` has returned,
     so sampling before it settles would miss the restart it is about to make.
+    It deletes its own ubus instance only after its service actions have run.
     """
-    lingering = dev.read(
-        f"i=0; while pidof {_ORCHESTRATOR} >/dev/null 2>&1 && [ $i -lt {timeout} ]; "
-        f"do sleep 1; i=$((i+1)); done; pidof {_ORCHESTRATOR} || true"
+    query = shlex.quote(json.dumps({"name": _ORCHESTRATOR}))
+    lingering = _poll_until(
+        lambda: _orchestrator_present(dev, query), timeout=timeout, sleep=sleep, clock=clock
     )
     require(
-        not lingering,
-        f"service orchestrator still reconciling after {timeout} s (pid(s) {lingering})",
+        lingering is None,
+        f"service orchestrator still reconciling after {timeout} s: {lingering}",
     )
 
 
@@ -761,12 +768,18 @@ def restart_compositor(dev: Device) -> str:
 
 
 @stage("Wait for package activation")
-def await_package_activation(dev: Device, *, old_pid: Pid | None) -> str:
+def await_package_activation(
+    dev: Device,
+    *,
+    old_pid: Pid | None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
     """Wait for activation to reload widgets or reconcile the compositor service."""
     if dry_run.get():
         return "skipped (dry-run)"
 
-    _await_orchestrator(dev)
+    _await_orchestrator(dev, sleep=sleep, clock=clock)
     now = compositor_pid(dev)
     if now is None:
         raise Abort("compositor is not running after package activation")
@@ -1592,8 +1605,16 @@ def _clear_orchestrator(
 
 
 def _orchestrator_present(dev: Device, query: str) -> str | None:
-    listed = dev.read(f"ubus call service list {query} 2>/dev/null || true")
-    if _ORCHESTRATOR in listed:
+    # procd answers `{}` for an absent service; anything else that is not
+    # a JSON object is a failed lookup, which proves nothing either way.
+    listed = dev.read(f"ubus call service list {query} 2>&1 || true")
+    try:
+        services = json.loads(listed)
+    except json.JSONDecodeError:
+        services = None
+    if not isinstance(services, dict):
+        return f"ubus could not list the {_ORCHESTRATOR} instance: {listed or '(no output)'}"
+    if _ORCHESTRATOR in services:
         return f"the {_ORCHESTRATOR} ubus instance did not disappear"
     return None
 
@@ -2520,6 +2541,7 @@ _UPGRADE_SERVER_APP = ".#upgrade-server"
 # The device serves gRPC(-web) on the plain web port; grpcurl talks h2c to it.
 _GRPC_PORT = 80
 _GRPC_PACKAGE = "braiins.bmc.web"
+_GRPCURL_MAX_TIME = 120
 
 _PACKAGE_PHASE_PREFIX = "PACKAGE_UPGRADE_PHASE_"
 
@@ -2541,6 +2563,7 @@ class UpgradeCycle:
     generation_before: int | None = None
     installed_before: set[str] | None = None  # package names in the pre-upgrade manifest
     widget_uid: str | None = None  # uid of the widget under install, for the registry check
+    server_instance: str | None = None  # bmc instance id before the upgrade, to detect its restart
     servers_snapshot: "FileSnapshot | None" = None
     nix_conf_snapshot: "FileSnapshot | None" = None
 
@@ -2857,8 +2880,7 @@ def require_exclusive_package_server(dev: Device) -> str:
     return f"{console.lit(_UPGRADE_SERVER_ID)} only"
 
 
-@stage("Authenticate")
-def grpc_login(dev: Device, cycle: "GrpcSession") -> str:
+def _login(dev: Device, cycle: "GrpcSession") -> None:
     response = _grpcurl(dev, "AuthenticationService/Login", data={"password": cycle.password})
     token = response.get("token")
     require(
@@ -2866,6 +2888,11 @@ def grpc_login(dev: Device, cycle: "GrpcSession") -> str:
         "login returned no session token — check --password",
     )
     cycle.cookie = f"session_id={token}"
+
+
+@stage("Authenticate")
+def grpc_login(dev: Device, cycle: "GrpcSession") -> str:
+    _login(dev, cycle)
     return "session established"
 
 
@@ -2961,7 +2988,14 @@ def check_for_install(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
 
 
 @stage("Verify widget installed")
-def verify_widget_installed(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
+def verify_widget_installed(
+    dev: Device,
+    cycle: UpgradeCycle,
+    widget: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
     raw = dev.read(
         f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} list-packages --format json"
     )
@@ -2976,11 +3010,59 @@ def verify_widget_installed(dev: Device, cycle: UpgradeCycle, widget: str) -> st
     uid = cycle.widget_uid
     if not uid:
         raise Abort("widget uid not captured from GetInstallableWidgets")
+    before = cycle.server_instance
+    if before is None:
+        msg = "BUG: the bmc instance was not snapshotted before the upgrade"
+        raise RuntimeError(msg)
+    restart = _await_settled_bmc(dev, before, sleep=sleep, clock=clock)
+    _login(dev, cycle)
     response = _grpcurl(dev, "SceneManagementService/GetAvailableWidgets", cookie=cycle.cookie)
     available = {w.get("uid") for w in response.get("widgets", [])}
-    if uid not in available:
-        raise Abort(f"{widget} (uid {uid}) not exposed by the registry after install: {available}")
-    return f"{widget} present in profile and registry (uid {uid})"
+    require(
+        uid in available,
+        f"{widget} (uid {uid}) not exposed by the registry after install ({restart}): {available}",
+    )
+    return f"{widget} present in profile and registry (uid {uid}, {restart})"
+
+
+def _server_instance_id(dev: Device, *, max_time: int = _GRPCURL_MAX_TIME) -> str:
+    response = _grpcurl(dev, "MetadataService/GetServerInstance", max_time=max_time)
+    instance = response.get("serverInstanceId")
+    if not isinstance(instance, str) or not instance:
+        raise Abort(f"GetServerInstance returned no id: {response}")
+    return instance
+
+
+@stage("Snapshot bmc instance")
+def snapshot_server_instance(dev: Device, cycle: UpgradeCycle) -> str:
+    cycle.server_instance = _server_instance_id(dev)
+    return cycle.server_instance
+
+
+def _await_settled_bmc(
+    dev: Device,
+    before: str,
+    *,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> str:
+    """Whether activation restarted bmc, once a restarted bmc serves again.
+
+    Once the orchestrator is gone, an unchanged instance id means bmc was left running.
+    """
+    _await_orchestrator(dev, sleep=sleep, clock=clock)
+    deadline = clock() + _BMC_READY_TIMEOUT
+    while True:
+        try:
+            current = _server_instance_id(dev, max_time=max(1, int(deadline - clock())))
+        except Abort as error:
+            require(
+                clock() < deadline,
+                f"bmc did not serve again within {_BMC_READY_TIMEOUT:.0f}s: {error}",
+            )
+            sleep(1)
+        else:
+            return "no bmc restart" if current == before else "bmc restarted"
 
 
 @stage("Run upgrade")
@@ -3117,14 +3199,17 @@ def _grpcurl(
     *,
     data: dict[str, Any] | None = None,
     cookie: str | None = None,
+    max_time: int = _GRPCURL_MAX_TIME,
 ) -> dict[str, Any]:
     """Unary gRPC call via grpcurl; returns the decoded response message."""
 
-    argv = _grpcurl_argv(dev, method, data=data, cookie=cookie, max_time=120)
+    argv = _grpcurl_argv(dev, method, data=data, cookie=cookie, max_time=max_time)
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, check=True)
+        proc = subprocess.run(argv, capture_output=True, text=True, check=True, timeout=max_time)
     except subprocess.CalledProcessError as e:
         raise Abort(f"{method} failed: {e.stderr.strip()}") from None
+    except subprocess.TimeoutExpired:
+        raise Abort(f"{method} did not answer within {max_time}s") from None
     try:
         response = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError as e:

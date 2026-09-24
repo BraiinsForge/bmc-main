@@ -1154,24 +1154,38 @@ def test_restart_compositor_restarts_by_default() -> None:
     assert _restarted(backend)
 
 
+_ORCHESTRATOR_GONE = "{}"
+_ORCHESTRATOR_LISTED = '{"bmc-nix-service-orchestrator": {}}'
+
+
+def _await_activation(backend: _Exec, *, old_pid: catalog.Pid | None) -> str:
+    return catalog.await_package_activation(
+        Device("h", backend=backend), old_pid=old_pid, sleep=lambda _s: None, clock=_ticking_clock()
+    )
+
+
 def test_await_package_activation_reports_orchestrator_restart() -> None:
     """A pid that moved across the activation means the reload already ran."""
-    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "999"}))
-    catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": _ORCHESTRATOR_GONE, "pidof": "999"}))
+    _await_activation(backend, old_pid=catalog.Pid("111"))
     assert not _restarted(backend)
 
 
 def test_await_package_activation_reports_compositor_start() -> None:
-    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "999"}))
-    catalog.await_package_activation(Device("h", backend=backend), old_pid=None)
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": _ORCHESTRATOR_GONE, "pidof": "999"}))
+    _await_activation(backend, old_pid=None)
     assert not _restarted(backend)
 
 
 def test_await_package_activation_reports_targeted_reload(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "111", "test -x": "yes"}))
-    catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    backend = _Exec(
+        _routes(
+            {"bmc-nix-service-orchestrator": _ORCHESTRATOR_GONE, "pidof": "111", "test -x": "yes"}
+        )
+    )
+    _await_activation(backend, old_pid=catalog.Pid("111"))
     assert not _restarted(backend)
     assert "compositor undisturbed" in capsys.readouterr().out
 
@@ -1179,23 +1193,27 @@ def test_await_package_activation_reports_targeted_reload(
 def test_await_package_activation_aborts_when_the_orchestrator_lingers() -> None:
     """Sampling the compositor while reconciliation still runs
     would let the stage claim an outcome the orchestrator is about to invalidate."""
-    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "555", "pidof": "111"}))
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": _ORCHESTRATOR_LISTED, "pidof": "111"}))
     with pytest.raises(Abort, match="still reconciling"):
-        catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+        _await_activation(backend, old_pid=catalog.Pid("111"))
     assert not _restarted(backend)
 
 
 def test_await_package_activation_rejects_a_core_without_targeted_reload() -> None:
-    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "111", "test -x": "no"}))
+    backend = _Exec(
+        _routes(
+            {"bmc-nix-service-orchestrator": _ORCHESTRATOR_GONE, "pidof": "111", "test -x": "no"}
+        )
+    )
     with pytest.raises(Abort, match="deploy a current core"):
-        catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+        _await_activation(backend, old_pid=catalog.Pid("111"))
     assert not _restarted(backend)
 
 
 def test_await_package_activation_rejects_a_stopped_compositor() -> None:
-    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": ""}))
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": _ORCHESTRATOR_GONE, "pidof": ""}))
     with pytest.raises(Abort, match="not running"):
-        catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+        _await_activation(backend, old_pid=catalog.Pid("111"))
     assert not _restarted(backend)
 
 
@@ -1869,6 +1887,168 @@ def test_remove_package_skips_when_absent() -> None:
     assert all("remove-packages" not in run[-1] for run in backend.runs)
 
 
+_WIDGET_UID = "7cb584a8-1f26-42a0-867e-955aadd2391c"
+
+
+def _installed_widget_cycle() -> catalog.UpgradeCycle:
+    cycle = _cycle()
+    cycle.widget_uid = _WIDGET_UID
+    cycle.cookie = "session_id=before-install"
+    cycle.server_instance = "instance-before"
+    return cycle
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class _Activation:
+    """A device finishing activation: the orchestrator stays registered for
+    `orchestrator_polls` ubus lookups, then bmc answers instance-id polls from
+    `instances`, repeating the last answer. None is a refused connection."""
+
+    def __init__(
+        self,
+        clock: _Clock,
+        orchestrator_polls: int,
+        instances: list[str | None],
+        widgets: list[str],
+    ) -> None:
+        self.clock = clock
+        self.orchestrator_polls = orchestrator_polls
+        self.instances = instances
+        self.widgets = widgets
+        self.instance_polls = 0
+        self.max_times: list[tuple[float, object]] = []
+        self.registry_read = False
+
+    @property
+    def orchestrator_gone(self) -> bool:
+        return self.orchestrator_polls <= 0
+
+    def device(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "ubus call service list" in cmd:
+            self.orchestrator_polls -= 1
+            return _cp(
+                argv, "{}" if self.orchestrator_gone else '{"bmc-nix-service-orchestrator":{}}'
+            )
+        assert "list-packages" in cmd, cmd
+        return _cp(argv, _list_packages("core", "widget-blockheight"))
+
+    def grpc(self, _dev: Device, method: str, **kwargs: object) -> dict[str, object]:
+        if method == "MetadataService/GetServerInstance":
+            assert self.orchestrator_gone, (
+                "an id read mid-activation may come from a bmc about to stop"
+            )
+            self.max_times.append((self.clock.now, kwargs.get("max_time")))
+            instance = self.instances[min(self.instance_polls, len(self.instances) - 1)]
+            self.instance_polls += 1
+            if instance is None:
+                raise Abort(f"{method} failed: connect: connection refused")
+            return {"serverInstanceId": instance}
+        if method == "AuthenticationService/Login":
+            return {"token": "fresh"}
+        assert method == "SceneManagementService/GetAvailableWidgets"
+        assert kwargs.get("cookie") == "session_id=fresh", "the pre-upgrade session may be dead"
+        self.registry_read = True
+        return {"widgets": [{"uid": uid} for uid in self.widgets]}
+
+
+def _verify_against(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    orchestrator_polls: int = 3,
+    instances: list[str | None],
+    widgets: list[str] | None = None,
+) -> tuple[_Activation, _Clock]:
+    clock = _Clock()
+    activation = _Activation(
+        clock, orchestrator_polls, instances, [_WIDGET_UID] if widgets is None else widgets
+    )
+    monkeypatch.setattr(catalog, "_grpcurl", activation.grpc)
+    catalog.verify_widget_installed(
+        Device("h", backend=_Exec(activation.device)),
+        _installed_widget_cycle(),
+        "widget-blockheight",
+        sleep=clock.sleep,
+        clock=clock.monotonic,
+    )
+    return activation, clock
+
+
+def test_verify_widget_installed_reads_the_registry_of_the_restarted_bmc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An install plan that also carries core restarts bmc during activation;
+    the registry that counts is the new bmc's, once it serves."""
+    instances = [None, None, "instance-after"]
+    activation, _clock = _verify_against(monkeypatch, instances=instances)
+    assert activation.instance_polls == len(instances)
+    assert activation.registry_read
+
+
+def test_verify_widget_installed_needs_no_wait_when_bmc_was_left_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A widget-only install leaves bmc running; once the orchestrator is gone,
+    the unchanged id settles it without sitting out a timer."""
+    activation, clock = _verify_against(
+        monkeypatch, orchestrator_polls=0, instances=["instance-before"]
+    )
+    assert activation.instance_polls == 1
+    assert activation.registry_read
+    assert clock.now == 0
+
+
+def test_verify_widget_installed_bounds_each_poll_by_the_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One hung poll must not stretch the ready budget past its cap."""
+    activation, _clock = _verify_against(
+        monkeypatch, orchestrator_polls=0, instances=[*[None] * 30, "instance-after"]
+    )
+    for at, max_time in activation.max_times:
+        assert isinstance(max_time, int)
+        assert at + max_time <= catalog._BMC_READY_TIMEOUT + 1
+
+
+def test_verify_widget_installed_fails_when_bmc_never_serves_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(Abort, match="did not serve again"):
+        _verify_against(monkeypatch, instances=[None])
+
+
+def test_verify_widget_installed_fails_when_the_orchestrator_never_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(Abort, match="did not disappear"):
+        _verify_against(monkeypatch, orchestrator_polls=10_000, instances=["instance-after"])
+
+
+@pytest.mark.parametrize("listed", ["", "Command failed: Request timed out"])
+def test_a_failed_orchestrator_lookup_does_not_count_as_gone(listed: str) -> None:
+    # Reading it as gone would let the registry check run before a restart.
+    backend = _Exec(_routes({"service list": listed}))
+    assert catalog._orchestrator_present(Device("h", backend=backend), "q") is not None
+
+
+def test_verify_widget_installed_fails_when_the_registry_never_exposes_the_widget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waiting out a restart must not mask a broken post-install refresh."""
+    with pytest.raises(Abort, match="not exposed by the registry"):
+        _verify_against(monkeypatch, instances=["instance-after"], widgets=["some-other-widget"])
+
+
 # ── sysupgrade e2e ────────────────────────────────────────────────────────────
 
 _NIX_ERA_EXTRA = ("rootfs.img", "bmc-nix-cli", "servers.json.default")
@@ -2241,7 +2421,7 @@ def _cleardown_routes(
             state["umounts"] += 1
         gone = state["deleted"] and not orchestrator_lingers
         outputs = {
-            "service list": "" if gone else '{"bmc-nix-service-orchestrator":{}}',
+            "service list": "{}" if gone else '{"bmc-nix-service-orchestrator":{}}',
             "/proc/mounts": "" if state["umounts"] >= mount_layers else "/dev/x /nix ext4 rw 0 0",
             "readlink -f": _GEN,
             "/proc/[0-9]*": holders,
@@ -2313,7 +2493,7 @@ def test_cleardown_clears_a_stale_orchestrator_without_a_generation() -> None:
         if "service delete" in cmd:
             state["deleted"] = True
         if "service list" in cmd:
-            return _cp(argv, "" if state["deleted"] else '{"bmc-nix-service-orchestrator":{}}')
+            return _cp(argv, "{}" if state["deleted"] else '{"bmc-nix-service-orchestrator":{}}')
         if "[ -d /mnt/data/nix ]" in cmd:
             return _cp(argv, "yes")
         return _cp(argv)
@@ -3003,7 +3183,7 @@ def _e2e_full_routes(sha_a: str, sha_b: str) -> _Respond:
             "MemAvailable": "524288",
             "sha256sum": sha_a if "a.tar" in cmd else sha_b,
             "dd bs=64": "64",
-            "service list": "",
+            "service list": "{}",
             "[ -f /mnt/data/nix/.sysupgrade-e2e-marker ]": "yes" if state["marker"] else "",
             "/proc/mounts": "/dev/x /nix ext4 rw 0 0" if state["mounted"] else "",
             "readlink -f": _GEN if state["flashes"] < 2 else _GEN.replace("/5", "/6"),

@@ -114,9 +114,14 @@ Then:
    name, category, icon).
 3. **Check for install** — `CheckForUpgrade` with `installPackages: [WIDGET]` must plan the widget as an added change
    and return an upgrade id.
-4. **Run upgrade** — the same `StartUpgrade` stream assertion as stage 8 above.
-5. **Verify widget installed** — the widget is back in `list-packages` and its uid is exposed by
-   `SceneManagementService/GetAvailableWidgets`, proving the running registry picked it up, not just the profile.
+4. **Snapshot bmc instance** — record the running bmc's `MetadataService/GetServerInstance` id.
+5. **Run upgrade** — the same `StartUpgrade` stream assertion as stage 8 above.
+6. **Verify widget installed** — the widget is back in `list-packages` and its uid is exposed by
+   `SceneManagementService/GetAvailableWidgets`, proving the running registry picked it up, not just the profile. A plan
+   that also carries core restarts bmc after the stream finishes, so the check first waits for the activation's
+   `bmc-nix-service-orchestrator` to deregister, which it does only after its service restarts. It then polls the
+   instance id until bmc serves, within 60 s: an unchanged id means bmc was left running, a changed one that it
+   restarted.
 
 The run is self-cleaning device-side — the reinstall returns the device to its baseline — and the server registry and
 `nix.conf` are captured and restored exactly as with `upgrade-e2e`, so the cleanup below applies.

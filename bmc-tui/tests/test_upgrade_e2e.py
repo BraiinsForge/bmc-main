@@ -159,6 +159,7 @@ def test_the_widget_install_harness_restores_through_the_same_session(
         "remove_package",
         "list_installable_widgets",
         "check_for_install",
+        "snapshot_server_instance",
         "verify_widget_installed",
     ):
         monkeypatch.setattr(catalog, name, lambda *_a, **_k: None)

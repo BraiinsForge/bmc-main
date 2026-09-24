@@ -87,6 +87,7 @@ class InstallWidgetE2e:
             catalog.remove_package(dev, cycle, self.widget)
             catalog.list_installable_widgets(dev, cycle, self.widget)
             catalog.check_for_install(dev, cycle, self.widget)
+            catalog.snapshot_server_instance(dev, cycle)
             catalog.run_upgrade(dev, cycle)
             catalog.verify_widget_installed(dev, cycle, self.widget)
 
