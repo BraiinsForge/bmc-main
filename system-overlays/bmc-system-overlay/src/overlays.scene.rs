@@ -65,7 +65,7 @@ fn draw_backdrop(r: &mut dyn Renderer, w: f32, h: f32, flat: bool) {
 fn tray_view(product: Product) -> SettingsTrayView {
     let (hostname, ip, ssid, brightness) = match product {
         Product::Bmc100 => ("braiins-deck", "192.168.1.42", "Braiins-WiFi", 70),
-        Product::Bmm100 => ("braiins-micro", "10.0.0.99", "Garage-WiFi", 45),
+        Product::Bmm100 => unreachable!("BUG: BMM100 has no settings tray, so no page stages one"),
         Product::Bmm101 => ("braiins-mini", "10.0.0.42", "Workshop-WiFi", 55),
         Product::Bfm100 => ("braiins-frame", "10.0.0.7", "Studio-WiFi", 60),
     };
@@ -1049,20 +1049,6 @@ mod settings_tray_bmc100 {
     #[scene("Settings Tray", default)]
     fn bmc100(ctx: &mut SceneCtx, ui: &mut Ui) {
         settings_tray_screens(ctx, ui, Product::Bmc100);
-    }
-}
-
-mod settings_tray_bmm100 {
-    use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
-    use bmc_platform::Product;
-
-    use super::settings_tray_screens;
-
-    scene_meta! { title: "Overlays / Settings Tray / BMM100" }
-
-    #[scene("Settings Tray", default)]
-    fn bmm100(ctx: &mut SceneCtx, ui: &mut Ui) {
-        settings_tray_screens(ctx, ui, Product::Bmm100);
     }
 }
 
