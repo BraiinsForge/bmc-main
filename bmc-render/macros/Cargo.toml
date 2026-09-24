@@ -7,6 +7,11 @@ license = "GPL-3.0-or-later"
 [lib]
 proc-macro = true
 
+[features]
+# A mesh `include_mesh!` cannot pack still compiles and warns at the call site,
+# carrying its error for `Draw::mesh` to show in its place.
+deferred-mesh-errors = []
+
 [dependencies]
 bmc-render-skin = { path = "../skin" }
 bmc-svg-compiler = { path = "../../bmc-wasm-runtime/svg-compiler" }

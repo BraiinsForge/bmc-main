@@ -12,6 +12,9 @@ math-3d = ["glam"]
 # Enable `profile::span`/`report` (fuel-based section profiling).
 # Off by default so production widgets carry no profiling code.
 profiling = []
+# Forwards `bmc-render-macros/deferred-mesh-errors` for a native host to opt into;
+# off, a mesh `include_mesh!` cannot pack fails the build, as a widget's must.
+deferred-mesh-errors = ["bmc-render-macros/deferred-mesh-errors"]
 
 [dependencies]
 bmc-led = { path = "../../bmc-led", default-features = false }

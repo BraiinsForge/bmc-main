@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 
 use bmc_wasm_protocol::PackageAssetKind;
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::{LitStr, parse_macro_input};
 
 /// Resolve an asset path relative to `CARGO_MANIFEST_DIR`.
@@ -236,6 +236,10 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
 /// - Texture > 1024x1024
 /// - Non-triangulated faces
 ///
+/// With the `deferred-mesh-errors` feature, a mesh that fails any of these
+/// compiles anyway: `Draw::mesh` draws the error where the mesh would be,
+/// and the call site gets a warning.
+///
 /// # Usage
 ///
 /// ```ignore
@@ -247,9 +251,47 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn include_mesh(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
-    match include_mesh_impl(&path_lit) {
+    let packed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        include_mesh_impl(&path_lit)
+    }))
+    .unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("packing the mesh panicked");
+        Err(syn::Error::new(path_lit.span(), message))
+    });
+    match packed {
         Ok(stream) => stream.into(),
+        Err(e) if cfg!(feature = "deferred-mesh-errors") => failed_mesh(&path_lit, &e).into(),
         Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// A mesh that `Draw::mesh` shows as `error` in the space it would have filled.
+///
+/// The call to a deprecated function makes the failure a warning at the call site,
+/// which a lint run that denies warnings still fails on.
+/// It is warned locally, since the workspace and the gallery allow `deprecated`.
+fn failed_mesh(path_lit: &LitStr, error: &syn::Error) -> proc_macro2::TokenStream {
+    let rel_path = path_lit.value();
+    let message = format!("include_mesh!({rel_path:?}) failed: {error}");
+    let name = asset_tag(&rel_path);
+    let source = static_asset_source(PackageAssetKind::Mesh, &name, &[], &quote! { &[] });
+    quote_spanned! {path_lit.span()=>
+        {
+            #[deprecated(note = #message)]
+            const fn include_mesh_failed() {}
+            #[warn(deprecated)]
+            const _: () = include_mesh_failed();
+            bmc_wasm_sdk::Mesh {
+                source: #source,
+                face_normals: &[],
+                name: #name,
+                error: Some(#message),
+            }
+        }
     }
 }
 
@@ -303,6 +345,7 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
                 source: #source,
                 face_normals: &[#(#normal_arrays),*],
                 name: #name,
+                error: None,
             }
         }
     })

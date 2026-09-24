@@ -44,8 +44,8 @@ use bmc_wasm_protocol::{
     Dash, Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
     NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW,
     NODE_SCROLL, NODE_SKELETON, NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, ProgressKind,
-    RelTimeClamp, RelTimeFormat, SkeletonKind, SvgId, TagIconMode, TagKind, WHITE, encode_arc_cap,
-    encode_arc_fill, encode_arc_segments, encode_fill,
+    RED_50, RelTimeClamp, RelTimeFormat, SkeletonKind, SvgId, TagIconMode, TagKind, TextAlign,
+    VerticalAlign, WHITE, encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -1120,6 +1120,8 @@ impl Draw {
     /// camera, and optional directional lighting. The mesh is rendered to an
     /// offscreen FBO on the GPU and composited into the 2D scene by femtovg.
     ///
+    /// A mesh `include_mesh!` could not pack draws its [`Mesh::error`] in its place.
+    ///
     /// # Examples
     /// ```ignore
     /// Draw::mesh(0.0, 0.0, 200.0, 200.0, &SUZANNE, MeshView {
@@ -1129,6 +1131,15 @@ impl Draw {
     /// ```
     #[must_use]
     pub fn mesh(x: f32, y: f32, w: f32, h: f32, mdl: &Mesh, view: MeshView) -> Self {
+        if let Some(error) = mdl.error {
+            let style = TextStyle {
+                color: RED_50,
+                align: TextAlign::Center,
+                vertical_align: VerticalAlign::Center,
+                ..TextStyle::default()
+            };
+            return Self::autofit_text(x, y, w, h, error, style);
+        }
         let mesh_id = ensure_mesh_registered(mdl);
         let light = view.light.unwrap_or(crate::mesh::LightAngles {
             pitch: f32::NAN,
@@ -2908,5 +2919,30 @@ mod autofit_text_tests {
         };
         assert_eq!(mode, AutoFit::Shrink);
         assert_eq!((min_size, max_size), (0, 0));
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod failed_mesh_tests {
+    use super::*;
+    use bmc_wasm_protocol::StaticAssetSource;
+
+    /// What `include_mesh!` leaves behind in a build that defers its errors.
+    static FAILED: Mesh = Mesh {
+        source: StaticAssetSource::embedded(&[]),
+        face_normals: &[],
+        name: "failed-mesh-test",
+        error: Some("include_mesh!(\"missing.glb\") failed: mesh file not found"),
+    };
+
+    #[test]
+    fn a_mesh_that_failed_to_pack_draws_its_error_in_its_place() {
+        let draw = Draw::mesh(10.0, 20.0, 200.0, 100.0, &FAILED, MeshView::default());
+
+        let Draw::AutofitText { text, .. } = draw else {
+            panic!("a failed mesh drew {draw:?}");
+        };
+        assert_eq!(Some(text.as_str()), FAILED.error);
     }
 }

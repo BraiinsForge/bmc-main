@@ -41,6 +41,9 @@ pub struct Mesh {
     pub face_normals: &'static [[f32; 3]],
     /// Stable, unique-per-host registration tag (e.g. `"crate::stem"`).
     pub name: &'static str,
+    /// Why `include_mesh!` could not pack the mesh, in a build that defers
+    /// its errors to [`Draw::mesh`](crate::tree::Draw::mesh); `None` otherwise.
+    pub error: Option<&'static str>,
 }
 
 /// Directional light angles, in degrees.

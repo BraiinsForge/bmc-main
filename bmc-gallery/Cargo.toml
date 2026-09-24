@@ -101,7 +101,7 @@ bmc-render-keyboard = { path = "../bmc-render/keyboard" }
 bmc-render-skin = { path = "../bmc-render/skin" }
 # The upgrade scene's view types, which the overlay crate takes but does not re-export.
 bmc-system-overlay = { path = "../system-overlays/bmc-system-overlay" }
-bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk" }
+bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk", features = ["deferred-mesh-errors"] }
 braiins-pool = { path = "../widgets-wasm/braiins-pool" }
 clock = { path = "../widgets-wasm/clock" }
 fleet-management = { path = "../widgets-wasm/fleet-management" }
