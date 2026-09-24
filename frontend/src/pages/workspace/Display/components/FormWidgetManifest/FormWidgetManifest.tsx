@@ -47,7 +47,8 @@ export interface WidgetManifestFormProps {
     sizeOptions?: Array<Exclude<pb.WidgetSize, pb.WidgetSize.UNSPECIFIED>>;
     onSizeChange?(size: pb.WidgetSize): void;
 
-    accounts?: pb.Account[];
+    /** `null` until loaded, which is not the same as there being none. */
+    accounts: null | pb.Account[];
     credentialTypes?: pb.CredentialTypeLookup;
     credentialBindings?: Record<string, string>;
     onCredentialBindingChange?(slotKey: string, accountId: string): void;
@@ -86,7 +87,7 @@ function accountOption(icon: pb.Icon | undefined, plainId?: string) {
 
 interface CredentialSlotFieldProps {
     slot: pb.CredentialSlotDefinition;
-    accounts: pb.Account[];
+    accounts: null | pb.Account[];
     credentialTypes: pb.CredentialTypeLookup;
     boundAccountId: string;
     error?: string;
@@ -100,6 +101,26 @@ interface CredentialSlotFieldProps {
 function CredentialSlotField(props: CredentialSlotFieldProps) {
     const { slot, accounts, credentialTypes, boundAccountId, error, onChange, firstOfType } = props;
     const { formatMessage } = useIntl();
+
+    const labelText = slot.required
+        ? formatMessage({ defaultMessage: '{label} (required)' }, { label: slot.label })
+        : slot.label;
+
+    // Judged against a list that has not arrived, every bound slot would read as invalid.
+    if (!accounts) {
+        return (
+            <BoundDropdown<pb.Account>
+                id={$(`credential-${slot.key}`)}
+                labelText={labelText}
+                placeholderText={formatMessage({ defaultMessage: 'Accounts not loaded' })}
+                helperText={slot.description}
+                items={[]}
+                value={null}
+                itemToString={a => a?.name ?? ''}
+                disabled
+            />
+        );
+    }
 
     const none = { ...UNBOUND, name: formatMessage({ defaultMessage: '— None —' }) };
     const eligible = accounts.filter(a => a.typeId === slot.typeId);
@@ -125,11 +146,7 @@ function CredentialSlotField(props: CredentialSlotFieldProps) {
         <Fragment>
             <BoundDropdown<pb.Account>
                 id={$(`credential-${slot.key}`)}
-                labelText={
-                    slot.required
-                        ? formatMessage({ defaultMessage: '{label} (required)' }, { label: slot.label })
-                        : slot.label
-                }
+                labelText={labelText}
                 placeholderText={none.name}
                 helperText={slot.description}
                 items={items}
@@ -186,7 +203,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
         size,
         sizeOptions,
         onSizeChange,
-        accounts = [],
+        accounts,
         credentialTypes = new Map(),
         credentialBindings = {},
         onCredentialBindingChange,
@@ -254,7 +271,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
 
 export function FormWidgetManifest(props: FormWidgetManifestProps) {
     const { isOpen, onSave, onCancel, ...formProps } = props;
-    const { manifest, errors, accounts = [], credentialBindings = {}, onCredentialBindingChange } = formProps;
+    const { manifest, errors, accounts, credentialBindings = {}, onCredentialBindingChange } = formProps;
     const { formatMessage } = useIntl();
 
     if (!manifest) return null;
@@ -265,6 +282,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
     // the server refuses it, so offering the click only earns a toast after the fact.
     const misbound =
         !!onCredentialBindingChange &&
+        !!accounts &&
         manifest.credentials.some(slot => isMisbound(slot, accounts, credentialBindings[slot.key] ?? ''));
 
     return (

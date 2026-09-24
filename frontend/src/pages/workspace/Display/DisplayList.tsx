@@ -94,7 +94,7 @@ interface State {
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
     timezones: pb.Timezone[];
-    accounts: pb.Account[];
+    accounts: null | pb.Account[];
     credentialTypes: pb.CredentialTypeLookup;
 
     cycle: {
@@ -117,7 +117,7 @@ const getInitialState = (): State => ({
     manifestLookup: new Map(),
     manifestsLoading: false,
     timezones: [],
-    accounts: [],
+    accounts: null,
     credentialTypes: new Map(),
 
     cycle: {
@@ -528,7 +528,7 @@ class View extends Component<Props, State> {
         if (!manifest) return undefined;
         return fn.credentialBindingsFor(write, {
             manifest,
-            accounts: this.state.accounts,
+            accounts: this.state.accounts ?? [],
             original: originalCredentialBindings,
             edited: editedBindings,
         });
@@ -542,6 +542,7 @@ class View extends Component<Props, State> {
     ) {
         if (!update) return undefined;
         const accounts = (await this.#loadAccounts(options)) ?? this.state.accounts;
+        if (!accounts) return update;
         return { bindings: fn.withoutDeletedAccounts(update.bindings, accounts) };
     }
 

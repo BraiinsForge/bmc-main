@@ -61,6 +61,7 @@ describe('FormWidgetManifest', () => {
                 errors={{ global: [], fields: { count: ['Not an integer'] } }}
                 onParamChange={() => {}}
                 timezones={[]}
+                accounts={[]}
             />,
         );
         expect(getByText('Not an integer')).toBeTruthy();
@@ -80,6 +81,7 @@ describe('FormWidgetManifest', () => {
                     captured = [k, v];
                 }}
                 timezones={[]}
+                accounts={[]}
             />,
         );
         const input = document.body.querySelector<HTMLInputElement>('input[type="number"]');
@@ -129,11 +131,14 @@ describe('FormWidgetManifest credential slots', () => {
             o => o.querySelector('span')?.textContent === name,
         );
 
-    const renderSlots = (props: {
+    const renderSlots = ({
+        accounts = ACCOUNTS,
+        ...props
+    }: {
         required?: boolean;
         bindings?: Record<string, string>;
         errors?: ParamsFormErrors;
-        accounts?: pb.Account[];
+        accounts?: null | pb.Account[];
         onChange?(slotKey: string, accountId: string): void;
     }) =>
         render(
@@ -146,7 +151,7 @@ describe('FormWidgetManifest credential slots', () => {
                 errors={props.errors ?? null}
                 onParamChange={() => {}}
                 timezones={[]}
-                accounts={props.accounts ?? ACCOUNTS}
+                accounts={accounts}
                 credentialBindings={props.bindings ?? {}}
                 onCredentialBindingChange={props.onChange ?? (() => {})}
             />,
@@ -271,6 +276,25 @@ describe('FormWidgetManifest credential slots', () => {
         const { getByText } = renderSlots({ bindings: { pool: 'a1', retired: 'a2' } });
         const done = getByText('Done').closest('button');
         expect(done?.disabled).toBe(false);
+    });
+
+    test('before the accounts load, a bound slot is not called invalid', () => {
+        const { queryByText } = renderSlots({ bindings: { pool: 'a1' }, accounts: null });
+
+        expect(queryByText('Takes a braiins-pool account — pick another, or clear it.')).toBeNull();
+    });
+
+    test('before the accounts load, saving is not blocked', () => {
+        const { getByText } = renderSlots({ bindings: { pool: 'a1' }, accounts: null });
+        const done = getByText('Done').closest('button');
+        expect(done?.disabled).toBe(false);
+    });
+
+    test('before the accounts load, the picker says so instead of offering nothing', () => {
+        const { queryByText } = renderSlots({ bindings: { pool: 'a1' }, accounts: null });
+
+        expect(queryByText('Accounts not loaded')).toBeTruthy();
+        expect(queryByText('No matching account')).toBeNull();
     });
 
     test('a server violation for the slot shows on its picker', () => {

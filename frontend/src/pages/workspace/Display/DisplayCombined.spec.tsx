@@ -672,6 +672,21 @@ describe('editing a placed widget', () => {
         expect(updates.map(u => u.credentialBindings)).toEqual([undefined, undefined]);
     });
 
+    test('until the accounts load, the picker says so instead of judging the binding', async () => {
+        mockServer(() => ({}));
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: ({ conf }) => {
+                conf({ delay: 300 });
+                return { accounts: [] };
+            },
+        });
+
+        await openEditor();
+
+        await waitFor(() => expect(document.body.textContent).toContain('Accounts not loaded'));
+        await waitFor(() => expect(document.body.textContent).not.toContain('Accounts not loaded'));
+    });
+
     test('Done leaves untouched bindings to the server', async () => {
         const updates: pb.UpdateWidgetRequest[] = [];
         mockServer(({ req }) => {

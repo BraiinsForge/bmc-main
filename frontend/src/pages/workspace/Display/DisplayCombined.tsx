@@ -96,7 +96,7 @@ interface State {
     scene: null | pb.Scene;
     runningWidgets: null | { count: number; max: number };
     timezones: pb.Timezone[];
-    accounts: pb.Account[];
+    accounts: null | pb.Account[];
     credentialTypes: pb.CredentialTypeLookup;
 
     openDialogKind: OpenDialogKind;
@@ -113,7 +113,7 @@ const getInitialState = (): State => ({
     scene: null,
     runningWidgets: null,
     timezones: [],
-    accounts: [],
+    accounts: null,
     credentialTypes: new Map(),
     openDialogKind: null,
     addPosition: null,
@@ -552,7 +552,7 @@ class View extends Component<Props, State> {
         if (!manifest) return undefined;
         return fn.credentialBindingsFor(write, {
             manifest,
-            accounts: this.state.accounts,
+            accounts: this.state.accounts ?? [],
             original: undo.credentialBindings,
             edited: editedBindings,
         });
@@ -566,6 +566,7 @@ class View extends Component<Props, State> {
     ) {
         if (!update) return undefined;
         const accounts = (await this.#loadAccounts(options)) ?? this.state.accounts;
+        if (!accounts) return update;
         return { bindings: fn.withoutDeletedAccounts(update.bindings, accounts) };
     }
 

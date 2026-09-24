@@ -1072,6 +1072,22 @@ describe('dialog session lifecycle', () => {
             expect(applied).toEqual(['pool-b', 'pool-a']);
         });
 
+        test('until the accounts load, the picker says so instead of judging the binding', async () => {
+            mockServer(() => ({}));
+            registerMocks(pb.services.AccountManagementService, {
+                getAllAccounts: ({ conf }) => {
+                    conf({ delay: 1000 });
+                    return { accounts: [] };
+                },
+            });
+
+            await openEditor();
+            const beforeLoad = document.body.textContent;
+            await flush(1000);
+
+            expect(beforeLoad).toContain('Accounts not loaded');
+        });
+
         test('Done leaves untouched bindings to the server', async () => {
             const updates: pb.UpdateWidgetRequest[] = [];
             mockServer(({ req }) => {
