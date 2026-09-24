@@ -47,7 +47,9 @@ The layout engine mirrors CSS flexbox on both axes: `cross_align` (`CrossAlign`)
 distribution:
 
 - Right-align a value in a label/value row: give the label `flex: 1.0` and set the value's `align: TextAlign::Right`.
-  The label grows and pushes the value to the trailing edge.
+  The label grows and pushes the value to the trailing edge. On a text, `flex` only grows it — unlike a container's, it
+  keeps the text's own width as its basis — so it does not decide which side gives way when the row runs out. See
+  [Let the renderer cut server strings](#let-the-renderer-cut-server-strings).
 - Push one row of many to the bottom: a single `spacer(1.0)` above it, where `SpaceBetween` would spread all rows.
 
 ```rust
@@ -62,6 +64,44 @@ row(props!(cross_align: CrossAlign::Center), [
 Do not scale font sizes by viewport width. Pick layout bands — column count, spacing, which fields are visible — from
 the actual width and height, but hold font sizes fixed. When space runs out, hide secondary fields rather than shrinking
 or overlapping text.
+
+## Let the renderer cut server strings
+
+Never budget a string by counting its characters: in a proportional font the glyph mix, not the count, decides what
+fits. Set `text_overflow` on the text instead, and the renderer cuts it at its box.
+
+- `TextOverflow::Ellipsis` keeps the text on one line and ends it in a shaped `…` where the box runs out. Prefer it for
+  right-aligned text: once cut, the line fits its box, so it stays right-aligned.
+- `TextOverflow::Clip` keeps the text on one line and cuts it at the box's inline edge. An overflowing line starts at
+  the box's left edge whatever its `align`, as in CSS, so right-aligned text loses its tail.
+- Neither mode soft-wraps. Hard line breaks still break, and `max_width` still caps the box.
+- The `…` takes the first span's style.
+- Canvas text (`Draw::text`, `Draw::autofit_text`) ignores `text_overflow`.
+
+Both modes shrink in a flex row — to nothing under `Clip`, to the `…` under `Ellipsis` — and so do the containers around
+them. Whether a text gets a box narrower than itself depends on where it sits:
+
+- A direct child of a column is bounded by the column's width.
+- An auto-width row whose parent does not stretch it (a `cross_align` other than `Stretch`, or a `center`) sizes to its
+  content, so nothing in it is ever cut.
+- A row that overflows shrinks every child that can shrink, in proportion to its width. Multi-word `Wrap` text wraps to
+  its widest word, and an empty fixed-size box — an image placeholder — shrinks to nothing. Only a canvas with an
+  explicit size, a single word, and a box around a fixed-size child keep their width.
+
+Three tools decide who gives way:
+
+- **Yielding run**: put the text that should give way in `row(props!(flex: 1.0), [...])`. A container with `flex` starts
+  from zero and grows into what its siblings leave, so only the run is cut.
+- **Cap**: `max_width` in the text's style bounds it even where its parent offers more.
+- **Fixed text**: pass a label that must keep its width through `typography::unbroken`. It can no longer wrap, so the
+  row takes its overrun out of the text beside it.
+
+```rust
+row(props!(cross_align: CrossAlign::Center, justify_content: Justify::SpaceBetween), [
+    text(typography::unbroken(label), style!(color: TITLE)),
+    text(value, style!(weight: FontWeight::BOLD, align: TextAlign::Right, text_overflow: TextOverflow::Ellipsis)),
+])
+```
 
 ## Model missing data explicitly
 
