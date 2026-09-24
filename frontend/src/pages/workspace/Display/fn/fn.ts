@@ -478,6 +478,74 @@ export function buildWidgetDataStruct(
     return { ok: true, value: pb.create(pb.WidgetDataStructSchema, { fields }) };
 }
 
+// A binding whose account is *gone* never arrives — `effective_bindings` drops it server-side.
+// One whose account is the wrong type does: existence is all that filter checks,
+// and a hand-edited config can mismatch a slot.
+export function isMisbound(slot: pb.CredentialSlotDefinition, accounts: pb.Account[], boundAccountId: string): boolean {
+    return !!boundAccountId && !accounts.some(a => a.id === boundAccountId && a.typeId === slot.typeId);
+}
+
+/** `bindings` less those naming an account that is gone. */
+export function withoutDeletedAccounts(
+    bindings: Record<string, string>,
+    accounts: pb.Account[],
+): Record<string, string> {
+    return Object.fromEntries(
+        Object.entries(bindings).filter(([, accountId]) => accounts.some(a => a.id === accountId)),
+    );
+}
+
+function withoutRetiredSlots(bindings: Record<string, string>, manifest: pb.WidgetManifest): Record<string, string> {
+    return Object.fromEntries(
+        manifest.credentials
+            .filter(slot => Object.hasOwn(bindings, slot.key))
+            .map(slot => [slot.key, bindings[slot.key]]),
+    );
+}
+
+/** Whether the server would accept `bindings` back: every key a declared slot, every account one that fits it. */
+export function credentialBindingsValid(
+    manifest: pb.WidgetManifest,
+    accounts: pb.Account[],
+    bindings: Record<string, string>,
+): boolean {
+    return Object.entries(bindings).every(([key, accountId]) => {
+        const slot = manifest.credentials.find(s => s.key === key);
+        return !!slot && !isMisbound(slot, accounts, accountId);
+    });
+}
+
+export type CredentialBindingsWrite = 'preview' | 'cancel' | 'done';
+
+/**
+ * The bindings a dialog write carries, or `undefined`
+ * to leave the server's own in place.
+ *
+ * None go out until the user changes one, so an edit that never
+ * touched them is not refused for an account deleted since the page loaded.
+ * Slots the manifest no longer declares are left out, the way dropped params are.
+ *
+ * A preview and its cancel also need the set the dialog opened with
+ * to validate, since the cancel has to send that set back.
+ */
+export function credentialBindingsFor(
+    write: CredentialBindingsWrite,
+    session: {
+        manifest: pb.WidgetManifest;
+        accounts: pb.Account[];
+        original: Record<string, string>;
+        edited?: Record<string, string>;
+    },
+): undefined | { bindings: Record<string, string> } {
+    const { manifest, accounts } = session;
+    if (!session.edited) return undefined;
+    const original = withoutRetiredSlots(session.original, manifest);
+    const edited = withoutRetiredSlots(session.edited, manifest);
+    if (write === 'done') return { bindings: edited };
+    if (!credentialBindingsValid(manifest, accounts, original)) return undefined;
+    return { bindings: write === 'cancel' ? original : edited };
+}
+
 /** Get available widget sizes for a given widget position */
 export function getValidWidgetSizes(pool: C.Located[], slot: Pick<C.Located, 'id' | 'position'>): C.Size[] {
     invariant(slot.position, 'slot.position is required');

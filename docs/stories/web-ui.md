@@ -78,11 +78,13 @@ firmware rebuild.
 > As a user, I want to see my parameter changes on the device as I make them, so I can tell whether a setting looks
 > right without committing it.
 
-- Editing a widget's params or size pushes valid changes to the device with a short debounce, so the display reacts as
-  the user types or toggles.
+- Editing a widget's params, size or bound accounts pushes valid changes to the device with a short debounce, so the
+  display reacts as the user types, toggles or picks an account.
+- Account changes go live only while every account the widget opened with is still valid; otherwise they wait for Done.
 - By clicking on Add a widget either as a fullscreen scene or in combined, the coordinator creates the widget on the
   device immediately with its default params; the tile appears live and continues to reflect every form change.
-- Cancelling add/edit dialog removes the widget so the scene is unchanged from before the dialog opened.
+- Cancelling the add dialog removes the new widget; cancelling the edit dialog restores the params, size and accounts
+  the widget had when it opened, less any account deleted since, so the scene is unchanged.
 - Scene preview is exclusive: only one active preview stream is allowed at a time.
 - Previewing a disabled scene temporarily spawns its widgets; ending preview tears those widgets down again.
 - Live application explicitly shows an error to the user, but success presents no toast.

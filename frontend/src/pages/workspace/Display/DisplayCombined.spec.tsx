@@ -27,6 +27,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 
 import DisplayCombined from './DisplayCombined';
 import type { ServiceMocks } from '@/lib/proto';
+import { deferred } from '@/lib/async';
 import { Toaster } from '@/lib/toast';
 import * as pb from '@/proto';
 import { store } from '@/store';
@@ -78,6 +79,7 @@ const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
 const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
 const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
 const WIDGET_1_EDIT_ID = `${WIDGET_ID_PREFIX}widget-1-edit`;
+const COUNT_INPUT_ID = 'bmc-display-comp-manifest-form-param-count';
 
 function elementById(id: string): HTMLElement {
     const el = document.getElementById(id);
@@ -298,6 +300,44 @@ describe('dialog session lifecycle', () => {
         expect(stored).toEqual([]);
     });
 
+    test('cancelling a newly added widget removes it only after a preview still in flight', async () => {
+        const counted = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.SMALL],
+            params: [paramDef('paramInteger', 'count')],
+        });
+        const previewHeld = deferred<void>();
+        let previewRequested = false;
+        const applied: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [counted] }),
+            updateWidget: async () => {
+                previewRequested = true;
+                await previewHeld;
+                applied.push('update');
+                return {};
+            },
+            removeWidget: () => {
+                applied.push('remove');
+                return {};
+            },
+        });
+        const { container } = renderPage();
+
+        await screen.findByText('Running widgets: 0 / 56');
+        clickAddSlot(container);
+        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
+        await waitFor(() => expect(previewRequested).toBe(true));
+        closeManifestEditor();
+        await settle();
+        previewHeld.resolve();
+
+        await waitFor(() => expect(applied).toHaveLength(2));
+        expect(applied).toEqual(['update', 'remove']);
+    });
+
     test('closing the picker after saving a widget leaves that widget in place', async () => {
         const { container } = renderPage();
 
@@ -455,6 +495,321 @@ describe('cancelling an edit', () => {
         expect(revert.size).toBe(pb.WidgetSize.SMALL);
         expect(revert.position?.col).toBe(3);
         expect(revert.params?.fields.count?.kind).toEqual({ case: 'integerValue', value: 7 });
+    });
+});
+
+describe('editing a placed widget', () => {
+    type UpdateWidgetMock = ServiceMocks<typeof pb.services.SceneManagementService>['updateWidget'];
+
+    const pooled = pb.create(pb.WidgetManifestSchema, {
+        uid: 'pool-stats',
+        name: 'Pool Stats',
+        supportedSizes: [pb.WidgetSize.SMALL],
+        params: [paramDef('paramInteger', 'count')],
+        credentials: [
+            pb.create(pb.CredentialSlotDefinitionSchema, { key: 'pool', typeId: 'braiins-pool', label: 'Pool' }),
+        ],
+    });
+    function mockServer(updateWidget: UpdateWidgetMock, boundAccountId = 'pool-a'): void {
+        const widget = pb.create(pb.WidgetSchema, {
+            id: 'widget-1',
+            position: pb.create(pb.WidgetPositionSchema, { row: 0, col: 0 }),
+            size: pb.WidgetSize.SMALL,
+            config: {
+                widgetUid: pooled.uid,
+                params: { fields: { count: { kind: { case: 'integerValue', value: 7 } } } },
+                credentialBindings: { bindings: { pool: boundAccountId } },
+            },
+        });
+        registerMocks(pb.services.SceneManagementService, {
+            getScene: () => ({ scene: combinedScene([widget]), runningWidgetCount: 1, maxRunningWidgetCount: 56 }),
+            getAvailableWidgets: () => ({ widgets: [pooled] }),
+            updateWidget,
+        });
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => ({
+                accounts: [
+                    ...['a', 'b'].map(x =>
+                        pb.create(pb.AccountSchema, {
+                            id: `pool-${x}`,
+                            name: `Pool ${x.toUpperCase()}`,
+                            typeId: 'braiins-pool',
+                        }),
+                    ),
+                    pb.create(pb.AccountSchema, { id: 'token-1', name: 'Some Token', typeId: 'generic-token' }),
+                ],
+            }),
+        });
+    }
+
+    async function openEditor(): Promise<void> {
+        renderPage();
+        await screen.findByText('Running widgets: 1 / 56');
+        fireEvent.click(await waitFor(() => elementById(WIDGET_1_EDIT_ID)));
+    }
+
+    const countOf = (req: pb.UpdateWidgetRequest) => {
+        const kind = req.params?.fields.count?.kind;
+        return kind?.case === 'integerValue' ? kind.value : undefined;
+    };
+
+    async function pickAccount(name: string): Promise<void> {
+        fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('combobox'));
+        const option = await waitFor(() => {
+            const found = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o =>
+                o.textContent?.includes(name),
+            );
+            if (!found) throw new Error(`${name} not offered`);
+            return found;
+        });
+        fireEvent.click(option);
+    }
+
+    test('picking an account previews it on the widget', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        await pickAccount('Pool B');
+
+        await waitFor(() => expect(updates.at(-1)?.credentialBindings?.bindings).toEqual({ pool: 'pool-b' }));
+    });
+
+    test('Cancel restores the account the widget opened with', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        await pickAccount('Pool B');
+        await waitFor(() => expect(updates).toHaveLength(1));
+        closeManifestEditor();
+
+        await waitFor(() => expect(updates).toHaveLength(2));
+        expect(updates[1].credentialBindings?.bindings).toEqual({ pool: 'pool-a' });
+    });
+
+    test('Cancel leaves out an original account deleted while the dialog was open', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        await pickAccount('Pool B');
+        await waitFor(() => expect(updates).toHaveLength(1));
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => ({
+                accounts: [pb.create(pb.AccountSchema, { id: 'pool-b', name: 'Pool B', typeId: 'braiins-pool' })],
+            }),
+        });
+        closeManifestEditor();
+
+        await waitFor(() => expect(updates).toHaveLength(2));
+        expect(updates[1].credentialBindings?.bindings).toEqual({});
+    });
+
+    test('Cancel falls back to the loaded accounts when the re-sync fails', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        await pickAccount('Pool B');
+        await waitFor(() => expect(updates).toHaveLength(1));
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => {
+                throw new ConnectError('connection lost', Code.Unavailable);
+            },
+        });
+        closeManifestEditor();
+
+        await waitFor(() => expect(updates).toHaveLength(2));
+        expect(updates[1].credentialBindings?.bindings).toEqual({ pool: 'pool-a' });
+    });
+
+    test('Done leaves out an account deleted while the dialog was open', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        await pickAccount('Pool B');
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => ({
+                accounts: [pb.create(pb.AccountSchema, { id: 'pool-a', name: 'Pool A', typeId: 'braiins-pool' })],
+            }),
+        });
+        await clickManifestDone();
+
+        await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
+        expect(updates.at(-1)?.credentialBindings?.bindings).toEqual({});
+    });
+
+    test('an account of the wrong type keeps account changes out of the preview and Cancel', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        }, 'token-1');
+
+        await openEditor();
+        await pickAccount('Pool B');
+        await waitFor(() => expect(updates).toHaveLength(1));
+        closeManifestEditor();
+
+        await waitFor(() => expect(updates).toHaveLength(2));
+        expect(updates.map(u => u.credentialBindings)).toEqual([undefined, undefined]);
+    });
+
+    test('Done leaves untouched bindings to the server', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        await clickManifestDone();
+
+        await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
+        expect(updates.map(u => u.credentialBindings)).toEqual([undefined]);
+    });
+
+    test('the account on show stays while the saved dialog animates closed', async () => {
+        mockServer(() => ({}));
+        // A closing modal is `aria-hidden`, so the picker in it is only reachable as a hidden role.
+        const picker = () => within(elementById(MANIFEST_MODAL_ID)).getByRole('combobox', { hidden: true });
+
+        await openEditor();
+        await waitFor(() => expect(picker().textContent).toContain('Pool A'));
+        await clickManifestDone();
+
+        await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
+        expect(picker().textContent).toContain('Pool A');
+    });
+
+    test('Done sends a changed account', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        await pickAccount('Pool B');
+        await clickManifestDone();
+
+        await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
+        expect(updates.at(-1)?.credentialBindings?.bindings).toEqual({ pool: 'pool-b' });
+    });
+
+    test('an edit that never touches an account leaves the bindings to the server', async () => {
+        const updates: pb.UpdateWidgetRequest[] = [];
+        mockServer(({ req }) => {
+            updates.push(req);
+            return {};
+        });
+
+        await openEditor();
+        fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), {
+            target: { value: '8' },
+        });
+        await waitFor(() => expect(updates).toHaveLength(1));
+        closeManifestEditor();
+
+        await waitFor(() => expect(updates).toHaveLength(2));
+        expect(updates.map(u => u.credentialBindings)).toEqual([undefined, undefined]);
+    });
+
+    describe('write ordering', () => {
+        test('Done lands after a preview still in flight', async () => {
+            const previewHeld = deferred<void>();
+            const requested: Array<number | undefined> = [];
+            const applied: Array<number | undefined> = [];
+            mockServer(async ({ req }) => {
+                requested.push(countOf(req));
+                if (countOf(req) === 8) await previewHeld;
+                applied.push(countOf(req));
+                return {};
+            });
+
+            await openEditor();
+            const count = await waitFor(() => elementById(COUNT_INPUT_ID));
+            fireEvent.change(count, { target: { value: '8' } });
+            await waitFor(() => expect(requested).toEqual([8]));
+            fireEvent.change(count, { target: { value: '9' } });
+            await clickManifestDone();
+            await settle();
+            previewHeld.resolve();
+
+            await waitFor(() => expect(applied).toHaveLength(2));
+            expect(applied).toEqual([8, 9]);
+        });
+
+        test('a widget removed right after Cancel waits for the writes before it', async () => {
+            const previewHeld = deferred<void>();
+            const requested: Array<number | undefined> = [];
+            const applied: string[] = [];
+            mockServer(async ({ req }) => {
+                requested.push(countOf(req));
+                if (countOf(req) === 8) await previewHeld;
+                applied.push(`update ${countOf(req)}`);
+                return {};
+            });
+            registerMocks(pb.services.SceneManagementService, {
+                removeWidget: () => {
+                    applied.push('remove');
+                    return {};
+                },
+            });
+
+            await openEditor();
+            fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
+            await waitFor(() => expect(requested).toEqual([8]));
+            closeManifestEditor();
+            await settle();
+            fireEvent.click(elementById(`${WIDGET_ID_PREFIX}widget-1-delete`));
+            await settle();
+            previewHeld.resolve();
+
+            await waitFor(() => expect(applied).toHaveLength(3));
+            expect(applied).toEqual(['update 8', 'update 7', 'remove']);
+        });
+
+        // The server applies the slow preview last unless Cancel waits its turn.
+        // A param edit keeps the revert free of the account re-sync, whose own delay would mask the race.
+        test('Cancel lands after a preview still in flight', async () => {
+            const previewHeld = deferred<void>();
+            const requested: Array<number | undefined> = [];
+            const applied: Array<number | undefined> = [];
+            mockServer(async ({ req }) => {
+                requested.push(countOf(req));
+                if (countOf(req) === 8) await previewHeld;
+                applied.push(countOf(req));
+                return {};
+            });
+
+            await openEditor();
+            fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
+            await waitFor(() => expect(requested).toEqual([8]));
+            closeManifestEditor();
+            await settle();
+            previewHeld.resolve();
+
+            await waitFor(() => expect(applied).toHaveLength(2));
+            expect(applied).toEqual([8, 7]);
+        });
     });
 });
 

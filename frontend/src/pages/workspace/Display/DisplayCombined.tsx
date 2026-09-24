@@ -30,7 +30,7 @@ import * as fn from './fn';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from './fn';
 import { getID } from './const';
 import { toast } from '@/lib/toast';
-import { delay } from '@/lib/async';
+import { delay, serial } from '@/lib/async';
 import { setState } from '@/lib/react';
 
 // App
@@ -66,15 +66,17 @@ interface ManifestFormState {
         params: FormifiedParams;
         size: pb.WidgetSize;
         position: pb.WidgetPosition;
+        credentialBindings: Record<string, string>;
     };
     isNewWidget: boolean;
-    credentialBindings: Record<string, string>;
+    editedBindings?: Record<string, string>;
 }
 
 const noUndo = (): ManifestFormState['undo'] => ({
     params: {},
     size: pb.WidgetSize.UNSPECIFIED,
     position: pb.create(pb.WidgetPositionSchema),
+    credentialBindings: {},
 });
 
 interface Props {
@@ -125,23 +127,29 @@ const getInitialState = (): State => ({
         position: pb.create(pb.WidgetPositionSchema),
         undo: noUndo(),
         isNewWidget: false,
-        credentialBindings: {},
     },
 });
 
-// A saved widget is no longer the dialog's to undo, so its session fields are dropped.
-// `manifest` stays, or the modal would vanish instead of animating closed.
+// A saved widget is no longer the dialog's to undo,
+// so its session fields are dropped.
+//
+// `manifest` and the bindings on show stay, or the modal
+// would change or vanish instead of animating closed.
 const endedManifestSession = (form: ManifestFormState): ManifestFormState => ({
     ...form,
     widgetID: '',
     isNewWidget: false,
-    undo: noUndo(),
+    undo: { ...noUndo(), credentialBindings: form.undo.credentialBindings },
 });
 
 const $ = getID('combined').get;
 
 class View extends Component<Props, State> {
     readonly state = getInitialState();
+
+    // Every widget write queues here, so a preview still
+    // in flight cannot overwrite a later Done, Cancel or drag.
+    #widgetUpdates = serial();
 
     static contextType = AppContext;
     declare context: AppContextType;
@@ -180,13 +188,14 @@ class View extends Component<Props, State> {
     };
 
     private abortLoadAccounts = pb.abort.get();
-    #loadAccounts = async (): Promise<void> => {
+    #loadAccounts = async (): Promise<void | pb.Account[]> => {
         const { formatMessage } = this.props.intl;
 
         try {
             const { signal } = this.abortLoadAccounts.replace();
             const { accounts } = await pb.rpc.accounts.getAllAccounts({}, { signal });
             this.setState({ accounts });
+            return accounts;
         } catch ($) {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
@@ -329,13 +338,15 @@ class View extends Component<Props, State> {
 
         // send the update to the server
         try {
-            await pb.rpc.scenes.updateWidget({
-                sceneId,
-                id: targetWidgetState.id,
-                size: targetWidgetState.size,
-                position: targetWidgetState.position,
-                params: targetWidgetState.config?.params,
-            });
+            await this.#widgetUpdates(() =>
+                pb.rpc.scenes.updateWidget({
+                    sceneId,
+                    id: targetWidgetState.id,
+                    size: targetWidgetState.size,
+                    position: targetWidgetState.position,
+                    params: targetWidgetState.config?.params,
+                }),
+            );
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -409,9 +420,13 @@ class View extends Component<Props, State> {
                 size: widget.size,
                 sizeOptions,
                 position,
-                undo: { params: { ...params }, size: widget.size, position },
+                undo: {
+                    params: { ...params },
+                    size: widget.size,
+                    position,
+                    credentialBindings: { ...bindings },
+                },
                 isNewWidget: false,
-                credentialBindings: { ...bindings },
             },
         });
     };
@@ -435,7 +450,7 @@ class View extends Component<Props, State> {
                 };
             });
 
-            await pb.rpc.scenes.removeWidget({ id: widgetId, sceneId });
+            await this.#widgetUpdates(() => pb.rpc.scenes.removeWidget({ id: widgetId, sceneId }));
         } catch ($) {
             if (pb.abort.is($)) return;
         }
@@ -508,10 +523,28 @@ class View extends Component<Props, State> {
                 // only the slot it went into, for a resize to fit around.
                 undo: { ...noUndo(), position: resolvedPosition },
                 isNewWidget: true,
-                credentialBindings: {},
             },
         });
     };
+
+    #credentialBindingsFor(write: fn.CredentialBindingsWrite) {
+        const { manifest, undo, editedBindings } = this.state.manifestForm;
+        if (!manifest) return undefined;
+        return fn.credentialBindingsFor(write, {
+            manifest,
+            accounts: this.state.accounts,
+            original: undo.credentialBindings,
+            edited: editedBindings,
+        });
+    }
+
+    // An account deleted since the dialog opened is already unbound on the server,
+    // and naming it again would fail the whole write, so the list is re-synced first.
+    async #withoutDeletedAccounts(update: undefined | { bindings: Record<string, string> }) {
+        if (!update) return undefined;
+        const accounts = (await this.#loadAccounts()) ?? this.state.accounts;
+        return { bindings: fn.withoutDeletedAccounts(update.bindings, accounts) };
+    }
 
     #livePreviewWidget = debounce(async (): Promise<void> => {
         const { sceneId } = this.props;
@@ -523,14 +556,18 @@ class View extends Component<Props, State> {
             return;
         }
         const paramsStruct = built.value;
+        const credentialBindings = this.#credentialBindingsFor('preview');
         try {
-            await pb.rpc.scenes.updateWidget({
-                id: widgetID,
-                sceneId,
-                position,
-                size,
-                params: paramsStruct,
-            });
+            await this.#widgetUpdates(() =>
+                pb.rpc.scenes.updateWidget({
+                    id: widgetID,
+                    sceneId,
+                    position,
+                    size,
+                    params: paramsStruct,
+                    credentialBindings,
+                }),
+            );
         } catch ($) {
             if (pb.abort.is($)) return;
             const { formatMessage } = this.props.intl;
@@ -586,12 +623,15 @@ class View extends Component<Props, State> {
     };
 
     #handleCredentialBindingChange = (slotKey: string, accountId: string): void => {
-        this.setState(s => {
-            const credentialBindings = { ...s.manifestForm.credentialBindings };
-            if (accountId) credentialBindings[slotKey] = accountId;
-            else delete credentialBindings[slotKey];
-            return { manifestForm: { ...s.manifestForm, credentialBindings } };
-        });
+        this.setState(
+            s => {
+                const editedBindings = { ...(s.manifestForm.editedBindings ?? s.manifestForm.undo.credentialBindings) };
+                if (accountId) editedBindings[slotKey] = accountId;
+                else delete editedBindings[slotKey];
+                return { manifestForm: { ...s.manifestForm, editedBindings } };
+            },
+            () => this.#livePreviewWidget(),
+        );
     };
 
     #handleManifestSizeChange = (size: pb.WidgetSize): void => {
@@ -614,7 +654,7 @@ class View extends Component<Props, State> {
     #handleManifestFormDone = async (): Promise<void> => {
         const { sceneId } = this.props;
         const { manifestForm } = this.state;
-        const { manifest, widgetID, params, size, position, credentialBindings } = manifestForm;
+        const { manifest, widgetID, params, size, position } = manifestForm;
 
         if (!manifest || !widgetID) {
             this.setState({ openDialogKind: null });
@@ -627,17 +667,20 @@ class View extends Component<Props, State> {
             return;
         }
 
+        const credentialBindings = this.#credentialBindingsFor('done');
         try {
             const { formatMessage } = this.props.intl;
             this.#livePreviewWidget.cancel();
-            await pb.rpc.scenes.updateWidget({
-                id: widgetID,
-                sceneId,
-                position,
-                size,
-                params: built.value,
-                credentialBindings: { bindings: credentialBindings },
-            });
+            await this.#widgetUpdates(async () =>
+                pb.rpc.scenes.updateWidget({
+                    id: widgetID,
+                    sceneId,
+                    position,
+                    size,
+                    params: built.value,
+                    credentialBindings: await this.#withoutDeletedAccounts(credentialBindings),
+                }),
+            );
 
             toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
             this.setState(s => ({
@@ -678,7 +721,9 @@ class View extends Component<Props, State> {
 
         if (isNewWidget) {
             try {
-                await pb.rpc.scenes.removeWidget({ id: widgetID, sceneId: this.props.sceneId });
+                await this.#widgetUpdates(() =>
+                    pb.rpc.scenes.removeWidget({ id: widgetID, sceneId: this.props.sceneId }),
+                );
                 this.#loadSceneDebounced();
             } catch ($) {
                 if (pb.abort.is($)) return;
@@ -692,17 +737,18 @@ class View extends Component<Props, State> {
         if (!manifest) return;
         const built = fn.buildWidgetDataStruct(manifest, undo.params);
         if (!built.ok) return;
+        const credentialBindings = this.#credentialBindingsFor('cancel');
         try {
-            await pb.rpc.scenes.updateWidget({
-                id: widgetID,
-                sceneId: this.props.sceneId,
-                position: undo.position,
-                size: undo.size,
-                params: built.value,
-                // Bindings are left out: only params are pushed live, so only params need reverting.
-                // Sending them back would re-validate a binding this dialog never touched,
-                // and cancelling out of a bad one would then be impossible.
-            });
+            await this.#widgetUpdates(async () =>
+                pb.rpc.scenes.updateWidget({
+                    id: widgetID,
+                    sceneId: this.props.sceneId,
+                    position: undo.position,
+                    size: undo.size,
+                    params: built.value,
+                    credentialBindings: await this.#withoutDeletedAccounts(credentialBindings),
+                }),
+            );
             this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -855,7 +901,7 @@ class View extends Component<Props, State> {
                         onSizeChange={this.#handleManifestSizeChange}
                         accounts={this.state.accounts}
                         credentialTypes={this.state.credentialTypes}
-                        credentialBindings={manifestForm.credentialBindings}
+                        credentialBindings={manifestForm.editedBindings ?? manifestForm.undo.credentialBindings}
                         onCredentialBindingChange={this.#handleCredentialBindingChange}
                     />
                 </div>

@@ -267,6 +267,12 @@ describe('FormWidgetManifest credential slots', () => {
         expect(captured).toEqual(['pool', '']);
     });
 
+    test('a binding to a slot the manifest no longer declares does not block saving', () => {
+        const { getByText } = renderSlots({ bindings: { pool: 'a1', retired: 'a2' } });
+        const done = getByText('Done').closest('button');
+        expect(done?.disabled).toBe(false);
+    });
+
     test('a server violation for the slot shows on its picker', () => {
         const { queryByText } = renderSlots({
             bindings: { pool: 'a1' },

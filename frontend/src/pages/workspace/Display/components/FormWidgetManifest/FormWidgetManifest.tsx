@@ -25,6 +25,7 @@ import { URLS } from '@/constants';
 import { Form, hasFormErrors } from '@/lib/form';
 import { getID } from '../const';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
+import { isMisbound } from '../../fn';
 
 import { ParamField } from '@/components/ParamField';
 import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
@@ -60,13 +61,6 @@ export interface FormWidgetManifestProps extends WidgetManifestFormProps {
 
 // The dropdown drops a null selection, so "no account" has to be a real item.
 const UNBOUND = pb.create(pb.AccountSchema, { id: '', name: '' });
-
-// A binding whose account is *gone* never arrives — `effective_bindings` drops it server-side.
-// One whose account is the wrong type does: existence is all that filter checks,
-// and a hand-edited config can mismatch a slot.
-function isMisbound(slot: pb.CredentialSlotDefinition, accounts: pb.Account[], boundAccountId: string) {
-    return !!boundAccountId && !accounts.some(a => a.id === boundAccountId && a.typeId === slot.typeId);
-}
 
 // Every option in one dropdown is filtered to the slot's type, so they share its artwork.
 // `plainId` opts one out: the stand-in for a misbound slot needs an id to be selectable,

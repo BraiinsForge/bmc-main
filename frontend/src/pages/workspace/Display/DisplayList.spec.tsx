@@ -31,7 +31,9 @@ import { store } from '@/store';
 import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
+import { deferred } from '@/lib/async';
 import { Toaster } from '@/lib/toast';
+import { paramDef } from './fn/test-helpers';
 
 // `mocks.service` wants every method typed; at runtime it only registers what we
 // pass. This lets us register a typed subset.
@@ -584,6 +586,7 @@ describe('dialog session lifecycle', () => {
     const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
     const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
     const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
+    const COUNT_INPUT_ID = 'bmc-display-comp-manifest-form-param-count';
 
     // Carbon keeps both dialogs mounted and toggles `is-visible`,
     // so presence in the DOM says nothing about which one is open.
@@ -653,6 +656,65 @@ describe('dialog session lifecycle', () => {
 
         expect(removedSceneIds).toEqual([created.id]);
         expect(server.some(scene => scene.id === created.id)).toBe(false);
+    });
+
+    test('cancelling a newly added fullscreen scene removes it only after a preview still in flight', async () => {
+        const counted = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+            params: [paramDef('paramInteger', 'count')],
+        });
+        const created = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: true,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-b',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: counted.uid }),
+                    }),
+                }),
+            },
+        });
+        const previewHeld = deferred<void>();
+        const applied: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [counted] }),
+            addFullscreenScene: () => {
+                server.push(created);
+                return { value: created.id };
+            },
+            getScene: () => ({ scene: created, runningWidgetCount: 2, maxRunningWidgetCount: 56 }),
+            updateWidget: async () => {
+                await previewHeld;
+                applied.push('update');
+                return {};
+            },
+            removeScene: ({ req }) => {
+                applied.push('remove');
+                server = server.filter(scene => scene.id !== req.value);
+                return {};
+            },
+            previewScene: () => (async function* () {})(),
+        });
+
+        renderPage();
+        await flush();
+
+        openFullscreenPicker();
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+        fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+        await flush(300);
+        closeManifestEditor();
+        await flush();
+        previewHeld.resolve();
+        await flush();
+
+        expect(applied).toEqual(['update', 'remove']);
     });
 
     test('closing the picker after saving a fullscreen scene leaves that scene in place', async () => {
@@ -851,6 +913,235 @@ describe('dialog session lifecycle', () => {
 
         expect(removedSceneIds).toEqual([created.id]);
         expect(document.body.textContent).toContain('server cancelled the read-back');
+    });
+
+    describe('account changes', () => {
+        type UpdateWidgetMock = ServiceMocks<typeof pb.services.SceneManagementService>['updateWidget'];
+
+        const pooled = pb.create(pb.WidgetManifestSchema, {
+            uid: 'pool-stats',
+            name: 'Pool Stats',
+            supportedSizes: [pb.WidgetSize.FULL],
+            params: [paramDef('paramInteger', 'count')],
+            credentials: [
+                pb.create(pb.CredentialSlotDefinitionSchema, { key: 'pool', typeId: 'braiins-pool', label: 'Pool' }),
+            ],
+        });
+
+        function mockServer(
+            updateWidget: UpdateWidgetMock,
+            bindings: Record<string, string> = { pool: 'pool-a' },
+        ): void {
+            server = [
+                pb.create(pb.SceneSchema, {
+                    id: 'S',
+                    enabled: true,
+                    kind: {
+                        case: 'fullscreen',
+                        value: {
+                            widget: {
+                                id: 'widget-s',
+                                size: pb.WidgetSize.FULL,
+                                config: {
+                                    widgetUid: pooled.uid,
+                                    params: { fields: { count: { kind: { case: 'integerValue', value: 7 } } } },
+                                    credentialBindings: { bindings },
+                                },
+                            },
+                        },
+                    },
+                }),
+            ];
+            registerMocks(pb.services.SceneManagementService, {
+                getAvailableWidgets: () => ({ widgets: [pooled] }),
+                previewScene: () => (async function* () {})(),
+                updateWidget,
+            });
+            registerMocks(pb.services.AccountManagementService, {
+                getAllAccounts: () => ({
+                    accounts: ['a', 'b'].map(x =>
+                        pb.create(pb.AccountSchema, {
+                            id: `pool-${x}`,
+                            name: `Pool ${x.toUpperCase()}`,
+                            typeId: 'braiins-pool',
+                        }),
+                    ),
+                }),
+            });
+        }
+
+        async function openEditor(): Promise<void> {
+            renderPage();
+            await flush();
+            fireEvent.click(elementById('bmc-display-comp-scene-overview-row-S-edit'));
+            await flush();
+        }
+
+        function pickAccount(name: string): void {
+            fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('combobox'));
+            const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o =>
+                o.textContent?.includes(name),
+            );
+            if (!option) throw new Error(`${name} not offered`);
+            fireEvent.click(option);
+        }
+
+        async function openEditorAndPick(name: string): Promise<void> {
+            await openEditor();
+            pickAccount(name);
+            await flush(300);
+        }
+
+        test('an edit that never touches an account leaves the bindings to the server', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                return {};
+            });
+
+            await openEditor();
+            fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+            await flush(300);
+            closeManifestEditor();
+            await flush();
+
+            expect(updates.map(u => u.credentialBindings)).toEqual([undefined, undefined]);
+        });
+
+        test('Done lands after a preview still in flight', async () => {
+            const previewHeld = deferred<void>();
+            const applied: Array<string | undefined> = [];
+            mockServer(async ({ req }) => {
+                const pool = req.credentialBindings?.bindings.pool;
+                if (pool === 'pool-b') await previewHeld;
+                applied.push(pool);
+                return {};
+            });
+
+            await openEditorAndPick('Pool B');
+            pickAccount('Pool A');
+            fireEvent.click(elementById(MANIFEST_DONE_ID));
+            await flush();
+            previewHeld.resolve();
+            await flush();
+
+            expect(applied).toEqual(['pool-b', 'pool-a']);
+        });
+
+        test('Done leaves untouched bindings to the server', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                return {};
+            });
+
+            await openEditor();
+            fireEvent.click(elementById(MANIFEST_DONE_ID));
+            await flush();
+
+            expect(updates.map(u => u.credentialBindings)).toEqual([undefined]);
+        });
+
+        test('picking an account previews it on the widget', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                return {};
+            });
+
+            await openEditorAndPick('Pool B');
+
+            expect(updates.map(u => u.credentialBindings?.bindings)).toEqual([{ pool: 'pool-b' }]);
+        });
+
+        test('a binding to a slot the widget dropped leaves preview and Cancel working without it', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(
+                ({ req }) => {
+                    updates.push(req);
+                    return {};
+                },
+                { pool: 'pool-a', retired: 'pool-a' },
+            );
+
+            await openEditorAndPick('Pool B');
+            closeManifestEditor();
+            await flush();
+
+            expect(updates.map(u => u.credentialBindings?.bindings)).toEqual([{ pool: 'pool-b' }, { pool: 'pool-a' }]);
+        });
+
+        test('Cancel leaves out an original account deleted while the dialog was open', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                return {};
+            });
+
+            await openEditorAndPick('Pool B');
+            registerMocks(pb.services.AccountManagementService, {
+                getAllAccounts: () => ({
+                    accounts: [pb.create(pb.AccountSchema, { id: 'pool-b', name: 'Pool B', typeId: 'braiins-pool' })],
+                }),
+            });
+            closeManifestEditor();
+            await flush();
+
+            expect(updates.at(-1)?.credentialBindings?.bindings).toEqual({});
+        });
+
+        test('Done leaves out an account deleted while the dialog was open', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                return {};
+            });
+
+            await openEditorAndPick('Pool B');
+            registerMocks(pb.services.AccountManagementService, {
+                getAllAccounts: () => ({
+                    accounts: [pb.create(pb.AccountSchema, { id: 'pool-a', name: 'Pool A', typeId: 'braiins-pool' })],
+                }),
+            });
+            fireEvent.click(elementById(MANIFEST_DONE_ID));
+            await flush();
+
+            expect(updates.at(-1)?.credentialBindings?.bindings).toEqual({});
+        });
+
+        test('Cancel restores the account the scene opened with', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                return {};
+            });
+
+            await openEditorAndPick('Pool B');
+            closeManifestEditor();
+            await flush();
+
+            expect(updates.at(-1)?.credentialBindings?.bindings).toEqual({ pool: 'pool-a' });
+        });
+
+        // The server applies the slow preview last unless Cancel waits its turn.
+        test('Cancel lands after a preview still in flight', async () => {
+            const previewHeld = deferred<void>();
+            const applied: Record<string, string>[] = [];
+            mockServer(async ({ req }) => {
+                const bindings = req.credentialBindings?.bindings ?? {};
+                if (bindings.pool === 'pool-b') await previewHeld;
+                applied.push(bindings);
+                return {};
+            });
+
+            await openEditorAndPick('Pool B');
+            closeManifestEditor();
+            await flush();
+            previewHeld.resolve();
+            await flush();
+
+            expect(applied).toEqual([{ pool: 'pool-b' }, { pool: 'pool-a' }]);
+        });
     });
 });
 

@@ -36,6 +36,9 @@ import {
     widgetParamsToFormifiedState,
     parseFormifiedValue,
     buildWidgetDataStruct,
+    credentialBindingsValid,
+    credentialBindingsFor,
+    withoutDeletedAccounts,
 } from './fn';
 import { paramDef } from './test-helpers';
 
@@ -948,5 +951,67 @@ describe('buildWidgetDataStruct', () => {
         const r = buildWidgetDataStruct(manifest, { count: '1', enabled: false });
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.fields.name).toBeTruthy();
+    });
+});
+
+describe('credential bindings', () => {
+    const manifest = pb.create(pb.WidgetManifestSchema, {
+        credentials: [{ key: 'pool', typeId: 'braiins-pool', label: 'Pool' }],
+    });
+    const accounts = [
+        pb.create(pb.AccountSchema, { id: 'pool-a', typeId: 'braiins-pool' }),
+        pb.create(pb.AccountSchema, { id: 'token-1', typeId: 'generic-token' }),
+    ];
+
+    test('a set of fitting accounts is valid', () => {
+        expect(credentialBindingsValid(manifest, accounts, { pool: 'pool-a' })).toBe(true);
+    });
+
+    test('an account of the wrong type is not', () => {
+        expect(credentialBindingsValid(manifest, accounts, { pool: 'token-1' })).toBe(false);
+    });
+
+    test('a slot the manifest no longer declares is not', () => {
+        expect(credentialBindingsValid(manifest, accounts, { retired: 'pool-a' })).toBe(false);
+    });
+
+    test('bindings to a deleted account are left out', () => {
+        expect(withoutDeletedAccounts({ pool: 'pool-a', backup: 'gone' }, accounts)).toEqual({ pool: 'pool-a' });
+    });
+
+    test('untouched bindings stay out of every write', () => {
+        const session = { manifest, accounts, original: { pool: 'pool-a' } };
+        for (const write of ['preview', 'cancel', 'done'] as const) {
+            expect(credentialBindingsFor(write, session)).toBeUndefined();
+        }
+    });
+
+    test('a preview carries the edited set and its cancel the original', () => {
+        const session = { manifest, accounts, original: { pool: 'pool-a' }, edited: {} };
+        expect(credentialBindingsFor('preview', session)).toEqual({ bindings: {} });
+        expect(credentialBindingsFor('cancel', session)).toEqual({ bindings: { pool: 'pool-a' } });
+    });
+
+    test('a preview and its cancel leave bindings out while the original set could not be sent back', () => {
+        const session = { manifest, accounts, original: { pool: 'token-1' }, edited: { pool: 'pool-a' } };
+        expect(credentialBindingsFor('preview', session)).toBeUndefined();
+        expect(credentialBindingsFor('cancel', session)).toBeUndefined();
+    });
+
+    test('done carries the edited set whatever the original was', () => {
+        const session = { manifest, accounts, original: { pool: 'token-1' }, edited: { pool: 'pool-a' } };
+        expect(credentialBindingsFor('done', session)).toEqual({ bindings: { pool: 'pool-a' } });
+    });
+
+    test('a slot the manifest no longer declares is left out of every write', () => {
+        const session = {
+            manifest,
+            accounts,
+            original: { pool: 'pool-a', retired: 'pool-a' },
+            edited: { pool: '', retired: 'pool-a' },
+        };
+        expect(credentialBindingsFor('preview', session)).toEqual({ bindings: { pool: '' } });
+        expect(credentialBindingsFor('cancel', session)).toEqual({ bindings: { pool: 'pool-a' } });
+        expect(credentialBindingsFor('done', session)).toEqual({ bindings: { pool: '' } });
     });
 });

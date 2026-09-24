@@ -86,3 +86,16 @@ export interface Deferred<T> extends Promise<T> {
     resolve(value?: T | PromiseLike<T>): void;
     reject(reason?: any): void;
 }
+
+/**
+ * Creates a runner that starts each task only once the one before it has settled.
+ * A failed task does not stop the ones queued after it.
+ */
+export function serial(): <T>(task: () => Promise<T>) => Promise<T> {
+    let tail: Promise<unknown> = Promise.resolve();
+    return <T>(task: () => Promise<T>): Promise<T> => {
+        const run = tail.then(task);
+        tail = run.catch(() => {});
+        return run;
+    };
+}
