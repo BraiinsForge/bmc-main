@@ -28,7 +28,7 @@
 //! Every fragment takes its geometry from parameters; which variant a
 //! frame gets is the layouts' decision.
 
-use bmc_wasm_sdk::typography::{ELLIPSIS, LDQUO, RDQUO};
+use bmc_wasm_sdk::typography::{LDQUO, RDQUO};
 #[cfg_attr(
     not(test),
     expect(
@@ -94,14 +94,11 @@ pub mod space {
 
 const HEADER_LOGO_SIZE: f32 = 24.0;
 
-/// Longest account run the narrowest account-bearing header keeps on one
-/// line beside the title — the Medium overview's, whose workers card
-/// claims part of the header row. The renderer has no ellipsis, so the
-/// header trims the name itself rather than let the row wrap.
-const ACCOUNT_MAX_CHARS: usize = 16;
-
 /// The header-left run: logo, widget title, and optionally the bound
 /// account's name — all in the design's muted grey.
+///
+/// The account takes only the width the title leaves:
+/// a long name ends in "…", inside its parentheses, and the title never wraps.
 #[must_use]
 pub fn header_left(account: Option<&str>) -> Node {
     let mut children = vec![
@@ -112,15 +109,17 @@ pub fn header_left(account: Option<&str>) -> Node {
         ),
     ];
     if let Some(account) = account {
-        let run = if account.chars().count() > ACCOUNT_MAX_CHARS {
-            let head: String = account.chars().take(ACCOUNT_MAX_CHARS).collect();
-            fmt!("({head}{ELLIPSIS})")
-        } else {
-            fmt!("({account})")
-        };
-        children.push(text(
-            run,
-            style!(size: font::TITLE, color: color::TEXT_MUTED),
+        let muted = || style!(size: font::TITLE, color: color::TEXT_MUTED);
+        children.push(row(
+            props!(flex: 1.0, cross_align: CrossAlign::Center),
+            [
+                text("(", muted()),
+                text(
+                    account,
+                    style!(size: font::TITLE, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
+                ),
+                text(")", muted()),
+            ],
         ));
     }
     row(props!(gap: 8.0, cross_align: CrossAlign::Center), children)
@@ -897,13 +896,44 @@ mod tests {
     }
 
     #[test]
-    fn header_shows_account_when_bound() {
-        // Node has no public inspection API; presence of both texts
-        // is covered visually by the storybook and captures.
-        // This test pins that assembly does not panic on either shape.
+    fn a_bound_account_gives_way_inside_its_parentheses() {
+        const ACCOUNT: &str = "an-account-name-no-header-seats-whole";
         bmc_wasm_sdk::assets::init_test_registrars();
-        let _ = header_left(Some("user.braiins"));
-        let _ = header_left(None);
+
+        let Node::Row(_, children) = header_left(Some(ACCOUNT)) else {
+            panic!("BUG: the header-left run is a row");
+        };
+        let Some(Node::Row(props, run)) = children.get(2) else {
+            panic!("BUG: the account run follows the title");
+        };
+        assert!(
+            props.flex > 0.0,
+            "only a growing run takes just the width the title leaves"
+        );
+        let texts: Vec<_> = run
+            .iter()
+            .map(|node| {
+                let Node::Paragraph {
+                    base_style, spans, ..
+                } = node
+                else {
+                    panic!("BUG: the account run holds text only, got {node:?}");
+                };
+                (spans[0].text.as_str(), base_style.text_overflow)
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                ("(", TextOverflow::Wrap),
+                (ACCOUNT, TextOverflow::Ellipsis),
+                (")", TextOverflow::Wrap),
+            ]
+        );
+        assert!(
+            matches!(header_left(None), Node::Row(_, children) if children.len() == 2),
+            "an unbound header carries no account run"
+        );
     }
 
     #[test]
