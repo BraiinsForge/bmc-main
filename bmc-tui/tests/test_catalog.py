@@ -1592,7 +1592,7 @@ def test_init_procedure_cleans_up_when_tarball_push_fails(tmp_path: Path) -> Non
 def _cycle(
     *,
     generation_before: int | None = None,
-    installed_before: set[str] | None = None,
+    installed_before: dict[str, str] | None = None,
 ) -> catalog.UpgradeCycle:
     cycle = catalog.UpgradeCycle(
         password="", port=8080, index_port=8081, key_dir=Path("/nonexistent")
@@ -1608,7 +1608,7 @@ def test_snapshot_profile_reads_current_generation() -> None:
     backend = _Exec(_routes({"readlink": "5-link", "cat": manifest}))
     catalog.snapshot_profile(Device("h", backend=backend), cycle)
     assert cycle.generation_before == 5
-    assert cycle.installed_before == {"core"}
+    assert cycle.installed_before == {"core": "1.0"}
 
 
 def test_snapshot_profile_aborts_on_unexpected_link() -> None:
@@ -1747,11 +1747,13 @@ def test_exclusive_package_server_aborts_on_malformed_json() -> None:
 
 
 def _manifest(**paths: str) -> str:
-    return json.dumps({"packages": {name: {"store_path": p} for name, p in paths.items()}})
+    return json.dumps(
+        {"packages": {name: {"version": "1.0", "store_path": p} for name, p in paths.items()}}
+    )
 
 
 def test_verify_profile_advanced_ok() -> None:
-    cycle = _cycle(generation_before=5, installed_before={"core"})
+    cycle = _cycle(generation_before=5, installed_before={"core": "1.0"})
     built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     manifest = _manifest(core="/nix/store/abc-core")
     backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
@@ -1760,7 +1762,7 @@ def test_verify_profile_advanced_ok() -> None:
 
 
 def test_verify_profile_advanced_aborts_when_generation_unchanged() -> None:
-    cycle = _cycle(generation_before=5, installed_before=set())
+    cycle = _cycle(generation_before=5, installed_before={})
     backend = _Exec(_routes({"readlink": "5-link"}))
     with pytest.raises(Abort, match="still 5"):
         catalog.verify_profile_advanced(
@@ -1769,7 +1771,7 @@ def test_verify_profile_advanced_aborts_when_generation_unchanged() -> None:
 
 
 def test_verify_profile_advanced_aborts_on_missing_store_path() -> None:
-    cycle = _cycle(generation_before=5, installed_before={"core"})
+    cycle = _cycle(generation_before=5, installed_before={"core": "1.0"})
     built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     manifest = _manifest(core="/nix/store/other")
     backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
@@ -1779,7 +1781,7 @@ def test_verify_profile_advanced_aborts_on_missing_store_path() -> None:
 
 
 def test_verify_profile_advanced_aborts_on_path_under_wrong_package() -> None:
-    cycle = _cycle(generation_before=5, installed_before={"core"})
+    cycle = _cycle(generation_before=5, installed_before={"core": "1.0"})
     built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     # The served path is present, but attached to a different package — a
     # substring check would have wrongly passed.
@@ -1791,12 +1793,44 @@ def test_verify_profile_advanced_aborts_on_path_under_wrong_package() -> None:
 
 
 def test_verify_profile_advanced_aborts_on_non_json_manifest() -> None:
-    cycle = _cycle(generation_before=5, installed_before={"core"})
+    cycle = _cycle(generation_before=5, installed_before={"core": "1.0"})
     built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     backend = _Exec(_routes({"readlink": "6-link", "cat": "/nix/store/abc-core"}))
     plan = catalog.Deployment(attrs=[], built=[built])
     with pytest.raises(Abort, match="not a package manifest"):
         catalog.verify_profile_advanced(Device("h", backend=backend), plan, cycle)
+
+
+def _verify_served_cli(installed: str, served: str, *, landed: bool) -> None:
+    cycle = _cycle(generation_before=5, installed_before={"bmc-nix-cli": installed})
+    cli = Built("bmc-nix-cli", served, Attr(".#n"), store_path=StorePath("/nix/store/served-cli"))
+    manifest = _manifest(**{"bmc-nix-cli": "/nix/store/served-cli" if landed else "/nix/store/old"})
+    backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
+    plan = catalog.Deployment(attrs=[], built=[cli])
+    catalog.verify_profile_advanced(Device("h", backend=backend), plan, cycle)
+
+
+def test_verify_profile_advanced_accepts_a_kept_newer_installed_package() -> None:
+    # e2e-sysupgrade leaves a bumped bmc-nix-cli above the rig's version,
+    # and the planner refuses that downgrade.
+    _verify_served_cli("0.1.1-bump", "0.1.0", landed=False)
+
+
+@pytest.mark.parametrize(
+    ("installed", "served"),
+    [
+        ("0.1.0", "0.1.1"),
+        # a same-version rebuild still moves to the served store path
+        ("0.1.0", "0.1.0"),
+        # the planner cannot order an unparsable version, so it does not guard it
+        ("nightly", "0.1.0"),
+    ],
+)
+def test_verify_profile_advanced_aborts_when_an_upgrade_the_planner_owes_did_not_land(
+    installed: str, served: str
+) -> None:
+    with pytest.raises(Abort, match="not replaced by their served store paths"):
+        _verify_served_cli(installed, served, landed=False)
 
 
 def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:

@@ -83,7 +83,8 @@ path that no longer reflects what ships.
 11. **Profile advanced** — re-reads the current generation, requiring it to have incremented, and requires every served
     package that was installed before the upgrade to appear in the new generation's manifest at its served store path.
     Served packages absent from the pre-upgrade manifest are index-only — they are not auto-installed and not expected
-    to appear.
+    to appear. An installed package whose version outranks the served one is exempt too, since the planner refuses that
+    downgrade; the harness orders versions as the planner does.
 
 The upgrade server is terminated when the procedure ends, whether it succeeded or aborted.
 

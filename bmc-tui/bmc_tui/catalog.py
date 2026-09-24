@@ -56,6 +56,7 @@ from bmc_tui.bos_version import BosVersion, VersionName, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.nix import ABSENT_ATTR, Attr, Built, Nix, Pkg, StorePath
+from bmc_tui.package_version import planner_keeps_installed
 from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, require, stage
 
 _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
@@ -2561,7 +2562,7 @@ class UpgradeCycle:
     cookie: str | None = None
     upgrade_id: str | None = None
     generation_before: int | None = None
-    installed_before: set[str] | None = None  # package names in the pre-upgrade manifest
+    installed_before: dict[str, str] | None = None  # pre-upgrade manifest versions by name
     widget_uid: str | None = None  # uid of the widget under install, for the registry check
     server_instance: str | None = None  # bmc instance id before the upgrade, to detect its restart
     servers_snapshot: "FileSnapshot | None" = None
@@ -2589,7 +2590,7 @@ def ensure_grpcurl() -> None:
 @stage("Snapshot current generation")
 def snapshot_profile(dev: Device, cycle: UpgradeCycle) -> str:
     cycle.generation_before = current_generation(dev)
-    cycle.installed_before = set(read_manifest_packages(dev))
+    cycle.installed_before = installed_versions(dev)
     return (
         f"generation {console.lit(cycle.generation_before)}, "
         f"{console.lit(len(cycle.installed_before))} installed package(s)"
@@ -3114,6 +3115,8 @@ def verify_profile_advanced(dev: Device, plan: Deployment, cycle: UpgradeCycle) 
             # Served but not installed — index-only packages are not
             # auto-installed, so they are not expected to appear.
             continue
+        if planner_keeps_installed(installed[b.name], b.version):
+            continue
         entry = entries.get(b.name)
         got = entry.get("store_path") if isinstance(entry, dict) else None
         if got != b.store_path:
@@ -3133,6 +3136,16 @@ def current_generation(dev: Device) -> int:
         f"unexpected current generation link: {link or '(missing)'}",
     )
     return int(number)
+
+
+def installed_versions(dev: Device) -> dict[str, str]:
+    versions = {}
+    for name, entry in read_manifest_packages(dev).items():
+        version = entry.get("version") if isinstance(entry, dict) else None
+        if not isinstance(version, str):
+            raise Abort(f"the current manifest has no version for {name}")
+        versions[name] = version
+    return versions
 
 
 def read_manifest_packages(dev: Device) -> dict[str, Any]:
