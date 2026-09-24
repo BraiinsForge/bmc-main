@@ -233,3 +233,21 @@ frames = 2
 
 [shot.knobs]
 Screen = "SetupStart"
+
+# Every overflow mode cutting an over-wide value, then the same boxes roomy enough
+# that a single line fits and must look exactly as if it had wrapped.
+[[shot]]
+name = "text-overflow-narrow"
+scene = "bmc_gallery::text_overflow::Examples"
+frames = 2
+
+[shot.knobs]
+"Box width" = 120
+
+[[shot]]
+name = "text-overflow-wide"
+scene = "bmc_gallery::text_overflow::Examples"
+frames = 2
+
+[shot.knobs]
+"Box width" = 360
