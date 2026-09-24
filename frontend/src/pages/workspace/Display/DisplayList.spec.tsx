@@ -580,6 +580,33 @@ test('shows running widget capacity reported by the backend', async () => {
     expect(screen.getByText('Running widgets: 1 / 56')).toBeTruthy();
 });
 
+describe('list actions in quick succession', () => {
+    test('deletes queued behind one still in flight all reach the device', async () => {
+        server = [makeScene('A'), makeScene('B'), makeScene('C')];
+        const firstHeld = deferred<void>();
+        const received: string[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            removeScene: ({ req, signal }) => {
+                // Like `fetch`, which never sends a request whose signal is already aborted.
+                if (signal.aborted) throw new ConnectError('aborted', Code.Canceled);
+                received.push(req.value);
+                return req.value === 'A' ? firstHeld.then(() => ({})) : {};
+            },
+        });
+        renderPage();
+        await flush();
+
+        for (const id of ['A', 'B', 'C']) {
+            fireEvent.click(elementById(`${ROW_ID_PREFIX}${id}-delete`));
+            await flush();
+        }
+        firstHeld.resolve();
+        await flush();
+
+        expect(received).toEqual(['A', 'B', 'C']);
+    });
+});
+
 describe('dialog session lifecycle', () => {
     // Spelled out rather than composed with `getID`, so a change
     // to the id scheme fails here instead of being silently followed.
@@ -915,7 +942,7 @@ describe('dialog session lifecycle', () => {
         expect(document.body.textContent).toContain('server cancelled the read-back');
     });
 
-    describe('account changes', () => {
+    describe('editing a placed scene', () => {
         type UpdateWidgetMock = ServiceMocks<typeof pb.services.SceneManagementService>['updateWidget'];
 
         const pooled = pb.create(pb.WidgetManifestSchema, {
@@ -1124,6 +1151,36 @@ describe('dialog session lifecycle', () => {
         });
 
         // The server applies the slow preview last unless Cancel waits its turn.
+        test('a scene cloned right after Cancel waits for the writes before it', async () => {
+            const previewHeld = deferred<void>();
+            const applied: string[] = [];
+            mockServer(async ({ req }) => {
+                const kind = req.params?.fields.count?.kind;
+                const count = kind?.case === 'integerValue' ? kind.value : undefined;
+                if (count === 8) await previewHeld;
+                applied.push(`update ${count}`);
+                return {};
+            });
+            registerMocks(pb.services.SceneManagementService, {
+                cloneScene: () => {
+                    applied.push('clone');
+                    return { value: 'S_c1' };
+                },
+            });
+
+            await openEditor();
+            fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+            await flush(300);
+            closeManifestEditor();
+            await flush();
+            fireEvent.click(elementById('bmc-display-comp-scene-overview-row-S-clone'));
+            await flush();
+            previewHeld.resolve();
+            await flush();
+
+            expect(applied).toEqual(['update 8', 'update 7', 'clone']);
+        });
+
         test('Cancel lands after a preview still in flight', async () => {
             const previewHeld = deferred<void>();
             const applied: Record<string, string>[] = [];

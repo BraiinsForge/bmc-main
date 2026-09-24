@@ -757,6 +757,37 @@ describe('editing a placed widget', () => {
             expect(applied).toEqual([8, 9]);
         });
 
+        test('a widget added right after Cancel waits for the writes before it', async () => {
+            const previewHeld = deferred<void>();
+            const requested: Array<number | undefined> = [];
+            const applied: string[] = [];
+            mockServer(async ({ req }) => {
+                requested.push(countOf(req));
+                if (countOf(req) === 8) await previewHeld;
+                applied.push(`update ${countOf(req)}`);
+                return {};
+            });
+            registerMocks(pb.services.SceneManagementService, {
+                addWidget: () => {
+                    applied.push('add');
+                    return { value: 'widget-2' };
+                },
+            });
+
+            await openEditor();
+            fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
+            await waitFor(() => expect(requested).toEqual([8]));
+            closeManifestEditor();
+            await settle();
+            clickAddSlot(document.body);
+            fireEvent.click(await screen.findByRole('button', { name: /Pool Stats/ }));
+            await settle();
+            previewHeld.resolve();
+
+            await waitFor(() => expect(applied).toHaveLength(3));
+            expect(applied).toEqual(['update 8', 'update 7', 'add']);
+        });
+
         test('a widget removed right after Cancel waits for the writes before it', async () => {
             const previewHeld = deferred<void>();
             const requested: Array<number | undefined> = [];

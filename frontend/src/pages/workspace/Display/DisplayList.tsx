@@ -153,8 +153,9 @@ const endedManifestSession = (form: ManifestFormState): ManifestFormState => ({
 class View extends Component<Props, State> {
     readonly state = getInitialState();
 
-    // Every widget write queues here, so a preview still in flight cannot overwrite a later Done or Cancel.
-    #widgetUpdates = serial();
+    // Every scene write queues here, so none can overtake
+    // a preview, Done or Cancel still in flight.
+    #sceneWrites = serial();
 
     #cyclePopOverRef = createRef<null | HTMLDivElement>();
     #windowClickHandle = (e: PointerEvent): void => {
@@ -335,7 +336,7 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
 
         try {
-            await pb.rpc.scenes.removeScene({ value: sceneID });
+            await this.#sceneWrites(() => pb.rpc.scenes.removeScene({ value: sceneID }));
             this.#loadScenesDebounced();
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
@@ -352,12 +353,14 @@ class View extends Component<Props, State> {
         let orphanSceneID: null | string = null;
 
         try {
-            const { value: sceneID } = await pb.rpc.scenes.addFullscreenScene({
-                config: {
-                    widgetUid: manifest.uid,
-                    params: pb.create(pb.WidgetDataStructSchema, { fields: {} }),
-                },
-            });
+            const { value: sceneID } = await this.#sceneWrites(() =>
+                pb.rpc.scenes.addFullscreenScene({
+                    config: {
+                        widgetUid: manifest.uid,
+                        params: pb.create(pb.WidgetDataStructSchema, { fields: {} }),
+                    },
+                }),
+            );
             orphanSceneID = sceneID;
 
             const { scene } = await pb.rpc.scenes.getScene({ value: sceneID });
@@ -409,7 +412,7 @@ class View extends Component<Props, State> {
     #sceneAddCombined = async (): Promise<void> => {
         const { navigate } = this.props;
 
-        const response = await pb.rpc.scenes.addCombinedScene({});
+        const response = await this.#sceneWrites(() => pb.rpc.scenes.addCombinedScene({}));
         navigate(URLS.pages.display.combined.getHref(response.value), { replace: false });
 
         this.#notifySceneAdded();
@@ -432,7 +435,7 @@ class View extends Component<Props, State> {
         // Cleanup has no client abort signal, so Canceled is a server failure that must be shown.
         if (isNewScene && sceneID) {
             try {
-                await this.#widgetUpdates(() => pb.rpc.scenes.removeScene({ value: sceneID }));
+                await this.#sceneWrites(() => pb.rpc.scenes.removeScene({ value: sceneID }));
                 this.#loadScenesDebounced();
             } catch ($) {
                 let msg = pb.collectAllErrorsAsFormattedList($);
@@ -448,7 +451,7 @@ class View extends Component<Props, State> {
         if (!built.ok) return DialogCloseResult.Closed;
         const credentialBindings = this.#credentialBindingsFor('cancel');
         try {
-            await this.#widgetUpdates(async () =>
+            await this.#sceneWrites(async () =>
                 pb.rpc.scenes.updateWidget({
                     id: widgetID,
                     sceneId: sceneID,
@@ -532,7 +535,7 @@ class View extends Component<Props, State> {
         const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
         const credentialBindings = this.#credentialBindingsFor('preview');
         try {
-            await this.#widgetUpdates(() =>
+            await this.#sceneWrites(() =>
                 pb.rpc.scenes.updateWidget({
                     id: widgetID,
                     sceneId: sceneID,
@@ -616,7 +619,7 @@ class View extends Component<Props, State> {
             const scene = this.#getScene(sceneID);
             const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
 
-            await this.#widgetUpdates(async () =>
+            await this.#sceneWrites(async () =>
                 pb.rpc.scenes.updateWidget({
                     id: widgetID,
                     sceneId: sceneID,
@@ -688,7 +691,6 @@ class View extends Component<Props, State> {
         return this.state.scenes.find(x => x.id === id) ?? null;
     };
 
-    private abortSceneMove = pb.abort.get();
     #sceneListMove = async (
         scenes: pb.Scene[],
         move: {
@@ -698,23 +700,21 @@ class View extends Component<Props, State> {
         },
     ): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { signal } = this.abortSceneMove.replace();
 
         try {
             // Optimistic update first
             this.setState({ scenes });
 
-            await pb.rpc.scenes.moveScene(
-                pb.create(pb.MoveSceneRequestSchema, {
-                    id: move.id,
-                    index: move.into,
-                }),
-                { signal },
+            await this.#sceneWrites(() =>
+                pb.rpc.scenes.moveScene(
+                    pb.create(pb.MoveSceneRequestSchema, {
+                        id: move.id,
+                        index: move.into,
+                    }),
+                ),
             );
             toast.success(formatMessage({ defaultMessage: 'Widget moved!' }));
         } catch ($) {
-            if (pb.abort.is($)) return;
-
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to move widget!' });
             toast.error(msg);
@@ -742,28 +742,22 @@ class View extends Component<Props, State> {
 
         this.#sceneListSetDurationSubmit(id, cycleDurationSec);
     };
-    private abortSceneSetDuration = pb.abort.get();
     #sceneListSetDurationSubmit = debounce(async (id: string, valueSeconds: undefined | number): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { signal } = this.abortSceneSetDuration.replace();
 
         try {
             const enabled: boolean = this.#getScene(id)?.enabled ?? true;
-            await pb.rpc.scenes.updateScene({ id, enabled, cycleDurationSec: valueSeconds }, { signal });
+            await this.#sceneWrites(() => pb.rpc.scenes.updateScene({ id, enabled, cycleDurationSec: valueSeconds }));
             this.#notifySuccessDebounced(formatMessage({ defaultMessage: 'Widget duration updated!' }));
         } catch ($) {
-            if (pb.abort.is($)) return;
-
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update widget duration! Please try again!' });
             toast.error(msg);
         }
     }, 500);
 
-    private abortSceneSetEnabled = pb.abort.get();
     #sceneListSetEnabled = async (id: string, value: boolean): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { signal } = this.abortSceneSetEnabled.replace();
 
         if (!value) {
             this.setState(s => ({
@@ -772,22 +766,20 @@ class View extends Component<Props, State> {
         }
 
         try {
-            await pb.rpc.scenes.updateScene(
-                {
+            const cycleDurationSec = this.#getScene(id)?.cycleDurationSec;
+            await this.#sceneWrites(() =>
+                pb.rpc.scenes.updateScene({
                     id,
                     enabled: value,
                     // This has to be sent since the RPC does not accept partial updates.
                     // If it's undefined, it means that the default value will be used.
-                    cycleDurationSec: this.#getScene(id)?.cycleDurationSec,
-                },
-                { signal },
+                    cycleDurationSec,
+                }),
             );
             this.setState(s => ({
                 scenes: s.scenes.map(x => (x.id === id ? { ...x, enabled: value } : x)),
             }));
         } catch ($) {
-            if (pb.abort.is($)) return;
-
             let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
             msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update widget state!' });
@@ -797,20 +789,16 @@ class View extends Component<Props, State> {
         this.#loadScenesDebounced();
     };
 
-    private abortSceneDelete = pb.abort.get();
     #sceneListDelete = async (id: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { signal } = this.abortSceneDelete.replace();
 
         try {
             // Optimistic update first
             this.setState(s => ({ scenes: s.scenes.filter(x => x.id !== id) }));
 
-            await pb.rpc.scenes.removeScene({ value: id }, { signal });
+            await this.#sceneWrites(() => pb.rpc.scenes.removeScene({ value: id }));
             toast.success(formatMessage({ defaultMessage: 'Widget deleted!' }));
         } catch ($) {
-            if (pb.abort.is($)) return;
-
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to delete widget!' });
             toast.error(msg);
@@ -819,10 +807,8 @@ class View extends Component<Props, State> {
         this.#loadScenesDebounced();
     };
 
-    private abortSceneClone = pb.abort.get();
     #sceneListClone = async (id: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { signal } = this.abortSceneClone.replace();
 
         // Placeholder clone with a unique id (computed out here to keep the
         // updater pure); the debounced reload swaps in the real scene.
@@ -841,11 +827,9 @@ class View extends Component<Props, State> {
                 return { scenes: res };
             });
 
-            await pb.rpc.scenes.cloneScene({ value: id }, { signal });
+            await this.#sceneWrites(() => pb.rpc.scenes.cloneScene({ value: id }));
             toast.success(formatMessage({ defaultMessage: 'Widget cloned!' }));
         } catch ($) {
-            if (pb.abort.is($)) return;
-
             this.setState(s => ({ scenes: s.scenes.filter(scene => scene.id !== optimisticId) }));
 
             let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
