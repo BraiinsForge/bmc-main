@@ -18,9 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Little-endian primitives shared by the wire codecs. Readers advance `*pos`
-//! and return `None` on truncated input; writers append at `*pos` into a buffer
-//! the caller has already sized to the struct's `SIZE`.
+//! Little-endian primitives shared by the wire codecs.
+//! Readers advance `*pos` and return `None` on truncated or out-of-range input;
+//! writers append at `*pos` into a buffer the caller has already sized to the struct's `SIZE`.
 
 use crate::colors::Color;
 
@@ -40,6 +40,14 @@ pub(crate) fn read_f32(data: &[u8], pos: &mut usize) -> Option<f32> {
     let bytes: [u8; 4] = data.get(*pos..*pos + 4)?.try_into().ok()?;
     *pos += 4;
     Some(f32::from_le_bytes(bytes))
+}
+
+pub(crate) fn read_finite_f32(data: &[u8], pos: &mut usize) -> Option<f32> {
+    read_f32(data, pos).filter(|v| v.is_finite())
+}
+
+pub(crate) fn read_extent_f32(data: &[u8], pos: &mut usize) -> Option<f32> {
+    read_finite_f32(data, pos).filter(|v| *v >= 0.0)
 }
 
 pub(crate) fn read_color(data: &[u8], pos: &mut usize) -> Option<Color> {

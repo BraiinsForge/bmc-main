@@ -590,8 +590,9 @@ impl<'a> TreeReader<'a> {
     }
 
     fn read_fill(&mut self) -> Result<Fill> {
+        let start = self.pos;
         decode_fill(self.data, &mut self.pos)
-            .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading fill"))
+            .ok_or_else(|| anyhow::anyhow!("invalid or truncated fill in tree at {start}"))
     }
 
     fn read_arc_fill(&mut self) -> Result<ArcFill> {
@@ -600,8 +601,9 @@ impl<'a> TreeReader<'a> {
     }
 
     fn read_arc_segments(&mut self) -> Result<ArcSegments> {
+        let start = self.pos;
         decode_arc_segments(self.data, &mut self.pos)
-            .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading arc segments"))
+            .ok_or_else(|| anyhow::anyhow!("invalid or truncated arc segments in tree at {start}"))
     }
 
     fn read_arc_cap(&mut self) -> Result<ArcCap> {
@@ -636,20 +638,9 @@ impl<'a> TreeReader<'a> {
 
     fn read_props(&mut self) -> Result<PropsData> {
         let Some(props) = PropsData::from_bytes(&self.data[self.pos..]) else {
-            bail!("unexpected end of tree data reading props");
+            bail!("invalid or truncated props in tree at {}", self.pos);
         };
         self.pos += PropsData::SIZE;
-        // taffy 0.9.2 passes a negative gap through `resolve_or_zero` and sums it
-        // into placement, so siblings genuinely overlap — while
-        // `can_overlap_siblings` models escape as `is_absolute() || margin < 0.0`
-        // and misses it, clearing the container for layering and painting the
-        // static and dynamic halves in the wrong order.
-        anyhow::ensure!(
-            props.gap >= 0.0,
-            "negative gap {} in tree at {}",
-            props.gap,
-            self.pos
-        );
         Ok(props)
     }
 
@@ -665,7 +656,7 @@ impl<'a> TreeReader<'a> {
 
     fn read_text_style(&mut self) -> Result<TextStyle> {
         let Some(style) = TextStyle::from_bytes(&self.data[self.pos..]) else {
-            bail!("unexpected end of tree data reading text style");
+            bail!("invalid or truncated text style in tree at {}", self.pos);
         };
         self.pos += TextStyle::SIZE;
         Ok(style)
@@ -769,7 +760,7 @@ impl<'a> TreeReader<'a> {
                 })
             }
             NODE_SPACER => {
-                let flex = self.read_f32()?;
+                let flex = self.read_extent()?;
                 Ok(TreeNode::Spacer { flex })
             }
             NODE_CANVAS => {
@@ -1390,6 +1381,34 @@ mod fill_decode_tests {
         let err = reader
             .read_draw()
             .expect_err("a negative width must not reach the renderer")
+            .to_string();
+        assert!(err.contains("invalid extent"), "wrong rejection: {err}");
+    }
+
+    #[test]
+    fn a_negative_gap_is_refused_at_the_boundary() {
+        let props = PropsData {
+            gap: -1.0,
+            ..PropsData::default()
+        };
+        let bytes = props.to_bytes();
+        let err = TreeReader::new(&bytes)
+            .read_props()
+            .expect_err("a negative gap must not reach layout")
+            .to_string();
+        assert!(
+            err.contains("invalid or truncated props"),
+            "wrong rejection: {err}"
+        );
+    }
+
+    #[test]
+    fn a_negative_spacer_flex_is_refused_at_the_boundary() {
+        let mut data = vec![NODE_SPACER];
+        data.extend_from_slice(&(-1.0_f32).to_le_bytes());
+        let err = TreeReader::new(&data)
+            .read_node()
+            .expect_err("a negative flex must not reach layout")
             .to_string();
         assert!(err.contains("invalid extent"), "wrong rejection: {err}");
     }

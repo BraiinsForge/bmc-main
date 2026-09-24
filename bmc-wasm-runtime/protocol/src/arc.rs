@@ -26,7 +26,7 @@
 //! segment gaps.
 
 use crate::colors::Color;
-use crate::wire::{read_color, read_f32, read_u32};
+use crate::wire::{read_color, read_finite_f32, read_u32};
 
 /// Wire discriminant for a solid-colour arc stroke.
 pub const ARC_FILL_SOLID: u8 = 0;
@@ -211,8 +211,8 @@ pub fn encode_arc_segments(out: &mut Vec<u8>, segments: &ArcSegments) {
 
 /// Read `ArcSegments` from `data` starting at `*pos`, advancing `*pos` past it.
 ///
-/// Returns `None` on an unknown discriminant or truncated input. On `None`,
-/// `*pos` is left in an unspecified state; the partial parse may have advanced it.
+/// Returns `None` on an unknown discriminant, a non-finite angle or truncated input.
+/// On `None`, `*pos` is left in an unspecified state; the partial parse may have advanced it.
 #[must_use]
 pub fn decode_arc_segments(data: &[u8], pos: &mut usize) -> Option<ArcSegments> {
     let kind = *data.get(*pos)?;
@@ -227,8 +227,8 @@ pub fn decode_arc_segments(data: &[u8], pos: &mut usize) -> Option<ArcSegments> 
             }
             let mut spans = Vec::with_capacity(count);
             for _ in 0..count {
-                let start = read_f32(data, pos)?;
-                let end = read_f32(data, pos)?;
+                let start = read_finite_f32(data, pos)?;
+                let end = read_finite_f32(data, pos)?;
                 spans.push((start, end));
             }
             Some(ArcSegments::Explicit(spans))
@@ -345,6 +345,24 @@ mod tests {
     #[test]
     fn explicit_segments_round_trip() {
         let segments = ArcSegments::Explicit(vec![(0.0, 1.0), (1.5, 2.0)]);
+        assert_eq!(round_trip_segments(&segments), segments);
+    }
+
+    #[test]
+    fn decode_segments_rejects_non_finite_angles() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for span in [(bad, 1.0), (0.0, bad)] {
+                let mut buf = Vec::new();
+                encode_arc_segments(&mut buf, &ArcSegments::Explicit(vec![span]));
+                let mut pos = 0;
+                assert!(decode_arc_segments(&buf, &mut pos).is_none(), "{span:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn negative_segment_angles_round_trip() {
+        let segments = ArcSegments::Explicit(vec![(-1.5, -0.5)]);
         assert_eq!(round_trip_segments(&segments), segments);
     }
 

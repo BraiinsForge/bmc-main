@@ -515,7 +515,8 @@ impl TextStyle {
         buf
     }
 
-    /// Deserialize from 28 bytes
+    /// Deserialize from 28 bytes.
+    /// Returns `None` on truncated input or a negative or non-finite `outline_width`.
     #[must_use]
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         let mut p = 0;
@@ -524,7 +525,7 @@ impl TextStyle {
         let max_width = wire::read_u32(data, &mut p)?;
         let flags = wire::read_u32(data, &mut p)?;
         let outline_color = wire::read_color(data, &mut p)?;
-        let outline_width = wire::read_f32(data, &mut p)?;
+        let outline_width = wire::read_extent_f32(data, &mut p)?;
         let flags2 = wire::read_u32(data, &mut p)?;
 
         let weight = FontWeight((flags & 0xFFF) as u16);
@@ -693,18 +694,22 @@ impl PropsData {
         buf
     }
 
+    /// Returns `None` on truncated input or an out-of-range float;
+    /// `inset_*` skip the check because NaN means auto.
     #[must_use]
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         let mut p = 0;
-        let padding = wire::read_f32(data, &mut p)?;
-        let margin = wire::read_f32(data, &mut p)?;
-        let gap = wire::read_f32(data, &mut p)?;
+        let padding = wire::read_extent_f32(data, &mut p)?;
+        let margin = wire::read_finite_f32(data, &mut p)?;
+        // A negative gap overlaps siblings;
+        // only a negative margin or an inset may take a node outside its slot.
+        let gap = wire::read_extent_f32(data, &mut p)?;
         let background = wire::read_color(data, &mut p)?;
-        let width = wire::read_f32(data, &mut p)?;
-        let height = wire::read_f32(data, &mut p)?;
-        let flex = wire::read_f32(data, &mut p)?;
-        let max_width = wire::read_f32(data, &mut p)?;
-        let max_height = wire::read_f32(data, &mut p)?;
+        let width = wire::read_extent_f32(data, &mut p)?;
+        let height = wire::read_extent_f32(data, &mut p)?;
+        let flex = wire::read_extent_f32(data, &mut p)?;
+        let max_width = wire::read_extent_f32(data, &mut p)?;
+        let max_height = wire::read_extent_f32(data, &mut p)?;
         let layout = LayoutFlags::from_bits(wire::read_u32(data, &mut p)?);
         let bg_np_id = BitmapId::from_wire(wire::read_u16(data, &mut p)?);
         let bg_np_left = wire::read_u16(data, &mut p)?;
@@ -715,8 +720,8 @@ impl PropsData {
         let inset_right = wire::read_f32(data, &mut p)?;
         let inset_bottom = wire::read_f32(data, &mut p)?;
         let inset_left = wire::read_f32(data, &mut p)?;
-        let border_radius = wire::read_f32(data, &mut p)?;
-        let border_width = wire::read_f32(data, &mut p)?;
+        let border_radius = wire::read_extent_f32(data, &mut p)?;
+        let border_width = wire::read_extent_f32(data, &mut p)?;
         let border_color = wire::read_color(data, &mut p)?;
         Some(Self {
             padding,
@@ -911,6 +916,93 @@ mod tests {
     #[test]
     fn props_data_from_bytes_rejects_truncated() {
         assert!(PropsData::from_bytes(&[0_u8; PropsData::SIZE - 1]).is_none());
+    }
+
+    fn decodes(props: PropsData) -> bool {
+        PropsData::from_bytes(&props.to_bytes()).is_some()
+    }
+
+    #[test]
+    fn props_data_rejects_non_finite_or_negative_extents() {
+        type Setter = fn(&mut PropsData, f32);
+        let extents: [(&str, Setter); 9] = [
+            ("padding", |p, v| p.padding = v),
+            ("gap", |p, v| p.gap = v),
+            ("width", |p, v| p.width = v),
+            ("height", |p, v| p.height = v),
+            ("flex", |p, v| p.flex = v),
+            ("max_width", |p, v| p.max_width = v),
+            ("max_height", |p, v| p.max_height = v),
+            ("border_radius", |p, v| p.border_radius = v),
+            ("border_width", |p, v| p.border_width = v),
+        ];
+        for (field, set) in extents {
+            for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
+                let mut props = PropsData::default();
+                set(&mut props, v);
+                assert!(!decodes(props), "{field} accepted {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn props_data_rejects_non_finite_margin() {
+        for margin in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(
+                !decodes(PropsData {
+                    margin,
+                    ..PropsData::default()
+                }),
+                "{margin}"
+            );
+        }
+    }
+
+    #[test]
+    fn props_data_decodes_defaults_and_keeps_nan_insets() {
+        let back = PropsData::from_bytes(&PropsData::default().to_bytes())
+            .expect("zero auto extents and NaN auto insets must decode");
+        for inset in [
+            back.inset_top,
+            back.inset_right,
+            back.inset_bottom,
+            back.inset_left,
+        ] {
+            assert!(
+                inset.is_nan(),
+                "NaN inset is auto and must survive decoding"
+            );
+        }
+    }
+
+    #[test]
+    fn props_data_accepts_negative_zero_extent() {
+        assert!(decodes(PropsData {
+            gap: -0.0,
+            ..PropsData::default()
+        }));
+    }
+
+    #[test]
+    fn props_data_accepts_negative_margin() {
+        assert!(decodes(PropsData {
+            margin: -4.0,
+            ..PropsData::default()
+        }));
+    }
+
+    #[test]
+    fn text_style_rejects_non_finite_or_negative_outline_width() {
+        for outline_width in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
+            let s = TextStyle {
+                outline_width,
+                ..TextStyle::default()
+            };
+            assert!(
+                TextStyle::from_bytes(&s.to_bytes()).is_none(),
+                "{outline_width}"
+            );
+        }
     }
 
     #[test]

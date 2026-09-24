@@ -21,7 +21,7 @@
 //! Shape fill paints: solid colour, linear gradient, and radial gradient.
 
 use crate::colors::Color;
-use crate::wire::{read_color, read_f32};
+use crate::wire::{read_color, read_finite_f32};
 
 /// Wire discriminant for a solid-colour paint.
 pub const FILL_SOLID: u8 = 0;
@@ -172,8 +172,8 @@ pub fn encode_fill(out: &mut Vec<u8>, fill: &Fill) {
 
 /// Read a `Fill` from `data` starting at `*pos`, advancing `*pos` past it.
 ///
-/// Returns `None` on an unknown discriminant or truncated input.  On `None`,
-/// `*pos` is left in an unspecified state; the partial parse may have advanced it.
+/// Returns `None` on an unknown discriminant, a non-finite angle or truncated input.
+/// On `None`, `*pos` is left in an unspecified state; the partial parse may have advanced it.
 #[must_use]
 pub fn decode_fill(data: &[u8], pos: &mut usize) -> Option<Fill> {
     let kind = *data.get(*pos)?;
@@ -183,7 +183,7 @@ pub fn decode_fill(data: &[u8], pos: &mut usize) -> Option<Fill> {
         FILL_LINEAR => {
             let start = read_color(data, pos)?;
             let end = read_color(data, pos)?;
-            let angle = read_f32(data, pos)?;
+            let angle = read_finite_f32(data, pos)?;
             Some(Fill::Linear { angle, start, end })
         }
         FILL_RADIAL => {
@@ -312,6 +312,22 @@ mod tests {
         encode_fill(&mut buf, &Fill::Solid(RED));
         assert_eq!(buf[0], FILL_SOLID);
         assert_eq!(buf.len(), 5);
+    }
+
+    #[test]
+    fn decode_rejects_non_finite_angle() {
+        for angle in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut buf = Vec::new();
+            encode_fill(&mut buf, &Fill::linear(angle, RED, BLUE));
+            let mut pos = 0;
+            assert!(decode_fill(&buf, &mut pos).is_none(), "{angle}");
+        }
+    }
+
+    #[test]
+    fn negative_angle_round_trips() {
+        let f = Fill::linear(-45.0, RED, BLUE);
+        assert_eq!(round_trip(f), f);
     }
 
     #[test]
