@@ -283,22 +283,18 @@ fn sector_time(seconds: f32) -> String {
     fmt!("{}.{}{}", whole, lead, millis)
 }
 
-/// A cell's text as one unbreakable line, which its column is never narrower than:
-/// `+1 LAP` would otherwise break at its space and take the row's baseline with it.
-fn unbroken(content: impl Into<String>) -> String {
-    content.into().replace(' ', typography::NBSP)
-}
-
-fn plain(content: impl Into<String>, size: u32, tone: Color) -> Node {
+/// One unbroken line per cell: `+1 LAP` would otherwise break at its space
+/// and take the row's baseline with it.
+fn plain(content: impl AsRef<str>, size: u32, tone: Color) -> Node {
     text(
-        unbroken(content),
+        typography::unbroken(content),
         style!(size: size, color: tone, line_height: 1.0),
     )
 }
 
-fn value(content: impl Into<String>, size: u32, tone: Color) -> Node {
+fn value(content: impl AsRef<str>, size: u32, tone: Color) -> Node {
     text(
-        unbroken(content),
+        typography::unbroken(content),
         style!(size: size, color: tone, align: TextAlign::Right, line_height: 1.0),
     )
 }
@@ -421,7 +417,7 @@ fn timing(text_value: &crate::model::TimingText, size: u32, tone: Color) -> Node
     if text_value.is_blank() {
         return value("-", size, tone);
     }
-    value(text_value.as_str().to_owned(), size, tone)
+    value(text_value.as_str(), size, tone)
 }
 
 fn cell(which: Cell, row_data: &TimingRow, bucket: SizeBucket) -> Node {
@@ -472,7 +468,7 @@ fn cell(which: Cell, row_data: &TimingRow, bucket: SizeBucket) -> Node {
         Cell::PracticeGapOrOut => {
             if row_data.is_out_lap {
                 // One word: this cell exists on the frames that fold the lap
-                // into the gap, whose slot is cut for `+0.161` and wraps.
+                // into the gap, whose slot is sized for `+0.161`, not `OUT LAP`.
                 value("OUT", size, color::TEXT_MUTED)
             } else {
                 cell(Cell::PracticeGap, row_data, bucket)
@@ -597,13 +593,18 @@ fn header(
         },
         Board::Quali | Board::Practice => data.session_label.clone(),
     };
+    let flag = parts::flag(FLAG, &data.country_flag_url);
     let mut content = Vec::new();
     if cols.titled {
         content.push(parts::title(board.title()));
-        content.push(parts::subtitle(&data.gp_name, bucket));
+        content.push(parts::yielding(vec![
+            parts::subtitle(&data.gp_name, bucket),
+            flag,
+        ]));
+    } else {
+        content.push(flag);
+        content.push(spacer(1.0));
     }
-    content.push(parts::flag(FLAG, &data.country_flag_url));
-    content.push(spacer(1.0));
     content.push(parts::subtitle(&info, bucket));
     parts::header(content, false, bucket)
 }

@@ -31,7 +31,7 @@
 use bmc_wasm_sdk::*;
 
 use bmc_wasm_sdk::system::{self, DateFormat, TimeFormat};
-use bmc_wasm_sdk::typography::{ELLIPSIS, ENDASH, NBSP};
+use bmc_wasm_sdk::typography::{ENDASH, unbroken};
 
 use crate::images::{self, ImageKind};
 use crate::model::{ImageUrl, SizeBucket};
@@ -170,13 +170,16 @@ pub fn header(content: Vec<Node>, stripe: bool, bucket: SizeBucket) -> Node {
 /// What the screen is, in the design's quieter weight.
 #[must_use]
 pub fn title(label: &str) -> Node {
-    text(label, style!(size: font::TITLE, color: color::TEXT_MUTED))
+    text(
+        unbroken(label),
+        style!(size: font::TITLE, color: color::TEXT_MUTED),
+    )
 }
 
 /// What the screen is showing — a date range, a Grand Prix, a country.
 ///
-/// Every caller names something the server chose, so the label is cut to
-/// what the frame seats rather than trusted to fit.
+/// Every caller names something the server chose,
+/// so it ends in "…" where the header runs out of room for it.
 #[must_use]
 pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
     let size = match bucket {
@@ -185,19 +188,19 @@ pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
         SizeBucket::Small => font::SUBTITLE_SMALL,
     };
     text(
-        truncate(label, subtitle_chars(bucket)),
-        style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
+        label,
+        style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
     )
 }
 
-/// What a subtitle seats, sharing its row with the screen's own name.
-fn subtitle_chars(bucket: SizeBucket) -> usize {
-    match bucket {
-        SizeBucket::Full => 46,
-        SizeBucket::Large => 28,
-        SizeBucket::Medium => 30,
-        SizeBucket::Small => 22,
-    }
+/// A run that takes only the width its row has left and is cut inside it,
+/// so nothing else in the row gives way — an empty artwork box included.
+#[must_use]
+pub fn yielding(children: Vec<Node>) -> Node {
+    row(
+        props!(flex: 1.0, gap: space::GAP * 2.0, cross_align: CrossAlign::Center),
+        children,
+    )
 }
 
 #[must_use]
@@ -214,42 +217,58 @@ pub enum LabelWeight {
     Strong,
 }
 
-/// A stat's value, or [`UNKNOWN`] dimmed where the payload named none —
-/// the one place either is drawn, so absence always reads as absence.
-fn stat_value(value: Option<&str>, value_chars: usize, size: u32) -> Node {
-    match value {
-        Some(value) => text(
-            truncate(value, value_chars),
-            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
-        ),
-        None => text(
-            UNKNOWN,
-            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT_MUTED, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
-        ),
+/// Which half of a [`stat_row`] gives way when the row runs out:
+/// the server's string, while the other half holds its whole width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Yields {
+    Label,
+    Value,
+}
+
+/// One half of a [`stat_row`]: cut with "…" where it yields,
+/// else one unbreakable line.
+fn stat_half(content: &str, yields: bool) -> (String, TextOverflow) {
+    if yields {
+        (content.to_owned(), TextOverflow::Ellipsis)
+    } else {
+        (unbroken(content), TextOverflow::Wrap)
     }
 }
 
-/// A label and its value, pushed to opposite edges of the row.
-///
-/// Both stay on one line. The label holds its whole width,
-/// and the value, which every caller sources from the server, gives way.
+/// A stat's value, or [`UNKNOWN`] dimmed where the payload named none —
+/// the one place either is drawn, so absence always reads as absence.
+fn stat_value(value: Option<&str>, size: u32, yields: bool) -> Node {
+    let (content, overflow, tone) = match value {
+        Some(value) => {
+            let (content, overflow) = stat_half(value, yields);
+            (content, overflow, color::TEXT)
+        }
+        None => (UNKNOWN.to_owned(), TextOverflow::Wrap, color::TEXT_MUTED),
+    };
+    text(
+        content,
+        style!(size: size, weight: FontWeight::SEMIBOLD, color: tone, align: TextAlign::Right, line_height: 1.0, text_overflow: overflow),
+    )
+}
+
+/// A label and its value, pushed to opposite edges of one line.
 #[must_use]
 pub fn stat_row(
     label: &str,
     value: Option<&str>,
-    value_chars: usize,
     size: u32,
     weight: LabelWeight,
+    yields: Yields,
 ) -> Node {
-    let label = label.replace(' ', NBSP);
+    let (label, overflow) = stat_half(label, yields == Yields::Label);
     let label = match weight {
         LabelWeight::Strong => text(
             label,
-            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: overflow),
         ),
         LabelWeight::Muted => text(
             label,
-            style!(size: size, color: color::TEXT_MUTED, line_height: 1.0),
+            style!(size: size, color: color::TEXT_MUTED, line_height: 1.0, text_overflow: overflow),
         ),
     };
     row(
@@ -259,24 +278,8 @@ pub fn stat_row(
             cross_align: CrossAlign::Center,
             justify_content: Justify::SpaceBetween
         ),
-        [label, stat_value(value, value_chars, size)],
+        [label, stat_value(value, size, yields == Yields::Value)],
     )
-}
-
-/// Cut a label to what its column seats.
-///
-/// A text node keeps its content's width whatever box surrounds it.
-/// Nothing shrinks, so an overlong label pushes every column after it
-/// off the frame, and any column holding a string the server chose
-/// needs cutting here first.
-#[must_use]
-pub fn truncate(label: &str, max_chars: usize) -> String {
-    if label.chars().count() <= max_chars {
-        return label.to_owned();
-    }
-    let mut out: String = label.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push_str(ELLIPSIS);
-    out
 }
 
 /// Rows sharing the column's height, ruled off from one another.
@@ -473,9 +476,12 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_sdk::{Node, assets, cache, encode_image_meta};
+    use bmc_wasm_sdk::{Node, TextOverflow, assets, cache, encode_image_meta};
 
-    use super::{CalendarDate, DateFormat, ENDASH, clock, contained, date_range, flag, system};
+    use super::{
+        CalendarDate, DateFormat, ENDASH, LabelWeight, Yields, clock, contained, date_range, flag,
+        font, stat_row, system, unbroken,
+    };
     use crate::images::{ImageKind, tag_for};
     use crate::model::ImageUrl;
     use crate::screens::fixtures::{weekend_day, weekend_time};
@@ -592,5 +598,52 @@ mod tests {
     fn the_clock_keeps_the_leading_zero_of_a_minute() {
         assert_eq!(clock(weekend_time(23, 13, 0)), "13:00");
         assert_eq!(clock(weekend_time(21, 9, 5)), "9:05");
+    }
+
+    /// The half that holds can't wrap, so it keeps its whole width
+    /// and the row takes its overrun out of the other half alone.
+    #[test]
+    fn a_stat_row_cuts_only_the_half_that_yields() {
+        let halves = |node: Node| -> Vec<(String, TextOverflow)> {
+            let Node::Row(_, children) = node else {
+                panic!("BUG: a stat row is a row");
+            };
+            children
+                .iter()
+                .map(|child| {
+                    let Node::Paragraph {
+                        base_style, spans, ..
+                    } = child
+                    else {
+                        panic!("BUG: a stat row holds text only, got {child:?}");
+                    };
+                    (spans[0].text.clone(), base_style.text_overflow)
+                })
+                .collect()
+        };
+        let row = |label, value, yields| {
+            halves(stat_row(
+                label,
+                Some(value),
+                font::ROW,
+                LabelWeight::Muted,
+                yields,
+            ))
+        };
+
+        assert_eq!(
+            row("Race Engineer", "Gianpiero Lambiase", Yields::Value),
+            [
+                (unbroken("Race Engineer"), TextOverflow::Wrap),
+                ("Gianpiero Lambiase".to_owned(), TextOverflow::Ellipsis),
+            ]
+        );
+        assert_eq!(
+            row("Sprint Qualifying", "Fri 16:30", Yields::Label),
+            [
+                ("Sprint Qualifying".to_owned(), TextOverflow::Ellipsis),
+                (unbroken("Fri 16:30"), TextOverflow::Wrap),
+            ]
+        );
     }
 }

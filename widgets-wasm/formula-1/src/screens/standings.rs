@@ -30,7 +30,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::model::{SizeBucket, StandingsRow};
-use crate::screens::parts::{self, color, font, truncate};
+use crate::screens::parts::{self, color, font};
 
 /// Everything the screen draws.
 #[derive(Clone, Debug)]
@@ -46,22 +46,16 @@ const FLAG_HEIGHT: f32 = LOGO * 0.7;
 /// Position column, its 28 px plus the 8 px it holds off the name.
 const POSITION: f32 = 36.0;
 
-/// The table's geometry for one frame.
-///
-/// The ported layout used flex ratios — name 4, country 2, team 4 —
-/// with cells shrinking and ellipsizing. This tree has no
-/// `min-width: 0`, so text never shrinks below its content; these are
-/// those ratios resolved per frame, with names cut to what they seat.
+/// The table's geometry for one frame: the ported layout's flex ratios
+/// — name 4, country 2, team 4 — resolved per frame.
 #[derive(Clone, Copy, Debug)]
 struct Columns {
     rows: usize,
     stripe: bool,
     name: f32,
-    name_chars: usize,
     /// `None` drops the column, as the narrow frames do.
     country: Option<f32>,
     team: Option<f32>,
-    team_chars: usize,
     points: f32,
     /// The score quietens as the frame narrows: bold, then semibold,
     /// then the same weight as everything else.
@@ -74,10 +68,8 @@ fn columns(bucket: SizeBucket) -> Columns {
             rows: 10,
             stripe: true,
             name: 443.0,
-            name_chars: 41,
             country: Some(221.0),
             team: Some(443.0),
-            team_chars: 34,
             points: 56.0,
             points_weight: FontWeight::BOLD,
         },
@@ -85,10 +77,8 @@ fn columns(bucket: SizeBucket) -> Columns {
             rows: 10,
             stripe: false,
             name: 237.0,
-            name_chars: 22,
             country: None,
             team: Some(237.0),
-            team_chars: 16,
             points: 56.0,
             points_weight: FontWeight::BOLD,
         },
@@ -96,10 +86,8 @@ fn columns(bucket: SizeBucket) -> Columns {
             rows: 5,
             stripe: true,
             name: 245.0,
-            name_chars: 22,
             country: None,
             team: Some(245.0),
-            team_chars: 16,
             points: 56.0,
             points_weight: FontWeight::SEMIBOLD,
         },
@@ -107,10 +95,8 @@ fn columns(bucket: SizeBucket) -> Columns {
             rows: 5,
             stripe: false,
             name: 189.0,
-            name_chars: 17,
             country: None,
             team: None,
-            team_chars: 0,
             points: 44.0,
             points_weight: FontWeight::REGULAR,
         },
@@ -121,7 +107,7 @@ fn columns(bucket: SizeBucket) -> Columns {
 fn name(content: impl Into<String>) -> Node {
     text(
         content,
-        style!(size: font::ROW, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
+        style!(size: font::ROW, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
     )
 }
 
@@ -143,10 +129,7 @@ fn muted(content: impl Into<String>) -> Node {
 
 /// A fixed-width column, so the cell below it starts at the same x.
 fn cell(width: f32, child: Node) -> Node {
-    col(
-        props!(width: width, cross_align: CrossAlign::Start),
-        [child],
-    )
+    col(props!(width: width), [child])
 }
 
 fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
@@ -158,10 +141,7 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
                 None => muted(parts::NO_ORDINAL),
             },
         ),
-        cell(
-            cols.name,
-            name(truncate(&entry.driver_name, cols.name_chars)),
-        ),
+        cell(cols.name, name(&entry.driver_name)),
     ];
     if let Some(width) = cols.country {
         cells.push(cell(
@@ -182,7 +162,10 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
                 props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
                 [
                     parts::team_mark(LOGO, &entry.team_logo_url, entry.team_color),
-                    plain(truncate(&entry.team_name, cols.team_chars)),
+                    parts::yielding(vec![text(
+                        &entry.team_name,
+                        style!(size: font::ROW, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+                    )]),
                 ],
             ),
         ));
@@ -240,9 +223,9 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_sdk::typography::ELLIPSIS;
+    use bmc_wasm_sdk::{Node, TextOverflow};
 
-    use super::{FontWeight, POSITION, columns, truncate};
+    use super::{FontWeight, POSITION, columns, standings_row};
 
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
@@ -313,38 +296,39 @@ mod tests {
         }
     }
 
+    /// The mark's placeholder is an empty box,
+    /// so it would be the first to shrink beside a name that runs on.
     #[test]
-    fn a_name_longer_than_its_column_is_cut_to_it() {
-        assert_eq!(truncate("Lando Norris", 34), "Lando Norris");
-        assert_eq!(
-            truncate("Andrea Kimi Antonelli", 10),
-            format!("Andrea Ki{ELLIPSIS}")
-        );
-    }
+    fn a_long_team_name_gives_way_to_its_mark() {
+        const TEAM: &str = "Scuderia Ferrari HP, longer than any team column seats";
+        let mut entry = fixtures::standings(SizeBucket::Large).rows.remove(0);
+        entry.team_name = TEAM.to_owned();
 
-    /// Cutting is the guard against an upstream that renames a driver,
-    /// not something the grid as it stands should ever provoke: the
-    /// narrow frames drop whole columns to make the room instead.
-    #[test]
-    fn every_frame_seats_the_grid_whole() {
-        for row in fixtures::standings_widest(SizeBucket::Full).rows {
-            for bucket in ALL {
-                let cols = columns(bucket);
-                assert_eq!(
-                    truncate(&row.driver_name, cols.name_chars),
-                    row.driver_name,
-                    "{bucket:?} cuts `{}`",
-                    row.driver_name,
-                );
-                if cols.team.is_some() {
-                    assert_eq!(
-                        truncate(&row.team_name, cols.team_chars),
-                        row.team_name,
-                        "{bucket:?} cuts `{}`",
-                        row.team_name,
-                    );
-                }
-            }
-        }
+        let Node::Row(_, cells) = standings_row(&entry, columns(SizeBucket::Large)) else {
+            panic!("BUG: a standings row is a row");
+        };
+        let Some(Node::Column(_, team_cell)) = cells.get(2) else {
+            panic!("BUG: the team cell follows the name at this frame");
+        };
+        let Some(Node::Row(_, team)) = team_cell.first() else {
+            panic!("BUG: the team cell sets its mark and name in a row");
+        };
+        let Some(Node::Row(run, name)) = team.get(1) else {
+            panic!("BUG: the team name follows its mark in a run of its own");
+        };
+        assert!(
+            run.flex > 0.0,
+            "only a growing run takes just the width the mark leaves"
+        );
+        let Some(Node::Paragraph {
+            base_style, spans, ..
+        }) = name.first()
+        else {
+            panic!("BUG: the run holds the team name");
+        };
+        assert_eq!(
+            (spans[0].text.as_str(), base_style.text_overflow),
+            (TEAM, TextOverflow::Ellipsis)
+        );
     }
 }

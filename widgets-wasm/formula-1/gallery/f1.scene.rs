@@ -326,56 +326,27 @@ fn driver_placeholders(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
-/// A constructor's name rather than filler, since a proportional font
-/// makes the glyph mix, not the count, decide what fits.
-const RULER_SOURCE: &str = "Scuderia Ferrari Racing Team Alpha Romeo Sauber";
-
-/// Text of exactly `chars` characters, cut from [`RULER_SOURCE`].
-fn ruler(chars: usize) -> String {
-    assert!(
-        chars <= RULER_SOURCE.chars().count(),
-        "a {chars}-character ruler needs a longer source than {RULER_SOURCE:?}",
-    );
-    RULER_SOURCE.chars().take(chars).collect()
-}
-
-/// Drag until the column cuts — that length is the frame's budget.
-#[expect(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "a character count over a fixed sample string, and the slider \
-              is bounded to it"
-)]
-fn ruler_length(ctx: &mut SceneCtx) -> usize {
-    let longest = RULER_SOURCE.chars().count() as f32;
-    ctx.slider("Length", 20.0, 1.0, longest, 1.0) as usize
-}
-
-/// The value column at a chosen length, to see where it cuts.
+/// Every server string made overlong, to see where each is cut.
 #[scene]
-fn driver_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let chars = ruler_length(ctx);
-    size_stages(ctx, ui, move |bucket| {
-        move || driver::driver_view(&fixtures::driver_widest(bucket, &ruler(chars)))
+fn driver_overlong(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || driver::driver_view(&fixtures::driver_overlong(bucket))
     });
 }
 
-/// The name and team columns at a chosen length.
+/// Every name and team made overlong.
 #[scene]
-fn standings_ruler(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let chars = ruler_length(ctx);
-    size_stages(ctx, ui, move |bucket| {
-        move || standings::standings_view(&fixtures::standings_ruler(bucket, &ruler(chars)))
+fn standings_overlong(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || standings::standings_view(&fixtures::standings_overlong(bucket))
     });
 }
 
-/// The info column at a chosen length.
+/// Every server string made overlong, to see where each is cut.
 #[scene]
-fn next_race_ruler(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let chars = ruler_length(ctx);
-    size_stages(ctx, ui, move |bucket| {
-        move || next_race::next_race_view(&fixtures::next_race_ruler(bucket, &ruler(chars)))
+fn next_race_overlong(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || next_race::next_race_view(&fixtures::next_race_overlong(bucket))
     });
 }
 

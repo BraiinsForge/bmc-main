@@ -2,7 +2,7 @@
 # there; these reach all of them, plus the empty and unavailable states no
 # recording ever captured at any geometry.
 #
-# The `*-widest` and `*-ruler` scenes are deliberately absent: they stress
+# The `*-widest` and `*-overlong` scenes are deliberately absent: they stress
 # the longest strings a layout survives, which is a developer's question.
 #
 # The four Deck fullscreen shots at the end are the same scenes from the same

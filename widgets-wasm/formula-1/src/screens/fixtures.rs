@@ -879,38 +879,46 @@ pub fn driver(bucket: SizeBucket) -> DriverViewData {
     driver_card(bucket, drivers().into_iter().next())
 }
 
-/// Fills the name and team columns, the two the standings cut.
+const OVERLONG: &str = "An upstream string far longer than any column of this widget seats";
+
+/// [`OVERLONG`] as every row's driver and team.
 #[must_use]
-pub fn standings_ruler(bucket: SizeBucket, value: &str) -> StandingsViewData {
+pub fn standings_overlong(bucket: SizeBucket) -> StandingsViewData {
     let mut view = standings(bucket);
     for row in &mut view.rows {
-        value.clone_into(&mut row.driver_name);
-        value.clone_into(&mut row.team_name);
+        OVERLONG.clone_into(&mut row.driver_name);
+        OVERLONG.clone_into(&mut row.team_name);
     }
     view
 }
 
-/// Fills the tyre compounds, the only info value the server
-/// writes as text; the rest are figures this widget formats.
+/// [`OVERLONG`] as every string the server names the weekend with.
 #[must_use]
-pub fn next_race_ruler(bucket: SizeBucket, value: &str) -> NextRaceViewData {
+pub fn next_race_overlong(bucket: SizeBucket) -> NextRaceViewData {
     let mut view = next_race(bucket);
     if let Some(race) = view.race.as_mut() {
-        race.tire_compounds = Some(value.to_owned());
+        OVERLONG.clone_into(&mut race.gp_name);
+        OVERLONG.clone_into(&mut race.country_name);
+        OVERLONG.clone_into(&mut race.circuit_name);
+        race.tire_compounds = Some(OVERLONG.to_owned());
+        for session in &mut race.sessions {
+            OVERLONG.clone_into(&mut session.name);
+        }
     }
     view
 }
 
-/// Fills every text field of the card.
+/// [`OVERLONG`] in every text field of the card.
 #[must_use]
-pub fn driver_widest(bucket: SizeBucket, value: &str) -> DriverViewData {
+pub fn driver_overlong(bucket: SizeBucket) -> DriverViewData {
     let mut driver = drivers()
         .into_iter()
         .next()
         .expect("BUG: fixtures name a driver");
-    value.clone_into(&mut driver.team);
-    value.clone_into(&mut driver.nationality);
-    driver.race_engineer = Some(value.to_owned());
+    OVERLONG.clone_into(&mut driver.name);
+    OVERLONG.clone_into(&mut driver.team);
+    OVERLONG.clone_into(&mut driver.nationality);
+    driver.race_engineer = Some(OVERLONG.to_owned());
     driver_card(bucket, Some(driver))
 }
 

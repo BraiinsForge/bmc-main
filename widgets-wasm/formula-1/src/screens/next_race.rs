@@ -32,7 +32,7 @@ use bmc_wasm_sdk::*;
 
 use crate::images::ImageKind;
 use crate::model::{NextRace, SizeBucket};
-use crate::screens::parts::{self, LabelWeight, color, font, space};
+use crate::screens::parts::{self, LabelWeight, Yields, color, font, space};
 
 /// Everything the screen draws.
 #[derive(Clone, Debug)]
@@ -45,12 +45,6 @@ pub struct NextRaceViewData {
 const COLUMN_GAP: f32 = 40.0;
 /// The Grand Prix name, the largest type on the widget.
 const GP_NAME: u32 = 32;
-/// What the Grand Prix block seats, on the two frames that draw one.
-/// Both lines run the full width, so one budget covers the pair.
-const GP_NAME_CHARS: usize = 30;
-/// The circuit's name, which stands in for its outline until that lands
-/// and is bounded by the map's own panel rather than the frame.
-const CIRCUIT_NAME_CHARS: usize = 24;
 /// What the design floats the Grand Prix block off the header, past
 /// the frame's own gap.
 const GP_BLOCK_LEAD: f32 = 12.0;
@@ -80,9 +74,6 @@ struct Layout {
     track_map: bool,
     info_font: u32,
     labels: LabelWeight,
-    /// What an info value seats beside its label; the tyre compounds are
-    /// the server's own string.
-    value_chars: usize,
 }
 
 fn layout(bucket: SizeBucket) -> Layout {
@@ -94,7 +85,6 @@ fn layout(bucket: SizeBucket) -> Layout {
             track_map: true,
             info_font: font::TITLE,
             labels: LabelWeight::Muted,
-            value_chars: 18,
         },
         SizeBucket::Large => Layout {
             stripe: true,
@@ -106,7 +96,6 @@ fn layout(bucket: SizeBucket) -> Layout {
             // size a sprint's session names cost more than the column has.
             info_font: font::ROW,
             labels: LabelWeight::Muted,
-            value_chars: 16,
         },
         SizeBucket::Medium => Layout {
             stripe: false,
@@ -115,7 +104,6 @@ fn layout(bucket: SizeBucket) -> Layout {
             track_map: false,
             info_font: font::ROW,
             labels: LabelWeight::Muted,
-            value_chars: 16,
         },
         SizeBucket::Small => Layout {
             stripe: false,
@@ -124,7 +112,6 @@ fn layout(bucket: SizeBucket) -> Layout {
             track_map: false,
             info_font: font::ROW,
             labels: LabelWeight::Strong,
-            value_chars: 12,
         },
     }
 }
@@ -149,13 +136,7 @@ fn session_time(at: Option<LocalDateTime>) -> Option<String> {
 }
 
 fn info_row(label: &str, value: Option<&str>, layout: Layout) -> Node {
-    parts::stat_row(
-        label,
-        value,
-        layout.value_chars,
-        layout.info_font,
-        layout.labels,
-    )
+    parts::stat_row(label, value, layout.info_font, layout.labels, Yields::Value)
 }
 
 fn circuit_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
@@ -182,21 +163,7 @@ fn circuit_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
     ]
 }
 
-/// What a frame's schedule column seats as a session's name.
-///
-/// The column holds a label and a time, and the time is the fixed half —
-/// so what is left over is the label's budget, and nothing in the tree
-/// shrinks text to fit it. A sprint's `Sprint Qualifying` is the longest
-/// name a weekend carries and the one these are cut for.
-fn session_chars(bucket: SizeBucket) -> usize {
-    match bucket {
-        SizeBucket::Full => 20,
-        SizeBucket::Large | SizeBucket::Medium => 18,
-        SizeBucket::Small => 11,
-    }
-}
-
-fn schedule_rows(race: &NextRace, layout: Layout, bucket: SizeBucket) -> Vec<Node> {
+fn schedule_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
     let mut rows = Vec::new();
     if let (Schedule::DatedSessions, Some(start)) = (layout.schedule, race.date_start) {
         rows.push(info_row(
@@ -205,11 +172,14 @@ fn schedule_rows(race: &NextRace, layout: Layout, bucket: SizeBucket) -> Vec<Nod
             layout,
         ));
     }
+    // The time is the fixed half, so a long session name gives way to it.
     for session in &race.sessions {
-        rows.push(info_row(
-            &parts::truncate(&session.name, session_chars(bucket)),
+        rows.push(parts::stat_row(
+            &session.name,
             session_time(session.starts_at).as_deref(),
-            layout,
+            layout.info_font,
+            layout.labels,
+            Yields::Label,
         ));
     }
     rows
@@ -223,15 +193,15 @@ fn gp_block(race: &NextRace) -> Node {
                 props!(gap: 10.0, cross_align: CrossAlign::Center),
                 [
                     text(
-                        parts::truncate(&race.gp_name, GP_NAME_CHARS),
-                        style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
+                        &race.gp_name,
+                        style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
                     ),
                     parts::flag(22.4, &race.country_flag_url),
                 ],
             ),
             text(
-                parts::truncate(&race.country_name, GP_NAME_CHARS),
-                style!(size: font::TITLE, color: color::TEXT_MUTED),
+                &race.country_name,
+                style!(size: font::TITLE, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
             ),
         ],
     )
@@ -260,8 +230,8 @@ fn track_map(race: &NextRace, bucket: SizeBucket) -> Node {
         width,
         height,
         text(
-            parts::truncate(&race.circuit_name, CIRCUIT_NAME_CHARS),
-            style!(size: font::ROW, color: color::TEXT_MUTED, align: TextAlign::Center),
+            &race.circuit_name,
+            style!(size: font::ROW, color: color::TEXT_MUTED, align: TextAlign::Center, text_overflow: TextOverflow::Ellipsis),
         ),
     );
     col(
@@ -308,17 +278,14 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
 }
 
 /// The columns of stats, and the schedule where the frame keeps one.
-fn columns(race: &NextRace, layout: Layout, bucket: SizeBucket) -> Node {
+fn columns(race: &NextRace, layout: Layout) -> Node {
     let circuit = parts::stat_col(circuit_rows(race, layout));
     if layout.schedule == Schedule::Absent {
         return circuit;
     }
     row(
         props!(flex: 1.0, gap: COLUMN_GAP),
-        [
-            circuit,
-            parts::stat_col(schedule_rows(race, layout, bucket)),
-        ],
+        [circuit, parts::stat_col(schedule_rows(race, layout))],
     )
 }
 
@@ -349,11 +316,11 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
                 col(props!(height: GP_BLOCK_LEAD), []),
                 gp_block(race),
                 col(props!(height: GP_BLOCK_GAP), []),
-                columns(race, layout, view.bucket),
+                columns(race, layout),
             ],
         )
     } else {
-        columns(race, layout, view.bucket)
+        columns(race, layout)
     };
     if layout.track_map {
         body = row(
@@ -366,33 +333,8 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{Schedule, layout, session_chars};
+    use super::{Schedule, layout};
     use crate::model::SizeBucket;
-    use crate::screens::parts::truncate;
-
-    /// The longest name a weekend carries, which a sprint introduced and
-    /// which overran the large frame — carrying the times off the edge,
-    /// since nothing in the tree shrinks text to fit.
-    const LONGEST: &str = "Sprint Qualifying";
-
-    /// Every frame wide enough to read a session name reads the longest
-    /// one whole. Small is the exception: it seats a name in the width a
-    /// phone-sized tile has, so it is the one frame that cuts.
-    #[test]
-    fn only_the_small_frame_cuts_the_longest_session_name() {
-        for bucket in [SizeBucket::Full, SizeBucket::Large, SizeBucket::Medium] {
-            assert_eq!(
-                truncate(LONGEST, session_chars(bucket)),
-                LONGEST,
-                "{bucket:?} seats {} and should read `{LONGEST}` whole",
-                session_chars(bucket),
-            );
-        }
-        assert_eq!(
-            truncate(LONGEST, session_chars(SizeBucket::Small)),
-            "Sprint Qua…"
-        );
-    }
 
     /// The per-frame rules the port keeps.
     #[test]

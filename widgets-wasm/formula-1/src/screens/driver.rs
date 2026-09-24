@@ -31,7 +31,7 @@ use bmc_wasm_sdk::*;
 
 use crate::images::{self, ImageKind};
 use crate::model::{DriverStats, ImageUrl, SizeBucket};
-use crate::screens::parts::{self, LabelWeight, color, font, space};
+use crate::screens::parts::{self, LabelWeight, Yields, color, font, space};
 
 /// Everything the screen draws.
 #[derive(Clone, Debug)]
@@ -80,10 +80,6 @@ struct Layout {
     split_stats: bool,
     stat_font: u32,
     labels: LabelWeight,
-    /// What a stat's value seats beside its label.
-    /// The team and the race engineer are the server's
-    /// own strings, and the longest of them barely fits.
-    value_chars: usize,
 }
 
 fn layout(bucket: SizeBucket) -> Layout {
@@ -93,28 +89,24 @@ fn layout(bucket: SizeBucket) -> Layout {
             split_stats: true,
             stat_font: font::TITLE,
             labels: LabelWeight::Muted,
-            value_chars: 20,
         },
         SizeBucket::Large => Layout {
             portrait: Portrait::Named,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Muted,
-            value_chars: 22,
         },
         SizeBucket::Medium => Layout {
             portrait: Portrait::Photo,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Muted,
-            value_chars: 24,
         },
         SizeBucket::Small => Layout {
             portrait: Portrait::Absent,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Strong,
-            value_chars: 20,
         },
     }
 }
@@ -138,13 +130,7 @@ fn name_line(driver: &DriverStats) -> String {
 }
 
 fn stat(label: &str, value: Option<&str>, layout: Layout) -> Node {
-    parts::stat_row(
-        label,
-        value,
-        layout.value_chars,
-        layout.stat_font,
-        layout.labels,
-    )
+    parts::stat_row(label, value, layout.stat_font, layout.labels, Yields::Value)
 }
 
 /// Who the driver drives as — the name block already says this
@@ -210,8 +196,8 @@ fn nationality_row(driver: &DriverStats, layout: Layout) -> Node {
                 props!(gap: space::GAP, cross_align: CrossAlign::Center),
                 [
                     text(
-                        parts::truncate(&driver.nationality, layout.value_chars),
-                        style!(size: layout.stat_font, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
+                        &driver.nationality,
+                        style!(size: layout.stat_font, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
                     ),
                     parts::flag(FLAG, &driver.nationality_flag_url),
                 ],
@@ -260,19 +246,21 @@ fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
                 (PHOTO_LARGE, PHOTO_LARGE, font::TITLE)
             };
             let mut named = vec![text(
-                parts::truncate(&name_line(driver), layout.value_chars),
-                style!(size: name_size, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+                name_line(driver),
+                style!(size: name_size, weight: FontWeight::SEMIBOLD, color: color::TEXT, text_overflow: TextOverflow::Ellipsis),
             )];
             // The widest frame names the team in the header's mark
             // instead, so only the frame below it repeats the team here.
             if !layout.split_stats {
                 named.push(text(
-                    parts::truncate(&driver.team, layout.value_chars),
-                    style!(size: font::ROW, color: color::TEXT_MUTED),
+                    &driver.team,
+                    style!(size: font::ROW, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
                 ));
             }
+            // As wide as the photo, so a long name is cut under it
+            // rather than widening the column into the stats.
             Some(col(
-                props!(gap: space::GAP * 2.0),
+                props!(width: width, gap: space::GAP * 2.0),
                 [
                     photo(driver, width, height),
                     col(props!(gap: space::GAP / 2.0), named),
@@ -289,8 +277,7 @@ fn header(driver: &DriverStats, logo: &ImageUrl, bucket: SizeBucket) -> Node {
             vec![parts::title("Driver stats"), spacer(1.0), mark]
         }
         SizeBucket::Medium => vec![
-            parts::subtitle(&name_line(driver), bucket),
-            spacer(1.0),
+            parts::yielding(vec![parts::subtitle(&name_line(driver), bucket)]),
             mark,
         ],
         SizeBucket::Small => vec![parts::subtitle(&name_line(driver), bucket)],
@@ -371,9 +358,7 @@ pub fn driver_view(view: &DriverViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_sdk::typography::ELLIPSIS;
-
-    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, name_line, parts, parts::space};
+    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, name_line, parts::space};
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
 
@@ -381,52 +366,6 @@ mod tests {
     /// `GAP * 2`, [`super::font::TITLE`], `GAP / 2`, then
     /// [`super::font::ROW`].
     const PHOTO_CAPTION: f32 = 64.0;
-
-    /// Nothing in the tree shrinks text, so the budget is the only thing
-    /// keeping a long value from pushing the column off the frame. Each
-    /// was read off the gallery's `Driver Widest` ruler at the narrowest
-    /// frame of its band.
-    #[test]
-    fn every_frame_seats_the_longest_value_it_draws_and_cuts_what_overruns() {
-        let drivers = fixtures::drivers();
-        let longest_team = drivers
-            .iter()
-            .map(|driver| driver.team.as_str())
-            .max_by_key(|team| team.chars().count())
-            .expect("BUG: the fixtures name at least one team");
-        let longest_engineer = drivers
-            .iter()
-            .filter_map(|driver| driver.race_engineer.as_deref())
-            .max_by_key(|name| name.chars().count())
-            .expect("BUG: the fixtures name at least one engineer");
-
-        for bucket in [
-            SizeBucket::Full,
-            SizeBucket::Large,
-            SizeBucket::Medium,
-            SizeBucket::Small,
-        ] {
-            let chars = layout(bucket).value_chars;
-            assert_eq!(
-                parts::truncate(longest_team, chars),
-                longest_team,
-                "{bucket:?} seats {chars} and draws the team on every frame",
-            );
-            // The narrow frames drop the engineer's row rather than cut it.
-            if matches!(bucket, SizeBucket::Full | SizeBucket::Large) {
-                assert_eq!(
-                    parts::truncate(longest_engineer, chars),
-                    longest_engineer,
-                    "{bucket:?} seats {chars} and should read `{longest_engineer}` whole",
-                );
-            }
-            let overrun = "x".repeat(chars + 1);
-            assert!(
-                parts::truncate(&overrun, chars).ends_with(ELLIPSIS),
-                "{bucket:?} must still cut what overruns its {chars}",
-            );
-        }
-    }
 
     /// There is no zeroth car, so a driver the payload gave no number
     /// keeps their name to themselves rather than trailing a bare `#`.

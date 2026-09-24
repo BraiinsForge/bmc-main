@@ -159,39 +159,35 @@ frames = 24
 [shot.knobs]
 Size = "Deck small"
 
+[[shot]]
+name = "standings-overlong-full"
+scene = "bmc_gallery::f1::Standings Overlong"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "standings-overlong-large"
+scene = "bmc_gallery::f1::Standings Overlong"
+frames = 24
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "standings-overlong-medium"
+scene = "bmc_gallery::f1::Standings Overlong"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+
 # The small frame drops the team column outright, so only the name is cut.
 [[shot]]
-name = "ruler-17-deck-small"
-scene = "bmc_gallery::f1::Standings Ruler"
+name = "standings-overlong-small"
+scene = "bmc_gallery::f1::Standings Overlong"
 frames = 24
 
 [shot.knobs]
 Size = "Deck small"
-Length = "17"
-
-[[shot]]
-name = "ruler-18-deck-small"
-scene = "bmc_gallery::f1::Standings Ruler"
-frames = 24
-
-[shot.knobs]
-Size = "Deck small"
-Length = "18"
-
-[[shot]]
-name = "ruler-22-deck-medium"
-scene = "bmc_gallery::f1::Standings Ruler"
-frames = 24
-
-[shot.knobs]
-Size = "Deck medium"
-Length = "22"
-
-[[shot]]
-name = "ruler-23-deck-medium"
-scene = "bmc_gallery::f1::Standings Ruler"
-frames = 24
-
-[shot.knobs]
-Size = "Deck medium"
-Length = "23"

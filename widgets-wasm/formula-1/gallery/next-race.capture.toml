@@ -148,37 +148,33 @@ frames = 24
 Size = "BMM Narrow"
 
 [[shot]]
-name = "ruler-12-deck-small"
-scene = "bmc_gallery::f1::Next Race Ruler"
+name = "next-race-overlong-full"
+scene = "bmc_gallery::f1::Next Race Overlong"
 frames = 24
 
 [shot.knobs]
-Size = "Deck small"
-Length = "12"
+Size = "Deck fullscreen"
 
 [[shot]]
-name = "ruler-13-deck-small"
-scene = "bmc_gallery::f1::Next Race Ruler"
+name = "next-race-overlong-large"
+scene = "bmc_gallery::f1::Next Race Overlong"
 frames = 24
 
 [shot.knobs]
-Size = "Deck small"
-Length = "13"
+Size = "Deck large"
 
 [[shot]]
-name = "ruler-16-deck-medium"
-scene = "bmc_gallery::f1::Next Race Ruler"
+name = "next-race-overlong-medium"
+scene = "bmc_gallery::f1::Next Race Overlong"
 frames = 24
 
 [shot.knobs]
 Size = "Deck medium"
-Length = "16"
 
 [[shot]]
-name = "ruler-17-deck-medium"
-scene = "bmc_gallery::f1::Next Race Ruler"
+name = "next-race-overlong-small"
+scene = "bmc_gallery::f1::Next Race Overlong"
 frames = 24
 
 [shot.knobs]
-Size = "Deck medium"
-Length = "17"
+Size = "Deck small"
