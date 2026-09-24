@@ -28,6 +28,7 @@ use bmc_wasm_protocol::{Color, SvgId};
 
 mod compact;
 mod controls;
+mod hold_dim;
 mod parts;
 mod round;
 mod station;
@@ -38,6 +39,7 @@ mod test_support;
 
 use compact::compact_children;
 use controls::{control_groups, control_rows, shared_caption};
+use hold_dim::HoldDim;
 use parts::close_button;
 use round::round_children;
 use wide::wide_children;
@@ -517,6 +519,7 @@ struct Content<'a> {
     icons: WifiIcons,
     control_icons: ControlIcons,
     controls: Controls<'a>,
+    dim: HoldDim,
 }
 
 /// The control rows the content calls for, in the row split the tier wants.
@@ -557,6 +560,7 @@ pub fn build_tree(
     controls: Controls<'_>,
 ) -> TreeNode {
     let tier = tier_for(&panel);
+    let dim = HoldDim::for_controls(&controls);
     let content = Content {
         hostname,
         ip,
@@ -567,6 +571,7 @@ pub fn build_tree(
         icons,
         control_icons: controls_icons,
         controls,
+        dim,
     };
     let mut children = match layout_for(&panel) {
         Layout::Wide => wide_children(content, tier),
@@ -575,7 +580,7 @@ pub fn build_tree(
     };
     // Last child: absolute positioning takes it out of flow, and rendering
     // follows child order, so it paints on top of everything.
-    children.push(close_button(&panel, tier, controls_icons.close));
+    children.push(dim.button(CLOSE_KEY, close_button(&panel, tier, controls_icons.close)));
     col(
         PropsData {
             background: SCRIM,
@@ -741,9 +746,14 @@ mod tests {
 
     /// Expected height of one flow child of the root column, derived from the
     /// same `Tier` fields the builders use so the test cannot drift from the
-    /// layout silently. The flex filler reports 0 (its worst case).
+    /// layout silently. The flex filler reports 0 (its worst case);
+    /// so does anything out of flow, such as the hold notice.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
     fn expected_flow_height(node: &TreeNode, tier: Tier, layout: Layout, setup: bool) -> f32 {
+        let node = undimmed(node);
+        if is_absolute(node) {
+            return 0.0;
+        }
         if let TreeNode::Column(props, kids) = node
             && kids.is_empty()
         {
@@ -759,6 +769,16 @@ mod tests {
         }
         let has_pair = keys.iter().any(|k| PAIR_KEYS.contains(&k.as_str()));
         let has_single = keys.iter().any(|k| SINGLE_KEYS.contains(&k.as_str()));
+        // The section the notice hangs off stacks its children like the root does.
+        if let TreeNode::Column(_, kids) = node
+            && kids.len() > 1
+            && !(has_pair || has_single)
+        {
+            return kids
+                .iter()
+                .map(|k| expected_flow_height(k, tier, layout, setup))
+                .sum();
+        }
         if has_pair || has_single {
             let value_gap = if tier.labeled { 8.0 } else { 2.0 };
             let pair_h = tier.circle
@@ -796,15 +816,20 @@ mod tests {
         0.0
     }
 
+    /// Holds included: the notice wraps the section above the rows
+    /// without moving them.
     #[test]
     fn controls_start_below_the_close_target() {
         let long_ssid = "An-Extremely-Long-Setup-Network-Name-420";
         assert_eq!(long_ssid.chars().count(), 40);
         for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
-            for (view, setup) in [
+            for ((view, setup), controls) in [
                 (WifiView::Idle, false),
                 (WifiView::Setup { ap_ssid: long_ssid }, true),
-            ] {
+            ]
+            .into_iter()
+            .flat_map(|view| [(view, all_controls()), (view, held_controls())])
+            {
                 let tier = tier_for(&panel);
                 let tree = build_tree(
                     Some("braiins-deck"),
@@ -815,7 +840,7 @@ mod tests {
                     panel,
                     view,
                     ControlIcons::default(),
-                    all_controls(),
+                    controls,
                 );
                 let kids = children(&tree).expect("BUG: root must be a container");
 
@@ -1007,7 +1032,7 @@ mod tests {
             );
 
             let kids = children(&tree).expect("BUG: root must be a container");
-            let last = kids.last().expect("BUG: root must have children");
+            let last = undimmed(kids.last().expect("BUG: root must have children"));
             assert!(
                 matches!(
                     last,

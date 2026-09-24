@@ -79,6 +79,19 @@ pub(super) fn all_controls() -> Controls<'static> {
     }
 }
 
+/// [`all_controls`] with both hold buttons mid-hold.
+pub(super) fn held_controls() -> Controls<'static> {
+    let held = HoldControl {
+        caption: Some("Keep holding…"),
+        progress: 0.5,
+    };
+    Controls {
+        restart: Some(held),
+        wifi_reconfig: held,
+        ..all_controls()
+    }
+}
+
 pub(super) fn build(panel: Panel, view: WifiView<'_>) -> TreeNode {
     build_tree(
         Some("braiins-deck"),
@@ -271,6 +284,48 @@ pub(super) fn style_of(node: &TreeNode, needle: &str) -> Option<TextStyle> {
 
 pub(super) fn text_color(node: &TreeNode, needle: &str) -> Option<Color> {
     style_of(node, needle).map(|style| style.color)
+}
+
+/// `node` with any [`TreeNode::Dimmed`] wrappers peeled off:
+/// what actually lays out.
+pub(super) fn undimmed(mut node: &TreeNode) -> &TreeNode {
+    while let TreeNode::Dimmed { child, .. } = node {
+        node = child;
+    }
+    node
+}
+
+/// The brightness the first node `hit` accepts draws at:
+/// the product of the [`TreeNode::Dimmed`] factors above it.
+pub(super) fn brightness_where(node: &TreeNode, hit: &dyn Fn(&TreeNode) -> bool) -> Option<f32> {
+    if hit(node) {
+        return Some(1.0);
+    }
+    let own = if let TreeNode::Dimmed { brightness, .. } = node {
+        *brightness
+    } else {
+        1.0
+    };
+    children(node)?
+        .iter()
+        .find_map(|kid| brightness_where(kid, hit))
+        .map(|below| own * below)
+}
+
+/// [`brightness_where`] for the paragraph showing `needle`.
+pub(super) fn text_brightness(tree: &TreeNode, needle: &str) -> Option<f32> {
+    brightness_where(
+        tree,
+        &|node| matches!(node, TreeNode::Paragraph { spans, .. } if spans.iter().any(|s| s.text == needle)),
+    )
+}
+
+/// [`brightness_where`] for the canvas carrying `key`.
+pub(super) fn canvas_brightness(tree: &TreeNode, key: &str) -> Option<f32> {
+    brightness_where(
+        tree,
+        &|node| matches!(node, TreeNode::Canvas { touch_key: Some(k), .. } if k == key),
+    )
 }
 
 /// Largest text size in the subtree — the line height driver of a text

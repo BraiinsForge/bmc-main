@@ -21,6 +21,7 @@
 //! The control buttons: the plus/minus pairs, the single hold buttons,
 //! and the caption line they share.
 
+use super::hold_dim::HoldDim;
 use super::parts::{ButtonIcon, press_fill, press_tint, round_button};
 use super::{
     BRIGHTNESS_DOWN_KEY, BRIGHTNESS_UP_KEY, CIRCLE_FILL, ControlIcons, Controls, NIGHT_ACTIVE,
@@ -170,7 +171,8 @@ fn single_group(
 /// (volume/brightness) and the single-button groups. On the Large tier the
 /// two halves concatenate into one row; medium/small render them as two rows.
 /// `wifi` is true only when the WiFi button applies (product/caps gate, not
-/// in setup mode).
+/// in setup mode). While a hold is in progress, every group but the held one
+/// is dimmed.
 pub(super) fn control_groups(
     tier: Tier,
     controls: &Controls<'_>,
@@ -178,29 +180,36 @@ pub(super) fn control_groups(
     wifi_icons: WifiIcons,
     wifi: bool,
 ) -> (Vec<TreeNode>, Vec<TreeNode>) {
+    let dim = HoldDim::for_controls(controls);
     let mut pairs = Vec::new();
     if let Some(v) = controls.volume {
-        pairs.push(pair_group(
-            tier,
-            VOLUME_DOWN_KEY,
+        pairs.push(dim.button(
             VOLUME_UP_KEY,
-            icons.sound_low,
-            icons.sound_high,
-            v,
-            "Volume",
-            controls.pressed,
+            pair_group(
+                tier,
+                VOLUME_DOWN_KEY,
+                VOLUME_UP_KEY,
+                icons.sound_low,
+                icons.sound_high,
+                v,
+                "Volume",
+                controls.pressed,
+            ),
         ));
     }
     if let Some(b) = controls.brightness {
-        pairs.push(pair_group(
-            tier,
-            BRIGHTNESS_DOWN_KEY,
+        pairs.push(dim.button(
             BRIGHTNESS_UP_KEY,
-            icons.brightness_low,
-            icons.brightness_high,
-            b,
-            "Brightness",
-            controls.pressed,
+            pair_group(
+                tier,
+                BRIGHTNESS_DOWN_KEY,
+                BRIGHTNESS_UP_KEY,
+                icons.brightness_low,
+                icons.brightness_high,
+                b,
+                "Brightness",
+                controls.pressed,
+            ),
         ));
     }
 
@@ -212,52 +221,61 @@ pub(super) fn control_groups(
         let sublabel = night
             .until
             .map_or_else(String::new, |until| format!("Until {until}"));
-        singles.push(single_group(
-            tier,
+        singles.push(dim.button(
             NIGHT_MODE_KEY,
-            ButtonIcon {
-                id: icons.night_mode,
-                aspect: icons.night_mode_aspect,
-            },
-            if night.active {
-                NIGHT_ACTIVE
-            } else {
-                CIRCLE_FILL
-            },
-            TRANSPARENT,
-            None,
-            if night.active {
-                "Night Mode: On"
-            } else {
-                "Night Mode: Off"
-            },
-            &sublabel,
+            single_group(
+                tier,
+                NIGHT_MODE_KEY,
+                ButtonIcon {
+                    id: icons.night_mode,
+                    aspect: icons.night_mode_aspect,
+                },
+                if night.active {
+                    NIGHT_ACTIVE
+                } else {
+                    CIRCLE_FILL
+                },
+                TRANSPARENT,
+                None,
+                if night.active {
+                    "Night Mode: On"
+                } else {
+                    "Night Mode: Off"
+                },
+                &sublabel,
+            ),
         ));
     }
     if let Some(restart) = controls.restart {
         let p = controls.pressed == Some(RESTART_KEY);
-        singles.push(single_group(
-            tier,
+        singles.push(dim.button(
             RESTART_KEY,
-            ButtonIcon::square(icons.restart),
-            press_fill(p),
-            press_tint(p),
-            Some(restart.progress),
-            "Restart",
-            "hold 5 seconds",
+            single_group(
+                tier,
+                RESTART_KEY,
+                ButtonIcon::square(icons.restart),
+                press_fill(p),
+                press_tint(p),
+                Some(restart.progress),
+                "Restart",
+                "hold 5 seconds",
+            ),
         ));
     }
     if wifi {
         let p = controls.pressed == Some(WIFI_RECONFIG_KEY);
-        singles.push(single_group(
-            tier,
+        singles.push(dim.button(
             WIFI_RECONFIG_KEY,
-            ButtonIcon::square(wifi_icons.problem),
-            press_fill(p),
-            press_tint(p),
-            Some(controls.wifi_reconfig.progress),
-            "Reconfigure Wi-Fi",
-            "hold 5 seconds",
+            single_group(
+                tier,
+                WIFI_RECONFIG_KEY,
+                ButtonIcon::square(wifi_icons.problem),
+                press_fill(p),
+                press_tint(p),
+                Some(controls.wifi_reconfig.progress),
+                "Reconfigure Wi-Fi",
+                "hold 5 seconds",
+            ),
         ));
     }
     (pairs, singles)
@@ -323,8 +341,9 @@ pub(super) fn shared_caption(tier: Tier, controls: &Controls<'_>) -> Option<Tree
     } else {
         None
     };
+    let dim = HoldDim::for_controls(controls);
     raw.map(|s| {
-        col(
+        dim.surroundings(col(
             PropsData {
                 cross_align: CrossAlign::Center,
                 ..PropsData::default()
@@ -339,7 +358,7 @@ pub(super) fn shared_caption(tier: Tier, controls: &Controls<'_>) -> Option<Tree
                     ..TextStyle::default()
                 },
             )],
-        )
+        ))
     })
 }
 
@@ -350,6 +369,7 @@ mod tests {
     use bmc_wasm_protocol::{Color, Fill};
 
     use super::*;
+    use crate::ui::hold_dim::DIMMED;
     use crate::ui::test_support::*;
     use crate::ui::*;
 
@@ -482,6 +502,30 @@ mod tests {
             panic!("expected Svg")
         };
         (fill, color)
+    }
+
+    /// While restart is held, every other button and its labels dim;
+    /// the held button and its labels stay lit.
+    #[test]
+    fn a_hold_dims_every_other_button() {
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            let tree = build_with_controls(panel, held_controls());
+            let button = |key| canvas_brightness(&tree, key).expect("BUG: the button renders");
+            assert_close(button(RESTART_KEY), 1.0, "the held button stays lit");
+            let mut others = vec![WIFI_RECONFIG_KEY, NIGHT_MODE_KEY];
+            if layout_for(&panel) != Layout::Compact {
+                others.push(BRIGHTNESS_UP_KEY);
+            }
+            for key in others {
+                assert_close(button(key), DIMMED, &format!("{panel:?}: {key} dims"));
+            }
+            if tier_for(&panel).labeled {
+                let label = |s| text_brightness(&tree, s).expect("BUG: the label renders");
+                assert_close(label("Restart"), 1.0, "the held button's label stays lit");
+                assert_close(label("Reconfigure Wi-Fi"), DIMMED, "another's label dims");
+                assert_close(label("Night Mode: On"), DIMMED, "another's label dims");
+            }
+        }
     }
 
     #[test]
@@ -688,14 +732,6 @@ mod tests {
     #[test]
     fn control_rows_fit_the_panel_width() {
         assert_control_rows_fit(all_controls());
-        let held = HoldControl {
-            caption: Some("Keep holding…"),
-            progress: 0.5,
-        };
-        assert_control_rows_fit(Controls {
-            restart: Some(held),
-            wifi_reconfig: held,
-            ..all_controls()
-        });
+        assert_control_rows_fit(held_controls());
     }
 }

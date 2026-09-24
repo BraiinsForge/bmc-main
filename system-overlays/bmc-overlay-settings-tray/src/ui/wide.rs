@@ -20,6 +20,7 @@
 
 //! The Deck's arrangement: an info header over one labeled control row.
 
+use super::hold_dim::HoldDim;
 use super::parts::{capped_text, fixed_width, ip_qr, pad_horizontal, text_style, wifi_icon};
 use super::{
     Content, INFO_HEADER_GAP, INFO_HEADER_SIZE, NO_DATA_PLACEHOLDER, Tier, WIDE_HOSTNAME_WIDTH,
@@ -154,13 +155,14 @@ pub(super) fn wide_header(
 
 /// The Large tier's flow children: two equal flex halves pin the control
 /// block's top edge to the vertical middle, matching the stable design. The
-/// top half holds the info header, the bottom half the control rows and the
-/// shared caption.
+/// top half holds the info header and, during a hold, the notice over it;
+/// the bottom half the control rows and the shared caption.
 fn wide_halves(
     header: TreeNode,
     rows: Vec<TreeNode>,
     caption_node: TreeNode,
     h_pad: f32,
+    dim: HoldDim,
 ) -> [TreeNode; 2] {
     let half = PropsData {
         flex: 1.0,
@@ -173,7 +175,7 @@ fn wide_halves(
     }
     bottom_half.push(pad_horizontal(caption_node, h_pad));
     [
-        col(half, vec![fixed_height(WIDE_TOP_PAD), header]),
+        dim.with_notice(half, vec![fixed_height(WIDE_TOP_PAD), header]),
         col(half, bottom_half),
     ]
 }
@@ -191,7 +193,7 @@ pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     );
     let rows = control_row_nodes(content, tier);
     let caption = caption_slot(content, tier);
-    wide_halves(header, rows, caption, tier.padding).into()
+    wide_halves(header, rows, caption, tier.padding, content.dim).into()
 }
 
 #[cfg(test)]

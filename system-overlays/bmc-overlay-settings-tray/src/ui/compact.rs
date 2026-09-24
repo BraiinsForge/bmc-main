@@ -165,15 +165,18 @@ fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
 /// The BMM100 and BMM101 flow children: address block, brightness slider,
 /// then whichever buttons the product still has.
 pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
-    let mut children = vec![
-        // Top padding is an explicit spacer, not container padding,
-        // so the close button's absolute insets resolve against the panel box.
-        fixed_height(COMPACT_GAP),
-        compact_info_row(content, panel, tier),
-        fixed_height(COMPACT_GAP),
-        pad_horizontal(compact_brightness_row(content), COMPACT_GAP),
-        fixed_height(COMPACT_GAP),
-    ];
+    let mut children = vec![content.dim.with_notice(
+        PropsData::default(),
+        vec![
+            // Top padding is an explicit spacer, not container padding,
+            // so the close button's absolute insets resolve against the panel box.
+            fixed_height(COMPACT_GAP),
+            compact_info_row(content, panel, tier),
+            fixed_height(COMPACT_GAP),
+            pad_horizontal(compact_brightness_row(content), COMPACT_GAP),
+            fixed_height(COMPACT_GAP),
+        ],
+    )];
     children.extend(compact_control_rows(content, tier));
     children
 }

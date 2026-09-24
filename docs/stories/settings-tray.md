@@ -44,6 +44,8 @@ volume, night mode, device restart, and Wi-Fi reconfiguration — without leavin
 - Restart requires press-and-hold; a filled circle fades in behind the button and shrinks into it while holding, and
   releasing early cancels.
 - Completing the hold restarts the device; the tray shows the progress ("Keep holding…", "Restarting…").
+- While either hold (restart or Wi-Fi) is in progress, everything but the held button dims, and a notice above the
+  buttons names the action and says how to cancel it, so the gesture's consequence is spelled out before it lands.
 - While a firmware upgrade is being applied the device declines the restart and the tray shows why, so an upgrade can
   never be corrupted by a manual reboot.
 
