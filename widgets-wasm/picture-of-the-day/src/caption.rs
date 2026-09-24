@@ -80,11 +80,6 @@ pub fn with_caption(mut root: Node, title: Option<&str>, credit: &str, size: Wid
     };
 
     // `style!` carries no insets, so the absolute placement lives on a wrapper.
-    //
-    // Both nodes below pin `text_overflow` even though `Wrap` is the default:
-    // the renderer honours `max_width` only in the wrap branch, so `Ellipsis`
-    // would drop the cap, letting the title run off the edge
-    // and the credit plate reach across the picture.
     if let Some(title) = title.filter(|t| !t.is_empty()) {
         children.push(row(
             props!(inset_top: pad, inset_left: pad),
@@ -97,8 +92,7 @@ pub fn with_caption(mut root: Node, title: Option<&str>, credit: &str, size: Wid
                     line_height: 1.1,
                     max_width: size.width.saturating_sub(PADDING_PX * 2),
                     outline_color: BLACK.with_alpha(TITLE_OUTLINE_ALPHA),
-                    outline_width: TITLE_OUTLINE_WIDTH,
-                    text_overflow: TextOverflow::Wrap
+                    outline_width: TITLE_OUTLINE_WIDTH
                 ),
             )],
         ));
@@ -125,8 +119,7 @@ pub fn with_caption(mut root: Node, title: Option<&str>, credit: &str, size: Wid
                     color: GRAY_30,
                     line_height: 1.1,
                     align: TextAlign::Right,
-                    max_width: max_text,
-                    text_overflow: TextOverflow::Wrap
+                    max_width: max_text
                 ),
             )],
         ));
