@@ -131,6 +131,7 @@ pub fn node_is_dynamic(node: &TreeNode) -> bool {
         | TreeNode::Center(_, children)
         | TreeNode::Scroll { children, .. } => children.iter().any(node_is_dynamic),
         TreeNode::Tag { content, .. } => node_is_dynamic(content),
+        TreeNode::Dimmed { child, .. } => node_is_dynamic(child),
         TreeNode::Canvas { draws, .. } => draws.iter().any(draw_is_dynamic),
         // Host-driven: these advance without the guest running. Calling a
         // modal always-dynamic is cheap — a closed one draws nothing.
@@ -156,6 +157,8 @@ pub fn node_is_dynamic(node: &TreeNode) -> bool {
 #[must_use]
 pub fn node_self_is_dynamic(node: &TreeNode) -> bool {
     match node {
+        // Its taffy node is the child's own.
+        TreeNode::Dimmed { child, .. } => node_self_is_dynamic(child),
         TreeNode::RelTime { .. } | TreeNode::ProgressBar { .. } | TreeNode::Modal { .. } => true,
         TreeNode::Column(..)
         | TreeNode::Row(..)
@@ -249,6 +252,7 @@ fn hash_layout_contribution<H: Hasher>(node: &TreeNode, now_unix_secs: i64, hash
             }
         }
         TreeNode::Tag { content, .. } => hash_layout_contribution(content, now_unix_secs, hasher),
+        TreeNode::Dimmed { child, .. } => hash_layout_contribution(child, now_unix_secs, hasher),
         TreeNode::Modal { .. }
         | TreeNode::ProgressBar { .. }
         | TreeNode::Canvas { .. }
@@ -347,6 +351,7 @@ fn static_paints_after_dynamic(node: &TreeNode, seen_dynamic: &mut bool) -> bool
             }
             false
         }
+        TreeNode::Dimmed { child, .. } => static_paints_after_dynamic(child, seen_dynamic),
         // The pill paints before the content it wraps.
         TreeNode::Tag { content, .. } => {
             *seen_dynamic || static_paints_after_dynamic(content, seen_dynamic)
@@ -380,6 +385,7 @@ fn can_overlap_siblings(node: &TreeNode) -> bool {
         } => escapes(props) || children.iter().any(can_overlap_siblings),
         TreeNode::Canvas { props, .. } | TreeNode::Paragraph { props, .. } => escapes(props),
         TreeNode::Tag { content, .. } => can_overlap_siblings(content),
+        TreeNode::Dimmed { child, .. } => can_overlap_siblings(child),
         TreeNode::Button { .. }
         | TreeNode::Spacer { .. }
         | TreeNode::Notification { .. }
@@ -423,6 +429,7 @@ pub fn has_static_content(node: &TreeNode) -> bool {
             props_paint(props) || canvas_bands(draws).any(Band::is_in_layer)
         }
         TreeNode::Tag { content, .. } => has_static_content(content),
+        TreeNode::Dimmed { child, .. } => has_static_content(child),
         // Never in the layer; a spacer paints nothing at all.
         TreeNode::RelTime { .. }
         | TreeNode::ProgressBar { .. }
@@ -482,6 +489,11 @@ fn hash_node<H: Hasher>(node: &TreeNode, hasher: &mut H) {
             hash_debug(kind, hasher);
             hash_debug(icon, hasher);
             hash_node(content, hasher);
+        }
+        // The factor changes every pixel beneath it, so it has to stale the layer.
+        TreeNode::Dimmed { brightness, child } => {
+            hash_debug(brightness, hasher);
+            hash_node(child, hasher);
         }
         TreeNode::Canvas {
             props,
@@ -1125,6 +1137,28 @@ mod tests {
             hash_idle(&canvas(vec![transitioned(leaf()), leaf_with_radius(1.0)])),
             hash_idle(&canvas(vec![transitioned(leaf()), leaf_with_radius(2.0)]))
         );
+    }
+
+    #[test]
+    fn changing_a_dim_invalidates_the_layer() {
+        let at = |brightness| crate::tree::dimmed(brightness, canvas(vec![leaf()]));
+        assert_ne!(
+            hash_idle(&at(0.5)),
+            hash_idle(&at(0.6)),
+            "a layer painted at one brightness must not serve another"
+        );
+    }
+
+    #[test]
+    fn a_dim_classifies_as_its_child() {
+        let animated = || canvas(vec![transitioned(leaf())]);
+        let dimmed = crate::tree::dimmed(0.5, animated());
+        assert_eq!(node_is_dynamic(&dimmed), node_is_dynamic(&animated()));
+        assert_eq!(
+            node_self_is_dynamic(&dimmed),
+            node_self_is_dynamic(&animated())
+        );
+        assert_eq!(has_static_content(&dimmed), has_static_content(&animated()));
     }
 
     #[test]

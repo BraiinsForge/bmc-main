@@ -421,6 +421,25 @@ pub enum TreeNode {
         bg_color: Color,
         skin: Option<SliderSkinData>,
     },
+    /// `child` drawn with every colour scaled by `brightness`,
+    /// as [`crate::renderer::Renderer::set_brightness`] scales it, and nested ones multiply.
+    /// No layout box of its own: `child` lays out as if unwrapped,
+    /// so absolute insets still resolve against the same parent.
+    /// A modal inside still draws lit: modals paint after the tree, outside it.
+    /// Host-only: the wire format has no encoding for it.
+    Dimmed {
+        brightness: f32,
+        child: Box<TreeNode>,
+    },
+}
+
+/// `child`, drawn at `brightness`; see [`TreeNode::Dimmed`].
+#[must_use]
+pub fn dimmed(brightness: f32, child: TreeNode) -> TreeNode {
+    TreeNode::Dimmed {
+        brightness,
+        child: Box::new(child),
+    }
 }
 
 /// Column layout.
@@ -1820,6 +1839,10 @@ pub struct NodeContext {
     /// but paints a static background, which must come from the cached layer
     /// rather than be repainted over it.
     pub(crate) self_dynamic: bool,
+    /// The [`TreeNode::Dimmed`] factor this node's subtree draws at,
+    /// relative to its parent. `None` rather than `1.0`,
+    /// because the derived `Default` would otherwise dim to black.
+    dim: Option<f32>,
     background: Color,
     /// CSS-modeled box decoration: radius rounds background
     /// and border alike, a zero width paints no border.
@@ -2847,6 +2870,26 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
+        TreeNode::Dimmed { brightness, child } => {
+            debug_assert!(
+                (0.0..=1.0).contains(brightness),
+                "BUG: TreeNode::Dimmed only dims, got {brightness}"
+            );
+            let id = build_taffy_node(taffy, child, now_unix_secs, result, modals)?;
+            if let Some(ctx) = taffy.get_node_context_mut(id) {
+                ctx.dim = Some(ctx.dim.map_or(*brightness, |inner| inner * brightness));
+            } else {
+                taffy.set_node_context(
+                    id,
+                    Some(NodeContext {
+                        dim: Some(*brightness),
+                        ..Default::default()
+                    }),
+                )?;
+            }
+            Ok(id)
+        }
+
         TreeNode::Modal {
             modal_id,
             is_open,
@@ -3132,8 +3175,45 @@ pub(crate) fn compute_taffy_layout(
     Ok(())
 }
 
-#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
+/// Paint `node_id` and its subtree at its [`TreeNode::Dimmed`] factor, if any,
+/// restoring the renderer's brightness after.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn render_taffy_node(
+    taffy: &TaffyTree<NodeContext>,
+    node_id: taffy::NodeId,
+    parent_x: f32,
+    parent_y: f32,
+    renderer: &mut RenderTarget<'_, '_, '_>,
+    interaction: &mut InteractionState,
+    scroll_states: &mut HashMap<String, ScrollState>,
+    result: &mut TreeResult,
+    anim_ctx: &mut AnimationContext<'_>,
+    depth: usize,
+) {
+    let dim = taffy.get_node_context(node_id).and_then(|ctx| ctx.dim);
+    let outer = renderer.brightness();
+    if let Some(dim) = dim {
+        renderer.set_brightness(outer * dim);
+    }
+    render_taffy_node_body(
+        taffy,
+        node_id,
+        parent_x,
+        parent_y,
+        renderer,
+        interaction,
+        scroll_states,
+        result,
+        anim_ctx,
+        depth,
+    );
+    if dim.is_some() {
+        renderer.set_brightness(outer);
+    }
+}
+
+#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
+fn render_taffy_node_body(
     taffy: &TaffyTree<NodeContext>,
     node_id: taffy::NodeId,
     parent_x: f32,
@@ -4286,6 +4366,10 @@ mod frame_pass_tests {
         calls: Vec<(&'static str, String)>,
         captured: Vec<String>,
         paragraphs: Vec<String>,
+        /// Each `fill_rect`, with the brightness it painted at.
+        fills: Vec<(crate::interaction::Rect, Color, f32)>,
+        /// `None` means undimmed: the derived `Default` would start at black.
+        brightness: Option<f32>,
     }
 
     impl Renderer for KeyRecordingRenderer {
@@ -4309,8 +4393,10 @@ mod frame_pass_tests {
             self.captured.retain(|k| k != key);
         }
 
-        fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, _color: Color) {
-            self.draws.push(crate::interaction::Rect::new(x, y, w, h));
+        fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
+            let rect = crate::interaction::Rect::new(x, y, w, h);
+            self.draws.push(rect);
+            self.fills.push((rect, color, self.brightness()));
         }
 
         fn fill_rounded_rect(
@@ -4396,10 +4482,12 @@ mod frame_pass_tests {
         fn pop_scissor(&mut self) {}
 
         fn brightness(&self) -> f32 {
-            1.0
+            self.brightness.unwrap_or(1.0)
         }
 
-        fn set_brightness(&mut self, _brightness: f32) {}
+        fn set_brightness(&mut self, brightness: f32) {
+            self.brightness = Some(brightness);
+        }
 
         fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
 
@@ -4875,6 +4963,103 @@ mod frame_pass_tests {
         let (result, _) = layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
             .expect("BUG: layout_and_render must succeed for a modal tree");
         result
+    }
+
+    const LIT: Color = Color::from_rgb(200, 0, 0);
+    const SHADED: Color = Color::from_rgb(0, 0, 200);
+
+    /// A 10×10 box painted `color`, positioned by `props`.
+    fn swatch(color: Color, props: PropsData) -> TreeNode {
+        TreeNode::Column(
+            PropsData {
+                background: color,
+                width: 10.0,
+                height: 10.0,
+                ..props
+            },
+            vec![],
+        )
+    }
+
+    fn brightness_of(renderer: &KeyRecordingRenderer, color: Color) -> f32 {
+        renderer
+            .fills
+            .iter()
+            .find(|(_, c, _)| *c == color)
+            .map(|(_, _, brightness)| *brightness)
+            .expect("BUG: the swatch must paint")
+    }
+
+    #[test]
+    fn a_dimmed_subtree_paints_at_its_brightness_and_its_siblings_do_not() {
+        let tree = TreeNode::Column(
+            PropsData::default(),
+            vec![
+                super::dimmed(0.5, swatch(SHADED, PropsData::default())),
+                swatch(LIT, PropsData::default()),
+            ],
+        );
+        let mut renderer = KeyRecordingRenderer::default();
+        render_once(&mut SlotState::default(), &mut renderer, &tree);
+        assert_close(brightness_of(&renderer, SHADED), 0.5);
+        assert_close(brightness_of(&renderer, LIT), 1.0);
+    }
+
+    #[test]
+    fn nested_dims_multiply_and_unwind() {
+        let tree = super::dimmed(
+            0.5,
+            TreeNode::Column(
+                PropsData::default(),
+                vec![
+                    swatch(LIT, PropsData::default()),
+                    super::dimmed(0.5, swatch(SHADED, PropsData::default())),
+                ],
+            ),
+        );
+        let mut renderer = KeyRecordingRenderer::default();
+        render_once(&mut SlotState::default(), &mut renderer, &tree);
+        assert_close(brightness_of(&renderer, LIT), 0.5);
+        assert_close(brightness_of(&renderer, SHADED), 0.25);
+        assert_close(renderer.brightness(), 1.0);
+    }
+
+    /// Wrapping must not add a box: an absolute child's insets resolve
+    /// against the same parent either way.
+    #[test]
+    fn a_dimmed_node_lays_out_as_its_child() {
+        let placed = || {
+            swatch(
+                LIT,
+                PropsData {
+                    inset_left: 7.0,
+                    inset_top: 9.0,
+                    ..PropsData::default()
+                },
+            )
+        };
+        let rect_of = |child: TreeNode| {
+            let tree = TreeNode::Column(
+                PropsData::default(),
+                vec![swatch(SHADED, PropsData::default()), child],
+            );
+            let mut renderer = KeyRecordingRenderer::default();
+            render_once(&mut SlotState::default(), &mut renderer, &tree);
+            renderer
+                .fills
+                .iter()
+                .find(|(_, c, _)| *c == LIT)
+                .map(|(rect, _, _)| (rect.x, rect.y, rect.w, rect.h))
+                .expect("BUG: the placed swatch must paint")
+        };
+        assert_eq!(rect_of(super::dimmed(0.5, placed())), rect_of(placed()));
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "expected brightness {expected}, got {actual}"
+        );
     }
 
     /// `render_once` with the static layer live, so the frame splits into

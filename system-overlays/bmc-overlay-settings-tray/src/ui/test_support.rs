@@ -114,7 +114,9 @@ pub(super) fn children(node: &TreeNode) -> Option<&[TreeNode]> {
         | TreeNode::Row(_, kids)
         | TreeNode::Center(_, kids)
         | TreeNode::Scroll { children: kids, .. } => Some(kids),
-        TreeNode::Tag { content, .. } => Some(std::slice::from_ref(&**content)),
+        TreeNode::Tag { content, .. } | TreeNode::Dimmed { child: content, .. } => {
+            Some(std::slice::from_ref(&**content))
+        }
         TreeNode::Paragraph { .. }
         | TreeNode::Button { .. }
         | TreeNode::Spacer { .. }
@@ -136,6 +138,7 @@ pub(super) fn is_absolute(node: &TreeNode) -> bool {
         TreeNode::Paragraph { props, .. }
         | TreeNode::Canvas { props, .. }
         | TreeNode::Scroll { props, .. } => props.is_absolute(),
+        TreeNode::Dimmed { child, .. } => is_absolute(child),
         TreeNode::Button { .. }
         | TreeNode::Spacer { .. }
         | TreeNode::Notification { .. }
