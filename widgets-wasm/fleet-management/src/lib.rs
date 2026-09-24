@@ -31,7 +31,6 @@ mod discovery;
 mod families;
 mod filter;
 mod history;
-mod layout;
 mod model;
 mod naming;
 mod paging;

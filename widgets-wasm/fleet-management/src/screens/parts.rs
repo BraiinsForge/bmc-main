@@ -33,7 +33,6 @@ use bmc_wasm_sdk::types::Hashrate;
 use bmc_wasm_sdk::*;
 
 use crate::history::{ChartWindow, HistoryDatum};
-use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::summary::DeviceStatus;
 use crate::view::{PageTurn, PagerScope, ViewMode, pager_click_id, view_click_id};
@@ -114,7 +113,10 @@ pub fn back_button() -> Node {
 }
 
 const CRUMB_FONT: u32 = TITLE_FONT;
-const CRUMB_MAX_CHARS: usize = 22;
+
+/// The widest a crumb gets before it ends in "…": at this width,
+/// the back chip, three crumbs and their separators still fit the frame.
+const CRUMB_MAX_W: u32 = 360;
 
 /// One breadcrumb segment: an ancestor jump when `click_id` is set,
 /// else the current level (plain, non-clickable).
@@ -139,10 +141,16 @@ pub fn breadcrumb(crumbs: &[Crumb<'_>]) -> Node {
 }
 
 fn crumb_segment(crumb: &Crumb<'_>) -> Node {
-    let label = truncate_label(crumb.label, CRUMB_MAX_CHARS);
     match crumb.click_id {
-        Some(id) => link(id, &label, style!(size: CRUMB_FONT, color: LINK)),
-        None => text(label, style!(size: CRUMB_FONT, color: WHITE)),
+        Some(id) => link(
+            id,
+            crumb.label,
+            style!(size: CRUMB_FONT, color: LINK, max_width: CRUMB_MAX_W, text_overflow: TextOverflow::Ellipsis),
+        ),
+        None => text(
+            crumb.label,
+            style!(size: CRUMB_FONT, color: WHITE, max_width: CRUMB_MAX_W, text_overflow: TextOverflow::Ellipsis),
+        ),
     }
 }
 
@@ -663,10 +671,9 @@ pub fn pager(scope: PagerScope, page: usize, page_count: usize) -> Node {
                 pager_click_id(scope, PageTurn::Prev),
             ),
             text(
-                fmt!("{} / {}", page + 1, page_count.max(1)),
-                // Clip keeps the count single-line (vs the default Wrap) so it
-                // can't be split into two lines when the column is tight.
-                style!(size: PAGER_FONT, color: LABEL, text_overflow: TextOverflow::Clip),
+                // Unbroken, so a tight column can't split the count over two lines.
+                typography::unbroken(fmt!("{} / {}", page + 1, page_count.max(1))),
+                style!(size: PAGER_FONT, color: LABEL),
             ),
             pager_button(
                 &icons::PAGER_DOWN,
@@ -704,6 +711,27 @@ fn idx_f32(i: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crumb_reaches_the_renderer_whole_capped_to_its_width() {
+        const LABEL: &str = "Braiins Mini Miner BMM 101 in the office, by the window";
+        let crumb = Crumb {
+            label: LABEL,
+            click_id: None,
+        };
+
+        let Node::Paragraph {
+            base_style, spans, ..
+        } = crumb_segment(&crumb)
+        else {
+            panic!("BUG: the current level is plain text");
+        };
+        assert_eq!(spans[0].text, LABEL);
+        assert_eq!(
+            (base_style.max_width, base_style.text_overflow),
+            (CRUMB_MAX_W, TextOverflow::Ellipsis)
+        );
+    }
 
     #[test]
     fn no_scale_spans_a_figure_the_axis_cannot_hold() {

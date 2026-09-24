@@ -33,7 +33,6 @@ use bmc_wasm_sdk::*;
 
 use crate::device::DeviceFamily;
 use crate::history::{ChartWindow, HistoryDatum};
-use crate::layout::truncate_label;
 use crate::screens::parts::{
     BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
     LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager,
@@ -56,7 +55,6 @@ const COL_EFF: f32 = 118.0;
 const COL_AVG: f32 = 91.0;
 const STATUS_SLOT: f32 = 50.0;
 const SPARK_W: f32 = COL_SPARK - 16.0;
-const MODEL_CHARS: usize = 28;
 
 const MODEL_FONT: u32 = 22;
 const STATUS_ICON: f32 = 16.0;
@@ -142,8 +140,8 @@ fn model_row(r: &ModelRow, window: ChartWindow) -> Node {
             cell(
                 COL_MODEL,
                 text(
-                    truncate_label(&r.name, MODEL_CHARS),
-                    style!(size: MODEL_FONT, weight: FontWeight::BOLD, color: WHITE),
+                    &r.name,
+                    style!(size: MODEL_FONT, weight: FontWeight::BOLD, color: WHITE, text_overflow: TextOverflow::Ellipsis),
                 ),
             ),
             cell(

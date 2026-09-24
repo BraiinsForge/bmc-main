@@ -29,7 +29,6 @@ use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature
 use bmc_wasm_sdk::*;
 
 use crate::history::{ChartWindow, HistoryDatum};
-use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
@@ -48,7 +47,6 @@ const COL_POWER: f32 = 112.0;
 const COL_EFF: f32 = 132.0;
 const COL_TEMP: f32 = 90.0;
 
-const HOST_CHARS: usize = 20;
 const HOST_FONT: u32 = 24;
 const VALUE_FONT: u32 = 24;
 
@@ -155,8 +153,8 @@ fn device_row(r: &DeviceRow, window: ChartWindow) -> Node {
     let host = cell(
         COL_HOST,
         text(
-            truncate_label(&r.hostname, HOST_CHARS),
-            style!(size: HOST_FONT, weight: FontWeight::SEMIBOLD, color: WHITE),
+            &r.hostname,
+            style!(size: HOST_FONT, weight: FontWeight::SEMIBOLD, color: WHITE, text_overflow: TextOverflow::Ellipsis),
         ),
     );
     // A device with no live telemetry would be a row of meaningless zeros; show
