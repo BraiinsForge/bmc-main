@@ -73,6 +73,23 @@ pub(super) fn txt(content: impl Into<String>, size: u32, weight: FontWeight, col
     )
 }
 
+/// The location's display name, a server string of any length,
+/// ended in `…` where its box, or `max_width` when given, runs out.
+#[must_use]
+pub(super) fn location(name: &str, size: u32, max_width: Option<u32>) -> Node {
+    text(
+        name.to_owned(),
+        style!(
+            size: size,
+            weight: FontWeight::REGULAR,
+            color: TEXT_SECONDARY,
+            line_height: 1.0,
+            max_width: max_width.unwrap_or(0),
+            text_overflow: TextOverflow::Ellipsis,
+        ),
+    )
+}
+
 /// A fixed-width forecast temperature cell (deckfeeder's
 /// `.forecast-temp { width: 4ch }`). The constant width keeps the day icons
 /// and sliders aligned across rows regardless of digit count — a bare text

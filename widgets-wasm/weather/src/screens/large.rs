@@ -158,16 +158,10 @@ fn stat_item(svg: &'static Svg, label: &str, value: Node, metrics: LargeMetrics)
 }
 
 fn location_row(weather: &crate::model::Weather, size: WidgetSize, metrics: LargeMetrics) -> Node {
-    text(
-        weather.location.display_name.clone(),
-        style!(
-            size: metrics.location_font_size,
-            weight: FontWeight::REGULAR,
-            color: TEXT_SECONDARY,
-            line_height: 1.0,
-            max_width: metrics.location_max_width(size),
-            text_overflow: TextOverflow::Ellipsis,
-        ),
+    common::location(
+        &weather.location.display_name,
+        metrics.location_font_size,
+        Some(metrics.location_max_width(size)),
     )
 }
 
@@ -485,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn a_short_large_frame_keeps_the_location_on_one_clipped_row() {
+    fn a_short_large_frame_ellipsizes_the_location_on_one_row() {
         let size = WidgetSize::from_dimensions(480, 320);
         init_test_registrars();
         let metrics = LargeMetrics::for_size(size);

@@ -30,11 +30,15 @@ use crate::{
 )]
 use bmc_wasm_sdk::*;
 
+/// The centred stack sizes to its content, so the location's bound comes
+/// from the frame, less the edge the other sizes keep as padding.
+const LOCATION_INSET: u32 = 16;
+
 #[must_use]
 pub fn small(
     weather: &crate::model::Weather,
     _params: &crate::manifest_params::Params,
-    _size: WidgetSize,
+    size: WidgetSize,
 ) -> Node {
     let current = weather.current.as_ref();
 
@@ -60,11 +64,10 @@ pub fn small(
         FontWeight::REGULAR,
         TEXT_SECONDARY,
     ));
-    stack.push(common::txt(
-        weather.location.display_name.clone(),
+    stack.push(common::location(
+        &weather.location.display_name,
         16,
-        FontWeight::REGULAR,
-        TEXT_SECONDARY,
+        Some(size.width.saturating_sub(2 * LOCATION_INSET)),
     ));
 
     col(

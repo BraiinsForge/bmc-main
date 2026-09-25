@@ -103,7 +103,7 @@ fn location(weather: &Weather) -> Node {
                 weight: FontWeight::REGULAR,
                 color: GRAY_40,
                 line_height: LINE_HEIGHT,
-                text_overflow: TextOverflow::Clip,
+                text_overflow: TextOverflow::Ellipsis,
             ),
         )],
     )

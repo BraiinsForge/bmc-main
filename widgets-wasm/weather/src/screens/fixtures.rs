@@ -202,11 +202,11 @@ pub fn frost(viewport: WidgetViewport, params: Params) -> ViewData {
 }
 
 /// A display name wider than any layout's location line.
+pub const LONG_LOCATION: &str =
+    "Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch, Wales, United Kingdom";
+
 #[must_use]
 pub fn long_location(viewport: WidgetViewport, params: Params) -> ViewData {
-    let weather = recorded(
-        "Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch, Wales, United Kingdom",
-        0.0,
-    );
+    let weather = recorded(LONG_LOCATION, 0.0);
     view(viewport, params, State::Loaded(weather))
 }

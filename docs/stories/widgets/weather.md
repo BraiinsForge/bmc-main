@@ -76,8 +76,7 @@ timezone or the device timezone.
   to 1280x480, and in the BMM101 panel's own frame.
 - Other non-canonical rectangular viewports keep the closest shared size classification; BMM100's 320x240 renders the
   `small` layout.
-- The `large` location label uses the full padded widget width, does not wrap, and clips if the API display name is
-  still too wide.
+- The location label stays on one line at every size and ends in `…` when the API display name is too wide for it.
 - *Location* and *Time zone* are manifest-driven widget parameters, configurable from the web UI.
 - The manifest subscribes to the device `localization` and `timezone` settings. There is no separate `units` setting.
 - Weather data comes from `https://nexus.braiinsforge.com/api/v1/data/weather/`; the widget polls roughly every 300

@@ -41,6 +41,10 @@ const HOUR_STYLE: HourStyle = HourStyle {
     temp_weight: FontWeight::REGULAR,
 };
 
+/// The today block sizes to its content, so the location takes a cap
+/// that leaves the hourly strip and the wind row their width.
+const LOCATION_MAX_WIDTH: u32 = 450;
+
 fn sun_item(svg: &'static Svg, at: Option<SystemTime>, tz: Option<&Tz>) -> Node {
     row(
         props!(cross_align: CrossAlign::Center, gap: 8.0),
@@ -78,12 +82,7 @@ fn current_block(weather: &crate::model::Weather) -> Node {
     col(
         props!(cross_align: CrossAlign::Start, gap: 12.0),
         [
-            common::txt(
-                weather.location.display_name.clone(),
-                24,
-                FontWeight::REGULAR,
-                TEXT_SECONDARY,
-            ),
+            common::location(&weather.location.display_name, 24, Some(LOCATION_MAX_WIDTH)),
             temp_and_icon,
             common::txt(
                 current.map_or_else(

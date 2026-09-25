@@ -1,6 +1,7 @@
-# The recorded forecast at every design size and on BMM100;
-# each state over the Large and BMM101 layouts, loading at every size;
-# the widest temperatures everywhere; and the settings that reshape a value.
+# The recorded forecast at every design size and on BMM100.
+# Each state over the Large and BMM101 layouts, loading at every size.
+# The widest temperatures and the longest location everywhere.
+# The settings that reshape a value.
 
 size = "1280x560"
 sheet = "sheet.png"
@@ -223,12 +224,36 @@ frames = 24
 State = "Frost"
 
 [[shot]]
+name = "long-location-full"
+scene = "bmc_gallery::weather::Long Location"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
 name = "long-location-large"
 scene = "bmc_gallery::weather::Long Location"
 frames = 24
 
 [shot.knobs]
 Size = "Large"
+
+[[shot]]
+name = "long-location-medium"
+scene = "bmc_gallery::weather::Long Location"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "long-location-small"
+scene = "bmc_gallery::weather::Long Location"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
 
 [[shot]]
 name = "long-location-bmm101"

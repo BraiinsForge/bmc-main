@@ -88,12 +88,7 @@ pub fn medium(
     let right = col(
         props!(flex: 1.0, gap: 20.0),
         [
-            common::txt(
-                weather.location.display_name.clone(),
-                24,
-                FontWeight::REGULAR,
-                TEXT_SECONDARY,
-            ),
+            common::location(&weather.location.display_name, 24, None),
             col(props!(height: 1.0, background: BORDER), []),
             common::hour_strip(hour_cells),
         ],

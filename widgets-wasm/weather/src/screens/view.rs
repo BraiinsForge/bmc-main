@@ -147,6 +147,24 @@ mod tests {
         }
     }
 
+    /// How the paragraph drawing `content` handles running out of room.
+    fn overflow_of(node: &Node, content: &str) -> Option<TextOverflow> {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                children
+                    .iter()
+                    .find_map(|child| overflow_of(child, content))
+            }
+            Node::Paragraph {
+                base_style, spans, ..
+            } => spans
+                .iter()
+                .any(|span| span.text == content)
+                .then_some(base_style.text_overflow),
+            _ => None,
+        }
+    }
+
     fn at(bucket: SizeBucket, state: fixtures::StateFixture, params: Params) -> Vec<String> {
         texts(&weather_view(&state(fixtures::at_bucket(bucket), params)))
     }
@@ -262,6 +280,26 @@ mod tests {
         );
         for label in ["Low T.", "High T.", "Sunrise", "Sunset"] {
             assert!(texts.contains(&label.to_owned()), "{label}: {texts:?}");
+        }
+    }
+
+    #[test]
+    fn every_layout_ends_a_long_location_in_an_ellipsis() {
+        install("Europe/Prague");
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+            SizeBucket::Bmm101,
+        ] {
+            let view =
+                fixtures::long_location(fixtures::at_bucket(bucket), fixtures::default_params());
+            assert_eq!(
+                overflow_of(&weather_view(&view), fixtures::LONG_LOCATION),
+                Some(TextOverflow::Ellipsis),
+                "{bucket:?}"
+            );
         }
     }
 
