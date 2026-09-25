@@ -111,10 +111,11 @@ const MEDIUM_DESIGN_W: f32 = 620.0;
 #[must_use]
 pub fn overview_view(view: &OverviewViewData) -> Node {
     if view.account.is_none() {
-        return frame(vec![
-            header(None),
+        return state_frame(
+            view.bucket,
+            None,
             parts::unbound_body(view.bucket, view.width, &view.bind_hint),
-        ]);
+        );
     }
     if view.data.access_denied {
         // The account joins the header where the normal layouts show it.
@@ -124,10 +125,11 @@ pub fn overview_view(view: &OverviewViewData) -> Node {
                 view.account.as_deref()
             }
         };
-        return frame(vec![header(account), parts::denied_body(view.bucket)]);
+        return state_frame(view.bucket, account, parts::denied_body(view.bucket));
     }
     match view.bucket {
-        SizeBucket::Small | SizeBucket::Bmm101 => small(view),
+        SizeBucket::Small => small(view),
+        SizeBucket::Bmm101 => bmm101(view),
         // Below Medium's 620 px design frame the two stat columns
         // and the workers card have to wrap to fit.
         // The layout drawn for a narrow frame carries it whole instead.
@@ -152,8 +154,32 @@ fn header(account: Option<&str>) -> Node {
     )
 }
 
+/// A state's body under its frame's header.
+fn state_frame(bucket: SizeBucket, account: Option<&str>, body: Node) -> Node {
+    if bucket == SizeBucket::Bmm101 {
+        return parts::bmm101_frame(account, body);
+    }
+    frame(vec![header(account), body])
+}
+
 /// A single centered hashrate hero, no card.
 fn small(view: &OverviewViewData) -> Node {
+    frame(vec![
+        header(None),
+        narrow_hero(view, font::BODY, font::BODY),
+    ])
+}
+
+/// Small's hero in BMM101's frame and type.
+fn bmm101(view: &OverviewViewData) -> Node {
+    parts::bmm101_frame(
+        view.account.as_deref(),
+        narrow_hero(view, font::bmm101::BODY, font::bmm101::SUB),
+    )
+}
+
+/// The hashrate between its label and 5m sub, centered in what the header leaves.
+fn narrow_hero(view: &OverviewViewData, label_size: u32, sub_size: u32) -> Node {
     let scaled = hashrate_strings(&view.data);
     let slot = parts::Slot::scaled(
         scaled
@@ -162,25 +188,24 @@ fn small(view: &OverviewViewData) -> Node {
         &view.data.hashrate_5m,
     );
     let hero = match slot {
-        parts::Slot::Value { value, unit } => parts::hero_value(value, unit),
+        parts::Slot::Value { value, unit } => parts::hero_value(value, unit, label_size),
         parts::Slot::Loading => parts::skeleton_value(chars::HASHRATE, font::HERO),
-        parts::Slot::Unavailable => parts::absent_value(parts::callout::UNAVAILABLE, font::HERO),
+        parts::Slot::Unavailable => {
+            parts::absent_value(parts::callout::UNAVAILABLE, font::HERO, label_size)
+        }
     };
-    let mut lines = vec![parts::label(HASHRATE_LABEL), hero];
+    let mut lines = vec![parts::label(HASHRATE_LABEL, label_size), hero];
     // The sub qualifies a value, so it goes where there is one to qualify.
     if !matches!(slot, parts::Slot::Unavailable) {
-        lines.push(parts::label("5m Average"));
+        lines.push(parts::label("5m Average", sub_size));
     }
-    frame(vec![
-        header(None),
-        center(
-            props!(flex: 1.0),
-            [col(
-                props!(gap: 12.0, cross_align: CrossAlign::Center),
-                lines,
-            )],
-        ),
-    ])
+    center(
+        props!(flex: 1.0),
+        [col(
+            props!(gap: 12.0, cross_align: CrossAlign::Center),
+            lines,
+        )],
+    )
 }
 
 /// Borderless stat blocks beside a compact workers card; the card centers
@@ -432,7 +457,7 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
         Some(estimate_at) => row(
             props!(cross_align: CrossAlign::End),
             [
-                parts::label("Next Payout "),
+                parts::label("Next Payout ", font::BODY),
                 relative_time_live(
                     SystemTime {
                         unix_secs: estimate_at,
@@ -447,7 +472,7 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
                 ),
             ],
         ),
-        None => parts::label("Next Payout"),
+        None => parts::label("Next Payout", font::BODY),
     };
     // Every line keeps its slot while loading, so the card never reflows
     // as the sources land one by one. A skeleton stands for a source still
@@ -497,4 +522,41 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
         ),
     };
     parts::stat_stack(title, meter, last_line, gaps)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screens::fixtures;
+    use crate::screens::tree::texts;
+
+    const BMM101_HEADER: [&str; 4] = ["Braiins Pool", "(", "user.braiins", ")"];
+
+    #[test]
+    fn the_bmm101_hero_reads_top_down_under_the_designed_header() {
+        bmc_wasm_sdk::assets::init_test_registrars();
+        let view = fixtures::sample_overview(SizeBucket::Bmm101, true, 5.0);
+        assert_eq!(
+            texts(&overview_view(&view)),
+            [
+                BMM101_HEADER.as_slice(),
+                &["Hashrate", "500,0 PH/s", "5m Average"]
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn a_denied_bmm101_key_names_its_account_in_the_designed_header() {
+        bmc_wasm_sdk::assets::init_test_registrars();
+        let view = fixtures::sample_overview_denied(SizeBucket::Bmm101);
+        assert_eq!(
+            texts(&overview_view(&view)),
+            [
+                BMM101_HEADER.as_slice(),
+                &["Access denied", "Check the API key's permissions"]
+            ]
+            .concat()
+        );
+    }
 }

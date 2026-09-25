@@ -61,8 +61,7 @@ const HEADER_H: f32 = 40.0;
 const FULL_X_BAND: f32 = 40.0;
 const FULL_MARKER: f32 = 36.0;
 
-/// BMM101's header and hero-line boxes: Figma's line box for their text.
-const BMM101_HEADER_H: f32 = 18.0;
+/// BMM101's hero-line box: Figma's line box for its text.
 const BMM101_HERO_H: f32 = 26.0;
 
 /// Glyph counts the loading bars stand in for, one per line's own strings.
@@ -81,24 +80,19 @@ mod chars {
 #[must_use]
 pub fn big_chart_view(view: &BigChartViewData) -> Node {
     if view.account.is_none() {
-        return col(
-            props!(padding: space::PADDING, gap: space::GAP, background: color::BG, flex: 1.0),
-            [
-                header(None),
-                parts::unbound_body(view.bucket, view.width, &view.bind_hint),
-            ],
+        return state_frame(
+            view.bucket,
+            None,
+            parts::unbound_body(view.bucket, view.width, &view.bind_hint),
         );
     }
     if view.data.access_denied {
         // The account joins the header where the normal layouts show it.
         let account = match view.bucket {
-            SizeBucket::Small | SizeBucket::Medium | SizeBucket::Bmm101 => None,
-            SizeBucket::Large | SizeBucket::Full => view.account.as_deref(),
+            SizeBucket::Small | SizeBucket::Medium => None,
+            SizeBucket::Large | SizeBucket::Full | SizeBucket::Bmm101 => view.account.as_deref(),
         };
-        return col(
-            props!(padding: space::PADDING, gap: space::GAP, background: color::BG, flex: 1.0),
-            [header(account), parts::denied_body(view.bucket)],
-        );
+        return state_frame(view.bucket, account, parts::denied_body(view.bucket));
     }
     match view.bucket {
         SizeBucket::Small => small(view),
@@ -113,6 +107,17 @@ fn header(account: Option<&str>) -> Node {
     row(
         props!(height: HEADER_H, cross_align: CrossAlign::Center),
         [parts::header_left(account, TitleSize::DECK)],
+    )
+}
+
+/// A state's body under its frame's header.
+fn state_frame(bucket: SizeBucket, account: Option<&str>, body: Node) -> Node {
+    if bucket == SizeBucket::Bmm101 {
+        return parts::bmm101_frame(account, body);
+    }
+    col(
+        props!(padding: space::PADDING, gap: space::GAP, background: color::BG, flex: 1.0),
+        [header(account), body],
     )
 }
 
@@ -234,7 +239,7 @@ fn full(view: &BigChartViewData) -> Node {
 /// The chart takes what the fixed lines leave.
 fn bmm101(view: &BigChartViewData) -> Node {
     let chart_w = view.width - 2.0 * space::PADDING;
-    let chart_h = view.height - 4.0 * space::PADDING - BMM101_HEADER_H - BMM101_HERO_H;
+    let chart_h = view.height - 4.0 * space::PADDING - parts::BMM101_HEADER_H - BMM101_HERO_H;
     let spec = ChartSpec {
         left_gutter: 36.0,
         right_gutter: 40.0,
@@ -258,22 +263,18 @@ fn bmm101(view: &BigChartViewData) -> Node {
         hero_line.push(spacer(1.0));
         hero_line.push(workers_pair(view, font::bmm101::BODY));
     }
-    col(
-        props!(padding: space::PADDING, gap: space::PADDING, background: color::BMM101_BG, flex: 1.0),
-        [
-            row(
-                props!(height: BMM101_HEADER_H, cross_align: CrossAlign::Center),
-                [parts::header_left(
-                    view.account.as_deref(),
-                    TitleSize::BMM101,
-                )],
-            ),
-            row(
-                props!(height: BMM101_HERO_H, cross_align: CrossAlign::Center),
-                hero_line,
-            ),
-            chart(view, chart_w, chart_h, &spec, font::bmm101::BODY),
-        ],
+    parts::bmm101_frame(
+        view.account.as_deref(),
+        col(
+            props!(gap: space::PADDING, flex: 1.0),
+            [
+                row(
+                    props!(height: BMM101_HERO_H, cross_align: CrossAlign::Center),
+                    hero_line,
+                ),
+                chart(view, chart_w, chart_h, &spec, font::bmm101::BODY),
+            ],
+        ),
     )
 }
 
@@ -463,28 +464,7 @@ mod tests {
 
     use super::*;
     use crate::screens::fixtures;
-
-    /// Every paragraph the tree would draw, in tree order;
-    /// the chart's tick labels are canvas draws, not paragraphs.
-    fn texts(node: &Node) -> Vec<String> {
-        let mut out = Vec::new();
-        collect_texts(node, &mut out);
-        out
-    }
-
-    fn collect_texts(node: &Node, out: &mut Vec<String>) {
-        match node {
-            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
-                for child in children {
-                    collect_texts(child, out);
-                }
-            }
-            Node::Paragraph { spans, .. } => {
-                out.push(spans.iter().map(|span| span.text.as_str()).collect());
-            }
-            _ => {}
-        }
-    }
+    use crate::screens::tree::texts;
 
     #[test]
     fn the_bmm101_frame_reads_top_down_as_designed() {

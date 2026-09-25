@@ -28,7 +28,7 @@
 //! Every fragment takes its geometry from parameters; which variant a
 //! frame gets is the layouts' decision.
 
-use bmc_wasm_sdk::typography::{LDQUO, RDQUO};
+use bmc_wasm_sdk::typography::{LDQUO, NBSP, RDQUO};
 #[cfg_attr(
     not(test),
     expect(
@@ -91,6 +91,7 @@ pub mod font {
     pub mod bmm101 {
         pub const TITLE: u32 = 14;
         pub const BODY: u32 = 20;
+        pub const SUB: u32 = 16;
         pub const TICK: u32 = 14;
     }
 }
@@ -149,16 +150,35 @@ pub fn header_left(account: Option<&str>, size: TitleSize) -> Node {
     row(props!(gap: 8.0, cross_align: CrossAlign::Center), children)
 }
 
+/// BMM101's header box: Figma's line box for its title.
+pub const BMM101_HEADER_H: f32 = 18.0;
+
+/// BMM101's frame: the header, then `body` in what is left,
+/// every gap the padding's width.
+#[must_use]
+pub fn bmm101_frame(account: Option<&str>, body: Node) -> Node {
+    col(
+        props!(padding: space::PADDING, gap: space::PADDING, background: color::BMM101_BG, flex: 1.0),
+        [
+            row(
+                props!(height: BMM101_HEADER_H, cross_align: CrossAlign::Center),
+                [header_left(account, TitleSize::BMM101)],
+            ),
+            body,
+        ],
+    )
+}
+
 // The typography voices. Every on-screen glyph goes through one of these
 // (or a fragment built from them), each pinning `line_height: 1.0` so a
 // text line is exactly its font size — the layouts' budgets count on it.
 
 /// Muted body text: titles, labels, subs, units.
 #[must_use]
-pub fn label(content: &str) -> Node {
+pub fn label(content: &str, size: u32) -> Node {
     text(
         content,
-        style!(size: font::BODY, color: color::TEXT_MUTED, line_height: 1.0),
+        style!(size: size, color: color::TEXT_MUTED, line_height: 1.0),
     )
 }
 
@@ -268,12 +288,12 @@ pub fn skeleton_meter() -> Node {
 /// keeps the line's height, so a card whose neighbour did load holds its
 /// title and footer on the row's shared baselines.
 #[must_use]
-pub fn absent_value(callout: &str, size: u32) -> Node {
+pub fn absent_value(callout: &str, size: u32, body_size: u32) -> Node {
     #[expect(clippy::cast_precision_loss, reason = "a font size is exact in f32")]
     let height = size as f32;
     row(
         props!(height: height, cross_align: CrossAlign::Center),
-        [absent(callout, font::BODY)],
+        [absent(callout, body_size)],
     )
 }
 
@@ -335,7 +355,13 @@ pub fn value_span(value: &str, value_color: Color) -> Span {
 /// A number in the value voice, trailed by the unit it was scaled to
 /// — "500,0 PH/s". The unit takes the label's size and colour
 /// but keeps the number's weight.
-fn quantity_line(value: &str, unit: Option<&str>, size: u32, weight: FontWeight) -> Node {
+fn quantity_line(
+    value: &str,
+    unit: Option<&str>,
+    size: u32,
+    label_size: u32,
+    weight: FontWeight,
+) -> Node {
     let mut spans = vec![span(value, ())];
     if let Some(unit) = unit {
         // One paragraph, so the unit sits on the number's own baseline.
@@ -344,7 +370,7 @@ fn quantity_line(value: &str, unit: Option<&str>, size: u32, weight: FontWeight)
         // (`bmc-render/src/gpu/renderer.rs`).
         spans.push(span(
             fmt!(" {unit}"),
-            style!(size: font::BODY, color: color::TEXT_MUTED),
+            style!(size: label_size, color: color::TEXT_MUTED),
         ));
     }
     paragraph(
@@ -488,23 +514,23 @@ pub fn stat_block(
                     props!(width: 8.0, height: 8.0),
                     [Draw::circle(4.0, 4.0, 4.0, dot_color)],
                 ),
-                label(block_label),
+                label(block_label, font::BODY),
             ],
         ),
-        None => label(block_label),
+        None => label(block_label, font::BODY),
     };
     let value_line: Node = match value {
         Slot::Value { value, unit } => {
-            quantity_line(value, unit, font::VALUE, FontWeight::SEMIBOLD)
+            quantity_line(value, unit, font::VALUE, font::BODY, FontWeight::SEMIBOLD)
         }
         Slot::Loading => skeleton_value(value_chars, font::VALUE),
-        Slot::Unavailable => absent_value(callout::UNAVAILABLE, font::VALUE),
+        Slot::Unavailable => absent_value(callout::UNAVAILABLE, font::VALUE, font::BODY),
     };
     // A sub qualifies a value ("5m Average", "≈ 10.038 USD"), so it goes with
     // one: the slot keeps its height, with nothing left to say or wait for.
     let sub_line = match sub {
         _ if matches!(value, Slot::Unavailable) => blank_line(),
-        Some(sub) => label(sub),
+        Some(sub) => label(sub, font::BODY),
         // Subs run "5m Average" to "≈ 10.038 USD".
         None => skeleton(10.0, font::BODY),
     };
@@ -525,8 +551,8 @@ pub fn stat_stack(title: Node, middle: Node, footer: Node, gaps: StatGaps) -> No
 
 /// The Small overview's single centered hashrate value.
 #[must_use]
-pub fn hero_value(value: &str, unit: Option<&str>) -> Node {
-    quantity_line(value, unit, font::HERO, FontWeight::BOLD)
+pub fn hero_value(value: &str, unit: Option<&str>, label_size: u32) -> Node {
+    quantity_line(value, unit, font::HERO, label_size, FontWeight::BOLD)
 }
 
 /// The payout meter's track thickness — heavier than the design's 8 px,
@@ -683,7 +709,7 @@ pub fn workers_panel(workers: &Availability<WorkerCounts>, spec: &WorkersSpec) -
         rows(workers.as_option()),
     );
 
-    col(props!(gap: 10.0), vec![label("Workers"), body])
+    col(props!(gap: 10.0), vec![label("Workers", font::BODY), body])
 }
 
 /// Where the unbound state points the operator: the Deck web app
@@ -718,6 +744,9 @@ const BIND_ROW_GAP: f32 = 32.0;
 /// own width fits, but splits the sentence and the network line as a full
 /// line over a stub; this breaks each near its middle instead.
 const BIND_NARROW_TEXT_W: f32 = 215.0;
+/// BMM101's, for its smaller prose: wide enough to seat the widest bind URL,
+/// `http://` and a full dotted quad, which cannot wrap.
+const BMM101_BIND_NARROW_TEXT_W: f32 = 220.0;
 
 /// The network line's rendered height, in lines.
 /// It is the one run whose length is the operator's: a name long enough
@@ -730,15 +759,24 @@ const BIND_NETWORK_LINES: f32 = 2.0;
     clippy::cast_precision_loss,
     reason = "a small font size and line count are exact in f32"
 )]
-fn bind_text_height(lines: f32, blocks: usize) -> f32 {
-    let line = font::BODY as f32 * BIND_LINE_HEIGHT;
+fn bind_text_height(lines: f32, blocks: usize, size: u32) -> f32 {
+    let line = size as f32 * BIND_LINE_HEIGHT;
     lines * line + BIND_LINE_GAP * blocks.saturating_sub(1) as f32
+}
+
+/// The size the state screens set their prose in.
+fn body_size(bucket: SizeBucket) -> u32 {
+    match bucket {
+        SizeBucket::Bmm101 => font::bmm101::BODY,
+        SizeBucket::Small | SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => font::BODY,
+    }
 }
 
 /// Unbound-state body: centered bind instructions, led
 /// by a QR code to the Deck web app where the frame fits one.
 #[must_use]
 pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> Node {
+    let body = body_size(bucket);
     // The wide frames run the QR beside the text; the narrow ones stack it.
     let beside = matches!(
         bucket,
@@ -770,46 +808,55 @@ pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> No
     // the wrapped full sentence plus a network line runs past its 220px.
     // A narrow frame keeps the network line but takes the short sentence.
     let compact = bucket == SizeBucket::Small;
-    let instruction = if compact || narrow {
-        "Bind an account in the Deck web app"
+    let instruction = if bucket == SizeBucket::Bmm101 {
+        // A column that seats the widest URL takes "the" onto the first line;
+        // the glue keeps it with "Deck" instead.
+        fmt!("Bind an account in the{NBSP}Deck web app")
+    } else if compact || narrow {
+        "Bind an account in the Deck web app".to_owned()
     } else {
-        "Bind a Braiins Pool account in the Deck web app to see your stats."
+        "Bind a Braiins Pool account in the Deck web app to see your stats.".to_owned()
     };
     // Rendered lines, not paragraphs: the QR squares off against what
     // the prose actually occupies, and a narrow column wraps the network line.
     let mut rendered = BIND_INSTRUCTION_LINES;
     let mut lines = vec![text(
         instruction,
-        style!(size: font::BODY, color: color::TEXT, align: text_align, line_height: BIND_LINE_HEIGHT),
+        style!(size: body, color: color::TEXT, align: text_align, line_height: BIND_LINE_HEIGHT),
     )];
     if !compact && !hint.ssid.is_empty() {
         rendered += if narrow { BIND_NETWORK_LINES } else { 1.0 };
         lines.push(text(
             fmt!("On the network {LDQUO}{}{RDQUO}", hint.ssid),
-            style!(size: font::BODY, color: color::TEXT_MUTED, align: text_align, line_height: BIND_LINE_HEIGHT),
+            style!(size: body, color: color::TEXT_MUTED, align: text_align, line_height: BIND_LINE_HEIGHT),
         ));
     }
     if !hint.url.is_empty() {
         rendered += 1.0;
         lines.push(text(
             hint.url.as_str(),
-            style!(size: font::BODY, color: color::WORKERS, align: text_align, line_height: BIND_LINE_HEIGHT),
+            style!(size: body, color: color::WORKERS, align: text_align, line_height: BIND_LINE_HEIGHT),
         ));
     }
     // Beside the text the QR takes the block's height, so the two square off.
     let qr_size = if beside {
-        Some(bind_text_height(rendered, lines.len()).max(QR_MIN_SIZE))
+        Some(bind_text_height(rendered, lines.len(), body).max(QR_MIN_SIZE))
     } else {
         match bucket {
             SizeBucket::Large => Some(170.0),
             SizeBucket::Small | SizeBucket::Medium | SizeBucket::Full | SizeBucket::Bmm101 => None,
         }
     };
+    let narrow_text_w = if bucket == SizeBucket::Bmm101 {
+        BMM101_BIND_NARROW_TEXT_W
+    } else {
+        BIND_NARROW_TEXT_W
+    };
     // Beside the prose a narrow frame sizes the row from its parts: capping
     // the row itself would take back from the column whatever the QR grew by.
     // Stacked, there is no row to sum, so the frame's own width is the cap.
     let max_w = match qr_size.filter(|_| narrow && beside) {
-        Some(qr) => qr + BIND_ROW_GAP + BIND_NARROW_TEXT_W,
+        Some(qr) => qr + BIND_ROW_GAP + narrow_text_w,
         None => cap.unwrap_or(content_w),
     };
     let qr_code = qr_size.filter(|_| !hint.url.is_empty()).map(|size| {
@@ -873,12 +920,13 @@ pub fn denied_body(bucket: SizeBucket) -> Node {
     } else {
         (48.0, 12.0)
     };
+    let body = body_size(bucket);
     let lines: Vec<Node> = detail
         .iter()
         .map(|line| {
             text(
                 *line,
-                style!(size: font::BODY, color: color::TEXT_MUTED, line_height: BIND_LINE_HEIGHT),
+                style!(size: body, color: color::TEXT_MUTED, line_height: BIND_LINE_HEIGHT),
             )
         })
         .collect();
@@ -898,9 +946,10 @@ pub fn denied_body(bucket: SizeBucket) -> Node {
                         color::ERROR,
                     )],
                 ),
+                // The heading keeps to body size, on every frame.
                 text(
                     "Access denied",
-                    style!(size: font::TITLE, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
+                    style!(size: body, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
                 ),
                 col(props!(cross_align: CrossAlign::Center), lines),
             ],

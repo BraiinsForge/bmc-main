@@ -28,3 +28,30 @@ pub mod icons;
 pub mod overview;
 pub mod parts;
 pub mod plot;
+
+#[cfg(test)]
+mod tree {
+    use bmc_wasm_sdk::Node;
+
+    /// Every paragraph the tree would draw, in tree order;
+    /// the chart's tick labels are canvas draws, not paragraphs.
+    pub fn texts(node: &Node) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_texts(node, &mut out);
+        out
+    }
+
+    fn collect_texts(node: &Node, out: &mut Vec<String>) {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                for child in children {
+                    collect_texts(child, out);
+                }
+            }
+            Node::Paragraph { spans, .. } => {
+                out.push(spans.iter().map(|span| span.text.as_str()).collect());
+            }
+            _ => {}
+        }
+    }
+}
