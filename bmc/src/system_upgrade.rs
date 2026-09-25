@@ -37,9 +37,7 @@ use bmc_scheduler::{Cron, JobScheduler};
 pub(crate) use bmc_upgrade::arbitration::Disruption;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeDetail};
-use bmc_upgrade::offers::{
-    PackageOffer, UpgradeOffer, UpgradeOfferCache, UpgradePreparation, prepare,
-};
+use bmc_upgrade::offers::{UpgradeOffer, UpgradeOfferCache, UpgradePreparation, prepare};
 use bmc_upgrade::packages::{
     EstimateMode, PackageBackend, PackageGcRequest, PackageProbe, PackageProbeError,
 };
@@ -916,9 +914,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 .probe(target_firmware.as_deref(), EstimateMode::Estimate, &install)
                 .await
             {
-                PackageProbe::Available(index, preview) => {
-                    Ok(Some(PackageOffer { index, preview }))
-                }
+                PackageProbe::Available(offer) => Ok(Some(offer)),
                 PackageProbe::UpToDate => Ok(None),
                 PackageProbe::Failed(error) => Err(SystemUpgradeError::PackageCheckFailed(error)),
             }
@@ -1501,7 +1497,7 @@ mod tests {
         detail: UpgradeDetail,
     ) -> ExecutionId {
         let prepared = prepare(Vec::new(), Some(detail), async {
-            Ok::<_, ()>(None::<PackageOffer>)
+            Ok::<_, ()>(None::<bmc_upgrade::offers::PackageOffer>)
         })
         .await
         .expect("BUG: fixture check succeeds");

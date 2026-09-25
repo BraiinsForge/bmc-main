@@ -52,7 +52,7 @@ pub enum EstimateMode {
 
 #[derive(Debug)]
 pub enum PackageProbe {
-    Available(bmc_nix::types::MergedIndex, PackagesPreview),
+    Available(crate::offers::PackageOffer),
     /// All package preconditions succeeded and the plan is empty.
     UpToDate,
     /// The package check could not produce a trustworthy answer.
@@ -441,7 +441,11 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
             EstimateMode::Skip => None,
         };
 
-        PackageProbe::Available(merged, build_packages_preview(&plan, realize_estimate))
+        PackageProbe::Available(crate::offers::PackageOffer {
+            index: merged,
+            manifest: base,
+            preview: build_packages_preview(&plan, realize_estimate),
+        })
     }
 
     async fn apply(
@@ -1157,7 +1161,7 @@ mod tests {
     #[tokio::test]
     async fn probe_selects_target_firmware_packages() {
         let (_dir, upgrader) = target_feed_upgrader().await;
-        let PackageProbe::Available(merged, _) = upgrader
+        let PackageProbe::Available(offer) = upgrader
             .probe(
                 Some("target"),
                 EstimateMode::Skip,
@@ -1167,7 +1171,8 @@ mod tests {
         else {
             panic!("the target feed must offer the incoming packages");
         };
-        let package = merged
+        let package = offer
+            .index
             .packages
             .iter()
             .find(|package| package.name == "nix")
@@ -1689,15 +1694,15 @@ mod tests {
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
         let probe = upgrader.probe(None, EstimateMode::Estimate, &[]).await;
-        let PackageProbe::Available(_, preview) = probe else {
+        let PackageProbe::Available(offer) = probe else {
             panic!("a transient estimate error must still offer the upgrade, got {probe:?}");
         };
         assert!(
-            preview.download_size_bytes.is_none(),
+            offer.preview.download_size_bytes.is_none(),
             "a transient estimate error must omit the download size"
         );
         assert!(
-            !preview.changes.is_empty(),
+            !offer.preview.changes.is_empty(),
             "the offered upgrade must still carry the changed package"
         );
     }
@@ -1712,10 +1717,10 @@ mod tests {
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
         let probe = upgrader.probe(None, EstimateMode::Estimate, &[]).await;
-        let PackageProbe::Available(_, preview) = probe else {
+        let PackageProbe::Available(offer) = probe else {
             panic!("a successful estimate must offer the upgrade, got {probe:?}");
         };
-        assert_eq!(preview.download_size_bytes, Some(4096));
+        assert_eq!(offer.preview.download_size_bytes, Some(4096));
     }
     #[tokio::test]
     async fn probe_reports_install_target_unavailable() {

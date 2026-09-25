@@ -18,6 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher as _};
+
 use crate::ExecutionId;
 
 /// One claimable offer at a time: a check stores the freshly prepared offer under a new ID,
@@ -55,6 +58,40 @@ impl<T> OfferSlot<T> {
     pub fn invalidate(&mut self) {
         self.current = None;
     }
+}
+
+/// What an offer would do to the device; offers with equal fingerprints share one ID.
+pub trait Fingerprint {
+    fn fingerprint(&self) -> OfferFingerprint<'_>;
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum OfferFingerprint<'a> {
+    /// `install` is what the firmware run installs after the flash, `None` when it skips packages.
+    Firmware {
+        hash: &'a str,
+        install: Option<BTreeSet<&'a str>>,
+    },
+    /// `plan` digests what a package run re-plans `install` against: the package index and the
+    /// installed profile on a device, whatever stands in for them in a mock.
+    Packages {
+        plan: u64,
+        install: BTreeSet<&'a str>,
+    },
+}
+
+/// Equal values digest equally; the digest is only comparable within one build.
+#[must_use]
+pub fn digest(value: &impl Hash) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The requested installs as the set they are, so their order and repeats do not split offers.
+#[must_use]
+pub fn install_set(install: &[String]) -> BTreeSet<&str> {
+    install.iter().map(String::as_str).collect()
 }
 
 #[cfg(test)]

@@ -20,15 +20,28 @@
 
 use std::future::Future;
 
-use bmc_nix::types::MergedIndex;
-use bmc_upgrade_types::{ExecutionId, OfferSlot, PackagesPreview};
+use bmc_nix::types::{Manifest, MergedIndex};
+use bmc_upgrade_types::{
+    ExecutionId, Fingerprint, OfferFingerprint, OfferSlot, PackagesPreview, digest, install_set,
+};
 
 use crate::arbitration::Disruption;
+use crate::firmware::UpgradeDetail;
 
 #[derive(Clone, Debug)]
 pub struct PackageOffer {
     pub index: MergedIndex,
+    pub manifest: Manifest,
     pub preview: PackagesPreview,
+}
+
+impl PackageOffer {
+    /// Digests the index and the installed profile as the check saw them. The preview's size
+    /// estimates come from the store and are left out on purpose.
+    #[must_use]
+    pub fn plan_digest(&self) -> u64 {
+        digest(&(&self.index, &self.manifest))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +65,23 @@ impl<F> UpgradeOffer<F> {
                 package_preview, ..
             } => package_preview.as_ref(),
             Self::Packages { packages, .. } => Some(&packages.preview),
+        }
+    }
+}
+
+impl Fingerprint for UpgradeOffer<UpgradeDetail> {
+    fn fingerprint(&self) -> OfferFingerprint<'_> {
+        match self {
+            Self::Firmware {
+                firmware, install, ..
+            } => OfferFingerprint::Firmware {
+                hash: &firmware.latest_release.hash,
+                install: Some(install_set(install)),
+            },
+            Self::Packages { packages, install } => OfferFingerprint::Packages {
+                plan: packages.plan_digest(),
+                install: install_set(install),
+            },
         }
     }
 }

@@ -31,7 +31,7 @@ use uuid::Uuid;
 pub mod offer_slot;
 pub mod wire;
 
-pub use offer_slot::OfferSlot;
+pub use offer_slot::{Fingerprint, OfferFingerprint, OfferSlot, digest, install_set};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
@@ -200,7 +200,7 @@ pub struct DownloadProgress {
     pub total_bytes: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct PackagesPreview {
     pub changes: Vec<PackageChange>,
@@ -211,7 +211,7 @@ pub struct PackagesPreview {
     pub bmc_changelog: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct PackageChange {
     pub name: String,

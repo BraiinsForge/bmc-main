@@ -35,6 +35,7 @@ use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::types::{FetchedIndex, MergedIndex, PackageIndex};
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_shared_utils::include_png;
+use bmc_upgrade::offers::PackageOffer;
 use bmc_upgrade::packages::{
     ApplyError, EstimateMode, InstallablePackage, PackageBackend, PackageGcError, PackageGcOutcome,
     PackageGcRequest, PackageProbe, PackageProbeError, PackagesPreview, SystemPackageChange,
@@ -369,7 +370,11 @@ impl PackageBackend for MockPackageBackend {
             PackagesScenario::Available => {
                 let mut preview = static_preview(estimate);
                 preview.changes.extend(installs);
-                PackageProbe::Available(empty_merged_index(), preview)
+                PackageProbe::Available(PackageOffer {
+                    index: empty_merged_index(),
+                    manifest: bmc_nix::types::Manifest::default(),
+                    preview,
+                })
             }
             // Nothing else changed, but an explicit install still yields a plan
             // of just the added widgets so the install path never dead-ends.
@@ -378,9 +383,10 @@ impl PackageBackend for MockPackageBackend {
                 if changes.is_empty() {
                     PackageProbe::UpToDate
                 } else {
-                    PackageProbe::Available(
-                        empty_merged_index(),
-                        PackagesPreview {
+                    PackageProbe::Available(PackageOffer {
+                        index: empty_merged_index(),
+                        manifest: bmc_nix::types::Manifest::default(),
+                        preview: PackagesPreview {
                             changes,
                             download_size_bytes: match estimate {
                                 EstimateMode::Estimate => Some(DOWNLOAD_TOTAL_BYTES),
@@ -393,7 +399,7 @@ impl PackageBackend for MockPackageBackend {
                             bmc_version: None,
                             bmc_changelog: None,
                         },
-                    )
+                    })
                 }
             }
             PackagesScenario::FetchFailed => {
@@ -661,7 +667,7 @@ mod tests {
 
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
-        let PackageProbe::Available(_, preview) =
+        let PackageProbe::Available(PackageOffer { preview, .. }) =
             backend.probe(None, EstimateMode::Estimate, &[]).await
         else {
             panic!("BUG: expected Available");
@@ -750,7 +756,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
-        let PackageProbe::Available(_, preview) =
+        let PackageProbe::Available(PackageOffer { preview, .. }) =
             backend.probe(None, EstimateMode::Skip, &[]).await
         else {
             panic!("BUG: expected Available");
@@ -766,7 +772,7 @@ mod tests {
             r#"{"packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#,
         );
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
-        let PackageProbe::Available(_, preview) = backend
+        let PackageProbe::Available(PackageOffer { preview, .. }) = backend
             .probe(None, EstimateMode::Skip, &["widget-flip-clock".to_owned()])
             .await
         else {
@@ -813,7 +819,7 @@ mod tests {
             r#"{"packages": "unavailable", "shadowed_packages": ["widget-flip-clock"]}"#,
         );
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
-        let PackageProbe::Available(_, preview) = backend
+        let PackageProbe::Available(PackageOffer { preview, .. }) = backend
             .probe(
                 None,
                 EstimateMode::Estimate,

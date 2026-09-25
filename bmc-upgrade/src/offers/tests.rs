@@ -22,12 +22,30 @@ use super::*;
 
 use std::collections::BTreeMap;
 
+impl Fingerprint for UpgradeOffer<&'static str> {
+    fn fingerprint(&self) -> OfferFingerprint<'_> {
+        match self {
+            Self::Firmware {
+                firmware, install, ..
+            } => OfferFingerprint::Firmware {
+                hash: firmware,
+                install: Some(install_set(install)),
+            },
+            Self::Packages { packages, install } => OfferFingerprint::Packages {
+                plan: packages.plan_digest(),
+                install: install_set(install),
+            },
+        }
+    }
+}
+
 fn packages(version: &str) -> PackageOffer {
     PackageOffer {
         index: MergedIndex {
             packages: Vec::new(),
             by_name: BTreeMap::new(),
         },
+        manifest: Manifest::default(),
         preview: PackagesPreview {
             changes: Vec::new(),
             download_size_bytes: None,

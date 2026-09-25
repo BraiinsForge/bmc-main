@@ -169,7 +169,7 @@ pub struct ResolvedPackage {
 }
 
 /// What initiated the installation of a package
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstalledBy {
     System,
@@ -177,7 +177,7 @@ pub enum InstalledBy {
 }
 
 /// Profile manifest (stored in each generation)
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]
 pub struct Manifest {
     pub packages: BTreeMap<String, ManifestPackage>,
 }
@@ -198,7 +198,7 @@ where
 /// Per-package manifest entry.
 ///
 /// Cache metadata is not persisted here — it lives only in `PackageIndex`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub struct ManifestPackage {
     pub version: String,
     pub store_path: String,
@@ -394,7 +394,7 @@ pub struct FetchedIndex {
 ///
 /// Stores all package entries from all servers in a flat vec.
 /// `by_name` provides fast lookup by package name to indices into `packages`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub struct MergedIndex {
     /// All entries in insertion order.
     pub packages: Vec<MergedPackageEntry>,
@@ -406,7 +406,7 @@ pub struct MergedIndex {
 ///
 /// Cache metadata is intentionally absent — store paths are realised
 /// through configured Nix substituters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub struct MergedPackageEntry {
     pub name: String,
     pub version: Version,

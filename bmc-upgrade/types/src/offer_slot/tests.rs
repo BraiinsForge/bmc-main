@@ -18,8 +18,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use super::OfferSlot;
+use super::{Fingerprint, OfferFingerprint, OfferSlot};
 use crate::ExecutionId;
+
+impl Fingerprint for &str {
+    fn fingerprint(&self) -> OfferFingerprint<'_> {
+        OfferFingerprint::Firmware {
+            hash: self,
+            install: None,
+        }
+    }
+}
 
 #[test]
 fn the_stored_offer_is_claimed_once() {
