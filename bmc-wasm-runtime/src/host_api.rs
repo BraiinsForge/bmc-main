@@ -943,6 +943,12 @@ impl StagedGuestDeliveries {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GuestTree {
+    Pending,
+    Committed,
+}
+
 /// Host-side state accessible to WASM via host functions.
 #[cfg_attr(
     feature = "testing",
@@ -1030,6 +1036,14 @@ pub(crate) struct HostState {
 
     /// Cached deserialized tree for animation-only frames (tree, width, height).
     pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
+
+    /// Whether the running guest render has committed a tree.
+    ///
+    /// The guest can still run out of fuel after `host_submit_tree` returns,
+    /// with its tree already painted on the target.
+    /// Replaying it would paint the tree over itself,
+    /// blending translucent draws and advancing animations twice.
+    pub guest_tree: GuestTree,
 
     /// Current wall-clock time, set by the host before each render().
     /// Used by `host_get_system_time()` — the runtime never calls `Local::now()`.
@@ -1454,6 +1468,7 @@ impl HostState {
             last_static_key: None,
             stale_export_buffers: 0,
             cached_tree: None,
+            guest_tree: GuestTree::Pending,
             system_time,
             monotonic_ms: 0,
             params: VersionedSnapshotCache::new(ParamsSnapshot::new(BTreeMap::new())),

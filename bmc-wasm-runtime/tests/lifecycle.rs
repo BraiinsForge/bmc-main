@@ -66,6 +66,8 @@ use bmc_widget_protocol::CredentialSecrets;
 #[path = "common/asset_fixtures.rs"]
 mod asset_fixtures;
 mod common;
+#[path = "common/pixel_readback.rs"]
+mod pixel_readback;
 use asset_fixtures::{compiled_empty_svg, one_px_png, renderer_ptr, wat_string_literal};
 use common::headless_egl;
 
@@ -717,6 +719,80 @@ fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
         tree_len = tree.len(),
         sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
     )
+}
+
+/// Submits an animated tree every render and, from the second render on,
+/// spins out of fuel after `host_submit_tree` has returned.
+/// The frame request keeps the animation from replaying the tree
+/// without running the guest.
+/// The rect is translucent so a second draw over it shows in its pixels.
+fn submit_then_burn_wat() -> String {
+    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
+        bmc_wasm_sdk::PropsData::default(),
+        [bmc_wasm_sdk::Draw::rect(
+            144.0,
+            104.0,
+            32.0,
+            32.0,
+            bmc_wasm_protocol::colors::Color::from_rgba(0xFF, 0xFF, 0xFF, 0x80),
+        )
+        .animate(
+            bmc_wasm_sdk::AnimProperty::Alpha,
+            1.0,
+            0.5,
+            10_000,
+            bmc_wasm_sdk::Easing::Linear,
+            bmc_wasm_sdk::LoopMode::Forever,
+        )],
+    ));
+    format!(
+        r#"
+        (module
+          (import "env" "host_submit_tree"
+            (func $submit_tree (param i32 i32 i32 i32)))
+          (import "env" "host_request_frame" (func $request_frame))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $render_count (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32)
+            global.get $render_count
+            i32.const 1
+            i32.add
+            global.set $render_count
+            i32.const 0
+            i32.const {tree_len}
+            i32.const 320
+            i32.const 240
+            call $submit_tree
+            call $request_frame
+            global.get $render_count
+            i32.const 1
+            i32.gt_u
+            if
+              loop $burn
+                br $burn
+              end
+            end))
+        "#,
+        data = wat_string_literal(&tree),
+        tree_len = tree.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
+fn submit_then_burn_runtime(gl: &headless_egl::HeadlessGl) -> (WasmWidgetRuntime, FemtoVgRenderer) {
+    let config = RuntimeConfig {
+        fuel_per_frame: 5_000,
+        ..RuntimeConfig::default()
+    };
+    let (mut runtime, mut renderer) = build_runtime_with_config(submit_then_burn_wat(), gl, config);
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok,
+        "the first render must submit its tree within the fuel budget"
+    );
+    (runtime, renderer)
 }
 
 fn dormant_callback_probe_wat() -> String {
@@ -1938,6 +2014,56 @@ fn dormant_callback_can_destructively_evict_and_recreate_a_volatile_asset() {
 }
 
 #[test]
+fn a_fuel_trap_after_submit_does_not_replay_the_committed_tree() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) = submit_then_burn_runtime(&gl);
+
+    let expected = [
+        RenderStatus::FuelExhausted,
+        RenderStatus::FuelExhausted,
+        RenderStatus::FuelExhausted,
+        RenderStatus::FuelExhausted,
+        RenderStatus::Dead,
+    ];
+    for (strike, status) in expected.into_iter().enumerate() {
+        let frame_counter_before = runtime.frame_counter_for_test();
+        assert_eq!(render_frame(&mut runtime, &mut renderer, 16), status);
+        assert_eq!(
+            runtime.frame_counter_for_test(),
+            frame_counter_before + 1,
+            "strike {} must draw the committed tree once, not replay it over itself",
+            strike + 1
+        );
+    }
+    assert!(
+        !runtime.wants_next_frame(),
+        "the death frame must not schedule the tree its guest committed"
+    );
+}
+
+#[test]
+fn a_fuel_trap_after_submit_blends_the_committed_tree_once() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) = submit_then_burn_runtime(&gl);
+    let [drawn_once, ..] = gl.read_pixel(160, 120);
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::FuelExhausted
+    );
+    let [struck, ..] = gl.read_pixel(160, 120);
+    assert!(
+        struck.abs_diff(drawn_once) <= 2,
+        "the strike frame must blend the translucent rect once: \
+         {struck} against {drawn_once} for a single draw"
+    );
+}
+
+#[test]
 fn fuel_dead_frames_replay_cached_assets_without_scheduling_and_reset_forces_guest_execution() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
@@ -1962,10 +2088,16 @@ fn fuel_dead_frames_replay_cached_assets_without_scheduling_and_reset_forces_gue
     );
 
     for strike in 1..5 {
+        let frame_counter_before = runtime.frame_counter_for_test();
         assert_eq!(
             render_frame(&mut runtime, &mut renderer, 16),
             RenderStatus::FuelExhausted,
             "strike {strike} must remain transient"
+        );
+        assert_eq!(
+            runtime.frame_counter_for_test(),
+            frame_counter_before + 1,
+            "strike {strike} must replay the last good tree under the warning bar"
         );
     }
     let frame_counter_before_death = runtime.frame_counter_for_test();

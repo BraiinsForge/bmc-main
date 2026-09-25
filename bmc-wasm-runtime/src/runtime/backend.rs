@@ -40,7 +40,7 @@ use bmc_render::tree;
 use bmc_render::tree::TouchHit;
 use bmc_render::{FrameTimings, RendererAssetResolver, layout_and_render_with_asset_resolver};
 
-use crate::host_api::{FixtureEvent, HermeticRun, HostState, Lifecycle, namespaced_tag};
+use crate::host_api::{FixtureEvent, GuestTree, HermeticRun, HostState, Lifecycle, namespaced_tag};
 use crate::network::NetworkInfo;
 use crate::renderer_assets::{
     AssetBacking, RendererAssetId, RendererAssetKind, RendererAssetRecord, cached_bitmap_dimensions,
@@ -170,7 +170,7 @@ pub enum RenderStatus {
     /// Frame rendered successfully within fuel budget.
     Ok,
     /// Widget exceeded its fuel budget this frame.
-    /// The last good frame is shown with a warning indicator.
+    /// The most recently submitted tree is shown with a warning indicator.
     FuelExhausted,
     /// Widget exceeded its budget too many times and has been killed.
     /// An error overlay is shown; WASM will not be called again
@@ -1146,8 +1146,8 @@ impl WasmWidgetRuntime {
     /// skips WASM execution and re-renders from cached tree data.
     ///
     /// Returns [`RenderStatus::FuelExhausted`] if the widget blew its budget
-    /// (last good frame is shown with a warning bar). After
-    /// [`Self::max_fuel_strikes`] consecutive fuel-outs the widget is killed
+    /// (the most recently submitted tree is shown with a warning bar).
+    /// After [`Self::max_fuel_strikes`] consecutive fuel-outs the widget is killed
     /// and [`RenderStatus::Dead`] is returned on every subsequent call.
     #[expect(
         clippy::too_many_lines,
@@ -1218,6 +1218,7 @@ impl WasmWidgetRuntime {
         // (not just the animation frame's ~0-16ms delta).
         let wasm_delta = (state.monotonic_ms - state.frame_schedule.last_wasm_render_at_ms) as u32;
         state.frame_schedule.last_wasm_render_at_ms = state.monotonic_ms;
+        state.guest_tree = GuestTree::Pending;
 
         // Full frame: run WASM with per-frame fuel budget.
         self.store.set_fuel(self.fuel_per_frame)?;
@@ -1307,18 +1308,23 @@ impl WasmWidgetRuntime {
                 if self.fuel_strikes >= self.max_fuel_strikes {
                     self.fuel_dead = true;
                     let state = self.store.data_mut();
-                    Self::render_stopped_cached_tree(state, delta_ms, target);
+                    if state.guest_tree == GuestTree::Committed {
+                        state.begin_render_frame();
+                    } else {
+                        Self::render_stopped_cached_tree(state, delta_ms, target);
+                    }
                     let background = DeadOverlayBackground::for_stopped_widget(
                         state.renderer_asset_failure.as_deref(),
                     );
                     Self::draw_dead_overlay(state, background);
                     return Ok(RenderStatus::Dead);
                 }
-                // Show last good frame + warning bar, and request a
-                // retry so the widget can run again with any state
-                // changes that happened before the fuel trap.
+                // A tree committed before the trap is already on the target;
+                // otherwise show the last good frame under the warning bar.
                 let state = self.store.data_mut();
-                if !Self::render_cached_tree(state, delta_ms, target) {
+                if state.guest_tree == GuestTree::Pending
+                    && !Self::render_cached_tree(state, delta_ms, target)
+                {
                     Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                     return Ok(RenderStatus::Dead);
                 }

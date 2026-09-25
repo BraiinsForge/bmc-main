@@ -395,6 +395,7 @@ fn commit_submitted_frame(
     state.frame_schedule.interaction_pending = had_interaction;
     state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
     state.cached_tree = Some((frame.tree_node, frame.w, frame.h));
+    state.guest_tree = crate::host_api::GuestTree::Committed;
     // A key recorded for a layer that was never captured would have the next
     // frame blit an image that does not exist, and the host preserve a target
     // on the strength of it. A capture or blit that failed is one way to get
