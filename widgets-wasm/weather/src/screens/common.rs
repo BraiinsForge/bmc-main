@@ -114,34 +114,31 @@ fn temp_box(value: String, align_right: bool, style: ForecastRowStyle) -> Node {
     )
 }
 
-/// Distribute nodes across the main axis with equal flexible gaps between
-/// them, emulating CSS `justify-content: space-between`.
-fn spread(cells: Vec<Node>) -> Vec<Node> {
-    let last = cells.len().saturating_sub(1);
-    let mut out: Vec<Node> = Vec::new();
-    for (i, cell) in cells.into_iter().enumerate() {
-        out.push(cell);
-        if i < last {
-            out.push(spacer(1.0));
-        }
-    }
-    out
-}
+/// The closest a strip lets two hours sit, however wide their figures run.
+const HOUR_STRIP_MIN_GAP: f32 = 8.0;
 
 /// The hour cells spread across the strip, or `--` when the forecast has none.
 #[must_use]
 pub(super) fn hour_strip(cells: Vec<Node>) -> Node {
-    let children = if cells.is_empty() {
-        vec![txt(
-            display::NOT_AVAILABLE.to_string(),
-            24,
-            FontWeight::REGULAR,
-            TEXT_SECONDARY,
-        )]
-    } else {
-        spread(cells)
-    };
-    row(props!(cross_align: CrossAlign::Center), children)
+    if cells.is_empty() {
+        return row(
+            props!(cross_align: CrossAlign::Center),
+            [txt(
+                display::NOT_AVAILABLE.to_string(),
+                24,
+                FontWeight::REGULAR,
+                TEXT_SECONDARY,
+            )],
+        );
+    }
+    row(
+        props!(
+            cross_align: CrossAlign::Center,
+            justify_content: Justify::SpaceBetween,
+            gap: HOUR_STRIP_MIN_GAP
+        ),
+        cells,
+    )
 }
 
 #[derive(Clone, Copy)]

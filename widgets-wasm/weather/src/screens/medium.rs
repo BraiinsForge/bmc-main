@@ -38,6 +38,20 @@ const HOUR_STYLE: HourStyle = HourStyle {
     temp_weight: FontWeight::REGULAR,
 };
 
+/// Five three-digit Fahrenheit hours would crowd the strip at full size.
+const FAHRENHEIT_TEMPERATURE_SCALE: f32 = 0.875;
+
+fn hour_style() -> HourStyle {
+    if system::current().temperature_unit() == Some(system::TemperatureUnit::Fahrenheit) {
+        HourStyle {
+            temperature_size: scale_font(HOUR_STYLE.temperature_size, FAHRENHEIT_TEMPERATURE_SCALE),
+            ..HOUR_STYLE
+        }
+    } else {
+        HOUR_STYLE
+    }
+}
+
 fn current_left(current: Option<&crate::model::Current>) -> Node {
     let mut stack: Vec<Node> = Vec::new();
     if let Some(c) = current {
@@ -71,6 +85,7 @@ pub fn medium(
     _size: WidgetSize,
 ) -> Node {
     let tz = display::select_tz(params.time_zone, &weather.location.timezone);
+    let style = hour_style();
 
     let hour_cells: Vec<Node> = weather
         .hourly
@@ -80,7 +95,7 @@ pub fn medium(
                 .iter()
                 .skip(h.start_index)
                 .take(5)
-                .map(|e| common::hour_cell(e, tz.as_ref(), HOUR_STYLE))
+                .map(|e| common::hour_cell(e, tz.as_ref(), style))
                 .collect()
         })
         .unwrap_or_default();
@@ -98,4 +113,23 @@ pub fn medium(
         props!(background: BLACK, flex: 1.0, padding: 16.0, gap: 32.0, cross_align: CrossAlign::Center),
         [current_left(weather.current.as_ref()), right],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_wasm_sdk::system::{self, SnapshotBuilder, TemperatureUnit};
+
+    use super::{HOUR_STYLE, hour_style};
+
+    fn install(unit: TemperatureUnit) {
+        system::set_current(SnapshotBuilder::new().temperature_unit(unit).build());
+    }
+
+    #[test]
+    fn fahrenheit_shrinks_the_hourly_temperatures_to_seven_eighths() {
+        install(TemperatureUnit::Fahrenheit);
+        assert_eq!(hour_style().temperature_size, 28);
+        install(TemperatureUnit::Celsius);
+        assert_eq!(hour_style().temperature_size, HOUR_STYLE.temperature_size);
+    }
 }
