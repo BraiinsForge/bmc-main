@@ -1855,10 +1855,15 @@ impl crate::system_upgrade::WidgetLifecycle for UpgradeWidgetLifecycle {
         .await;
     }
 
+    // Serialised with the pause's stop and restart,
+    // since the upgrade run gate no longer outlives a restart.
     async fn refresh_widgets(&self) {
-        self.coordinator
-            .reload_changed_widgets(&self.config_handle)
-            .await;
+        let coordinator = Arc::clone(&self.coordinator);
+        let config = Arc::clone(&self.config_handle);
+        run_lifecycle_operation(Arc::clone(&self.operations), async move {
+            coordinator.reload_changed_widgets(&config).await;
+        })
+        .await;
     }
 }
 

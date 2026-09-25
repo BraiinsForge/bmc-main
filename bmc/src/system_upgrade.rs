@@ -22,13 +22,6 @@
 pub(crate) mod boser;
 mod periodic_gc;
 pub(crate) mod stagger;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "not spawned until the local firmware run can wait on its acknowledgement"
-    )
-)]
 mod widget_pause;
 
 use self::stagger::{MAINTENANCE_MIN_DELAY, MaintenanceStagger};
@@ -171,6 +164,31 @@ fn one_shot(state: UpgradeRunState) -> UpgradeRunStream {
     UpgradeRunStream { rx }
 }
 
+async fn await_widget_pause(
+    widget_pause: &mut widget_pause::Acknowledgement,
+    generation: UpgradeGeneration,
+) -> Result<(), SystemUpgradeError> {
+    let Ok(paused) = widget_pause
+        .wait_for(|paused| paused.is_some_and(|paused| paused >= generation))
+        .await
+    else {
+        error!(
+            ?generation,
+            "BUG: the widget pause listener is gone; refusing to download firmware next to running widgets"
+        );
+        return Err(SystemUpgradeError::UpgradeFailed);
+    };
+    if *paused != Some(generation) {
+        error!(
+            ?generation,
+            paused = ?*paused,
+            "BUG: another firmware run took over the widget pause; refusing to download beside it"
+        );
+        return Err(SystemUpgradeError::UpgradeFailed);
+    }
+    Ok(())
+}
+
 fn record_pending_install(
     install: &[String],
     path: &std::path::Path,
@@ -208,7 +226,6 @@ async fn apply_firmware_upgrade<U: BmcManager>(
     state_service: &StateService,
     install: &[String],
     pending_install_path: &std::path::Path,
-    widget_guard: &mut WidgetRestartGuard,
 ) -> bool {
     let (line_tx, line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service.clone());
@@ -217,15 +234,8 @@ async fn apply_firmware_upgrade<U: BmcManager>(
     let result = bmc_manager
         .upgrade(true, upgrade_image_path, Some(line_tx))
         .await;
-    let (applied, progress_counts) = finish_firmware_upgrade(
-        result,
-        reader,
-        tx,
-        install,
-        pending_install_path,
-        widget_guard,
-    )
-    .await;
+    let (applied, progress_counts) =
+        finish_firmware_upgrade(result, reader, tx, install, pending_install_path).await;
     if let Some((output_lines, 0)) = progress_counts
         && output_lines > 0
     {
@@ -256,11 +266,7 @@ async fn finish_firmware_upgrade(
     tx: &tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
     install: &[String],
     pending_install_path: &std::path::Path,
-    widget_guard: &mut WidgetRestartGuard,
 ) -> (bool, Option<(usize, usize)>) {
-    if result.is_ok() {
-        widget_guard.disarm();
-    }
     // `upgrade` consumed the only sender, so the reader drains the backlog
     // and exits; awaiting it keeps every `Package*` event
     // ahead of the terminal Phase/Failed event.
@@ -280,65 +286,6 @@ async fn finish_firmware_upgrade(
         }
     };
     (applied, progress_counts)
-}
-
-/// Restarts the widgets when dropped, unless disarmed. A firmware run stops
-/// them before downloading the image (which lands on tmpfs) to free RAM, so
-/// every failure path from that point must bring them back; running the
-/// restart on drop covers each early return without repeating the call. The
-/// success path disarms the guard, since the reboot starts widgets fresh. The
-/// upgrade run gate stays owned until recovery finishes or reboot takes over.
-struct WidgetRestartGuard {
-    widget_lifecycle: Option<Arc<dyn WidgetLifecycle>>,
-    run_gate: Option<tokio::sync::OwnedMutexGuard<()>>,
-}
-
-impl WidgetRestartGuard {
-    fn new(
-        widget_lifecycle: Arc<dyn WidgetLifecycle>,
-        run_gate: tokio::sync::OwnedMutexGuard<()>,
-    ) -> Self {
-        Self {
-            widget_lifecycle: Some(widget_lifecycle),
-            run_gate: Some(run_gate),
-        }
-    }
-
-    async fn stop_widgets(
-        widget_lifecycle: Arc<dyn WidgetLifecycle>,
-        run_gate: tokio::sync::OwnedMutexGuard<()>,
-    ) -> Self {
-        let guard = Self::new(Arc::clone(&widget_lifecycle), run_gate);
-        widget_lifecycle.stop_all_widgets().await;
-        guard
-    }
-
-    async fn restart(mut self) {
-        if let Some(widget_lifecycle) = self.widget_lifecycle.as_ref().map(Arc::clone) {
-            widget_lifecycle.restart_widgets().await;
-            self.widget_lifecycle = None;
-        }
-    }
-
-    fn disarm(&mut self) {
-        self.widget_lifecycle = None;
-    }
-}
-
-impl Drop for WidgetRestartGuard {
-    fn drop(&mut self) {
-        if let Some(widget_lifecycle) = self.widget_lifecycle.take() {
-            let run_gate = self
-                .run_gate
-                .take()
-                .expect("BUG: armed widget recovery must own the upgrade run gate");
-            // `restart_widgets` is async and `drop` is not, so spawn it.
-            task::spawn(async move {
-                widget_lifecycle.restart_widgets().await;
-                drop(run_gate);
-            });
-        }
-    }
 }
 
 #[expect(clippy::cast_precision_loss)]
@@ -435,21 +382,47 @@ impl UpgradeDisplayProjector {
 fn forward_upgrade_events(
     state_service: StateService,
     display_state_service: DisplayStateService,
+    gate: tokio::sync::OwnedMutexGuard<()>,
     generation: UpgradeGeneration,
     kind: UpgradeKind,
     mut run: UpgradeRunStream,
 ) -> UpgradeRunStream {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let mut projector = UpgradeDisplayProjector::new(generation, kind);
-    display_state_service.publish(projector.initial_snapshot());
+    let mut last = projector.initial_snapshot();
+    display_state_service.publish(last.clone());
     task::spawn(async move {
         while let Some(state) = run.rx.recv().await {
             if let Some(event) = led_event(&state) {
                 state_service.notify(event);
             }
-            display_state_service.publish(projector.project(&state));
+            last = projector.project(&state);
+            display_state_service.publish(last.clone());
             _ = tx.send(state);
         }
+        // Ends the caller's stream with a clean OK trailer even while parked.
+        drop(tx);
+        match last.state {
+            UpgradeDisplayState::Running {
+                phase: Some(UpgradePhase::FirmwareApplying),
+                ..
+            } => {
+                // The reboot ends the run; nothing may start before it.
+                std::future::pending::<()>().await;
+            }
+            UpgradeDisplayState::Running { .. } => {
+                warn!(
+                    ?generation,
+                    "Upgrade run ended without an outcome; clearing its display"
+                );
+                display_state_service.clear();
+                state_service.clear();
+            }
+            UpgradeDisplayState::Succeeded { .. } | UpgradeDisplayState::Failed { .. } => {}
+        }
+        // Released only after the run's last publish,
+        // so it cannot overwrite the next run's snapshot.
+        drop(gate);
     });
     UpgradeRunStream { rx }
 }
@@ -620,7 +593,6 @@ fn store_space_preflight(
 }
 
 fn spawn_packages_run(
-    gate: tokio::sync::OwnedMutexGuard<()>,
     package_backend: Arc<dyn PackageBackend>,
     widget_lifecycle: Arc<dyn WidgetLifecycle>,
     merged: bmc_nix::types::MergedIndex,
@@ -630,7 +602,6 @@ fn spawn_packages_run(
 ) -> UpgradeRunStream {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     task::spawn(async move {
-        let _gate = gate;
         state_service.notify(SystemUpgradeState::DownloadStarted {
             total_mb: download_size_bytes.map(bytes_to_mb),
         });
@@ -727,13 +698,6 @@ pub(crate) struct DisplayStateService {
     /// the widget pause must not miss a `FirmwareApplying` or `Failed`
     /// that the next value overwrites.
     events: tokio::sync::mpsc::UnboundedSender<Option<UpgradeDisplaySnapshot>>,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "not spawned until the local firmware run can wait on its acknowledgement"
-        )
-    )]
     unclaimed_events: Arc<std::sync::Mutex<Option<DisplayEvents>>>,
     generation: Arc<AtomicUsize>,
 }
@@ -751,13 +715,6 @@ impl DisplayStateService {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "not spawned until the local firmware run can wait on its acknowledgement"
-        )
-    )]
     pub(crate) fn take_events(&self) -> Option<DisplayEvents> {
         self.unclaimed_events
             .lock()
@@ -825,6 +782,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     system_upgrades: Arc<Mutex<SystemOfferCache>>,
     package_backend: Arc<dyn PackageBackend>,
     widget_lifecycle: Arc<dyn WidgetLifecycle>,
+    widget_pause: widget_pause::Acknowledgement,
     pending_install_path: PathBuf,
 }
 
@@ -849,6 +807,7 @@ where
             system_upgrades: self.system_upgrades.clone(),
             package_backend: self.package_backend.clone(),
             widget_lifecycle: self.widget_lifecycle.clone(),
+            widget_pause: self.widget_pause.clone(),
             pending_install_path: self.pending_install_path.clone(),
         }
     }
@@ -878,9 +837,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         // a change between those reads can cost at most one occurrence.
         let now = chrono::Utc::now().with_timezone(&scheduler.timezone());
         let stagger = stagger::MaintenanceStagger::draw(&now, &mut rand::rng());
+        let display_state_service = DisplayStateService::new();
+        let widget_pause = widget_pause::spawn(
+            display_state_service
+                .take_events()
+                .expect("BUG: a new display state service still holds its events"),
+            Arc::clone(&widget_lifecycle),
+        );
         Self {
             state_service,
-            display_state_service: DisplayStateService::new(),
+            display_state_service,
             firmware_upgrader: Arc::new(firmware_upgrader),
             bmc_manager,
             scheduler,
@@ -893,6 +859,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             system_upgrades: Arc::new(Mutex::new(SystemOfferCache::default())),
             package_backend,
             widget_lifecycle,
+            widget_pause,
             pending_install_path,
         }
     }
@@ -979,6 +946,11 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         gate: tokio::sync::OwnedMutexGuard<()>,
         upgrade: AvailableSystemUpgrade,
     ) -> UpgradeRunStream {
+        assert!(
+            !self.hardware_capabilities.boser_managed,
+            "BUG: a local upgrade run next to Boser's would flap the widget pause between their generations"
+        );
+        let generation = self.display_state_service.next_generation();
         let (kind, run) = match upgrade {
             AvailableSystemUpgrade::Firmware {
                 firmware: detail,
@@ -986,14 +958,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 ..
             } => (
                 UpgradeKind::Firmware,
-                self.spawn_firmware_run(gate, detail, install),
+                self.spawn_firmware_run(generation, detail, install),
             ),
             AvailableSystemUpgrade::Packages { packages, install } => {
                 let download_size_bytes = packages.preview.download_size_bytes;
                 (
                     UpgradeKind::Packages,
                     spawn_packages_run(
-                        gate,
                         Arc::clone(&self.package_backend),
                         Arc::clone(&self.widget_lifecycle),
                         packages.index,
@@ -1007,7 +978,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         forward_upgrade_events(
             self.state_service.clone(),
             self.display_state_service.clone(),
-            self.display_state_service.next_generation(),
+            gate,
+            generation,
             kind,
             run,
         )
@@ -1050,28 +1022,29 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
     fn spawn_firmware_run(
         &self,
-        gate: tokio::sync::OwnedMutexGuard<()>,
+        generation: UpgradeGeneration,
         detail: UpgradeDetail,
         install: Vec<String>,
     ) -> UpgradeRunStream {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let firmware_upgrader = Arc::clone(&self.firmware_upgrader);
         let bmc_manager = Arc::clone(&self.bmc_manager);
-        let widget_lifecycle = Arc::clone(&self.widget_lifecycle);
+        let mut widget_pause = self.widget_pause.clone();
         let state_service = self.state_service.clone();
         let pending_install_path = self.pending_install_path.clone();
         task::spawn(async move {
             let release = &detail.latest_release;
             let total_bytes = release.file_size as u64;
 
+            // The image lands on tmpfs, so widgets must be gone before it grows.
+            if let Err(err) = await_widget_pause(&mut widget_pause, generation).await {
+                _ = tx.send(UpgradeRunState::Failed(err));
+                return;
+            }
             _ = tx.send(UpgradeRunState::Phase(UpgradePhase::FirmwareDownloading));
             state_service.notify(SystemUpgradeState::DownloadStarted {
                 total_mb: Some(bytes_to_mb(total_bytes)),
             });
-            // Stop widgets before the download starts: the image lands on tmpfs
-            // (RAM), so freeing their memory first leaves room for it. Arm recovery
-            // before entering the cancellable stop.
-            let mut widget_guard = WidgetRestartGuard::stop_widgets(widget_lifecycle, gate).await;
             let handoff_accepted = async {
                 let mut download_rx = firmware_upgrader.download_firmware(
                     release.url.clone(),
@@ -1127,7 +1100,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 // Verification must precede the handoff,
                 // so a failed download cannot leave stale state.
                 // The upgrade attempt consumes a successful write;
-                // a write failure aborts while the guard can still restart widgets.
+                // a write failure aborts before sysupgrade starts.
                 if !install.is_empty()
                     && let Err(err) = record_pending_install(&install, &pending_install_path)
                 {
@@ -1142,7 +1115,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                     &state_service,
                     &install,
                     &pending_install_path,
-                    &mut widget_guard,
                 )
                 .await
             }
@@ -1150,12 +1122,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             if handoff_accepted {
                 info!("Firmware upgrade handoff accepted");
                 _ = tx.send(UpgradeRunState::Phase(UpgradePhase::FirmwareApplying));
-                // Drop the sender to end the stream with a clean OK trailer,
-                // then park so the run gate stays held until the reboot.
-                drop(tx);
-                std::future::pending::<()>().await;
-            } else {
-                widget_guard.restart().await;
             }
         });
         UpgradeRunStream { rx }
@@ -1704,58 +1670,6 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Default)]
-    struct GatedStopLifecycle {
-        stop_entered: tokio::sync::Notify,
-        restart_entered: tokio::sync::Notify,
-        release_restart: tokio::sync::Notify,
-        restarted: std::sync::atomic::AtomicUsize,
-        restart_completions: std::sync::atomic::AtomicUsize,
-    }
-
-    #[async_trait::async_trait]
-    impl WidgetLifecycle for GatedStopLifecycle {
-        async fn stop_all_widgets(&self) {
-            self.stop_entered.notify_one();
-            std::future::pending::<()>().await;
-        }
-
-        async fn restart_widgets(&self) {
-            self.restarted
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.restart_entered.notify_one();
-            self.release_restart.notified().await;
-            self.restart_completions
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
-
-        async fn refresh_widgets(&self) {}
-    }
-
-    #[derive(Debug, Default)]
-    struct GatedRestartLifecycle {
-        restart_entered: tokio::sync::Notify,
-        release_restart: tokio::sync::Notify,
-        restart_calls: std::sync::atomic::AtomicUsize,
-        restart_completions: std::sync::atomic::AtomicUsize,
-    }
-
-    #[async_trait::async_trait]
-    impl WidgetLifecycle for GatedRestartLifecycle {
-        async fn stop_all_widgets(&self) {}
-
-        async fn restart_widgets(&self) {
-            self.restart_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.restart_entered.notify_one();
-            self.release_restart.notified().await;
-            self.restart_completions
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
-
-        async fn refresh_widgets(&self) {}
-    }
-
     #[tokio::test]
     async fn firmware_progress_counts_output_and_events() {
         let realizing = r#"@bmc {"type":"phase","phase":"realizing"}"#;
@@ -1801,173 +1715,6 @@ mod tests {
                 "all valid progress events must still be forwarded: {lines:?}"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn successful_handoff_disarms_recovery_before_progress_drain() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
-        let lifecycle = Arc::new(GatedRestartLifecycle::default());
-        let mut guard = WidgetRestartGuard::new(lifecycle.clone(), gate);
-        let reader = tokio::spawn(std::future::pending::<(usize, usize)>());
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut finish = Box::pin(finish_firmware_upgrade(
-            Ok(()),
-            reader,
-            &tx,
-            &[],
-            std::path::Path::new("/nonexistent/pending-install"),
-            &mut guard,
-        ));
-
-        assert!(
-            futures::poll!(finish.as_mut()).is_pending(),
-            "progress draining must remain cancellable after handoff"
-        );
-        drop(finish);
-        drop(guard);
-        tokio::task::yield_now().await;
-
-        assert_eq!(
-            lifecycle
-                .restart_calls
-                .load(std::sync::atomic::Ordering::SeqCst),
-            0,
-            "accepted handoff must not restart widgets when progress drain is cancelled"
-        );
-        assert!(run_gate.try_lock().is_ok());
-    }
-
-    #[tokio::test]
-    async fn cancellation_while_stopping_widgets_still_restarts_them_once() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
-        let lifecycle = Arc::new(GatedStopLifecycle::default());
-        let task = tokio::spawn({
-            let lifecycle = Arc::clone(&lifecycle);
-            async move {
-                WidgetRestartGuard::stop_widgets(lifecycle, gate).await;
-            }
-        });
-        lifecycle.stop_entered.notified().await;
-        task.abort();
-        let _ = task.await;
-
-        lifecycle.restart_entered.notified().await;
-        assert!(
-            run_gate.try_lock().is_err(),
-            "cancelled stop recovery must retain the upgrade run gate"
-        );
-        lifecycle.release_restart.notify_one();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while lifecycle
-                .restart_completions
-                .load(std::sync::atomic::Ordering::SeqCst)
-                == 0
-            {
-                tokio::task::yield_now().await;
-            }
-            while run_gate.try_lock().is_err() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("widget restart and its upgrade gate handoff must complete");
-        assert_eq!(
-            lifecycle
-                .restarted
-                .load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn cancellation_while_restarting_widgets_retries_recovery() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
-        let lifecycle = Arc::new(GatedRestartLifecycle::default());
-        let task = tokio::spawn({
-            let lifecycle = Arc::clone(&lifecycle);
-            async move {
-                WidgetRestartGuard::stop_widgets(lifecycle, gate)
-                    .await
-                    .restart()
-                    .await;
-            }
-        });
-        lifecycle.restart_entered.notified().await;
-        task.abort();
-        let _ = task.await;
-
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while lifecycle
-                .restart_calls
-                .load(std::sync::atomic::Ordering::SeqCst)
-                < 2
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("cancelled widget recovery must be retried by the guard");
-        assert!(
-            run_gate.try_lock().is_err(),
-            "retried recovery must retain the upgrade run gate"
-        );
-        lifecycle.release_restart.notify_one();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while lifecycle
-                .restart_completions
-                .load(std::sync::atomic::Ordering::SeqCst)
-                == 0
-            {
-                tokio::task::yield_now().await;
-            }
-            while run_gate.try_lock().is_err() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("retried widget recovery must complete");
-        assert_eq!(
-            lifecycle
-                .restart_completions
-                .load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn run_gate_stays_held_until_widget_restart_finishes() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
-        let lifecycle = Arc::new(GatedRestartLifecycle::default());
-        let run = tokio::spawn({
-            let lifecycle = Arc::clone(&lifecycle);
-            async move {
-                WidgetRestartGuard::stop_widgets(lifecycle, gate)
-                    .await
-                    .restart()
-                    .await;
-            }
-        });
-
-        lifecycle.restart_entered.notified().await;
-        assert!(
-            run_gate.try_lock().is_err(),
-            "a new upgrade must not overlap recovery from the previous run"
-        );
-        lifecycle.release_restart.notify_one();
-        run.await.expect("BUG: guarded restart task");
-        assert!(run_gate.try_lock().is_ok());
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2073,12 +1820,11 @@ mod tests {
             .expect("BUG: fresh gate is lockable");
         let backend = Arc::new(RecordingGcBackend::new([]));
         let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
-        let Ok(gate) = automatic_gc_preflight(gate, &backend_dyn, Some(1_000)).await else {
+        let Ok(_gate) = automatic_gc_preflight(gate, &backend_dyn, Some(1_000)).await else {
             panic!("BUG: successful forced GC must preserve the gate");
         };
 
         let run = spawn_packages_run(
-            gate,
             backend_dyn,
             Arc::new(RecordingLifecycle::default()),
             empty_merged_index(),
@@ -2276,14 +2022,9 @@ mod tests {
 
     #[tokio::test]
     async fn manual_upgrade_does_not_run_forced_gc() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
         let backend = Arc::new(RecordingGcBackend::new([]));
 
         let run = spawn_packages_run(
-            gate,
             Arc::clone(&backend) as Arc<dyn PackageBackend>,
             Arc::new(RecordingLifecycle::default()),
             empty_merged_index(),
@@ -2310,46 +2051,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_gate_is_free_after_a_packages_run_completes() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
-        let lifecycle = Arc::new(RecordingLifecycle::default());
-
-        let run = spawn_packages_run(
-            gate,
-            Arc::new(StubBackend),
-            Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
-            empty_merged_index(),
-            Vec::new(),
-            None,
-            StateService::new(),
-        );
-
-        let last = drain(run).await;
-        assert!(
-            matches!(last, Some(UpgradeRunState::Finished)),
-            "run must finish successfully, got {last:?}"
-        );
-        // The detached run task dropped its gate when it completed; a new
-        // run must be startable immediately.
-        assert!(
-            run_gate.try_lock().is_ok(),
-            "run gate must be free after the run completes"
-        );
-    }
-
-    #[tokio::test]
     async fn successful_packages_run_refreshes_widgets_once() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
         let lifecycle = Arc::new(RecordingLifecycle::default());
 
         let run = spawn_packages_run(
-            gate,
             Arc::new(StubBackend),
             Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
             empty_merged_index(),
@@ -2387,10 +2092,6 @@ mod tests {
 
     #[tokio::test]
     async fn packages_run_refreshes_widgets_before_finishing() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
         let entered = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
         let lifecycle = Arc::new(GatedLifecycle {
@@ -2399,7 +2100,6 @@ mod tests {
         });
 
         let mut run = spawn_packages_run(
-            gate,
             Arc::new(StubBackend),
             Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
             empty_merged_index(),
@@ -2429,14 +2129,9 @@ mod tests {
 
     #[tokio::test]
     async fn failed_packages_run_does_not_refresh_widgets() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
         let lifecycle = Arc::new(RecordingLifecycle::default());
 
         let run = spawn_packages_run(
-            gate,
             Arc::new(FailingBackend(ApplyFailure::Generic)),
             Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
             empty_merged_index(),
@@ -2463,13 +2158,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_full_store_found_during_apply_keeps_its_own_failure() {
-        let run_gate = Arc::new(Mutex::new(()));
-        let gate = Arc::clone(&run_gate)
-            .try_lock_owned()
-            .expect("BUG: fresh gate is lockable");
-
         let run = spawn_packages_run(
-            gate,
             Arc::new(FailingBackend(ApplyFailure::StoreFull)),
             Arc::new(RecordingLifecycle::default()) as Arc<dyn WidgetLifecycle>,
             empty_merged_index(),
@@ -2729,10 +2418,14 @@ mod tests {
         let display_state_service = DisplayStateService::new();
         let mut display_receiver = display_state_service.subscribe();
         let generation = display_state_service.next_generation();
+        let run_gate = Arc::new(Mutex::new(()));
         let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut run = forward_upgrade_events(
             state_service,
             display_state_service,
+            Arc::clone(&run_gate)
+                .try_lock_owned()
+                .expect("BUG: fresh gate is lockable"),
             generation,
             UpgradeKind::Packages,
             UpgradeRunStream { rx: input_rx },
