@@ -22,9 +22,12 @@
 pub(crate) mod boser;
 mod periodic_gc;
 pub(crate) mod stagger;
-#[expect(
-    dead_code,
-    reason = "not spawned until the local firmware run can wait on its acknowledgement"
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "not spawned until the local firmware run can wait on its acknowledgement"
+    )
 )]
 mod widget_pause;
 
@@ -724,9 +727,12 @@ pub(crate) struct DisplayStateService {
     /// the widget pause must not miss a `FirmwareApplying` or `Failed`
     /// that the next value overwrites.
     events: tokio::sync::mpsc::UnboundedSender<Option<UpgradeDisplaySnapshot>>,
-    #[expect(
-        dead_code,
-        reason = "not spawned until the local firmware run can wait on its acknowledgement"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "not spawned until the local firmware run can wait on its acknowledgement"
+        )
     )]
     unclaimed_events: Arc<std::sync::Mutex<Option<DisplayEvents>>>,
     generation: Arc<AtomicUsize>,
@@ -745,9 +751,12 @@ impl DisplayStateService {
         }
     }
 
-    #[expect(
-        dead_code,
-        reason = "not spawned until the local firmware run can wait on its acknowledgement"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "not spawned until the local firmware run can wait on its acknowledgement"
+        )
     )]
     pub(crate) fn take_events(&self) -> Option<DisplayEvents> {
         self.unclaimed_events
@@ -1435,6 +1444,8 @@ impl SystemUpgradeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod display_state;
     use bmc_upgrade::packages::EstimateMode;
     use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome};
     use chrono::TimeZone as _;

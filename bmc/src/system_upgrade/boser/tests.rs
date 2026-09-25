@@ -24,7 +24,13 @@ use crate::compositor::{
     DownloadProgress, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
     UpgradePhase,
 };
-use crate::system_upgrade::{DisplayStateService, StateService, SystemUpgradeState};
+use crate::system_upgrade::widget_pause::{
+    self,
+    test_support::{Call, ScriptedLifecycle, StopBehaviour, settle},
+};
+use crate::system_upgrade::{
+    DisplayStateService, StateService, SystemUpgradeState, WidgetLifecycle,
+};
 use axum::Router;
 use axum::body::Body;
 use axum::http::header;
@@ -37,6 +43,7 @@ use futures::{StreamExt, stream};
 use std::convert::Infallible;
 use std::future::IntoFuture;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -660,4 +667,70 @@ async fn a_state_on_the_stream_reaches_the_display() {
         package_running(UpgradePhase::PackageBuilding)
     );
     observer.abort();
+}
+
+fn projection_with_widget_pause(widgets: &Arc<ScriptedLifecycle>) -> Projection {
+    let display = DisplayStateService::new();
+    widget_pause::spawn(
+        display
+            .take_events()
+            .expect("BUG: a new display service still holds its events"),
+        Arc::clone(widgets) as Arc<dyn WidgetLifecycle>,
+    );
+    Projection::new(display, StateService::new())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_firmware_bearing_boser_run_pauses_widgets_until_it_fails() {
+    for kind in [UpgradeKind::Firmware, UpgradeKind::FirmwareAndPackages] {
+        let widgets = ScriptedLifecycle::new(StopBehaviour::Immediate);
+        let mut projection = projection_with_widget_pause(&widgets);
+        let id = ExecutionId::new();
+
+        projection.observe(&running_with_kind(
+            id,
+            kind,
+            WirePhase::Firmware(FirmwarePhase::Downloading),
+        ));
+        settle().await;
+        assert_eq!(
+            widgets.calls(),
+            [Call::Stop],
+            "{kind:?}: Boser's image fills /tmp too"
+        );
+
+        projection.observe(&UpgradeState::Failed {
+            id,
+            kind,
+            phase: WirePhase::Firmware(FirmwarePhase::Downloading),
+            reason: "download failed".to_owned(),
+        });
+        settle().await;
+        assert_eq!(widgets.calls(), [Call::Stop, Call::Restart], "{kind:?}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_legacy_boser_sequence_keeps_widgets_stopped_across_its_none() {
+    let widgets = ScriptedLifecycle::new(StopBehaviour::Immediate);
+    let mut projection = projection_with_widget_pause(&widgets);
+
+    projection.observe(&downloading(100));
+    settle().await;
+    projection.observe(&UpgradeState::None);
+    settle().await;
+    projection.observe(&running_with_kind(
+        ExecutionId::new(),
+        UpgradeKind::Firmware,
+        WirePhase::Firmware(FirmwarePhase::Flashing),
+    ));
+    settle().await;
+    tokio::time::advance(Duration::from_hours(24)).await;
+    settle().await;
+
+    assert_eq!(
+        widgets.calls(),
+        [Call::Stop],
+        "the BOS frontend flashes as a new execution right after the download's bare None"
+    );
 }
