@@ -3,7 +3,7 @@
 The Braiins Pool widget shows live hashrate, worker, and payout stats for one Braiins Pool (FPPS) mining account. It
 reads the pool's public API with an account API key the user binds once as a saved account, and offers two scene styles:
 an **Overview** of payout and worker stats, or a **Big Chart** filled by the hashrate history. Both styles render at all
-four widget sizes, each size showing as much of the picture as its frame holds.
+four widget sizes and in BMM101's own frame, each showing as much of the picture as its frame holds.
 
 ## User stories
 
@@ -22,6 +22,8 @@ four widget sizes, each size showing as much of the picture as its frame holds.
 - Each size shows what its frame holds: the smallest is the hashrate alone, centered; the medium pairs hashrate and
   today's reward beside a compact workers panel; the large leads with the payout card over two stat cards and a
   sparkline; the full size runs stat tiles beside the chart and a roomy workers panel.
+- BMM101 shows the smallest layout in its own frame, in the type the other widgets use there, under a header naming the
+  bound account.
 - Where the frame has room for it, the header carries the bound account's name, so a device showing two accounts is
   never ambiguous.
 
@@ -42,6 +44,10 @@ four widget sizes, each size showing as much of the picture as its frame holds.
   axis, so a hashrate drop caused by workers dropping off is readable in one glance.
 - Dashed gridlines mark the axis maximum, two thirds, one third, and zero. Hashrate ticks carry their own SI unit
   letter; worker ticks shorten to `k` form once the counts are large.
+- BMM101 draws the Big Chart in a frame of its own: the header with the account, the hashrate and active-worker count on
+  one line, and the chart inset beneath with both axes. Its hashrate ticks are bare numbers in the unit that line names
+  (`900` under PH/s), or all carry the axis's prefix letter where it runs in another unit (`3T` to `0T`). Every worker
+  tick takes `k` once the counts are large.
 - The full-screen frame adds time labels along the bottom and marks each completed payout inside the window with an icon
   on the baseline — on-chain and Lightning payouts have distinct icons.
 - Overview's larger frames carry the same history as a chart or a bare sparkline, without axes or labels.
@@ -110,15 +116,15 @@ The widget reads Braiins Pool's FPPS API at `https://api.braiins.com/pool/v2`, a
 key. Every endpoint is polled once a minute with a 10-second timeout, and only when the current style, size, and worker
 toggle actually display it.
 
-| Endpoint                 | Feeds                                           | Polled for                                         |
-| ------------------------ | ----------------------------------------------- | -------------------------------------------------- |
-| `/user/hashrate/current` | the headline hashrate                           | every style and size                               |
-| `/user/rewards/latest`   | today's reward in BTC and fiat                  | Overview, medium and larger                        |
-| `/user/hashrate/history` | the hashrate chart and sparkline                | Big Chart; Overview large and full                 |
-| `/user/workers/current`  | the workers-by-state panel and chart legend     | Big Chart medium and larger; Overview medium, full |
-| `/user/workers/history`  | the chart's worker line                         | Big Chart medium and larger; Overview full         |
-| `/user/financials`       | the next-payout estimate and meter              | Overview large and full                            |
-| `/user/payouts/recent`   | the last payout, and the chart's payout markers | Overview large and full; Big Chart full            |
+| Endpoint                 | Feeds                                           | Polled for                                                     |
+| ------------------------ | ----------------------------------------------- | -------------------------------------------------------------- |
+| `/user/hashrate/current` | the headline hashrate                           | every style and size                                           |
+| `/user/rewards/latest`   | today's reward in BTC and fiat                  | Overview, medium and larger                                    |
+| `/user/hashrate/history` | the hashrate chart and sparkline                | Big Chart; Overview large and full                             |
+| `/user/workers/current`  | the workers-by-state panel and chart legend     | Big Chart medium and larger, and BMM101; Overview medium, full |
+| `/user/workers/history`  | the chart's worker line                         | Big Chart medium and larger, and BMM101; Overview full         |
+| `/user/financials`       | the next-payout estimate and meter              | Overview large and full                                        |
+| `/user/payouts/recent`   | the last payout, and the chart's payout markers | Overview large and full; Big Chart full                        |
 
 - The two worker endpoints are also gated by *Worker states*; with the toggle off, neither is polled.
 - History and payout windows are requested as timestamp ranges and followed through the pool's cursor pagination until
@@ -141,8 +147,8 @@ All parameters are manifest-driven widget settings, configurable from the web UI
 
 ## Constraints
 
-- Rectangular viewports only, from 317×238 up to the Deck's full 1280×480. The layout is chosen from four size buckets
-  rather than scaled continuously.
+- Rectangular viewports only, from 317×238 up to the Deck's full 1280×480. The layout is chosen from the four sizes and
+  the BMM101 panel's own frame rather than scaled continuously; BMM100's 320×240 renders the small layout.
 - The account slot is required: with nothing bound the widget polls nothing and shows the bind prompt.
 - History is fetched in pages well under the pool's own page ceiling, so a wide window costs several requests; this
   keeps any single reply small enough for the widget to parse within its per-frame budget.

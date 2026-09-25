@@ -23,7 +23,8 @@ BFM100 face.
 Live hashrate, worker, and payout stats for one Braiins Pool account, bound as a saved account so the API key is entered
 once. Renders as an Overview of payout and worker stats or as a Big Chart of hashrate history over a selectable window,
 with the active-worker count on a second axis and completed payouts marked on the full-screen chart. Distinguishes
-not-yet-loaded from genuinely empty, and names the fix when the API key cannot read pool stats.
+not-yet-loaded from genuinely empty, and names the fix when the API key cannot read pool stats. Renders at all four
+widget sizes and in BMM101's own frame.
 
 ### [Clock Widget](clock.md)
 
