@@ -34,21 +34,13 @@ use crate::{
 use bmc_wasm_sdk::*;
 
 #[derive(Clone, Copy)]
-enum CurrentLayout {
-    Stacked,
-    Compact,
-}
-
-#[derive(Clone, Copy)]
 struct LargeMetrics {
-    current_layout: CurrentLayout,
     location_font_size: u32,
     temperature_font_size: u32,
     current_icon_size: f32,
     padding: f32,
     condition_font_size: u32,
     current_gap: f32,
-    compact_icon_text_gap: f32,
     root_gap: f32,
     today_gap: f32,
     stat_item_gap: f32,
@@ -72,25 +64,14 @@ struct LargeMetrics {
 impl LargeMetrics {
     fn for_size(size: WidgetSize) -> Self {
         let fit = size.fit();
-        let current_layout = if matches!(size.variant, SizeVariant::Large) && size.height < 360 {
-            CurrentLayout::Compact
-        } else {
-            CurrentLayout::Stacked
-        };
-        let (root_gap, current_gap) = match current_layout {
-            CurrentLayout::Stacked => (16.0 * fit, 8.0 * fit),
-            CurrentLayout::Compact => (16.0 * fit, 6.0 * fit),
-        };
         Self {
-            current_layout,
             location_font_size: 16,
             temperature_font_size: scale_font(64, fit),
             current_icon_size: 68.0 * fit,
             padding: 16.0 * fit,
             condition_font_size: scale_font(24, fit),
-            current_gap,
-            compact_icon_text_gap: 54.0 * fit,
-            root_gap,
+            current_gap: 8.0 * fit,
+            root_gap: 16.0 * fit,
             today_gap: 24.0 * fit,
             stat_item_gap: 6.0 * fit,
             stat_label_gap: 8.0 * fit,
@@ -195,29 +176,12 @@ fn current_left(weather: &crate::model::Weather, metrics: LargeMetrics) -> Node 
             metrics.current_icon_size,
         ));
     }
-    match metrics.current_layout {
-        CurrentLayout::Stacked => {
-            stack.push(current_temperature(current, metrics));
-            stack.push(current_condition(current, metrics));
-            col(
-                props!(cross_align: CrossAlign::Start, gap: metrics.current_gap),
-                stack,
-            )
-        }
-        CurrentLayout::Compact => {
-            stack.push(col(
-                props!(cross_align: CrossAlign::Start, gap: metrics.current_gap),
-                [
-                    current_temperature(current, metrics),
-                    current_condition(current, metrics),
-                ],
-            ));
-            row(
-                props!(cross_align: CrossAlign::Center, gap: metrics.compact_icon_text_gap),
-                stack,
-            )
-        }
-    }
+    stack.push(current_temperature(current, metrics));
+    stack.push(current_condition(current, metrics));
+    col(
+        props!(cross_align: CrossAlign::Start, gap: metrics.current_gap),
+        stack,
+    )
 }
 
 fn stats_panel(weather: &crate::model::Weather, tz: Option<&Tz>, metrics: LargeMetrics) -> Node {
@@ -368,15 +332,20 @@ mod tests {
     use bmc_wasm_sdk::{Node, SystemTime, TextOverflow, WidgetSize};
     use units::{availability::Availability, units::DegreeCelsius};
 
+    /// Classed Large, but smaller than its canonical 638×480: a fit of 7/8.
+    fn smaller_large() -> WidgetSize {
+        WidgetSize::from_dimensions(560, 420)
+    }
+
     #[test]
-    fn a_short_large_frame_scales_its_metrics_by_fit() {
-        let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(480, 320));
+    fn a_smaller_large_frame_scales_its_metrics_by_fit() {
+        let metrics = LargeMetrics::for_size(smaller_large());
 
         assert_eq!(metrics.location_font_size, 16);
-        assert_eq!(metrics.temperature_font_size, 43);
-        assert_eq!(metrics.current_icon_size, 45.333_336);
-        assert_eq!(metrics.padding, 10.666_667);
-        assert_eq!(metrics.forecast_bar_width, 93.333_336);
+        assert_eq!(metrics.temperature_font_size, 56);
+        assert_eq!(metrics.current_icon_size, 59.5);
+        assert_eq!(metrics.padding, 14.0);
+        assert_eq!(metrics.forecast_bar_width, 122.5);
     }
 
     #[test]
@@ -391,25 +360,15 @@ mod tests {
     }
 
     #[test]
-    fn a_short_large_frame_scales_its_forecast_rows() {
-        let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(480, 320));
-        let style = metrics.forecast_row_style();
+    fn a_smaller_large_frame_scales_its_forecast_rows() {
+        let style = LargeMetrics::for_size(smaller_large()).forecast_row_style();
 
-        assert_eq!(style.label_size, 16);
-        assert_eq!(style.icon_size, 26.666_668);
-        assert_eq!(style.temperature_size, 21);
-        assert_eq!(style.temperature_cell_width, 53.333_336);
-        assert_eq!(style.bar_width, 93.333_336);
-        assert_eq!(style.bar_height, 10.666_667);
-    }
-
-    #[test]
-    fn a_short_large_frame_tightens_its_vertical_gaps() {
-        let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(480, 320));
-
-        assert_eq!(metrics.root_gap, 10.666_667);
-        assert_eq!(metrics.current_gap, 4.0);
-        assert_eq!(metrics.compact_icon_text_gap, 36.0);
+        assert_eq!(style.label_size, 21);
+        assert_eq!(style.icon_size, 35.0);
+        assert_eq!(style.temperature_size, 28);
+        assert_eq!(style.temperature_cell_width, 70.0);
+        assert_eq!(style.bar_width, 122.5);
+        assert_eq!(style.bar_height, 14.0);
     }
 
     #[test]
@@ -418,38 +377,6 @@ mod tests {
 
         assert_eq!(metrics.root_gap, 16.0);
         assert_eq!(metrics.current_gap, 8.0);
-    }
-
-    #[test]
-    fn a_short_large_frame_sets_the_condition_beside_the_icon() {
-        let size = WidgetSize::from_dimensions(480, 320);
-        init_test_registrars();
-        let params = Params {
-            location: "Prague".to_string(),
-            time_zone: TimeZone::System,
-        };
-        let node = large(&weather(), &params, size);
-
-        let Node::Column(_, root_children) = node else {
-            panic!("BUG: Large weather root must be a column");
-        };
-        let Some(Node::Row(_, today_children)) = root_children.get(1) else {
-            panic!("BUG: Large weather today block must be a row");
-        };
-        let Some(Node::Row(current_props, current_children)) = today_children.first() else {
-            panic!("BUG: short Large current block must be a compact row");
-        };
-        let Some(Node::Canvas { .. }) = current_children.first() else {
-            panic!("BUG: compact current block must keep icon first");
-        };
-        let Some(Node::Column(_, text_children)) = current_children.get(1) else {
-            panic!("BUG: compact current block must place temperature and condition after icon");
-        };
-
-        assert_eq!(current_props.gap, 36.0);
-        assert_eq!(text_children.len(), 2);
-        assert!(matches!(text_children[0], Node::Paragraph { .. }));
-        assert!(matches!(text_children[1], Node::Paragraph { .. }));
     }
 
     #[test]
@@ -479,8 +406,8 @@ mod tests {
     }
 
     #[test]
-    fn a_short_large_frame_ellipsizes_the_location_on_one_row() {
-        let size = WidgetSize::from_dimensions(480, 320);
+    fn a_smaller_large_frame_ellipsizes_the_location_on_one_row() {
+        let size = smaller_large();
         init_test_registrars();
         let metrics = LargeMetrics::for_size(size);
         let params = Params {

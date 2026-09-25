@@ -44,8 +44,6 @@ timezone or the device timezone.
 > As a user, I want today's low, high, sunrise, and sunset so I can plan around the day.
 
 - The `large` size shows current conditions, today's low and high temperatures, and today's sunrise and sunset times.
-- On shorter Large viewports, the Large layout keeps the same information but moves the temperature and condition text
-  to the right of the current-condition icon to save vertical space.
 - BMM101 shows the same details in its own 480x320 frame: the current conditions beside today's low, high, sunrise and
   sunset, over the daily forecast.
 - The `full` size shows sunrise and sunset times alongside the current conditions and hourly strip.
