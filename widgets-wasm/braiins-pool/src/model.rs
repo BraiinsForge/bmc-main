@@ -26,19 +26,32 @@ use units::availability::Availability;
 use crate::manifest_params::{ChartFrame, Style};
 
 /// Layout band picked from the actual viewport, mirroring the design's
-/// Small / Medium / Large / Fullscreen widget variants.
+/// Small / Medium / Large / Fullscreen widget variants and BMM101's 480×320 frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SizeBucket {
     Small,
     Medium,
     Large,
     Full,
+    Bmm101,
 }
+
+/// The two BMM frames the narrow bucket has to tell apart.
+const BMM100_HEIGHT: u32 = 240;
+const BMM101_HEIGHT: u32 = 320;
+/// Split at their midpoint, so either frame keeps its bucket a few pixels either way.
+const BMM101_MIN_HEIGHT: u32 = u32::midpoint(BMM100_HEIGHT, BMM101_HEIGHT);
+const BMM101_MAX_WIDTH: u32 = 480;
 
 /// Design reference sizes: S 306×220, M 620×220, L 620×448, Fullscreen 1280×480.
 /// Thresholds sit between neighbouring variants so each snaps to its band.
+/// BMM101 takes any landscape frame up to its width and down to the BMM split,
+/// ahead of the bands.
 #[must_use]
 pub fn size_bucket(width: u32, height: u32) -> SizeBucket {
+    if width <= BMM101_MAX_WIDTH && height < width && height >= BMM101_MIN_HEIGHT {
+        return SizeBucket::Bmm101;
+    }
     if width >= 900 {
         SizeBucket::Full
     } else if width <= 450 {
@@ -102,7 +115,7 @@ pub fn source_needed(
     bucket: SizeBucket,
     worker_states: bool,
 ) -> bool {
-    use SizeBucket::{Full, Large, Medium};
+    use SizeBucket::{Bmm101, Full, Large, Medium};
     let by_variant = match source {
         Source::HashrateCurrent => true,
         Source::RewardsLatest => {
@@ -110,11 +123,11 @@ pub fn source_needed(
         }
         Source::HashrateHistory => style == Style::BigChart || matches!(bucket, Full | Large),
         Source::WorkersCurrent => match style {
-            Style::BigChart => matches!(bucket, Full | Large | Medium),
+            Style::BigChart => matches!(bucket, Full | Large | Medium | Bmm101),
             Style::Overview => matches!(bucket, Full | Medium),
         },
         Source::WorkersHistory => match style {
-            Style::BigChart => matches!(bucket, Full | Large | Medium),
+            Style::BigChart => matches!(bucket, Full | Large | Medium | Bmm101),
             Style::Overview => bucket == Full,
         },
         Source::Financials => style == Style::Overview && matches!(bucket, Full | Large),
@@ -290,17 +303,29 @@ mod tests {
         assert_eq!(size_bucket(620, 220), SizeBucket::Medium);
         assert_eq!(size_bucket(620, 448), SizeBucket::Large);
         assert_eq!(size_bucket(1280, 480), SizeBucket::Full);
+        assert_eq!(size_bucket(480, 320), SizeBucket::Bmm101);
     }
+
+    #[test]
+    fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
+        assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
+        assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
+        assert_eq!(size_bucket(480, 279), SizeBucket::Medium);
+        assert_eq!(size_bucket(481, 320), SizeBucket::Medium);
+    }
+
+    const EVERY_BUCKET: [SizeBucket; 5] = [
+        SizeBucket::Small,
+        SizeBucket::Medium,
+        SizeBucket::Large,
+        SizeBucket::Full,
+        SizeBucket::Bmm101,
+    ];
 
     #[test]
     fn hashrate_is_always_needed() {
         for style in [Style::Overview, Style::BigChart] {
-            for bucket in [
-                SizeBucket::Small,
-                SizeBucket::Medium,
-                SizeBucket::Large,
-                SizeBucket::Full,
-            ] {
+            for bucket in EVERY_BUCKET {
                 assert!(source_needed(Source::HashrateCurrent, style, bucket, false));
             }
         }
@@ -308,12 +333,7 @@ mod tests {
 
     #[test]
     fn big_chart_fetches_history_at_every_size() {
-        for bucket in [
-            SizeBucket::Small,
-            SizeBucket::Medium,
-            SizeBucket::Large,
-            SizeBucket::Full,
-        ] {
+        for bucket in EVERY_BUCKET {
             assert!(source_needed(
                 Source::HashrateHistory,
                 Style::BigChart,
@@ -352,6 +372,38 @@ mod tests {
             .filter(|s| source_needed(*s, Style::Overview, SizeBucket::Small, true))
             .collect();
         assert_eq!(needed, [Source::HashrateCurrent]);
+    }
+
+    fn needed_at(style: Style, bucket: SizeBucket, worker_states: bool) -> Vec<Source> {
+        Source::ALL
+            .into_iter()
+            .filter(|s| source_needed(*s, style, bucket, worker_states))
+            .collect()
+    }
+
+    #[test]
+    fn the_bmm101_overview_reads_hashrate_only() {
+        assert_eq!(
+            needed_at(Style::Overview, SizeBucket::Bmm101, true),
+            [Source::HashrateCurrent]
+        );
+    }
+
+    #[test]
+    fn the_bmm101_big_chart_reads_the_hashrate_and_workers_it_charts() {
+        assert_eq!(
+            needed_at(Style::BigChart, SizeBucket::Bmm101, true),
+            [
+                Source::HashrateCurrent,
+                Source::HashrateHistory,
+                Source::WorkersCurrent,
+                Source::WorkersHistory,
+            ]
+        );
+        assert_eq!(
+            needed_at(Style::BigChart, SizeBucket::Bmm101, false),
+            [Source::HashrateCurrent, Source::HashrateHistory]
+        );
     }
 
     #[test]

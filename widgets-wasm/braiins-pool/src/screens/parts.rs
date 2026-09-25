@@ -47,11 +47,12 @@ use crate::screens::icons;
 
 pub mod color {
     use bmc_wasm_sdk::{
-        Color, GRAY_40, GRAY_60, GRAY_80, GRAY_90, GREEN_50, ORANGE_40, RED_50, TEAL_30, VIOLET_50,
-        VIOLET_60, WHITE,
+        BLACK, Color, GRAY_40, GRAY_60, GRAY_80, GRAY_90, GREEN_50, ORANGE_40, RED_50, TEAL_30,
+        VIOLET_50, VIOLET_60, WHITE,
     };
 
     pub const BG: Color = Color::from_hex(0x09_09_09);
+    pub const BMM101_BG: Color = BLACK;
     /// Cards float on the background at the design's 70 % opacity.
     pub const CARD_BG: Color = Color::from_rgba(0x16, 0x16, 0x16, 179);
     pub const CARD_BORDER: Color = GRAY_90;
@@ -85,6 +86,13 @@ pub mod font {
     /// Chart tick labels: smaller than body so they fit their gutters
     /// with a margin off the frame edge.
     pub const TICK: u32 = 20;
+
+    /// BMM101's scale, matching the other widgets' BMM101 frames.
+    pub mod bmm101 {
+        pub const TITLE: u32 = 14;
+        pub const BODY: u32 = 20;
+        pub const TICK: u32 = 14;
+    }
 }
 
 pub mod space {
@@ -92,7 +100,23 @@ pub mod space {
     pub const GAP: f32 = 8.0;
 }
 
-const HEADER_LOGO_SIZE: f32 = 24.0;
+/// The header-left run's logo and text sizes.
+#[derive(Clone, Copy, Debug)]
+pub struct TitleSize {
+    pub logo: f32,
+    pub text: u32,
+}
+
+impl TitleSize {
+    pub const DECK: Self = Self {
+        logo: 24.0,
+        text: font::TITLE,
+    };
+    pub const BMM101: Self = Self {
+        logo: 16.0,
+        text: font::bmm101::TITLE,
+    };
+}
 
 /// The header-left run: logo, widget title, and optionally the bound
 /// account's name — all in the design's muted grey.
@@ -100,23 +124,23 @@ const HEADER_LOGO_SIZE: f32 = 24.0;
 /// The account takes only the width the title leaves:
 /// a long name ends in "…", inside its parentheses, and the title never wraps.
 #[must_use]
-pub fn header_left(account: Option<&str>) -> Node {
+pub fn header_left(account: Option<&str>, size: TitleSize) -> Node {
     let mut children = vec![
-        inline_icon(&icons::LOGO, HEADER_LOGO_SIZE, Color::default()),
+        inline_icon(&icons::LOGO, size.logo, Color::default()),
         text(
             "Braiins Pool",
-            style!(size: font::TITLE, weight: FontWeight::SEMIBOLD, color: color::TEXT_MUTED),
+            style!(size: size.text, weight: FontWeight::SEMIBOLD, color: color::TEXT_MUTED),
         ),
     ];
     if let Some(account) = account {
-        let muted = || style!(size: font::TITLE, color: color::TEXT_MUTED);
+        let muted = || style!(size: size.text, color: color::TEXT_MUTED);
         children.push(row(
             props!(flex: 1.0, cross_align: CrossAlign::Center),
             [
                 text("(", muted()),
                 text(
                     account,
-                    style!(size: font::TITLE, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
+                    style!(size: size.text, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
                 ),
                 text(")", muted()),
             ],
@@ -142,10 +166,10 @@ pub fn label(content: &str) -> Node {
 /// arrived and there is nothing there, as opposed to a loading skeleton.
 /// The caller phrases it for its slot ("No payouts yet").
 #[must_use]
-pub fn absent(callout: &str) -> Node {
+pub fn absent(callout: &str, size: u32) -> Node {
     text(
         callout,
-        style!(size: font::BODY, color: color::TEXT_ABSENT, line_height: 1.0),
+        style!(size: size, color: color::TEXT_ABSENT, line_height: 1.0),
     )
 }
 
@@ -213,8 +237,8 @@ impl<'a> Slot<'a> {
 
 /// A loading bar for a body-text slot, sized for `chars` glyphs.
 #[must_use]
-pub fn skeleton(chars: f32) -> Node {
-    skeleton::text(chars, font::BODY, color::SKELETON)
+pub fn skeleton(chars: f32, size: u32) -> Node {
+    skeleton::text(chars, size, color::SKELETON)
 }
 
 /// A loading bar for a value slot — Carbon's taller heading bar.
@@ -249,7 +273,7 @@ pub fn absent_value(callout: &str, size: u32) -> Node {
     let height = size as f32;
     row(
         props!(height: height, cross_align: CrossAlign::Center),
-        [absent(callout)],
+        [absent(callout, font::BODY)],
     )
 }
 
@@ -263,8 +287,11 @@ fn blank_line() -> Node {
 
 /// A callout centered in a chart's plot area, in place of its loading block.
 #[must_use]
-pub fn absent_block(width: f32, height: f32, callout: &str) -> Node {
-    center(props!(width: width, height: height), [absent(callout)])
+pub fn absent_block(width: f32, height: f32, callout: &str, size: u32) -> Node {
+    center(
+        props!(width: width, height: height),
+        [absent(callout, size)],
+    )
 }
 
 /// The meter's slot when no payout is underway, spanning the title gap
@@ -282,7 +309,7 @@ pub fn absent_meter(callout: &str, gaps: StatGaps) -> Node {
     let pad = (span + gaps.value_sub - font::BODY as f32) / 2.0;
     col(
         props!(height: span),
-        [row(props!(height: pad), []), absent(callout)],
+        [row(props!(height: pad), []), absent(callout, font::BODY)],
     )
 }
 
@@ -292,9 +319,9 @@ pub fn absent_meter(callout: &str, gaps: StatGaps) -> Node {
 /// weight and colour; the family is line-wide (DeckSans, whose digits
 /// carry the design's dotted zero).
 #[must_use]
-pub fn text_run(spans: Vec<Span>) -> Node {
+pub fn text_run(spans: Vec<Span>, size: u32) -> Node {
     paragraph(
-        style!(size: font::BODY, color: color::TEXT_MUTED, family: FontFamily::DeckSans, line_height: 1.0),
+        style!(size: size, color: color::TEXT_MUTED, family: FontFamily::DeckSans, line_height: 1.0),
         spans,
     )
 }
@@ -329,8 +356,11 @@ fn quantity_line(value: &str, unit: Option<&str>, size: u32, weight: FontWeight)
 /// A hero stat: grey label run into a Bold value in the series' colour.
 /// The label carries its own trailing separator ("5m HR (PH/s): ").
 #[must_use]
-pub fn stat_pair(pair_label: &str, value: &str, value_color: Color) -> Node {
-    text_run(vec![span(pair_label, ()), value_span(value, value_color)])
+pub fn stat_pair(pair_label: &str, value: &str, value_color: Color, size: u32) -> Node {
+    text_run(
+        vec![span(pair_label, ()), value_span(value, value_color)],
+        size,
+    )
 }
 
 /// A card's box behaviour: padding, whether content centers vertically,
@@ -476,7 +506,7 @@ pub fn stat_block(
         _ if matches!(value, Slot::Unavailable) => blank_line(),
         Some(sub) => label(sub),
         // Subs run "5m Average" to "≈ 10.038 USD".
-        None => skeleton(10.0),
+        None => skeleton(10.0, font::BODY),
     };
     stat_stack(title, value_line, sub_line, gaps)
 }
@@ -649,7 +679,7 @@ pub fn workers_panel(workers: &Availability<WorkerCounts>, spec: &WorkersSpec) -
     // One callout for the panel, not the same word down every state's row.
     let body = placeholder(
         workers,
-        absent(callout::UNAVAILABLE),
+        absent(callout::UNAVAILABLE, font::BODY),
         rows(workers.as_option()),
     );
 
@@ -710,7 +740,10 @@ fn bind_text_height(lines: f32, blocks: usize) -> f32 {
 #[must_use]
 pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> Node {
     // The wide frames run the QR beside the text; the narrow ones stack it.
-    let beside = matches!(bucket, SizeBucket::Medium | SizeBucket::Full);
+    let beside = matches!(
+        bucket,
+        SizeBucket::Medium | SizeBucket::Full | SizeBucket::Bmm101
+    );
     let text_align = if beside {
         TextAlign::Left
     } else {
@@ -720,15 +753,19 @@ pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> No
     // the centered box, and so the wrap lands on balanced lines rather
     // than a full line over a stub: the stacked frames cap near half
     // the sentence's width, Medium near the width left beside its QR.
-    let design_cap: f32 = match bucket {
-        SizeBucket::Small => 274.0,
-        SizeBucket::Medium => 572.0,
-        SizeBucket::Large => 440.0,
-        SizeBucket::Full => 700.0,
+    // BMM101 has none, so it always takes the narrow column.
+    let design_cap = match bucket {
+        SizeBucket::Small => Some(274.0),
+        SizeBucket::Medium => Some(572.0),
+        SizeBucket::Large => Some(440.0),
+        SizeBucket::Full => Some(700.0),
+        SizeBucket::Bmm101 => None,
     };
+    let content_w = frame_width - 2.0 * space::PADDING;
     // A cap is drawn for its band's design frame, which can outrun a viewport
-    // that snapped to that band: BMM101 is 480 px wide in Medium's 620 px band.
-    let narrow = frame_width - 2.0 * space::PADDING < design_cap;
+    // that snapped to that band; without one that fits, the frame is narrow.
+    let cap = design_cap.filter(|cap| *cap <= content_w);
+    let narrow = cap.is_none();
     // The smallest frame fits the instruction and the address only;
     // the wrapped full sentence plus a network line runs past its 220px.
     // A narrow frame keeps the network line but takes the short sentence.
@@ -765,7 +802,7 @@ pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> No
     } else {
         match bucket {
             SizeBucket::Large => Some(170.0),
-            SizeBucket::Small | SizeBucket::Medium | SizeBucket::Full => None,
+            SizeBucket::Small | SizeBucket::Medium | SizeBucket::Full | SizeBucket::Bmm101 => None,
         }
     };
     // Beside the prose a narrow frame sizes the row from its parts: capping
@@ -773,8 +810,7 @@ pub fn unbound_body(bucket: SizeBucket, frame_width: f32, hint: &BindHint) -> No
     // Stacked, there is no row to sum, so the frame's own width is the cap.
     let max_w = match qr_size.filter(|_| narrow && beside) {
         Some(qr) => qr + BIND_ROW_GAP + BIND_NARROW_TEXT_W,
-        None if narrow => frame_width - 2.0 * space::PADDING,
-        None => design_cap,
+        None => cap.unwrap_or(content_w),
     };
     let qr_code = qr_size.filter(|_| !hint.url.is_empty()).map(|size| {
         canvas(
@@ -821,7 +857,7 @@ pub fn denied_body(bucket: SizeBucket) -> Node {
     // — and Medium runs that nudge on one line, being the wide one of the two.
     let detail: &[&str] = match bucket {
         SizeBucket::Small => &["Check the API key's", "permissions"],
-        SizeBucket::Medium => &["Check the API key's permissions"],
+        SizeBucket::Medium | SizeBucket::Bmm101 => &["Check the API key's permissions"],
         SizeBucket::Large => &[
             "The account's API key cannot read pool stats.",
             "Reissue it in the pool's settings",
@@ -900,7 +936,7 @@ mod tests {
         const ACCOUNT: &str = "an-account-name-no-header-seats-whole";
         bmc_wasm_sdk::assets::init_test_registrars();
 
-        let Node::Row(_, children) = header_left(Some(ACCOUNT)) else {
+        let Node::Row(_, children) = header_left(Some(ACCOUNT), TitleSize::DECK) else {
             panic!("BUG: the header-left run is a row");
         };
         let Some(Node::Row(props, run)) = children.get(2) else {
@@ -931,7 +967,7 @@ mod tests {
             ]
         );
         assert!(
-            matches!(header_left(None), Node::Row(_, children) if children.len() == 2),
+            matches!(header_left(None, TitleSize::DECK), Node::Row(_, children) if children.len() == 2),
             "an unbound header carries no account run"
         );
     }

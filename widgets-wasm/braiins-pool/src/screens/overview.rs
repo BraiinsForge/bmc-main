@@ -31,8 +31,8 @@
 use bmc_wasm_sdk::*;
 
 use crate::model::{PoolData, SizeBucket};
-use crate::screens::parts::{self, color, font, space};
-use crate::screens::plot::{self, ChartSpec};
+use crate::screens::parts::{self, TitleSize, color, font, space};
+use crate::screens::plot::{self, ChartSpec, DECK_TICKS};
 
 /// Everything the Overview screen shows; the wasm side fills it from live
 /// state, the storybook from fixtures.
@@ -100,7 +100,7 @@ const SPARKLINE: ChartSpec = ChartSpec {
     x_band: None,
     solid_baseline: false,
     grid_steps: 2,
-    tick_font: font::TICK,
+    ticks: DECK_TICKS,
     marker_size: None,
 };
 
@@ -120,15 +120,17 @@ pub fn overview_view(view: &OverviewViewData) -> Node {
         // The account joins the header where the normal layouts show it.
         let account = match view.bucket {
             SizeBucket::Small => None,
-            SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => view.account.as_deref(),
+            SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full | SizeBucket::Bmm101 => {
+                view.account.as_deref()
+            }
         };
         return frame(vec![header(account), parts::denied_body(view.bucket)]);
     }
     match view.bucket {
-        SizeBucket::Small => small(view),
-        // BMM101 snaps to Medium at 480 px against its 620 px design frame,
-        // where the two stat columns and the workers card have to wrap to
-        // fit. The layout drawn for a narrow frame carries it whole instead.
+        SizeBucket::Small | SizeBucket::Bmm101 => small(view),
+        // Below Medium's 620 px design frame the two stat columns
+        // and the workers card have to wrap to fit.
+        // The layout drawn for a narrow frame carries it whole instead.
         SizeBucket::Medium if view.width < MEDIUM_DESIGN_W => small(view),
         SizeBucket::Medium => medium(view),
         SizeBucket::Large => large(view),
@@ -146,7 +148,7 @@ fn frame(children: Vec<Node>) -> Node {
 fn header(account: Option<&str>) -> Node {
     row(
         props!(height: budget::HEADER, cross_align: CrossAlign::Center),
-        [parts::header_left(account)],
+        [parts::header_left(account, TitleSize::DECK)],
     )
 }
 
@@ -263,7 +265,7 @@ fn large(view: &OverviewViewData) -> Node {
         Some(history) => plot::line_chart(history, None, content_w, spark_h, &SPARKLINE, &[], &[]),
         None => parts::placeholder(
             &view.data.hashrate_history,
-            parts::absent_block(content_w, spark_h, parts::callout::HISTORY),
+            parts::absent_block(content_w, spark_h, parts::callout::HISTORY, font::BODY),
             parts::skeleton_block(content_w, spark_h),
         ),
     });
@@ -323,7 +325,7 @@ fn full(view: &OverviewViewData) -> Node {
             x_band: None,
             solid_baseline: true,
             grid_steps: 3,
-            tick_font: font::TICK,
+            ticks: DECK_TICKS,
             marker_size: None,
         };
         main.push(plot::line_chart(
@@ -338,7 +340,7 @@ fn full(view: &OverviewViewData) -> Node {
     } else {
         main.push(parts::placeholder(
             &view.data.hashrate_history,
-            parts::absent_block(main_w, chart_h, parts::callout::HISTORY),
+            parts::absent_block(main_w, chart_h, parts::callout::HISTORY, font::BODY),
             parts::skeleton_block(main_w, chart_h),
         ));
     }
@@ -476,19 +478,22 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
     };
     let last_line = match data.payouts.as_option() {
         Some(payouts) => match payouts.last() {
-            Some(payout) => parts::text_run(vec![
-                span("Last payout: ", ()),
-                span(
-                    payout.amount_btc.format_with_sign(),
-                    style!(weight: FontWeight::SEMIBOLD, color: color::TEXT),
-                ),
-            ]),
-            None => parts::absent("No payouts yet"),
+            Some(payout) => parts::text_run(
+                vec![
+                    span("Last payout: ", ()),
+                    span(
+                        payout.amount_btc.format_with_sign(),
+                        style!(weight: FontWeight::SEMIBOLD, color: color::TEXT),
+                    ),
+                ],
+                font::BODY,
+            ),
+            None => parts::absent("No payouts yet", font::BODY),
         },
         None => parts::placeholder(
             &data.payouts,
-            parts::absent(parts::callout::LAST_PAYOUT),
-            parts::skeleton(chars::LAST_PAYOUT),
+            parts::absent(parts::callout::LAST_PAYOUT, font::BODY),
+            parts::skeleton(chars::LAST_PAYOUT, font::BODY),
         ),
     };
     parts::stat_stack(title, meter, last_line, gaps)

@@ -149,6 +149,7 @@ fn overview_size(bucket: SizeBucket) -> (f32, f32) {
         SizeBucket::Medium => (620.0, 220.0),
         SizeBucket::Large => (620.0, 448.0),
         SizeBucket::Full => (1_280.0, 480.0),
+        SizeBucket::Bmm101 => (480.0, 320.0),
     }
 }
 
@@ -158,6 +159,7 @@ fn chart_size(bucket: SizeBucket) -> (f32, f32) {
         SizeBucket::Medium => (638.0, 238.0),
         SizeBucket::Large => (638.0, 480.0),
         SizeBucket::Full => (1_280.0, 480.0),
+        SizeBucket::Bmm101 => (480.0, 320.0),
     }
 }
 
