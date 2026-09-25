@@ -53,7 +53,15 @@ impl NumberFormat {
             format!("#,##0.{}", "0".repeat(precision))
         };
 
-        number.formato_ops(&pattern, &options)
+        let formatted = number.formato_ops(&pattern, &options);
+        // Zero has no sign, but `formato` keeps the minus
+        // of a negative value that rounds to it.
+        match formatted.strip_prefix('-') {
+            Some(magnitude) if !magnitude.bytes().any(|b| matches!(b, b'1'..=b'9')) => {
+                magnitude.to_owned()
+            }
+            _ => formatted,
+        }
     }
 }
 
@@ -119,5 +127,21 @@ mod tests {
         let format = NumberFormat::SpaceGroupDotDecimal;
         let result = format.format_number(number, 5);
         assert_eq!(result, "0.12568");
+    }
+
+    #[test]
+    fn a_negative_value_that_rounds_to_zero_reads_as_zero() {
+        let format = NumberFormat::SpaceGroupCommaDecimal;
+        assert_eq!(format.format_number(-0.2, 0), "0");
+        assert_eq!(format.format_number(-0.004, 2), "0,00");
+        assert_eq!(format.format_number(-0.0, 1), "0,0");
+    }
+
+    #[test]
+    fn a_negative_value_away_from_zero_keeps_its_sign() {
+        let format = NumberFormat::SpaceGroupCommaDecimal;
+        assert_eq!(format.format_number(-0.6, 0), "-1");
+        assert_eq!(format.format_number(-0.06, 1), "-0,1");
+        assert_eq!(format.format_number(-1234.5, 1), format!("-1{NBSP}234,5"));
     }
 }

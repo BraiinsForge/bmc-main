@@ -89,4 +89,10 @@ mod tests {
         let f = TemperatureUnit::Celsius.format(NumberFormat::SpaceGroupDotDecimal, 26.0, 0, false);
         assert_eq!(f, format!("26{DEGREE}"));
     }
+
+    #[test]
+    fn a_temperature_rounding_to_zero_has_no_sign() {
+        let f = TemperatureUnit::Celsius.format(NumberFormat::SpaceGroupDotDecimal, -0.2, 0, false);
+        assert_eq!(f, format!("0{DEGREE}"));
+    }
 }
