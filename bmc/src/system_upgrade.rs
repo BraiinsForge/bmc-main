@@ -22,6 +22,11 @@
 pub(crate) mod boser;
 mod periodic_gc;
 pub(crate) mod stagger;
+#[expect(
+    dead_code,
+    reason = "not spawned until the local firmware run can wait on its acknowledgement"
+)]
+mod widget_pause;
 
 use self::stagger::{MAINTENANCE_MIN_DELAY, MaintenanceStagger};
 use crate::BmcManager;
@@ -710,20 +715,45 @@ impl StateService {
     }
 }
 
+pub(crate) type DisplayEvents = UnboundedReceiver<Option<UpgradeDisplaySnapshot>>;
+
 #[derive(Clone, Debug)]
 pub(crate) struct DisplayStateService {
     sender: Arc<watch::Sender<Option<UpgradeDisplaySnapshot>>>,
+    /// Every change of the watch, in order:
+    /// the widget pause must not miss a `FirmwareApplying` or `Failed`
+    /// that the next value overwrites.
+    events: tokio::sync::mpsc::UnboundedSender<Option<UpgradeDisplaySnapshot>>,
+    #[expect(
+        dead_code,
+        reason = "not spawned until the local firmware run can wait on its acknowledgement"
+    )]
+    unclaimed_events: Arc<std::sync::Mutex<Option<DisplayEvents>>>,
     generation: Arc<AtomicUsize>,
 }
 
 impl DisplayStateService {
     pub(crate) fn new() -> Self {
         let (sender, _) = watch::channel(None);
+        let (events, unclaimed_events) = tokio::sync::mpsc::unbounded_channel();
 
         Self {
             sender: Arc::new(sender),
+            events,
+            unclaimed_events: Arc::new(std::sync::Mutex::new(Some(unclaimed_events))),
             generation: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    #[expect(
+        dead_code,
+        reason = "not spawned until the local firmware run can wait on its acknowledgement"
+    )]
+    pub(crate) fn take_events(&self) -> Option<DisplayEvents> {
+        self.unclaimed_events
+            .lock()
+            .expect("BUG: the display event slot is only ever taken, never poisoned")
+            .take()
     }
 
     pub(crate) fn next_generation(&self) -> UpgradeGeneration {
@@ -731,20 +761,28 @@ impl DisplayStateService {
         UpgradeGeneration::new(value)
     }
 
+    // Sent inside `send_if_modified`, under the watch's write lock,
+    // so concurrent producers enqueue in the order they changed it.
     pub(crate) fn publish(&self, snapshot: UpgradeDisplaySnapshot) {
         let snapshot = Some(snapshot);
         self.sender.send_if_modified(|current| {
-            if *current != snapshot {
-                *current = snapshot;
-                return true;
+            if *current == snapshot {
+                return false;
             }
-            false
+            _ = self.events.send(snapshot.clone());
+            *current = snapshot;
+            true
         });
     }
 
     pub(crate) fn clear(&self) {
-        self.sender
-            .send_if_modified(|current| current.take().is_some());
+        self.sender.send_if_modified(|current| {
+            if current.take().is_none() {
+                return false;
+            }
+            _ = self.events.send(None);
+            true
+        });
     }
 
     fn subscribe(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
