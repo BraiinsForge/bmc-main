@@ -2067,7 +2067,6 @@ impl WasmWidgetRuntime {
         }
     }
 
-    /// Per-component timing breakdown from the last rendered frame.
     /// Whether the next frame will repaint only its damaged regions, leaving
     /// the rest of the target as it is.
     ///
@@ -2077,14 +2076,19 @@ impl WasmWidgetRuntime {
     /// Everything read here is settled before the guest runs, and the replay
     /// half of the answer comes from the same `will_replay_cached_tree` that
     /// [`Self::render`] branches on, so the two cannot disagree.
+    ///
+    /// A dead widget never preserves: its overlay's scrim is not damage,
+    /// so each preserved frame would dim the last good frame once more.
     #[must_use]
     pub fn next_frame_preserves_target(&self, width: f32, height: f32) -> bool {
         let state = self.store.data();
-        state.will_replay_cached_tree()
+        !self.fuel_dead
+            && state.will_replay_cached_tree()
             && state.static_layer_useful
             && !state.frame_damage(width, height).is_empty()
     }
 
+    /// Per-component timing breakdown from the last rendered frame.
     #[must_use]
     pub fn last_timings(&self) -> FrameTimings {
         self.store.data().last_timings
@@ -2533,6 +2537,7 @@ mod tests {
         is_host_renderer_asset,
     };
     use crate::renderer_assets::RendererAssetId;
+    use bmc_render::interaction::Rect;
     use bmc_wasm_protocol::{DisplayShape, SVG_RESERVED_MIN, SvgId, ViewportShape};
 
     /// Minimal SDK-version-shaped widget so `WasmWidgetRuntime::new` finishes
@@ -2801,6 +2806,26 @@ mod tests {
         assert!(error.to_string().contains("all fuel consumed"));
         assert!(normal.deliver_params_update(BTreeMap::new()));
         assert_eq!(normal.call_export_i32("completed"), Some(1));
+    }
+
+    #[test]
+    fn a_dead_widget_never_preserves_its_target() {
+        let mut runtime = minimal_runtime();
+        let state = runtime.store.data_mut();
+        state.frame_schedule.has_active_animations = true;
+        state.cached_tree = Some((bmc_render::tree::TreeNode::Spacer { flex: 1.0 }, 40.0, 40.0));
+        state.recent_dynamic_rects = [
+            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
+            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
+        ];
+        assert!(
+            runtime.next_frame_preserves_target(480.0, 480.0),
+            "the fixture must be one a live widget would preserve"
+        );
+
+        runtime.fuel_dead = true;
+
+        assert!(!runtime.next_frame_preserves_target(480.0, 480.0));
     }
 
     #[test]
