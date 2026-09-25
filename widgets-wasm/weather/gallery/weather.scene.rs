@@ -39,14 +39,15 @@ const BUCKETS: [(SizeBucket, &str); 5] = [
 
 const BMM100_VIEWPORT: (u32, u32) = (320, 240);
 
-const STATES: [(&str, StateFixture); 8] = [
+const STATES: [(&str, StateFixture); 9] = [
     ("Healthy", fixtures::healthy),
     ("Loading", fixtures::loading),
     ("Failed", fixtures::failed),
     ("Stale", fixtures::stale),
     ("Location Not Found", fixtures::bad_location),
     ("No Location", fixtures::no_location),
-    ("Frost", fixtures::frost),
+    ("Cold", fixtures::cold),
+    ("Hot", fixtures::hot),
     ("Long Location", fixtures::long_location),
 ];
 
@@ -158,9 +159,17 @@ fn no_location(ctx: &mut SceneCtx, ui: &mut Ui) {
 }
 
 #[scene]
-fn frost(ctx: &mut SceneCtx, ui: &mut Ui) {
-    ui.label("Every temperature 25 °C lower: the widest the figures get.");
-    state_stages(ctx, ui, fixtures::frost);
+fn cold(ctx: &mut SceneCtx, ui: &mut Ui) {
+    ui.label(
+        "Every temperature 55 °C lower: two-digit negatives, the highs included, in either unit.",
+    );
+    state_stages(ctx, ui, fixtures::cold);
+}
+
+#[scene]
+fn hot(ctx: &mut SceneCtx, ui: &mut Ui) {
+    ui.label("Every temperature 20 °C higher: three-digit highs once in Fahrenheit.");
+    state_stages(ctx, ui, fixtures::hot);
 }
 
 #[scene]

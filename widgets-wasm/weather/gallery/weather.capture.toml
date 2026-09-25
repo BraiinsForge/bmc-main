@@ -175,53 +175,126 @@ frames = 24
 [shot.knobs]
 Size = "BMM101"
 
+# Cold is as wide in either unit, hot only in Fahrenheit;
+# each goes everywhere in that unit, and in the other on BMM101.
 [[shot]]
-name = "frost-full"
-scene = "bmc_gallery::weather::Frost"
+name = "cold-full"
+scene = "bmc_gallery::weather::Cold"
 frames = 24
 
 [shot.knobs]
 Size = "Fullscreen"
 
 [[shot]]
-name = "frost-large"
-scene = "bmc_gallery::weather::Frost"
+name = "cold-large"
+scene = "bmc_gallery::weather::Cold"
 frames = 24
 
 [shot.knobs]
 Size = "Large"
 
 [[shot]]
-name = "frost-medium"
-scene = "bmc_gallery::weather::Frost"
+name = "cold-medium"
+scene = "bmc_gallery::weather::Cold"
 frames = 24
 
 [shot.knobs]
 Size = "Medium"
 
 [[shot]]
-name = "frost-small"
-scene = "bmc_gallery::weather::Frost"
+name = "cold-small"
+scene = "bmc_gallery::weather::Cold"
 frames = 24
 
 [shot.knobs]
 Size = "Small"
 
 [[shot]]
-name = "frost-bmm101"
-scene = "bmc_gallery::weather::Frost"
+name = "cold-bmm101"
+scene = "bmc_gallery::weather::Cold"
 frames = 24
 
 [shot.knobs]
 Size = "BMM101"
 
 [[shot]]
-name = "frost-bmm100"
+name = "cold-bmm101-fahrenheit"
+scene = "bmc_gallery::weather::Cold"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+Temperature = "Fahrenheit"
+
+[[shot]]
+name = "cold-bmm100"
 scene = "bmc_gallery::weather::BMM100"
 frames = 24
 
 [shot.knobs]
-State = "Frost"
+State = "Cold"
+
+[[shot]]
+name = "hot-full"
+scene = "bmc_gallery::weather::Hot"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Temperature = "Fahrenheit"
+
+[[shot]]
+name = "hot-large"
+scene = "bmc_gallery::weather::Hot"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+Temperature = "Fahrenheit"
+
+[[shot]]
+name = "hot-medium"
+scene = "bmc_gallery::weather::Hot"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+Temperature = "Fahrenheit"
+
+[[shot]]
+name = "hot-small"
+scene = "bmc_gallery::weather::Hot"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+Temperature = "Fahrenheit"
+
+[[shot]]
+name = "hot-bmm101"
+scene = "bmc_gallery::weather::Hot"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+Temperature = "Fahrenheit"
+
+[[shot]]
+name = "hot-bmm101-celsius"
+scene = "bmc_gallery::weather::Hot"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "hot-bmm100"
+scene = "bmc_gallery::weather::BMM100"
+frames = 24
+
+[shot.knobs]
+State = "Hot"
+Temperature = "Fahrenheit"
 
 [[shot]]
 name = "long-location-full"

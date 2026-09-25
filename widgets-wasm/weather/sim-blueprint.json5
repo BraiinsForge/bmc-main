@@ -33,9 +33,15 @@
     },
     {
       device: "weather",
-      label: "Frost — every temperature 25 °C lower",
+      label: "Cold — every temperature 55 °C lower, two-digit negatives in either unit",
       port: 20505,
-      params: { temperature_offset_c: -25 },
+      params: { temperature_offset_c: -55 },
+    },
+    {
+      device: "weather",
+      label: "Hot — every temperature 20 °C higher, three-digit highs in Fahrenheit",
+      port: 20506,
+      params: { temperature_offset_c: 20 },
     },
   ],
 }

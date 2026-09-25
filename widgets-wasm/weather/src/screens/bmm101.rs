@@ -71,6 +71,8 @@ const DAY_ROW_GAP: f32 = 4.0;
 const DAY_NAME_WIDTH: f32 = 160.0;
 const DAY_ICON: f32 = 32.0;
 /// Fixed, so the bars line up down the rows.
+/// A row, not a column, holds the value: a three-digit high
+/// keeps its width and runs into the edge instead of wrapping.
 const MAX_CELL_WIDTH: f32 = 34.0;
 const BAR_GAP: f32 = 4.0;
 const BAR_WIDTH: f32 = 180.0;
@@ -304,7 +306,7 @@ fn day_row(
                         GRAY_40,
                     ),
                     range_bar(range, day, marker),
-                    col(
+                    row(
                         props!(width: MAX_CELL_WIDTH),
                         [value(display::temperature_bare(day.max))],
                     ),

@@ -60,8 +60,11 @@ const DAILY_CODES: [i64; 8] = [2, 3, 61, 63, 80, 1, 0, 2];
 const DAILY_MIN: [f64; 8] = [12.5, 13.0, 11.8, 10.2, 11.5, 12.9, 14.1, 13.6];
 const DAILY_MAX: [f64; 8] = [24.1, 22.4, 19.6, 18.0, 20.3, 25.0, 27.2, 24.8];
 
-/// Pushes the recorded forecast below zero, to the widest temperatures the layouts draw.
-const FROST_OFFSET_C: f64 = -25.0;
+/// Every figure a two-digit negative, the highs included,
+/// in either unit: the warmest figure is -27.8 °C, -18 °F.
+const COLD_OFFSET_C: f64 = -55.0;
+/// Every high three digits in Fahrenheit: the coolest is 38 °C, 100 °F.
+const HOT_OFFSET_C: f64 = 20.0;
 
 /// The gallery clock starts at zero, so this reads as 20 minutes elapsed.
 const STALE_SINCE: SystemTime = SystemTime {
@@ -195,9 +198,17 @@ pub fn no_location(viewport: WidgetViewport, mut params: Params) -> ViewData {
     view(viewport, params, State::Loading)
 }
 
+/// The widest negatives the layouts draw.
 #[must_use]
-pub fn frost(viewport: WidgetViewport, params: Params) -> ViewData {
-    let weather = recorded("Prague, Czech Republic", FROST_OFFSET_C);
+pub fn cold(viewport: WidgetViewport, params: Params) -> ViewData {
+    let weather = recorded("Prague, Czech Republic", COLD_OFFSET_C);
+    view(viewport, params, State::Loaded(weather))
+}
+
+/// The widest positives the layouts draw, once in Fahrenheit.
+#[must_use]
+pub fn hot(viewport: WidgetViewport, params: Params) -> ViewData {
+    let weather = recorded("Prague, Czech Republic", HOT_OFFSET_C);
     view(viewport, params, State::Loaded(weather))
 }
 

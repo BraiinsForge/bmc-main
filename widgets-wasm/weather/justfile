@@ -8,7 +8,7 @@ dir := source_directory()
 repo := parent_directory(parent_directory(dir))
 root_justfile := repo / "justfile"
 
-# Widget + sim + watch in mprocs. SCENARIO: healthy, warming, location-not-found, failed, stale, frost.
+# Widget + sim + watch in mprocs. SCENARIO: healthy, warming, location-not-found, failed, stale, cold, hot.
 dev SCENARIO="healthy":
     @just --justfile {{ root_justfile }} wasm::prebuild weather
     mprocs \
@@ -33,10 +33,11 @@ sim-args SCENARIO:
         location-not-found) port=20502 ;;
         failed)             port=20503 ;;
         stale)              port=20504 ;;
-        frost)              port=20505 ;;
+        cold)               port=20505 ;;
+        hot)                port=20506 ;;
         *)
             echo "unknown scenario '{{ SCENARIO }}' (healthy | warming |" \
-                 "location-not-found | failed | stale | frost)" >&2
+                 "location-not-found | failed | stale | cold | hot)" >&2
             exit 1
             ;;
     esac
