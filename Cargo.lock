@@ -1392,6 +1392,7 @@ dependencies = [
  "index-common",
  "reqwest",
  "ring",
+ "semver",
  "serde",
  "serde_json",
  "sysinfo",

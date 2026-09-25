@@ -22,6 +22,8 @@ use super::*;
 
 use std::collections::BTreeMap;
 
+use bmc_nix::types::{InstalledBy, ManifestPackage, MergedPackageEntry};
+
 impl Fingerprint for UpgradeOffer<&'static str> {
     fn fingerprint(&self) -> OfferFingerprint<'_> {
         match self {
@@ -56,18 +58,57 @@ fn packages(version: &str) -> PackageOffer {
     }
 }
 
+fn indexed(name: &str) -> MergedPackageEntry {
+    MergedPackageEntry {
+        name: name.to_owned(),
+        version: semver::Version::new(1, 0, 0),
+        store_path: format!("/nix/store/{name}"),
+        category: None,
+        description: None,
+        upgrade_strategy: None,
+        install_strategy: None,
+        server_id: "server".to_owned(),
+        server_priority: 0,
+        metadata: BTreeMap::new(),
+    }
+}
+
+fn installed(name: &str) -> ManifestPackage {
+    ManifestPackage {
+        version: "1.0.0".to_owned(),
+        store_path: format!("/nix/store/{name}"),
+        category: None,
+        description: None,
+        upgrade_strategy: None,
+        install_strategy: None,
+        installed_by: InstalledBy::System,
+        installed_from: "server".to_owned(),
+        pinned: None,
+    }
+}
+
 async fn check(
     offers: &mut UpgradeOfferCache<&'static str>,
     firmware: Option<&'static str>,
     packages: Option<PackageOffer>,
 ) -> OfferCheck<&'static str> {
-    offers.invalidate();
-    let prepared = prepare(vec!["requested".to_owned()], firmware, async {
-        Ok::<_, ()>(packages)
-    })
-    .await
-    .expect("BUG: fixture probes succeed");
+    check_installing(offers, vec!["requested".to_owned()], firmware, packages).await
+}
+
+async fn check_installing(
+    offers: &mut UpgradeOfferCache<&'static str>,
+    install: Vec<String>,
+    firmware: Option<&'static str>,
+    packages: Option<PackageOffer>,
+) -> OfferCheck<&'static str> {
+    let prepared = prepare(install, firmware, async { Ok::<_, ()>(packages) })
+        .await
+        .expect("BUG: fixture probes succeed");
     offers.cache(prepared)
+}
+
+fn offer_id(check: &OfferCheck<&'static str>) -> ExecutionId {
+    check.upgrade_id.expect("BUG: the check offers an upgrade")
 }
 
 #[tokio::test]
@@ -137,4 +178,87 @@ async fn package_error_blocks_firmware() {
         result.expect_err("BUG: package failure must propagate"),
         "package check failed"
     );
+}
+
+#[tokio::test]
+async fn a_check_that_finds_nothing_drops_the_offer() {
+    let mut offers = UpgradeOfferCache::default();
+    let id = offer_id(&check(&mut offers, Some("firmware"), None).await);
+    assert!(check(&mut offers, None, None).await.upgrade_id.is_none());
+    assert!(offers.claim(id).is_none());
+}
+
+#[tokio::test]
+async fn a_newer_preview_keeps_the_firmware_id_and_is_the_one_claimed() {
+    let mut offers = UpgradeOfferCache::default();
+    let id = offer_id(&check(&mut offers, Some("firmware"), Some(packages("v1"))).await);
+    let again = check(&mut offers, Some("firmware"), Some(packages("v2"))).await;
+    assert_eq!(again.upgrade_id, Some(id));
+    assert_eq!(
+        again
+            .packages
+            .as_ref()
+            .and_then(|preview| preview.bmc_version.as_deref()),
+        Some("v2")
+    );
+    assert!(
+        matches!(offers.claim(id), Some(UpgradeOffer::Firmware { package_preview: Some(preview), .. }) if preview.bmc_version.as_deref() == Some("v2"))
+    );
+}
+
+#[tokio::test]
+async fn a_different_package_index_retires_the_id() {
+    let mut offers = UpgradeOfferCache::default();
+    let id = offer_id(&check(&mut offers, None, Some(packages("same"))).await);
+    assert_eq!(
+        check(&mut offers, None, Some(packages("same")))
+            .await
+            .upgrade_id,
+        Some(id)
+    );
+    let mut refreshed = packages("same");
+    refreshed.index.packages.push(indexed("widget-weather"));
+    let new = offer_id(&check(&mut offers, None, Some(refreshed)).await);
+    assert_ne!(new, id);
+    assert!(offers.claim(id).is_none());
+    assert!(offers.claim(new).is_some());
+}
+
+#[tokio::test]
+async fn a_different_installed_profile_retires_the_id() {
+    let mut offers = UpgradeOfferCache::default();
+    let id = offer_id(&check(&mut offers, None, Some(packages("same"))).await);
+    let mut changed = packages("same");
+    changed
+        .manifest
+        .packages
+        .insert("widget-weather".to_owned(), installed("widget-weather"));
+    let new = offer_id(&check(&mut offers, None, Some(changed)).await);
+    assert_ne!(new, id);
+    assert!(offers.claim(id).is_none());
+}
+
+#[tokio::test]
+async fn install_order_and_duplicates_do_not_change_the_id() {
+    for (firmware, packages) in [(Some("firmware"), None), (None, Some(packages("same")))] {
+        let mut offers = UpgradeOfferCache::default();
+        let mut id_for = async |install: &[&str]| {
+            let install = install.iter().map(|name| (*name).to_owned()).collect();
+            offer_id(&check_installing(&mut offers, install, firmware, packages.clone()).await)
+        };
+        let first = id_for(&["a"]).await;
+        let second = id_for(&["a", "b"]).await;
+        assert_ne!(second, first, "another package is another upgrade");
+        assert_eq!(id_for(&["b", "a", "a"]).await, second);
+        let Some(UpgradeOffer::Firmware { install, .. } | UpgradeOffer::Packages { install, .. }) =
+            offers.claim(second)
+        else {
+            panic!("BUG: the kept id claims the offer");
+        };
+        assert_eq!(
+            install,
+            ["b", "a", "a"],
+            "the run gets the latest request as sent"
+        );
+    }
 }

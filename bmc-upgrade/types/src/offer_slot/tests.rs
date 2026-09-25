@@ -30,6 +30,13 @@ impl Fingerprint for &str {
     }
 }
 
+/// The number is the value a repeated check refreshes; only the name is fingerprinted.
+impl Fingerprint for (&str, u8) {
+    fn fingerprint(&self) -> OfferFingerprint<'_> {
+        self.0.fingerprint()
+    }
+}
+
 #[test]
 fn the_stored_offer_is_claimed_once() {
     let mut slot = OfferSlot::default();
@@ -47,13 +54,22 @@ fn a_foreign_id_leaves_the_offer_claimable() {
 }
 
 #[test]
-fn storing_again_retires_the_previous_id() {
+fn a_different_offer_retires_the_previous_id() {
     let mut slot = OfferSlot::default();
     let old = slot.store("old");
     let new = slot.store("new");
     assert_ne!(old, new);
     assert_eq!(slot.claim(old), None);
     assert_eq!(slot.claim(new), Some("new"));
+}
+
+#[test]
+fn the_same_offer_keeps_its_id_and_takes_the_new_value() {
+    let mut slot = OfferSlot::default();
+    let first = slot.store(("offer", 1));
+    let second = slot.store(("offer", 2));
+    assert_eq!(first, second);
+    assert_eq!(slot.claim(first), Some(("offer", 2)));
 }
 
 #[test]

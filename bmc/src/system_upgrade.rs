@@ -2763,6 +2763,48 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_repeated_check_keeps_the_offer_id() {
+            let release = test_upgrade_detail().latest_release;
+            let (service, _timezone) = discovery_service(
+                DiscoveryIndex(Ok(Some(vec![release]))),
+                Arc::new(StubBackend(Some(Arc::default()))),
+            )
+            .await;
+            let id = firmware_offer(&service.system_upgrades).await;
+            let checked = service
+                .check_for_upgrade(Vec::new())
+                .await
+                .expect("BUG: check must succeed");
+            assert_eq!(checked.upgrade_id, Some(id.to_string()));
+        }
+
+        #[tokio::test]
+        async fn a_failed_check_leaves_the_offer_claimable() {
+            let (service, _timezone) = discovery_service(
+                DiscoveryIndex(Err(FirmwareDownloadError::IndexDownloadFailed)),
+                Arc::new(StubBackend(None)),
+            )
+            .await;
+            let id = firmware_offer(&service.system_upgrades).await;
+            assert!(service.check_for_upgrade(Vec::new()).await.is_err());
+            assert!(service.system_upgrades.lock().await.claim(id).is_some());
+        }
+
+        #[tokio::test]
+        async fn cancelled_check_releases_admission_and_keeps_the_offer() {
+            let (service, _timezone) =
+                discovery_service(DiscoveryIndex(Ok(None)), Arc::new(StubBackend(None))).await;
+            let id = firmware_offer(&service.system_upgrades).await;
+            {
+                let mut check = Box::pin(service.check_for_upgrade(Vec::new()));
+                assert!(futures::poll!(&mut check).is_pending());
+                assert!(service.run_gate.try_lock().is_err());
+            }
+            assert!(service.run_gate.try_lock().is_ok());
+            assert!(service.system_upgrades.lock().await.claim(id).is_some());
+        }
+
+        #[tokio::test]
         async fn cancelled_automatic_preparation_releases_admission_without_replacing_offer() {
             let (service, _timezone) =
                 discovery_service(DiscoveryIndex(Ok(None)), Arc::new(StubBackend(None))).await;
