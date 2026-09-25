@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Protocol
 
 from bmc_tui import catalog, console, fw_index, nix
+from bmc_tui.bos_version import BosVersion
 from bmc_tui.catalog import FirmwareCycle, StreamResult  # noqa: TC001
 from bmc_tui.device import Device
 from bmc_tui.image import Image
@@ -49,6 +50,17 @@ _RETAIN_TRANSFER_GRACE = 120.0
 # A flash + reboot resolves well within one 180 s poll lap; a boot id
 # still unchanged after three full laps is not coming.
 _BOOT_RESOLVE_DEADLINE = 600.0
+# The core published with the production 26.09 firmware looks up the package feed
+# by the running firmware version, a bug fixed in later cores.
+_PRODUCTION_26_09_CORE = "/nix/store/0hk3mczydf6y85v5kvfkhbf24wiv8wpy-bmc-bmc-core"
+
+
+def _running_feed_entries(dev: Device, anchored: BosVersion) -> list[str]:
+    """The anchored version to also list in the feed, only for the production 26.09 core."""
+    core = catalog.read_manifest_packages(dev).get("core")
+    if isinstance(core, dict) and core.get("store_path") == _PRODUCTION_26_09_CORE:
+        return [anchored.canonical]
+    return []
 
 
 @dataclass
@@ -459,10 +471,16 @@ class E2eGrpcSysupgrade:
             catalog.trust_image_keys(mutation_dev, image)
             catalog.remove_uploaded_image(mutation_dev, image, cycle)
             offered = cycle.image_version
-            if offered is None:
-                msg = "BUG: target firmware was not resolved before package feed construction"
+            anchored = cycle.running_version
+            if offered is None or anchored is None:
+                msg = "BUG: firmware versions were not resolved before package feed construction"
                 raise RuntimeError(msg)
-            catalog.start_upgrade_server(mutation_dev, plan, packages, firmware=offered.canonical)
+            catalog.start_upgrade_server(
+                mutation_dev,
+                plan,
+                packages,
+                firmwares=[offered.canonical, *_running_feed_entries(mutation_dev, anchored)],
+            )
             catalog.register_upgrade_server(mutation_dev, packages)
             catalog.require_exclusive_package_server(mutation_dev)
 

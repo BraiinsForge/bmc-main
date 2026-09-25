@@ -2598,21 +2598,26 @@ def snapshot_profile(dev: Device, cycle: UpgradeCycle) -> str:
 
 
 def upgrade_server_argv(  # noqa: PLR0913
-    *, host: str, port: int, index_port: int, key_dir: Path, built: list[Built], firmware: str
+    *,
+    host: str,
+    port: int,
+    index_port: int,
+    key_dir: Path,
+    built: list[Built],
+    firmwares: list[str],
 ) -> list[str]:
     """The ``nix run .#upgrade-server`` command for the built package set.
 
     Widget packages (named ``widget-*``) go in as ``--widget`` so the server
     reads their bundled manifest and attaches the picker metadata the frontend
     add-a-widget menu needs; everything else is a plain ``--package`` entry.
+    Every firmware gets its own feed entry for the same package index.
     """
     argv = [
         "nix",
         "run",
         _UPGRADE_SERVER_APP,
         "--",
-        "--firmware",
-        firmware,
         "--host",
         host,
         "--port",
@@ -2622,6 +2627,8 @@ def upgrade_server_argv(  # noqa: PLR0913
         "--key-dir",
         str(key_dir),
     ]
+    for firmware in firmwares:
+        argv += ["--firmware", firmware]
     for b in built:
         flag = "--widget" if b.name.startswith("widget-") else "--package"
         argv += [flag, f"{b.name}={b.version}={b.store_path}"]
@@ -2630,9 +2637,16 @@ def upgrade_server_argv(  # noqa: PLR0913
 
 @stage("Start upgrade server")
 def start_upgrade_server(
-    dev: Device, plan: Deployment, cycle: UpgradeCycle, *, firmware: str
+    dev: Device,
+    plan: Deployment,
+    cycle: UpgradeCycle,
+    *,
+    firmwares: list[str],
 ) -> str:
-    require(bool(firmware.strip()), "package feed requires a firmware version")
+    require(
+        bool(firmwares) and all(f.strip() for f in firmwares),
+        "package feed requires a firmware version",
+    )
     cycle.host = _local_addr(dev.host)
     cycle.log_path = Path(tempfile.gettempdir()) / "bmc-upgrade-server.log"
     argv = upgrade_server_argv(
@@ -2641,7 +2655,7 @@ def start_upgrade_server(
         index_port=cycle.index_port,
         key_dir=cycle.key_dir,
         built=plan.built,
-        firmware=firmware,
+        firmwares=firmwares,
     )
     launch_upgrade_server(cycle, argv)
     return f"feed {console.lit(cycle.feed_url)}, cache {console.lit(cycle.cache_url)}"

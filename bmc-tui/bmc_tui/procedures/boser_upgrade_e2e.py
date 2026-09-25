@@ -99,11 +99,11 @@ class BoserUpgradeE2e:
             index_port=self.index_port,
             key_dir=cycle.key_dir,
             built=[],
-            firmware=(
+            firmwares=[
                 parse_bos_version(image.version).canonical
                 if image is not None
                 else running.canonical
-            ),
+            ],
         )
         argv += ["--base-index", str(self.package_index.resolve())]
         failed = False

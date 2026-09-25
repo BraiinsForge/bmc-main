@@ -1841,7 +1841,7 @@ def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:
         port=8080,
         index_port=8081,
         key_dir=Path("/k"),
-        firmware="target-firmware",
+        firmwares=["target-firmware"],
         built=[
             Built("core", "1.0", Attr(".#core^out"), store_path=StorePath("/nix/store/core")),
             Built(
@@ -1855,6 +1855,19 @@ def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:
     assert argv[argv.index("--firmware") + 1] == "target-firmware"
     assert argv[argv.index("--package") + 1] == "core=1.0=/nix/store/core"
     assert argv[argv.index("--widget") + 1] == "widget-weather=0.1.0=/nix/store/weather"
+
+
+def test_upgrade_server_argv_lists_a_feed_entry_per_firmware() -> None:
+    firmwares = ["target-firmware", "running-firmware"]
+    argv = catalog.upgrade_server_argv(
+        host="10.0.0.1",
+        port=8080,
+        index_port=8081,
+        key_dir=Path("/k"),
+        firmwares=firmwares,
+        built=[],
+    )
+    assert [argv[i + 1] for i, arg in enumerate(argv) if arg == "--firmware"] == firmwares
 
 
 def test_stop_upgrade_server_is_a_noop_without_a_server() -> None:

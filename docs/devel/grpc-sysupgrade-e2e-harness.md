@@ -128,7 +128,9 @@ deletes the snapshot directory. Unlike `e2e-sysupgrade`, this harness restores `
 it leaves no rig lines behind on a completed run.
 
 The shared package server registers a feed containing only the image target firmware entry. The running (anchored)
-firmware has no entry, so resolving its index fails the test. Package-upgrade and widget-install harnesses instead read
-`/etc/bos_version` from the device and serve that firmware entry. Their package-only scenarios require no firmware
-upgrade offer. The development upgrade server requires `--firmware BOS_VERSION`; its feed supports upgrades, not store
-initialization (the init URL deliberately returns 404).
+firmware has no entry, so resolving its index fails the test. The one exception is a device running the core published
+with the production 26.09 firmware: its BMC application looks up the feed by the running firmware version, a bug fixed
+in later cores, so the anchored version is listed too, pointing at the same index. Package-upgrade and widget-install
+harnesses instead read `/etc/bos_version` from the device and serve that firmware entry. Their package-only scenarios
+require no firmware upgrade offer. The development upgrade server requires at least one `--firmware BOS_VERSION` and
+accepts it repeated; its feed supports upgrades, not store initialization (the init URL deliberately returns 404).

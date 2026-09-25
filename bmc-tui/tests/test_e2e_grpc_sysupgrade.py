@@ -122,7 +122,12 @@ def harness(  # noqa: PLR0915
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
     server = _Server(snapshot)
-    state = SimpleNamespace(cycle=None, outcome=catalog.StreamOutcome.PROVISIONAL_SUCCESS)
+    state = SimpleNamespace(
+        cycle=None,
+        outcome=catalog.StreamOutcome.PROVISIONAL_SUCCESS,
+        firmwares=None,
+        core_store_path="/nix/store/abc-bmc-bmc-core",
+    )
 
     monkeypatch.setattr("tempfile.mkdtemp", lambda **_kwargs: str(snapshot))
     monkeypatch.setattr(
@@ -145,6 +150,11 @@ def harness(  # noqa: PLR0915
         cycle.image_version = parse_bos_version(image.version)
 
     monkeypatch.setattr(catalog, "preflight_versions", versions)
+    monkeypatch.setattr(
+        catalog,
+        "read_manifest_packages",
+        lambda _dev: {"core": {"store_path": state.core_store_path}},
+    )
 
     def snapshot_upgrade(_dev: object, cycle: catalog.FirmwareCycle) -> None:
         cycle.servers_snapshot = catalog.FileSnapshot(catalog.SERVERS_JSON, None)
@@ -173,10 +183,14 @@ def harness(  # noqa: PLR0915
     monkeypatch.setattr(catalog, "remove_uploaded_image", remove)
 
     def start_server(
-        _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmware: str
+        _dev: object,
+        _plan: object,
+        cycle: catalog.UpgradeCycle,
+        *,
+        firmwares: list[str],
     ) -> None:
-        assert firmware == state.cycle.image_version.canonical
-        assert firmware != state.cycle.running_version.canonical
+        assert state.cycle.image_version.canonical != state.cycle.running_version.canonical
+        state.firmwares = firmwares
         cycle.server = cast("subprocess.Popen[bytes]", SimpleNamespace(pid=4321))
         events.append("start host")
 
@@ -418,7 +432,7 @@ def test_package_server_start_failure_stops_stored_process(
     harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail_after_start(
-        _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmware: str
+        _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmwares: list[str]
     ) -> None:
         cycle.server = cast("subprocess.Popen[bytes]", SimpleNamespace(pid=4321))
         raise Abort("package server startup")
@@ -537,6 +551,31 @@ def test_index_anchor_entry_uses_rewritten_running_version(
     assert harness.server.index_text is not None
     assert "2025-06-20-0-acde0123-25.06" in harness.server.index_text
     assert "2025-06-20-0-acde0123-25.07" not in harness.server.index_text
+
+
+def test_production_26_09_core_is_fed_the_target_index_under_its_anchored_version(
+    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Its bmc resolves the feed by /etc/bos_version, which the anchor rewrote;
+    # without that entry it finds no index and the upgrade check fails.
+    def anchor(_dev: object, cycle: catalog.FirmwareCycle) -> None:
+        assert cycle.running_version is not None and cycle.image_version is not None
+        cycle.running_version = catalog.anchored_version(cycle.running_version, cycle.image_version)
+
+    monkeypatch.setattr(catalog, "ensure_anchor_version", anchor)
+    harness.state.core_store_path = e2e_grpc_sysupgrade._PRODUCTION_26_09_CORE
+    _run(harness)
+    cycle = harness.state.cycle
+    assert harness.state.firmwares == [
+        cycle.image_version.canonical,
+        cycle.running_version.canonical,
+    ]
+
+
+def test_any_other_core_is_fed_the_target_entry_only(harness: SimpleNamespace) -> None:
+    # A running-firmware entry would hide a bmc that wrongly scopes the feed to it.
+    _run(harness)
+    assert harness.state.firmwares == [harness.state.cycle.image_version.canonical]
 
 
 def test_resolution_error_retries_until_boot_resolves(

@@ -26,14 +26,16 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: upgrade-server --firmware BOS_VERSION [--base-index FILE] [--package NAME=VERSION=STORE_PATH...] [options]
+Usage: upgrade-server --firmware BOS_VERSION... [--base-index FILE] [--package NAME=VERSION=STORE_PATH...] [options]
 
 Serve the local /nix/store as a signed binary cache and publish a
 firmware-scoped nix-package-feed.v1.json, its package index, and a
 servers.json fragment for a Deck device. Store initialization is unsupported.
 
 Options:
-  --firmware VERSION Required exact BOS firmware version for the feed entry.
+  --firmware VERSION Exact BOS firmware version to serve a feed entry for
+                     (repeatable, at least one). Every entry points at the
+                     same package index.
   --package NAME=VERSION=STORE_PATH
                      Index entry (repeatable). Overrides a same-name
                      entry from --base-index.
@@ -66,7 +68,7 @@ index_port=""
 host=""
 key_dir="${XDG_STATE_HOME:-$HOME/.local/state}/bmc-upgrade-server"
 base_index=""
-firmware=""
+firmwares=()
 packages=()
 widgets=()
 
@@ -82,7 +84,7 @@ while [ $# -gt 0 ]; do
         value="$2"
         shift 2
         case "$arg" in
-        --firmware) firmware="$value" ;;
+        --firmware) firmwares+=("$value") ;;
         --package) packages+=("$value") ;;
         --widget) widgets+=("$value") ;;
         --base-index) base_index="$value" ;;
@@ -103,7 +105,7 @@ if [ "${#packages[@]}" -eq 0 ] && [ "${#widgets[@]}" -eq 0 ] && [ -z "$base_inde
     usage >&2
     die "a --base-index, --package or --widget is required"
 fi
-[ -n "$firmware" ] || die "--firmware BOS_VERSION is required"
+[ "${#firmwares[@]}" -gt 0 ] || die "--firmware BOS_VERSION is required"
 [ -n "$index_port" ] || index_port=$((port + 1))
 
 if [ -z "$host" ]; then
@@ -235,12 +237,13 @@ fi
 
 # The feed schema requires init fields; this upgrade-only server serves no tarball.
 feed_file="$work_dir/nix-package-feed.v1.json"
-jq -n --arg firmware "$firmware" --arg base "$base_url" '{version: 1, entries: [{
-    bos_version: $firmware,
+# The device rejects a feed that repeats a bos_version.
+jq -n --arg base "$base_url" '{version: 1, entries: [$ARGS.positional | unique[] | {
+    bos_version: .,
     download_url: ($base + "/init-not-supported"),
     profile_path: "/init-not-supported",
     index_url: ($base + "/nix-package-index.v1.json")
-}]}' >"$feed_file"
+}]}' --args "${firmwares[@]}" >"$feed_file"
 
 jq -n --arg feed_url "$base_url/nix-package-feed.v1.json" --arg key "$cache_public_key" \
     '{id: "dev-upgrade", feed_url: $feed_url, known_public_key: $key, priority: 50, enabled: true}' \
@@ -283,7 +286,7 @@ cat <<EOF
 
 binary cache:     $cache_url
 package feed:     $base_url/nix-package-feed.v1.json
-firmware:         $firmware
+firmware:         ${firmwares[*]}
 package index:    $base_url/nix-package-index.v1.json
 cache public key: $cache_public_key
 

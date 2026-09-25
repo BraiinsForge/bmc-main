@@ -38,7 +38,7 @@ def _stub_run(monkeypatch: pytest.MonkeyPatch, events: list[str], *, fail_at: st
     def record(name: str):
         def hook(*_args: object, **_kwargs: object) -> None:
             if name == "start_upgrade_server":
-                assert _kwargs["firmware"] == "device-firmware"
+                assert _kwargs["firmwares"] == ["device-firmware"]
             events.append(name)
             if name == fail_at:
                 raise Abort(f"scripted failure in {name}")
