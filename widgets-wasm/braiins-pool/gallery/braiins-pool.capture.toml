@@ -25,12 +25,48 @@ frames = 8
 Size = "BMM"
 
 [[shot]]
+name = "big-chart-no-workers-bmm101"
+scene = "bmc_gallery::pool::Big Chart"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+"Worker states" = false
+
+[[shot]]
+name = "big-chart-climb-0-bmm101"
+scene = "bmc_gallery::pool::Big Chart"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+"Hashrate climb (decades)" = 0.0
+
+[[shot]]
+name = "big-chart-climb-9-bmm101"
+scene = "bmc_gallery::pool::Big Chart"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+"Hashrate climb (decades)" = 9.0
+
+[[shot]]
 name = "overview-unbound-bmm101"
 scene = "bmc_gallery::pool::Overview Unbound"
 frames = 8
 
 [shot.knobs]
 Size = "BMM"
+
+[[shot]]
+name = "overview-unbound-widest-url-bmm101"
+scene = "bmc_gallery::pool::Overview Unbound"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+"Bind URL" = "http://192.168.100.142"
 
 [[shot]]
 name = "overview-loading-bmm101"

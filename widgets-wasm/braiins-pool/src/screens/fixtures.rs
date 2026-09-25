@@ -245,11 +245,14 @@ pub fn sample_overview_failed(bucket: SizeBucket) -> OverviewViewData {
     overview_with(bucket, failed_data())
 }
 
+/// Bind URLs to stage: the sample address, and a dotted quad at its widest.
+pub const BIND_URLS: [&str; 2] = ["http://192.168.1.42", "http://192.168.100.142"];
+
 /// The hint the host fills from the deck's own network state.
 fn unbound_hint() -> crate::screens::parts::BindHint {
     crate::screens::parts::BindHint {
         ssid: "Braiins-Guest".to_owned(),
-        url: "http://192.168.1.42".to_owned(),
+        url: BIND_URLS[0].to_owned(),
     }
 }
 

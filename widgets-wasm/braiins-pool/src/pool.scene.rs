@@ -86,6 +86,12 @@ fn spread_knob(ctx: &mut SceneCtx) -> f64 {
     f64::from(ctx.slider("Hashrate climb (decades)", 5.0, 0.0, 9.0, 0.1))
 }
 
+/// The bind URL the unbound hint shows: the one run in its prose
+/// that cannot wrap, so its width is what the column has to seat.
+fn bind_url_knob(ctx: &mut SceneCtx) -> String {
+    fixtures::BIND_URLS[ctx.select("Bind URL", &fixtures::BIND_URLS, 0)].to_owned()
+}
+
 #[scene(default)]
 fn overview(ctx: &mut SceneCtx, ui: &mut Ui) {
     let worker_states = ctx.toggle("Worker states", true);
@@ -116,12 +122,14 @@ fn big_chart(ctx: &mut SceneCtx, ui: &mut Ui) {
 
 #[scene]
 fn overview_unbound(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let url = bind_url_knob(ctx);
     size_stages(ctx, ui, |bucket, width, height| {
-        let view = OverviewViewData {
+        let mut view = OverviewViewData {
             width,
             height,
             ..fixtures::sample_overview_unbound(bucket)
         };
+        view.bind_hint.url.clone_from(&url);
         move || overview::overview_view(&view)
     });
 }
@@ -176,12 +184,14 @@ fn overview_denied(ctx: &mut SceneCtx, ui: &mut Ui) {
 
 #[scene]
 fn big_chart_unbound(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let url = bind_url_knob(ctx);
     size_stages(ctx, ui, |bucket, width, height| {
-        let view = BigChartViewData {
+        let mut view = BigChartViewData {
             width,
             height,
             ..fixtures::sample_big_chart_unbound(bucket)
         };
+        view.bind_hint.url.clone_from(&url);
         move || big_chart::big_chart_view(&view)
     });
 }
