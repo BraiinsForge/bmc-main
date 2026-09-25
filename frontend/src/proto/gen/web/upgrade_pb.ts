@@ -154,6 +154,12 @@ export const PackageUpgradePlanSchema: GenMessage<PackageUpgradePlan> = /*@__PUR
  */
 export type CheckForUpgradeResponse = Message<'braiins.bmc.web.CheckForUpgradeResponse'> & {
     /**
+     * Stable while repeated checks prepare the same upgrade, so clients
+     * that checked it share one id. A start consumes it. A check that
+     * prepares a different upgrade or finds nothing to do replaces it,
+     * and so does an automatic upgrade. A failed check leaves it alone.
+     * Absent when there is nothing to upgrade.
+     *
      * @generated from field: optional string upgrade_id = 1;
      */
     upgradeId?: string | undefined;

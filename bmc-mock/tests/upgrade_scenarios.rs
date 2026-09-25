@@ -734,27 +734,25 @@ async fn unknown_upgrade_id_expires() {
 }
 
 #[tokio::test]
-async fn second_check_evicts_the_first_upgrade_id() {
-    let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "available"}"#);
+async fn an_unchanged_check_keeps_the_upgrade_id_and_a_different_one_evicts_it() {
+    let mut mock = spawn_mock(
+        r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#,
+    );
     let mut client = upgrade_client(&mut mock).await;
+    let mut check = async |install_packages: Vec<String>| {
+        client
+            .check_for_upgrade(CheckForUpgradeRequest { install_packages })
+            .await
+            .expect("BUG: check failed")
+            .into_inner()
+            .upgrade_id
+            .expect("BUG: check must offer an id")
+    };
 
-    let first = client
-        .check_for_upgrade(CheckForUpgradeRequest {
-            install_packages: vec![],
-        })
-        .await
-        .expect("BUG: first check failed")
-        .into_inner()
-        .upgrade_id
-        .expect("BUG: first check must offer an id");
-
-    // A second check clears the prior offer set, so the first id is gone.
-    client
-        .check_for_upgrade(CheckForUpgradeRequest {
-            install_packages: vec![],
-        })
-        .await
-        .expect("BUG: second check failed");
+    let first = check(vec![]).await;
+    assert_eq!(check(vec![]).await, first, "the same plan keeps its id");
+    let other = check(vec!["widget-flip-clock".to_owned()]).await;
+    assert_ne!(other, first, "installing a widget changes the plan");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id: first })

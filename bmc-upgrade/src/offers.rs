@@ -137,9 +137,8 @@ where
     })
 }
 
-/// Callers hold their operation lock across checking or claiming and through execution, and
-/// invalidate before preparing a new check so a failed or cancelled preparation leaves no stale
-/// offer behind.
+/// Callers hold their operation lock across checking or claiming and through execution.
+/// A failed or cancelled check keeps the stored offer; one that finds nothing to do drops it.
 #[derive(Debug)]
 pub struct UpgradeOfferCache<F> {
     slot: OfferSlot<UpgradeOffer<F>>,
@@ -158,9 +157,16 @@ impl<F> UpgradeOfferCache<F> {
         self.slot.invalidate();
     }
 
-    pub fn cache(&mut self, prepared: UpgradePreparation<F>) -> OfferCheck<F> {
-        self.slot.invalidate();
-        let upgrade_id = prepared.upgrade.map(|offer| self.slot.store(offer));
+    pub fn cache(&mut self, prepared: UpgradePreparation<F>) -> OfferCheck<F>
+    where
+        UpgradeOffer<F>: Fingerprint,
+    {
+        let upgrade_id = if let Some(offer) = prepared.upgrade {
+            Some(self.slot.store(offer))
+        } else {
+            self.slot.invalidate();
+            None
+        };
         OfferCheck {
             firmware: prepared.firmware,
             packages: prepared.packages,

@@ -889,7 +889,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             .map_err(|_| SystemUpgradeError::UpgradeInProgress)?;
 
         let mut offers = self.system_upgrades.lock().await;
-        offers.invalidate();
         let prepared = self.prepare_upgrade(install).await?;
         let outcome = offers.cache(prepared);
         Ok(CheckOutcome {

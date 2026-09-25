@@ -23,8 +23,9 @@ use std::hash::{Hash, Hasher as _};
 
 use crate::ExecutionId;
 
-/// One claimable offer at a time: a check stores the freshly prepared offer under a new ID,
-/// and only the start that names that ID takes it out, so an offer runs at most once.
+/// One claimable offer at a time.
+/// Storing the same upgrade again keeps its ID, so clients that checked it share one;
+/// only the start that names the ID takes the offer out, so an offer runs at most once.
 #[derive(Debug)]
 pub struct OfferSlot<T> {
     current: Option<(ExecutionId, T)>,
@@ -36,14 +37,23 @@ impl<T> Default for OfferSlot<T> {
     }
 }
 
-impl<T> OfferSlot<T> {
-    /// Replaces whatever was stored and returns the ID the new offer answers to.
+impl<T: Fingerprint> OfferSlot<T> {
+    /// Returns the current ID when `offer` has the stored offer's fingerprint, a new one otherwise;
+    /// either way `offer` replaces the stored value.
     pub fn store(&mut self, offer: T) -> ExecutionId {
-        let id = ExecutionId::new();
+        let id = if let Some((id, stored)) = &self.current
+            && stored.fingerprint() == offer.fingerprint()
+        {
+            *id
+        } else {
+            ExecutionId::new()
+        };
         self.current = Some((id, offer));
         id
     }
+}
 
+impl<T> OfferSlot<T> {
     /// Takes the offer out when `id` names it; any other ID leaves the stored offer in place.
     pub fn claim(&mut self, id: ExecutionId) -> Option<T> {
         match self.current.take() {

@@ -63,6 +63,11 @@ enum UpgradeDisruption {
 }
 
 message CheckForUpgradeResponse {
+  // Stable while repeated checks prepare the same upgrade, so clients
+  // that checked it share one id. A start consumes it. A check that
+  // prepares a different upgrade or finds nothing to do replaces it,
+  // and so does an automatic upgrade. A failed check leaves it alone.
+  // Absent when there is nothing to upgrade.
   optional string upgrade_id = 1;
   optional FirmwareUpgrade firmware = 2;
   optional PackageUpgradePlan packages = 3;
