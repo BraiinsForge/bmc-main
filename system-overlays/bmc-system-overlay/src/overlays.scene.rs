@@ -37,9 +37,9 @@ use bmc_overlay_device_info::{
     DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info,
 };
 use bmc_overlay_offline::{Connectivity, OfflineView, Status, decide, render_offline};
-use bmc_overlay_settings_tray::ui::BRIGHTNESS_UP_KEY;
+use bmc_overlay_settings_tray::ui::{Action, BRIGHTNESS_UP_KEY, Phase};
 use bmc_overlay_settings_tray::{
-    NightModeView, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
+    NightModeView, SettingsTrayRenderState, SettingsTrayView, StatusView, render_settings_tray,
 };
 use bmc_overlay_upgrade::{Surface, SurfaceTier, UpgradeRenderState, UpgradeView, render_upgrade};
 use bmc_platform::{HardwareProfile, Product};
@@ -95,8 +95,7 @@ fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
         active: true,
         until: Some("06:30".to_owned()),
     });
-    view.restart_caption = None;
-    view.reconfig_caption = None;
+    view.status = None;
     view
 }
 
@@ -300,7 +299,9 @@ render_states!(
     TRAY_VOLUME_HIGH,
     TRAY_PRESSED,
     TRAY_RESTART_HOLDING,
+    TRAY_RESTART_PENDING,
     TRAY_RESTART_DECLINED,
+    TRAY_WIFI_FAILED,
     TRAY_ALL_GROUPS,
     TRAY_SETUP,
 );
@@ -748,15 +749,47 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
         (
             "Restart holding at 15%",
             variant(|view| {
-                view.restart_progress = 0.15;
-                view.restart_caption = Some("Keep holding…".to_owned());
+                view.status = Some(StatusView {
+                    action: Action::Restart,
+                    phase: Phase::Holding { progress: 0.15 },
+                    reason: None,
+                });
             }),
             &TRAY_RESTART_HOLDING,
         ),
         (
+            "Restart pending",
+            variant(|view| {
+                view.status = Some(StatusView {
+                    action: Action::Restart,
+                    phase: Phase::Pending,
+                    reason: None,
+                });
+            }),
+            &TRAY_RESTART_PENDING,
+        ),
+        (
             "Restart declined",
-            variant(|view| view.restart_caption = Some("upgrade in progress".to_owned())),
+            variant(|view| {
+                view.status = Some(StatusView {
+                    action: Action::Restart,
+                    phase: Phase::Failed,
+                    reason: Some("upgrade in progress".to_owned()),
+                });
+            }),
             &TRAY_RESTART_DECLINED,
+        ),
+        (
+            "Wi-Fi setup failed",
+            variant(|view| {
+                view.wifi_button = true;
+                view.status = Some(StatusView {
+                    action: Action::WifiReconfig,
+                    phase: Phase::Failed,
+                    reason: None,
+                });
+            }),
+            &TRAY_WIFI_FAILED,
         ),
         (
             "All groups",

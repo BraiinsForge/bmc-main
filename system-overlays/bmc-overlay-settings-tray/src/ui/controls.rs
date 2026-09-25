@@ -18,19 +18,18 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The control buttons: the plus/minus pairs, the single hold buttons,
-//! and the caption line they share.
+//! The control buttons: the plus/minus pairs and the single hold buttons.
 
-use super::hold_dim::HoldDim;
+use super::notice::Notice;
 use super::parts::{ButtonIcon, press_fill, press_tint, round_button};
 use super::{
-    BRIGHTNESS_DOWN_KEY, BRIGHTNESS_UP_KEY, CIRCLE_FILL, ControlIcons, Controls, NIGHT_ACTIVE,
-    NIGHT_MODE_KEY, RESTART_KEY, Tier, VOLUME_DOWN_KEY, VOLUME_UP_KEY, WIFI_RECONFIG_KEY,
-    WifiIcons,
+    Action, BRIGHTNESS_DOWN_KEY, BRIGHTNESS_UP_KEY, CIRCLE_FILL, ControlIcons, Controls,
+    NIGHT_ACTIVE, NIGHT_MODE_KEY, RESTART_KEY, Tier, VOLUME_DOWN_KEY, VOLUME_UP_KEY,
+    WIFI_RECONFIG_KEY, WifiIcons,
 };
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, text};
 use bmc_wasm_protocol::colors::{GRAY_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{Color, CrossAlign, FontWeight, SvgId, TextAlign, TextOverflow};
+use bmc_wasm_protocol::{Color, CrossAlign, FontWeight, SvgId, TextAlign};
 
 /// A ±step pair (volume / brightness) with its value text below. On the Large
 /// tier the block is a fixed-width column with bold value + gray name.
@@ -171,8 +170,8 @@ fn single_group(
 /// (volume/brightness) and the single-button groups. On the Large tier the
 /// two halves concatenate into one row; medium/small render them as two rows.
 /// `wifi` is true only when the WiFi button applies (product/caps gate, not
-/// in setup mode). While a hold is in progress, every group but the held one
-/// is dimmed.
+/// in setup mode). While the notice is up, every group but the action's own
+/// is dimmed and disabled.
 pub(super) fn control_groups(
     tier: Tier,
     controls: &Controls<'_>,
@@ -180,7 +179,7 @@ pub(super) fn control_groups(
     wifi_icons: WifiIcons,
     wifi: bool,
 ) -> (Vec<TreeNode>, Vec<TreeNode>) {
-    let dim = HoldDim::for_controls(controls);
+    let dim = Notice::for_controls(controls);
     let mut pairs = Vec::new();
     if let Some(v) = controls.volume {
         pairs.push(dim.button(
@@ -246,7 +245,7 @@ pub(super) fn control_groups(
             ),
         ));
     }
-    if let Some(restart) = controls.restart {
+    if controls.restart {
         let p = controls.pressed == Some(RESTART_KEY);
         singles.push(dim.button(
             RESTART_KEY,
@@ -256,7 +255,7 @@ pub(super) fn control_groups(
                 ButtonIcon::square(icons.restart),
                 press_fill(p),
                 press_tint(p),
-                Some(restart.progress),
+                Some(controls.hold_progress(Action::Restart)),
                 "Restart",
                 "hold 5 seconds",
             ),
@@ -272,7 +271,7 @@ pub(super) fn control_groups(
                 ButtonIcon::square(wifi_icons.problem),
                 press_fill(p),
                 press_tint(p),
-                Some(controls.wifi_reconfig.progress),
+                Some(controls.hold_progress(Action::WifiReconfig)),
                 "Reconfigure Wi-Fi",
                 "hold 5 seconds",
             ),
@@ -320,48 +319,6 @@ pub(super) fn control_rows(
         .collect()
 }
 
-/// Dynamic status line under the control rows. Precedence: restart >
-/// reconfigure > night-mode-until (medium/small only) > none.
-/// Prefixed with the control name so unlabeled small-tier buttons stay
-/// attributable.
-pub(super) fn shared_caption(tier: Tier, controls: &Controls<'_>) -> Option<TreeNode> {
-    let raw = if let Some(c) = controls.restart.and_then(|r| r.caption) {
-        Some(format!("Restart: {c}"))
-    } else if let Some(c) = controls.wifi_reconfig.caption {
-        Some(format!("Reconfigure Wi-Fi: {c}"))
-    } else if !tier.labeled
-        && let Some(n) = controls.night_mode
-        && let Some(until) = n.until
-    {
-        Some(if n.active {
-            format!("Night mode on until {until}")
-        } else {
-            format!("Night mode off until {until}")
-        })
-    } else {
-        None
-    };
-    let dim = HoldDim::for_controls(controls);
-    raw.map(|s| {
-        dim.surroundings(col(
-            PropsData {
-                cross_align: CrossAlign::Center,
-                ..PropsData::default()
-            },
-            vec![text(
-                &s,
-                TextStyle {
-                    size: tier.caption_size,
-                    color: GRAY_50,
-                    align: TextAlign::Center,
-                    text_overflow: TextOverflow::Ellipsis,
-                    ..TextStyle::default()
-                },
-            )],
-        ))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use bmc_render::tree::DrawCommand;
@@ -369,7 +326,7 @@ mod tests {
     use bmc_wasm_protocol::{Color, Fill};
 
     use super::*;
-    use crate::ui::hold_dim::DIMMED;
+    use crate::ui::notice::DIMMED;
     use crate::ui::test_support::*;
     use crate::ui::*;
 
@@ -504,21 +461,19 @@ mod tests {
         (fill, color)
     }
 
-    /// While restart is held, every other button and its labels dim;
-    /// the held button and its labels stay lit.
+    /// While restart is held, every other button dims and stops taking
+    /// touches; the held button stays lit and live, and so does close.
     #[test]
-    fn a_hold_dims_every_other_button() {
+    fn the_notice_dims_and_disables_every_other_button() {
         for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
             let tree = build_with_controls(panel, held_controls());
-            let button = |key| canvas_brightness(&tree, key).expect("BUG: the button renders");
-            assert_close(button(RESTART_KEY), 1.0, "the held button stays lit");
-            let mut others = vec![WIFI_RECONFIG_KEY, NIGHT_MODE_KEY];
-            if layout_for(&panel) != Layout::Compact {
-                others.push(BRIGHTNESS_UP_KEY);
-            }
-            for key in others {
-                assert_close(button(key), DIMMED, &format!("{panel:?}: {key} dims"));
-            }
+            let held = canvas_brightness(&tree, RESTART_KEY).expect("BUG: the held button renders");
+            assert_close(held, 1.0, "the held button stays lit");
+            assert_eq!(
+                touch_keys(&tree),
+                [CLOSE_KEY, RESTART_KEY],
+                "{panel:?}: only the held button and close take touches"
+            );
             if tier_for(&panel).labeled {
                 let label = |s| text_brightness(&tree, s).expect("BUG: the label renders");
                 assert_close(label("Restart"), 1.0, "the held button's label stays lit");
@@ -597,11 +552,8 @@ mod tests {
     #[test]
     fn large_tier_hold_hint_stays_legible_over_the_progress_circle() {
         let controls = Controls {
-            restart: Some(HoldControl {
-                caption: None,
-                progress: 0.15,
-            }),
-            ..Controls::default()
+            restart: true,
+            ..controls_at(Action::Restart, Phase::Holding { progress: 0.15 })
         };
         assert_eq!(
             text_color(
@@ -612,7 +564,7 @@ mod tests {
         );
 
         let resting = Controls {
-            restart: Some(HoldControl::default()),
+            restart: true,
             ..Controls::default()
         };
         assert_eq!(
@@ -624,73 +576,23 @@ mod tests {
         );
     }
 
-    /// The disc is the only layout left with a caption line. The wide one
-    /// carries the same copy in its labeled groups, and the compact one
-    /// renders bare buttons with nothing beneath them.
+    /// Every status reads on the notice alone:
+    /// no layout keeps a line of its own for it, nor for the night end time.
     #[test]
-    fn caption_precedence_and_prefixes() {
-        let caption_texts = |panel: Panel, controls: Controls<'_>| {
+    fn no_layout_keeps_a_caption_line() {
+        let failed = controls_at(Action::Restart, Phase::Failed);
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let mut texts = Vec::new();
-            collect_texts(&build_with_controls(panel, controls), &mut texts);
-            texts
-        };
-        let holding = HoldControl {
-            caption: Some("Keep holding…"),
-            progress: 0.2,
-        };
-
-        let all = Controls {
-            restart: Some(holding),
-            wifi_reconfig: holding,
-            ..Controls::default()
-        };
-        let all_texts = caption_texts(round_panel(), all);
-        assert!(
-            all_texts.iter().any(|t| t == "Restart: Keep holding…"),
-            "restart beats the wifi caption"
-        );
-        assert!(
-            !all_texts
-                .iter()
-                .any(|t| t.starts_with("Reconfigure Wi-Fi:")),
-            "the losing caption must not render alongside the winner"
-        );
-
-        let wifi_only = Controls {
-            wifi_reconfig: holding,
-            ..Controls::default()
-        };
-        assert!(
-            caption_texts(round_panel(), wifi_only)
-                .iter()
-                .any(|t| t == "Reconfigure Wi-Fi: Keep holding…"),
-            "reconfigure surfaces its own caption when it is the only hold"
-        );
-
-        let night = Controls {
-            night_mode: Some(NightMode {
-                active: true,
-                until: Some("22:00"),
-            }),
-            ..Controls::default()
-        };
-        assert!(
-            caption_texts(round_panel(), night)
-                .iter()
-                .any(|t| t == "Night mode on until 22:00"),
-            "the round layout surfaces the night end time on the caption line"
-        );
-        assert!(
-            !caption_texts(wide_panel(), night)
-                .iter()
-                .any(|t| t.starts_with("Night mode on until")),
-            "the Large tier shows the end time in the night group instead"
-        );
-        assert!(
-            caption_texts(wide_panel(), night)
-                .iter()
-                .any(|t| t == "Until 22:00")
-        );
+            collect_texts(&build_with_controls(panel, failed), &mut texts);
+            assert!(
+                !texts.iter().any(|t| t.starts_with("Restart:")),
+                "{panel:?}: no prefixed caption"
+            );
+            assert!(
+                !texts.iter().any(|t| t.starts_with("Night mode on until")),
+                "{panel:?}: no night mode caption"
+            );
+        }
     }
 
     fn assert_control_rows_fit(controls: Controls<'_>) {

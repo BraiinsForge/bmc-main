@@ -40,8 +40,10 @@
 
 use std::time::Instant;
 
+use bmc_overlay_settings_tray::ui::{Action, Phase};
 use bmc_overlay_settings_tray::{
-    SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
+    SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView, StatusView,
+    render_settings_tray,
 };
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::{FrameClear, Renderer};
@@ -427,7 +429,11 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
 #[test]
 fn large_tier_hold_circle_is_centered_on_its_button() {
     let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmc100);
-    view.restart_progress = 0.5;
+    view.status = Some(StatusView {
+        action: Action::Restart,
+        phase: Phase::Holding { progress: 0.5 },
+        reason: None,
+    });
 
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);

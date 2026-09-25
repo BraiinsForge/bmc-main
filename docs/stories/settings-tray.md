@@ -32,8 +32,8 @@ volume, night mode, device restart, and Wi-Fi reconfiguration — without leavin
 
 > As a user, I want to see and toggle night mode from the tray so that I can override the schedule on the spot.
 
-- The tray shows whether night mode is currently on or off, and — when a schedule is configured — the time until the
-  current state lasts.
+- The tray shows whether night mode is currently on or off, and — when a schedule is configured and the display has room
+  to label its buttons — the time until the current state lasts.
 - Tapping the toggle switches night mode immediately.
 
 ### Restart the device deliberately
@@ -43,10 +43,11 @@ volume, night mode, device restart, and Wi-Fi reconfiguration — without leavin
 
 - Restart requires press-and-hold; a filled circle fades in behind the button and shrinks into it while holding, and
   releasing early cancels.
-- Completing the hold restarts the device; the tray shows the progress ("Keep holding…", "Restarting…").
-- While either hold (restart or Wi-Fi) is in progress, everything but the held button dims, and a notice above the
-  buttons names the action and says how to cancel it, so the gesture's consequence is spelled out before it lands.
-- While a firmware upgrade is being applied the device declines the restart and the tray shows why, so an upgrade can
+- Completing the hold restarts the device.
+- From the moment a hold (restart or Wi-Fi) starts until its outcome has been shown, a notice above the buttons reports
+  it: what the hold will do and how to cancel it, then that it is underway, then why it failed if it did. Everything but
+  the held button dims and ignores touches meanwhile, except the close button, so the tray can always be left.
+- While a firmware upgrade is being applied the device declines the restart and the notice says why, so an upgrade can
   never be corrupted by a manual reboot.
 
 ### See the device's address

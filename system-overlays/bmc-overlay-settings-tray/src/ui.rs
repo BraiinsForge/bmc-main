@@ -23,12 +23,12 @@
 //! of host/GL imports so it compiles and unit-tests on the host.
 
 use bmc_platform::DisplayShape;
-use bmc_render::tree::{PropsData, TreeNode, col, fixed_height};
+use bmc_render::tree::{PropsData, TreeNode, col};
 use bmc_wasm_protocol::{Color, SvgId};
 
 mod compact;
 mod controls;
-mod hold_dim;
+mod notice;
 mod parts;
 mod round;
 mod station;
@@ -38,8 +38,8 @@ mod wide;
 mod test_support;
 
 use compact::compact_children;
-use controls::{control_groups, control_rows, shared_caption};
-use hold_dim::HoldDim;
+use controls::{control_groups, control_rows};
+use notice::Notice;
 use parts::close_button;
 use round::round_children;
 use wide::wide_children;
@@ -227,6 +227,10 @@ const WIDE_SETUP_BADGE_SIZE: u32 = 14;
 /// Size of the values in the Large tier's info blocks.
 const WIDE_INFO_VALUE_SIZE: u32 = 24;
 
+/// Size of the notice lines over the Large tier's top half,
+/// a step above its largest text so the notice reads first.
+const WIDE_NOTICE_SIZE: u32 = 32;
+
 /// Side of the WiFi signal icon in the Large tier's header.
 const WIDE_WIFI_ICON_SIZE: f32 = 32.0;
 
@@ -366,12 +370,42 @@ impl Default for ControlIcons {
     }
 }
 
-/// Dynamic state of one hold-to-confirm control: its shared-caption text (the
-/// FSM caption, `None` when resting) and the 0..=1 hold fraction.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct HoldControl<'a> {
-    pub caption: Option<&'a str>,
-    pub progress: f32,
+/// The hold button an action runs from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Restart,
+    WifiReconfig,
+}
+
+impl Action {
+    /// The touch key of the button the action runs from.
+    #[must_use]
+    pub fn key(self) -> &'static str {
+        match self {
+            Action::Restart => RESTART_KEY,
+            Action::WifiReconfig => WIFI_RECONFIG_KEY,
+        }
+    }
+}
+
+/// How far a hold action has come.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Phase {
+    /// The finger is down; `progress` is the 0..=1 hold fraction.
+    Holding { progress: f32 },
+    /// The hold completed and the request is out.
+    Pending,
+    /// The request was declined or timed out, shown for a moment.
+    Failed,
+}
+
+/// The action the notice reports on. `reason` is the one bmc gave
+/// for declining a restart, while that failure shows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Status<'a> {
+    pub action: Action,
+    pub phase: Phase,
+    pub reason: Option<&'a str>,
 }
 
 /// Night-mode toggle state: whether it is active and the formatted end time
@@ -391,14 +425,28 @@ pub struct Controls<'a> {
     pub brightness: Option<u8>,
     pub volume: Option<u8>,
     pub night_mode: Option<NightMode<'a>>,
-    pub restart: Option<HoldControl<'a>>,
-    pub wifi_reconfig: HoldControl<'a>,
+    pub restart: bool,
+    pub status: Option<Status<'a>>,
     pub pressed: Option<&'a str>,
+}
+
+impl Controls<'_> {
+    /// The hold fraction of `action`'s button: zero unless it is being held.
+    fn hold_progress(&self, action: Action) -> f32 {
+        match self.status {
+            Some(Status {
+                action: held,
+                phase: Phase::Holding { progress },
+                ..
+            }) if held == action => progress,
+            Some(_) | None => 0.0,
+        }
+    }
 }
 
 /// Per-panel control sizing, picked by [`tier_for`] from the panel's width
 /// and shape. A labeled tier captions every group; an unlabeled tier renders
-/// bare buttons and leaves the copy to a shared caption line.
+/// bare buttons.
 #[derive(Debug, Clone, Copy)]
 struct Tier {
     circle: f32,
@@ -468,8 +516,8 @@ fn tier_for(panel: &Panel) -> Tier {
             padding: 16.0,
         }
     } else {
-        // BFM100. Labeled groups do not fit across the disc, so its
-        // chord-safe band takes bare buttons under one caption line.
+        // BFM100. Labeled groups do not fit across the disc,
+        // so its chord-safe band takes bare buttons.
         Tier {
             circle: 64.0,
             icon: 28.0,
@@ -519,7 +567,7 @@ struct Content<'a> {
     icons: WifiIcons,
     control_icons: ControlIcons,
     controls: Controls<'a>,
-    dim: HoldDim,
+    notice: Notice<'a>,
 }
 
 /// The control rows the content calls for, in the row split the tier wants.
@@ -532,14 +580,6 @@ fn control_row_nodes(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
         content.wifi_button,
     );
     control_rows(tier, pairs, singles)
-}
-
-/// The caption line, holding its height while empty so captions appearing
-/// and disappearing never shift the control rows.
-fn caption_slot(content: Content<'_>, tier: Tier) -> TreeNode {
-    #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
-    let caption_h = tier.caption_size as f32 * LINE_H;
-    shared_caption(tier, &content.controls).unwrap_or_else(|| fixed_height(caption_h))
 }
 
 /// Build the overlay UI tree for the current state.
@@ -560,7 +600,7 @@ pub fn build_tree(
     controls: Controls<'_>,
 ) -> TreeNode {
     let tier = tier_for(&panel);
-    let dim = HoldDim::for_controls(&controls);
+    let notice = Notice::for_controls(&controls);
     let content = Content {
         hostname,
         ip,
@@ -571,7 +611,7 @@ pub fn build_tree(
         icons,
         control_icons: controls_icons,
         controls,
-        dim,
+        notice,
     };
     let mut children = match layout_for(&panel) {
         Layout::Wide => wide_children(content, tier),
@@ -580,7 +620,7 @@ pub fn build_tree(
     };
     // Last child: absolute positioning takes it out of flow, and rendering
     // follows child order, so it paints on top of everything.
-    children.push(dim.button(CLOSE_KEY, close_button(&panel, tier, controls_icons.close)));
+    children.push(notice.close(close_button(&panel, tier, controls_icons.close)));
     col(
         PropsData {
             background: SCRIM,
@@ -985,15 +1025,7 @@ mod tests {
                 .map(hold_circle_columns)
                 .sum::<usize>()
         }
-        let held = HoldControl {
-            caption: None,
-            progress: 0.5,
-        };
-        let controls = Controls {
-            restart: Some(held),
-            wifi_reconfig: held,
-            ..all_controls()
-        };
+        let controls = held_controls();
         for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
             let tree = build_with_controls(panel, controls);
             let mut absolute = Vec::new();

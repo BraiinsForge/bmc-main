@@ -510,9 +510,11 @@ mod tests {
     fn hold_circle_fades_in_over_the_start_of_the_hold() {
         let hold_circle_of = |progress| {
             let controls = Controls {
-                restart: Some(HoldControl {
-                    caption: None,
-                    progress,
+                restart: true,
+                status: Some(Status {
+                    action: Action::Restart,
+                    phase: Phase::Holding { progress },
+                    reason: None,
                 }),
                 ..Controls::default()
             };

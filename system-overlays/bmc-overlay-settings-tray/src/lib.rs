@@ -255,6 +255,14 @@ pub struct NightModeView {
     pub until: Option<String>,
 }
 
+/// The owned form of [`ui::Status`]: the action the notice reports on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusView {
+    pub action: ui::Action,
+    pub phase: ui::Phase,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -270,14 +278,8 @@ pub struct SettingsTrayView {
     pub show_volume: bool,
     pub night_mode: Option<NightModeView>,
     pub show_restart: bool,
-    /// Dynamic captions for the shared caption line; `None` when the control
-    /// rests. The restart caption carries the decline reason while the FSM
-    /// surfaces one.
-    pub restart_caption: Option<String>,
-    pub reconfig_caption: Option<String>,
-    /// 0..=1 hold fractions for the progress circles.
-    pub restart_progress: f32,
-    pub reconfig_progress: f32,
+    /// The hold action in progress, pending or just failed; `None` at rest.
+    pub status: Option<StatusView>,
     pub hostname: Option<String>,
     pub ip: Option<String>,
     pub wifi_signal: Option<i32>,
@@ -308,10 +310,7 @@ impl SettingsTrayView {
                 until: None,
             }),
             show_restart: true,
-            restart_caption: None,
-            reconfig_caption: None,
-            restart_progress: 0.0,
-            reconfig_progress: 0.0,
+            status: None,
             hostname: None,
             ip: None,
             wifi_signal: None,
@@ -501,18 +500,7 @@ impl SettingsTrayOverlay {
             active: self.night_active,
             until: self.night_until.clone(),
         });
-        view.restart_caption = if self.restart.shows_message() {
-            Some(
-                self.declined_reason
-                    .clone()
-                    .unwrap_or_else(|| self.restart.label().to_owned()),
-            )
-        } else {
-            self.restart.caption().map(str::to_owned)
-        };
-        view.restart_progress = self.restart.progress(now);
-        view.reconfig_caption = self.button.caption().map(str::to_owned);
-        view.reconfig_progress = self.button.progress(now);
+        view.status = self.status(now);
         view.hostname.clone_from(&self.hostname);
         view.ip.clone_from(&self.ip);
         view.wifi_signal = self.wifi_signal;
@@ -569,6 +557,26 @@ impl SettingsTrayOverlay {
         self.wifi_signal = snapshot.wifi_signal_dbm;
         self.ssid = snapshot.station_ssid;
         self.content_dirty |= content_changed;
+    }
+
+    /// The action the notice reports on. Restart wins a tie, which the input
+    /// model keeps unreachable: one key is pressed at a time, and the notice
+    /// strips every other button's key besides.
+    fn status(&self, now: Instant) -> Option<StatusView> {
+        let restart = self.restart.phase(now).map(|phase| StatusView {
+            action: ui::Action::Restart,
+            phase,
+            reason: (phase == ui::Phase::Failed)
+                .then(|| self.declined_reason.clone())
+                .flatten(),
+        });
+        restart.or_else(|| {
+            self.button.phase(now).map(|phase| StatusView {
+                action: ui::Action::WifiReconfig,
+                phase,
+                reason: None,
+            })
+        })
     }
 
     /// Advance both hold FSMs from the tree's press state and queue the
@@ -1003,14 +1011,12 @@ pub fn render_settings_tray(
             active: n.active,
             until: n.until.as_deref(),
         }),
-        restart: view.show_restart.then_some(ui::HoldControl {
-            caption: view.restart_caption.as_deref(),
-            progress: view.restart_progress,
+        restart: view.show_restart,
+        status: view.status.as_ref().map(|status| ui::Status {
+            action: status.action,
+            phase: status.phase,
+            reason: status.reason.as_deref(),
         }),
-        wifi_reconfig: ui::HoldControl {
-            caption: view.reconfig_caption.as_deref(),
-            progress: view.reconfig_progress,
-        },
         pressed,
     };
     let node = ui::build_tree(
@@ -1098,9 +1104,38 @@ mod view_tests {
         assert_eq!(view.setup_ssid.as_deref(), Some("Deck setup"));
         assert!(view.wifi_button);
         assert_eq!(
-            view.reconfig_caption, None,
-            "an active setup AP silences the reconfigure caption"
+            view.status, None,
+            "an active setup AP silences the reconfigure notice"
         );
+    }
+
+    #[test]
+    fn a_decline_reaches_the_status_with_its_reason() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.on_restart_declined("upgrade in progress");
+        assert_eq!(
+            overlay.view(Instant::now()).status,
+            Some(StatusView {
+                action: ui::Action::Restart,
+                phase: ui::Phase::Failed,
+                reason: Some("upgrade in progress".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn restart_wins_a_tie() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.restart.tick(true, now);
+        overlay.button.tick(true, now);
+        let status = overlay
+            .view(now)
+            .status
+            .expect("BUG: two holds are running");
+        assert_eq!(status.action, ui::Action::Restart);
+        assert_eq!(status.reason, None, "a hold carries no reason");
     }
 
     #[test]

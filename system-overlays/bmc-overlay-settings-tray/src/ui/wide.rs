@@ -20,13 +20,13 @@
 
 //! The Deck's arrangement: an info header over one labeled control row.
 
-use super::hold_dim::HoldDim;
+use super::notice::Notice;
 use super::parts::{capped_text, fixed_width, ip_qr, pad_horizontal, text_style, wifi_icon};
 use super::{
     Content, INFO_HEADER_GAP, INFO_HEADER_SIZE, NO_DATA_PLACEHOLDER, Tier, WIDE_HOSTNAME_WIDTH,
     WIDE_INFO_GAP, WIDE_INFO_LEFT_PAD, WIDE_INFO_RIGHT_PAD, WIDE_INFO_STACK_GAP,
-    WIDE_INFO_VALUE_SIZE, WIDE_QR_SIZE, WIDE_ROW_GAP, WIDE_SETUP_BADGE_SIZE, WIDE_SSID_WIDTH,
-    WIDE_TOP_PAD, WIDE_WIFI_GAP, WIDE_WIFI_ICON_SIZE, WifiIcons, WifiView, caption_slot,
+    WIDE_INFO_VALUE_SIZE, WIDE_NOTICE_SIZE, WIDE_QR_SIZE, WIDE_ROW_GAP, WIDE_SETUP_BADGE_SIZE,
+    WIDE_SSID_WIDTH, WIDE_TOP_PAD, WIDE_WIFI_GAP, WIDE_WIFI_ICON_SIZE, WifiIcons, WifiView,
     control_row_nodes,
 };
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text};
@@ -155,14 +155,13 @@ pub(super) fn wide_header(
 
 /// The Large tier's flow children: two equal flex halves pin the control
 /// block's top edge to the vertical middle, matching the stable design. The
-/// top half holds the info header and, during a hold, the notice over it;
-/// the bottom half the control rows and the shared caption.
+/// top half holds the info header and, while one is up, the notice over it;
+/// the bottom half the control rows.
 fn wide_halves(
     header: TreeNode,
     rows: Vec<TreeNode>,
-    caption_node: TreeNode,
     h_pad: f32,
-    dim: HoldDim,
+    notice: Notice<'_>,
 ) -> [TreeNode; 2] {
     let half = PropsData {
         flex: 1.0,
@@ -173,15 +172,18 @@ fn wide_halves(
         bottom_half.push(pad_horizontal(row_node, h_pad));
         bottom_half.push(fixed_height(WIDE_ROW_GAP));
     }
-    bottom_half.push(pad_horizontal(caption_node, h_pad));
     [
-        dim.with_notice(half, vec![fixed_height(WIDE_TOP_PAD), header]),
+        notice.with_notice(
+            half,
+            WIDE_NOTICE_SIZE,
+            vec![fixed_height(WIDE_TOP_PAD), header],
+        ),
         col(half, bottom_half),
     ]
 }
 
 /// The Deck's flow children: the info header in the top half,
-/// the labeled control row and the caption in the bottom half.
+/// the labeled control row in the bottom half.
 pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     let header = wide_header(
         content.hostname.unwrap_or("N/A"),
@@ -192,8 +194,7 @@ pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
         content.wifi_view,
     );
     let rows = control_row_nodes(content, tier);
-    let caption = caption_slot(content, tier);
-    wide_halves(header, rows, caption, tier.padding, content.dim).into()
+    wide_halves(header, rows, tier.padding, content.notice).into()
 }
 
 #[cfg(test)]

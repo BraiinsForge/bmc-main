@@ -24,6 +24,8 @@
 
 use std::time::{Duration, Instant};
 
+use crate::ui::Phase;
+
 /// Hold duration to confirm a WiFi action.
 const HOLD: Duration = Duration::from_secs(5);
 /// Max wait after firing reconfigure before giving up and showing the error.
@@ -127,41 +129,19 @@ impl ButtonState {
         )
     }
 
-    /// Caption for the reconfigure button, conveying hold progress and the
-    /// transient error.
+    /// What the notice reports: `None` at rest,
+    /// and while setup mode hides the button.
     #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            ButtonState::Idle {
-                error_since: Some(_),
-            } => "Couldn't start WiFi setup",
-            ButtonState::Idle { error_since: None } => "Reconfigure WiFi",
-            ButtonState::Holding { .. } => "Keep holding…",
-            ButtonState::Pending { .. } => "Starting WiFi setup…",
-            ButtonState::Active => "",
-        }
-    }
-
-    /// Hold fraction for the progress circle; nonzero only while holding.
-    #[must_use]
-    pub fn progress(self, now: Instant) -> f32 {
-        match self {
-            ButtonState::Holding { since } => hold_fraction(since, now, HOLD),
-            ButtonState::Idle { .. } | ButtonState::Pending { .. } | ButtonState::Active => 0.0,
-        }
-    }
-
-    /// Dynamic caption for the shared caption line; `None` when resting idle
-    /// or hidden behind an active setup AP.
-    #[must_use]
-    pub fn caption(self) -> Option<&'static str> {
+    pub fn phase(self, now: Instant) -> Option<Phase> {
         match self {
             ButtonState::Idle { error_since: None } | ButtonState::Active => None,
+            ButtonState::Holding { since } => Some(Phase::Holding {
+                progress: hold_fraction(since, now, HOLD),
+            }),
+            ButtonState::Pending { .. } => Some(Phase::Pending),
             ButtonState::Idle {
                 error_since: Some(_),
-            }
-            | ButtonState::Holding { .. }
-            | ButtonState::Pending { .. } => Some(self.label()),
+            } => Some(Phase::Failed),
         }
     }
 }
@@ -295,48 +275,21 @@ impl RestartState {
         )
     }
 
-    /// Caption for the restart button. A declined reason (owned by the
-    /// overlay) replaces the generic message while shows_message().
+    /// What the notice reports: `None` at rest.
     #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            RestartState::Idle {
-                message_since: Some(_),
-            }
-            | RestartState::Cooldown { .. } => "Restart failed",
-            RestartState::Idle {
-                message_since: None,
-            } => "Restart",
-            RestartState::Holding { .. } => "Keep holding…",
-            RestartState::Pending { .. } => "Restarting…",
-        }
-    }
-
-    /// Hold fraction for the progress circle; nonzero only while holding.
-    #[must_use]
-    pub fn progress(self, now: Instant) -> f32 {
-        match self {
-            RestartState::Holding { since } => hold_fraction(since, now, RESTART_HOLD),
-            RestartState::Idle { .. }
-            | RestartState::Pending { .. }
-            | RestartState::Cooldown { .. } => 0.0,
-        }
-    }
-
-    /// Dynamic caption for the shared caption line; `None` when resting idle.
-    /// The overlay substitutes a decline reason while `shows_message()`.
-    #[must_use]
-    pub fn caption(self) -> Option<&'static str> {
+    pub fn phase(self, now: Instant) -> Option<Phase> {
         match self {
             RestartState::Idle {
                 message_since: None,
             } => None,
+            RestartState::Holding { since } => Some(Phase::Holding {
+                progress: hold_fraction(since, now, RESTART_HOLD),
+            }),
+            RestartState::Pending { .. } => Some(Phase::Pending),
             RestartState::Idle {
                 message_since: Some(_),
             }
-            | RestartState::Holding { .. }
-            | RestartState::Pending { .. }
-            | RestartState::Cooldown { .. } => Some(self.label()),
+            | RestartState::Cooldown { .. } => Some(Phase::Failed),
         }
     }
 }
@@ -421,7 +374,10 @@ mod tests {
         let t0 = Instant::now();
         let mut r = RestartState::default();
         r.tick(true, t0);
-        assert_eq!(r.label(), "Keep holding…", "a live hold swaps the caption");
+        assert!(
+            matches!(r.phase(t0), Some(Phase::Holding { .. })),
+            "a live hold reports itself"
+        );
         r.tick(false, t0 + Duration::from_secs(3));
         assert!(
             matches!(
@@ -432,7 +388,7 @@ mod tests {
             ),
             "early release snaps back to idle"
         );
-        assert_eq!(r.label(), "Restart");
+        assert_eq!(r.phase(t0 + Duration::from_secs(3)), None);
     }
 
     #[test]
@@ -510,50 +466,78 @@ mod tests {
         );
     }
 
+    fn progress_at(phase: Option<Phase>) -> f32 {
+        match phase {
+            Some(Phase::Holding { progress }) => progress,
+            other => panic!("expected a hold, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn progress_is_zero_when_idle_and_grows_while_holding() {
+    fn progress_grows_while_holding() {
         let t0 = Instant::now();
         let mut b = ButtonState::default();
-        assert_close(b.progress(t0), 0.0, "idle");
         b.tick(true, t0);
         assert_close(
-            b.progress(t0 + Duration::from_millis(2500)),
+            progress_at(b.phase(t0 + Duration::from_millis(2500))),
             0.5,
             "half of five-second hold",
         );
-        assert_close(b.progress(t0 + Duration::from_secs(10)), 1.0, "clamped");
+        assert_close(
+            progress_at(b.phase(t0 + Duration::from_secs(10))),
+            1.0,
+            "clamped",
+        );
 
         let mut r = RestartState::default();
         r.tick(true, t0);
         assert_close(
-            r.progress(t0 + Duration::from_millis(2500)),
+            progress_at(r.phase(t0 + Duration::from_millis(2500))),
             0.5,
             "restart holds for 5s, so 2.5s is half",
         );
     }
 
     #[test]
-    fn captions_are_none_only_for_resting_idle() {
+    fn reconfigure_reports_every_phase_and_rests_silent() {
         let t0 = Instant::now();
         let mut b = ButtonState::default();
-        assert_eq!(b.caption(), None);
+        assert_eq!(b.phase(t0), None);
         b.tick(true, t0);
-        assert_eq!(b.caption(), Some("Keep holding…"));
-        b.tick(true, t0 + Duration::from_secs(5));
-        assert_eq!(b.caption(), Some("Starting WiFi setup…"));
-        b.tick(true, t0 + Duration::from_secs(15));
-        assert_eq!(
-            b.caption(),
-            Some("Couldn't start WiFi setup"),
-            "transient error idle still captions"
-        );
+        assert!(matches!(b.phase(t0), Some(Phase::Holding { .. })));
+        let fired = t0 + Duration::from_secs(5);
+        b.tick(true, fired);
+        assert_eq!(b.phase(fired), Some(Phase::Pending));
+        let timed_out = t0 + Duration::from_secs(15);
+        b.tick(true, timed_out);
+        assert_eq!(b.phase(timed_out), Some(Phase::Failed));
         b.on_wifi_ap(true);
-        assert_eq!(b.caption(), None, "setup-active hides the control entirely");
+        assert_eq!(b.phase(timed_out), None, "setup mode hides the button");
+    }
 
+    #[test]
+    fn restart_reports_every_phase_and_rests_silent() {
+        let t0 = Instant::now();
         let mut r = RestartState::default();
-        assert_eq!(r.caption(), None);
+        assert_eq!(r.phase(t0), None);
         r.tick(true, t0);
-        assert_eq!(r.caption(), Some("Keep holding…"));
+        assert!(matches!(r.phase(t0), Some(Phase::Holding { .. })));
+        let fired = t0 + Duration::from_secs(5);
+        r.tick(true, fired);
+        assert_eq!(r.phase(fired), Some(Phase::Pending));
+        r.on_declined(fired);
+        assert_eq!(
+            r.phase(fired),
+            Some(Phase::Failed),
+            "held through a decline"
+        );
+        let released = fired + Duration::from_secs(1);
+        r.tick(false, released);
+        assert_eq!(
+            r.phase(released),
+            Some(Phase::Failed),
+            "the message outlives the lift"
+        );
     }
 
     #[test]

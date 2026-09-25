@@ -22,6 +22,7 @@
 //! then the brightness slider, then bare buttons.
 
 use super::controls::{control_groups, control_rows};
+use super::notice::NOTICE_SIZE;
 use super::parts::{close_origin, fixed_width, ip_qr, pad_horizontal, text_style};
 use super::{
     BRIGHTNESS_ICON_SIZE, BRIGHTNESS_SLIDER_KEY, COMPACT_CLOSE_MARGIN, COMPACT_GAP,
@@ -165,8 +166,9 @@ fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
 /// The BMM100 and BMM101 flow children: address block, brightness slider,
 /// then whichever buttons the product still has.
 pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
-    let mut children = vec![content.dim.with_notice(
+    let mut children = vec![content.notice.with_notice(
         PropsData::default(),
+        NOTICE_SIZE,
         vec![
             // Top padding is an explicit spacer, not container padding,
             // so the close button's absolute insets resolve against the panel box.

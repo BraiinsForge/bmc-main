@@ -73,23 +73,27 @@ pub(super) fn all_controls() -> Controls<'static> {
             active: true,
             until: Some("06:30"),
         }),
-        restart: Some(HoldControl::default()),
-        wifi_reconfig: HoldControl::default(),
+        restart: true,
+        status: None,
         pressed: None,
     }
 }
 
-/// [`all_controls`] with both hold buttons mid-hold.
-pub(super) fn held_controls() -> Controls<'static> {
-    let held = HoldControl {
-        caption: Some("Keep holding…"),
-        progress: 0.5,
-    };
+/// [`all_controls`] with `action` at `phase`.
+pub(super) fn controls_at(action: Action, phase: Phase) -> Controls<'static> {
     Controls {
-        restart: Some(held),
-        wifi_reconfig: held,
+        status: Some(Status {
+            action,
+            phase,
+            reason: None,
+        }),
         ..all_controls()
     }
+}
+
+/// [`all_controls`] with restart held halfway.
+pub(super) fn held_controls() -> Controls<'static> {
+    controls_at(Action::Restart, Phase::Holding { progress: 0.5 })
 }
 
 pub(super) fn build(panel: Panel, view: WifiView<'_>) -> TreeNode {
@@ -222,6 +226,29 @@ pub(super) fn canvas_keys(node: &TreeNode, out: &mut Vec<String>) {
         for k in kids {
             canvas_keys(k, out);
         }
+    }
+}
+
+/// Every key in the tree that still takes touches, the slider's included.
+pub(super) fn touch_keys(node: &TreeNode) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_touch_keys(node, &mut out);
+    out.sort();
+    out
+}
+
+fn collect_touch_keys(node: &TreeNode, out: &mut Vec<String>) {
+    if let TreeNode::Canvas {
+        touch_key: Some(k), ..
+    }
+    | TreeNode::ProgressBar {
+        touch_key: Some(k), ..
+    } = node
+    {
+        out.push(k.clone());
+    }
+    for kid in children(node).into_iter().flatten() {
+        collect_touch_keys(kid, out);
     }
 }
 
