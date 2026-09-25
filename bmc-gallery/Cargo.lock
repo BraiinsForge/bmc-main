@@ -2479,8 +2479,8 @@ dependencies = [
 
 [[package]]
 name = "gallery"
-version = "0.11.0"
-source = "git+https://github.com/kubijo/rs-gallery.git?tag=v0.11.0#6d2327ecf3b25127338c9cb3bebf2ba219429375"
+version = "0.13.1"
+source = "git+https://github.com/kubijo/rs-gallery.git?tag=v0.13.1#b0cf1fc3b73c7ea8d391e8c70b4d006021445c79"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2522,8 +2522,8 @@ dependencies = [
 
 [[package]]
 name = "gallery-build"
-version = "0.11.0"
-source = "git+https://github.com/kubijo/rs-gallery.git?tag=v0.11.0#6d2327ecf3b25127338c9cb3bebf2ba219429375"
+version = "0.13.1"
+source = "git+https://github.com/kubijo/rs-gallery.git?tag=v0.13.1#b0cf1fc3b73c7ea8d391e8c70b4d006021445c79"
 dependencies = [
  "camino",
  "glob",
@@ -2533,8 +2533,8 @@ dependencies = [
 
 [[package]]
 name = "gallery-macros"
-version = "0.11.0"
-source = "git+https://github.com/kubijo/rs-gallery.git?tag=v0.11.0#6d2327ecf3b25127338c9cb3bebf2ba219429375"
+version = "0.13.1"
+source = "git+https://github.com/kubijo/rs-gallery.git?tag=v0.13.1#b0cf1fc3b73c7ea8d391e8c70b4d006021445c79"
 dependencies = [
  "heck",
  "prettyplease",
@@ -2864,7 +2864,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.19",
- "windows 0.62.2",
+ "windows 0.54.0",
 ]
 
 [[package]]
@@ -7150,7 +7150,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -6,7 +6,8 @@
 set default-list
 
 # Never the dev shell's tree, or each toolchain rebuilds the other's.
-export CARGO_TARGET_DIR := env('CARGO_TARGET_DIR', source_directory() / ".tmp/cargo-target")
+CARGO_TARGET_ROOT := env('CARGO_TARGET_DIR', source_directory() / ".tmp/cargo-target")
+export CARGO_TARGET_DIR := CARGO_TARGET_ROOT
 
 # Only this catches all of ruff's cache; the package `cache-dir` configs miss some.
 export RUFF_CACHE_DIR := source_directory() / ".tmp/ruff_cache"

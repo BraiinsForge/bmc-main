@@ -6,6 +6,12 @@ set working-directory := '..'
 # `gl` takes the command as positional arguments: interpolating them as one string
 # re-splits a scene name that contains a space back into two arguments.
 set positional-arguments
+# Lets the target dir below replace `common.justfile`'s.
+set allow-duplicate-variables
+
+# A tree of its own: a widget crate is a cdylib too, so its rlib's name carries no hash,
+# and the widgets workspace's build of it without `scene` would overwrite the gallery's.
+export CARGO_TARGET_DIR := CARGO_TARGET_ROOT / "gallery"
 
 # Run CMD, on mesa's software EGL when GALLERY_SOFTWARE_GL=1.
 [private]
