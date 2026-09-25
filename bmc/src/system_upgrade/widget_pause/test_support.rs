@@ -19,6 +19,7 @@
 // the grant above.
 
 use crate::system_upgrade::WidgetLifecycle;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -50,6 +51,7 @@ pub(crate) struct ScriptedLifecycle {
     stop_released: tokio::sync::Notify,
     restart_released: tokio::sync::Notify,
     calls: Mutex<Vec<Call>>,
+    running: AtomicBool,
 }
 
 impl ScriptedLifecycle {
@@ -68,11 +70,33 @@ impl ScriptedLifecycle {
             stop_released: tokio::sync::Notify::new(),
             restart_released: tokio::sync::Notify::new(),
             calls: Mutex::new(Vec::new()),
+            running: AtomicBool::new(true),
         })
+    }
+
+    /// Whether the last completed operation left the widgets running.
+    pub(crate) fn running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
     }
 
     pub(crate) fn calls(&self) -> Vec<Call> {
         self.calls.lock().expect("BUG: call log poisoned").clone()
+    }
+
+    /// For tests on real time, where a fixed sleep proves nothing.
+    pub(crate) async fn wait_for_calls(&self, expected: &[Call]) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while self.calls() != expected {
+                settle().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "the lifecycle must reach {expected:?} in time, got {:?}",
+                self.calls()
+            )
+        });
     }
 
     pub(crate) fn release_stop(&self) {
@@ -100,6 +124,7 @@ impl WidgetLifecycle for ScriptedLifecycle {
             StopBehaviour::Held => self.stop_released.notified().await,
             StopBehaviour::Panics => panic!("scripted widget stop failure"),
         }
+        self.running.store(false, Ordering::SeqCst);
     }
 
     async fn restart_widgets(&self) {
@@ -108,6 +133,7 @@ impl WidgetLifecycle for ScriptedLifecycle {
             RestartBehaviour::Immediate => {}
             RestartBehaviour::Held => self.restart_released.notified().await,
         }
+        self.running.store(true, Ordering::SeqCst);
     }
 
     async fn refresh_widgets(&self) {

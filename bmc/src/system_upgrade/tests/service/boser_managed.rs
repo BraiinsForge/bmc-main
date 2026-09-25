@@ -130,3 +130,13 @@ async fn periodic_gc_follows_maintenance_ownership() {
         );
     }
 }
+
+#[tokio::test]
+#[should_panic(expected = "a local upgrade run next to Boser's")]
+async fn a_local_run_on_a_boser_managed_board_is_a_bug() {
+    let (service, _timezone_sender) =
+        stub_service_with_capabilities(capabilities(Product::Bfm100)).await;
+    let id = firmware_offer(&service.system_upgrades).await;
+
+    _ = service.start_upgrade(id.to_string()).await;
+}

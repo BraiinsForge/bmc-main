@@ -3361,6 +3361,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_packages_refresh_waits_for_an_upgrade_restart_in_flight() {
+        let (temp, coordinator, _compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let config = config_with_scene(&temp, scene).await;
+        let lifecycle = Arc::new(UpgradeWidgetLifecycle::new(
+            Arc::new(coordinator),
+            Arc::clone(&config),
+        ));
+        let restart_in_flight = Arc::clone(&lifecycle.operations).lock_owned().await;
+
+        let refresh = tokio::spawn({
+            let lifecycle = Arc::clone(&lifecycle);
+            async move { crate::system_upgrade::WidgetLifecycle::refresh_widgets(&*lifecycle).await }
+        });
+        tokio::task::yield_now().await;
+        drop(restart_in_flight);
+        assert!(
+            lifecycle.operations.try_lock().is_err(),
+            "a refresh must queue behind an upgrade restart on the lifecycle lock, not reload beside it"
+        );
+
+        tokio::time::timeout(Duration::from_secs(5), refresh)
+            .await
+            .expect("the refresh must run once the restart finishes")
+            .expect("BUG: refresh task panicked");
+        lifecycle.coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn terminal_deactivation_follows_a_resume_waiting_for_receipts() {
         let (temp, coordinator, compositor, scene) =
             coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;

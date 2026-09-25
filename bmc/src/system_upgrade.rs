@@ -1412,6 +1412,7 @@ mod tests {
     use super::*;
 
     mod display_state;
+    mod forwarding;
     use bmc_upgrade::packages::EstimateMode;
     use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome};
     use chrono::TimeZone as _;
@@ -1475,7 +1476,14 @@ mod tests {
     }
 
     async fn firmware_offer(offers: &Mutex<SystemOfferCache>) -> ExecutionId {
-        let prepared = prepare(Vec::new(), Some(test_upgrade_detail()), async {
+        firmware_offer_of(offers, test_upgrade_detail()).await
+    }
+
+    async fn firmware_offer_of(
+        offers: &Mutex<SystemOfferCache>,
+        detail: UpgradeDetail,
+    ) -> ExecutionId {
+        let prepared = prepare(Vec::new(), Some(detail), async {
             Ok::<_, ()>(None::<PackageOffer>)
         })
         .await
@@ -2524,6 +2532,7 @@ mod tests {
         use tokio::sync::watch;
 
         mod boser_managed;
+        mod firmware_pause;
 
         const UNREACHABLE: &str = "BUG: a gated auto-upgrade must not reach the service's stubs";
 
