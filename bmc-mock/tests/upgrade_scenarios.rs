@@ -58,9 +58,10 @@ impl tonic::service::Interceptor for CookieAuth {
     }
 }
 
-async fn upgrade_client(
-    mock: &mut MockInstance,
-) -> UpgradeServiceClient<tonic::service::interceptor::InterceptedService<Channel, CookieAuth>> {
+type UpgradeClient =
+    UpgradeServiceClient<tonic::service::interceptor::InterceptedService<Channel, CookieAuth>>;
+
+async fn upgrade_client(mock: &mut MockInstance) -> UpgradeClient {
     let (channel, cookie) = common::authenticated_channel(mock).await;
     UpgradeServiceClient::with_interceptor(channel, CookieAuth(cookie))
 }
@@ -91,6 +92,18 @@ async fn drain_until_error(
     })
     .await
     .expect("stream did not error within the timeout")
+}
+
+async fn drain_until_finished(stream: &mut tonic::Streaming<UpgradeProgress>) -> bool {
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        let mut finished = false;
+        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+            finished |= matches!(progress.event, Some(upgrade_progress::Event::Finished(())));
+        }
+        finished
+    })
+    .await
+    .expect("stream did not finish within the timeout")
 }
 
 #[tokio::test]
@@ -749,13 +762,13 @@ async fn an_unchanged_check_keeps_the_upgrade_id_and_a_different_one_evicts_it()
             .expect("BUG: check must offer an id")
     };
 
-    let first = check(vec![]).await;
-    assert_eq!(check(vec![]).await, first, "the same plan keeps its id");
     let other = check(vec!["widget-flip-clock".to_owned()]).await;
-    assert_ne!(other, first, "installing a widget changes the plan");
+    let first = check(vec![]).await;
+    assert_ne!(first, other, "installing a widget changes the plan");
+    assert_eq!(check(vec![]).await, first, "the same plan keeps its id");
 
     let mut stream = client
-        .start_upgrade(StartUpgradeRequest { upgrade_id: first })
+        .start_upgrade(StartUpgradeRequest { upgrade_id: other })
         .await
         .expect("BUG: start failed")
         .into_inner();
@@ -765,6 +778,70 @@ async fn an_unchanged_check_keeps_the_upgrade_id_and_a_different_one_evicts_it()
         "an evicted id must fail before any progress event"
     );
     assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id: first })
+        .await
+        .expect("BUG: the kept id must start")
+        .into_inner();
+    assert!(
+        drain_until_finished(&mut stream).await,
+        "the kept id runs to the end"
+    );
+}
+
+#[tokio::test]
+async fn a_changed_scenario_retires_the_offer_and_the_new_one_runs() {
+    let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
+    let mut client = upgrade_client(&mut mock).await;
+    let mut check = async || {
+        client
+            .check_for_upgrade(CheckForUpgradeRequest {
+                install_packages: vec![],
+            })
+            .await
+            .expect("BUG: check failed")
+            .into_inner()
+    };
+
+    let before = check().await;
+    assert!(before.firmware.is_some(), "the first check offers firmware");
+    std::fs::write(
+        mock.mockfs.join("etc/upgrade-scenario.json"),
+        r#"{"firmware": "up-to-date", "packages": "available"}"#,
+    )
+    .expect("BUG: rewrite scenario");
+    let after = check().await;
+    assert!(after.firmware.is_none(), "the firmware release went away");
+    let firmware = before.upgrade_id.expect("BUG: check must offer an id");
+    let packages = after.upgrade_id.expect("BUG: check must offer an id");
+    assert_ne!(packages, firmware, "a different upgrade gets a new id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest {
+            upgrade_id: firmware,
+        })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let (events, error) = drain_until_error(&mut stream).await;
+    assert!(
+        events.is_empty(),
+        "a retired id must fail before any progress event"
+    );
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest {
+            upgrade_id: packages,
+        })
+        .await
+        .expect("BUG: the new id must start")
+        .into_inner();
+    assert!(
+        drain_until_finished(&mut stream).await,
+        "the new id runs to the end"
+    );
 }
 
 #[tokio::test]
@@ -815,6 +892,7 @@ async fn scenario_flip_changes_next_check() {
         .expect("BUG: check failed")
         .into_inner();
     assert!(response.firmware.is_some());
+    let retired = response.upgrade_id.expect("BUG: firmware creates an offer");
 
     std::fs::write(
         mock.mockfs.join("etc/upgrade-scenario.json"),
@@ -831,6 +909,125 @@ async fn scenario_flip_changes_next_check() {
         .into_inner();
     assert!(response.firmware.is_none());
     assert!(response.upgrade_id.is_none());
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest {
+            upgrade_id: retired,
+        })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let (events, error) = drain_until_error(&mut stream).await;
+    assert!(
+        events.is_empty(),
+        "a check that finds nothing must retire the offer before any progress event"
+    );
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+}
+
+#[tokio::test]
+async fn a_changed_profile_retires_the_packages_offer_and_the_new_one_runs() {
+    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+    let mut client = upgrade_client(&mut mock).await;
+    let check = async |client: &mut UpgradeClient| {
+        client
+            .check_for_upgrade(CheckForUpgradeRequest {
+                install_packages: vec![],
+            })
+            .await
+            .expect("BUG: check failed")
+            .into_inner()
+            .upgrade_id
+            .expect("BUG: check must offer an id")
+    };
+
+    let shadowed = check(&mut client).await;
+    std::fs::write(
+        mock.mockfs.join("etc/upgrade-scenario.json"),
+        r#"{"firmware": "up-to-date", "packages": "available"}"#,
+    )
+    .expect("BUG: rewrite scenario");
+    let installed = check(&mut client).await;
+    assert_ne!(
+        installed, shadowed,
+        "a widget that got installed changes the plan"
+    );
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest {
+            upgrade_id: shadowed,
+        })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let (events, error) = drain_until_error(&mut stream).await;
+    assert!(
+        events.is_empty(),
+        "a retired id must fail before any progress event"
+    );
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest {
+            upgrade_id: installed,
+        })
+        .await
+        .expect("BUG: the new id must start")
+        .into_inner();
+    assert!(
+        drain_until_finished(&mut stream).await,
+        "the new id runs to the end"
+    );
+}
+
+#[tokio::test]
+async fn a_shared_id_starts_once_and_is_busy_while_it_runs() {
+    let mut mock = spawn_mock_realistic(r#"{"firmware": "up-to-date", "packages": "available"}"#);
+    let mut client = upgrade_client(&mut mock).await;
+    let mut other_tab = client.clone();
+    let check = async |client: &mut UpgradeClient| {
+        client
+            .check_for_upgrade(CheckForUpgradeRequest {
+                install_packages: vec![],
+            })
+            .await
+            .expect("BUG: check failed")
+            .into_inner()
+            .upgrade_id
+            .expect("BUG: check must offer an id")
+    };
+    let upgrade_id = check(&mut client).await;
+    assert_eq!(check(&mut other_tab).await, upgrade_id);
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest {
+            upgrade_id: upgrade_id.clone(),
+        })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let first = stream
+        .message()
+        .await
+        .expect("BUG: stream errored before first event")
+        .expect("BUG: stream ended before first event");
+    assert!(first.event.is_some(), "expected a progress event");
+
+    let mut second = other_tab
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let (events, error) = drain_until_error(&mut second).await;
+    assert!(
+        events.is_empty(),
+        "a second start of the shared id must be refused before any progress event"
+    );
+    assert_eq!(error.code(), tonic::Code::Unavailable);
+    assert!(
+        drain_until_finished(&mut stream).await,
+        "the first start runs the shared offer to the end"
+    );
 }
 
 const SHADOWED_SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
