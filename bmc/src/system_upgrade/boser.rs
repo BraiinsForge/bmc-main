@@ -58,6 +58,9 @@ struct Projection {
     display: DisplayStateService,
     state: StateService,
     current: Option<(ExecutionKey, UpgradeGeneration)>,
+    /// The execution that ended without an outcome, until another one starts:
+    /// an outcome Boser reports for it after the outage grace still counts.
+    ended: Option<(ExecutionKey, UpgradeGeneration)>,
     outage_since: Option<Instant>,
 }
 
@@ -80,13 +83,22 @@ impl StateSink for Projection {
             // ended and its outcome was not observed.
             self.end_current();
         }
-        // A terminal presents only when it continues the execution on display,
-        // which rules out both the terminal Boser retains at boot and its replay
-        // after a reconnect.
-        if let Some((key, state @ UpgradeDisplayState::Running { .. })) = projected {
-            let generation = self.display.next_generation();
-            self.current = Some((key, generation));
-            self.present(generation, state);
+        // Present an outcome only for the running execution or the one that ended
+        // before its outcome arrived. That drops the outcome Boser retains from
+        // before boot and a replay of one already presented.
+        match projected {
+            Some((key, state @ UpgradeDisplayState::Running { .. })) => {
+                self.ended = None;
+                let generation = self.display.next_generation();
+                self.current = Some((key, generation));
+                self.present(generation, state);
+            }
+            Some((key, state)) => {
+                if let Some((_, generation)) = self.ended.take_if(|(ended, _)| *ended == key) {
+                    self.present(generation, state);
+                }
+            }
+            None => {}
         }
     }
 
@@ -115,6 +127,7 @@ impl Projection {
             display,
             state,
             current: None,
+            ended: None,
             outage_since: None,
         }
     }
@@ -141,7 +154,8 @@ impl Projection {
     /// to the compositor keeps its deadline.
     fn end_current(&mut self) {
         self.outage_since = None;
-        if self.current.take().is_some() {
+        if let Some(ended) = self.current.take() {
+            self.ended = Some(ended);
             self.display.clear();
             self.state.clear();
         }

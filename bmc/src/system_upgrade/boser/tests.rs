@@ -527,7 +527,7 @@ async fn a_recovered_execution_gets_a_fresh_grace_for_its_next_outage() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_expired_execution_ignores_its_terminal_but_can_restart_running() {
+async fn an_expired_execution_presents_its_late_terminal_and_can_restart_running() {
     let mut bench = bench();
     let id = ExecutionId::new();
     bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
@@ -535,14 +535,53 @@ async fn an_expired_execution_ignores_its_terminal_but_can_restart_running() {
     bench.projection.stream_lost();
     tokio::time::advance(UPGRADE_OUTAGE_GRACE).await;
     bench.projection.stream_lost();
+    assert_eq!(bench.display(), None);
 
     bench.observe(&completed(id));
-    assert_eq!(bench.display(), None);
-    assert_eq!(bench.state(), None);
+    assert_eq!(
+        bench.display(),
+        Some(UpgradeDisplaySnapshot {
+            generation,
+            state: UpgradeDisplayState::Succeeded {
+                kind: UpgradeKind::Packages
+            },
+        }),
+        "Boser was alive to report the outcome, so the outage did not lose it"
+    );
+    assert_eq!(bench.state(), Some(SystemUpgradeState::Finished));
 
     bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
     assert_ne!(bench.generation(), generation);
     assert_eq!(bench.state(), Some(SystemUpgradeState::UpgradeStarted));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_new_execution_forgets_the_one_the_outage_ended() {
+    let mut bench = bench();
+    let expired = ExecutionId::new();
+    bench.observe(&running(
+        expired,
+        WirePhase::Packages(PackagePhase::Building),
+    ));
+    bench.projection.stream_lost();
+    tokio::time::advance(UPGRADE_OUTAGE_GRACE).await;
+    bench.projection.stream_lost();
+    let next = ExecutionId::new();
+    bench.observe(&running(
+        next,
+        WirePhase::Packages(PackagePhase::Activating),
+    ));
+    bench.observe(&completed(next));
+    let shown = bench.display();
+
+    bench.observe(&failed(expired));
+
+    assert_eq!(
+        bench.display(),
+        shown,
+        "a terminal of the execution the outage ended must not overwrite a later outcome"
+    );
+    assert_eq!(bench.state(), Some(SystemUpgradeState::Finished));
 }
 
 #[tokio::test(start_paused = true)]
@@ -732,5 +771,43 @@ async fn the_legacy_boser_sequence_keeps_widgets_stopped_across_its_none() {
         widgets.calls(),
         [Call::Stop],
         "the BOS frontend flashes as a new execution right after the download's bare None"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failure_reported_after_the_outage_grace_restarts_widgets() {
+    let widgets = ScriptedLifecycle::new(StopBehaviour::Immediate);
+    let mut projection = projection_with_widget_pause(&widgets);
+    let id = ExecutionId::new();
+    let kind = UpgradeKind::Firmware;
+
+    projection.observe(&running_with_kind(
+        id,
+        kind,
+        WirePhase::Firmware(FirmwarePhase::Flashing),
+    ));
+    settle().await;
+    projection.stream_lost();
+    tokio::time::advance(UPGRADE_OUTAGE_GRACE).await;
+    projection.stream_lost();
+    settle().await;
+    assert_eq!(
+        widgets.calls(),
+        [Call::Stop],
+        "silence after a reported flash keeps the widgets stopped"
+    );
+
+    projection.observe(&UpgradeState::Failed {
+        id,
+        kind,
+        phase: WirePhase::Firmware(FirmwarePhase::Flashing),
+        reason: "flash failed".to_owned(),
+    });
+    settle().await;
+
+    assert_eq!(
+        widgets.calls(),
+        [Call::Stop, Call::Restart],
+        "Boser reporting the failure means the board is not flashing"
     );
 }
