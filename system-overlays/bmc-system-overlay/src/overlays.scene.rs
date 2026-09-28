@@ -304,6 +304,8 @@ render_states!(
     TRAY_WIFI_FAILED,
     TRAY_ALL_GROUPS,
     TRAY_SETUP,
+    TRAY_WEAK_SIGNAL,
+    TRAY_NO_SIGNAL,
 );
 
 #[expect(
@@ -690,6 +692,11 @@ mod device_info_bmm100 {
 /// Every tray state at one product's display: the tray at rest, each control group's variants,
 /// and the worst case with every group on at once. The size comes from the product,
 /// so a geometry change there shows up here.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a flat catalogue: one card per tray state, which reads worse \
+              split across helpers than listed in one place"
+)]
 fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
     let flat = ctx.toggle("Flat backdrop", false);
     let resting = tray_view(product);
@@ -800,6 +807,16 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
             "Setup mode",
             variant(|view| view.setup_ssid = Some("Braiins-Deck-Setup-A1B2C3".to_owned())),
             &TRAY_SETUP,
+        ),
+        (
+            "Weak signal",
+            variant(|view| view.wifi_signal = Some(-80)),
+            &TRAY_WEAK_SIGNAL,
+        ),
+        (
+            "No signal reading",
+            variant(|view| view.wifi_signal = None),
+            &TRAY_NO_SIGNAL,
         ),
     ]);
 

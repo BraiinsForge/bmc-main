@@ -23,13 +23,15 @@
 
 use super::controls::{control_groups, control_rows};
 use super::notice::NOTICE_SIZE;
-use super::parts::{close_origin, fixed_width, ip_qr, pad_horizontal, text_style};
+use super::parts::{close_origin, fixed_width, ip_qr, pad_horizontal, text_style, wifi_icon};
 use super::{
     BRIGHTNESS_ICON_SIZE, BRIGHTNESS_SLIDER_KEY, COMPACT_CLOSE_MARGIN, COMPACT_GAP,
-    COMPACT_INFO_SIZE, COMPACT_QR_SIZE, Content, ControlIcons, NO_DATA_PLACEHOLDER, Panel,
-    SLIDER_TRACK_H, Tier, brightness_fraction,
+    COMPACT_INFO_SIZE, COMPACT_QR_SIZE, COMPACT_WIFI_GAP, COMPACT_WIFI_ICON_SIZE, Content,
+    ControlIcons, NO_DATA_PLACEHOLDER, Panel, SLIDER_TRACK_H, Tier, WifiView, brightness_fraction,
 };
-use bmc_render::tree::{DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, text};
+use bmc_render::tree::{
+    DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
+};
 use bmc_wasm_protocol::colors::{GRAY_40, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{CrossAlign, ProgressKind, TextAlign, TextOverflow};
 
@@ -72,26 +74,42 @@ pub(super) fn slider(key: &'static str, fraction: f32) -> TreeNode {
 }
 
 /// One column of the compact address table, evenly spaced.
-fn compact_info_column(props: PropsData, lines: [&str; 3], style: TextStyle) -> TreeNode {
+fn compact_info_column(props: PropsData, lines: Vec<TreeNode>) -> TreeNode {
     let mut kids = Vec::new();
     for line in lines {
         if !kids.is_empty() {
             kids.push(fixed_height(COMPACT_GAP));
         }
-        kids.push(text(line, style));
+        kids.push(line);
     }
     col(props, kids)
+}
+
+/// The signal icon and the station SSID,
+/// or the problem icon and the AP SSID while setup runs.
+fn compact_wifi_value(content: Content<'_>, style: TextStyle) -> TreeNode {
+    let (wifi_signal, ssid) = match content.wifi_view {
+        WifiView::Idle => (content.wifi_signal, content.ssid),
+        WifiView::Setup { ap_ssid } => (None, ap_ssid),
+    };
+    row(
+        PropsData {
+            cross_align: CrossAlign::Center,
+            ..PropsData::default()
+        },
+        vec![
+            spacer(1.0),
+            wifi_icon(content.icons, wifi_signal, COMPACT_WIFI_ICON_SIZE),
+            fixed_width(COMPACT_WIFI_GAP),
+            text(ssid, style),
+        ],
+    )
 }
 
 /// The compact address block. Both columns come from one list, so a row
 /// cannot appear on one side alone and slide the values out of line.
 /// Capped short of the close target floating over its top-right corner.
 fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode {
-    let rows = [
-        ("Hostname", content.hostname.unwrap_or(NO_DATA_PLACEHOLDER)),
-        ("IP Address", content.ip.unwrap_or(NO_DATA_PLACEHOLDER)),
-        ("WiFi SSID", content.ssid),
-    ];
     let label_style = TextStyle {
         align: TextAlign::Left,
         ..text_style(COMPACT_INFO_SIZE, GRAY_40)
@@ -107,12 +125,24 @@ fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode 
         kids.push(ip_qr(ip, COMPACT_QR_SIZE));
         kids.push(fixed_width(COMPACT_GAP));
     }
-    kids.extend([
-        compact_info_column(
-            PropsData::default(),
-            rows.map(|(label, _)| label),
-            label_style,
+
+    let rows = [
+        (
+            "Hostname",
+            text(content.hostname.unwrap_or(NO_DATA_PLACEHOLDER), value_style),
         ),
+        (
+            "IP Address",
+            text(content.ip.unwrap_or(NO_DATA_PLACEHOLDER), value_style),
+        ),
+        ("WiFi SSID", compact_wifi_value(content, value_style)),
+    ];
+    let (label_nodes, value_nodes) = rows
+        .into_iter()
+        .map(|(label, value)| (text(label, label_style), value))
+        .unzip();
+    kids.extend([
+        compact_info_column(PropsData::default(), label_nodes),
         fixed_width(COMPACT_GAP),
         // Grown from zero rather than shrunk from its content, so an overlong value
         // gives way inside its own column and never squeezes a label into wrapping.
@@ -121,8 +151,7 @@ fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode 
                 flex: 1.0,
                 ..PropsData::default()
             },
-            rows.map(|(_, value)| value),
-            value_style,
+            value_nodes,
         ),
     ]);
 
@@ -181,4 +210,102 @@ pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -
     )];
     children.extend(compact_control_rows(content, tier));
     children
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_render::tree::{DrawCommand, TreeNode};
+    use bmc_wasm_protocol::SvgId;
+
+    use super::*;
+    use crate::ui::test_support::*;
+    use crate::ui::{ControlIcons, build_tree};
+
+    /// BMM101 as it ships: no reconfigure button,
+    /// whose glyph would add a second WiFi icon to the tree.
+    fn bmm101_panel() -> Panel {
+        Panel {
+            wifi_button: false,
+            ..narrow_panel()
+        }
+    }
+
+    fn svg_ids(node: &TreeNode, out: &mut Vec<SvgId>) {
+        if let TreeNode::Canvas { draws, .. } = node {
+            out.extend(draws.iter().filter_map(|draw| {
+                if let DrawCommand::Svg { icon_id, .. } = draw {
+                    *icon_id
+                } else {
+                    None
+                }
+            }));
+        }
+        for kid in children(node).into_iter().flatten() {
+            svg_ids(kid, out);
+        }
+    }
+
+    fn signal_icons_drawn(tree: &TreeNode) -> Vec<SvgId> {
+        let icons = distinct_icons();
+        let signal = [icons.problem, icons.low, icons.fair, icons.strong];
+        let mut ids = Vec::new();
+        svg_ids(tree, &mut ids);
+        ids.retain(|id| signal.contains(&Some(*id)));
+        ids
+    }
+
+    fn tray(wifi_signal: Option<i32>, view: WifiView<'_>) -> TreeNode {
+        build_tree(
+            Some("braiins-mini"),
+            Some("10.0.0.42"),
+            wifi_signal,
+            Some("Workshop-WiFi"),
+            distinct_icons(),
+            bmm101_panel(),
+            view,
+            ControlIcons::default(),
+            all_controls(),
+        )
+    }
+
+    #[test]
+    fn the_ssid_carries_the_icon_of_its_signal_band() {
+        let icons = distinct_icons();
+        for (dbm, expected) in [
+            (Some(-52), icons.strong),
+            (Some(-70), icons.fair),
+            (Some(-80), icons.low),
+            (None, icons.problem),
+        ] {
+            let drawn = signal_icons_drawn(&tray(dbm, WifiView::Idle));
+            assert_eq!(
+                drawn,
+                vec![expected.expect("BUG: distinct icons are all set")],
+                "{dbm:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn setup_mode_shows_the_problem_icon_beside_the_ap_ssid() {
+        let tree = tray(
+            Some(-52),
+            WifiView::Setup {
+                ap_ssid: "Mini-Setup",
+            },
+        );
+        assert_eq!(
+            signal_icons_drawn(&tree),
+            vec![
+                distinct_icons()
+                    .problem
+                    .expect("BUG: distinct icons are all set")
+            ],
+            "the station's reading does not describe the setup AP"
+        );
+        let mut texts = Vec::new();
+        collect_texts(&tree, &mut texts);
+        assert!(texts.iter().any(|t| t == "Mini-Setup"), "{texts:?}");
+        assert!(!texts.iter().any(|t| t == "Workshop-WiFi"), "{texts:?}");
+    }
 }

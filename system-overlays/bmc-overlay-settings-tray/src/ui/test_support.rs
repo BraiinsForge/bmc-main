@@ -24,7 +24,7 @@
 
 use bmc_platform::DisplayShape;
 use bmc_render::tree::{DrawCommand, TextStyle, TreeNode};
-use bmc_wasm_protocol::{Color, Fill};
+use bmc_wasm_protocol::{Color, Fill, SvgId};
 
 use super::*;
 
@@ -52,6 +52,17 @@ pub(super) fn narrow_panel() -> Panel {
         width: 480,
         height: 320,
         wifi_button: true,
+    }
+}
+
+/// A distinct id per signal icon, so a test can tell which one was drawn.
+pub(super) fn distinct_icons() -> WifiIcons {
+    let id = |raw| SvgId::from_wire(raw).expect("BUG: test SvgId must be non-zero");
+    WifiIcons {
+        problem: Some(id(1)),
+        low: Some(id(2)),
+        fair: Some(id(3)),
+        strong: Some(id(4)),
     }
 }
 

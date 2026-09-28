@@ -199,6 +199,16 @@ const COMPACT_CLOSE_MARGIN: f32 = 16.0;
 /// Text size of the compact info table, labels and values alike.
 const COMPACT_INFO_SIZE: u32 = 16;
 
+/// The compact table's WiFi icon and its gap to the SSID.
+const COMPACT_WIFI_ICON_SIZE: f32 = 20.0;
+const COMPACT_WIFI_GAP: f32 = 8.0;
+
+#[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
+const _: () = assert!(
+    COMPACT_WIFI_ICON_SIZE <= COMPACT_INFO_SIZE as f32 * LINE_H,
+    "BUG: the WiFi icon must not set the compact SSID row's height",
+);
+
 /// Side of the square brightness icon beside the slider.
 const BRIGHTNESS_ICON_SIZE: f32 = 32.0;
 
@@ -620,7 +630,7 @@ pub fn build_tree(
 mod tests {
     use bmc_render::tree::{PropsData, TreeNode};
 
-    use bmc_wasm_protocol::{SvgId, TextOverflow};
+    use bmc_wasm_protocol::TextOverflow;
 
     use super::*;
     use crate::ui::parts::close_origin;
@@ -1077,16 +1087,6 @@ mod tests {
             build(narrow_panel(), WifiView::Idle),
             TreeNode::Column(..)
         ));
-    }
-
-    fn distinct_icons() -> WifiIcons {
-        let id = |raw| SvgId::from_wire(raw).expect("BUG: test SvgId must be non-zero");
-        WifiIcons {
-            problem: Some(id(1)),
-            low: Some(id(2)),
-            fair: Some(id(3)),
-            strong: Some(id(4)),
-        }
     }
 
     #[test]
