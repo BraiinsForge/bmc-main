@@ -17,5 +17,7 @@ mod miner-info-mining 'miner-info-mining'
 mod miner-info-overload 'miner-info-overload'
 # SpaceX Launch widget: sim-backed dev, gallery captures and fixture recording.
 mod spacex-launch 'spacex-launch'
+# Ticker List widget: sim-backed dev, gallery captures and fixture recording.
+mod ticker-list 'ticker-list'
 # Weather widget: sim-backed dev, gallery captures and fixture recording.
 mod weather 'weather'

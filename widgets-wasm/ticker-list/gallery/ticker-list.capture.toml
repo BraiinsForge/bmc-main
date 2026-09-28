@@ -1,0 +1,395 @@
+# The recorded fixture replays one live session and shows only the states it hit;
+# these scenes stage every row state at every frame from view fixtures.
+
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+# BMM101 first: mixed-states seats a live row, a shut market and an unknown symbol.
+
+[[shot]]
+name = "mixed-states-bmm101"
+scene = "bmc_gallery::ticker_list::Mixed States"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "healthy-bmm101"
+scene = "bmc_gallery::ticker_list::Healthy"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "loading-bmm101"
+scene = "bmc_gallery::ticker_list::Loading"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "failed-bmm101"
+scene = "bmc_gallery::ticker_list::Failed"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "stale-bmm101"
+scene = "bmc_gallery::ticker_list::Stale"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "closed-markets-bmm101"
+scene = "bmc_gallery::ticker_list::Closed Markets"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "no-symbols-bmm101"
+scene = "bmc_gallery::ticker_list::No Symbols"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "one-symbol-bmm101"
+scene = "bmc_gallery::ticker_list::One Symbol"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+# The Deck bands and BMM100, which BMM101 is judged against.
+
+[[shot]]
+name = "healthy-full"
+scene = "bmc_gallery::ticker_list::Healthy"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "healthy-large"
+scene = "bmc_gallery::ticker_list::Healthy"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "healthy-medium"
+scene = "bmc_gallery::ticker_list::Healthy"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "healthy-small"
+scene = "bmc_gallery::ticker_list::Healthy"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "healthy-bmm100"
+scene = "bmc_gallery::ticker_list::Healthy"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "mixed-states-full"
+scene = "bmc_gallery::ticker_list::Mixed States"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "mixed-states-large"
+scene = "bmc_gallery::ticker_list::Mixed States"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "mixed-states-medium"
+scene = "bmc_gallery::ticker_list::Mixed States"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "mixed-states-small"
+scene = "bmc_gallery::ticker_list::Mixed States"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "mixed-states-bmm100"
+scene = "bmc_gallery::ticker_list::Mixed States"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "loading-full"
+scene = "bmc_gallery::ticker_list::Loading"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "loading-large"
+scene = "bmc_gallery::ticker_list::Loading"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "loading-medium"
+scene = "bmc_gallery::ticker_list::Loading"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "loading-small"
+scene = "bmc_gallery::ticker_list::Loading"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "loading-bmm100"
+scene = "bmc_gallery::ticker_list::Loading"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "failed-full"
+scene = "bmc_gallery::ticker_list::Failed"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "failed-large"
+scene = "bmc_gallery::ticker_list::Failed"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "failed-medium"
+scene = "bmc_gallery::ticker_list::Failed"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "failed-small"
+scene = "bmc_gallery::ticker_list::Failed"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "failed-bmm100"
+scene = "bmc_gallery::ticker_list::Failed"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "stale-full"
+scene = "bmc_gallery::ticker_list::Stale"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "stale-large"
+scene = "bmc_gallery::ticker_list::Stale"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "stale-medium"
+scene = "bmc_gallery::ticker_list::Stale"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "stale-small"
+scene = "bmc_gallery::ticker_list::Stale"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "stale-bmm100"
+scene = "bmc_gallery::ticker_list::Stale"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "closed-markets-full"
+scene = "bmc_gallery::ticker_list::Closed Markets"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "closed-markets-large"
+scene = "bmc_gallery::ticker_list::Closed Markets"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "closed-markets-medium"
+scene = "bmc_gallery::ticker_list::Closed Markets"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "closed-markets-small"
+scene = "bmc_gallery::ticker_list::Closed Markets"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "closed-markets-bmm100"
+scene = "bmc_gallery::ticker_list::Closed Markets"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "no-symbols-full"
+scene = "bmc_gallery::ticker_list::No Symbols"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "no-symbols-large"
+scene = "bmc_gallery::ticker_list::No Symbols"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "no-symbols-medium"
+scene = "bmc_gallery::ticker_list::No Symbols"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "no-symbols-small"
+scene = "bmc_gallery::ticker_list::No Symbols"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "no-symbols-bmm100"
+scene = "bmc_gallery::ticker_list::No Symbols"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "one-symbol-full"
+scene = "bmc_gallery::ticker_list::One Symbol"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "one-symbol-large"
+scene = "bmc_gallery::ticker_list::One Symbol"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "one-symbol-medium"
+scene = "bmc_gallery::ticker_list::One Symbol"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "one-symbol-small"
+scene = "bmc_gallery::ticker_list::One Symbol"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "one-symbol-bmm100"
+scene = "bmc_gallery::ticker_list::One Symbol"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"

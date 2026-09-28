@@ -324,6 +324,11 @@ pub fn view(
     stale: &[Option<SystemTime>],
     ws: WidgetSize,
 ) -> Node {
+    // Only an empty list collapses to a message. Rows that all failed keep
+    // their placeholders: each names its symbol and why it is missing.
+    if symbols.is_empty() {
+        return message_view("No symbols provided", ws);
+    }
     let band = band_for(ws.variant).scaled(ws.fit());
     #[expect(
         clippy::cast_precision_loss,
@@ -359,9 +364,7 @@ pub fn view(
     )
 }
 
-/// A centered full-widget message (invalid symbols / all failed).
-#[must_use]
-pub fn message_view(message: &str, ws: WidgetSize) -> Node {
+fn message_view(message: &str, ws: WidgetSize) -> Node {
     let band = band_for(ws.variant).scaled(ws.fit());
     #[expect(
         clippy::cast_precision_loss,
@@ -384,6 +387,52 @@ pub fn message_view(message: &str, ws: WidgetSize) -> Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures;
+
+    /// Every paragraph the tree would draw, in tree order.
+    fn texts(node: &Node) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_texts(node, &mut out);
+        out
+    }
+
+    fn collect_texts(node: &Node, out: &mut Vec<String>) {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                for child in children {
+                    collect_texts(child, out);
+                }
+            }
+            Node::Paragraph { spans, .. } => {
+                out.push(spans.iter().map(|span| span.text.as_str()).collect());
+            }
+            _ => {}
+        }
+    }
+
+    fn view_of(list: &fixtures::List, size: WidgetSize) -> Node {
+        view(&list.symbols, &list.states, &list.names, &list.stale, size)
+    }
+
+    #[test]
+    fn an_empty_list_reads_as_a_message_not_blank_rows() {
+        let size = WidgetSize::from_dimensions(638, 480);
+        assert_eq!(
+            texts(&view_of(&fixtures::no_symbols(), size)),
+            ["No symbols provided"]
+        );
+    }
+
+    #[test]
+    fn a_list_whose_rows_all_failed_keeps_each_placeholder() {
+        let size = WidgetSize::from_dimensions(638, 480);
+        let texts = texts(&view_of(&fixtures::failed(), size));
+        assert_eq!(
+            texts.iter().filter(|text| *text == "Unavailable").count(),
+            crate::layout::size_capacity(SizeVariant::Large),
+            "every seated row names why it is missing: {texts:?}"
+        );
+    }
 
     fn sparkline_stroke_color(node: Node) -> Color {
         let Node::Row(_, children) = node else {

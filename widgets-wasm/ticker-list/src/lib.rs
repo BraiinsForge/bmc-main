@@ -22,6 +22,7 @@
 //! symbol: symbol + best-effort company name + sparkline + price + signed
 //! change. One bad symbol degrades only its own row.
 
+pub mod fixtures;
 pub mod layout;
 mod manifest_params;
 pub mod model;
@@ -643,35 +644,25 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
         let ws = widget_size();
-        let node = if SYMBOLS.with(|s| s.borrow().is_empty()) {
-            render::message_view("No symbols provided", ws)
-        } else {
-            // Even when every row failed, keep the per-row placeholders: each
-            // one names its symbol and why it is missing, which a collapsed
-            // whole-widget message would hide.
-
-            // Each badge ages from its row's last good load, but only while
-            // that row is stale — the same anchor rule ticker-single applies.
-            let stale: Vec<Option<SystemTime>> = PRICE_HANDLES.with(|h| {
-                h.borrow()
-                    .iter()
-                    .map(|h| {
-                        if h.is_stale() {
-                            h.last_success_time()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            });
-            SYMBOLS.with(|sym| {
-                STATES.with(|st| {
-                    NAMES.with(|nm| {
-                        render::view(&sym.borrow(), &st.borrow(), &nm.borrow(), &stale, ws)
-                    })
+        // Each badge ages from its row's last good load, but only while
+        // that row is stale — the same anchor rule ticker-single applies.
+        let stale: Vec<Option<SystemTime>> = PRICE_HANDLES.with(|h| {
+            h.borrow()
+                .iter()
+                .map(|h| {
+                    if h.is_stale() {
+                        h.last_success_time()
+                    } else {
+                        None
+                    }
                 })
+                .collect()
+        });
+        let node = SYMBOLS.with(|sym| {
+            STATES.with(|st| {
+                NAMES.with(|nm| render::view(&sym.borrow(), &st.borrow(), &nm.borrow(), &stale, ws))
             })
-        };
+        });
         let _ = render_ui(ws.width, ws.height, node);
     }
 }

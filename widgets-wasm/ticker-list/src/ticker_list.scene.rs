@@ -18,124 +18,84 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+//! Every state of the list, rendered natively over fixture data
+//! on each device frame the manifest admits.
+
 use bmc_gallery::prelude::*;
-use prices::format::price_change;
-use ticker_list::model::{RowState, TickerRow};
+use ticker_list::fixtures::{self, List};
 use ticker_list::render;
 
 scene_meta! { title: "Widgets / Tickers / Ticker List" }
 
-#[derive(Clone, Copy)]
-enum Viewport {
-    Variant(SizeVariant),
-    Dimensions(u32, u32),
+/// Every device frame the gallery knows of, less the round face,
+/// which the manifest does not admit.
+fn viewports() -> impl Iterator<Item = DeviceViewport> {
+    DEVICE_VIEWPORTS
+        .into_iter()
+        .filter(|viewport| !viewport.size.is_round())
 }
 
-const VIEWPORTS: [(Viewport, &str); 5] = [
-    (Viewport::Variant(SizeVariant::Full), "Fullscreen"),
-    (Viewport::Variant(SizeVariant::Large), "Large"),
-    (Viewport::Variant(SizeVariant::Medium), "Medium"),
-    (Viewport::Variant(SizeVariant::Small), "Small"),
-    (Viewport::Dimensions(480, 320), "BMM101"),
-];
+/// Which viewport to stage, as an index into [`viewports`], `None` for all of them.
+/// A capture recipe pins one: six stages stacked overrun the renderer's texture bound.
+fn only_size(ctx: &mut SceneCtx) -> Option<usize> {
+    let mut labels = vec!["All"];
+    labels.extend(viewports().map(|viewport| viewport.label));
+    ctx.select("Size", &labels, 0).checked_sub(1)
+}
 
-const ROWS: [(&str, &str, [f64; 7], bool); 8] = [
-    (
-        "AAPL",
-        "Apple Inc.",
-        [296.0, 299.0, 298.0, 302.0, 304.0, 303.0, 306.0],
-        true,
-    ),
-    (
-        "TSLA",
-        "Tesla, Inc.",
-        [348.0, 344.0, 345.0, 340.0, 337.0, 338.0, 334.0],
-        false,
-    ),
-    (
-        "MSFT",
-        "Microsoft Corp.",
-        [510.0, 512.0, 511.0, 515.0, 518.0, 517.0, 521.0],
-        true,
-    ),
-    (
-        "META",
-        "Meta Platforms, Inc.",
-        [575.0, 572.0, 568.0, 570.0, 565.0, 561.0, 559.0],
-        true,
-    ),
-    (
-        "JPM",
-        "JPMorgan Chase & Co.",
-        [356.0, 357.0, 360.0, 359.0, 362.0, 364.0, 366.0],
-        false,
-    ),
-    (
-        "NVDA",
-        "NVIDIA Corp.",
-        [186.0, 184.0, 185.0, 181.0, 179.0, 176.0, 174.0],
-        true,
-    ),
-    (
-        "SPY",
-        "SPDR S&P 500 ETF Trust",
-        [766.0, 768.0, 767.0, 771.0, 774.0, 773.0, 777.0],
-        true,
-    ),
-    (
-        "NFLX",
-        "Netflix, Inc.",
-        [82.0, 81.0, 79.0, 80.0, 77.0, 75.0, 74.0],
-        false,
-    ),
-];
-
-fn fixture() -> (Vec<String>, Vec<RowState>, Vec<Option<String>>) {
-    let mut symbols = Vec::with_capacity(ROWS.len());
-    let mut states = Vec::with_capacity(ROWS.len());
-    let mut names = Vec::with_capacity(ROWS.len());
-    for (symbol, name, series, market_open) in ROWS {
-        let first = series[0];
-        let price = series[series.len() - 1];
-        symbols.push(symbol.to_owned());
-        names.push(Some(name.to_owned()));
-        states.push(RowState::Resolved {
-            data: TickerRow {
-                symbol: symbol.to_owned(),
-                price,
-                change_pct: price_change(first, price),
-                series: series.to_vec(),
-                market_open,
-            },
+fn list_stages(ctx: &mut SceneCtx, ui: &mut Ui, list: fn() -> List) {
+    let only = only_size(ctx);
+    system_settings(ctx);
+    for (index, viewport) in viewports().enumerate() {
+        if only.is_some_and(|wanted| wanted != index) {
+            continue;
+        }
+        let (width, height) = viewport.pixels();
+        let size = WidgetSize::from_dimensions(width, height);
+        ui.heading(viewport.label);
+        ctx.node_stage(ui, viewport.size, move || {
+            let list = list();
+            render::view(&list.symbols, &list.states, &list.names, &list.stale, size)
         });
     }
-    (symbols, states, names)
-}
-
-fn render_viewport(ctx: &mut SceneCtx, ui: &mut Ui, (viewport, label): (Viewport, &str)) {
-    let size = match viewport {
-        Viewport::Variant(variant) => WidgetSize {
-            variant,
-            width: variant.width(),
-            height: variant.height(),
-        },
-        Viewport::Dimensions(width, height) => WidgetSize::from_dimensions(width, height),
-    };
-    let (width, height) = (size.width, size.height);
-    ui.heading(label);
-    ctx.node_stage(ui, (width, height), || {
-        let (symbols, states, names) = fixture();
-        let stale: [Option<SystemTime>; ROWS.len()] = [None; ROWS.len()];
-        render::view(&symbols, &states, &names, &stale, size)
-    });
 }
 
 #[scene(default)]
-fn ticker_list(ctx: &mut SceneCtx, ui: &mut Ui) {
-    render_viewport(ctx, ui, VIEWPORTS[0]);
-    ui.columns(2, |columns| {
-        for (index, viewport) in VIEWPORTS[1..].iter().copied().enumerate() {
-            render_viewport(ctx, &mut columns[index % 2], viewport);
-        }
-    });
+fn healthy(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::healthy);
+}
+
+#[scene]
+fn mixed_states(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::mixed);
+}
+
+#[scene]
+fn loading(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::loading);
+}
+
+#[scene]
+fn failed(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::failed);
+}
+
+#[scene]
+fn stale(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::stale);
+}
+
+#[scene]
+fn closed_markets(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::closed_markets);
+}
+
+#[scene]
+fn no_symbols(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::no_symbols);
+}
+
+#[scene]
+fn one_symbol(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::one_symbol);
 }

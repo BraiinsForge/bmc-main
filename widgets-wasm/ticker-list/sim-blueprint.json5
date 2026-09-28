@@ -1,0 +1,41 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  instances: [
+    {
+      device: "prices",
+      label: "Healthy Nexus prices, every market open",
+      port: 20700,
+    },
+    {
+      device: "prices",
+      label: "Mixed — TSLA shut over an empty window, MSTR shut, JPM failing; type NONEXS for a symbol Nexus lacks",
+      port: 20701,
+      params: { closed: ["TSLA", "MSTR"], empty: ["TSLA"], failing: ["JPM"] },
+    },
+    {
+      device: "prices",
+      label: "Warming up — 503 until a minute in",
+      port: 20702,
+      params: { warmup_secs: 60 },
+    },
+    {
+      device: "prices",
+      label: "Initial hard failure",
+      port: 20703,
+      params: { status: 503 },
+    },
+    {
+      device: "prices",
+      label: "Failing after a minute — stale once the held prices outlive the poll's grace",
+      port: 20704,
+      params: { status: 503, fail_after_secs: 60 },
+    },
+    {
+      device: "prices",
+      label: "Wide — every price 20 000 times higher: the defaults run to eight digits, BTC-USD past a billion",
+      port: 20705,
+      params: { price_scale: 20000 },
+    },
+  ],
+}
