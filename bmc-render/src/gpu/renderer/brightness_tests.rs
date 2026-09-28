@@ -25,11 +25,11 @@ use crate::tree::{SpanData, TextStyle};
 use bmc_wasm_protocol::colors::{TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{Fill, SVG_FLAG_HAS_FILL, SVG_OP_CLOSE, SVG_OP_LINE_TO, SVG_OP_MOVE_TO};
 
-const W: u32 = 64;
+pub(super) const W: u32 = 64;
 const H: u32 = 64;
 const HALF: f32 = 0.5;
 
-fn render(draw: impl FnOnce(&mut FemtoVgRenderer)) -> Vec<[u8; 4]> {
+pub(super) fn render(draw: impl FnOnce(&mut FemtoVgRenderer)) -> Vec<[u8; 4]> {
     let harness = GlHarness::new().expect("BUG: headless GL setup failed");
     let (fbo, fbo_id) = create_readback_fbo(&harness.gl, W, H);
     let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), W, H, fbo_id, 0) }
@@ -79,7 +79,7 @@ fn white_square_icon() -> Vec<u8> {
     buf
 }
 
-const FULL: (f32, f32, f32, f32) = (0.0, 0.0, W as f32, H as f32);
+pub(super) const FULL: (f32, f32, f32, f32) = (0.0, 0.0, W as f32, H as f32);
 
 #[test]
 fn a_solid_fill_dims() {

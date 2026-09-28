@@ -4164,6 +4164,9 @@ mod text_overflow_pixel_tests {
 mod brightness_tests;
 
 #[cfg(test)]
+mod svg_tint_tests;
+
+#[cfg(test)]
 mod scissor_tests {
     use super::scissor_box;
     use crate::interaction::Rect;

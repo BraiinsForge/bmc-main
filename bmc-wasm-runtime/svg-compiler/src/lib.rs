@@ -61,7 +61,7 @@ pub fn compile_svg(svg: &str) -> Vec<u8> {
 
     let size = tree.size();
     let mut paths = Vec::new();
-    collect_paths(tree.root(), &mut paths);
+    collect_paths(tree.root(), 1.0, &mut paths);
 
     let mut buf = Vec::new();
     buf.extend_from_slice(&size.width().to_le_bytes());
@@ -97,16 +97,22 @@ enum PathOp {
     Close,
 }
 
-fn collect_paths(group: &usvg::Group, out: &mut Vec<PathInfo>) {
+/// `opacity` is the product of the enclosing groups' opacities.
+/// usvg wraps an element carrying `opacity` in a group,
+/// and the flat path list has no groups, so it folds into each path's alpha.
+/// That is exact unless a group's paths overlap:
+/// those blend twice where they cross, where a composited group blends once.
+fn collect_paths(group: &usvg::Group, opacity: f32, out: &mut Vec<PathInfo>) {
     for node in group.children() {
         match node {
-            usvg::Node::Group(g) => collect_paths(g, out),
+            usvg::Node::Group(g) => collect_paths(g, opacity * g.opacity().get(), out),
             usvg::Node::Path(path) => {
                 let fill = path.fill();
-                let fill_color = fill.and_then(|f| paint_to_rgba(f.paint(), f.opacity().get()));
+                let fill_color =
+                    fill.and_then(|f| paint_to_rgba(f.paint(), opacity * f.opacity().get()));
                 let stroke_color = path
                     .stroke()
-                    .and_then(|s| paint_to_rgba(s.paint(), s.opacity().get()));
+                    .and_then(|s| paint_to_rgba(s.paint(), opacity * s.opacity().get()));
                 let stroke_width = path.stroke().map_or(0.0, |s| s.width().get());
 
                 // Skip paths with no visible paint

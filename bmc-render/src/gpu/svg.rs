@@ -250,8 +250,9 @@ impl SvgRegistry {
 /// Override precedence (per path):
 /// 1. `fills` override matching the path's `id` wins,
 ///    recolouring the fill paint only;
-/// 2. otherwise `color != TRANSPARENT` tints every fill
-///    and stroke with that single colour;
+/// 2. otherwise `color != TRANSPARENT` tints every fill and stroke
+///    with that colour, keeping each path's own alpha (scaled by the tint's),
+///    so paths of differing opacity keep the icon's shape;
 /// 3. otherwise the path's stored SVG colours are used.
 ///
 /// Whichever wins is then scaled by `brightness`, as [`Color::brightness`] would.
@@ -286,6 +287,9 @@ pub fn draw_svg(
     let dim = |c: femtovg::Color| {
         femtovg::Color::rgbaf(c.r * brightness, c.g * brightness, c.b * brightness, c.a)
     };
+    let tinted = |tint: femtovg::Color, own: femtovg::Color| {
+        femtovg::Color::rgbaf(tint.r, tint.g, tint.b, tint.a * own.a)
+    };
     let tint = if color == bmc_wasm_protocol::colors::TRANSPARENT {
         None
     } else {
@@ -307,9 +311,10 @@ pub fn draw_svg(
     for (idx, icon_path) in icon.paths.iter().enumerate() {
         let path_override = override_for(idx);
         if let Some(fill_color) = icon_path.fill_color {
+            let own = to_femtovg_color(fill_color);
             let paint_color = path_override
-                .or(tint)
-                .unwrap_or_else(|| to_femtovg_color(fill_color));
+                .or_else(|| tint.map(|t| tinted(t, own)))
+                .unwrap_or(own);
             let mut paint = Paint::color(dim(paint_color));
             paint.set_anti_alias(anti_alias);
             if icon_path.is_evenodd {
@@ -318,9 +323,10 @@ pub fn draw_svg(
             canvas.fill_path(&icon_path.path, &paint);
         }
         if let Some(stroke_color) = icon_path.stroke_color {
+            let own = to_femtovg_color(stroke_color);
             let paint_color = path_override
-                .or(tint)
-                .unwrap_or_else(|| to_femtovg_color(stroke_color));
+                .or_else(|| tint.map(|t| tinted(t, own)))
+                .unwrap_or(own);
             let mut paint = Paint::color(dim(paint_color));
             paint.set_anti_alias(anti_alias);
             paint.set_line_width(icon_path.stroke_width);
