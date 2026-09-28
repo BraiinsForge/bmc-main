@@ -21,6 +21,9 @@
 //! The wasm render path: the per-size ticker grid (two columns at Full, a
 //! single column otherwise), each row's symbol/company, optional
 //! sparkline, and price/change, with hairline dividers between cells.
+//! BMM101 draws a frame of its own, in [`bmm101`].
+
+mod bmm101;
 
 #[cfg_attr(
     not(test),
@@ -31,7 +34,7 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::layout::{Band, band_for};
+use crate::layout::{Band, SizeBucket, band_for, size_bucket};
 use crate::model::{RowState, TickerRow};
 use prices::chart;
 use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
@@ -51,13 +54,14 @@ const CHART_FILL_TOP_ALPHA: f32 = 0.15;
 const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
 const ERROR_ROW_ALPHA: f32 = 0.6;
 const CLOSED_MARKER_SCALE: f32 = 0.75;
+const NO_SYMBOLS: &str = "No symbols provided";
 
 fn fixed_width(width: f32) -> Node {
     col(props!(width: width), Vec::<Node>::new())
 }
 
-fn h_divider() -> Node {
-    col(props!(height: 1.0, background: BORDER), Vec::<Node>::new())
+fn rule_line(color: Color) -> Node {
+    col(props!(height: 1.0, background: color), Vec::<Node>::new())
 }
 
 fn v_divider() -> Node {
@@ -79,32 +83,86 @@ fn empty_cells(band: &Band) -> Cells {
     }
 }
 
-fn closed_marker(band: &Band) -> Node {
+/// What one row slot holds, before a layout styles it.
+#[derive(Clone, Copy)]
+enum Slot<'a> {
+    Empty,
+    Resolved {
+        data: &'a TickerRow,
+        name: Option<&'a str>,
+        stale: Option<SystemTime>,
+    },
+    Placeholder {
+        symbol: &'a str,
+        status: &'static str,
+        not_found: bool,
+    },
+}
+
+fn slot<'a>(
+    index: usize,
+    symbols: &'a [String],
+    states: &'a [RowState],
+    names: &'a [Option<String>],
+    stale: &[Option<SystemTime>],
+) -> Slot<'a> {
+    let (Some(symbol), Some(row_state)) = (symbols.get(index), states.get(index)) else {
+        return Slot::Empty;
+    };
+    let placeholder = |status, not_found| Slot::Placeholder {
+        symbol,
+        status,
+        not_found,
+    };
+    match row_state {
+        RowState::Resolved { data } => Slot::Resolved {
+            data,
+            name: names.get(index).and_then(Option::as_deref),
+            stale: stale.get(index).copied().flatten(),
+        },
+        RowState::InputError { .. } => placeholder("Not found", true),
+        RowState::NoData { market_closed } => {
+            placeholder(if *market_closed { "Closed" } else { "No data" }, false)
+        }
+        RowState::Failed => placeholder("Unavailable", false),
+        RowState::Loading => placeholder("Loading\u{2026}", false),
+    }
+}
+
+fn price_text(row_data: &TickerRow) -> String {
+    match price_precision(&row_data.symbol, row_data.price) {
+        PricePrecision::Fraction(digits) => format_number!(row_data.price, digits),
+        PricePrecision::BelowMin => {
+            let mut out = String::from("<");
+            out.push_str(&format_number!(MIN_PRICE, 6));
+            out
+        }
+    }
+}
+
+fn closed_marker(band: &Band, color: Color) -> Node {
     #[expect(
         clippy::cast_precision_loss,
         reason = "scaled font sizes are small, exact in f32"
     )]
     let diameter = scale_font(band.symbol_font, CLOSED_MARKER_SCALE) as f32;
-    let draws = pause_marker(diameter, SECONDARY, BACKGROUND);
+    let draws = pause_marker(diameter, color, BACKGROUND);
     canvas(props!(width: diameter, height: diameter), draws)
 }
 
-/// `symbol` line, with a pause marker after it when the market is closed
+/// The `symbol` node, with a pause marker in `marker` after it when the market is closed
 /// and, when the row is stale, a badge aging from its last good load.
 fn symbol_line(
-    symbol: &str,
-    color: Color,
+    symbol: Node,
     band: &Band,
+    marker: Color,
     closed: bool,
     stale: Option<SystemTime>,
 ) -> Node {
-    let mut children = vec![text(
-        symbol,
-        style!(size: band.symbol_font, weight: FontWeight::BOLD, color: color),
-    )];
+    let mut children = vec![symbol];
     if closed {
         children.push(fixed_width(band.row_gap));
-        children.push(closed_marker(band));
+        children.push(closed_marker(band, marker));
     }
     if let Some(anchor) = stale {
         children.push(fixed_width(band.row_gap));
@@ -113,10 +171,28 @@ fn symbol_line(
     row(props!(cross_align: CrossAlign::Center), children)
 }
 
-fn sparkline(series: &[f64], trend: Color, closed: bool, band: &Band) -> Node {
-    let (w, h) = (band.chart_width, band.chart_height);
+/// How a sparkline strokes its line and fills the area under it.
+struct Paint {
+    line: Color,
+    fill_top: Color,
+    fill_bottom: Color,
+    stroke: f32,
+}
+
+/// A closed market greys the line, a live one takes the trend's colour.
+fn deck_paint(trend: Color, closed: bool) -> Paint {
     let color = if closed { SECONDARY } else { trend };
     let alpha = if closed { CLOSED_CHART_ALPHA } else { 1.0 };
+    Paint {
+        line: color.with_alpha(alpha),
+        fill_top: color.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
+        fill_bottom: color.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha),
+        stroke: CHART_STROKE,
+    }
+}
+
+fn sparkline(series: &[f64], paint: &Paint, band: &Band) -> Node {
+    let (w, h) = (band.chart_width, band.chart_height);
     let line = chart::series_points(series, w, h, CHART_INSET);
     if line.len() < 2 {
         return fixed_width(w);
@@ -127,14 +203,8 @@ fn sparkline(series: &[f64], trend: Color, closed: bool, band: &Band) -> Node {
     canvas(
         props!(width: w, height: h),
         [
-            fill!(
-                area,
-                linear: (
-                    color.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
-                    color.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha)
-                )
-            ),
-            path!(line, stroke: CHART_STROKE, color: color.with_alpha(alpha)),
+            fill!(area, linear: (paint.fill_top, paint.fill_bottom)),
+            path!(line, stroke: paint.stroke, color: paint.line),
         ],
     )
 }
@@ -174,19 +244,17 @@ fn resolved_cells(
         TREND_DOWN
     };
     let closed = row_data.is_closed_marked();
-    let price = match price_precision(&row_data.symbol, row_data.price) {
-        PricePrecision::Fraction(digits) => format_number!(row_data.price, digits),
-        PricePrecision::BelowMin => {
-            let mut out = String::from("<");
-            out.push_str(&format_number!(MIN_PRICE, 6));
-            out
-        }
-    };
     Cells {
         name: col(
             props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
             [
-                symbol_line(&row_data.symbol, PRIMARY, band, closed, stale),
+                symbol_line(
+                    deck_symbol(&row_data.symbol, PRIMARY, band),
+                    band,
+                    SECONDARY,
+                    closed,
+                    stale,
+                ),
                 text(
                     name.unwrap_or_default(),
                     style!(size: band.company_font, color: SECONDARY, text_overflow: TextOverflow::Ellipsis),
@@ -194,12 +262,24 @@ fn resolved_cells(
             ],
         ),
         chart: if band.show_sparkline {
-            sparkline(&row_data.series, trend, closed, band)
+            sparkline(&row_data.series, &deck_paint(trend, closed), band)
         } else {
             fixed_width(0.0)
         },
-        price: right_col(price, change_text(row_data.change_pct), trend, band),
+        price: right_col(
+            price_text(row_data),
+            change_text(row_data.change_pct),
+            trend,
+            band,
+        ),
     }
+}
+
+fn deck_symbol(symbol: &str, color: Color, band: &Band) -> Node {
+    text(
+        symbol,
+        style!(size: band.symbol_font, weight: FontWeight::BOLD, color: color),
+    )
 }
 
 /// Per-row counterpart to the SDK's `with_stale_overlay` pill, rendered inline
@@ -262,7 +342,7 @@ fn placeholder_cells(symbol: &str, status: &str, symbol_color: Color, band: &Ban
         name: col(
             props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
             [
-                symbol_line(symbol, sym, band, false, None),
+                symbol_line(deck_symbol(symbol, sym, band), band, SECONDARY, false, None),
                 text(status, style!(size: band.company_font, color: muted)),
             ],
         ),
@@ -277,74 +357,129 @@ fn placeholder_cells(symbol: &str, status: &str, symbol_color: Color, band: &Ban
     }
 }
 
-fn slot(
-    index: usize,
-    symbols: &[String],
-    states: &[RowState],
-    names: &[Option<String>],
-    stale: &[Option<SystemTime>],
-    band: &Band,
-) -> Cells {
-    let Some(symbol) = symbols.get(index) else {
-        return empty_cells(band);
-    };
-    let Some(row_state) = states.get(index) else {
-        return empty_cells(band);
-    };
-    match row_state {
-        RowState::Resolved { data } => resolved_cells(
-            data,
-            names.get(index).and_then(Option::as_deref),
-            stale.get(index).copied().flatten(),
+fn deck_cells(slot: Slot, band: &Band) -> Cells {
+    match slot {
+        Slot::Empty => empty_cells(band),
+        Slot::Resolved { data, name, stale } => resolved_cells(data, name, stale, band),
+        Slot::Placeholder {
+            symbol,
+            status,
+            not_found,
+        } => placeholder_cells(
+            symbol,
+            status,
+            if not_found { ERROR } else { SECONDARY },
             band,
         ),
-        RowState::InputError { .. } => placeholder_cells(symbol, "Not found", ERROR, band),
-        RowState::NoData { market_closed } => {
-            let text = if *market_closed { "Closed" } else { "No data" };
-            placeholder_cells(symbol, text, SECONDARY, band)
+    }
+}
+
+/// How a list spaces its columns and rules.
+struct Grid {
+    /// Space at the list's outer edges.
+    edge: f32,
+    /// Space on either side of the chart column.
+    chart_gap: f32,
+    show_charts: bool,
+    rule: Color,
+    /// Space above and below each rule.
+    rule_gap: f32,
+    /// Every row this tall; `None` shares the list's height out evenly.
+    row_height: Option<f32>,
+    /// The price column is never narrower than this.
+    price_min_width: Option<f32>,
+}
+
+impl Grid {
+    fn deck(band: &Band) -> Self {
+        Self {
+            edge: band.row_padding,
+            chart_gap: band.row_padding,
+            show_charts: band.show_sparkline,
+            rule: BORDER,
+            rule_gap: 0.0,
+            row_height: None,
+            price_min_width: None,
         }
-        RowState::Failed => placeholder_cells(symbol, "Unavailable", SECONDARY, band),
-        RowState::Loading => placeholder_cells(symbol, "Loading\u{2026}", SECONDARY, band),
+    }
+
+    fn cell(&self, justify: Justify, children: Vec<Node>) -> Node {
+        match self.row_height {
+            Some(height) => row(
+                props!(height: height, cross_align: CrossAlign::Center, justify_content: justify),
+                children,
+            ),
+            None => row(
+                props!(flex: 1.0, cross_align: CrossAlign::Center, justify_content: justify),
+                children,
+            ),
+        }
+    }
+
+    fn rule(&self) -> Node {
+        if self.rule_gap > 0.0 {
+            col(
+                props!(height: 2.0 * self.rule_gap + 1.0, justify_content: Justify::Center),
+                [rule_line(self.rule)],
+            )
+        } else {
+            rule_line(self.rule)
+        }
     }
 }
 
 /// A list laid out a column at a time — names, charts, prices — so every chart starts
 /// where the widest price leaves room, not against its own row's price.
-fn list(rows: Vec<Cells>, band: &Band) -> Node {
-    let pad = band.row_padding;
+fn list(rows: Vec<Cells>, grid: &Grid) -> Node {
     let mut names = Vec::with_capacity(2 * rows.len());
     let mut charts = Vec::with_capacity(2 * rows.len());
-    let mut prices = Vec::with_capacity(2 * rows.len());
+    let mut prices = Vec::with_capacity(2 * rows.len() + 1);
     for (index, cells) in rows.into_iter().enumerate() {
         if index > 0 {
-            names.push(h_divider());
-            charts.push(h_divider());
-            prices.push(h_divider());
+            names.push(grid.rule());
+            charts.push(grid.rule());
+            prices.push(grid.rule());
         }
-        names.push(row(
-            props!(flex: 1.0, cross_align: CrossAlign::Center),
-            [fixed_width(pad), cells.name],
+        names.push(grid.cell(Justify::Start, vec![fixed_width(grid.edge), cells.name]));
+        charts.push(grid.cell(
+            Justify::Start,
+            vec![
+                fixed_width(grid.chart_gap),
+                cells.chart,
+                fixed_width(grid.chart_gap),
+            ],
         ));
-        charts.push(row(
-            props!(flex: 1.0, cross_align: CrossAlign::Center),
-            [fixed_width(pad), cells.chart, fixed_width(pad)],
-        ));
-        prices.push(row(
-            props!(flex: 1.0, cross_align: CrossAlign::Center, justify_content: Justify::End),
-            [cells.price, fixed_width(pad)],
-        ));
+        prices.push(grid.cell(Justify::End, vec![cells.price, fixed_width(grid.edge)]));
+    }
+    if let Some(width) = grid.price_min_width {
+        prices.push(fixed_width(width));
     }
     let mut columns = vec![col(props!(flex: 1.0), names)];
-    if band.show_sparkline {
+    if grid.show_charts {
         columns.push(col(props!(), charts));
     }
     columns.push(col(props!(), prices));
     row(props!(flex: 1.0), columns)
 }
 
-/// The full grid for the current size.
+/// The list for the current size: BMM101's own frame, or the Deck's grid.
 #[must_use]
 pub fn view(
+    symbols: &[String],
+    states: &[RowState],
+    names: &[Option<String>],
+    stale: &[Option<SystemTime>],
+    ws: WidgetSize,
+) -> Node {
+    match size_bucket(ws.width, ws.height) {
+        SizeBucket::Bmm101 => bmm101::view(symbols, states, names, stale, ws),
+        SizeBucket::Full | SizeBucket::Large | SizeBucket::Medium | SizeBucket::Small => {
+            deck_view(symbols, states, names, stale, ws)
+        }
+    }
+}
+
+fn deck_view(
     symbols: &[String],
     states: &[RowState],
     names: &[Option<String>],
@@ -354,9 +489,10 @@ pub fn view(
     // Only an empty list collapses to a message. Rows that all failed keep
     // their placeholders: each names its symbol and why it is missing.
     if symbols.is_empty() {
-        return message_view("No symbols provided", ws);
+        return message_view(NO_SYMBOLS, ws);
     }
     let band = band_for(ws.variant).scaled(ws.fit());
+    let grid = Grid::deck(&band);
     #[expect(
         clippy::cast_precision_loss,
         reason = "viewport dimensions are <= 1280, exact in f32"
@@ -364,7 +500,7 @@ pub fn view(
     let (w, h) = (ws.width as f32, ws.height as f32);
 
     let rows: Vec<Cells> = (0..band.rows)
-        .map(|index| slot(index, symbols, states, names, stale, &band))
+        .map(|index| deck_cells(slot(index, symbols, states, names, stale), &band))
         .collect();
     let body = if band.columns == 2 {
         // Filled left to right, so the first two symbols share the top row.
@@ -374,7 +510,7 @@ pub fn view(
             .partition(|(index, _)| index % 2 == 0);
         let half = |half: Vec<(usize, Cells)>| {
             let rows = half.into_iter().map(|(_, cells)| cells).collect();
-            list(rows, &band)
+            list(rows, &grid)
         };
         // Both halves on whole pixels: taffy 0.9 rounds a node's location
         // against its parent but its width against the absolute edge,
@@ -390,7 +526,7 @@ pub fn view(
             ],
         )
     } else {
-        list(rows, &band)
+        list(rows, &grid)
     };
     col(props!(background: BACKGROUND, width: w, height: h), [body])
 }
@@ -445,6 +581,72 @@ mod tests {
         view(&list.symbols, &list.states, &list.names, &list.stale, size)
     }
 
+    /// The style of the paragraph drawing `wanted`, anywhere in the tree.
+    fn style_of(node: &Node, wanted: &str) -> Option<TextStyle> {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                children.iter().find_map(|child| style_of(child, wanted))
+            }
+            Node::Paragraph {
+                base_style, spans, ..
+            } if spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+                == wanted =>
+            {
+                Some(*base_style)
+            }
+            _ => None,
+        }
+    }
+
+    fn bmm101() -> WidgetSize {
+        WidgetSize::from_dimensions(480, 320)
+    }
+
+    #[test]
+    fn the_bmm101_frame_reads_top_down_as_designed() {
+        let texts = texts(&view_of(&fixtures::mixed(), bmm101()));
+        assert_eq!(
+            texts[..9],
+            [
+                "Financial Ticker List",
+                "NVDA",
+                "NVIDIA Corporation",
+                "TSLA",
+                "Closed",
+                "NONEXS",
+                "Not found",
+                "AAPL",
+                "Apple Inc.",
+            ],
+            "the header, then each row's symbol over its name or status: {texts:?}"
+        );
+        assert_eq!(
+            texts.iter().filter(|text| *text == "N/A").count(),
+            2,
+            "the shut market and the unknown symbol carry no price: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn bmm101_cuts_a_long_symbol_and_name_rather_than_wrapping_them() {
+        const SYMBOL: &str = "EXTRAORDINARILYLONGSYMBOL";
+        const NAME: &str = "Meta Platforms, Inc. Class A Common Stock";
+        let mut list = fixtures::healthy();
+        list.names[0] = Some(NAME.to_owned());
+        let RowState::Resolved { data } = &mut list.states[0] else {
+            panic!("BUG: the healthy list's rows are resolved");
+        };
+        data.symbol = SYMBOL.to_owned();
+        let view = view_of(&list, bmm101());
+        for text in [SYMBOL, NAME] {
+            let style = style_of(&view, text).expect("BUG: the row draws its symbol and name");
+            assert_eq!(style.text_overflow, TextOverflow::Ellipsis, "{text}");
+        }
+    }
+
     #[test]
     fn an_empty_list_reads_as_a_message_not_blank_rows() {
         let size = WidgetSize::from_dimensions(638, 480);
@@ -460,7 +662,7 @@ mod tests {
         let texts = texts(&view_of(&fixtures::failed(), size));
         assert_eq!(
             texts.iter().filter(|text| *text == "Unavailable").count(),
-            crate::layout::size_capacity(SizeVariant::Large),
+            crate::layout::capacity(size),
             "every seated row names why it is missing: {texts:?}"
         );
     }
@@ -503,11 +705,11 @@ mod tests {
         let band = band_for(SizeVariant::Full);
         let series = [1.0, 2.0];
         assert_eq!(
-            sparkline_stroke_color(sparkline(&series, TREND_UP, false, &band)),
+            sparkline_stroke_color(sparkline(&series, &deck_paint(TREND_UP, false), &band)),
             TREND_UP
         );
         assert_eq!(
-            sparkline_stroke_color(sparkline(&series, TREND_UP, true, &band)),
+            sparkline_stroke_color(sparkline(&series, &deck_paint(TREND_UP, true), &band)),
             SECONDARY.with_alpha(CLOSED_CHART_ALPHA)
         );
     }

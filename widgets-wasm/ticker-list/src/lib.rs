@@ -125,8 +125,9 @@ mod tests {
 
     #[test]
     fn full_layout_capacity_matches_the_registered_row_polls() {
+        let (width, height) = layout::SizeBucket::Full.design_size();
         assert_eq!(
-            layout::size_capacity(bmc_wasm_sdk::SizeVariant::Full),
+            layout::capacity(bmc_wasm_sdk::WidgetSize::from_dimensions(width, height)),
             symbols::MAX_SYMBOLS
         );
     }
@@ -367,7 +368,7 @@ mod wasm_glue {
 
     /// Rows that are both configured and within the current size's capacity.
     fn enabled_rows() -> usize {
-        let cap = layout::size_capacity(widget_size().variant);
+        let cap = layout::capacity(widget_size());
         SYMBOLS.with(|s| s.borrow().len()).min(cap)
     }
 

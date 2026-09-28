@@ -18,13 +18,62 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Per-size layout bands (row capacity, columns, sparkline box, fonts) and their
-//! `fit`-scaling. Fonts and geometry scale by [`WidgetSize::fit`] so BMM101
-//! (480×320) shrinks instead of overflowing — the same mechanism the clock and
-//! the sparkline use. Row/column counts and `show_sparkline` are layout
+//! Which frame a viewport gets, the Deck's per-size layout bands (row capacity,
+//! columns, sparkline box, fonts) and their `fit`-scaling. Fonts and geometry
+//! scale by [`WidgetSize::fit`] so a viewport short of its variant's box shrinks
+//! instead of overflowing. Row/column counts and `show_sparkline` are layout
 //! structure and are picked from the variant, not scaled.
+//! BMM101 draws a frame of its own instead.
 
-use bmc_wasm_sdk::{SizeVariant, scale_font};
+use bmc_wasm_sdk::{SizeVariant, WidgetSize, scale_font};
+
+/// The frames a layout is picked for: the four BMC100 slots and BMM101's 480×320.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeBucket {
+    Full,
+    Large,
+    Medium,
+    Small,
+    Bmm101,
+}
+
+impl SizeBucket {
+    #[must_use]
+    pub const fn design_size(self) -> (u32, u32) {
+        match self {
+            Self::Full => (1_280, 480),
+            Self::Large => (638, 480),
+            Self::Medium => (638, 238),
+            Self::Small => (317, 238),
+            Self::Bmm101 => (480, 320),
+        }
+    }
+}
+
+/// The two BMM frames the narrow bucket has to tell apart.
+const BMM100_HEIGHT: u32 = 240;
+const BMM101_HEIGHT: u32 = SizeBucket::Bmm101.design_size().1;
+/// Split at their midpoint, so either frame keeps its bucket a few pixels either way.
+const BMM101_MIN_HEIGHT: u32 = u32::midpoint(BMM100_HEIGHT, BMM101_HEIGHT);
+const BMM101_MAX_WIDTH: u32 = SizeBucket::Bmm101.design_size().0;
+
+/// A landscape frame no wider than BMM101 and at least as tall as the BMM split
+/// is BMM101; everything else takes the closest BMC100 variant, as the SDK does.
+#[must_use]
+pub fn size_bucket(width: u32, height: u32) -> SizeBucket {
+    if width <= BMM101_MAX_WIDTH && height < width && height >= BMM101_MIN_HEIGHT {
+        return SizeBucket::Bmm101;
+    }
+    match SizeVariant::closest(width, height) {
+        SizeVariant::Full => SizeBucket::Full,
+        SizeVariant::Large => SizeBucket::Large,
+        SizeVariant::Medium => SizeBucket::Medium,
+        SizeVariant::Small => SizeBucket::Small,
+    }
+}
+
+/// BMM101 seats as many rows as the Deck's Large.
+pub const BMM101_ROWS: usize = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Band {
@@ -122,23 +171,57 @@ pub fn band_for(variant: SizeVariant) -> Band {
     }
 }
 
-/// How many symbols a size renders and fetches: Full 8, Large 4,
-/// Medium/Small 2.
+/// How many symbols a viewport renders and fetches:
+/// Full 8, Large and BMM101 4, Medium and Small 2.
 #[must_use]
-pub fn size_capacity(variant: SizeVariant) -> usize {
-    band_for(variant).rows
+pub fn capacity(ws: WidgetSize) -> usize {
+    match size_bucket(ws.width, ws.height) {
+        SizeBucket::Bmm101 => BMM101_ROWS,
+        SizeBucket::Full | SizeBucket::Large | SizeBucket::Medium | SizeBucket::Small => {
+            band_for(ws.variant).rows
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn at(bucket: SizeBucket) -> WidgetSize {
+        let (width, height) = bucket.design_size();
+        WidgetSize::from_dimensions(width, height)
+    }
+
     #[test]
     fn capacities_match_size_bands() {
-        assert_eq!(size_capacity(SizeVariant::Full), 8);
-        assert_eq!(size_capacity(SizeVariant::Large), 4);
-        assert_eq!(size_capacity(SizeVariant::Medium), 2);
-        assert_eq!(size_capacity(SizeVariant::Small), 2);
+        assert_eq!(capacity(at(SizeBucket::Full)), 8);
+        assert_eq!(capacity(at(SizeBucket::Large)), 4);
+        assert_eq!(capacity(at(SizeBucket::Medium)), 2);
+        assert_eq!(capacity(at(SizeBucket::Small)), 2);
+        assert_eq!(capacity(at(SizeBucket::Bmm101)), 4);
+    }
+
+    #[test]
+    fn every_design_size_lands_in_its_own_bucket() {
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+            SizeBucket::Bmm101,
+        ] {
+            let (width, height) = bucket.design_size();
+            assert_eq!(size_bucket(width, height), bucket, "{width}x{height}");
+        }
+    }
+
+    /// A frame that misses the BMM101 rule by a pixel falls to the SDK's closest variant.
+    #[test]
+    fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
+        assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
+        assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
+        assert_eq!(size_bucket(480, 279), SizeBucket::Medium);
+        assert_eq!(size_bucket(481, 320), SizeBucket::Large);
     }
 
     #[test]
