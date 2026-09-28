@@ -1246,6 +1246,7 @@ mod view_tests {
                 station_ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
                 station_ssid: Some("Braiins-WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
+                cable_uplink: false,
             }),
         });
 
@@ -1276,6 +1277,7 @@ mod view_tests {
                             station_ipv4: None,
                             station_ssid: Some("Braiins-WiFi".to_owned()),
                             wifi_signal_dbm: None,
+                            cable_uplink: false,
                         },
                     });
                 };
@@ -1323,6 +1325,7 @@ mod view_tests {
                 station_ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
                 station_ssid: Some("Braiins-WiFi".to_owned()),
                 wifi_signal_dbm: Some(-57),
+                cable_uplink: false,
             }),
         });
         let _ = overlay.take_content_dirty();
@@ -1349,6 +1352,7 @@ mod view_tests {
                 station_ipv4: Some(Ipv4Addr::new(192, 168, 1, 43)),
                 station_ssid: Some("Braiins-WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
+                cable_uplink: false,
             }),
         });
         let _ = overlay.take_content_dirty();
@@ -1372,6 +1376,7 @@ mod view_tests {
                 station_ipv4: None,
                 station_ssid: None,
                 wifi_signal_dbm: Some(-76),
+                cable_uplink: false,
             }),
         });
         let _ = overlay.take_content_dirty();

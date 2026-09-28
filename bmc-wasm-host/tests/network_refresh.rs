@@ -29,6 +29,7 @@ fn online_snapshot(signal_dbm: i32) -> Snapshot {
         station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 7)),
         station_ssid: Some("deck-net".to_owned()),
         wifi_signal_dbm: Some(signal_dbm),
+        cable_uplink: false,
     }
 }
 
@@ -73,6 +74,7 @@ fn offline_projects_empty_strings() {
         station_ipv4: None,
         station_ssid: None,
         wifi_signal_dbm: None,
+        cable_uplink: false,
     };
     let info = widget_network_info(&offline);
     assert_eq!(

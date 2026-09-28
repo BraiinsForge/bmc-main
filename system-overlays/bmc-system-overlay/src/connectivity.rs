@@ -182,12 +182,14 @@ mod tests {
             station_ipv4: None,
             station_ssid: None,
             wifi_signal_dbm: None,
+            cable_uplink: false,
         });
         state.publish(Snapshot {
             ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ssid: Some("Office WiFi".to_owned()),
             wifi_signal_dbm: Some(-52),
+            cable_uplink: false,
         });
         assert_eq!(
             state.read_if_changed(None).map(|update| update.snapshot),
@@ -196,6 +198,7 @@ mod tests {
                 station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
                 station_ssid: Some("Office WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
+                cable_uplink: false,
             })
         );
     }
@@ -217,6 +220,7 @@ mod tests {
             station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ssid: Some("Office WiFi".to_owned()),
             wifi_signal_dbm: Some(-52),
+            cable_uplink: false,
         };
         state.publish(snapshot.clone());
         let first = state
@@ -236,12 +240,14 @@ mod tests {
             station_ipv4: None,
             station_ssid: None,
             wifi_signal_dbm: None,
+            cable_uplink: false,
         };
         let online = Snapshot {
             ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ssid: Some("Office WiFi".to_owned()),
             wifi_signal_dbm: Some(-52),
+            cable_uplink: false,
         };
         state.publish(offline);
         let first = state

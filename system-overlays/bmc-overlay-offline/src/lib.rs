@@ -444,6 +444,7 @@ mod tests {
             station_ipv4: None,
             station_ssid: None,
             wifi_signal_dbm: None,
+            cable_uplink: false,
         }
     }
 
@@ -453,6 +454,7 @@ mod tests {
             station_ipv4: None,
             station_ssid: None,
             wifi_signal_dbm: None,
+            cable_uplink: false,
         }
     }
 

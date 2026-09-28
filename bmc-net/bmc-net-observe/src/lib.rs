@@ -53,6 +53,10 @@ enum WifiMode {
 /// would otherwise report as `Unknown` and outrank a real wireless uplink.
 const KNOWN_AP_INTERFACES: &[&str] = &["ethap0"];
 
+/// The ESP32 setup firmware's station netdev: it has no wireless section either,
+/// and a name that does not start with `wlan`, so it would otherwise pass for the cable.
+const KNOWN_STATION_INTERFACES: &[&str] = &["ethsta0"];
+
 /// Uplink preference, best first. The order is the product decision: the
 /// cable when it is plugged in, else the WiFi station, else whatever else has
 /// an address, and a setup AP only when nothing else does.
@@ -73,6 +77,7 @@ fn uplink_rank(name: &str, mode: WifiMode) -> UplinkRank {
         // The ESP32 AP has no wireless section, so it is known by name.
         WifiMode::Unknown if KNOWN_AP_INTERFACES.contains(&name) => UplinkRank::Ap,
         WifiMode::Station => UplinkRank::Station,
+        WifiMode::Unknown if KNOWN_STATION_INTERFACES.contains(&name) => UplinkRank::Station,
         WifiMode::Unknown if !name.starts_with("wlan") => UplinkRank::Wired,
         WifiMode::Unknown => UplinkRank::Unclassified,
     }
@@ -182,6 +187,15 @@ fn ipv4_of(interfaces: &[Interface], name: &str) -> Option<Ipv4Addr> {
         .iter()
         .find(|iface| iface.name == name)
         .and_then(interface_ipv4)
+}
+
+/// Whether the cable carries the uplink: the wired interface heads
+/// the ranking [`pick_interface`] uses. The ranking decides, not the route table.
+#[must_use]
+fn picks_the_cable(interfaces: &[Interface], modes: &HashMap<String, WifiMode>) -> bool {
+    ranked_candidates(interfaces, modes)
+        .first()
+        .is_some_and(|(name, mode)| uplink_rank(name, *mode) == UplinkRank::Wired)
 }
 
 /// Address of the interface [`pick_interface`] selects. Pure, for testing.
@@ -377,6 +391,9 @@ pub struct Snapshot {
     pub station_ssid: Option<String>,
     /// Signal level of the first interface in `/proc/net/wireless`.
     pub wifi_signal_dbm: Option<i32>,
+    /// Whether `ipv4` is the cable's. A plugged-in cable outranks every other uplink,
+    /// so this holds whenever one carries an address.
+    pub cable_uplink: bool,
 }
 
 /// Assemble a snapshot from one pass's raw inputs. Pure, for testing.
@@ -393,6 +410,7 @@ fn snapshot_from(
         station_ipv4: pick_station_ipv4(interfaces, &modes),
         station_ssid: station_ssid_from_sections(sections),
         wifi_signal_dbm: proc_net_wireless.and_then(wifi_signal_from_proc_net_wireless),
+        cable_uplink: picks_the_cable(interfaces, &modes),
     }
 }
 
@@ -552,6 +570,17 @@ mod tests {
     }
 
     #[test]
+    fn the_cable_carries_the_uplink_only_while_it_ranks_first() {
+        let modes = HashMap::from([("wlan0".to_owned(), WifiMode::Station)]);
+        let wifi = v4("wlan0", Ipv4Addr::new(192, 168, 1, 106));
+        let cable = v4("eth0", Ipv4Addr::new(10, 33, 50, 103));
+        assert!(picks_the_cable(&[cable.clone(), wifi.clone()], &modes));
+        assert!(picks_the_cable(std::slice::from_ref(&cable), &modes));
+        assert!(!picks_the_cable(std::slice::from_ref(&wifi), &modes));
+        assert!(!picks_the_cable(&[], &modes));
+    }
+
+    #[test]
     fn an_unplugged_static_cable_does_not_shadow_the_wifi_uplink() {
         // A static `eth0` keeps its address with the cable out; only the
         // carrier tells, and only wired candidates are judged by it.
@@ -576,6 +605,14 @@ mod tests {
         ];
         let modes = HashMap::from([("wlan0".to_owned(), WifiMode::Station)]);
         assert_eq!(pick_interface(&interfaces, &modes), Some("wlan0"));
+    }
+
+    #[test]
+    fn the_esp32_setup_station_is_not_taken_for_the_cable() {
+        assert_eq!(
+            uplink_rank("ethsta0", WifiMode::Unknown),
+            UplinkRank::Station
+        );
     }
 
     #[test]
@@ -754,6 +791,7 @@ header
                 station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
                 station_ssid: Some("Office WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
+                cable_uplink: false,
             }
         );
     }
@@ -767,6 +805,7 @@ header
                 station_ipv4: None,
                 station_ssid: None,
                 wifi_signal_dbm: None,
+                cable_uplink: false,
             }
         );
     }

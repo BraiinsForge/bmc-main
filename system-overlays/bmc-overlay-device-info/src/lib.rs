@@ -806,6 +806,7 @@ mod tests {
                     station_ipv4: ip,
                     station_ssid,
                     wifi_signal_dbm: None,
+                    cable_uplink: false,
                 },
             });
         }
