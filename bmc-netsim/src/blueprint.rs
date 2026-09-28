@@ -36,7 +36,7 @@ use serde_json::Value as Json;
 use crate::cache::Cache;
 use crate::devices::{
     axeos, bitcoin_mining_data, bos, braiins_pool, braiins_public_api, formula_1,
-    halving_countdown, spacex_launch, ubos, weather,
+    halving_countdown, prices, spacex_launch, ubos, weather,
 };
 use crate::http_status::HttpStatus;
 use crate::value::Value;
@@ -183,6 +183,20 @@ pub enum Instance {
         #[serde(default)]
         port: Option<u16>,
     },
+    /// A Nexus prices deployment — a cloud API on its port, never announced.
+    Prices {
+        /// Human label describing this entry's scenario, shown in the readout.
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        params: prices::Params,
+        #[serde(default = "one")]
+        count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
+    },
     /// A Nexus weather deployment — a cloud API on its port, never announced.
     Weather {
         /// Human label describing this entry's scenario, shown in the readout.
@@ -228,6 +242,7 @@ const DEVICE_KEYS: &[&str] = &[
     "braiins-public-api",
     "formula-1",
     "halving-countdown",
+    "prices",
     "weather",
     "spacex-launch",
 ];
@@ -243,6 +258,7 @@ enum DeviceParams {
     BraiinsPublicApi(braiins_public_api::Params),
     Formula1(formula_1::Params),
     HalvingCountdown(halving_countdown::Params),
+    Prices(prices::Params),
     Weather(weather::Params),
     SpacexLaunch(spacex_launch::Params),
 }
@@ -260,6 +276,7 @@ impl DeviceParams {
             "braiins-public-api" => DeviceParams::BraiinsPublicApi(map.next_value()?),
             "formula-1" => DeviceParams::Formula1(map.next_value()?),
             "halving-countdown" => DeviceParams::HalvingCountdown(map.next_value()?),
+            "prices" => DeviceParams::Prices(map.next_value()?),
             "weather" => DeviceParams::Weather(map.next_value()?),
             "spacex-launch" => DeviceParams::SpacexLaunch(map.next_value()?),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
@@ -287,6 +304,7 @@ impl DeviceParams {
             "halving-countdown" => {
                 DeviceParams::HalvingCountdown(serde_json::from_value(json).map_err(E::custom)?)
             }
+            "prices" => DeviceParams::Prices(serde_json::from_value(json).map_err(E::custom)?),
             "weather" => DeviceParams::Weather(serde_json::from_value(json).map_err(E::custom)?),
             "spacex-launch" => {
                 DeviceParams::SpacexLaunch(serde_json::from_value(json).map_err(E::custom)?)
@@ -311,6 +329,7 @@ impl DeviceParams {
             "halving-countdown" => {
                 DeviceParams::HalvingCountdown(halving_countdown::Params::default())
             }
+            "prices" => DeviceParams::Prices(prices::Params::default()),
             "weather" => DeviceParams::Weather(weather::Params::default()),
             "spacex-launch" => DeviceParams::SpacexLaunch(spacex_launch::Params::default()),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
@@ -362,6 +381,12 @@ impl DeviceParams {
                 port,
             },
             DeviceParams::HalvingCountdown(params) => Instance::HalvingCountdown {
+                label,
+                params,
+                count,
+                port,
+            },
+            DeviceParams::Prices(params) => Instance::Prices {
                 label,
                 params,
                 count,
@@ -476,6 +501,7 @@ impl Instance {
             Instance::BraiinsPublicApi { .. } => "braiins-public-api",
             Instance::Formula1 { .. } => "formula-1",
             Instance::HalvingCountdown { .. } => "halving-countdown",
+            Instance::Prices { .. } => "prices",
             Instance::Weather { .. } => "weather",
             Instance::SpacexLaunch { .. } => "spacex-launch",
         }
@@ -493,6 +519,7 @@ impl Instance {
             | Instance::BraiinsPublicApi { count, .. }
             | Instance::Formula1 { count, .. }
             | Instance::HalvingCountdown { count, .. }
+            | Instance::Prices { count, .. }
             | Instance::Weather { count, .. }
             | Instance::SpacexLaunch { count, .. } => *count,
         }
@@ -510,6 +537,7 @@ impl Instance {
             | Instance::BraiinsPublicApi { label, .. }
             | Instance::Formula1 { label, .. }
             | Instance::HalvingCountdown { label, .. }
+            | Instance::Prices { label, .. }
             | Instance::Weather { label, .. }
             | Instance::SpacexLaunch { label, .. } => label.as_deref(),
         }
@@ -527,6 +555,7 @@ impl Instance {
             | Instance::BraiinsPublicApi { port, .. }
             | Instance::Formula1 { port, .. }
             | Instance::HalvingCountdown { port, .. }
+            | Instance::Prices { port, .. }
             | Instance::Weather { port, .. }
             | Instance::SpacexLaunch { port, .. } => *port,
         }
@@ -544,6 +573,7 @@ impl Instance {
             Instance::BraiinsPublicApi { params, .. } => params.resource(name, port),
             Instance::Formula1 { params, .. } => params.resource(name, port),
             Instance::HalvingCountdown { params, .. } => params.resource(name, port),
+            Instance::Prices { params, .. } => params.resource(name, port),
             Instance::Weather { params, .. } => params.resource(name, port),
             Instance::SpacexLaunch { params, .. } => params.resource(name, port),
         }

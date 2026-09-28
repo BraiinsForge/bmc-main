@@ -82,6 +82,7 @@ drifts around `hashrate_ths`.
 | `braiins-pool`       | — (cloud, not announced)       | FPPS `/pool/v2/user/{hashrate,workers}/{current,history}`, `rewards/latest`, `financials`, `payouts/recent`                       |
 | `braiins-public-api` | — (cloud, not announced)       | `/v1/{price-stats, difficulty-stats, price-history}`, `/v2/{blocks, hashrate-stats}`                                              |
 | `halving-countdown`  | — (cloud, not announced)       | Nexus `/api/v1/data/bitcoin/halving-prediction`                                                                                   |
+| `prices`             | — (cloud, not announced)       | Nexus `/api/v1/data/{prices/{window}/{candle}, reference}/{symbol}` for the instruments the ticker fixtures recorded              |
 | `weather`            | — (cloud, not announced)       | Nexus `/api/v1/data/weather/{location}`                                                                                           |
 | `spacex-launch`      | — (cloud, not announced)       | Nexus `/api/v1/data/spacex/next-launch`                                                                                           |
 

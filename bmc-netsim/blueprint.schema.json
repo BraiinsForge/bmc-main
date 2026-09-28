@@ -1000,6 +1000,47 @@
           ]
         },
         {
+          "description": "A Nexus prices deployment — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "prices"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/PricesParams"
+            },
+            "port": {
+              "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "device"
+          ]
+        },
+        {
           "description": "A Nexus weather deployment — a cloud API on its port, never announced.",
           "type": "object",
           "properties": {
@@ -1087,6 +1128,77 @@
       "description": "A non-negative figure, such as a hashrate or a power draw",
       "type": "number",
       "minimum": 0.0
+    },
+    "PricesParams": {
+      "description": "Scenario controls for the simulated Nexus prices and reference resources.",
+      "type": "object",
+      "properties": {
+        "closed": {
+          "description": "Instruments whose market is shut: their reference reads `is_market_open: false`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PricesSymbol"
+          }
+        },
+        "empty": {
+          "description": "Instruments whose windows hold no bars: their prices answer 404\nwhile their reference still resolves.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PricesSymbol"
+          }
+        },
+        "fail_after_secs": {
+          "description": "Answer 200 before this point, then switch to `status`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "failing": {
+          "description": "Instruments whose prices answer 503 while the others stay live.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PricesSymbol"
+          }
+        },
+        "price_scale": {
+          "description": "Factor on every price, to push the list across magnitudes.",
+          "$ref": "#/$defs/NonNegative"
+        },
+        "status": {
+          "description": "HTTP status every route returns after startup, or after `fail_after_secs`.",
+          "$ref": "#/$defs/HttpStatus"
+        },
+        "warmup_secs": {
+          "description": "Answer 503 until this many seconds of scenario time have elapsed.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "PricesSymbol": {
+      "description": "A symbol the prices profile carries, spelled as a widget is configured with it",
+      "type": "string",
+      "enum": [
+        "NVDA",
+        "AAPL",
+        "TSLA",
+        "MSTR",
+        "JPM",
+        "META",
+        "SPY",
+        "NFLX",
+        "^GSPC",
+        "BTC",
+        "BTC-USD",
+        "EUR-USD"
+      ]
     },
     "Session": {
       "description": "Which session the live boards report as running.",

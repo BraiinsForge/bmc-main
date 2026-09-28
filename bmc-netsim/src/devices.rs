@@ -29,6 +29,7 @@ pub mod braiins_pool;
 pub mod braiins_public_api;
 pub mod formula_1;
 pub mod halving_countdown;
+pub mod prices;
 pub mod spacex_launch;
 pub mod ubos;
 pub mod weather;
