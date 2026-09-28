@@ -179,6 +179,8 @@ All commit messages follow strict formatting guidelines:
 - **Must** write all sentences in the imperative (similar to subject)
 - **Must** start each sentence in the body with a lowercase letter
 - **Never** add "Generated with Claude Code" or "Co-Authored-By: Claude" to commit messages
+- **Never** call refreshing capture baselines a "rebase" — that word names the git operation. Say *re-capture*
+  (`widgets-wasm: weather: Re-capture the baselines`), in commit messages, MR text, and conversation alike
 - Use "-" for each line in the body (no leading space at the beginning)
 - Add ticket reference at the end as an alternative approach, but do not mix styles - be consistent
 - For multiple topics, chain them: `topic1: topic2: topic3: Subject description`
