@@ -40,7 +40,7 @@ use crate::manifest_params::Params;
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
 
-// One global round-robin walks every pollable device in a single rotation,
+// One global round-robin walks every device in a single rotation,
 // with only one request-cycle in flight at a time. Each device's opening
 // fetch is deferred by `tick_ms`, so completions arrive as an even drip
 // instead of a per-family burst — and the spread doubles as a load cap
@@ -172,7 +172,7 @@ fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
     })
 }
 
-/// Every pollable device across the enabled families, in family order
+/// Every device across the enabled families, in family order
 /// — the snapshot the ring rebuilds from at the start of each rotation.
 fn gather_ring() -> Vec<DeviceId> {
     let _s = profile::span("gather_ring");
@@ -185,22 +185,18 @@ fn gather_ring() -> Vec<DeviceId> {
     let mut ids = Vec::new();
     for family in DeviceFamily::ALL {
         if family_enabled(family) {
-            ids.extend(crate::DEVICES.with(|d| d.borrow().pollable_ids_for_family(family)));
+            ids.extend(crate::DEVICES.with(|d| d.borrow().ids_for_family(family)));
         }
     }
     // Debug-level so it's silent at the production INFO threshold; raise the
-    // device log level to DEBUG to watch the fleet's membership over time.
+    // device log level to DEBUG to watch the fleet over time.
     let census = crate::DEVICES.with(|d| d.borrow().census());
     log_debug!(
-        "fleet census: total={} reported={} reachable={} ring={} — cand={} dormant={} ident={} confirmed={}",
+        "fleet census: total={} reachable={} confirmed={} ring={}",
         census.total,
-        census.reported,
         census.reachable,
-        ids.len(),
-        census.candidate,
-        census.dormant,
-        census.identified,
         census.confirmed,
+        ids.len(),
     );
     ids
 }
@@ -220,7 +216,7 @@ fn send(req: FetchRequest<'_>, delay_ms: u32) -> Option<FetchRequestId> {
 /// so a freshly discovered device gets data promptly.
 ///
 /// `family` and `is_new` are ignored — the global ring picks up
-/// every pollable device.
+/// every device of an enabled family.
 pub fn on_discovered(_family: DeviceFamily, _is_new: bool) {
     kick();
 }
@@ -289,13 +285,13 @@ pub fn remove_token(id: &DeviceId) {
 /// Begin the device at the ring cursor after `delay_ms`,
 /// skipping any that have left the fleet or a disabled family.
 /// Rebuilds the ring when the rotation wraps;
-/// a rebuild that finds nothing pollable parks the poller idle.
+/// a rebuild that finds nothing to poll parks the poller idle.
 fn begin_device(delay_ms: u32) {
     let mut rebuilt = false;
     loop {
         if with_poller(|p| p.ring.is_done()) {
             if rebuilt {
-                // The fresh ring was already all-unpollable this call; go idle.
+                // The fresh ring was already all skipped this call; go idle.
                 park_idle();
                 return;
             }

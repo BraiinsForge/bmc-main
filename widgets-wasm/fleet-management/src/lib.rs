@@ -212,7 +212,7 @@ fn on_removed(family: DeviceFamily, name: &str) {
                 (
                     dev.identity.family,
                     dev.model.as_ref().map(|m| m.name.clone()),
-                    dev.is_confirmed(),
+                    dev.confirmed,
                 )
             })
     });
@@ -248,15 +248,10 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
         let model_hint = found.model_hint;
         let family = identity.family;
         let name = identity.name.clone();
-        let id = identity.id.clone();
         let model = model_hint
             .as_ref()
             .map_or_else(|| "model pending".to_owned(), |m| m.name.clone());
         let is_new = DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
-        // Every family reaches here positively identified:
-        // AxeOS and BOS by their TXT keys, uBOS by its dedicated service type.
-        // So keep it polled — the report still waits for an answered poll.
-        DEVICES.with(|d| d.borrow_mut().identify(&id));
         if is_new {
             log_info!(
                 "fleet: discovered {} {} ({})",

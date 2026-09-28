@@ -247,14 +247,11 @@ fn partition_key(dev: &KnownDevice) -> (Option<usize>, &str) {
 
 #[must_use]
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
-    // Only positively identified devices enter the report: AxeOS/uBOS are
-    // confirmed at discovery, a base-type BOS only once it answers a poll — so a
-    // non-miner `_http._tcp` responder never counts. A confirmed device then folds
-    // regardless of reachability (an unreachable one contributes no reading, see
-    // `fold_group`); operator model/family filters hide it further.
+    // A device folds regardless of reachability (an unreachable one contributes
+    // no reading, see `fold_group`); only the operator's family filter hides it.
     let visible: Vec<&KnownDevice> = devices
         .iter()
-        .filter(|d| d.is_reported() && filters.is_visible(d.identity.family))
+        .filter(|d| filters.is_visible(d.identity.family))
         .collect();
 
     // Key on family as well as model name so two families sharing a display name
@@ -305,10 +302,7 @@ pub fn model_detail_rows(
         .iter()
         .filter(|dev| {
             let (fam, lab) = partition_key(dev);
-            dev.is_reported()
-                && fam == family_index
-                && lab == label
-                && filters.is_visible(dev.identity.family)
+            fam == family_index && lab == label && filters.is_visible(dev.identity.family)
         })
         // fold_group's "Unknown"-label family sentinel may misfire on a
         // device display-named "Unknown"; model-detail rows never read `family`.
@@ -333,7 +327,7 @@ pub fn model_detail_rows(
 mod tests {
     use super::*;
 
-    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, KnownDevice, Membership};
+    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, KnownDevice};
     use crate::filter::Filters;
     use crate::telemetry::TelemetrySnapshot;
 
@@ -356,7 +350,7 @@ mod tests {
             telemetry: reading.map(|reading| TelemetrySnapshot { reading }),
             reachable: true,
             consecutive_failures: 0,
-            membership: Membership::Confirmed,
+            confirmed: true,
             last_failure: None,
             unreachable_since: None,
         }
@@ -656,40 +650,15 @@ mod tests {
     }
 
     #[test]
-    fn a_candidate_is_excluded_until_it_answers_a_poll() {
-        // A base-type sighting that hasn't answered (a non-miner `_http._tcp`
-        // responder, or a real BOS mid-boot) is a candidate — hidden from the
-        // report until an answered poll confirms it.
-        let mut list = DeviceList::new();
-        let id = DeviceId::new("bos/x");
-        list.upsert(discovered("bos/x", DeviceFamily::Bos, "192.168.1.136", 80));
-        assert_eq!(
-            summarize(&list, &Filters::default()).total.total_count,
-            0,
-            "an unconfirmed candidate must not be counted"
-        );
-        list.record_pass(&id, reading(Some(5.0)), true);
-        assert_eq!(
-            summarize(&list, &Filters::default()).total.total_count,
-            1,
-            "answering a poll admits it to the report"
-        );
-    }
-
-    #[test]
     fn an_identified_but_unanswered_device_is_still_reported() {
-        // A positively family-identified device (uBOS on its own type) is shown
-        // even before it answers, so an erroring miner surfaces rather than hides.
+        // Shown even before it answers, so an erroring miner surfaces rather than hides.
         let mut list = DeviceList::new();
-        let id = DeviceId::new("ubos/ubos-01");
         list.upsert(discovered(
             "ubos/ubos-01",
             DeviceFamily::Ubos,
             "10.0.0.4",
             8080,
         ));
-        assert_eq!(summarize(&list, &Filters::default()).total.total_count, 0);
-        list.identify(&id);
         assert_eq!(
             summarize(&list, &Filters::default()).total.total_count,
             1,
@@ -708,7 +677,7 @@ mod tests {
             telemetry: None,
             reachable: false,
             consecutive_failures: 0,
-            membership: Membership::Identified,
+            confirmed: false,
             last_failure: None,
             unreachable_since: None,
         };
