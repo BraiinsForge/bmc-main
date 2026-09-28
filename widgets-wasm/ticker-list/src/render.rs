@@ -53,7 +53,8 @@ const CHART_INSET: f32 = 2.0;
 const CHART_FILL_TOP_ALPHA: f32 = 0.15;
 const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
 const ERROR_ROW_ALPHA: f32 = 0.6;
-const CLOSED_MARKER_SCALE: f32 = 0.75;
+/// The SDK stale pill's space between its icon and label.
+const STALE_ICON_GAP: f32 = 8.0;
 const NO_SYMBOLS: &str = "No symbols provided";
 
 fn fixed_width(width: f32) -> Node {
@@ -141,34 +142,58 @@ fn price_text(row_data: &TickerRow) -> String {
 }
 
 fn closed_marker(band: &Band, color: Color) -> Node {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "scaled font sizes are small, exact in f32"
-    )]
-    let diameter = scale_font(band.symbol_font, CLOSED_MARKER_SCALE) as f32;
+    let diameter = band.marker_size;
     let draws = pause_marker(diameter, color, BACKGROUND);
     canvas(props!(width: diameter, height: diameter), draws)
 }
 
-/// The `symbol` node, with a pause marker in `marker` after it when the market is closed
-/// and, when the row is stale, a badge aging from its last good load.
-fn symbol_line(
-    symbol: Node,
-    band: &Band,
-    marker: Color,
-    closed: bool,
-    stale: Option<SystemTime>,
-) -> Node {
+/// The `symbol` node, with a pause marker in `marker` after it when the market is closed.
+fn symbol_line(symbol: Node, band: &Band, marker: Color, closed: bool) -> Node {
     let mut children = vec![symbol];
     if closed {
         children.push(fixed_width(band.row_gap));
         children.push(closed_marker(band, marker));
     }
-    if let Some(anchor) = stale {
-        children.push(fixed_width(band.row_gap));
-        children.push(stale_badge(band, anchor));
-    }
     row(props!(cross_align: CrossAlign::Center), children)
+}
+
+/// Stands in for the company name while a row is stale:
+/// the SDK pill's warning icon and the age of the last good load, in the name's type.
+/// Per row, because the SDK's `with_stale_overlay` floats one pill over the whole root
+/// and so cannot say *which* rows hold an old series.
+fn stale_line(anchor: SystemTime, name: TextStyle, band: &Band) -> Node {
+    let icon = band.marker_size;
+    row(
+        props!(gap: STALE_ICON_GAP, cross_align: CrossAlign::Center),
+        [
+            canvas(
+                props!(width: icon, height: icon),
+                [Draw::svg_builtin(
+                    0.0,
+                    0.0,
+                    icon,
+                    icon,
+                    ICON_WARNING,
+                    ORANGE_40,
+                )],
+            ),
+            relative_time_live(
+                anchor,
+                // "12m ago", not the pill's "Last refresh 12m ago":
+                // BMM101's name column is narrower than the sentence.
+                RelTimeFormat {
+                    length: RelTimeLength::Short,
+                    segments: RelTimeSegments::Single,
+                },
+                // An age only counts up; never "in …" on a clock step back.
+                RelTimeClamp::ElapsedOnly,
+                TextStyle {
+                    color: ORANGE_40,
+                    ..name
+                },
+            ),
+        ],
+    )
 }
 
 /// How a sparkline strokes its line and fills the area under it.
@@ -244,6 +269,8 @@ fn resolved_cells(
         TREND_DOWN
     };
     let closed = row_data.is_closed_marked();
+    let name_style =
+        style!(size: band.company_font, color: SECONDARY, text_overflow: TextOverflow::Ellipsis);
     Cells {
         name: col(
             props!(flex: 1.0, gap: band.row_gap),
@@ -253,12 +280,11 @@ fn resolved_cells(
                     band,
                     SECONDARY,
                     closed,
-                    stale,
                 ),
-                text(
-                    name.unwrap_or_default(),
-                    style!(size: band.company_font, color: SECONDARY, text_overflow: TextOverflow::Ellipsis),
-                ),
+                match stale {
+                    Some(anchor) => stale_line(anchor, name_style.0, band),
+                    None => text(name.unwrap_or_default(), name_style),
+                },
             ],
         ),
         chart: if band.show_sparkline {
@@ -282,57 +308,6 @@ fn deck_symbol(symbol: &str, color: Color, band: &Band) -> Node {
     )
 }
 
-/// Per-row counterpart to the SDK's `with_stale_overlay` pill, rendered inline
-/// after the symbol: a list polls each row separately, so a single pill floated
-/// over the root could not say *which* rows are holding an old series.
-///
-/// It carries the SDK pill's Carbon Warning tokens rather than a palette of its
-/// own, but builds its own chrome off the band — `Node::Tag`'s padding and icon
-/// are fixed host-side constants, which at a 0.67 `fit` would leave a badge
-/// wider than the sparkline sitting beside a 21px symbol. `band.stale_label`
-/// adds the age; bands too narrow for it show the icon alone.
-fn stale_badge(band: &Band, anchor: SystemTime) -> Node {
-    let mut children = vec![canvas(
-        props!(width: band.stale_icon, height: band.stale_icon),
-        [Draw::svg_builtin(
-            0.0,
-            0.0,
-            band.stale_icon,
-            band.stale_icon,
-            ICON_WARNING,
-            ORANGE_40,
-        )],
-    )];
-    if band.stale_label {
-        children.push(relative_time_live(
-            anchor,
-            // Bare "5m", not the pill's "Last refresh 5m ago" — a row has room
-            // for a magnitude, not a sentence.
-            RelTimeFormat {
-                length: RelTimeLength::Short,
-                segments: RelTimeSegments::Single,
-            },
-            // An age only counts up; never "in …" on a clock step back.
-            RelTimeClamp::ElapsedOnly,
-            TextStyle {
-                size: band.stale_font,
-                weight: FontWeight::BOLD,
-                color: ORANGE_40,
-                ..TextStyle::default()
-            },
-        ));
-    }
-    row(
-        props!(
-            background: GRAY_100,
-            padding: band.badge_padding,
-            gap: band.badge_padding,
-            cross_align: CrossAlign::Center
-        ),
-        children,
-    )
-}
-
 /// A placeholder row: symbol (error-colored for not-found, gray otherwise) +
 /// a short status, price `N/A`, and the whole row dimmed to 0.6.
 fn placeholder_cells(symbol: &str, status: &str, symbol_color: Color, band: &Band) -> Cells {
@@ -342,7 +317,7 @@ fn placeholder_cells(symbol: &str, status: &str, symbol_color: Color, band: &Ban
         name: col(
             props!(flex: 1.0, gap: band.row_gap),
             [
-                symbol_line(deck_symbol(symbol, sym, band), band, SECONDARY, false, None),
+                symbol_line(deck_symbol(symbol, sym, band), band, SECONDARY, false),
                 text(status, style!(size: band.company_font, color: muted)),
             ],
         ),
@@ -646,6 +621,29 @@ mod tests {
                     "{size:?}: {text}"
                 );
             }
+        }
+    }
+
+    fn count_ages(node: &Node) -> usize {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                children.iter().map(count_ages).sum()
+            }
+            Node::RelTime { .. } => 1,
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn a_stale_row_shows_its_age_in_place_of_the_company_name() {
+        for size in [bmm101(), WidgetSize::from_dimensions(638, 480)] {
+            let view = view_of(&fixtures::stale(), size);
+            let texts = texts(&view);
+            assert!(
+                !texts.iter().any(|text| text == "NVIDIA Corporation"),
+                "{size:?}: {texts:?}"
+            );
+            assert_eq!(count_ages(&view), crate::layout::capacity(size), "{size:?}");
         }
     }
 

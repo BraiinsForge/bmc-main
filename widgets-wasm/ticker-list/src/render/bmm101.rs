@@ -32,7 +32,7 @@ use bmc_wasm_sdk::*;
 
 use super::{
     Cells, Grid, NO_SYMBOLS, Paint, Slot, fixed_width, list, price_text, slot, sparkline,
-    symbol_line,
+    stale_line, symbol_line,
 };
 use crate::layout::{BMM101_ROWS, Band};
 use crate::model::{RowState, TickerRow};
@@ -63,11 +63,9 @@ const FALLING_FILL_ALPHA: f32 = 0.30;
 const TAG_PADDING_X: f32 = 4.0;
 const TAG_PADDING_Y: f32 = 2.0;
 const TAG_RADIUS: f32 = 4.0;
-/// Between a symbol and its pause marker or stale badge.
+/// Between a symbol and its pause marker.
 const MARKER_GAP: f32 = 4.0;
-const STALE_SIZE: u32 = 14;
-const STALE_ICON: f32 = 16.0;
-const STALE_PADDING: f32 = 2.0;
+const MARKER_SIZE: f32 = 16.0;
 /// A placeholder row dims as it does on the Deck.
 const PLACEHOLDER_ALPHA: f32 = 0.6;
 
@@ -80,15 +78,13 @@ fn band(row_height: f32) -> Band {
         change_font: BODY_SIZE,
         chart_width: CHART_WIDTH,
         chart_height: row_height,
-        badge_padding: STALE_PADDING,
+        badge_padding: 0.0,
         row_padding: 0.0,
         row_gap: MARKER_GAP,
         rows: BMM101_ROWS,
         columns: 1,
         show_sparkline: true,
-        stale_label: true,
-        stale_font: STALE_SIZE,
-        stale_icon: STALE_ICON,
+        marker_size: MARKER_SIZE,
     }
 }
 
@@ -109,19 +105,17 @@ fn symbol(symbol: &str, color: Color) -> Node {
     )
 }
 
-fn sub_line(value: &str, color: Color) -> Node {
-    line_box(
-        SUB_SLOT,
-        text(
-            value,
-            style!(
-                size: SUB_SIZE,
-                color: color,
-                line_height: LINE_HEIGHT,
-                text_overflow: TextOverflow::Ellipsis
-            ),
-        ),
+fn sub_style(color: Color) -> StyleResult {
+    style!(
+        size: SUB_SIZE,
+        color: color,
+        line_height: LINE_HEIGHT,
+        text_overflow: TextOverflow::Ellipsis
     )
+}
+
+fn sub_line(value: &str, color: Color) -> Node {
+    line_box(SUB_SLOT, text(value, sub_style(color)))
 }
 
 fn figure(value: impl Into<String>, color: Color) -> Node {
@@ -190,8 +184,11 @@ fn resolved(data: &TickerRow, name: Option<&str>, stale: Option<SystemTime>, ban
     let closed = data.is_closed_marked();
     Cells {
         name: name_cell(
-            symbol_line(symbol(&data.symbol, WHITE), band, GRAY_40, closed, stale),
-            sub_line(name.unwrap_or_default(), GRAY_40),
+            symbol_line(symbol(&data.symbol, WHITE), band, GRAY_40, closed),
+            match stale {
+                Some(anchor) => line_box(SUB_SLOT, stale_line(anchor, sub_style(GRAY_40).0, band)),
+                None => sub_line(name.unwrap_or_default(), GRAY_40),
+            },
         ),
         chart: sparkline(&data.series, &paint(rising, closed), band),
         price: col(
@@ -214,7 +211,6 @@ fn placeholder(symbol_text: &str, status: &str, not_found: bool, band: &Band) ->
                 band,
                 GRAY_40,
                 false,
-                None,
             ),
             sub_line(status, muted),
         ),

@@ -91,11 +91,8 @@ pub struct Band {
     /// 2 at Full, 1 otherwise.
     pub columns: usize,
     pub show_sparkline: bool,
-    /// Whether the stale badge carries the last-refresh age; icon-only on
-    /// bands too narrow to fit it between symbol and price.
-    pub stale_label: bool,
-    pub stale_font: u32,
-    pub stale_icon: f32,
+    /// The pause marker's diameter, and the stale warning's icon.
+    pub marker_size: f32,
 }
 
 const FULL: Band = Band {
@@ -111,9 +108,7 @@ const FULL: Band = Band {
     rows: 8,
     columns: 2,
     show_sparkline: true,
-    stale_label: true,
-    stale_font: 14,
-    stale_icon: 16.0,
+    marker_size: 16.0,
 };
 
 const LARGE: Band = Band {
@@ -135,7 +130,6 @@ const SMALL: Band = Band {
     rows: 2,
     columns: 1,
     show_sparkline: false,
-    stale_label: false,
     ..FULL
 };
 
@@ -154,8 +148,8 @@ impl Band {
             badge_padding: self.badge_padding * fit,
             row_padding: self.row_padding * fit,
             row_gap: self.row_gap * fit,
-            stale_font: scale_font(self.stale_font, fit),
-            stale_icon: self.stale_icon * fit,
+            // Whole pixels, as `pause_marker` centres whole-pixel bars on the disc.
+            marker_size: (self.marker_size * fit).round(),
             ..self
         }
     }

@@ -526,9 +526,9 @@ mod wasm_glue {
                 reschedule_failure(handle, class);
             }
             Transition::Keep => {
-                // A failed refresh keeps the held series on screen; the stale
-                // badge rides the poll engine's `is_stale` grace, and `retry`
-                // rejects a 2xx-bad-parse reply as a staleness anchor.
+                // A failed refresh keeps the held series on screen;
+                // the stale warning rides the poll engine's `is_stale` grace,
+                // and `retry` rejects a 2xx-bad-parse reply as a staleness anchor.
                 reschedule_failure(handle, class);
             }
         }
@@ -645,8 +645,8 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
         let ws = widget_size();
-        // Each badge ages from its row's last good load, but only while
-        // that row is stale — the same anchor rule ticker-single applies.
+        // Each row's age counts from its last good load, but only
+        // while that row is stale — the same anchor rule ticker-single applies.
         let stale: Vec<Option<SystemTime>> = PRICE_HANDLES.with(|h| {
             h.borrow()
                 .iter()
