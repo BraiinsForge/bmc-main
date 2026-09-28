@@ -57,16 +57,19 @@ fn platform_slug(platform: i64) -> Option<&'static str> {
 }
 
 /// BOS advertises `_http._tcp` with the `_bos` subtype.
-/// Browsing the subtype directly means every event on this browse is a BOS device.
+/// The widget browses the base type instead, as subtype PTRs resolve unreliably,
+/// and tells BOS apart by [`is_bos_txt`].
 pub const BOS_SERVICE_TYPES: &[&str] = &["_bos._sub._http._tcp"];
 
-/// Whether `GET /api/v1/version` answers like BOS+ — integer `{major, minor,
-/// patch}`. Discovery fingerprints a base-type candidate with this predicate
-/// before sending credentials. Spoofable — a benign-host filter (printers,
-/// NAS), not a boundary against a host impersonating BOS.
+/// Whether an `_http._tcp` sighting carries the BOS TXT signal:
+/// its live `bos_version`, or `bos=1` when BOS has no version to advertise.
+///
+/// Spoofable, so it keeps unrelated hosts (printers, NAS) away from
+/// the BOS credentials rather than proving the peer is BOS.
 #[must_use]
-pub fn is_version_response(json: &dyn JsonLookup) -> bool {
-    json.i64("/major").is_some() && json.i64("/minor").is_some() && json.i64("/patch").is_some()
+pub fn is_bos_txt(json: &dyn JsonLookup) -> bool {
+    json.str("/txt/bos_version").is_some_and(|v| !v.is_empty())
+        || json.str("/txt/bos").as_deref() == Some("1")
 }
 
 pub struct BosAdapter;
@@ -244,6 +247,38 @@ mod tests {
     #[test]
     fn browses_the_bos_subtype() {
         assert_eq!(BosAdapter.browse_service_types(), &["_bos._sub._http._tcp"]);
+    }
+
+    fn with_txt(key: &'static str, value: &'static str) -> MapJson {
+        let mut json = bos_shaped();
+        json.strings.insert(key, value);
+        json
+    }
+
+    #[test]
+    fn a_bos_version_identifies_bos() {
+        assert!(is_bos_txt(&with_txt("/txt/bos_version", "26.09")));
+    }
+
+    #[test]
+    fn the_bos_flag_identifies_bos_without_a_version() {
+        assert!(is_bos_txt(&with_txt("/txt/bos", "1")));
+    }
+
+    #[test]
+    fn an_empty_bos_version_does_not_identify_bos() {
+        assert!(!is_bos_txt(&with_txt("/txt/bos_version", "")));
+    }
+
+    #[test]
+    fn a_bos_flag_other_than_one_does_not_identify_bos() {
+        assert!(!is_bos_txt(&with_txt("/txt/bos", "0")));
+        assert!(!is_bos_txt(&with_txt("/txt/bos", "")));
+    }
+
+    #[test]
+    fn a_sighting_without_bos_txt_is_not_bos() {
+        assert!(!is_bos_txt(&bos_shaped()));
     }
 
     #[test]

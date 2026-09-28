@@ -154,22 +154,22 @@ const HTTP_SERVICE_TYPES: &[&str] = &["_http._tcp"];
 
 /// BOS and AxeOS share `_http._tcp`. Unlike the flaky `_sub` subtype PTRs,
 /// the base type resolves reliably despite co-located mDNS responders.
-/// AxeOS passes a positive TXT test here, so it is identified straight away.
-/// BOS has no discovery signal on the shared type, so it is fingerprinted first,
-/// identified only when its version probe clears — a non-miner responder never
-/// gets that far. Either way the report waits for an answered poll.
+/// Each family is told apart by its TXT keys; any other host on the type
+/// is ignored, so it never receives a request, let alone BOS credentials.
 #[cfg(target_arch = "wasm32")]
 fn on_http_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => {
             let doc = JsonDoc::parse(json.as_bytes());
-            let txt = |key| doc.str(key).is_some_and(|v| !v.is_empty());
-            if txt("/txt/family") || txt("/txt/board") {
-                ingest(&BitaxeAdapter, &doc);
-            } else {
-                // BOS shares `_http._tcp` with arbitrary hosts; fingerprint the host
-                // before crediting it, so root credentials never reach a non-BOS box.
-                session::probe_bos_candidate(json);
+            match discovery::classify_http_found(&doc) {
+                Some(DeviceFamily::Bitaxe) => ingest(&BitaxeAdapter, &doc),
+                Some(DeviceFamily::Bos) => ingest(&BosAdapter, &doc),
+                Some(DeviceFamily::Ubos) => {}
+                None => log_debug!(
+                    "fleet: ignoring _http._tcp service {} at {}: no BOS or AxeOS TXT",
+                    doc.str("/name").unwrap_or_default(),
+                    doc.str("/host").unwrap_or_default(),
+                ),
             }
         }
         // A base-type removal carries no family, so drop under both ids.
@@ -253,8 +253,8 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
             .as_ref()
             .map_or_else(|| "model pending".to_owned(), |m| m.name.clone());
         let is_new = DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
-        // Every family reaches here positively identified: AxeOS by its TXT test, uBOS
-        // by its dedicated service type, a base-type BOS once its fingerprint clears.
+        // Every family reaches here positively identified:
+        // AxeOS and BOS by their TXT keys, uBOS by its dedicated service type.
         // So keep it polled — the report still waits for an answered poll.
         DEVICES.with(|d| d.borrow_mut().identify(&id));
         if is_new {
@@ -268,14 +268,6 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
         session::on_discovered(family, is_new);
         request_frame();
     }
-}
-
-/// Ingest a BOS whose version fingerprint cleared — positive identification,
-/// the same role AxeOS's discovery TXT test plays.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn ingest_probed_bos(json: &str) {
-    let doc = JsonDoc::parse(json.as_bytes());
-    ingest(&BosAdapter, &doc);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -327,8 +319,8 @@ fn rebuild_model_detail_rows(
 }
 
 /// The no-credentials fallback for an otherwise-empty fleet.
-/// Unreachable as written: a fingerprinted BOS is identified
-/// and so reports, which keeps the fleet non-empty and the gate shut.
+/// Unreachable as written: a BOS identified by its TXT reports at once,
+/// which keeps the fleet non-empty and the gate shut.
 ///
 /// Kept for the missing-credentials state BDK-434 adds,
 /// to key on instead. `None` keeps the generic "Searching…" state.

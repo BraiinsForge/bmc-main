@@ -182,13 +182,6 @@ impl Params {
             .then(|| leaf(drift(self.power_w.get() / self.hashrate_ths.get())));
         let base = mix(0, name);
         let endpoints = vec![
-            // The widget fingerprints BOS over this unauthenticated endpoint
-            // before crediting; always 200, independent of the miner's state.
-            EndpointSpec {
-                method: "GET".to_owned(),
-                path: "/api/v1/version".to_owned(),
-                response: ResponseSpec::render(json!({ "major": 1, "minor": 6, "patch": 0 })),
-            },
             EndpointSpec {
                 method: "POST".to_owned(),
                 path: "/api/v1/auth/login".to_owned(),
@@ -388,7 +381,6 @@ mod tests {
         assert_eq!(
             paths,
             [
-                "/api/v1/version",
                 "/api/v1/auth/login",
                 "/api/v1/miner/stats",
                 "/api/v1/miner/hw/hashboards",

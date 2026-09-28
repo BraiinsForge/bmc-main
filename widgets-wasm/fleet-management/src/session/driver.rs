@@ -36,7 +36,6 @@ use super::{
 };
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId, PollFailure, family_label};
-use crate::families::bos::{self, BosAdapter};
 use crate::manifest_params::Params;
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
@@ -77,13 +76,6 @@ struct InFlight {
     device: DeviceId,
     generation: u64,
     kind: FetchKind,
-}
-
-/// A base-type BOS candidate awaiting its version fingerprint.
-/// `doc` is the original Found payload, re-ingested once the probe confirms BOS.
-struct ProbePending {
-    id: DeviceId,
-    doc: String,
 }
 
 /// The single global poller. `ring` is the current rotation snapshot;
@@ -137,8 +129,6 @@ thread_local! {
     static POLLER: RefCell<Poller> = RefCell::new(Poller::idle());
     static TOKENS: RefCell<HashMap<DeviceId, String>> = RefCell::new(HashMap::new());
     static ROUTES: RefCell<HashMap<FetchRequestId, InFlight>> = RefCell::new(HashMap::new());
-    static PROBES: RefCell<HashMap<FetchRequestId, ProbePending>> = RefCell::new(HashMap::new());
-    static PROBING: RefCell<HashMap<DeviceId, i64>> = RefCell::new(HashMap::new());
     static PARAMS: RefCell<Rc<Params>> = RefCell::new(Rc::new(Params::current()));
 }
 
@@ -222,107 +212,6 @@ fn send(req: FetchRequest<'_>, delay_ms: u32) -> Option<FetchRequestId> {
         req.send(on_fetch)
     } else {
         req.send_after(delay_ms, on_fetch)
-    }
-}
-
-/// The unauthenticated endpoint BOS answers on the shared `_http._tcp` browse,
-/// appended to the API base — so the full probe URL is `…/api/v1/version`.
-const BOS_PROBE_ENDPOINT: &str = "/version";
-
-/// How long a candidate holds the single probe slot before a re-announcement
-/// may re-probe it. A probe resolves (an answer, or `DEVICE_FETCH_TIMEOUT`)
-/// within ~1s, so past this a lost response is assumed — otherwise a probe
-/// whose `on_probe` never fires would wedge the candidate out of the fleet for good.
-/// Well under the re-announce interval, so recovery is the very next announcement.
-const PROBE_STALE_SECS: i64 = 5;
-
-/// Claim the single probe slot for `id`: `true` when a probe should be sent
-/// (slot free, or its prior probe went stale — now stamped `now`),
-/// `false` when a fresh probe is still in flight.
-fn claim_probe_slot(probing: &mut HashMap<DeviceId, i64>, id: &DeviceId, now: i64) -> bool {
-    match probing.get(id) {
-        Some(&started) if now - started < PROBE_STALE_SECS => false,
-        _ => {
-            probing.insert(id.clone(), now);
-            true
-        }
-    }
-}
-
-/// Fingerprint a base-type BOS candidate before it can be sent credentials.
-///
-/// BOS shares `_http._tcp` with arbitrary hosts, so a fresh sighting is probed
-/// over the unauthenticated `/version` endpoint and ingested only if it answers
-/// BOS-shaped; a host already in the fleet just refreshes. The gate filters
-/// benign hosts (printers, NAS) — not proof against deliberate impersonation.
-pub fn probe_bos_candidate(json: &str) {
-    let doc = bmc_wasm_sdk::JsonDoc::parse(json.as_bytes());
-    let Some(found) = BosAdapter.parse_found(&doc) else {
-        return;
-    };
-    let id = found.identity.id;
-    // A device already in the fleet was fingerprinted on first sighting; just refresh.
-    let known = crate::DEVICES.with(|d| d.borrow().iter().any(|dev| dev.identity.id == id));
-    if known {
-        crate::ingest_probed_bos(json);
-        return;
-    }
-    // One probe per candidate at a time, so re-announcements don't pile on
-    // — but a stale slot (a probe whose response was lost) is reclaimed,
-    // so a dropped response can't wedge the candidate out of the fleet.
-    let now = SystemTime::now().unix_secs;
-    if !PROBING.with(|p| claim_probe_slot(&mut p.borrow_mut(), &id, now)) {
-        log_debug!(
-            "fleet: BOS {} re-sighted, a probe is already in flight",
-            id.as_str()
-        );
-        return;
-    }
-    let url = fmt!(
-        "{}{}",
-        base_url(&BosAdapter, &found.identity.host, found.identity.port),
-        BOS_PROBE_ENDPOINT,
-    );
-    let sent = FetchRequest::get(&url)
-        .timeout(DEVICE_FETCH_TIMEOUT)
-        .send(on_probe);
-    if let Some(req_id) = sent {
-        log_debug!(
-            "fleet: BOS {} probing the fingerprint endpoint",
-            id.as_str()
-        );
-        PROBES.with(|r| {
-            r.borrow_mut().insert(
-                req_id,
-                ProbePending {
-                    id,
-                    doc: json.to_owned(),
-                },
-            );
-        });
-    } else {
-        log_debug!("fleet: BOS {} probe send failed", id.as_str());
-        PROBING.with(|p| p.borrow_mut().remove(&id));
-    }
-}
-
-fn on_probe(response: &bmc_wasm_sdk::FetchResponse) {
-    let Some(pending) = PROBES.with(|r| r.borrow_mut().remove(&response.request_id)) else {
-        return;
-    };
-    PROBING.with(|p| p.borrow_mut().remove(&pending.id));
-    if response.ok() && bos::is_version_response(&response.json()) {
-        log_debug!(
-            "fleet: BOS {} answered the fingerprint, ingesting",
-            pending.id.as_str()
-        );
-        crate::ingest_probed_bos(&pending.doc);
-    } else {
-        log_debug!(
-            "fleet: BOS {} failed the fingerprint (status {}) — not sending credentials",
-            pending.id.as_str(),
-            response.status
-        );
     }
 }
 
@@ -882,23 +771,5 @@ mod tests {
         assert_eq!(escalate_failure(Some(Unreachable), ApiError), ApiError);
         assert_eq!(escalate_failure(Some(ApiError), AuthError), AuthError);
         assert_eq!(escalate_failure(Some(AuthError), ApiError), AuthError);
-    }
-
-    #[test]
-    fn claim_probe_slot_reclaims_a_stale_slot() {
-        let mut probing = HashMap::new();
-        let id = DeviceId::for_family(DeviceFamily::Bos, "bos-1._http._tcp.local.");
-        assert!(
-            claim_probe_slot(&mut probing, &id, 100),
-            "an empty slot sends the first probe"
-        );
-        assert!(
-            !claim_probe_slot(&mut probing, &id, 100 + PROBE_STALE_SECS - 1),
-            "a fresh probe still in flight blocks a re-probe"
-        );
-        assert!(
-            claim_probe_slot(&mut probing, &id, 100 + PROBE_STALE_SECS),
-            "a slot whose probe went stale is reclaimed so a lost response re-probes"
-        );
     }
 }

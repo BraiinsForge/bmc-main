@@ -22,6 +22,21 @@
 // `crate::discovery::JsonLookup` rather than the shared lib.
 pub use mining::hashboards::JsonLookup;
 
+use crate::device::DeviceFamily;
+use crate::families::{bitaxe, bos};
+
+/// The family an `_http._tcp` sighting's TXT identifies, if any.
+#[must_use]
+pub fn classify_http_found(json: &dyn JsonLookup) -> Option<DeviceFamily> {
+    if bitaxe::is_axeos_txt(json) {
+        Some(DeviceFamily::Bitaxe)
+    } else if bos::is_bos_txt(json) {
+        Some(DeviceFamily::Bos)
+    } else {
+        None
+    }
+}
+
 /// Pull the user-facing name plus routing endpoint out of an mDNS `Found`
 /// payload. Returns `None` when host or port are missing or unusable; the
 /// caller's family is what classifies the device, not anything in here.
@@ -75,7 +90,7 @@ mod tests {
     use super::tests_support::MapJson;
     use super::*;
 
-    fn bos_shaped() -> MapJson {
+    fn http_sighting() -> MapJson {
         let mut json = MapJson::default();
         json.strings.insert("/service_type", "_http._tcp.local.");
         json.strings.insert("/name", "miner-a._http._tcp.local.");
@@ -86,7 +101,7 @@ mod tests {
 
     #[test]
     fn extracts_name_host_and_port() {
-        let (name, host, port) = extract_endpoint(&bos_shaped()).expect("BUG: endpoint present");
+        let (name, host, port) = extract_endpoint(&http_sighting()).expect("BUG: endpoint present");
         assert_eq!(name, "miner-a._http._tcp.local.");
         assert_eq!(host, "10.0.0.5");
         assert_eq!(port, 80);
@@ -94,15 +109,36 @@ mod tests {
 
     #[test]
     fn rejects_event_missing_host() {
-        let mut json = bos_shaped();
+        let mut json = http_sighting();
         json.strings.remove("/host");
         assert_eq!(extract_endpoint(&json), None);
     }
 
     #[test]
     fn rejects_event_with_zero_port() {
-        let mut json = bos_shaped();
+        let mut json = http_sighting();
         json.ints.insert("/port", 0);
         assert_eq!(extract_endpoint(&json), None);
+    }
+
+    #[test]
+    fn classifies_axeos_by_its_txt() {
+        let mut json = http_sighting();
+        json.strings.insert("/txt/board", "602");
+        assert_eq!(classify_http_found(&json), Some(DeviceFamily::Bitaxe));
+    }
+
+    #[test]
+    fn classifies_bos_by_its_txt() {
+        let mut json = http_sighting();
+        json.strings.insert("/txt/bos_version", "26.09");
+        assert_eq!(classify_http_found(&json), Some(DeviceFamily::Bos));
+    }
+
+    #[test]
+    fn a_plain_http_host_is_no_family() {
+        let mut json = http_sighting();
+        json.strings.insert("/txt/path", "/");
+        assert_eq!(classify_http_found(&json), None);
     }
 }

@@ -145,11 +145,11 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 | AxeOS            | Bitaxe           | `_http._tcp` | 80           | `/api/system` | none                                                                   |
 
 - **Discovery.** The widget runs two mDNS browses: the base `_http._tcp` service (BOS and AxeOS share it) and Braiins OS
-  Libre's own `_ubos._tcp`. On `_http._tcp`, AxeOS is identified up front by its discovery TXT records; a BOS miner
-  carries no distinguishing signal there, so it enters as a *candidate* and is only admitted to the report once it
-  answers a poll — a non-miner web server is probed a few times and then dropped. Braiins OS Libre is identified
-  directly by its own service type. A miner that advertises neither browsed type, or sits on a network segment mDNS does
-  not reach, is not discovered.
+  Libre's own `_ubos._tcp`. On `_http._tcp`, both families are identified up front by their discovery TXT records: AxeOS
+  by its `family` or `board` key, BOS by its `bos_version` key or the `bos=1` flag. Any other host on the type is
+  ignored and never contacted, so the BOS password reaches only hosts that announce themselves as BOS. BOS firmware that
+  predates these TXT keys is not discovered. Braiins OS Libre is identified directly by its own service type. A miner
+  that advertises neither browsed type, or sits on a network segment mDNS does not reach, is not discovered.
 - **BOS** (Braiins OS) miners are polled across three endpoints: `/miner/stats` (hashrate and power),
   `/miner/hw/hashboards` (the hottest chip temperature and the chip type/count), and `/miner/details` (uptime, platform,
   nominal hashrate, and miner model). A `401`/`403` triggers one re-authentication per device per pass.

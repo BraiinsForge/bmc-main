@@ -38,6 +38,12 @@ fn non_empty(json: &dyn JsonLookup, path: &str) -> Option<String> {
     json.str(path).filter(|s| !s.is_empty())
 }
 
+/// Whether an `_http._tcp` sighting carries the AxeOS TXT keys.
+#[must_use]
+pub fn is_axeos_txt(json: &dyn JsonLookup) -> bool {
+    non_empty(json, "/txt/family").is_some() || non_empty(json, "/txt/board").is_some()
+}
+
 fn txt_model_hint(json: &dyn JsonLookup) -> Option<MinerModel> {
     let family = non_empty(json, "/txt/family");
     let board = non_empty(json, "/txt/board");

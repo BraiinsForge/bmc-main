@@ -25,6 +25,7 @@
 
 use crate::adapter::FamilyAdapter;
 use crate::device::DeviceFamily;
+use crate::discovery::classify_http_found;
 use crate::discovery::tests_support::MapJson;
 use crate::families::bitaxe::BitaxeAdapter;
 use crate::families::bos::BosAdapter;
@@ -42,6 +43,12 @@ fn bos_sim_response_derives_the_intended_device() {
     found.strings.insert("/name", "bos-01._http._tcp.local.");
     found.strings.insert("/host", "10.0.0.5");
     found.ints.insert("/port", 80);
+    found.strings.insert("/txt/bos_version", "26.09-sim");
+    assert_eq!(
+        classify_http_found(&found),
+        Some(DeviceFamily::Bos),
+        "the sim's announcement must identify as BOS",
+    );
     let discovered = BosAdapter
         .parse_found(&found)
         .expect("BUG: BOS discovery must parse");
@@ -112,23 +119,6 @@ fn bos_sim_response_derives_the_intended_device() {
 }
 
 #[test]
-fn bos_version_response_passes_the_discovery_fingerprint() {
-    // Mirrors bos.rs: the public `GET /api/v1/version` body the widget probes.
-    let mut version = MapJson::default();
-    version.ints.insert("/major", 1);
-    version.ints.insert("/minor", 6);
-    version.ints.insert("/patch", 0);
-    assert!(
-        crate::families::bos::is_version_response(&version),
-        "the sim's version body must fingerprint as BOS",
-    );
-    assert!(
-        !crate::families::bos::is_version_response(&MapJson::default()),
-        "a bare _http._tcp responder must not pass the fingerprint",
-    );
-}
-
-#[test]
 fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
     // ubos.rs default: Braiins Forge Miner x4, 4.8 TH/s (4.8e12 H/s),
     // 76 W (76000 mW), 65 °C, uptime 187020, no API nominal.
@@ -191,6 +181,7 @@ fn axeos_sim_response_derives_the_intended_device() {
     found.strings.insert("/txt/board", "++");
     found.strings.insert("/txt/asic", "BM1370");
     found.strings.insert("/txt/asic_count", "4");
+    assert_eq!(classify_http_found(&found), Some(DeviceFamily::Bitaxe));
     let discovered = BitaxeAdapter
         .parse_found(&found)
         .expect("BUG: AxeOS discovery must parse");
