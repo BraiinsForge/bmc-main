@@ -330,14 +330,13 @@ mod tests {
     use crate::ui::test_support::*;
     use crate::ui::*;
 
-    /// BMM101 is wide enough to caption its buttons. BMM100 is not, and the
-    /// disc spends its room on the chord-safe band.
+    /// BMM101 is wide enough to caption its buttons.
+    /// The disc spends its room on the chord-safe band.
     #[test]
     fn only_the_labeled_tiers_caption_their_buttons() {
         for (panel, labeled) in [
             (wide_panel(), true),
             (narrow_panel(), true),
-            (small_panel(), false),
             (round_panel(), false),
         ] {
             let mut texts = Vec::new();
@@ -465,7 +464,7 @@ mod tests {
     /// touches; the held button stays lit and live, and so does close.
     #[test]
     fn the_notice_dims_and_disables_every_other_button() {
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_with_controls(panel, held_controls());
             let held = canvas_brightness(&tree, RESTART_KEY).expect("BUG: the held button renders");
             assert_close(held, 1.0, "the held button stays lit");
@@ -596,7 +595,7 @@ mod tests {
     }
 
     fn assert_control_rows_fit(controls: Controls<'_>) {
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_tree(
                 Some("braiins-deck"),
                 Some("10.0.0.2"),

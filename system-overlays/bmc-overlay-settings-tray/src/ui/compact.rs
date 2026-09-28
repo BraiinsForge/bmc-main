@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The BMM100 and BMM101 arrangement: the address block,
+//! The BMM101 arrangement: the address block,
 //! then the brightness slider, then bare buttons.
 
 use super::controls::{control_groups, control_rows};
@@ -163,7 +163,7 @@ fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     control_rows(tier, Vec::new(), singles)
 }
 
-/// The BMM100 and BMM101 flow children: address block, brightness slider,
+/// The BMM101 flow children: address block, brightness slider,
 /// then whichever buttons the product still has.
 pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
     let mut children = vec![content.notice.with_notice(

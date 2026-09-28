@@ -486,20 +486,6 @@ fn tier_for(panel: &Panel) -> Tier {
             caption_size: 20,
             padding: 24.0,
         }
-    } else if panel.width <= 320 {
-        // BMM100, too narrow to caption three buttons.
-        Tier {
-            circle: 48.0,
-            icon: 22.0,
-            pair_gap: 12.0,
-            group_gap: 12.0,
-            labeled: false,
-            pair_w: 0.0,
-            single_w: 0.0,
-            value_size: 12,
-            caption_size: 12,
-            padding: 12.0,
-        }
     } else if matches!(panel.shape, DisplayShape::Rectangular) {
         // BMM101. The 12pt caption is what keeps the widest label on one
         // line; see `the_widest_label_fits_a_bmm101_group`.
@@ -538,7 +524,7 @@ fn tier_for(panel: &Panel) -> Tier {
 enum Layout {
     /// The Deck's 1280×480: labeled buttons in one row under an info header.
     Wide,
-    /// The BMM100 and BMM101 rectangles: the address table on top,
+    /// The BMM101 rectangle: the address table on top,
     /// the brightness slider under it, bare buttons last.
     Compact,
     /// The BFM100's disc: one column inside the chord-safe band.
@@ -694,7 +680,6 @@ mod tests {
     fn layout_follows_shape_then_width() {
         assert_eq!(layout_for(&wide_panel()), Layout::Wide);
         assert_eq!(layout_for(&narrow_panel()), Layout::Compact);
-        assert_eq!(layout_for(&small_panel()), Layout::Compact);
         assert_eq!(layout_for(&round_panel()), Layout::Round);
     }
 
@@ -703,7 +688,6 @@ mod tests {
         assert_circle(&wide_panel(), 112.0);
         assert_circle(&narrow_panel(), 64.0);
         assert_circle(&round_panel(), 64.0);
-        assert_circle(&small_panel(), 48.0);
     }
 
     /// Assert the wide layout's two-equal-flex-halves structure: the control
@@ -862,7 +846,7 @@ mod tests {
     fn controls_start_below_the_close_target() {
         let long_ssid = "An-Extremely-Long-Setup-Network-Name-420";
         assert_eq!(long_ssid.chars().count(), 40);
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for ((view, setup), controls) in [
                 (WifiView::Idle, false),
                 (WifiView::Setup { ap_ssid: long_ssid }, true),
@@ -927,7 +911,7 @@ mod tests {
     /// without an IP to encode.
     #[test]
     fn qr_encodes_the_ip_url_on_the_rectangular_layouts() {
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for ip in [Some("10.0.0.2"), None] {
                 let tree = build_tree(
                     Some("braiins-deck"),
@@ -958,7 +942,7 @@ mod tests {
     /// have room to label both.
     #[test]
     fn every_layout_shows_the_address_and_only_the_disc_drops_the_hostname() {
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for ip in [Some("10.0.0.2"), Some("255.255.255.255"), None] {
                 let tree = build_tree(
                     Some("braiins-deck"),
@@ -1026,7 +1010,7 @@ mod tests {
                 .sum::<usize>()
         }
         let controls = held_controls();
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_with_controls(panel, controls);
             let mut absolute = Vec::new();
             absolute_canvases(&tree, &mut absolute);
@@ -1160,7 +1144,7 @@ mod tests {
         let hostname = "braiins-deck-".repeat(6);
         let ssid = "a-network-name-".repeat(5);
         let ip = "10.0.0.2";
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_tree(
                 Some(&hostname),
                 Some(ip),

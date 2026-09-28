@@ -247,7 +247,7 @@ mod tests {
             pressed: Some(RESTART_KEY),
             ..all_controls()
         };
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for controls in [all_controls(), pressed_only] {
                 let tree = build_with_controls(panel, controls);
                 let mut found = Vec::new();
@@ -269,7 +269,7 @@ mod tests {
     /// until the action has an outcome to show and has shown it.
     #[test]
     fn every_status_dims_everything_around_the_buttons() {
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for controls in every_status() {
                 let tree = build_with_controls(panel, controls);
                 let what = format!("{panel:?} {:?}", controls.status);
@@ -367,7 +367,7 @@ mod tests {
     /// so it takes the size of the section it ends.
     #[test]
     fn the_notice_stretches_over_its_section() {
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_with_controls(panel, held_controls());
             let mut found = Vec::new();
             overlays(&tree, &mut found);
@@ -394,7 +394,7 @@ mod tests {
     /// The notice reads once, over the section that precedes the first button row.
     #[test]
     fn the_notice_sits_above_the_buttons() {
-        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_with_controls(panel, held_controls());
             let mut found = Vec::new();
             overlays(&tree, &mut found);

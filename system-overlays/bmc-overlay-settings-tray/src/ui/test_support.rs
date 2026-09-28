@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Fixtures and tree walkers the layout tests share: the four panels,
+//! Fixtures and tree walkers the layout tests share: the three panels,
 //! a fully populated control set, and readers that pull text, canvases
 //! and widths back out of a built tree.
 
@@ -51,15 +51,6 @@ pub(super) fn narrow_panel() -> Panel {
         shape: DisplayShape::Rectangular,
         width: 480,
         height: 320,
-        wifi_button: true,
-    }
-}
-
-pub(super) fn small_panel() -> Panel {
-    Panel {
-        shape: DisplayShape::Rectangular,
-        width: 320,
-        height: 240,
         wifi_button: true,
     }
 }
