@@ -40,8 +40,9 @@ const BRIGHTNESS_LOW: Svg = include_svg!("assets/controls/brightness-low.svg");
 const BRIGHTNESS_HIGH: Svg = include_svg!("assets/controls/brightness-high.svg");
 const NIGHT_MODE: Svg = include_svg!("assets/controls/nightmode.svg");
 const RESTART: Svg = include_svg!("assets/controls/restart.svg");
-/// Resolves to the repo-root `assets/`, shared with the device-info overlay.
+/// These two resolve to the repo-root `assets/`, shared with the device-info overlay.
 const CLOSE: Svg = include_svg!("assets/icons/close.svg");
+const ETHERNET: Svg = include_svg!("assets/icons/ethernet.svg");
 
 /// All icon handles the tray renders with.
 #[derive(Debug, Clone, Copy, Default)]
@@ -67,6 +68,7 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> TrayIcons {
             low: reg(&LOW),
             fair: reg(&FAIR),
             strong: reg(&STRONG),
+            cable: reg(&ETHERNET),
         },
         controls: ControlIcons {
             sound_low: reg(&SOUND_LOW),

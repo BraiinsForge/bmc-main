@@ -27,7 +27,7 @@ use super::{
 };
 use bmc_platform::DisplayShape;
 use bmc_render::tree::{DrawCommand, PropsData, TextStyle, TreeNode, col, row, text};
-use bmc_wasm_protocol::colors::{BLACK, TRANSPARENT, WHITE};
+use bmc_wasm_protocol::colors::{BLACK, GREEN_50, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign, TextOverflow};
 
 pub(super) fn text_style(size: u32, color: Color) -> TextStyle {
@@ -105,7 +105,26 @@ pub(super) fn header_row(header: &str, size: u32) -> TreeNode {
     )
 }
 
+/// The SETUP badge before a setup AP's SSID: what tells the user this is
+/// a network to join from a phone, not the one the device is on.
+pub(super) fn setup_badge(size: u32) -> TreeNode {
+    text(
+        "SETUP",
+        TextStyle {
+            size,
+            weight: FontWeight::BOLD,
+            color: GREEN_50,
+            ..TextStyle::default()
+        },
+    )
+}
+
 pub(super) fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>, size: f32) -> TreeNode {
+    svg_icon(icons.for_signal(wifi_signal), size, TRANSPARENT)
+}
+
+/// A square icon. A `TRANSPARENT` tint keeps the artwork's own colours.
+pub(super) fn svg_icon(icon_id: Option<SvgId>, size: f32, tint: Color) -> TreeNode {
     TreeNode::Canvas {
         props: PropsData {
             width: size,
@@ -118,8 +137,8 @@ pub(super) fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>, size: f32) -
             y: 0.0,
             w: size,
             h: size,
-            color: TRANSPARENT,
-            icon_id: icons.for_signal(wifi_signal),
+            color: tint,
+            icon_id,
             anti_alias: true,
             fills: Vec::new(),
         }],

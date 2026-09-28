@@ -199,14 +199,14 @@ const COMPACT_CLOSE_MARGIN: f32 = 16.0;
 /// Text size of the compact info table, labels and values alike.
 const COMPACT_INFO_SIZE: u32 = 16;
 
-/// The compact table's WiFi icon and its gap to the SSID.
-const COMPACT_WIFI_ICON_SIZE: f32 = 20.0;
-const COMPACT_WIFI_GAP: f32 = 8.0;
+/// The compact table's connection icon and its gap to the name beside it.
+const COMPACT_CONNECTION_ICON_SIZE: f32 = 20.0;
+const COMPACT_CONNECTION_GAP: f32 = 8.0;
 
 #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
 const _: () = assert!(
-    COMPACT_WIFI_ICON_SIZE <= COMPACT_INFO_SIZE as f32 * LINE_H,
-    "BUG: the WiFi icon must not set the compact SSID row's height",
+    COMPACT_CONNECTION_ICON_SIZE <= COMPACT_INFO_SIZE as f32 * LINE_H,
+    "BUG: the icon must not set the compact connection row's height",
 );
 
 /// Side of the square brightness icon beside the slider.
@@ -291,6 +291,9 @@ pub enum WifiView<'a> {
     Idle,
     /// Setup mode: compact row with a SETUP badge and the AP SSID.
     Setup { ap_ssid: &'a str },
+    /// The cable carries the uplink, which outranks setup mode too.
+    /// Only the compact table names it; the Deck and the disc keep their station line.
+    Cable,
 }
 
 /// Display panel the overlay is laid out for.
@@ -328,13 +331,14 @@ pub(crate) fn signal_band(dbm: Option<i32>) -> SignalBand {
     }
 }
 
-/// Registered icon ids for each Wi-Fi signal-strength state.
+/// Registered icon ids for each Wi-Fi signal-strength state, and for the cable.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WifiIcons {
     pub problem: Option<SvgId>,
     pub low: Option<SvgId>,
     pub fair: Option<SvgId>,
     pub strong: Option<SvgId>,
+    pub cable: Option<SvgId>,
 }
 
 impl WifiIcons {
@@ -603,7 +607,7 @@ pub fn build_tree(
         wifi_signal,
         ssid: ssid.unwrap_or("Not configured"),
         wifi_view,
-        wifi_button: panel.wifi_button && matches!(wifi_view, WifiView::Idle),
+        wifi_button: panel.wifi_button && !matches!(wifi_view, WifiView::Setup { .. }),
         icons,
         control_icons: controls_icons,
         controls,

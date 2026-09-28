@@ -478,7 +478,7 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
         now,
     );
 
-    for label in ["Hostname", "IP Address", "WiFi SSID"] {
+    for label in ["Hostname", "IP Address", "Connection"] {
         let (_, width) = renderer
             .paragraphs
             .iter()

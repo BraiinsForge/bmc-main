@@ -63,6 +63,7 @@ pub(super) fn distinct_icons() -> WifiIcons {
         low: Some(id(2)),
         fair: Some(id(3)),
         strong: Some(id(4)),
+        cable: Some(id(5)),
     }
 }
 

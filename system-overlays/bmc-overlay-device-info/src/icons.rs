@@ -38,7 +38,8 @@ const DESKTOP_CLOCK: Svg = include_svg!("assets/desktop_clock.svg");
 /// Miner device outline (BMM101), shown where the Deck screens show the clock.
 const MINER: Svg = include_svg!("assets/miner.svg");
 /// The cable itself, for the screens that wait on one instead of picturing the board.
-const ETHERNET: Svg = include_svg!("assets/ethernet.svg");
+/// Resolves to the repo-root `assets/`, shared with the settings tray.
+const ETHERNET: Svg = include_svg!("assets/icons/ethernet.svg");
 const ETHERNET_ERROR: Svg = include_svg!("assets/ethernet_error.svg");
 /// Its own artwork, since the legacy init-setup set
 /// has no icon for a failure that is not about WiFi.

@@ -21,7 +21,9 @@
 //! The Deck's arrangement: an info header over one labeled control row.
 
 use super::notice::Notice;
-use super::parts::{capped_text, fixed_width, ip_qr, pad_horizontal, text_style, wifi_icon};
+use super::parts::{
+    capped_text, fixed_width, ip_qr, pad_horizontal, setup_badge, text_style, wifi_icon,
+};
 use super::{
     Content, INFO_HEADER_GAP, INFO_HEADER_SIZE, NO_DATA_PLACEHOLDER, Tier, WIDE_HOSTNAME_WIDTH,
     WIDE_INFO_GAP, WIDE_INFO_LEFT_PAD, WIDE_INFO_RIGHT_PAD, WIDE_INFO_STACK_GAP,
@@ -29,9 +31,9 @@ use super::{
     WIDE_SSID_WIDTH, WIDE_TOP_PAD, WIDE_WIFI_GAP, WIDE_WIFI_ICON_SIZE, WifiIcons, WifiView,
     control_row_nodes,
 };
-use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text};
-use bmc_wasm_protocol::colors::{GRAY_50, GREEN_50, WHITE};
-use bmc_wasm_protocol::{CrossAlign, FontWeight};
+use bmc_render::tree::{PropsData, TreeNode, col, fixed_height, row, spacer, text};
+use bmc_wasm_protocol::CrossAlign;
+use bmc_wasm_protocol::colors::{GRAY_50, WHITE};
 
 /// One Large-tier info block: a small gray header over a white value node.
 fn info_block(header: &'static str, value: TreeNode) -> TreeNode {
@@ -60,7 +62,7 @@ pub(super) fn wide_header(
 ) -> TreeNode {
     let value_size = WIDE_INFO_VALUE_SIZE;
     let wifi_block = match wifi_view {
-        WifiView::Idle => info_block(
+        WifiView::Idle | WifiView::Cable => info_block(
             "Wi-Fi Connection",
             row(
                 PropsData {
@@ -90,15 +92,7 @@ pub(super) fn wide_header(
                         },
                         vec![
                             wifi_icon(icons, None, WIDE_WIFI_ICON_SIZE),
-                            text(
-                                "SETUP",
-                                TextStyle {
-                                    size: WIDE_SETUP_BADGE_SIZE,
-                                    weight: FontWeight::BOLD,
-                                    color: GREEN_50,
-                                    ..TextStyle::default()
-                                },
-                            ),
+                            setup_badge(WIDE_SETUP_BADGE_SIZE),
                             capped_text(ap_ssid, value_size, WIDE_SSID_WIDTH),
                         ],
                     ),

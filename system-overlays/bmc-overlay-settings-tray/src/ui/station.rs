@@ -21,11 +21,11 @@
 //! The disc's bottom line: who the device is connected to,
 //! or the setup AP while provisioning runs.
 
-use super::parts::{text_style, wifi_icon};
+use super::parts::{setup_badge, text_style, wifi_icon};
 use super::{Content, ROUND_WIFI_ICON_SIZE, ROUND_WIFI_TEXT_SIZE, WifiIcons, WifiView};
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, row, text};
-use bmc_wasm_protocol::colors::{GREEN_50, WHITE};
-use bmc_wasm_protocol::{CrossAlign, FontWeight, Justify, TextOverflow};
+use bmc_wasm_protocol::colors::WHITE;
+use bmc_wasm_protocol::{CrossAlign, Justify, TextOverflow};
 
 /// One centered line of the disc's station info,
 /// stretched across its column so only the SSID gives way when it runs out.
@@ -63,19 +63,9 @@ fn station_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str) -> TreeN
 /// One centered line of icon, badge and SSID, as tall as the idle
 /// line it replaces so the vertical budget holds either way.
 fn setup_row(icons: WifiIcons, ap_ssid: &str) -> TreeNode {
-    let badge_size = ROUND_WIFI_TEXT_SIZE;
-    let badge = text(
-        "SETUP",
-        TextStyle {
-            size: badge_size,
-            weight: FontWeight::BOLD,
-            color: GREEN_50,
-            ..TextStyle::default()
-        },
-    );
     centered_line(vec![
         wifi_icon(icons, None, ROUND_WIFI_ICON_SIZE),
-        badge,
+        setup_badge(ROUND_WIFI_TEXT_SIZE),
         ssid_text(ap_ssid),
     ])
 }
@@ -85,6 +75,8 @@ fn setup_row(icons: WifiIcons, ap_ssid: &str) -> TreeNode {
 pub(super) fn station_line(content: Content<'_>) -> TreeNode {
     match content.wifi_view {
         WifiView::Setup { ap_ssid } => setup_row(content.icons, ap_ssid),
-        WifiView::Idle => station_info(content.icons, content.wifi_signal, content.ssid),
+        WifiView::Idle | WifiView::Cable => {
+            station_info(content.icons, content.wifi_signal, content.ssid)
+        }
     }
 }

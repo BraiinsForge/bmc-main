@@ -285,6 +285,8 @@ pub struct SettingsTrayView {
     pub wifi_signal: Option<i32>,
     pub ssid: Option<String>,
     pub setup_ssid: Option<String>,
+    /// Whether the cable carries the uplink.
+    pub cable_uplink: bool,
     pub wifi_button: bool,
     /// Forced pressed key for gallery injection; the runtime leaves this
     /// `None` and derives the pressed key from the tree's touch state.
@@ -316,9 +318,22 @@ impl SettingsTrayView {
             wifi_signal: None,
             ssid: None,
             setup_ssid: None,
+            cable_uplink: false,
             wifi_button: wifi_reconfig_supported(product),
             pressed_key: None,
         }
+    }
+}
+
+/// What the connection line shows: the cable while it carries the uplink,
+/// even over a running setup, then the setup AP, then the station.
+fn wifi_view(view: &SettingsTrayView) -> WifiView<'_> {
+    if view.cable_uplink {
+        WifiView::Cable
+    } else if let Some(ssid) = view.setup_ssid.as_deref() {
+        WifiView::Setup { ap_ssid: ssid }
+    } else {
+        WifiView::Idle
     }
 }
 
@@ -399,6 +414,7 @@ pub struct SettingsTrayOverlay {
     ip: Option<String>,
     wifi_signal: Option<i32>,
     ssid: Option<String>,
+    cable_uplink: bool,
     /// Version of the last connectivity snapshot folded into the fields
     /// above (`None` = none yet); lets `refresh_network` skip unchanged reads.
     snapshot_version: Option<SnapshotVersion>,
@@ -470,6 +486,7 @@ impl SettingsTrayOverlay {
             ip: None,
             wifi_signal: None,
             ssid: None,
+            cable_uplink: false,
             snapshot_version: None,
             setup_ssid: None,
             button: ButtonState::default(),
@@ -506,6 +523,7 @@ impl SettingsTrayOverlay {
         view.wifi_signal = self.wifi_signal;
         view.ssid.clone_from(&self.ssid);
         view.setup_ssid.clone_from(&self.setup_ssid);
+        view.cable_uplink = self.cable_uplink;
         view.wifi_button = wifi_reconfig_supported(self.product);
         if let Some(caps) = self.caps {
             view.show_brightness = caps.brightness;
@@ -551,11 +569,14 @@ impl SettingsTrayOverlay {
         let ip = snapshot.ipv4.as_ref().map(Ipv4Addr::to_string);
         let signal_band_changed =
             ui::signal_band(snapshot.wifi_signal_dbm) != ui::signal_band(self.wifi_signal);
-        let content_changed =
-            ip != self.ip || snapshot.station_ssid != self.ssid || signal_band_changed;
+        let content_changed = ip != self.ip
+            || snapshot.station_ssid != self.ssid
+            || signal_band_changed
+            || snapshot.cable_uplink != self.cable_uplink;
         self.ip = ip;
         self.wifi_signal = snapshot.wifi_signal_dbm;
         self.ssid = snapshot.station_ssid;
+        self.cable_uplink = snapshot.cable_uplink;
         self.content_dirty |= content_changed;
     }
 
@@ -999,11 +1020,7 @@ pub fn render_settings_tray(
     let pressed_derived = PRESSABLE.iter().copied().find(|k| state.tree.is_pressed(k));
     let pressed = view.pressed_key.as_deref().or(pressed_derived);
 
-    let wifi_view = if let Some(ssid) = view.setup_ssid.as_deref() {
-        WifiView::Setup { ap_ssid: ssid }
-    } else {
-        WifiView::Idle
-    };
+    let wifi_view = wifi_view(view);
     let controls = ui::Controls {
         brightness: view.show_brightness.then_some(view.brightness),
         volume: view.show_volume.then_some(view.volume),
@@ -1387,6 +1404,37 @@ mod view_tests {
             overlay.content_dirty(),
             "a different rendered signal band must invalidate the attached content"
         );
+    }
+
+    #[test]
+    fn plugging_the_cable_in_dirties_content() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, now);
+        overlay.ip = Some("10.33.50.103".to_owned());
+        overlay.env = Box::new(StaticEnv {
+            snapshot: Some(Snapshot {
+                ipv4: Some(Ipv4Addr::new(10, 33, 50, 103)),
+                station_ipv4: Some(Ipv4Addr::new(10, 33, 50, 103)),
+                station_ssid: None,
+                wifi_signal_dbm: None,
+                cable_uplink: true,
+            }),
+        });
+        let _ = overlay.take_content_dirty();
+
+        let _ = overlay.tick(now);
+
+        assert!(overlay.content_dirty(), "the row must switch to the cable");
+        assert!(overlay.view(now).cable_uplink);
+    }
+
+    #[test]
+    fn the_cable_outranks_a_running_setup() {
+        let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmm101);
+        view.setup_ssid = Some("Mini-Setup".to_owned());
+        assert!(matches!(wifi_view(&view), WifiView::Setup { .. }));
+        view.cable_uplink = true;
+        assert!(matches!(wifi_view(&view), WifiView::Cable));
     }
 }
 

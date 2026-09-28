@@ -306,6 +306,8 @@ render_states!(
     TRAY_SETUP,
     TRAY_WEAK_SIGNAL,
     TRAY_NO_SIGNAL,
+    TRAY_CABLE,
+    TRAY_CABLE_SETUP,
 );
 
 #[expect(
@@ -819,6 +821,24 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
             &TRAY_NO_SIGNAL,
         ),
     ]);
+    // Only the compact table names the cable; elsewhere these repeat the resting tray.
+    if product == Product::Bmm101 {
+        cards.extend([
+            (
+                "Ethernet cable",
+                variant(|view| view.cable_uplink = true),
+                &TRAY_CABLE,
+            ),
+            (
+                "Ethernet cable during setup",
+                variant(|view| {
+                    view.cable_uplink = true;
+                    view.setup_ssid = Some("Braiins-Deck-Setup-A1B2C3".to_owned());
+                }),
+                &TRAY_CABLE_SETUP,
+            ),
+        ]);
+    }
 
     ui.heading("Settings tray");
     let sizes = matrix_sizes(size, cards.len());

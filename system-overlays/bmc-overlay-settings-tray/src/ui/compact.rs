@@ -23,10 +23,12 @@
 
 use super::controls::{control_groups, control_rows};
 use super::notice::NOTICE_SIZE;
-use super::parts::{close_origin, fixed_width, ip_qr, pad_horizontal, text_style, wifi_icon};
+use super::parts::{
+    close_origin, fixed_width, ip_qr, pad_horizontal, setup_badge, svg_icon, text_style, wifi_icon,
+};
 use super::{
-    BRIGHTNESS_ICON_SIZE, BRIGHTNESS_SLIDER_KEY, COMPACT_CLOSE_MARGIN, COMPACT_GAP,
-    COMPACT_INFO_SIZE, COMPACT_QR_SIZE, COMPACT_WIFI_GAP, COMPACT_WIFI_ICON_SIZE, Content,
+    BRIGHTNESS_ICON_SIZE, BRIGHTNESS_SLIDER_KEY, COMPACT_CLOSE_MARGIN, COMPACT_CONNECTION_GAP,
+    COMPACT_CONNECTION_ICON_SIZE, COMPACT_GAP, COMPACT_INFO_SIZE, COMPACT_QR_SIZE, Content,
     ControlIcons, NO_DATA_PLACEHOLDER, Panel, SLIDER_TRACK_H, Tier, WifiView, brightness_fraction,
 };
 use bmc_render::tree::{
@@ -85,24 +87,35 @@ fn compact_info_column(props: PropsData, lines: Vec<TreeNode>) -> TreeNode {
     col(props, kids)
 }
 
-/// The signal icon and the station SSID,
-/// or the problem icon and the AP SSID while setup runs.
-fn compact_wifi_value(content: Content<'_>, style: TextStyle) -> TreeNode {
-    let (wifi_signal, ssid) = match content.wifi_view {
-        WifiView::Idle => (content.wifi_signal, content.ssid),
-        WifiView::Setup { ap_ssid } => (None, ap_ssid),
+/// What the device is online through: the cable while it carries the uplink,
+/// else the signal icon and the station SSID, or the problem icon and the
+/// SETUP badge while setup runs. The AP SSID is left to the device-info
+/// screen, which has the room for it; this cell has sixteen characters.
+fn compact_connection_value(content: Content<'_>, style: TextStyle) -> TreeNode {
+    let (icon, name) = match content.wifi_view {
+        WifiView::Cable => (
+            svg_icon(content.icons.cable, COMPACT_CONNECTION_ICON_SIZE, WHITE),
+            text("Ethernet", style),
+        ),
+        WifiView::Idle => (
+            wifi_icon(
+                content.icons,
+                content.wifi_signal,
+                COMPACT_CONNECTION_ICON_SIZE,
+            ),
+            text(content.ssid, style),
+        ),
+        WifiView::Setup { .. } => (
+            wifi_icon(content.icons, None, COMPACT_CONNECTION_ICON_SIZE),
+            setup_badge(style.size),
+        ),
     };
     row(
         PropsData {
             cross_align: CrossAlign::Center,
             ..PropsData::default()
         },
-        vec![
-            spacer(1.0),
-            wifi_icon(content.icons, wifi_signal, COMPACT_WIFI_ICON_SIZE),
-            fixed_width(COMPACT_WIFI_GAP),
-            text(ssid, style),
-        ],
+        vec![spacer(1.0), icon, fixed_width(COMPACT_CONNECTION_GAP), name],
     )
 }
 
@@ -135,7 +148,7 @@ fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode 
             "IP Address",
             text(content.ip.unwrap_or(NO_DATA_PLACEHOLDER), value_style),
         ),
-        ("WiFi SSID", compact_wifi_value(content, value_style)),
+        ("Connection", compact_connection_value(content, value_style)),
     ];
     let (label_nodes, value_nodes) = rows
         .into_iter()
@@ -215,7 +228,8 @@ pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -
 #[cfg(test)]
 mod tests {
     use bmc_render::tree::{DrawCommand, TreeNode};
-    use bmc_wasm_protocol::SvgId;
+    use bmc_wasm_protocol::colors::GREEN_50;
+    use bmc_wasm_protocol::{FontWeight, SvgId};
 
     use super::*;
     use crate::ui::test_support::*;
@@ -287,7 +301,27 @@ mod tests {
     }
 
     #[test]
-    fn setup_mode_shows_the_problem_icon_beside_the_ap_ssid() {
+    fn the_cable_takes_the_row_from_the_ssid() {
+        let tree = tray(Some(-52), WifiView::Cable);
+        let mut ids = Vec::new();
+        svg_ids(&tree, &mut ids);
+        let cable = distinct_icons()
+            .cable
+            .expect("BUG: distinct icons are all set");
+        assert!(ids.contains(&cable), "the cable glyph must draw: {ids:?}");
+        assert!(signal_icons_drawn(&tree).is_empty(), "{ids:?}");
+        let mut texts = Vec::new();
+        collect_texts(&tree, &mut texts);
+        assert!(texts.iter().any(|t| t == "Connection"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "Ethernet"), "{texts:?}");
+        assert!(!texts.iter().any(|t| t == "Workshop-WiFi"), "{texts:?}");
+    }
+
+    #[test]
+    /// The badge is what says setup mode, as on the Deck and the disc;
+    /// the problem icon alone reads as a fault. The SSID stays off the row:
+    /// the device-info screen names it in full.
+    fn setup_mode_shows_the_problem_icon_and_the_badge_without_the_ssid() {
         let tree = tray(
             Some(-52),
             WifiView::Setup {
@@ -305,7 +339,15 @@ mod tests {
         );
         let mut texts = Vec::new();
         collect_texts(&tree, &mut texts);
-        assert!(texts.iter().any(|t| t == "Mini-Setup"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "Connection"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "SETUP"), "{texts:?}");
+        assert!(!texts.iter().any(|t| t == "Mini-Setup"), "{texts:?}");
         assert!(!texts.iter().any(|t| t == "Workshop-WiFi"), "{texts:?}");
+        let badge = style_of(&tree, "SETUP").expect("BUG: the badge is a paragraph");
+        assert_eq!(
+            (badge.size, badge.weight, badge.color),
+            (COMPACT_INFO_SIZE, FontWeight::BOLD, GREEN_50),
+            "bold green at the row's own size, so the row stays one line tall"
+        );
     }
 }
