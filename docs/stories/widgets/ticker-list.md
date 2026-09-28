@@ -26,9 +26,11 @@ fetched independently so one bad symbol never blanks the others.
 
 - The `full` size shows eight rows in two columns, filled left to right so the first two symbols share the top row.
 - The `large` size shows four rows, and the `medium` and `small` sizes show two, all in a single column.
+- BMM101 shows four rows in a frame of its own, under a header naming the widget, in the type the other widgets use
+  there: each row the symbol over its name, a sparkline, and the price over its change.
 - Symbols configured beyond what the current size can show are neither fetched nor displayed.
-- The `small` size drops the sparkline to leave room for the numbers, and shortens the instrument name budget.
-- Instrument names longer than the row allows are truncated with an ellipsis.
+- The `small` size drops the sparkline to leave room for the numbers.
+- Symbols and instrument names longer than the row allows are truncated with an ellipsis.
 
 ### Read the trend for each row
 
@@ -38,6 +40,8 @@ fetched independently so one bad symbol never blanks the others.
   price of the selected period to the latest price.
 - A non-negative change is green and a negative change is red; the sparkline and its fill take the same colour.
 - The sparkline traces the price across the whole selected period within its row.
+- The sparklines line up down the list: each starts where the widest price leaves room, not against its own row's price.
+  At `full` each column lines up on its own.
 - The price is formatted with as many decimals as its magnitude warrants — none at 1000 and above, two at 1 and above,
   and progressively more for small values.
 - Currency pairs made of two fiat currencies below a rate of 1000 use five decimals, or three when quoted in JPY.
@@ -64,8 +68,8 @@ fetched independently so one bad symbol never blanks the others.
   otherwise.
 - Any other failure shows `Unavailable` with `N/A` and keeps retrying on its own.
 - If a row already has a price and the refresh starts failing, the last known price and sparkline stay on screen; after
-  about seven and a half minutes the row gains a warning badge with the age of the last refresh. The `small` size shows
-  the warning icon without the age.
+  about seven and a half minutes a warning icon and the age of the last refresh, such as `12m ago`, take the place of
+  the instrument name.
 
 ### Know when a market is closed
 
@@ -77,11 +81,11 @@ fetched independently so one bad symbol never blanks the others.
 
 ## Constraints
 
-- The widget renders at the shared `small`, `medium`, `large`, and `full` sizes on rectangular viewports from 317x238 up
-  to 1280x480. The round BFM100 face is not supported.
-- Non-canonical rectangular viewports keep the closest shared size classification and scale by the widget fit factor, so
-  BMM101's 480x320 fullscreen viewport shows the four-row Large layout shrunk to fit. Row and column counts, the
-  sparkline toggle, and the name budget are layout structure and do not scale.
+- The widget renders at the shared `small`, `medium`, `large`, and `full` sizes and in BMM101's own frame, on
+  rectangular viewports from 317x238 up to 1280x480. The round BFM100 face is not supported.
+- Other rectangular viewports keep the closest shared size classification and scale by the widget fit factor; BMM100's
+  320x240 renders the `small` layout. Row and column counts and the sparkline toggle are layout structure and do not
+  scale.
 - *Symbol 1* … *Symbol 8* and *Time Period* are manifest-driven widget parameters, configurable from the web UI. The
   manifest format has no list type, so the symbols are eight separate string parameters rather than one array.
 - The manifest subscribes to the device `localization` setting. The percentage change is deliberately not localized.

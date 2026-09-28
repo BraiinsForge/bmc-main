@@ -126,7 +126,8 @@ device timezone.
 A widget that lists up to eight financial instruments — stocks, indices, currency pairs, or cryptocurrency pairs — one
 per row, each with its name, a sparkline over a selectable time period, the current price, and a signed change badge.
 Reads prices and instrument names from the Braiins Forge Nexus, fetches every row independently so one bad symbol only
-degrades its own row, and adapts from eight rows in two columns at full size down to two chartless rows at small.
+degrades its own row, and adapts from eight rows in two columns at full size down to two chartless rows at small, with
+four rows in BMM101's own frame.
 
 ### [Single Ticker Widget](ticker-single.md)
 
