@@ -27,11 +27,13 @@ gl +cmd:
     if [ "${GALLERY_SOFTWARE_GL:-0}" = "1" ]; then
         mesa="$(nix build --no-link --print-out-paths .#pkgs.mesa)"
         libgl="$(nix build --no-link --print-out-paths .#pkgs.libGL)"
-        # Set from inside the shell, which exports an LD_LIBRARY_PATH of its own.
+        # Set from inside the shell, which exports an LD_LIBRARY_PATH of its own
+        # and resets CARGO_TARGET_DIR to its own tree, so the gallery subtree goes back on here.
         exec nix develop --command bash -c '
             export __EGL_VENDOR_LIBRARY_FILENAMES="$1"
             export LD_LIBRARY_PATH="$2${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             export GALLERY_CAPTURE_RENDERER=llvmpipe
+            export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:?the dev shell sets the target root}/gallery"
             shift 2
             exec "$@"
         ' _ "$mesa/share/glvnd/egl_vendor.d/50_mesa.json" "$mesa/lib:$libgl/lib" "$@"
