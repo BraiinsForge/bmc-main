@@ -246,7 +246,7 @@ fn resolved_cells(
     let closed = row_data.is_closed_marked();
     Cells {
         name: col(
-            props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
+            props!(flex: 1.0, gap: band.row_gap),
             [
                 symbol_line(
                     deck_symbol(&row_data.symbol, PRIMARY, band),
@@ -278,7 +278,7 @@ fn resolved_cells(
 fn deck_symbol(symbol: &str, color: Color, band: &Band) -> Node {
     text(
         symbol,
-        style!(size: band.symbol_font, weight: FontWeight::BOLD, color: color),
+        style!(size: band.symbol_font, weight: FontWeight::BOLD, color: color, text_overflow: TextOverflow::Ellipsis),
     )
 }
 
@@ -340,7 +340,7 @@ fn placeholder_cells(symbol: &str, status: &str, symbol_color: Color, band: &Ban
     let muted = SECONDARY.with_alpha(ERROR_ROW_ALPHA);
     Cells {
         name: col(
-            props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
+            props!(flex: 1.0, gap: band.row_gap),
             [
                 symbol_line(deck_symbol(symbol, sym, band), band, SECONDARY, false, None),
                 text(status, style!(size: band.company_font, color: muted)),
@@ -631,19 +631,21 @@ mod tests {
     }
 
     #[test]
-    fn bmm101_cuts_a_long_symbol_and_name_rather_than_wrapping_them() {
-        const SYMBOL: &str = "EXTRAORDINARILYLONGSYMBOL";
-        const NAME: &str = "Meta Platforms, Inc. Class A Common Stock";
-        let mut list = fixtures::healthy();
-        list.names[0] = Some(NAME.to_owned());
-        let RowState::Resolved { data } = &mut list.states[0] else {
-            panic!("BUG: the healthy list's rows are resolved");
-        };
-        data.symbol = SYMBOL.to_owned();
-        let view = view_of(&list, bmm101());
-        for text in [SYMBOL, NAME] {
-            let style = style_of(&view, text).expect("BUG: the row draws its symbol and name");
-            assert_eq!(style.text_overflow, TextOverflow::Ellipsis, "{text}");
+    fn a_long_symbol_and_name_are_cut_rather_than_wrapped() {
+        let list = fixtures::extremes(fixtures::Extremes {
+            long_strings: true,
+            ..fixtures::Extremes::default()
+        });
+        for size in [bmm101(), WidgetSize::from_dimensions(638, 480)] {
+            let view = view_of(&list, size);
+            for text in [fixtures::LONG_SYMBOL, fixtures::LONGEST_NAME] {
+                let style = style_of(&view, text).expect("BUG: the row draws its symbol and name");
+                assert_eq!(
+                    style.text_overflow,
+                    TextOverflow::Ellipsis,
+                    "{size:?}: {text}"
+                );
+            }
         }
     }
 
