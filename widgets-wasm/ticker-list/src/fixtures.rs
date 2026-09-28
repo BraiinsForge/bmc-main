@@ -231,3 +231,80 @@ pub fn one_symbol() -> List {
     list.push_row(RECORDED[0], true);
     list
 }
+
+/// A price in each precision bucket, then ever wider whole prices,
+/// each labelled and under a symbol whose rules format it.
+pub const PRICES: [(&str, &str, f64); 7] = [
+    ("Below the minimum", "MSTR", 0.000_000_4),
+    ("Sub-cent", "PEPE-USD", 0.000_123),
+    ("Five-decimal FX", "EUR-HUF", 390.123_45),
+    ("Rounds up to 1 000", "SPY", 999.995),
+    ("Eight digits", "BTC-JPY", 16_500_000.0),
+    ("Nine digits", "BTC-KRW", 150_000_000.0),
+    ("Ten digits", "BTC-IDR", 1_700_000_000.0),
+];
+
+/// Changes at the badge's widest and at the edges of its rounding.
+pub const CHANGES: [(&str, f64); 4] = [
+    ("+1234.5%", 1_234.5),
+    ("-100.0%", -99.96),
+    ("Negative, rounds to +0.0%", -0.04),
+    ("+5.3%", 5.3),
+];
+
+/// A typed symbol too long for any name column, with no break in it.
+pub const LONG_SYMBOL: &str = "EXTRAORDINARILYLONGSYMBOL";
+
+/// The longest name Nexus gave any default symbol.
+pub const LONGEST_NAME: &str = "Meta Platforms, Inc. Class A Common Stock";
+
+/// The first row [`extremes`] stages.
+#[derive(Clone, Copy, Default)]
+pub struct Extremes {
+    pub symbol: &'static str,
+    pub price: f64,
+    pub change_pct: f64,
+    /// Swaps in [`LONG_SYMBOL`] and [`LONGEST_NAME`]; the symbol then decides the price's precision.
+    pub long_strings: bool,
+    pub closed: bool,
+    pub stale: bool,
+}
+
+/// A first row at the given extremes over three ordinary ones,
+/// so its price sets the chart column every row shares.
+#[must_use]
+pub fn extremes(first: Extremes) -> List {
+    const RISING: [f64; 7] = [1.0, 1.02, 0.99, 1.05, 1.08, 1.06, 1.1];
+    let shape = if first.change_pct >= 0.0 {
+        RISING
+    } else {
+        RISING.map(|step| 2.1 - step)
+    };
+    let series = shape.map(|step| first.price * step / shape[6]);
+    let symbol = if first.long_strings {
+        LONG_SYMBOL
+    } else {
+        first.symbol
+    };
+    let mut list = empty();
+    list.push(
+        symbol,
+        first.long_strings.then_some(LONGEST_NAME),
+        RowState::Resolved {
+            data: TickerRow {
+                symbol: symbol.to_owned(),
+                price: first.price,
+                change_pct: first.change_pct,
+                series: series.to_vec(),
+                market_open: !first.closed,
+            },
+        },
+    );
+    if first.stale {
+        list.stale[0] = Some(STALE_SINCE);
+    }
+    for row in RECORDED.into_iter().take(3) {
+        list.push_row(row, true);
+    }
+    list
+}

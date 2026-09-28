@@ -43,7 +43,7 @@ fn only_size(ctx: &mut SceneCtx) -> Option<usize> {
     ctx.select("Size", &labels, 0).checked_sub(1)
 }
 
-fn list_stages(ctx: &mut SceneCtx, ui: &mut Ui, list: fn() -> List) {
+fn list_stages(ctx: &mut SceneCtx, ui: &mut Ui, list: impl Fn() -> List + Copy + 'static) {
     let only = only_size(ctx);
     system_settings(ctx);
     for (index, viewport) in viewports().enumerate() {
@@ -98,4 +98,25 @@ fn no_symbols(ctx: &mut SceneCtx, ui: &mut Ui) {
 #[scene]
 fn one_symbol(ctx: &mut SceneCtx, ui: &mut Ui) {
     list_stages(ctx, ui, fixtures::one_symbol);
+}
+
+/// A first row at its extremes over three ordinary ones, the worst case by default:
+/// the widest price and change, and a symbol and name that cannot fit,
+/// the symbol beside a shut market's pause marker.
+/// Stale stays off by default, as a stale row's age takes the long name's place.
+#[scene]
+fn extremes(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let price_labels: Vec<&str> = fixtures::PRICES.iter().map(|(label, ..)| *label).collect();
+    let price_at = ctx.select("Price", &price_labels, fixtures::PRICES.len() - 1);
+    let (_, symbol, price) = fixtures::PRICES[price_at];
+    let change_labels: Vec<&str> = fixtures::CHANGES.iter().map(|(label, _)| *label).collect();
+    let first = fixtures::Extremes {
+        symbol,
+        price,
+        change_pct: fixtures::CHANGES[ctx.select("Change", &change_labels, 0)].1,
+        long_strings: ctx.toggle("Long strings", true),
+        closed: ctx.toggle("Closed", true),
+        stale: ctx.toggle("Stale", false),
+    };
+    list_stages(ctx, ui, move || fixtures::extremes(first));
 }

@@ -393,3 +393,208 @@ frames = 8
 
 [shot.knobs]
 Size = "BMM Narrow"
+
+# Extremes: the worst case first, then stale, each price bucket with ordinary strings,
+# the change's rounding edges, the other number formats, and the Deck.
+
+[[shot]]
+name = "extremes-widest-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "extremes-stale-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Stale = true
+
+[[shot]]
+name = "extremes-below-minimum-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Price = "Below the minimum"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-sub-cent-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Price = "Sub-cent"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-five-decimal-fx-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Price = "Five-decimal FX"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-rounds-up-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Price = "Rounds up to 1 000"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-eight-digits-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Price = "Eight digits"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-eight-digits-small"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+Price = "Eight digits"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-eight-digits-bmm100"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
+Price = "Eight digits"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-nine-digits-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Price = "Nine digits"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-ten-digits-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Price = "Ten digits"
+"Long strings" = false
+Closed = false
+
+[[shot]]
+name = "extremes-down-100-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Change = "-100.0%"
+
+[[shot]]
+name = "extremes-rounds-to-zero-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Change = "Negative, rounds to +0.0%"
+"Long strings" = false
+
+[[shot]]
+name = "extremes-comma-group-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Numbers = "1,234.5"
+
+[[shot]]
+name = "extremes-dot-group-bmm101"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+Numbers = "1.234,5"
+
+[[shot]]
+name = "extremes-widest-large"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+
+[[shot]]
+name = "extremes-stale-large"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "Deck large"
+Stale = true
+
+[[shot]]
+name = "extremes-widest-full"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "extremes-widest-medium"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "extremes-widest-small"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "extremes-widest-bmm100"
+scene = "bmc_gallery::ticker_list::Extremes"
+frames = 8
+
+[shot.knobs]
+Size = "BMM Narrow"
