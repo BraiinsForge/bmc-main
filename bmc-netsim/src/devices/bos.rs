@@ -19,7 +19,8 @@
 // the grant above.
 
 //! BOS+ profile (BMM/BFM). Announces `_http._tcp` with the `_bos` subtype
-//! and serves the boser REST paths the widget reads, in BOS units (GH/s, watts).
+//! and a `bos_version` TXT key, and serves the boser REST paths the widget
+//! reads, in BOS units (GH/s, watts).
 //!
 //! Shape follows the boser REST API ("Braiins OS Public REST API")
 //! as consumed by the widget's `families/bos.rs` adapter.
@@ -51,6 +52,10 @@ const BOARDS: usize = 2;
 
 /// How far the board sensor sits below the hottest chip on the same board.
 const BOARD_BELOW_CHIP_C: f64 = 13.0;
+
+/// The system version BOS advertises in its `bos_version` TXT key.
+/// Any non-empty value identifies BOS, so the spelling is arbitrary.
+const BOS_VERSION: &str = "26.09-sim";
 
 /// BOS `TunerState::Stable`: the tuner has settled
 /// and the miner runs at its chosen frequencies.
@@ -250,7 +255,7 @@ impl Params {
             announce: Some(AnnounceSpec::Mdns {
                 service_type: "_http._tcp".to_owned(),
                 subtype: Some("_bos".to_owned()),
-                txt: BTreeMap::new(),
+                txt: BTreeMap::from([("bos_version".to_owned(), BOS_VERSION.to_owned())]),
             }),
             endpoints,
             sampler: None,
@@ -393,6 +398,18 @@ mod tests {
                 "/api/v1/network/",
                 "/api/v1/configuration/constraints",
             ]
+        );
+    }
+
+    #[test]
+    fn announces_the_bos_version_txt_the_fleet_widget_identifies_by() {
+        let resource = Params::default().resource("miner", 20_300);
+        let Some(AnnounceSpec::Mdns { txt, .. }) = &resource.announce else {
+            panic!("BUG: the BOS profile must announce over mDNS");
+        };
+        assert!(
+            txt.get("bos_version").is_some_and(|v| !v.is_empty()),
+            "the fleet widget ignores an _http._tcp host without a bos_version",
         );
     }
 

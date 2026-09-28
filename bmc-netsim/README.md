@@ -76,7 +76,7 @@ drifts around `hashrate_ths`.
 
 | `device`             | mDNS service                   | endpoints                                                                                                                         |
 | -------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `bos`                | `_bos._sub._http._tcp`         | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details, configuration/constraints, cooling/state, network/}` |
+| `bos`                | `_bos._sub._http._tcp` + TXT   | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details, configuration/constraints, cooling/state, network/}` |
 | `bos-libre`          | `_ubos._tcp`                   | `/api/info`                                                                                                                       |
 | `axeos`              | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                                                                                |
 | `braiins-pool`       | — (cloud, not announced)       | FPPS `/pool/v2/user/{hashrate,workers}/{current,history}`, `rewards/latest`, `financials`, `payouts/recent`                       |
