@@ -64,11 +64,19 @@ fn v_divider() -> Node {
     col(props!(width: 1.0, background: BORDER), Vec::<Node>::new())
 }
 
-fn empty_row() -> Node {
-    col(
-        props!(flex: 1.0, background: BACKGROUND),
-        Vec::<Node>::new(),
-    )
+/// One row's content, split across the list's columns.
+struct Cells {
+    name: Node,
+    chart: Node,
+    price: Node,
+}
+
+fn empty_cells(band: &Band) -> Cells {
+    Cells {
+        name: col(props!(flex: 1.0), Vec::<Node>::new()),
+        chart: fixed_width(band.chart_width),
+        price: col(props!(), Vec::<Node>::new()),
+    }
 }
 
 fn closed_marker(band: &Band) -> Node {
@@ -105,35 +113,29 @@ fn symbol_line(
     row(props!(cross_align: CrossAlign::Center), children)
 }
 
-fn sparkline_node(series: &[f64], trend: Color, closed: bool, band: &Band) -> Node {
-    let margin = band.row_padding;
+fn sparkline(series: &[f64], trend: Color, closed: bool, band: &Band) -> Node {
     let (w, h) = (band.chart_width, band.chart_height);
     let color = if closed { SECONDARY } else { trend };
     let alpha = if closed { CLOSED_CHART_ALPHA } else { 1.0 };
     let line = chart::series_points(series, w, h, CHART_INSET);
-    let canvas_node = if line.len() < 2 {
-        fixed_width(w)
-    } else {
-        let mut area = line.clone();
-        area.push((w, h));
-        area.push((0.0, h));
-        canvas(
-            props!(width: w, height: h),
-            [
-                fill!(
-                    area,
-                    linear: (
-                        color.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
-                        color.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha)
-                    )
-                ),
-                path!(line, stroke: CHART_STROKE, color: color.with_alpha(alpha)),
-            ],
-        )
-    };
-    row(
-        props!(cross_align: CrossAlign::Center),
-        [fixed_width(margin), canvas_node, fixed_width(margin)],
+    if line.len() < 2 {
+        return fixed_width(w);
+    }
+    let mut area = line.clone();
+    area.push((w, h));
+    area.push((0.0, h));
+    canvas(
+        props!(width: w, height: h),
+        [
+            fill!(
+                area,
+                linear: (
+                    color.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
+                    color.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha)
+                )
+            ),
+            path!(line, stroke: CHART_STROKE, color: color.with_alpha(alpha)),
+        ],
     )
 }
 
@@ -160,28 +162,18 @@ fn right_col(price_str: String, change_str: String, trend: Color, band: &Band) -
     )
 }
 
-fn resolved_row(
+fn resolved_cells(
     row_data: &TickerRow,
     name: Option<&str>,
     stale: Option<SystemTime>,
     band: &Band,
-) -> Node {
+) -> Cells {
     let trend = if row_data.is_positive() {
         TREND_UP
     } else {
         TREND_DOWN
     };
     let closed = row_data.is_closed_marked();
-    let left = col(
-        props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
-        [
-            symbol_line(&row_data.symbol, PRIMARY, band, closed, stale),
-            text(
-                name.unwrap_or_default(),
-                style!(size: band.company_font, color: SECONDARY, text_overflow: TextOverflow::Ellipsis),
-            ),
-        ],
-    );
     let price = match price_precision(&row_data.symbol, row_data.price) {
         PricePrecision::Fraction(digits) => format_number!(row_data.price, digits),
         PricePrecision::BelowMin => {
@@ -190,17 +182,24 @@ fn resolved_row(
             out
         }
     };
-    let right = right_col(price, change_text(row_data.change_pct), trend, band);
-
-    let mut children = vec![left];
-    if band.show_sparkline {
-        children.push(sparkline_node(&row_data.series, trend, closed, band));
+    Cells {
+        name: col(
+            props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
+            [
+                symbol_line(&row_data.symbol, PRIMARY, band, closed, stale),
+                text(
+                    name.unwrap_or_default(),
+                    style!(size: band.company_font, color: SECONDARY, text_overflow: TextOverflow::Ellipsis),
+                ),
+            ],
+        ),
+        chart: if band.show_sparkline {
+            sparkline(&row_data.series, trend, closed, band)
+        } else {
+            fixed_width(0.0)
+        },
+        price: right_col(price, change_text(row_data.change_pct), trend, band),
     }
-    children.push(right);
-    row(
-        props!(flex: 1.0, cross_align: CrossAlign::Center, padding: band.row_padding),
-        children,
-    )
 }
 
 /// Per-row counterpart to the SDK's `with_stale_overlay` pill, rendered inline
@@ -256,32 +255,26 @@ fn stale_badge(band: &Band, anchor: SystemTime) -> Node {
 
 /// A placeholder row: symbol (error-colored for not-found, gray otherwise) +
 /// a short status, price `N/A`, and the whole row dimmed to 0.6.
-fn placeholder_row(symbol: &str, status: &str, symbol_color: Color, band: &Band) -> Node {
+fn placeholder_cells(symbol: &str, status: &str, symbol_color: Color, band: &Band) -> Cells {
     let sym = symbol_color.with_alpha(ERROR_ROW_ALPHA);
     let muted = SECONDARY.with_alpha(ERROR_ROW_ALPHA);
-    let left = col(
-        props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
-        [
-            symbol_line(symbol, sym, band, false, None),
-            text(status, style!(size: band.company_font, color: muted)),
-        ],
-    );
-    let right = col(
-        props!(cross_align: CrossAlign::End),
-        [text(
-            "N/A",
-            style!(size: band.price_font, weight: FontWeight::BOLD, color: muted, align: TextAlign::Right),
-        )],
-    );
-    let mut children = vec![left];
-    if band.show_sparkline {
-        children.push(fixed_width(band.chart_width + band.row_padding * 2.0));
+    Cells {
+        name: col(
+            props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
+            [
+                symbol_line(symbol, sym, band, false, None),
+                text(status, style!(size: band.company_font, color: muted)),
+            ],
+        ),
+        chart: fixed_width(band.chart_width),
+        price: col(
+            props!(cross_align: CrossAlign::End),
+            [text(
+                "N/A",
+                style!(size: band.price_font, weight: FontWeight::BOLD, color: muted, align: TextAlign::Right),
+            )],
+        ),
     }
-    children.push(right);
-    row(
-        props!(flex: 1.0, cross_align: CrossAlign::Center, padding: band.row_padding),
-        children,
-    )
 }
 
 fn slot(
@@ -291,28 +284,62 @@ fn slot(
     names: &[Option<String>],
     stale: &[Option<SystemTime>],
     band: &Band,
-) -> Node {
+) -> Cells {
     let Some(symbol) = symbols.get(index) else {
-        return empty_row();
+        return empty_cells(band);
     };
     let Some(row_state) = states.get(index) else {
-        return empty_row();
+        return empty_cells(band);
     };
     match row_state {
-        RowState::Resolved { data } => resolved_row(
+        RowState::Resolved { data } => resolved_cells(
             data,
             names.get(index).and_then(Option::as_deref),
             stale.get(index).copied().flatten(),
             band,
         ),
-        RowState::InputError { .. } => placeholder_row(symbol, "Not found", ERROR, band),
+        RowState::InputError { .. } => placeholder_cells(symbol, "Not found", ERROR, band),
         RowState::NoData { market_closed } => {
             let text = if *market_closed { "Closed" } else { "No data" };
-            placeholder_row(symbol, text, SECONDARY, band)
+            placeholder_cells(symbol, text, SECONDARY, band)
         }
-        RowState::Failed => placeholder_row(symbol, "Unavailable", SECONDARY, band),
-        RowState::Loading => placeholder_row(symbol, "Loading\u{2026}", SECONDARY, band),
+        RowState::Failed => placeholder_cells(symbol, "Unavailable", SECONDARY, band),
+        RowState::Loading => placeholder_cells(symbol, "Loading\u{2026}", SECONDARY, band),
     }
+}
+
+/// A list laid out a column at a time — names, charts, prices — so every chart starts
+/// where the widest price leaves room, not against its own row's price.
+fn list(rows: Vec<Cells>, band: &Band) -> Node {
+    let pad = band.row_padding;
+    let mut names = Vec::with_capacity(2 * rows.len());
+    let mut charts = Vec::with_capacity(2 * rows.len());
+    let mut prices = Vec::with_capacity(2 * rows.len());
+    for (index, cells) in rows.into_iter().enumerate() {
+        if index > 0 {
+            names.push(h_divider());
+            charts.push(h_divider());
+            prices.push(h_divider());
+        }
+        names.push(row(
+            props!(flex: 1.0, cross_align: CrossAlign::Center),
+            [fixed_width(pad), cells.name],
+        ));
+        charts.push(row(
+            props!(flex: 1.0, cross_align: CrossAlign::Center),
+            [fixed_width(pad), cells.chart, fixed_width(pad)],
+        ));
+        prices.push(row(
+            props!(flex: 1.0, cross_align: CrossAlign::Center, justify_content: Justify::End),
+            [cells.price, fixed_width(pad)],
+        ));
+    }
+    let mut columns = vec![col(props!(flex: 1.0), names)];
+    if band.show_sparkline {
+        columns.push(col(props!(), charts));
+    }
+    columns.push(col(props!(), prices));
+    row(props!(flex: 1.0), columns)
 }
 
 /// The full grid for the current size.
@@ -336,32 +363,36 @@ pub fn view(
     )]
     let (w, h) = (ws.width as f32, ws.height as f32);
 
-    let mut children = Vec::new();
-    if band.columns == 2 {
-        let grid_rows = band.rows / 2;
-        for r in 0..grid_rows {
-            let left = slot(2 * r, symbols, states, names, stale, &band);
-            let right = slot(2 * r + 1, symbols, states, names, stale, &band);
-            children.push(row(
-                props!(flex: 1.0, cross_align: CrossAlign::Center),
-                [left, v_divider(), right],
-            ));
-            if r + 1 < grid_rows {
-                children.push(h_divider());
-            }
-        }
+    let rows: Vec<Cells> = (0..band.rows)
+        .map(|index| slot(index, symbols, states, names, stale, &band))
+        .collect();
+    let body = if band.columns == 2 {
+        // Filled left to right, so the first two symbols share the top row.
+        let (left, right): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .enumerate()
+            .partition(|(index, _)| index % 2 == 0);
+        let half = |half: Vec<(usize, Cells)>| {
+            let rows = half.into_iter().map(|(_, cells)| cells).collect();
+            list(rows, &band)
+        };
+        // Both halves on whole pixels: taffy 0.9 rounds a node's location
+        // against its parent but its width against the absolute edge,
+        // so a half that starts on a half pixel opens a one-pixel gap
+        // in its rules where its columns meet.
+        let left_width = ((w - 1.0) / 2.0).floor();
+        row(
+            props!(flex: 1.0),
+            [
+                col(props!(width: left_width), [half(left)]),
+                v_divider(),
+                half(right),
+            ],
+        )
     } else {
-        for i in 0..band.rows {
-            children.push(slot(i, symbols, states, names, stale, &band));
-            if i + 1 < band.rows {
-                children.push(h_divider());
-            }
-        }
-    }
-    col(
-        props!(background: BACKGROUND, width: w, height: h),
-        children,
-    )
+        list(rows, &band)
+    };
+    col(props!(background: BACKGROUND, width: w, height: h), [body])
 }
 
 fn message_view(message: &str, ws: WidgetSize) -> Node {
@@ -434,12 +465,23 @@ mod tests {
         );
     }
 
-    fn sparkline_stroke_color(node: Node) -> Color {
-        let Node::Row(_, children) = node else {
-            panic!("BUG: the sparkline wrapper must be a row");
+    #[test]
+    fn full_fills_left_to_right_so_the_first_two_symbols_share_the_top_row() {
+        let size = WidgetSize::from_dimensions(1_280, 480);
+        let Node::Column(_, body) = view_of(&fixtures::healthy(), size) else {
+            panic!("BUG: the view is a column");
         };
-        let Some(Node::Canvas { draws, .. }) = children.get(1) else {
-            panic!("BUG: the sparkline canvas must follow its left margin");
+        let Some(Node::Row(_, halves)) = body.first() else {
+            panic!("BUG: Full lays its halves out in a row");
+        };
+        let lead = |half: &Node| texts(half).first().cloned();
+        assert_eq!(lead(&halves[0]).as_deref(), Some("NVDA"));
+        assert_eq!(lead(&halves[2]).as_deref(), Some("AAPL"));
+    }
+
+    fn sparkline_stroke_color(node: Node) -> Color {
+        let Node::Canvas { draws, .. } = node else {
+            panic!("BUG: a two-point sparkline is a canvas");
         };
         draws
             .iter()
@@ -461,11 +503,11 @@ mod tests {
         let band = band_for(SizeVariant::Full);
         let series = [1.0, 2.0];
         assert_eq!(
-            sparkline_stroke_color(sparkline_node(&series, TREND_UP, false, &band)),
+            sparkline_stroke_color(sparkline(&series, TREND_UP, false, &band)),
             TREND_UP
         );
         assert_eq!(
-            sparkline_stroke_color(sparkline_node(&series, TREND_UP, true, &band)),
+            sparkline_stroke_color(sparkline(&series, TREND_UP, true, &band)),
             SECONDARY.with_alpha(CLOSED_CHART_ALPHA)
         );
     }
@@ -489,13 +531,9 @@ mod tests {
         };
         let row_data = TickerRow::from_candles("BTC", &candles).expect("BUG: candles build a row");
 
-        let Node::Row(_, children) =
-            resolved_row(&row_data, Some(NAME), None, &band_for(SizeVariant::Small))
-        else {
-            panic!("BUG: a resolved row is a row");
-        };
-        let Some(Node::Column(_, left)) = children.first() else {
-            panic!("BUG: the name column leads the row");
+        let cells = resolved_cells(&row_data, Some(NAME), None, &band_for(SizeVariant::Small));
+        let Node::Column(_, left) = cells.name else {
+            panic!("BUG: the name cell is a column");
         };
         let Some(Node::Paragraph {
             base_style, spans, ..
