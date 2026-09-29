@@ -32,7 +32,7 @@ use bmc::installable_widgets::{
 use bmc_nix::index::merge_indexes;
 use bmc_nix::service_orchestrator::publish_upgraded_service_marker;
 use bmc_nix::store::progress::DownloadSnapshot;
-use bmc_nix::types::{FetchedIndex, MergedIndex, PackageIndex};
+use bmc_nix::types::{FetchedIndex, InstalledBy, ManifestPackage, MergedIndex, PackageIndex};
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_shared_utils::include_png;
 use bmc_upgrade::offers::PackageOffer;
@@ -113,6 +113,52 @@ pub struct MockPackageBackend {
 }
 
 impl MockPackageBackend {
+    /// The widgets in the tree are installed unless the scenario shadows them,
+    /// and so are the packages the static preview upgrades from a version;
+    /// the tree's version wins for a widget named by both.
+    fn installed_profile(&self, scenario: &scenario::UpgradeScenario) -> bmc_nix::types::Manifest {
+        let installed = |name: String, version: String, installed_by: InstalledBy| {
+            let package = ManifestPackage {
+                store_path: format!("/nix/store/mock-{name}-{version}"),
+                version,
+                category: None,
+                description: None,
+                upgrade_strategy: None,
+                install_strategy: None,
+                installed_by,
+                installed_from: "mock".to_owned(),
+                pinned: None,
+            };
+            (name, package)
+        };
+        let mut widgets: Vec<(String, String)> = self
+            .widgets_path
+            .as_deref()
+            .map(crate::widget_staging::widget_dirs)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter_map(|dir| widget_manifest(&dir.join("manifest.json")))
+            .map(|(name, manifest)| (name, manifest.version.to_string()))
+            .collect();
+        // The tree walk is unordered; sorting keeps the profile equal across probes when two
+        // directories map to one package name.
+        widgets.sort();
+        let widgets = widgets
+            .into_iter()
+            .map(|(name, version)| installed(name, version, InstalledBy::User));
+        let system = static_preview(EstimateMode::Skip)
+            .changes
+            .into_iter()
+            .filter_map(|change| Some((change.name, change.version_from?)))
+            .map(|(name, version)| installed(name, version, InstalledBy::System));
+        let packages = system
+            .chain(widgets)
+            .filter(|(name, _)| !scenario.shadowed_packages.contains(name))
+            .collect();
+        bmc_nix::types::Manifest { packages }
+    }
+
     fn prepare_catalog_package(&self, mut package: InstallablePackage) -> InstallablePackage {
         if let Some(widget) = from_packages(vec![package.clone()]).pop() {
             let widget = if self.index_path.is_some() {
@@ -269,13 +315,17 @@ fn installable_widgets_from_dir(root: &Path) -> Vec<InstallableWidget> {
         .collect()
 }
 
-/// Parse one widget `manifest.json` into an [`InstallableWidget`], resolving
-/// the manifest-relative icon and inlining it. Returns `None` on a manifest
-/// that will not parse rather than failing the whole listing.
-fn widget_from_manifest(manifest_path: &Path) -> Option<InstallableWidget> {
+/// A manifest that does not parse yields `None`, so one broken widget cannot fail the tree.
+fn widget_manifest(manifest_path: &Path) -> Option<(String, Manifest)> {
     let widget_dir = manifest_path.parent()?;
     let package_name = format!("widget-{}", widget_dir.file_name()?.to_str()?);
-    let manifest: Manifest = std::fs::read_to_string(manifest_path).ok()?.parse().ok()?;
+    let manifest = std::fs::read_to_string(manifest_path).ok()?.parse().ok()?;
+    Some((package_name, manifest))
+}
+
+fn widget_from_manifest(manifest_path: &Path) -> Option<InstallableWidget> {
+    let (package_name, manifest) = widget_manifest(manifest_path)?;
+    let widget_dir = manifest_path.parent()?;
     let icon = manifest
         .icon
         .map(|rel| widget_dir.join(rel).to_string_lossy().into_owned());
@@ -366,13 +416,16 @@ impl PackageBackend for MockPackageBackend {
             changelog: None,
         });
 
+        // The mock persists no profile; deriving one from the scenario lets unshadowing a widget
+        // change the offer's plan the way an install does on a device.
+        let manifest = self.installed_profile(&scenario);
         match scenario.packages {
             PackagesScenario::Available => {
                 let mut preview = static_preview(estimate);
                 preview.changes.extend(installs);
                 PackageProbe::Available(PackageOffer {
                     index: empty_merged_index(),
-                    manifest: bmc_nix::types::Manifest::default(),
+                    manifest,
                     preview,
                 })
             }
@@ -385,7 +438,7 @@ impl PackageBackend for MockPackageBackend {
                 } else {
                     PackageProbe::Available(PackageOffer {
                         index: empty_merged_index(),
-                        manifest: bmc_nix::types::Manifest::default(),
+                        manifest,
                         preview: PackagesPreview {
                             changes,
                             download_size_bytes: match estimate {
@@ -896,6 +949,26 @@ mod tests {
                 .previews
                 .iter()
                 .all(|p| p.image.starts_with("data:image/png;base64,") && !p.size.is_empty())
+        );
+    }
+
+    #[tokio::test]
+    async fn the_installed_profile_takes_the_tree_version_over_the_static_preview() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let widgets = write_widget_tree(dir.path(), &["weather"]);
+        let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier())
+            .with_widgets_path(Some(widgets));
+        let PackageProbe::Available(PackageOffer { manifest, .. }) =
+            backend.probe(None, EstimateMode::Skip, &[]).await
+        else {
+            panic!("BUG: expected Available");
+        };
+        let weather = &manifest.packages["widget-weather"];
+        assert_eq!(weather.installed_by, InstalledBy::User);
+        assert_ne!(
+            weather.version, "1.2.0",
+            "the static preview's version must not shadow the installed widget"
         );
     }
 
