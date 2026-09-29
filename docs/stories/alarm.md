@@ -63,6 +63,8 @@ firing alarm; the LED and sound feedback are covered in [LED Notifications](led-
 
 - Each alarm has a time, shown in my configured 12- or 24-hour format.
 - I can repeat it on any set of weekdays, or leave it as a one-off.
+- Several alarms may share a time, for example the same time with a different sound on different days. If two alarms
+  ring at once, one of them takes over the screen and sound.
 
 ### Give an alarm a label and a sound
 
