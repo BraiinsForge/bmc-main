@@ -1,7 +1,8 @@
 # The recorded launch at every design size and on the panel without
 # a bucket of its own; each state that replaces the launch, which the Deck
 # draws alike at every size and BMM101 in its own frame;
-# and the launch once its net time has passed.
+# the launch once its net time has passed; and the longest names
+# and widest values, wherever they have a row or a title to stretch.
 
 size = "1280x560"
 sheet = "sheet.png"
@@ -124,3 +125,67 @@ frames = 24
 
 [shot.knobs]
 Size = "BMM101"
+
+[[shot]]
+name = "long-mission-bmm101"
+scene = "bmc_gallery::spacex_launch::Long Mission"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "longest-mission-bmm101"
+scene = "bmc_gallery::spacex_launch::Longest Mission"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "longest-mission-full"
+scene = "bmc_gallery::spacex_launch::Longest Mission"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "longest-mission-medium"
+scene = "bmc_gallery::spacex_launch::Longest Mission"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "widest-values-bmm101"
+scene = "bmc_gallery::spacex_launch::Widest Values"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
+name = "widest-values-medium"
+scene = "bmc_gallery::spacex_launch::Widest Values"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "widest-values-small"
+scene = "bmc_gallery::spacex_launch::Widest Values"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "widest-values-bmm100"
+scene = "bmc_gallery::spacex_launch::BMM100"
+frames = 24
+
+[shot.knobs]
+State = "Widest Values"

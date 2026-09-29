@@ -23,7 +23,8 @@
 use bmc_wasm_sdk::{ViewportShape, WidgetViewport};
 
 use crate::model::{
-    LaunchData, SizeBucket, State, abbreviate_mission_type, abbreviate_place, format_booster,
+    LaunchData, SizeBucket, State, abbreviate_mission_type, abbreviate_place,
+    abbreviate_spacecraft, format_booster,
 };
 use crate::screens::ViewData;
 
@@ -35,6 +36,15 @@ const NOW: i64 = 1_781_784_681;
 
 /// 19 June 2026, 08:40 UTC — the `net` Nexus served at [`NOW`].
 const RECORDED_NET: i64 = 1_781_858_400;
+
+/// Three-digit days out.
+const DISTANT_NET: i64 = NOW + 888 * 86_400 + 8 * 3_600 + 8 * 60 + 8;
+
+/// Figma's long mission name, too wide for one line at the hero's top size.
+pub const LONG_MISSION: &str = "Transporter 17 (Dedicated SSO Rideshare)";
+
+/// A launch without a mission block reads as its own name: the rocket, then the mission.
+pub const LONGEST_MISSION: &str = "Falcon 9 Block 5 | Transporter 17 (Dedicated SSO Rideshare)";
 
 /// What Nexus served at [`NOW`], as the parser reads it.
 fn recorded() -> LaunchData {
@@ -106,4 +116,41 @@ pub fn launched(viewport: WidgetViewport) -> ViewData {
         now_secs: RECORDED_NET,
         ..healthy(viewport)
     }
+}
+
+fn named(viewport: WidgetViewport, mission_name: &str) -> ViewData {
+    let launch = LaunchData {
+        mission_name: mission_name.to_owned(),
+        ..recorded()
+    };
+    view(viewport, State::Loaded(launch))
+}
+
+#[must_use]
+pub fn long_mission(viewport: WidgetViewport) -> ViewData {
+    named(viewport, LONG_MISSION)
+}
+
+#[must_use]
+pub fn longest_mission(viewport: WidgetViewport) -> ViewData {
+    named(viewport, LONGEST_MISSION)
+}
+
+/// The widest value every row can show.
+/// Any status wider than `To Be Determined` comes only after the net time,
+/// when the view reads `Launched` instead.
+#[must_use]
+pub fn widest_values(viewport: WidgetViewport) -> ViewData {
+    let launch = LaunchData {
+        mission_name: LONGEST_MISSION.to_owned(),
+        launch_unix: DISTANT_NET,
+        status: "To Be Determined".to_owned(),
+        rocket: "Falcon 9 Block 5".to_owned(),
+        place: abbreviate_place("SpaceX Starbase, TX, USA", "Orbital Launch Pad 2"),
+        landing: "Not confirmed".to_owned(),
+        booster: format_booster(29),
+        payload: abbreviate_mission_type("Communications"),
+        spacecraft: abbreviate_spacecraft("Cargo Dragon"),
+    };
+    view(viewport, State::Loaded(launch))
 }

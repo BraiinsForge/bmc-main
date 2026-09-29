@@ -38,12 +38,15 @@ const BUCKETS: [(SizeBucket, &str); 5] = [
 
 const BMM100_VIEWPORT: (u32, u32) = (320, 240);
 
-const STATES: [(&str, StateFixture); 5] = [
+const STATES: [(&str, StateFixture); 8] = [
     ("Healthy", fixtures::healthy),
     ("Loading", fixtures::loading),
     ("No Launch", fixtures::no_launch),
     ("Failed", fixtures::failed),
     ("Launched", fixtures::launched),
+    ("Long Mission", fixtures::long_mission),
+    ("Longest Mission", fixtures::longest_mission),
+    ("Widest Values", fixtures::widest_values),
 ];
 
 fn only_size(ctx: &mut SceneCtx) -> Option<SizeBucket> {
@@ -131,6 +134,24 @@ fn failed(ctx: &mut SceneCtx, ui: &mut Ui) {
 fn launched(ctx: &mut SceneCtx, ui: &mut Ui) {
     ui.label("Past its net time: the countdown holds at T-0 and the status reads Launched.");
     state_stages(ctx, ui, fixtures::launched);
+}
+
+#[scene]
+fn long_mission(ctx: &mut SceneCtx, ui: &mut Ui) {
+    ui.label("Too wide for one line at 40: BMM101's hero shrinks it onto two lines.");
+    state_stages(ctx, ui, fixtures::long_mission);
+}
+
+#[scene]
+fn longest_mission(ctx: &mut SceneCtx, ui: &mut Ui) {
+    ui.label("A launch without a mission block, named after its rocket and its mission.");
+    state_stages(ctx, ui, fixtures::longest_mission);
+}
+
+#[scene]
+fn widest_values(ctx: &mut SceneCtx, ui: &mut Ui) {
+    ui.label("Every row at its widest, the countdown three digits of days out.");
+    state_stages(ctx, ui, fixtures::widest_values);
 }
 
 /// The 320×240 panel, which has no bucket: it draws the Small layout.
