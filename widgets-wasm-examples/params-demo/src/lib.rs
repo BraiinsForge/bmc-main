@@ -57,8 +57,8 @@ thread_local! {
     /// Per-key milliseconds-remaining on the change-decay highlight.
     /// Bumped to `DECAY_MS` inside `on_params_update` for every key whose value differs
     /// from the previous snapshot, decremented by `delta_ms` at the end of every `render`.
-    /// `BTreeMap<String, u32>` keeps key iteration deterministic; bounded by manifest size
-    /// (14 entries today), so the allocation cost is irrelevant.
+    /// `BTreeMap<String, u32>` keeps key iteration deterministic;
+    /// bounded by manifest size, so the allocation cost is irrelevant.
     static DECAY_MS_REMAINING: RefCell<BTreeMap<String, u32>> =
         const { RefCell::new(BTreeMap::new()) };
 }
@@ -321,7 +321,7 @@ pub extern "C" fn render(delta_ms: u32) {
 /// Each row is a one-liner (`key  value`) — the hint subtitle
 /// is dropped to win vertical density, and the full 317 px tile
 /// width is available for values, so URLs and longer strings
-/// don't wrap. The 14 params stack with `timezone` + `next_alarm`
+/// don't wrap. The params stack with `timezone` + `next_alarm`
 /// appended as a teaser of the System snapshot.
 fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let sys = system::current();
@@ -345,7 +345,7 @@ fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
 }
 
 /// Two-pane compact layout for the Medium / Large variants.
-/// Left pane: all 14 params; right pane: the full 8-field system snapshot.
+/// Left pane: every param; right pane: the full 8-field system snapshot.
 /// `Sizes` controls scale so the same shape works at MEDIUM (cramped)
 /// and LARGE (breathing room).
 fn render_two_pane(w: u32, h: u32, p: &Params, sizes: &Sizes) {
@@ -367,10 +367,10 @@ fn render_two_pane(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     );
 }
 
-/// 14-row params list, one `kv_line` per manifest entry.
+/// One `kv_line` per manifest param, lists last.
 /// Shared by [`render_compact`] (Small) and [`render_two_pane`] (Medium / Large).
 fn params_rows(p: &Params, sizes: &Sizes) -> Vec<Node> {
-    vec![
+    let mut rows = vec![
         kv_line("free_string", &p.free_string, sizes),
         kv_line(
             "string_enum",
@@ -413,7 +413,62 @@ fn params_rows(p: &Params, sizes: &Sizes) -> Vec<Node> {
         kv_line_opt_i32("optional_integer", p.optional_integer, sizes),
         kv_line_opt_f64("optional_double", p.optional_double, sizes),
         kv_line_opt_bool("optional_boolean", p.optional_boolean, sizes),
+    ];
+    rows.extend(list_entries(p).map(|(key, _, value)| kv_line(key, value, sizes)));
+    rows
+}
+
+/// Each list param as `(key, hint, items on one line)`.
+fn list_entries(p: &Params) -> [(&'static str, &'static str, String); 7] {
+    [
+        ("string_list", "items: string", joined(&p.string_list)),
+        (
+            "integer_list",
+            "items: integer",
+            joined(p.integer_list.iter().map(|v| fmt!("{v}"))),
+        ),
+        (
+            "double_list",
+            "items: double",
+            joined(p.double_list.iter().map(|v| format_f64_fixed(*v, 2))),
+        ),
+        (
+            "boolean_list",
+            "items: boolean",
+            joined(p.boolean_list.iter().map(|b| if *b { "on" } else { "off" })),
+        ),
+        ("tz_list", "items: timezone", joined(&p.tz_list)),
+        (
+            "enum_list",
+            "items: enum",
+            joined(p.enum_list.iter().map(|e| e.as_manifest_label())),
+        ),
+        (
+            "links",
+            "items: object",
+            joined(p.links.iter().map(link_text)),
+        ),
     ]
+}
+
+fn joined<S: AsRef<str>>(items: impl IntoIterator<Item = S>) -> String {
+    let items: Vec<S> = items.into_iter().collect();
+    if items.is_empty() {
+        return "(empty)".to_owned();
+    }
+    items
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<&str>>()
+        .join(", ")
+}
+
+fn link_text(link: &manifest_params::LinksItem) -> String {
+    let tone = link.tone.as_manifest_label();
+    match &link.url {
+        Some(url) => fmt!("{} · {} · {}", link.label, url, tone),
+        None => fmt!("{} · {}", link.label, tone),
+    }
 }
 
 /// 8-row system-snapshot list for the right pane of [`render_two_pane`].
@@ -554,8 +609,19 @@ fn kv_line(key: &str, value: impl Into<String>, sizes: &Sizes) -> Node {
                 props!(width: sizes.label_width),
                 [text(key, style!(size: sizes.key, color: GRAY_40))],
             ),
-            text(value, style!(size: sizes.value, color: GRAY_10)),
+            value_cell(value, sizes),
         ],
+    )
+}
+
+/// The value beside a key, wrapping in whatever width the key leaves it.
+///
+/// Wrapped in a flex container because a text node keeps its whole width
+/// as its flex basis, so an overlong value would squeeze the key instead.
+fn value_cell(value: impl Into<String>, sizes: &Sizes) -> Node {
+    col(
+        props!(flex: 1.0),
+        [text(value, style!(size: sizes.value, color: GRAY_10))],
     )
 }
 
@@ -687,11 +753,11 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
         ],
     );
 
-    // The header speaks of 14 keys because the typed struct mirrors
+    // The footer speaks of 21 keys because the typed struct mirrors
     // the manifest one-to-one; the optional cells fall back to `(unset)`
     // when the host delivered null.
     let mut optional_cells = vec![
-        section_header("Optional, no default (null-on-wire)", sizes),
+        section_header("Optional, no default", sizes),
         kv_opt_str("optional_string", "", p.optional_string.as_deref(), sizes),
         kv_opt_i32("optional_integer", "", p.optional_integer, sizes),
         kv_opt_f64("optional_double", "", p.optional_double, sizes),
@@ -702,11 +768,11 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     optional_cells.extend([
         spacer(1.0),
         text(
-            "Snapshot carries 14 key(s)",
+            "Snapshot carries 21 key(s)",
             style!(size: sizes.footer_size, color: GRAY_50),
         ),
         text(
-            "(unset) means the host delivered null or the key was absent.",
+            "(unset): null on the wire, or no key",
             style!(size: sizes.footer_size, color: GRAY_50),
         ),
     ]);
@@ -781,12 +847,19 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
         ],
     );
 
+    let mut list_cells = vec![section_header("Lists (array params)", sizes)];
+    list_cells.extend(list_entries(p).map(|(key, hint, value)| kv(key, hint, value, sizes)));
+    let lists = col(
+        props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding),
+        list_cells,
+    );
+
     let _ = render_ui(
         w,
         h,
         row(
             props!(background: BG_COLOR, gap: sizes.col_gap / 2.0, flex: 1.0),
-            [required, optional, system_col],
+            [required, optional, system_col, lists],
         ),
     );
 }
@@ -815,7 +888,7 @@ fn kv(key: &str, hint: &str, value: impl Into<String>, sizes: &Sizes) -> Node {
                     text(hint, style!(size: sizes.hint, color: GRAY_60)),
                 ],
             ),
-            text(value, style!(size: sizes.value, color: GRAY_10)),
+            value_cell(value, sizes),
         ],
     )
 }

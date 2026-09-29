@@ -52,6 +52,45 @@ impl DoubleEnum {
 }
 bmc_wasm_sdk::impl_manifest_f64_enum!(DoubleEnum);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnumListItem {
+    Violet,
+    Green,
+    Amber,
+}
+impl EnumListItem {
+    /// Every variant, in manifest-declaration order. Useful when a widget
+    /// wants to render a "pick one" UI or audit the enum exhaustively.
+    pub const ALL: &'static [Self] = &[Self::Violet, Self::Green, Self::Amber];
+    /// Manifest wire value for this variant.
+    #[must_use]
+    pub fn as_manifest_value(self) -> &'static str {
+        match self {
+            Self::Violet => "violet",
+            Self::Green => "green",
+            Self::Amber => "amber",
+        }
+    }
+    /// Human-readable label declared in the manifest's `enum_values`.
+    #[must_use]
+    pub fn as_manifest_label(self) -> &'static str {
+        match self {
+            Self::Violet => "Violet",
+            Self::Green => "Green",
+            Self::Amber => "Amber",
+        }
+    }
+    #[must_use]
+    pub fn from_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "violet" => Some(Self::Violet),
+            "green" => Some(Self::Green),
+            "amber" => Some(Self::Amber),
+            _ => None,
+        }
+    }
+}
+bmc_wasm_sdk::impl_manifest_str_enum!(EnumListItem);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntegerEnum {
     One,
     Two,
@@ -95,6 +134,57 @@ impl IntegerEnum {
 }
 bmc_wasm_sdk::impl_manifest_i32_enum!(IntegerEnum);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinksItemTone {
+    Info,
+    Warning,
+}
+impl LinksItemTone {
+    /// Every variant, in manifest-declaration order. Useful when a widget
+    /// wants to render a "pick one" UI or audit the enum exhaustively.
+    pub const ALL: &'static [Self] = &[Self::Info, Self::Warning];
+    /// Manifest wire value for this variant.
+    #[must_use]
+    pub fn as_manifest_value(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+        }
+    }
+    /// Human-readable label declared in the manifest's `enum_values`.
+    #[must_use]
+    pub fn as_manifest_label(self) -> &'static str {
+        match self {
+            Self::Info => "Info",
+            Self::Warning => "Warning",
+        }
+    }
+    #[must_use]
+    pub fn from_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "info" => Some(Self::Info),
+            "warning" => Some(Self::Warning),
+            _ => None,
+        }
+    }
+}
+bmc_wasm_sdk::impl_manifest_str_enum!(LinksItemTone);
+#[derive(Clone, Debug, PartialEq)]
+pub struct LinksItem {
+    pub label: String,
+    pub url: Option<String>,
+    pub tone: LinksItemTone,
+}
+impl snapshot::typed::ValueRead for LinksItem {
+    fn from_value(value: snapshot::Value<'_>) -> Option<Self> {
+        let row = value.as_object()?;
+        Some(Self {
+            label: snapshot::typed::required_field(&row, "label")?,
+            url: snapshot::typed::optional_field(&row, "url")?,
+            tone: snapshot::typed::required_field(&row, "tone")?,
+        })
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StringEnum {
     Violet,
     Green,
@@ -136,19 +226,26 @@ bmc_wasm_sdk::impl_manifest_str_enum!(StringEnum);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub boolean_flag: bool,
+    pub boolean_list: Vec<bool>,
     pub double_enum: DoubleEnum,
+    pub double_list: Vec<f64>,
     pub double_range: f64,
+    pub enum_list: Vec<EnumListItem>,
     pub free_string: String,
     pub integer_enum: IntegerEnum,
+    pub integer_list: Vec<i32>,
     pub integer_range: i32,
+    pub links: Vec<LinksItem>,
     pub optional_boolean: Option<bool>,
     pub optional_double: Option<f64>,
     pub optional_integer: Option<i32>,
     pub optional_string: Option<String>,
     pub string_date: String,
     pub string_enum: StringEnum,
+    pub string_list: Vec<String>,
     pub string_uri: String,
     pub tz: String,
+    pub tz_list: Vec<String>,
 }
 impl Params {
     /// Materialise a typed snapshot from a dynamic [`snapshot::Params`].
@@ -156,19 +253,26 @@ impl Params {
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
             boolean_flag: <bool as ParamRead>::read_required(snap, "boolean_flag"),
+            boolean_list: <Vec<bool> as ParamRead>::read_required(snap, "boolean_list"),
             double_enum: <DoubleEnum as ParamRead>::read_required(snap, "double_enum"),
+            double_list: <Vec<f64> as ParamRead>::read_required(snap, "double_list"),
             double_range: <f64 as ParamRead>::read_required(snap, "double_range"),
+            enum_list: <Vec<EnumListItem> as ParamRead>::read_required(snap, "enum_list"),
             free_string: <String as ParamRead>::read_required(snap, "free_string"),
             integer_enum: <IntegerEnum as ParamRead>::read_required(snap, "integer_enum"),
+            integer_list: <Vec<i32> as ParamRead>::read_required(snap, "integer_list"),
             integer_range: <i32 as ParamRead>::read_required(snap, "integer_range"),
+            links: <Vec<LinksItem> as ParamRead>::read_required(snap, "links"),
             optional_boolean: <bool as ParamRead>::read_optional(snap, "optional_boolean"),
             optional_double: <f64 as ParamRead>::read_optional(snap, "optional_double"),
             optional_integer: <i32 as ParamRead>::read_optional(snap, "optional_integer"),
             optional_string: <String as ParamRead>::read_optional(snap, "optional_string"),
             string_date: <String as ParamRead>::read_required(snap, "string_date"),
             string_enum: <StringEnum as ParamRead>::read_required(snap, "string_enum"),
+            string_list: <Vec<String> as ParamRead>::read_required(snap, "string_list"),
             string_uri: <String as ParamRead>::read_required(snap, "string_uri"),
             tz: <String as ParamRead>::read_required(snap, "tz"),
+            tz_list: <Vec<String> as ParamRead>::read_required(snap, "tz_list"),
         }
     }
     /// Latest typed snapshot delivered for this widget instance.
@@ -217,11 +321,20 @@ impl Params {
         if self.boolean_flag != other.boolean_flag {
             out.push("boolean_flag");
         }
+        if self.boolean_list != other.boolean_list {
+            out.push("boolean_list");
+        }
         if self.double_enum != other.double_enum {
             out.push("double_enum");
         }
+        if self.double_list != other.double_list {
+            out.push("double_list");
+        }
         if self.double_range != other.double_range {
             out.push("double_range");
+        }
+        if self.enum_list != other.enum_list {
+            out.push("enum_list");
         }
         if self.free_string != other.free_string {
             out.push("free_string");
@@ -229,8 +342,14 @@ impl Params {
         if self.integer_enum != other.integer_enum {
             out.push("integer_enum");
         }
+        if self.integer_list != other.integer_list {
+            out.push("integer_list");
+        }
         if self.integer_range != other.integer_range {
             out.push("integer_range");
+        }
+        if self.links != other.links {
+            out.push("links");
         }
         if self.optional_boolean != other.optional_boolean {
             out.push("optional_boolean");
@@ -250,11 +369,17 @@ impl Params {
         if self.string_enum != other.string_enum {
             out.push("string_enum");
         }
+        if self.string_list != other.string_list {
+            out.push("string_list");
+        }
         if self.string_uri != other.string_uri {
             out.push("string_uri");
         }
         if self.tz != other.tz {
             out.push("tz");
+        }
+        if self.tz_list != other.tz_list {
+            out.push("tz_list");
         }
         out
     }

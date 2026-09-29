@@ -160,6 +160,155 @@
       "description": "Optional with no default — exercises null-on-wire for the Boolean variant",
       "type": "boolean",
       "optional": true
+    },
+    "string_list": {
+      "name": "String list",
+      "description": "List of free-form strings",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "max_items": 5,
+      "default_value": [
+        "BTC",
+        "ETH"
+      ]
+    },
+    "integer_list": {
+      "name": "Integer list",
+      "description": "List of integers, each bounded by the item's min / max",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default_value": 50
+      },
+      "max_items": 5,
+      "default_value": [
+        10,
+        20,
+        30
+      ]
+    },
+    "double_list": {
+      "name": "Double list",
+      "description": "List of doubles; min_items keeps at least one",
+      "type": "array",
+      "items": {
+        "type": "double",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.05
+      },
+      "min_items": 1,
+      "max_items": 4,
+      "default_value": [
+        0.25,
+        0.75
+      ]
+    },
+    "boolean_list": {
+      "name": "Boolean list",
+      "description": "List of on/off toggles",
+      "type": "array",
+      "items": {
+        "type": "boolean",
+        "default_value": true
+      },
+      "max_items": 3,
+      "default_value": [
+        true,
+        false
+      ]
+    },
+    "tz_list": {
+      "name": "Timezone list",
+      "description": "List of IANA timezone identifiers",
+      "type": "array",
+      "items": {
+        "type": "timezone",
+        "default_value": "Europe/Prague"
+      },
+      "max_items": 3,
+      "default_value": [
+        "Europe/Prague",
+        "Asia/Tokyo"
+      ]
+    },
+    "enum_list": {
+      "name": "Enum list",
+      "description": "List whose items come from a closed enum_values set",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "default_value": "violet",
+        "enum_values": [
+          {
+            "value": "violet",
+            "label": "Violet"
+          },
+          {
+            "value": "green",
+            "label": "Green"
+          },
+          {
+            "value": "amber",
+            "label": "Amber"
+          }
+        ]
+      },
+      "min_items": 1,
+      "max_items": 3,
+      "default_value": [
+        "green",
+        "amber"
+      ]
+    },
+    "links": {
+      "name": "Links",
+      "description": "List of object rows: a label, an optional URL and an enum tone",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "fields": {
+          "label": {
+            "name": "Label",
+            "description": "Text shown for the link",
+            "type": "string"
+          },
+          "url": {
+            "name": "URL",
+            "description": "Leave empty to show the label as plain text",
+            "type": "string",
+            "format": "uri",
+            "optional": true
+          },
+          "tone": {
+            "name": "Tone",
+            "type": "string",
+            "default_value": "info",
+            "enum_values": [
+              {
+                "value": "info",
+                "label": "Info"
+              },
+              {
+                "value": "warning",
+                "label": "Warning"
+              }
+            ]
+          }
+        }
+      },
+      "max_items": 4,
+      "default_value": [
+        {
+          "label": "Braiins",
+          "url": "https://braiins.com",
+          "tone": "info"
+        }
+      ]
     }
   },
   "credentials": {
