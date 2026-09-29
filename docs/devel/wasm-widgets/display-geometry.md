@@ -109,9 +109,10 @@ The host builds geometry before the widget process starts:
 3. The compositor emits the initial Wayland batch:
 
    ```text
-   configure(width, height, viewport_shape)
+   configure(width, height, viewport_shape, token)
    display_info(width, height, shape, dpi)
-   params(json)
+   params(fd, size)
+   credentials(fd, size) / credential_secrets(fd, size)
    setting events...
    configure_done
    ```

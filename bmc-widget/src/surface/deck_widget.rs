@@ -32,8 +32,8 @@ use wayland_client::{
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
 
 use bmc_widget_protocol::client::{
-    deck_widget_manager_v2::DeckWidgetManagerV2,
-    deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
+    deck_widget_manager_v3::DeckWidgetManagerV3,
+    deck_widget_surface_v2::{self, DeckWidgetSurfaceV2},
 };
 use bmc_widget_protocol::{
     ActionPayload, NextAlarm, SettingUpdate, ViewportShape, WidgetInstanceKey, widget_key_from_env,
@@ -155,12 +155,12 @@ pub struct DeckWidgetSurfaceState {
 
     // -- Wayland objects (internal) --
     compositor: Option<wl_compositor::WlCompositor>,
-    widget_manager: Option<DeckWidgetManagerV2>,
+    widget_manager: Option<DeckWidgetManagerV3>,
     linux_dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
     seat: Option<wl_seat::WlSeat>,
     touch: Option<wl_touch::WlTouch>,
     surface: Option<wl_surface::WlSurface>,
-    widget_surface: Option<DeckWidgetSurfaceV1>,
+    widget_surface: Option<DeckWidgetSurfaceV2>,
 
     // -- Initial configure accumulation --
     /// Becomes `true` when the compositor emits `configure_done`. Used by
@@ -169,15 +169,14 @@ pub struct DeckWidgetSurfaceState {
     /// Accumulated `configure` data (dimensions, viewport shape, instance
     /// token). `None` until the compositor emits its `configure` event.
     pending_size: Option<(ViewportShape, u32, u32, String)>,
-    /// Accumulated `display_info` event. `None` until the compositor emits
-    /// it; resolved to the BMC100 default for old compositors that do not.
+    /// Accumulated `display_info` event.
+    /// `None` until the compositor emits it; resolved to the BMC100 default if it never does.
     pending_display: Option<bmc_widget_protocol::DisplayInfo>,
-    /// Accumulated `params(json)` event (empty if the compositor sent
-    /// `{}`).
+    /// Accumulated `params` event (empty if the compositor sent `{}`).
     pending_params: serde_json::Map<String, serde_json::Value>,
-    /// Accumulated `credentials(json)` event (empty when nothing is bound).
+    /// Accumulated `credentials` event (empty when nothing is bound).
     pending_credentials: serde_json::Map<String, serde_json::Value>,
-    /// Accumulated `credential_secrets(json)` event.
+    /// Accumulated `credential_secrets` event.
     pending_secrets: serde_json::Map<String, serde_json::Value>,
     /// Accumulated setting events emitted before `configure_done`.
     pending_initial_settings: Vec<SettingUpdate>,
@@ -442,7 +441,7 @@ impl DeckWidgetSurfaceClient {
 
     /// Connect to the Wayland display and return the compositor's initial state.
     ///
-    /// Requires the globals `wl_compositor`, `deck_widget_manager_v2`,
+    /// Requires the globals `wl_compositor`, `deck_widget_manager_v3`,
     /// and `zwp_linux_dmabuf_v1`; returns after `configure_done`.
     pub fn connect() -> Result<(Self, InitialState)> {
         let widget_key = widget_key_from_env()?;
@@ -476,7 +475,7 @@ impl DeckWidgetSurfaceClient {
         let widget_surface = state
             .widget_manager
             .as_ref()
-            .context("deck_widget_manager_v2 not available")?
+            .context("deck_widget_manager_v3 not available")?
             .get_widget_surface(widget_key.to_string(), &surface, &qh, ());
 
         surface.commit();
@@ -873,10 +872,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
                     tracing::debug!("Bound wl_compositor v{}", version.min(6));
                     state.compositor = Some(compositor);
                 }
-                "deck_widget_manager_v2" => {
+                "deck_widget_manager_v3" => {
                     let widget_manager =
-                        registry.bind::<DeckWidgetManagerV2, _, _>(name, version.min(2), qh, ());
-                    tracing::debug!("Bound deck_widget_manager_v2 v{}", version.min(2));
+                        registry.bind::<DeckWidgetManagerV3, _, _>(name, version.min(1), qh, ());
+                    tracing::debug!("Bound deck_widget_manager_v3 v{}", version.min(1));
                     state.widget_manager = Some(widget_manager);
                 }
                 "zwp_linux_dmabuf_v1" => {
@@ -900,11 +899,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
     }
 }
 
-impl Dispatch<DeckWidgetManagerV2, ()> for DeckWidgetSurfaceState {
+impl Dispatch<DeckWidgetManagerV3, ()> for DeckWidgetSurfaceState {
     fn event(
         _: &mut Self,
-        _: &DeckWidgetManagerV2,
-        _: <DeckWidgetManagerV2 as wayland_client::Proxy>::Event,
+        _: &DeckWidgetManagerV3,
+        _: <DeckWidgetManagerV3 as wayland_client::Proxy>::Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -922,7 +921,7 @@ fn apply_display_info_event(
     state: &mut DeckWidgetSurfaceState,
     width: u32,
     height: u32,
-    shape: WEnum<deck_widget_surface_v1::DisplayShape>,
+    shape: WEnum<deck_widget_surface_v2::DisplayShape>,
     dpi: u32,
 ) {
     let Some(shape) = shape.into_result().ok().map(Into::into) else {
@@ -937,18 +936,18 @@ fn apply_display_info_event(
     });
 }
 
-impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
+impl Dispatch<DeckWidgetSurfaceV2, ()> for DeckWidgetSurfaceState {
     #[expect(clippy::too_many_lines)]
     fn event(
         state: &mut Self,
-        _: &DeckWidgetSurfaceV1,
-        event: deck_widget_surface_v1::Event,
+        _: &DeckWidgetSurfaceV2,
+        event: deck_widget_surface_v2::Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         match event {
-            deck_widget_surface_v1::Event::Configure {
+            deck_widget_surface_v2::Event::Configure {
                 width,
                 height,
                 viewport_shape,
@@ -969,25 +968,27 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                 tracing::debug!("Configure: {}x{} viewport_shape={:?}", width, height, shape);
                 state.pending_size = Some((shape, width, height, token));
             }
-            deck_widget_surface_v1::Event::DisplayInfo {
+            deck_widget_surface_v2::Event::DisplayInfo {
                 width,
                 height,
                 shape,
                 dpi,
             } => apply_display_info_event(state, width, height, shape, dpi),
-            deck_widget_surface_v1::Event::Params { json } => {
-                handle_params_json(
-                    &mut state.pending_params,
-                    &mut state.pending_events,
-                    state.configure_done,
-                    &json,
-                );
+            deck_widget_surface_v2::Event::Params { fd, size } => {
+                if let Some(json) = read_payload(fd, size, "params") {
+                    handle_params_json(
+                        &mut state.pending_params,
+                        &mut state.pending_events,
+                        state.configure_done,
+                        &json,
+                    );
+                }
             }
-            deck_widget_surface_v1::Event::ConfigureDone => {
+            deck_widget_surface_v2::Event::ConfigureDone => {
                 tracing::debug!("ConfigureDone");
                 state.configure_done = true;
             }
-            deck_widget_surface_v1::Event::Timezone { value } => {
+            deck_widget_surface_v2::Event::Timezone { value } => {
                 tracing::debug!("Timezone update: {value}");
                 let update = SettingUpdate::Timezone(value);
                 if state.configure_done {
@@ -996,42 +997,42 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                     state.pending_initial_settings.push(update);
                 }
             }
-            deck_widget_surface_v1::Event::NightMode { value } => {
+            deck_widget_surface_v2::Event::NightMode { value } => {
                 if let Some(b) = from_protocol::night_mode(value) {
                     push_setting(state, SettingUpdate::NightMode(b));
                 }
             }
-            deck_widget_surface_v1::Event::DateFormat { value } => {
+            deck_widget_surface_v2::Event::DateFormat { value } => {
                 if let Some(v) = from_protocol::date_format(value) {
                     push_setting(state, SettingUpdate::DateFormat(v));
                 }
             }
-            deck_widget_surface_v1::Event::TimeFormat { value } => {
+            deck_widget_surface_v2::Event::TimeFormat { value } => {
                 if let Some(v) = from_protocol::time_format(value) {
                     push_setting(state, SettingUpdate::TimeFormat(v));
                 }
             }
-            deck_widget_surface_v1::Event::NumberFormat { value } => {
+            deck_widget_surface_v2::Event::NumberFormat { value } => {
                 if let Some(v) = from_protocol::number_format(value) {
                     push_setting(state, SettingUpdate::NumberFormat(v));
                 }
             }
-            deck_widget_surface_v1::Event::TemperatureUnit { value } => {
+            deck_widget_surface_v2::Event::TemperatureUnit { value } => {
                 if let Some(v) = from_protocol::temperature_unit(value) {
                     push_setting(state, SettingUpdate::TemperatureUnit(v));
                 }
             }
-            deck_widget_surface_v1::Event::FirstDayOfWeek { value } => {
+            deck_widget_surface_v2::Event::FirstDayOfWeek { value } => {
                 if let Some(v) = from_protocol::weekday(value) {
                     push_setting(state, SettingUpdate::FirstDayOfWeek(v));
                 }
             }
-            deck_widget_surface_v1::Event::UnitSystem { value } => {
+            deck_widget_surface_v2::Event::UnitSystem { value } => {
                 if let Some(v) = from_protocol::unit_system(value) {
                     push_setting(state, SettingUpdate::UnitSystem(v));
                 }
             }
-            deck_widget_surface_v1::Event::NextAlarm {
+            deck_widget_surface_v2::Event::NextAlarm {
                 present,
                 fire_at_utc_ms_hi,
                 fire_at_utc_ms_lo,
@@ -1053,46 +1054,50 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                     push_setting(state, SettingUpdate::NextAlarm(next));
                 }
             }
-            deck_widget_surface_v1::Event::Shutdown => {
+            deck_widget_surface_v2::Event::Shutdown => {
                 tracing::info!("Shutdown requested by compositor");
                 state.running = false;
                 state.pending_events.push(DeckWidgetEvent::Shutdown);
             }
-            deck_widget_surface_v1::Event::Lifecycle { state: value } => {
+            deck_widget_surface_v2::Event::Lifecycle { state: value } => {
                 if let Some(s) = from_protocol::lifecycle_state(value) {
                     state.pending_events.push(DeckWidgetEvent::Lifecycle(s));
                 }
             }
-            deck_widget_surface_v1::Event::TransitionIncoming => {
+            deck_widget_surface_v2::Event::TransitionIncoming => {
                 state
                     .pending_events
                     .push(DeckWidgetEvent::TransitionIncoming);
             }
-            deck_widget_surface_v1::Event::Credentials { json } => {
-                handle_credential_json(
-                    &mut state.pending_credentials,
-                    &mut state.pending_events,
-                    state.configure_done,
-                    &json,
-                    DeckWidgetEvent::CredentialsUpdate,
-                    "credentials",
-                );
+            deck_widget_surface_v2::Event::Credentials { fd, size } => {
+                if let Some(json) = read_payload(fd, size, "credentials") {
+                    handle_credential_json(
+                        &mut state.pending_credentials,
+                        &mut state.pending_events,
+                        state.configure_done,
+                        &json,
+                        DeckWidgetEvent::CredentialsUpdate,
+                        "credentials",
+                    );
+                }
             }
-            deck_widget_surface_v1::Event::CredentialSecrets { json } => {
-                handle_credential_json(
-                    &mut state.pending_secrets,
-                    &mut state.pending_events,
-                    state.configure_done,
-                    &json,
-                    |map| {
-                        DeckWidgetEvent::SecretsUpdate(bmc_widget_protocol::CredentialSecrets::new(
-                            map,
-                        ))
-                    },
-                    "credential_secrets",
-                );
+            deck_widget_surface_v2::Event::CredentialSecrets { fd, size } => {
+                if let Some(json) = read_payload(fd, size, "credential_secrets") {
+                    handle_credential_json(
+                        &mut state.pending_secrets,
+                        &mut state.pending_events,
+                        state.configure_done,
+                        &json,
+                        |map| {
+                            DeckWidgetEvent::SecretsUpdate(
+                                bmc_widget_protocol::CredentialSecrets::new(map),
+                            )
+                        },
+                        "credential_secrets",
+                    );
+                }
             }
-            deck_widget_surface_v1::Event::LedRequestStatus { request_id, status } => {
+            deck_widget_surface_v2::Event::LedRequestStatus { request_id, status } => {
                 tracing::debug!("Received led_request_status: req={request_id} status={status:?}");
             }
             _ => {}
@@ -1144,6 +1149,14 @@ fn take_initial_state(
         settings: std::mem::take(&mut state.pending_initial_settings),
         token,
     }
+}
+
+/// Read a payload event's JSON; a failure names only the event,
+/// since secrets travel this way too.
+fn read_payload(fd: std::os::fd::OwnedFd, size: u32, event: &str) -> Option<String> {
+    bmc_widget_protocol::read_json_fd(fd, size)
+        .inspect_err(|e| tracing::warn!("Failed to read the {event} payload fd: {e}"))
+        .ok()
 }
 
 /// Decode one credential event into the initial batch or the runtime queue.
@@ -1292,7 +1305,7 @@ mod tests {
         WidgetEvent, handle_params_json, sync_touch_capability,
     };
     use bmc_widget_protocol::LifecycleState;
-    use bmc_widget_protocol::client::deck_widget_surface_v1;
+    use bmc_widget_protocol::client::deck_widget_surface_v2;
 
     fn test_surface_state() -> DeckWidgetSurfaceState {
         DeckWidgetSurfaceState {
@@ -1345,7 +1358,7 @@ mod tests {
             &mut state,
             480,
             480,
-            WEnum::Value(deck_widget_surface_v1::DisplayShape::Round),
+            WEnum::Value(deck_widget_surface_v2::DisplayShape::Round),
             1,
         );
         assert_eq!(

@@ -59,6 +59,7 @@ log.workspace = true
 merge-streams.workspace = true
 netlink-sys = { workspace = true, features = ["tokio_socket"] }
 pw_hash.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smithay.workspace = true

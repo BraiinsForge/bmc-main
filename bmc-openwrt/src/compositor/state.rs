@@ -32,7 +32,7 @@ use super::widget_tracker::{LifecycleState, WidgetTracker};
 use crate::compositor::layer_surface::{LayerEntry, replace_buffer};
 use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::{
-    deck_widget_manager_v2::DeckWidgetManagerV2, deck_widget_surface_v1::DeckWidgetSurfaceV1,
+    deck_widget_manager_v3::DeckWidgetManagerV3, deck_widget_surface_v2::DeckWidgetSurfaceV2,
 };
 use deck_screen_edge_v1::server::deck_screen_edge_manager_v1::Border;
 use smithay::{
@@ -1394,13 +1394,13 @@ delegate_output_capture_source!(self::CompositorState);
 delegate_image_copy_capture!(self::CompositorState);
 
 wl::delegate_global_dispatch!(
-    CompositorState: [DeckWidgetManagerV2: ()] => DeckWidgetProtocolState
+    CompositorState: [DeckWidgetManagerV3: ()] => DeckWidgetProtocolState
 );
 wl::delegate_dispatch!(
-    CompositorState: [DeckWidgetManagerV2: WidgetManagerUserData] => DeckWidgetProtocolState
+    CompositorState: [DeckWidgetManagerV3: WidgetManagerUserData] => DeckWidgetProtocolState
 );
 wl::delegate_dispatch!(
-    CompositorState: [DeckWidgetSurfaceV1: WidgetSurfaceUserData] => DeckWidgetProtocolState
+    CompositorState: [DeckWidgetSurfaceV2: WidgetSurfaceUserData] => DeckWidgetProtocolState
 );
 
 #[cfg(test)]
@@ -1555,8 +1555,8 @@ mod compositor_protocol_test {
         WidgetRegistration,
     };
     use bmc_widget_protocol::client::{
-        deck_widget_manager_v2::{self, DeckWidgetManagerV2},
-        deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
+        deck_widget_manager_v3::{self, DeckWidgetManagerV3},
+        deck_widget_surface_v2::{self, DeckWidgetSurfaceV2},
     };
     use bmc_widget_protocol::{CredentialSecrets, ViewportShape, WidgetInitialConfig};
     use smithay::reexports::wayland_server::{Display, Resource as _, backend::ClientId};
@@ -1573,7 +1573,8 @@ mod compositor_protocol_test {
     #[derive(Default)]
     struct TestClient {
         compositor: Option<wl_compositor::WlCompositor>,
-        manager: Option<DeckWidgetManagerV2>,
+        manager: Option<DeckWidgetManagerV3>,
+        params: Option<String>,
         credentials: Option<String>,
         credential_secrets: Option<String>,
         configure_done: bool,
@@ -1598,8 +1599,8 @@ mod compositor_protocol_test {
                     "wl_compositor" => {
                         state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
                     }
-                    "deck_widget_manager_v2" => {
-                        state.manager = Some(registry.bind(name, version.min(2), qh, ()));
+                    "deck_widget_manager_v3" => {
+                        state.manager = Some(registry.bind(name, version.min(1), qh, ()));
                     }
                     _ => {}
                 }
@@ -1619,11 +1620,11 @@ mod compositor_protocol_test {
         }
     }
 
-    impl Dispatch<DeckWidgetManagerV2, ()> for TestClient {
+    impl Dispatch<DeckWidgetManagerV3, ()> for TestClient {
         fn event(
             _: &mut Self,
-            _: &DeckWidgetManagerV2,
-            _: deck_widget_manager_v2::Event,
+            _: &DeckWidgetManagerV3,
+            _: deck_widget_manager_v3::Event,
             (): &(),
             _: &Connection,
             _: &QueueHandle<Self>,
@@ -1643,27 +1644,34 @@ mod compositor_protocol_test {
         }
     }
 
-    impl Dispatch<DeckWidgetSurfaceV1, ()> for TestClient {
+    impl Dispatch<DeckWidgetSurfaceV2, ()> for TestClient {
         fn event(
             state: &mut Self,
-            _: &DeckWidgetSurfaceV1,
-            event: deck_widget_surface_v1::Event,
+            _: &DeckWidgetSurfaceV2,
+            event: deck_widget_surface_v2::Event,
             (): &(),
             _: &Connection,
             _: &QueueHandle<Self>,
         ) {
+            let read = |fd, size| {
+                bmc_widget_protocol::read_json_fd(fd, size)
+                    .expect("BUG: a payload fd must hold the JSON its event announced")
+            };
             #[expect(
                 clippy::wildcard_enum_match_arm,
-                reason = "the test client records only the version-sensitive initial events"
+                reason = "the test client records only the JSON payloads and configure_done"
             )]
             match event {
-                deck_widget_surface_v1::Event::Credentials { json } => {
-                    state.credentials = Some(json);
+                deck_widget_surface_v2::Event::Params { fd, size } => {
+                    state.params = Some(read(fd, size));
                 }
-                deck_widget_surface_v1::Event::CredentialSecrets { json } => {
-                    state.credential_secrets = Some(json);
+                deck_widget_surface_v2::Event::Credentials { fd, size } => {
+                    state.credentials = Some(read(fd, size));
                 }
-                deck_widget_surface_v1::Event::ConfigureDone => {
+                deck_widget_surface_v2::Event::CredentialSecrets { fd, size } => {
+                    state.credential_secrets = Some(read(fd, size));
+                }
+                deck_widget_surface_v2::Event::ConfigureDone => {
                     state.configure_done = true;
                 }
                 _ => {}
@@ -1730,7 +1738,7 @@ mod compositor_protocol_test {
         client: &TestClient,
         qh: &QueueHandle<TestClient>,
         key: String,
-    ) -> DeckWidgetSurfaceV1 {
+    ) -> DeckWidgetSurfaceV2 {
         let wl_compositor = client
             .compositor
             .as_ref()
@@ -1890,8 +1898,8 @@ mod compositor_protocol_test {
             &mut queue,
             &mut client,
         );
-        assert_eq!(error.code, deck_widget_manager_v2::Error::InvalidKey as u32);
-        assert_eq!(error.object_interface, "deck_widget_manager_v2");
+        assert_eq!(error.code, deck_widget_manager_v3::Error::InvalidKey as u32);
+        assert_eq!(error.object_interface, "deck_widget_manager_v3");
 
         let (survivor, _, survivor_state, _) = connect_client(&mut display, &mut compositor);
         assert!(survivor.protocol_error().is_none());
@@ -1900,8 +1908,62 @@ mod compositor_protocol_test {
                 .manager
                 .expect("BUG: server must keep advertising after rejecting one client")
                 .version(),
-            2
+            1
         );
+    }
+
+    #[test]
+    fn params_far_past_one_wayland_message_arrive_whole() {
+        let (mut display, mut compositor) = new_server();
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        let params: serde_json::Map<String, serde_json::Value> = (0..100)
+            .map(|i| (format!("param_{i}"), serde_json::json!("x".repeat(1_000))))
+            .collect();
+        let params_json = serde_json::Value::Object(params.clone()).to_string();
+        assert!(
+            params_json.len() > usize::from(u16::MAX),
+            "the payload must exceed even the 64 KiB wire-header ceiling"
+        );
+        register_keyed_widget(&mut compositor, key, config_with_params(params.clone()));
+
+        let (conn, mut queue, mut client, _) = connect_client(&mut display, &mut compositor);
+        let qh = queue.handle();
+        request_keyed_surface(&client, &qh, key.to_string());
+        pump(
+            &mut display,
+            &mut compositor,
+            &conn,
+            &mut queue,
+            &mut client,
+        );
+
+        assert!(conn.protocol_error().is_none());
+        assert!(client.configure_done);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                client
+                    .params
+                    .as_deref()
+                    .expect("BUG: the initial batch must carry params")
+            )
+            .expect("BUG: params event must contain JSON"),
+            serde_json::Value::Object(params)
+        );
+    }
+
+    fn config_with_params(
+        params: serde_json::Map<String, serde_json::Value>,
+    ) -> WidgetInitialConfig {
+        WidgetInitialConfig {
+            width: 100,
+            height: 100,
+            viewport_shape: ViewportShape::Rectangular,
+            display: bmc_widget_protocol::DisplayInfo::BMC100,
+            params,
+            credentials: serde_json::Map::new(),
+            credential_secrets: CredentialSecrets::default(),
+            token: "payload-test".to_owned(),
+        }
     }
 
     #[test]
@@ -1921,13 +1983,13 @@ mod compositor_protocol_test {
         );
         assert_eq!(
             error.code,
-            deck_widget_manager_v2::Error::UnknownWidget as u32
+            deck_widget_manager_v3::Error::UnknownWidget as u32
         );
-        assert_eq!(error.object_interface, "deck_widget_manager_v2");
+        assert_eq!(error.object_interface, "deck_widget_manager_v3");
     }
 
     #[test]
-    fn keyed_factory_creates_v2_surface_with_initial_credentials() {
+    fn keyed_factory_creates_a_surface_with_initial_credentials() {
         let (mut display, mut compositor) = new_server();
         let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
         let credentials = serde_json::json!({
@@ -1965,10 +2027,10 @@ mod compositor_protocol_test {
             .manager
             .clone()
             .expect("BUG: keyed manager global should be advertised");
-        assert_eq!(manager.version(), 2);
+        assert_eq!(manager.version(), 1);
 
         let widget_surface = request_keyed_surface(&client, &qh, key.to_string());
-        assert_eq!(widget_surface.version(), 2);
+        assert_eq!(widget_surface.version(), 1);
         pump(
             &mut display,
             &mut compositor,
@@ -1987,7 +2049,7 @@ mod compositor_protocol_test {
                 client
                     .credentials
                     .as_deref()
-                    .expect("BUG: v2 keyed surface must receive credentials")
+                    .expect("BUG: a keyed surface must receive credentials")
             )
             .expect("BUG: credentials event must contain JSON"),
             credentials
@@ -1997,7 +2059,7 @@ mod compositor_protocol_test {
                 client
                     .credential_secrets
                     .as_deref()
-                    .expect("BUG: v2 keyed surface must receive credential secrets")
+                    .expect("BUG: a keyed surface must receive credential secrets")
             )
             .expect("BUG: credential secrets event must contain JSON"),
             credential_secrets

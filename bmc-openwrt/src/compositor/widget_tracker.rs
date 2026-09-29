@@ -26,7 +26,7 @@ use bmc::compositor::{InstanceId, SceneLayout};
 
 use super::scene_cycling::TransitionFrame;
 
-pub use bmc_widget_protocol::server::deck_widget_surface_v1::LifecycleState;
+pub use bmc_widget_protocol::server::deck_widget_surface_v2::LifecycleState;
 
 /// Default drag distance (fraction of screen width) required to commit a
 /// scene change.

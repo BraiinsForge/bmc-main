@@ -4,7 +4,7 @@ Widget lifecycle has three related parts:
 
 - a stable configured-instance key routes a widget process to its compositor record;
 - the coordinator and widget manager control whether that instance may run and connect;
-- `deck_widget_surface_v1.lifecycle` describes where an attached widget is in the displayed scene.
+- `deck_widget_surface_v2.lifecycle` describes where an attached widget is in the displayed scene.
 
 For widget geometry, params, credentials, settings, and the initial configure batch, see
 [`widget-runtime-configuration.md`](widget-runtime-configuration.md). For how the WASM host turns scene lifecycle events
@@ -15,7 +15,7 @@ into buffer and rendering policy, see [`wasm-host/render-loop.md`](wasm-host/ren
 Every configured widget has a UUID that remains stable while that configured instance exists. The coordinator uses it as
 `WidgetInstanceKey` and registers the instance with the compositor. The manager retains the same UUID in the launch's
 `WidgetConfigKey`; `WaylandSpawner` receives it separately from `WidgetEnv` and writes it to the child's
-`BMC_WIDGET_KEY`. The widget supplies the key to `deck_widget_manager_v2.get_widget_surface`, and the compositor
+`BMC_WIDGET_KEY`. The widget supplies the key to `deck_widget_manager_v3.get_widget_surface`, and the compositor
 attaches the new surface to the matching retained registration.
 
 The key is routing identity, not a security credential. It is intentionally available to the widget process and only
@@ -170,7 +170,7 @@ after the final deactivation phase.
 
 ## Scene Lifecycle Events
 
-Once attached, a widget receives `deck_widget_surface_v1.lifecycle(state)` events describing its relationship to the
+Once attached, a widget receives `deck_widget_surface_v2.lifecycle(state)` events describing its relationship to the
 displayed scene:
 
 | State      | Meaning                                                               |

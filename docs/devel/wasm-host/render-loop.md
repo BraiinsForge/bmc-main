@@ -40,7 +40,7 @@ main_loop::run and passed into per-slot work as `renderer_ptr` on each loop pass
 
 ## Lifecycle States
 
-The compositor sends `deck_widget_surface_v1.lifecycle` events. The host maps those protocol values to
+The compositor sends `deck_widget_surface_v2.lifecycle` events. The host maps those protocol values to
 `bmc-wasm-host::lifecycle::LifecycleState`:
 
 | State      | Has render target | May render        | Host-requested frame loop | Meaning                                                            |

@@ -85,14 +85,17 @@ pub mod client {
     wayland_scanner::generate_client_code!("./protocol/deck-widget.xml");
 }
 
+mod json_fd;
 mod types;
+
+pub use json_fd::read_json_fd;
 
 // Re-export common types for convenience
 pub use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
 pub use bmc_shared_utils::number_format::NumberFormat;
 pub use bmc_shared_utils::temperature::TemperatureUnit;
 pub use bmc_shared_utils::unit_system::UnitSystem;
-pub use client::deck_widget_surface_v1::LifecycleState;
+pub use client::deck_widget_surface_v2::LifecycleState;
 pub use types::{
     ActionPayload, CredentialSecrets, DeclaredSlot, DisplayInfo, DisplayShape, LED_REQUEST_ID_ALL,
     LedEffect, LedRequestId, LedRequestStatus, LedScope, Localization, NextAlarm,

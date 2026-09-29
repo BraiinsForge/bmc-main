@@ -19,7 +19,7 @@
 // the grant above.
 
 pub(crate) mod to_protocol {
-    use bmc_widget_protocol::client::deck_widget_surface_v1 as p;
+    use bmc_widget_protocol::client::deck_widget_surface_v2 as p;
     use bmc_widget_protocol::{LedEffect, LedScope};
 
     pub fn led_effect(effect: LedEffect) -> p::LedEffect {
@@ -42,7 +42,7 @@ pub(crate) mod to_protocol {
 }
 
 pub(crate) mod from_protocol {
-    use bmc_widget_protocol::client::deck_widget_surface_v1 as p;
+    use bmc_widget_protocol::client::deck_widget_surface_v2 as p;
     use bmc_widget_protocol::wayland_client::WEnum;
     use bmc_widget_protocol::{
         DateFormat, NumberFormat, TemperatureUnit, TimeSystem, UnitSystem, WeekDay,
@@ -130,7 +130,7 @@ pub(crate) mod from_protocol {
 #[cfg(test)]
 mod tests {
     use super::from_protocol;
-    use bmc_widget_protocol::client::deck_widget_surface_v1 as protocol;
+    use bmc_widget_protocol::client::deck_widget_surface_v2 as protocol;
     use bmc_widget_protocol::wayland_client::WEnum;
 
     #[test]

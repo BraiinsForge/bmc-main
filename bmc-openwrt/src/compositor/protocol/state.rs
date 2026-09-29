@@ -21,7 +21,7 @@
 //! Protocol state management for deck_widget.
 
 use bmc::compositor::{InstanceId, WidgetConnectionMode, WidgetInstanceKey, WidgetRegistration};
-use bmc_widget_protocol::server::deck_widget_surface_v1::DeckWidgetSurfaceV1;
+use bmc_widget_protocol::server::deck_widget_surface_v2::DeckWidgetSurfaceV2;
 use bmc_widget_protocol::{
     ActionPayload, LedRequestId, LedRequestStatus, SettingUpdate, WidgetInitialConfig,
 };
@@ -29,12 +29,15 @@ use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::backend::{ClientId, ObjectId};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use std::collections::HashMap;
+use std::os::fd::AsFd;
 
 use super::conversions::{
     date_format_to_protocol, night_mode_to_protocol, number_format_to_protocol,
     presence_to_protocol, temperature_unit_to_protocol, time_format_to_protocol,
     unit_system_to_protocol, weekday_to_protocol,
 };
+use super::json_fd;
+use super::json_fd::JsonFd;
 use crate::compositor::widget_tracker::LifecycleState;
 
 #[derive(Debug, Clone)]
@@ -42,7 +45,7 @@ pub struct WidgetData {
     pub instance_id: InstanceId,
     pub connection_mode: WidgetConnectionMode,
     pub config: WidgetInitialConfig,
-    pub protocol_surface: Option<DeckWidgetSurfaceV1>,
+    pub protocol_surface: Option<DeckWidgetSurfaceV2>,
     pub wl_surface: Option<WlSurface>,
     pub client_id: Option<ClientId>,
 }
@@ -70,42 +73,43 @@ pub struct DeckWidgetProtocolState {
 }
 
 /// Abstraction over the Wayland server surface used by `emit_initial_state_into`.
-/// The real implementation delegates to `DeckWidgetSurfaceV1`; the `#[cfg(test)]`
+/// The real implementation delegates to `DeckWidgetSurfaceV2`; the `#[cfg(test)]`
 /// implementation records events in a `Vec` for order/payload assertions.
 trait WidgetSurface {
     fn configure(
         &self,
         width: u32,
         height: u32,
-        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
+        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v2::ViewportShape,
         token: String,
     );
     fn display_info(
         &self,
         width: u32,
         height: u32,
-        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v2::DisplayShape,
         dpi: u32,
     );
-    fn params(&self, params_json: String);
-    fn credentials(&self, credentials_json: String);
-    fn credential_secrets(&self, secrets_json: String);
+    fn params_json(&self, params_json: String);
+    /// The guest-visible view and the secrets, delivered together or not at all.
+    fn credentials_json(&self, credentials_json: String, secrets_json: String);
     fn emit_setting(&self, setting: &SettingUpdate);
     fn configure_done(&self);
-    /// Negotiated interface version, which decides what may be sent at all.
-    fn version(&self) -> u32;
 }
 
-/// Interface version that introduced the two credential events.
-/// Mirrors `since="2"` in `deck-widget.xml`.
-const CREDENTIAL_EVENTS_SINCE: u32 = 2;
+/// Seal a JSON payload for its fd event, or log why it can't be delivered.
+fn json_payload(event: &str, json: &str) -> Option<JsonFd> {
+    json_fd::sealed(event, json)
+        .inspect_err(|e| tracing::error!("cannot deliver the {event} event: {e}"))
+        .ok()
+}
 
-impl WidgetSurface for DeckWidgetSurfaceV1 {
+impl WidgetSurface for DeckWidgetSurfaceV2 {
     fn configure(
         &self,
         width: u32,
         height: u32,
-        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
+        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v2::ViewportShape,
         token: String,
     ) {
         self.configure(width, height, viewport_shape, token);
@@ -115,22 +119,27 @@ impl WidgetSurface for DeckWidgetSurfaceV1 {
         &self,
         width: u32,
         height: u32,
-        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v2::DisplayShape,
         dpi: u32,
     ) {
         self.display_info(width, height, shape, dpi);
     }
 
-    fn params(&self, params_json: String) {
-        self.params(params_json);
+    fn params_json(&self, params_json: String) {
+        if let Some(payload) = json_payload("params", &params_json) {
+            self.params(payload.fd.as_fd(), payload.size);
+        }
     }
 
-    fn credentials(&self, credentials_json: String) {
-        self.credentials(credentials_json);
-    }
-
-    fn credential_secrets(&self, secrets_json: String) {
-        self.credential_secrets(secrets_json);
+    fn credentials_json(&self, credentials_json: String, secrets_json: String) {
+        let (Some(view), Some(secrets)) = (
+            json_payload("credentials", &credentials_json),
+            json_payload("credential_secrets", &secrets_json),
+        ) else {
+            return;
+        };
+        self.credentials(view.fd.as_fd(), view.size);
+        self.credential_secrets(secrets.fd.as_fd(), secrets.size);
     }
 
     fn emit_setting(&self, setting: &SettingUpdate) {
@@ -139,10 +148,6 @@ impl WidgetSurface for DeckWidgetSurfaceV1 {
 
     fn configure_done(&self) {
         self.configure_done();
-    }
-
-    fn version(&self) -> u32 {
-        Resource::version(self)
     }
 }
 
@@ -226,7 +231,7 @@ impl DeckWidgetProtocolState {
         &mut self,
         instance_id: &InstanceId,
         wl_surface: WlSurface,
-        protocol_surface: DeckWidgetSurfaceV1,
+        protocol_surface: DeckWidgetSurfaceV2,
     ) -> Option<DetachedWidget> {
         let Some(entry) = self.widget_mut(instance_id) else {
             tracing::error!(
@@ -334,7 +339,7 @@ impl DeckWidgetProtocolState {
     pub(crate) fn attach_protocol_surface_for_test(
         &mut self,
         instance_id: &InstanceId,
-        protocol_surface: DeckWidgetSurfaceV1,
+        protocol_surface: DeckWidgetSurfaceV2,
     ) {
         let widget = self
             .widget_mut(instance_id)
@@ -393,7 +398,7 @@ impl DeckWidgetProtocolState {
         };
 
         let params_json = serde_json::Value::Object(widget_data.config.params.clone()).to_string();
-        surface.params(params_json);
+        surface.params_json(params_json);
     }
 
     /// Also refreshes the stored config, so a reconnect replays the resolution.
@@ -430,7 +435,7 @@ impl DeckWidgetProtocolState {
     /// Emit the initial configure batch on the given surface for the
     /// given instance: `configure` → `display_info` → `params` → setting events →
     /// `configure_done`.
-    pub fn emit_initial_state(&self, instance_id: &InstanceId, surface: &DeckWidgetSurfaceV1) {
+    pub fn emit_initial_state(&self, instance_id: &InstanceId, surface: &DeckWidgetSurfaceV2) {
         self.emit_initial_state_into(instance_id, surface);
     }
 
@@ -459,7 +464,7 @@ impl DeckWidgetProtocolState {
         );
 
         let params_json = serde_json::Value::Object(config.params.clone()).to_string();
-        surface.params(params_json);
+        surface.params_json(params_json);
 
         emit_credentials(surface, config);
 
@@ -580,8 +585,8 @@ impl Default for DeckWidgetProtocolState {
 
 fn led_request_status_to_protocol(
     status: LedRequestStatus,
-) -> bmc_widget_protocol::server::deck_widget_surface_v1::LedRequestStatus {
-    use bmc_widget_protocol::server::deck_widget_surface_v1::LedRequestStatus as P;
+) -> bmc_widget_protocol::server::deck_widget_surface_v2::LedRequestStatus {
+    use bmc_widget_protocol::server::deck_widget_surface_v2::LedRequestStatus as P;
     match status {
         LedRequestStatus::Accepted => P::Accepted,
         LedRequestStatus::Rejected => P::Rejected,
@@ -600,18 +605,14 @@ fn credentials_changed(
 
 /// Emit the guest-visible view and then the secrets, always as a pair:
 /// a widget that saw a slot appear must be able to spend it.
-///
-/// Both events are `since="2"`. A version-1 peer is not merely uninterested:
-/// sending it an event it has no opcode for would desynchronise the stream.
 fn emit_credentials<S: WidgetSurface>(surface: &S, config: &WidgetInitialConfig) {
-    if surface.version() < CREDENTIAL_EVENTS_SINCE {
-        return;
-    }
-    surface.credentials(serde_json::Value::Object(config.credentials.clone()).to_string());
-    surface.credential_secrets(config.credential_secrets.to_json_string());
+    surface.credentials_json(
+        serde_json::Value::Object(config.credentials.clone()).to_string(),
+        config.credential_secrets.to_json_string(),
+    );
 }
 
-fn emit_setting(surface: &DeckWidgetSurfaceV1, setting: &SettingUpdate) {
+fn emit_setting(surface: &DeckWidgetSurfaceV2, setting: &SettingUpdate) {
     match setting {
         SettingUpdate::Timezone(tz) => surface.timezone(tz.clone()),
         SettingUpdate::NightMode(enabled) => surface.night_mode(night_mode_to_protocol(*enabled)),
@@ -683,12 +684,12 @@ enum RecordedEvent {
     Configure(
         u32,
         u32,
-        bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
+        bmc_widget_protocol::server::deck_widget_surface_v2::ViewportShape,
     ),
     DisplayInfo {
         width: u32,
         height: u32,
-        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v2::DisplayShape,
         dpi: u32,
     },
     Params,
@@ -699,30 +700,9 @@ enum RecordedEvent {
 }
 
 #[cfg(test)]
+#[derive(Default)]
 pub(super) struct RecordingSurface {
     events: std::cell::RefCell<Vec<RecordedEvent>>,
-    version: u32,
-}
-
-#[cfg(test)]
-impl Default for RecordingSurface {
-    fn default() -> Self {
-        Self {
-            events: std::cell::RefCell::default(),
-            version: CREDENTIAL_EVENTS_SINCE,
-        }
-    }
-}
-
-#[cfg(test)]
-impl RecordingSurface {
-    /// A peer that negotiated an older interface version.
-    fn at_version(version: u32) -> Self {
-        Self {
-            version,
-            ..Self::default()
-        }
-    }
 }
 
 #[cfg(test)]
@@ -731,7 +711,7 @@ impl WidgetSurface for RecordingSurface {
         &self,
         width: u32,
         height: u32,
-        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
+        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v2::ViewportShape,
         _token: String,
     ) {
         self.events
@@ -743,7 +723,7 @@ impl WidgetSurface for RecordingSurface {
         &self,
         width: u32,
         height: u32,
-        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v2::DisplayShape,
         dpi: u32,
     ) {
         self.events.borrow_mut().push(RecordedEvent::DisplayInfo {
@@ -754,20 +734,14 @@ impl WidgetSurface for RecordingSurface {
         });
     }
 
-    fn params(&self, _params_json: String) {
+    fn params_json(&self, _params_json: String) {
         self.events.borrow_mut().push(RecordedEvent::Params);
     }
 
-    fn credentials(&self, credentials_json: String) {
-        self.events
-            .borrow_mut()
-            .push(RecordedEvent::Credentials(credentials_json));
-    }
-
-    fn credential_secrets(&self, secrets_json: String) {
-        self.events
-            .borrow_mut()
-            .push(RecordedEvent::CredentialSecrets(secrets_json));
+    fn credentials_json(&self, credentials_json: String, secrets_json: String) {
+        let mut events = self.events.borrow_mut();
+        events.push(RecordedEvent::Credentials(credentials_json));
+        events.push(RecordedEvent::CredentialSecrets(secrets_json));
     }
 
     fn emit_setting(&self, _setting: &SettingUpdate) {
@@ -776,10 +750,6 @@ impl WidgetSurface for RecordingSurface {
 
     fn configure_done(&self) {
         self.events.borrow_mut().push(RecordedEvent::ConfigureDone);
-    }
-
-    fn version(&self) -> u32 {
-        self.version
     }
 }
 
@@ -830,7 +800,7 @@ impl RecordedEvents {
     fn configure(&self) -> Option<(u32, u32, bmc_widget_protocol::ViewportShape)> {
         self.0.iter().find_map(|e| {
             if let RecordedEvent::Configure(w, h, s) = e {
-                use bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape as P;
+                use bmc_widget_protocol::server::deck_widget_surface_v2::ViewportShape as P;
                 let domain_shape = match s {
                     P::Rectangular => bmc_widget_protocol::ViewportShape::Rectangular,
                     P::Round => bmc_widget_protocol::ViewportShape::Round,
@@ -852,7 +822,7 @@ impl RecordedEvents {
                 dpi,
             } = e
             {
-                use bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape as P;
+                use bmc_widget_protocol::server::deck_widget_surface_v2::DisplayShape as P;
                 let domain_shape = match shape {
                     P::Rectangular => bmc_widget_protocol::DisplayShape::Rectangular,
                     P::Round => bmc_widget_protocol::DisplayShape::Round,
@@ -973,9 +943,9 @@ mod tests {
         let instance_id = registration.key.to_string();
         state.register_retained_widget(registration.clone());
         let protocol_surface = client
-            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(
+            .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(
                 &handle,
-                2,
+                1,
                 WidgetSurfaceUserData {
                     instance_id: instance_id.clone(),
                 },
@@ -1138,9 +1108,9 @@ mod tests {
         let key = registration.key;
         let instance_id = key.to_string();
         let protocol_surface = client
-            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(
+            .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(
                 &handle,
-                2,
+                1,
                 WidgetSurfaceUserData {
                     instance_id: instance_id.clone(),
                 },
@@ -1209,10 +1179,10 @@ mod tests {
             instance_id: instance_id.clone(),
         };
         let first_surface = first_client
-            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(&handle, 1, user_data())
             .expect("BUG: first test protocol surface should initialize");
         let replacement_surface = second_client
-            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(&handle, 1, user_data())
             .expect("BUG: replacement test protocol surface should initialize");
 
         let mut state = DeckWidgetProtocolState::new();
@@ -1257,10 +1227,10 @@ mod tests {
             instance_id: instance_id.clone(),
         };
         let first_protocol = client
-            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(&handle, 1, user_data())
             .expect("BUG: first protocol surface should initialize");
         let second_protocol = client
-            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(&handle, 1, user_data())
             .expect("BUG: second protocol surface should initialize");
         let first_wl = client
             .create_resource_from_objdata::<WlSurface, CompositorState>(
@@ -1397,22 +1367,6 @@ mod tests {
                 bmc_widget_protocol::DisplayShape::Rectangular,
                 217
             )),
-        );
-    }
-
-    #[test]
-    fn a_version_1_peer_gets_the_batch_without_credential_events() {
-        let mut state = DeckWidgetProtocolState::new();
-        register_test_widget(&mut state, TEST_INSTANCE_ID.to_owned(), make_config());
-
-        let events = state
-            .test_emit_initial_state_events_into(TEST_INSTANCE_ID, RecordingSurface::at_version(1))
-            .expect("BUG: test widget must be registered");
-
-        assert_eq!(
-            events.names(),
-            ["configure", "display_info", "params", "configure_done"],
-            "an event a v1 peer has no opcode for would desynchronise its stream"
         );
     }
 

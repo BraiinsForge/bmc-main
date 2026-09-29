@@ -5,14 +5,14 @@
     SPDX-License-Identifier: MIT
   </copyright>
 
-  <interface name="deck_widget_manager_v2" version="2">
+  <interface name="deck_widget_manager_v3" version="1">
     <description summary="keyed Deck widget manager">
       Global interface for creating a widget surface identified by its
       configured widget instance key.
 
-      The global must be advertised at version 2 because get_widget_surface
-      creates a surface at the manager resource version. Surface version 2
-      carries credential state.
+      get_widget_surface creates the surface at the manager resource's version,
+      so an event added to deck_widget_surface_v2 later needs the manager's version,
+      and the version its global is advertised at, raised to match.
     </description>
 
     <request name="destroy" type="destructor">
@@ -23,10 +23,10 @@
 
     <request name="get_widget_surface">
       <description summary="create a keyed widget surface">
-        Create a deck_widget_surface_v1 for the given wl_surface and canonical
+        Create a deck_widget_surface_v2 for the given wl_surface and canonical
         configured-widget UUID. The wl_surface must not already have a role.
       </description>
-      <arg name="id" type="new_id" interface="deck_widget_surface_v1"/>
+      <arg name="id" type="new_id" interface="deck_widget_surface_v2"/>
       <arg name="widget_instance_key" type="string" summary="canonical configured-widget UUID"/>
       <arg name="surface" type="object" interface="wl_surface"/>
     </request>
@@ -38,7 +38,7 @@
     </enum>
   </interface>
 
-  <interface name="deck_widget_surface_v1" version="2">
+  <interface name="deck_widget_surface_v2" version="1">
     <description summary="Deck widget surface">
       Interface for a widget surface. On surface creation, the compositor
       emits initial configuration as a sequence of events, terminated by
@@ -46,7 +46,8 @@
 
         configure(width, height, viewport_shape, token)
         display_info(width, height, shape, dpi)
-        params(json)
+        params(fd, size)
+        credentials(fd, size) / credential_secrets(fd, size)
         timezone / night_mode / date_format / ... (setting events)
         configure_done
 
@@ -54,6 +55,15 @@
       After configure_done, the same setting events continue to flow
       whenever system settings change. Widget readiness is detected when
       the first buffer is committed.
+
+      JSON payloads (params, credentials, credential_secrets) travel
+      as a file descriptor, not a string argument:
+      libwayland caps a message at 4096 bytes
+      and disconnects a client sent a larger event.
+      The fd is a sealed memfd (no write, shrink or grow)
+      holding exactly size bytes of UTF-8 JSON.
+      Its file offset is left at the end of the write,
+      so the receiver reads positionally from offset 0, then closes the fd.
     </description>
 
     <!-- Requests (Widget → Compositor) -->
@@ -135,21 +145,15 @@
     </request>
 
     <!-- Events (Compositor → Widget) -->
-    <!--
-      Initial configuration is delivered on surface creation as a batch
-      of events terminated by configure_done. Each setting is its own
-      event so that adding a new setting later is a backwards-compatible
-      change: existing widgets simply ignore unknown events.
-    -->
 
     <event name="configure">
       <description summary="widget geometry, viewport shape, and instance identity">
         Delivered once on surface creation. Carries the widget's pixel
         dimensions, the shape of its viewport, and the opaque, stable
         per-instance token (usable to key per-instance resources such as an
-        asset cache; stable across dormancy and restart). Follow-up `param_*`
-        and setting events refine configuration; the batch is terminated by
-        `configure_done`.
+        asset cache; stable across dormancy and restart). Follow-up `params`,
+        credential and setting events refine configuration; the batch is
+        terminated by `configure_done`.
       </description>
       <arg name="width" type="uint" summary="pixel width"/>
       <arg name="height" type="uint" summary="pixel height"/>
@@ -185,7 +189,50 @@
         change (via an update that keeps the widget's geometry stable).
         An empty JSON object ("{}") is sent when no params are configured.
       </description>
-      <arg name="json" type="string" summary="JSON-encoded params object"/>
+      <arg name="fd" type="fd" summary="sealed memfd holding the JSON-encoded params object"/>
+      <arg name="size" type="uint" summary="byte length of the JSON"/>
+    </event>
+
+    <event name="credentials">
+      <description summary="which credential slots are bound, and to what">
+        The widget's credential slots that currently resolve to a saved
+        account, as a JSON-encoded object keyed by manifest slot name:
+        {"SLOT": {"type": "CREDENTIAL-TYPE-ID", "account":
+        "OPERATOR-CHOSEN-NAME"}}. A slot absent from the object is
+        unbound, whether the operator never bound it or bound it to an
+        account that no longer exists.
+
+        Carries no secret material and is safe to log. This is the whole
+        of what a widget may learn about its credentials; the values
+        themselves arrive on credential_secrets and stop at the widget
+        process.
+
+        Emitted on surface creation as part of the initial configure
+        batch, and re-emitted whenever the resolution changes. An empty
+        JSON object ("{}") is sent when nothing is bound.
+      </description>
+      <arg name="fd" type="fd" summary="sealed memfd holding the JSON-encoded slot-to-account object"/>
+      <arg name="size" type="uint" summary="byte length of the JSON"/>
+    </event>
+
+    <event name="credential_secrets">
+      <description summary="secret field values for the bound slots">
+        The secret field values behind each bound slot, as a JSON-encoded
+        object keyed by manifest slot name: {"SLOT": {"fields": {"FIELD":
+        "VALUE"}, "allow_hosts": ["HOST", …]}}. Slot keys match the
+        credentials event exactly. allow_hosts is the account's own egress
+        pin in the catalog's pin grammar; absent or empty, the slot's
+        credential type decides.
+
+        This event carries live secrets and must never be forwarded to
+        guest WASM, written to a log, or persisted. The widget process is
+        trusted to hold it and to substitute the values into outbound
+        requests on the widget's behalf; the widget itself never sees them.
+
+        Emitted alongside credentials, on the same occasions.
+      </description>
+      <arg name="fd" type="fd" summary="sealed memfd holding the JSON-encoded slot-to-field-values object"/>
+      <arg name="size" type="uint" summary="byte length of the JSON"/>
     </event>
 
     <event name="configure_done">
@@ -195,70 +242,6 @@
         intends to deliver and may start rendering. Subsequent setting
         events represent runtime changes.
       </description>
-    </event>
-
-    <event name="timezone">
-      <description summary="timezone setting update">
-        Current timezone, IANA identifier (e.g. "Europe/Prague").
-        Sent on connect and whenever the timezone changes.
-      </description>
-      <arg name="value" type="string" summary="IANA timezone identifier"/>
-    </event>
-
-    <event name="night_mode">
-      <description summary="night mode setting update">
-        Whether night mode is active. Sent on connect and on toggle.
-      </description>
-      <arg name="value" type="uint" enum="night_mode_state"/>
-    </event>
-
-    <!-- Localization added as separate events, to prevent
-         breaking changes when adding a new localization field. -->
-
-    <event name="date_format">
-      <arg name="value" type="uint" enum="date_format"/>
-    </event>
-
-    <event name="time_format">
-      <arg name="value" type="uint" enum="time_format"/>
-    </event>
-
-    <event name="number_format">
-      <arg name="value" type="uint" enum="number_format"/>
-    </event>
-
-    <event name="temperature_unit">
-      <arg name="value" type="uint" enum="temperature_unit"/>
-    </event>
-
-    <event name="first_day_of_week">
-      <arg name="value" type="uint" enum="weekday"/>
-    </event>
-
-    <event name="unit_system">
-      <arg name="value" type="uint" enum="unit_system"/>
-    </event>
-
-    <event name="next_alarm">
-      <description summary="resolved next-to-fire alarm">
-        Soonest upcoming alarm derived host-side from the operator's alarm
-        list. Sent on connect and whenever the next-to-fire entry changes
-        (alarm add/edit/delete/fire/snooze, or timezone change).
-
-        `fire_at_utc_ms_hi` and `fire_at_utc_ms_lo` carry the high and low
-        32 bits of a signed 64-bit milliseconds-since-UNIX-epoch timestamp,
-        matching the hi/lo split pattern from wp_presentation_feedback. Both
-        args are zero when `present` is `absent`.
-      </description>
-      <arg name="present" type="uint" enum="presence"/>
-      <arg name="fire_at_utc_ms_hi" type="int"
-           summary="high 32 bits of the signed 64-bit ms timestamp"/>
-      <arg name="fire_at_utc_ms_lo" type="uint"
-           summary="low 32 bits of the signed 64-bit ms timestamp"/>
-      <arg name="name" type="string"
-           summary="operator-typed display name (max 256 UTF-8 bytes;
-                    compositor truncates over-long inputs with a trailing
-                    '…' on a char boundary). Empty when absent."/>
     </event>
 
     <event name="lifecycle">
@@ -282,9 +265,6 @@
           visible   -> dormant | prepared | leaving
           entering  -> visible | prepared | dormant
           leaving   -> dormant | prepared | visible
-
-        Widgets that do not bind this event silently ignore it; old
-        widgets keep working unchanged.
       </description>
       <arg name="state" type="uint" enum="lifecycle_state"/>
     </event>
@@ -335,47 +315,69 @@
       <arg name="status" type="uint" enum="led_request_status"/>
     </event>
 
-    <event name="credentials" since="2">
-      <description summary="which credential slots are bound, and to what">
-        The widget's credential slots that currently resolve to a saved
-        account, as a JSON-encoded object keyed by manifest slot name:
-        {"SLOT": {"type": "CREDENTIAL-TYPE-ID", "account":
-        "OPERATOR-CHOSEN-NAME"}}. A slot absent from the object is
-        unbound, whether the operator never bound it or bound it to an
-        account that no longer exists.
+    <!-- Setting events, one per setting.
+         A new setting is a new event after next_alarm,
+         at the raised version deck_widget_manager_v3 describes. -->
 
-        Carries no secret material and is safe to log. This is the whole
-        of what a widget may learn about its credentials; the values
-        themselves arrive on credential_secrets and stop at the widget
-        process.
-
-        Emitted on surface creation as part of the initial configure
-        batch, and re-emitted whenever the resolution changes. An empty
-        JSON object ("{}") is sent when nothing is bound.
-
-        A version-1 peer never receives this event, and reads every slot
-        as unbound.
+    <event name="timezone">
+      <description summary="timezone setting update">
+        Current timezone, IANA identifier (e.g. "Europe/Prague").
+        Sent on connect and whenever the timezone changes.
       </description>
-      <arg name="json" type="string" summary="JSON-encoded slot-to-account object"/>
+      <arg name="value" type="string" summary="IANA timezone identifier"/>
     </event>
 
-    <event name="credential_secrets" since="2">
-      <description summary="secret field values for the bound slots">
-        The secret field values behind each bound slot, as a JSON-encoded
-        object keyed by manifest slot name: {"SLOT": {"fields": {"FIELD":
-        "VALUE"}, "allow_hosts": ["HOST", …]}}. Slot keys match the
-        credentials event exactly. allow_hosts is the account's own egress
-        pin in the catalog's pin grammar; absent or empty, the slot's
-        credential type decides.
-
-        This event carries live secrets and must never be forwarded to
-        guest WASM, written to a log, or persisted. The widget process is
-        trusted to hold it and to substitute the values into outbound
-        requests on the widget's behalf; the widget itself never sees them.
-
-        Emitted alongside credentials, on the same occasions.
+    <event name="night_mode">
+      <description summary="night mode setting update">
+        Whether night mode is active. Sent on connect and on toggle.
       </description>
-      <arg name="json" type="string" summary="JSON-encoded slot-to-field-values object"/>
+      <arg name="value" type="uint" enum="night_mode_state"/>
+    </event>
+
+    <event name="date_format">
+      <arg name="value" type="uint" enum="date_format"/>
+    </event>
+
+    <event name="time_format">
+      <arg name="value" type="uint" enum="time_format"/>
+    </event>
+
+    <event name="number_format">
+      <arg name="value" type="uint" enum="number_format"/>
+    </event>
+
+    <event name="temperature_unit">
+      <arg name="value" type="uint" enum="temperature_unit"/>
+    </event>
+
+    <event name="first_day_of_week">
+      <arg name="value" type="uint" enum="weekday"/>
+    </event>
+
+    <event name="unit_system">
+      <arg name="value" type="uint" enum="unit_system"/>
+    </event>
+
+    <event name="next_alarm">
+      <description summary="resolved next-to-fire alarm">
+        Soonest upcoming alarm derived host-side from the operator's alarm
+        list. Sent on connect and whenever the next-to-fire entry changes
+        (alarm add/edit/delete/fire/snooze, or timezone change).
+
+        `fire_at_utc_ms_hi` and `fire_at_utc_ms_lo` carry the high and low
+        32 bits of a signed 64-bit milliseconds-since-UNIX-epoch timestamp,
+        matching the hi/lo split pattern from wp_presentation_feedback. Both
+        args are zero when `present` is `absent`.
+      </description>
+      <arg name="present" type="uint" enum="presence"/>
+      <arg name="fire_at_utc_ms_hi" type="int"
+           summary="high 32 bits of the signed 64-bit ms timestamp"/>
+      <arg name="fire_at_utc_ms_lo" type="uint"
+           summary="low 32 bits of the signed 64-bit ms timestamp"/>
+      <arg name="name" type="string"
+           summary="operator-typed display name (max 256 UTF-8 bytes;
+                    compositor truncates over-long inputs with a trailing
+                    '…' on a char boundary). Empty when absent."/>
     </event>
 
     <!-- Touch input is handled via standard wl_seat/wl_touch rather than

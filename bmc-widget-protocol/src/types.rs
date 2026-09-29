@@ -297,7 +297,7 @@ fn default_display_info() -> DisplayInfo {
     DisplayInfo::BMC100
 }
 
-impl From<DisplayShape> for crate::server::deck_widget_surface_v1::DisplayShape {
+impl From<DisplayShape> for crate::server::deck_widget_surface_v2::DisplayShape {
     fn from(shape: DisplayShape) -> Self {
         match shape {
             DisplayShape::Rectangular => Self::Rectangular,
@@ -306,9 +306,9 @@ impl From<DisplayShape> for crate::server::deck_widget_surface_v1::DisplayShape 
     }
 }
 
-impl From<crate::client::deck_widget_surface_v1::DisplayShape> for DisplayShape {
-    fn from(wire: crate::client::deck_widget_surface_v1::DisplayShape) -> Self {
-        use crate::client::deck_widget_surface_v1::DisplayShape as P;
+impl From<crate::client::deck_widget_surface_v2::DisplayShape> for DisplayShape {
+    fn from(wire: crate::client::deck_widget_surface_v2::DisplayShape) -> Self {
+        use crate::client::deck_widget_surface_v2::DisplayShape as P;
         match wire {
             P::Rectangular => Self::Rectangular,
             P::Round => Self::Round,
@@ -316,7 +316,7 @@ impl From<crate::client::deck_widget_surface_v1::DisplayShape> for DisplayShape 
     }
 }
 
-impl From<ViewportShape> for crate::server::deck_widget_surface_v1::ViewportShape {
+impl From<ViewportShape> for crate::server::deck_widget_surface_v2::ViewportShape {
     fn from(shape: ViewportShape) -> Self {
         match shape {
             ViewportShape::Rectangular => Self::Rectangular,
@@ -325,9 +325,9 @@ impl From<ViewportShape> for crate::server::deck_widget_surface_v1::ViewportShap
     }
 }
 
-impl From<crate::client::deck_widget_surface_v1::ViewportShape> for ViewportShape {
-    fn from(wire: crate::client::deck_widget_surface_v1::ViewportShape) -> Self {
-        use crate::client::deck_widget_surface_v1::ViewportShape as P;
+impl From<crate::client::deck_widget_surface_v2::ViewportShape> for ViewportShape {
+    fn from(wire: crate::client::deck_widget_surface_v2::ViewportShape) -> Self {
+        use crate::client::deck_widget_surface_v2::ViewportShape as P;
         match wire {
             P::Rectangular => Self::Rectangular,
             P::Round => Self::Round,
@@ -375,10 +375,10 @@ pub struct Settings {
 
 /// One atomic setting change broadcast from the compositor to widgets.
 ///
-/// Each variant maps 1:1 to a typed event in the `deck_widget_v1` protocol.
+/// Each variant maps 1:1 to a setting event of `deck_widget_surface_v2`.
 /// One variant per locale field, rather than a single bundled `Localization`,
-/// lets us add new locale fields later without breaking existing widgets —
-/// old widgets simply ignore unknown events.
+/// lets a new field arrive as a new event at a raised version,
+/// where a bundled event would change its arguments and need a rename.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "key", content = "value", rename_all = "camelCase")]
 pub enum SettingUpdate {
@@ -413,9 +413,9 @@ impl SettingUpdate {
 /// `WeekDay`. Widgets receive the latter via `SettingUpdate::FirstDayOfWeek`;
 /// this impl lives here so the per-widget protocol adapters don't have
 /// to hand-roll the identity mapping.
-impl From<crate::client::deck_widget_surface_v1::Weekday> for WeekDay {
-    fn from(w: crate::client::deck_widget_surface_v1::Weekday) -> Self {
-        use crate::client::deck_widget_surface_v1::Weekday as P;
+impl From<crate::client::deck_widget_surface_v2::Weekday> for WeekDay {
+    fn from(w: crate::client::deck_widget_surface_v2::Weekday) -> Self {
+        use crate::client::deck_widget_surface_v2::Weekday as P;
         match w {
             P::Monday => Self::Monday,
             P::Tuesday => Self::Tuesday,

@@ -22,8 +22,8 @@
 
 use bmc::compositor::{InstanceId, WidgetInstanceKey};
 use bmc_widget_protocol::server::{
-    deck_widget_manager_v2::{self, DeckWidgetManagerV2},
-    deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
+    deck_widget_manager_v3::{self, DeckWidgetManagerV3},
+    deck_widget_surface_v2::{self, DeckWidgetSurfaceV2},
 };
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
@@ -80,7 +80,7 @@ pub trait DeckWidgetHandler {
         &mut self,
         instance_id: &InstanceId,
         wl_surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
-        protocol_surface: DeckWidgetSurfaceV1,
+        protocol_surface: DeckWidgetSurfaceV2,
     ) -> Option<ClientId> {
         let new_client_id = protocol_surface.client().map(|client| client.id());
         let replaced =
@@ -97,10 +97,10 @@ pub trait DeckWidgetHandler {
     }
 }
 
-impl<D> GlobalDispatch<DeckWidgetManagerV2, (), D> for DeckWidgetProtocolState
+impl<D> GlobalDispatch<DeckWidgetManagerV3, (), D> for DeckWidgetProtocolState
 where
-    D: GlobalDispatch<DeckWidgetManagerV2, (), D>
-        + Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D>
+    D: GlobalDispatch<DeckWidgetManagerV3, (), D>
+        + Dispatch<DeckWidgetManagerV3, WidgetManagerUserData, D>
         + DeckWidgetHandler
         + 'static,
 {
@@ -108,7 +108,7 @@ where
         _state: &mut D,
         _handle: &DisplayHandle,
         _client: &Client,
-        resource: New<DeckWidgetManagerV2>,
+        resource: New<DeckWidgetManagerV3>,
         _global_data: &(),
         data_init: &mut DataInit<'_, D>,
     ) {
@@ -116,31 +116,31 @@ where
     }
 }
 
-impl<D> Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D> for DeckWidgetProtocolState
+impl<D> Dispatch<DeckWidgetManagerV3, WidgetManagerUserData, D> for DeckWidgetProtocolState
 where
-    D: Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D>
-        + Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D>
+    D: Dispatch<DeckWidgetManagerV3, WidgetManagerUserData, D>
+        + Dispatch<DeckWidgetSurfaceV2, WidgetSurfaceUserData, D>
         + DeckWidgetHandler
         + 'static,
 {
     fn request(
         state: &mut D,
         _client: &Client,
-        resource: &DeckWidgetManagerV2,
-        request: deck_widget_manager_v2::Request,
+        resource: &DeckWidgetManagerV3,
+        request: deck_widget_manager_v3::Request,
         _data: &WidgetManagerUserData,
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
         match request {
-            deck_widget_manager_v2::Request::GetWidgetSurface {
+            deck_widget_manager_v3::Request::GetWidgetSurface {
                 id,
                 widget_instance_key,
                 surface,
             } => {
                 let Ok(key) = widget_instance_key.parse::<WidgetInstanceKey>() else {
                     resource.post_error(
-                        deck_widget_manager_v2::Error::InvalidKey,
+                        deck_widget_manager_v3::Error::InvalidKey,
                         format!("noncanonical widget instance key {widget_instance_key:?}"),
                     );
                     return;
@@ -148,7 +148,7 @@ where
                 let protocol_state = state.deck_widget_state();
                 let Some(instance_id) = protocol_state.accepting_instance_id(key).cloned() else {
                     resource.post_error(
-                        deck_widget_manager_v2::Error::UnknownWidget,
+                        deck_widget_manager_v3::Error::UnknownWidget,
                         format!("widget instance {key} is not accepting connections"),
                     );
                     return;
@@ -171,15 +171,15 @@ where
                     .deck_widget_state()
                     .emit_initial_state(&instance_id, &widget_surface);
             }
-            deck_widget_manager_v2::Request::Destroy => {}
+            deck_widget_manager_v3::Request::Destroy => {}
             other => tracing::warn!("Ignoring unknown keyed widget manager request: {other:?}"),
         }
     }
 }
 
-impl<D> Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D> for DeckWidgetProtocolState
+impl<D> Dispatch<DeckWidgetSurfaceV2, WidgetSurfaceUserData, D> for DeckWidgetProtocolState
 where
-    D: Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D> + DeckWidgetHandler + 'static,
+    D: Dispatch<DeckWidgetSurfaceV2, WidgetSurfaceUserData, D> + DeckWidgetHandler + 'static,
 {
     #[expect(
         clippy::too_many_lines,
@@ -188,8 +188,8 @@ where
     fn request(
         state: &mut D,
         client: &Client,
-        resource: &DeckWidgetSurfaceV1,
-        request: deck_widget_surface_v1::Request,
+        resource: &DeckWidgetSurfaceV2,
+        request: deck_widget_surface_v2::Request,
         data: &WidgetSurfaceUserData,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
@@ -201,7 +201,7 @@ where
             &resource.id(),
         );
         match request {
-            deck_widget_surface_v1::Request::Destroy => {
+            deck_widget_surface_v2::Request::Destroy => {
                 state.detach_widget_surface(&instance_id, &client.id(), &resource.id());
                 tracing::info!("Widget surface destroyed for instance: {}", instance_id);
             }
@@ -213,7 +213,7 @@ where
                     "ignoring request from stale widget attachment"
                 );
             }
-            deck_widget_surface_v1::Request::PlaySound { sound } => {
+            deck_widget_surface_v2::Request::PlaySound { sound } => {
                 let protocol_state = state.deck_widget_state();
                 tracing::debug!("Widget {} play_sound: {sound}", instance_id);
                 protocol_state.add_action(
@@ -221,7 +221,7 @@ where
                     bmc_widget_protocol::ActionPayload::PlaySound { sound },
                 );
             }
-            deck_widget_surface_v1::Request::StopSound => {
+            deck_widget_surface_v2::Request::StopSound => {
                 let protocol_state = state.deck_widget_state();
                 tracing::debug!("Widget {} stop_sound", instance_id);
                 protocol_state.add_action(
@@ -229,7 +229,7 @@ where
                     bmc_widget_protocol::ActionPayload::StopSound {},
                 );
             }
-            deck_widget_surface_v1::Request::LedTemporary {
+            deck_widget_surface_v2::Request::LedTemporary {
                 request_id,
                 effect,
                 r,
@@ -274,7 +274,7 @@ where
                     },
                 );
             }
-            deck_widget_surface_v1::Request::LedEndless {
+            deck_widget_surface_v2::Request::LedEndless {
                 request_id,
                 effect,
                 r,
@@ -317,7 +317,7 @@ where
                     },
                 );
             }
-            deck_widget_surface_v1::Request::StopLed { request_id } => {
+            deck_widget_surface_v2::Request::StopLed { request_id } => {
                 let protocol_state = state.deck_widget_state();
                 tracing::debug!("Widget {} stop_led: req={request_id}", instance_id);
                 protocol_state.add_action(
@@ -326,7 +326,7 @@ where
                 );
             }
             other => {
-                // `deck_widget_surface_v1::Request` is `#[non_exhaustive]`,
+                // `deck_widget_surface_v2::Request` is `#[non_exhaustive]`,
                 // so the compiler cannot guarantee exhaustiveness. Any
                 // variant added to the protocol but not yet handled here
                 // is a programming error — log it loudly instead of
@@ -341,7 +341,7 @@ where
     fn destroyed(
         state: &mut D,
         client_id: ClientId,
-        resource: &DeckWidgetSurfaceV1,
+        resource: &DeckWidgetSurfaceV2,
         data: &WidgetSurfaceUserData,
     ) {
         state.detach_widget_surface(&data.instance_id, &client_id, &resource.id());
@@ -350,11 +350,11 @@ where
 
 pub fn create_global<D>(display: &DisplayHandle)
 where
-    D: GlobalDispatch<DeckWidgetManagerV2, (), D>
-        + Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D>
-        + Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D>
+    D: GlobalDispatch<DeckWidgetManagerV3, (), D>
+        + Dispatch<DeckWidgetManagerV3, WidgetManagerUserData, D>
+        + Dispatch<DeckWidgetSurfaceV2, WidgetSurfaceUserData, D>
         + DeckWidgetHandler
         + 'static,
 {
-    display.create_global::<D, DeckWidgetManagerV2, ()>(2, ());
+    display.create_global::<D, DeckWidgetManagerV3, ()>(1, ());
 }

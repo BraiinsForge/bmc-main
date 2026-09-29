@@ -53,7 +53,7 @@ The high-level startup path is:
 8. The thin drops into an idle loop. From this point on, the control socket is only a lifetime witness. Each thin owns
    exactly one such connection, and each accepted connection corresponds to at most one host slot.
 
-The host passes the stable key to `deck_widget_manager_v2.get_widget_surface`. The compositor either attaches the client
+The host passes the stable key to `deck_widget_manager_v3.get_widget_surface`. The compositor either attaches the client
 to the matching active retained record or rejects it immediately. It does not buffer unclaimed Wayland connections for
 future registrations; registration and activation happen before the process is spawned.
 
@@ -123,9 +123,10 @@ For each admitted thin connection, the host:
 
 1. Reads `Hello` and receives exactly one Wayland fd.
 2. Wraps the fd in a `wayland_client::Connection`.
-3. Binds the Wayland globals it needs, including `deck_widget_manager_v2` and `zwp_linux_dmabuf_v1`.
-4. Creates a `wl_surface` and calls `deck_widget_manager_v2.get_widget_surface` with the stable widget key.
-5. Waits for the initial configure batch: `configure`, `params`, setting events, then `configure_done`.
+3. Binds the Wayland globals it needs, including `deck_widget_manager_v3` and `zwp_linux_dmabuf_v1`.
+4. Creates a `wl_surface` and calls `deck_widget_manager_v3.get_widget_surface` with the stable widget key.
+5. Waits for the initial configure batch: `configure`, `display_info`, `params`, `credentials` and `credential_secrets`,
+   setting events, then `configure_done`.
 6. Reads and hashes the `.wasm` bytes, then reuses the cached module for identical content or validates and caches it on
    a miss. Per-function translation into wasmi bytecode stays lazy and populates the shared engine's code map on first
    call.

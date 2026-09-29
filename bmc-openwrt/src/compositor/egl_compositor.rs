@@ -2973,7 +2973,7 @@ mod tests {
     use bmc_platform::backlight::ScreenVisibility;
     use bmc_widget_protocol::{
         ActionPayload, ViewportShape, WidgetInitialConfig,
-        server::deck_widget_surface_v1::DeckWidgetSurfaceV1,
+        server::deck_widget_surface_v2::DeckWidgetSurfaceV2,
     };
     use smithay::backend::input::{
         AbsolutePositionEvent, Device, DeviceCapability, Event, InputBackend, InputEvent,
@@ -3165,9 +3165,9 @@ mod tests {
                 .insert_client(socket, Arc::new(ClientState::default()))
                 .expect("BUG: test Wayland client should register");
             let protocol_surface = client
-                .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(
+                .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(
                     &handle,
-                    2,
+                    1,
                     WidgetSurfaceUserData {
                         instance_id: instance_id.clone(),
                     },
@@ -3273,9 +3273,9 @@ mod tests {
                 .insert_client(socket, Arc::new(ClientState::default()))
                 .expect("BUG: test Wayland client should register");
             let surface = client
-                .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(
+                .create_resource::<DeckWidgetSurfaceV2, _, CompositorState>(
                     handle,
-                    2,
+                    1,
                     WidgetSurfaceUserData {
                         instance_id: instance_id.clone(),
                     },

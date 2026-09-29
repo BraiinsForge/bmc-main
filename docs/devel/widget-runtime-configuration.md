@@ -1,10 +1,10 @@
-# Widget runtime configuration via `deck_widget_manager_v2`
+# Widget runtime configuration via `deck_widget_manager_v3`
 
 ## Description
 
 A widget process receives its geometry, per-instance params, credentials, and current system settings over
-`deck_widget_surface_v1`. It identifies the configured instance when creating that surface through the keyed
-`deck_widget_manager_v2` factory.
+`deck_widget_surface_v2`. It identifies the configured instance when creating that surface through the keyed
+`deck_widget_manager_v3` factory.
 
 A widget process's environment is:
 
@@ -31,7 +31,7 @@ ordinary stops, and upgrade pauses, and holds the latest placement and initial c
 successor to attach. Deletion unregisters the record entirely. There is no PID association, generation stamp, or queue
 of connections waiting for later registration. PID remains useful only for supervision and logs.
 
-This is an intentionally breaking native protocol change. The compositor advertises only `deck_widget_manager_v2`, and
+This is an intentionally breaking native protocol change. The compositor advertises only `deck_widget_manager_v3`, and
 bundled clients require it; older clients using the former manager interface are not supported.
 
 ### Parameters
@@ -53,12 +53,22 @@ On `get_widget_surface` the compositor emits a batch of events terminated by `co
 ```
 configure(width, height, viewport_shape, token)
 display_info(width, height, shape, dpi)
-params(json)
-credentials(json) / credential_secrets(json)
+params(fd, size)
+credentials(fd, size) / credential_secrets(fd, size)
 timezone / night_mode / date_format / time_format /
-  number_format / temperature_unit / first_day_of_week
+  number_format / temperature_unit / first_day_of_week /
+  unit_system / next_alarm
 configure_done
 ```
+
+The three JSON payloads travel as a sealed memfd plus its byte length rather than a string argument. libwayland caps a
+message at 4096 bytes, header included, so a string argument holds at most 4083 bytes. A larger event is not dropped:
+the server logs `Data too big for buffer` and disconnects the client. This was measured against libwayland 1.24, with
+system libwayland on both ends and no override of its buffer size. Raising the buffer would not help, as the wire
+header's 16-bit size field caps any message at 64 KiB.
+
+Changing an event's arguments is a breaking change that interface versions cannot express, which is why both interfaces
+took new names (`deck_widget_manager_v3`, `deck_widget_surface_v2`) rather than a version bump.
 
 - `configure` carries the widget viewport's pixel dimensions, viewport shape, and an opaque per-instance token for
   namespacing resources such as caches.
@@ -87,7 +97,7 @@ Changes that *do* affect viewport size or shape still respawn — the widget onl
 `display_info(...)` once, during the initial batch, so a new geometry needs a fresh process to size its renderer for.
 
 Runtime param pushes are full replacements of the widget params map (not partial patches). Widgets should treat every
-`params(json)` event as a complete snapshot and re-bind state from that snapshot.
+`params` event as a complete snapshot and re-bind state from that snapshot.
 
 ### Shutdown
 
@@ -238,7 +248,7 @@ Two consequences worth knowing:
   compositor serves them over the protocol.
 
 - Params are typed end-to-end before they reach Wayland. The scene config, compositor, and Wayland-side serialization
-  run on `serde_json::Map<String, Value>`. The widget process receives params as a JSON-encoded string (Wayland's
-  `params(json)` event) and deserializes via its own `#[derive(Deserialize)]` schema — the manifest is the source of
+  run on `serde_json::Map<String, Value>`. The widget process receives params as JSON in a memfd (Wayland's
+  `params(fd, size)` event) and deserializes via its own `#[derive(Deserialize)]` schema — the manifest is the source of
   truth on what the widget expects, and the pipeline carries the user's choices through without ad-hoc per-layer string
   parsing.
