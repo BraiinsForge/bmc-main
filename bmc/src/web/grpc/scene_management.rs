@@ -24,9 +24,9 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bmc_field_schema::MissingValues;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
-use bmc_shared_time::time::Timezone;
 use bmc_widget_manifest::{
     BooleanParam, CredentialKey, DoubleParam, IntegerParam, ParamDefinition, ParamKind,
     StringParam, TimezoneParam,
@@ -931,57 +931,36 @@ pub(crate) fn validate_widget_params(
     mode: ValidateMode,
 ) -> Result<BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>, FieldViolations>
 {
+    let values = params
+        .fields
+        .iter()
+        .map(|(key, value)| (key.clone(), param_value_from_wire(value)))
+        .collect();
+    let missing = match mode {
+        ValidateMode::Add => MissingValues::Default,
+        ValidateMode::Update => MissingValues::Reject,
+    };
+    bmc_field_schema::validate_values(&manifest.params, &values, missing).map_err(|violations| {
+        let mut field_violations = FieldViolations::new();
+        for v in violations {
+            field_violations.push(format!("params{}", v.path), v.message);
+        }
+        field_violations
+    })
+}
+
+fn param_value_from_wire(
+    value: &web::WidgetDataValue,
+) -> Result<bmc_widget_manifest::ParamValue, String> {
+    use bmc_widget_manifest::ParamValue as PV;
     use web::widget_data_value::Kind as VK;
-    let mut violations = FieldViolations::new();
-    let mut typed = BTreeMap::new();
-
-    for (key, def) in &manifest.params {
-        let path = format!("params[{:?}]", key.as_str());
-        let Some(wdv) = params.fields.get(key.as_str()) else {
-            if matches!(mode, ValidateMode::Update) {
-                violations.push(path, "Value is required");
-            } else {
-                typed.insert(
-                    key.clone(),
-                    bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
-                );
-            }
-            continue;
-        };
-
-        let Some(kind) = wdv.kind.as_ref() else {
-            violations.push(path, "WidgetDataValue.kind unset");
-            continue;
-        };
-
-        if matches!(kind, VK::NullValue(())) {
-            if def.is_optional {
-                typed.insert(key.clone(), bmc_widget_manifest::ParamValue::Null);
-            } else {
-                violations.push(path, "Value is required");
-            }
-            continue;
-        }
-
-        if let Some(value) =
-            validate_and_project_param_value(&path, &def.kind, kind, &mut violations)
-        {
-            typed.insert(key.clone(), value);
-        }
-    }
-
-    for key in params.fields.keys() {
-        if !manifest.params.contains_key(key.as_str()) {
-            // Debug-format the key so a client-supplied key with quotes,
-            // newlines, etc. cannot break the FieldViolation field path.
-            violations.push(format!("params[{key:?}]"), "Unknown param");
-        }
-    }
-
-    if violations.is_empty() {
-        Ok(typed)
-    } else {
-        Err(violations)
+    match &value.kind {
+        None => Err("WidgetDataValue.kind unset".to_owned()),
+        Some(VK::NullValue(())) => Ok(PV::Null),
+        Some(VK::BooleanValue(b)) => Ok(PV::Boolean(*b)),
+        Some(VK::IntegerValue(i)) => Ok(PV::Integer(*i)),
+        Some(VK::DoubleValue(d)) => Ok(PV::Double(*d)),
+        Some(VK::StringValue(s)) => Ok(PV::String(s.clone())),
     }
 }
 
@@ -1033,112 +1012,6 @@ pub(crate) fn validate_credential_bindings(
         Ok(typed)
     } else {
         Err(violations)
-    }
-}
-
-fn type_mismatch_message(kind: &ParamKind) -> &'static str {
-    match kind {
-        ParamKind::String(_) => "Must be text",
-        ParamKind::Integer(_) => "Must be a whole number",
-        ParamKind::Double(_) => "Must be a number",
-        ParamKind::Boolean(_) => "Must be true or false",
-        ParamKind::Timezone(_) => "Must be a timezone",
-    }
-}
-
-fn validate_and_project_param_value(
-    path: &str,
-    param_kind: &ParamKind,
-    kind: &web::widget_data_value::Kind,
-    violations: &mut FieldViolations,
-) -> Option<bmc_widget_manifest::ParamValue> {
-    use bmc_widget_manifest::ParamValue as PV;
-    use web::widget_data_value::Kind as VK;
-    match (param_kind, kind) {
-        (ParamKind::String(StringParam { enum_values, .. }), VK::StringValue(s)) => {
-            if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
-                violations.push(path.to_owned(), "Must be one of the listed options");
-                return None;
-            }
-            Some(PV::String(s.clone()))
-        }
-        (ParamKind::Timezone(_), VK::StringValue(s)) => {
-            if !Timezone::list().iter().any(|tz| tz.iana() == s) {
-                violations.push(path.to_owned(), "Must be a valid timezone");
-                return None;
-            }
-            Some(PV::String(s.clone()))
-        }
-        (ParamKind::Boolean(_), VK::BooleanValue(b)) => Some(PV::Boolean(*b)),
-        (
-            ParamKind::Integer(IntegerParam {
-                min,
-                max,
-                enum_values,
-                ..
-            }),
-            VK::IntegerValue(i),
-        ) => {
-            let mut ok = true;
-            if let Some(lo) = min
-                && i < lo
-            {
-                violations.push(path.to_owned(), format!("Must be at least {lo}"));
-                ok = false;
-            }
-            if let Some(hi) = max
-                && i > hi
-            {
-                violations.push(path.to_owned(), format!("Must be at most {hi}"));
-                ok = false;
-            }
-            if !enum_values.is_empty() && !enum_values.iter().any(|o| o.value == *i) {
-                violations.push(path.to_owned(), "Must be one of the listed options");
-                ok = false;
-            }
-            if ok { Some(PV::Integer(*i)) } else { None }
-        }
-        (
-            ParamKind::Double(DoubleParam {
-                min,
-                max,
-                enum_values,
-                ..
-            }),
-            VK::DoubleValue(d),
-        ) => {
-            if !d.is_finite() {
-                violations.push(path.to_owned(), "Must be a finite number");
-                return None;
-            }
-            let mut ok = true;
-            if let Some(lo) = min
-                && d < lo
-            {
-                violations.push(path.to_owned(), format!("Must be at least {lo}"));
-                ok = false;
-            }
-            if let Some(hi) = max
-                && d > hi
-            {
-                violations.push(path.to_owned(), format!("Must be at most {hi}"));
-                ok = false;
-            }
-            if !enum_values.is_empty()
-                && !enum_values.iter().any(|o| {
-                    bmc_widget_manifest::f64_canonical_bits(o.value)
-                        == bmc_widget_manifest::f64_canonical_bits(*d)
-                })
-            {
-                violations.push(path.to_owned(), "Must be one of the listed options");
-                ok = false;
-            }
-            if ok { Some(PV::Double(*d)) } else { None }
-        }
-        (other_kind, _) => {
-            violations.push(path.to_owned(), type_mismatch_message(other_kind));
-            None
-        }
     }
 }
 

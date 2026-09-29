@@ -35,6 +35,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 pub mod credential;
+mod validate;
+
+pub use validate::{MissingValues, Violation, validate_values};
 
 /// Maximum byte length of a [`ParamKey`]. Under the wire-format `u16` length field, so the
 /// encoder's `u16::try_from` is statically infallible.

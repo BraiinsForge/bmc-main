@@ -13,6 +13,7 @@ include = ["assets/*.svg"]
 
 [dependencies]
 base64.workspace = true
+bmc-shared-time.workspace = true
 indexmap.workspace = true
 ipnet.workspace = true
 schemars = { workspace = true, features = ["indexmap2"] }
