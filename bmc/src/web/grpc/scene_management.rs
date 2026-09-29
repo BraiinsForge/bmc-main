@@ -703,6 +703,10 @@ fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::FieldValue {
         PV::Integer(i) => VK::IntegerValue(*i),
         PV::Double(d) => VK::DoubleValue(*d),
         PV::String(s) => VK::StringValue(s.clone()),
+        PV::List(items) => VK::ListValue(web::FieldValueList {
+            items: items.iter().map(param_value_to_wire).collect(),
+        }),
+        PV::Object(fields) => VK::StructValue(params_to_widget_data_struct(fields)),
     };
     web::FieldValue { kind: Some(arm) }
 }
@@ -961,6 +965,22 @@ fn param_value_from_wire(
         Some(VK::IntegerValue(i)) => Ok(PV::Integer(*i)),
         Some(VK::DoubleValue(d)) => Ok(PV::Double(*d)),
         Some(VK::StringValue(s)) => Ok(PV::String(s.clone())),
+        Some(VK::ListValue(list)) => list
+            .items
+            .iter()
+            .map(param_value_from_wire)
+            .collect::<Result<_, _>>()
+            .map(PV::List),
+        Some(VK::StructValue(values)) => values
+            .fields
+            .iter()
+            .map(|(key, value)| {
+                let key = bmc_widget_manifest::ParamKey::try_new(key.clone())
+                    .map_err(|key| format!("Invalid field key {key:?}"))?;
+                Ok((key, param_value_from_wire(value)?))
+            })
+            .collect::<Result<_, _>>()
+            .map(PV::Object),
     }
 }
 
@@ -1948,6 +1968,14 @@ mod tests {
             (key("d"), PV::Double(2.5)),
             (key("b"), PV::Boolean(false)),
             (key("n"), PV::Null),
+            (
+                key("l"),
+                PV::List(vec![PV::String("NVDA".into()), PV::Integer(1)]),
+            ),
+            (
+                key("o"),
+                PV::Object(BTreeMap::from([(key("label"), PV::String("x".into()))])),
+            ),
         ]
         .into_iter()
         .collect();
@@ -1961,6 +1989,62 @@ mod tests {
             Some(VK::BooleanValue(false))
         ));
         assert!(matches!(wire.fields["n"].kind, Some(VK::NullValue(()))));
+        assert!(matches!(wire.fields["l"].kind, Some(VK::ListValue(_))));
+        assert!(matches!(wire.fields["o"].kind, Some(VK::StructValue(_))));
+
+        let back: BTreeMap<ParamKey, PV> = wire
+            .fields
+            .iter()
+            .map(|(k, v)| {
+                let value = param_value_from_wire(v).expect("BUG: encoded values decode");
+                (key(k), value)
+            })
+            .collect();
+        assert_eq!(back, map);
+    }
+
+    #[test]
+    fn validate_widget_params_list_for_a_scalar_param_is_a_type_mismatch() {
+        let manifest = single_param_manifest(
+            "color",
+            ParamKind::String(StringParam {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            }),
+            false,
+        );
+        let list = web::FieldValue {
+            kind: Some(web::field_value::Kind::ListValue(web::FieldValueList {
+                items: vec![wdv_string("red")],
+            })),
+        };
+        let params = fields_one("color", list);
+        assert_eq!(first_violation_desc(&manifest, &params), "Must be text");
+    }
+
+    #[test]
+    fn validate_widget_params_reports_an_invalid_nested_key_at_its_param() {
+        let manifest = single_param_manifest(
+            "color",
+            ParamKind::String(StringParam {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            }),
+            false,
+        );
+        let object = web::FieldValue {
+            kind: Some(web::field_value::Kind::StructValue(fields_one(
+                "not a key",
+                wdv_string("x"),
+            ))),
+        };
+        let params = fields_one("color", object);
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            r#"Invalid field key "not a key""#
+        );
     }
 
     fn wdv_string(s: &str) -> web::FieldValue {

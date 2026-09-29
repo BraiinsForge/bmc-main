@@ -26,6 +26,7 @@
 //! (`default_value` in `[min, max]` / in `enum_values`, `±0.0` enum collision) live in
 //! [`ParamDefinition::validate`].
 
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 use indexmap::IndexMap;
@@ -161,8 +162,9 @@ pub enum StringFormat {
     Password,
 }
 
-/// Typed scalar value for a stored field — the [`ParamKind`] value space (null, bool, i32, finite
-/// f64, string). Both the compositor's in-memory form and the wire shape sent to widgets.
+/// Typed value for a stored field: null, bool, i32, finite f64, string, and lists and objects of those.
+/// Both the compositor's in-memory form and the wire shape sent to widgets.
+/// Which shapes a field accepts is its [`ParamKind`]'s call, enforced by [`validate_values`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ParamValue {
@@ -177,6 +179,10 @@ pub enum ParamValue {
     Double(f64),
     /// A UTF-8 string.
     String(String),
+    /// An ordered list of values.
+    List(Vec<ParamValue>),
+    /// Values keyed by field name.
+    Object(BTreeMap<ParamKey, ParamValue>),
 }
 
 fn deserialize_finite_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
@@ -191,7 +197,7 @@ fn deserialize_finite_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Err
 }
 
 impl ParamValue {
-    /// JSON projection for the wayland boundary — bare scalars, not the internally-tagged form.
+    /// JSON projection for the wayland boundary — bare values, not the internally-tagged form.
     #[must_use]
     pub fn to_json_value(&self) -> serde_json::Value {
         match self {
@@ -201,6 +207,15 @@ impl ParamValue {
             ParamValue::Double(d) => serde_json::Number::from_f64(*d)
                 .map_or(serde_json::Value::Null, serde_json::Value::Number),
             ParamValue::String(s) => serde_json::Value::String(s.clone()),
+            ParamValue::List(items) => {
+                serde_json::Value::Array(items.iter().map(ParamValue::to_json_value).collect())
+            }
+            ParamValue::Object(fields) => serde_json::Value::Object(
+                fields
+                    .iter()
+                    .map(|(key, value)| (key.as_str().to_owned(), value.to_json_value()))
+                    .collect(),
+            ),
         }
     }
 
@@ -226,14 +241,11 @@ impl ParamValue {
 }
 
 /// Reasons the wayland-side JSON-to-[`ParamValue`] conversion can fail.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ParamValueConversionError {
-    /// Expected a scalar, got an array.
-    #[error("expected scalar, got JSON array")]
-    Array,
-    /// Expected a scalar, got an object.
-    #[error("expected scalar, got JSON object")]
-    Object,
+    /// An object key that is not a valid [`ParamKey`].
+    #[error("invalid object key {0:?}")]
+    InvalidObjectKey(String),
     /// A number representable as neither i32 nor f64 (unreachable via `serde_json`, kept for exhaustiveness).
     #[error("number is not representable as i32 or f64")]
     UnrepresentableNumber,
@@ -245,8 +257,8 @@ pub enum ParamValueConversionError {
     StringTooLong { len: usize, max: usize },
 }
 
-/// Inverse of [`ParamValue::to_json_value`] — re-types wayland-edge JSON into a scalar
-/// [`ParamValue`], erroring on objects, arrays, and non-finite numbers.
+/// Inverse of [`ParamValue::to_json_value`] — re-types wayland-edge JSON into a [`ParamValue`],
+/// erroring on non-finite numbers, over-long strings and object keys that are not a [`ParamKey`].
 impl TryFrom<&serde_json::Value> for ParamValue {
     type Error = ParamValueConversionError;
 
@@ -285,8 +297,22 @@ impl TryFrom<&serde_json::Value> for ParamValue {
                     Err(ParamValueConversionError::UnrepresentableNumber)
                 }
             }
-            serde_json::Value::Array(_) => Err(ParamValueConversionError::Array),
-            serde_json::Value::Object(_) => Err(ParamValueConversionError::Object),
+            serde_json::Value::Array(items) => Ok(ParamValue::List(
+                items
+                    .iter()
+                    .map(ParamValue::try_from)
+                    .collect::<Result<_, _>>()?,
+            )),
+            serde_json::Value::Object(fields) => Ok(ParamValue::Object(
+                fields
+                    .iter()
+                    .map(|(key, value)| {
+                        let key = ParamKey::try_new(key.clone())
+                            .map_err(ParamValueConversionError::InvalidObjectKey)?;
+                        Ok((key, ParamValue::try_from(value)?))
+                    })
+                    .collect::<Result<_, _>>()?,
+            )),
         }
     }
 }

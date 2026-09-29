@@ -45,14 +45,6 @@
 //! The packed wire format is documented in `bmc_wasm_sdk::params`; the host-side serialiser
 //! here is the inverse of the SDK's parser.
 
-#![expect(
-    clippy::cast_possible_truncation,
-    reason = "in-memory `BTreeMap` length and per-entry byte counts are bounded by `try_from` guards \
-              right before each `as u32` / `as u16` cast in `encode_entry`; the encoder is the \
-              inverse of the SDK parser, which itself only ever reads u32/u16 sizes — so values \
-              that would actually truncate are unreachable for valid `ParamKey` / `ParamValue` inputs"
-)]
-
 use anyhow::Result;
 use bmc_wasm_protocol::params::kind;
 use wasmi::{Caller, Extern, Linker};
@@ -88,7 +80,12 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
             // until the next `params.replace` call instead of forcing a fresh encode every time.
             // `.to_vec()` releases the `&mut HostState` borrow before the wasm-memory write below.
             let bytes = caller.data_mut().params.encoded().to_vec();
-            let needed = bytes.len() as u32;
+            let needed = u32::try_from(bytes.len()).map_err(|_| {
+                wasmi::Error::new(
+                    "host import `host_params_snapshot`: the snapshot exceeds the guest's \
+                     32-bit address space",
+                )
+            })?;
 
             if out_cap < needed {
                 // Probe (out_cap == 0) and retry-with-larger-buffer both fall here.
@@ -155,8 +152,8 @@ impl bmc_wasm_protocol::versioned_snapshot::WireEncode for ParamsSnapshot {
 /// production callers go through the [`ParamsSnapshot`] newtype
 /// or the cache's `encoded()` accessor on `HostState`.
 pub(crate) fn encode_params(params: &std::collections::BTreeMap<ParamKey, ParamValue>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(estimate_size(params));
-    out.extend_from_slice(&(params.len() as u32).to_le_bytes());
+    let mut out = Vec::new();
+    out.extend_from_slice(&wire_len(params.len()).to_le_bytes());
     for (key, value) in params {
         encode_entry(&mut out, key.as_str(), value);
     }
@@ -164,52 +161,57 @@ pub(crate) fn encode_params(params: &std::collections::BTreeMap<ParamKey, ParamV
 }
 
 fn encode_entry(out: &mut Vec<u8>, key: &str, value: &ParamValue) {
-    let kind_byte = match value {
-        ParamValue::String(_) => kind::STR,
-        ParamValue::Integer(_) => kind::I32,
-        ParamValue::Double(_) => kind::F64,
-        ParamValue::Boolean(_) => kind::BOOL,
-        ParamValue::Null => kind::NULL,
-    };
-    out.push(kind_byte);
+    out.push(kind_byte(value));
 
-    // `ParamKey` enforces `MAX_PARAM_KEY_LENGTH` (well below `u16::MAX`)
-    // at the manifest layer, so the conversion is statically infallible here.
-    // Same shape for the `s_len` u32 below.
     let key_len =
         u16::try_from(key.len()).expect("BUG: ParamKey enforces MAX_PARAM_KEY_LENGTH < u16::MAX");
     out.extend_from_slice(&key_len.to_le_bytes());
     out.extend_from_slice(key.as_bytes());
 
+    encode_payload(out, value);
+}
+
+fn kind_byte(value: &ParamValue) -> u8 {
+    match value {
+        ParamValue::String(_) => kind::STR,
+        ParamValue::Integer(_) => kind::I32,
+        ParamValue::Double(_) => kind::F64,
+        ParamValue::Boolean(_) => kind::BOOL,
+        ParamValue::Null => kind::NULL,
+        ParamValue::List(_) => kind::LIST,
+        ParamValue::Object(_) => kind::OBJECT,
+    }
+}
+
+fn encode_payload(out: &mut Vec<u8>, value: &ParamValue) {
     match value {
         ParamValue::String(s) => {
-            let s_len = u32::try_from(s.len())
-                .expect("BUG: ParamValue::String enforces MAX_PARAM_STRING_LENGTH < u32::MAX");
-            out.extend_from_slice(&s_len.to_le_bytes());
+            out.extend_from_slice(&wire_len(s.len()).to_le_bytes());
             out.extend_from_slice(s.as_bytes());
         }
         ParamValue::Integer(v) => out.extend_from_slice(&v.to_le_bytes()),
         ParamValue::Double(v) => out.extend_from_slice(&v.to_le_bytes()),
         ParamValue::Boolean(b) => out.push(u8::from(*b)),
         ParamValue::Null => {}
+        ParamValue::List(items) => {
+            out.extend_from_slice(&wire_len(items.len()).to_le_bytes());
+            for item in items {
+                out.push(kind_byte(item));
+                encode_payload(out, item);
+            }
+        }
+        ParamValue::Object(fields) => {
+            out.extend_from_slice(&wire_len(fields.len()).to_le_bytes());
+            for (key, field) in fields {
+                encode_entry(out, key.as_str(), field);
+            }
+        }
     }
 }
 
-/// Approximate byte length of the packed snapshot.
-/// Used only for `Vec::with_capacity`; over- or under-estimate is harmless.
-fn estimate_size(params: &std::collections::BTreeMap<ParamKey, ParamValue>) -> usize {
-    let mut total = 4; // count header
-    for (key, value) in params {
-        total += 3 + key.as_str().len(); // kind byte + key_len + key bytes
-        total += match value {
-            ParamValue::String(s) => 4 + s.len(),
-            ParamValue::Integer(_) => 4,
-            ParamValue::Double(_) => 8,
-            ParamValue::Boolean(_) => 1,
-            ParamValue::Null => 0,
-        };
-    }
-    total
+fn wire_len(len: usize) -> u32 {
+    u32::try_from(len)
+        .expect("BUG: usize is 32-bit on the device, and 2^32 entries or bytes cannot fit in memory elsewhere")
 }
 
 #[cfg(test)]
@@ -343,5 +345,54 @@ mod tests {
         assert_eq!(parsed.get_i32("e_null"), None);
         assert_eq!(parsed.get_f64("e_null"), None);
         assert_eq!(parsed.get_bool("e_null"), None);
+    }
+
+    #[test]
+    fn lists_and_objects_round_trip_through_sdk_parser() {
+        use bmc_wasm_sdk::params::Params;
+
+        let link = |label: &str, url: &str| {
+            ParamValue::Object(BTreeMap::from([
+                (key("label"), ParamValue::String(label.into())),
+                (key("url"), ParamValue::String(url.into())),
+            ]))
+        };
+        let mut params = BTreeMap::new();
+        params.insert(
+            key("links"),
+            ParamValue::List(vec![
+                link("Pool", "https://pool.example"),
+                link("Docs", "https://docs.example"),
+            ]),
+        );
+        params.insert(
+            key("matrix"),
+            ParamValue::List(vec![ParamValue::List(vec![ParamValue::Integer(7)])]),
+        );
+        params.insert(key("z_after"), ParamValue::Boolean(true));
+
+        let parsed = Params::from_bytes(encode_params(&params));
+
+        let labels: Vec<&str> = parsed
+            .get_list("links")
+            .expect("BUG: links is a list")
+            .iter()
+            .filter_map(|link| link.as_object()?.get("label")?.as_str())
+            .collect();
+        assert_eq!(labels, ["Pool", "Docs"]);
+
+        let inner = parsed
+            .get_list("matrix")
+            .and_then(|m| m.iter().next())
+            .and_then(|row| row.as_list())
+            .and_then(|row| row.iter().next())
+            .and_then(|cell| cell.as_i32());
+        assert_eq!(inner, Some(7));
+
+        assert_eq!(
+            parsed.get_bool("z_after"),
+            Some(true),
+            "a scalar after nested containers must still be reachable"
+        );
     }
 }

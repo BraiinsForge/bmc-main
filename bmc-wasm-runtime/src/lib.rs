@@ -159,8 +159,9 @@ pub enum ParseParamsError {
     #[error("invalid param key {key:?}")]
     InvalidKey { key: String },
 
-    /// Value was an array, object, non-finite number, or other shape
-    /// that [`bmc_widget_manifest::ParamValue::try_from`] rejects.
+    /// A value [`bmc_widget_manifest::ParamValue::try_from`] rejects:
+    /// an unrepresentable or non-finite number, an over-long string,
+    /// or an object key that is not a `ParamKey`.
     #[error("param {key:?} value not representable: {source}")]
     InvalidValue {
         key: String,
@@ -212,8 +213,7 @@ pub fn parse_credentials_json(
 /// before this path; a failure here therefore indicates an off-spec producer
 /// (compositor bug) and is logged at `warn` level by callers.
 ///
-/// Accepts only scalar shapes (string / integer / finite double / boolean / null);
-/// Arrays, objects, and non-finite numbers reject.
+/// Accepts scalars, null, and lists and objects of those.
 ///
 /// Keys must satisfy the `ParamKey` regex (start with an ASCII letter,
 /// then `[A-Za-z0-9_-]*`) and stay within the manifest-layer length cap.

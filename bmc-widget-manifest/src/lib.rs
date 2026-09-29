@@ -1291,6 +1291,10 @@ mod tests {
         assert!(res.is_err(), "all-digit param key must reject");
     }
 
+    fn key(name: &str) -> ParamKey {
+        ParamKey::try_new(name.to_owned()).expect("BUG: test key must be a valid ParamKey")
+    }
+
     #[test]
     fn param_value_round_trips_each_variant() {
         let cases = [
@@ -1299,6 +1303,14 @@ mod tests {
             ParamValue::Integer(-7),
             ParamValue::Double(3.5),
             ParamValue::String("x".into()),
+            ParamValue::List(vec![
+                ParamValue::String("NVDA".into()),
+                ParamValue::Integer(2),
+            ]),
+            ParamValue::Object(std::collections::BTreeMap::from([
+                (key("label"), ParamValue::String("Pool".into())),
+                (key("enabled"), ParamValue::Boolean(false)),
+            ])),
         ];
         for v in cases {
             let s = serde_json::to_string(&v).expect("BUG: serialize");
@@ -1330,13 +1342,24 @@ mod tests {
     }
 
     #[test]
-    fn param_value_serializes_as_bare_scalar() {
+    fn param_value_serializes_as_bare_json() {
         let cases: &[(ParamValue, &str)] = &[
             (ParamValue::Null, "null"),
             (ParamValue::Boolean(true), "true"),
             (ParamValue::Integer(42), "42"),
             (ParamValue::Double(2.5), "2.5"),
             (ParamValue::String("hi".into()), r#""hi""#),
+            (
+                ParamValue::List(vec![ParamValue::String("a".into()), ParamValue::Integer(1)]),
+                r#"["a",1]"#,
+            ),
+            (
+                ParamValue::Object(std::collections::BTreeMap::from([(
+                    key("k"),
+                    ParamValue::Boolean(true),
+                )])),
+                r#"{"k":true}"#,
+            ),
         ];
         for (v, expected) in cases {
             let s = serde_json::to_string(v).expect("BUG: serialize ParamValue");
@@ -1362,6 +1385,18 @@ mod tests {
         assert_eq!(
             ParamValue::String("hi".into()).to_json_value(),
             serde_json::json!("hi")
+        );
+        assert_eq!(
+            ParamValue::List(vec![ParamValue::Integer(1), ParamValue::Null]).to_json_value(),
+            serde_json::json!([1, null])
+        );
+        assert_eq!(
+            ParamValue::Object(std::collections::BTreeMap::from([(
+                key("label"),
+                ParamValue::String("x".into()),
+            )]))
+            .to_json_value(),
+            serde_json::json!({"label": "x"})
         );
     }
 
@@ -1389,16 +1424,28 @@ mod tests {
     }
 
     #[test]
-    fn param_value_try_from_json_rejects_arrays_and_objects() {
-        let arr = serde_json::json!([1, 2]);
-        let obj = serde_json::json!({"a": 1});
+    fn param_value_try_from_json_converts_arrays_and_objects_recursively() {
+        let json = serde_json::json!([{"label": "a", "value": 1}, [true]]);
         assert_eq!(
-            ParamValue::try_from(&arr),
-            Err(ParamValueConversionError::Array)
+            ParamValue::try_from(&json),
+            Ok(ParamValue::List(vec![
+                ParamValue::Object(std::collections::BTreeMap::from([
+                    (key("label"), ParamValue::String("a".into())),
+                    (key("value"), ParamValue::Integer(1)),
+                ])),
+                ParamValue::List(vec![ParamValue::Boolean(true)]),
+            ]))
         );
+    }
+
+    #[test]
+    fn param_value_try_from_json_rejects_an_object_key_that_is_not_a_param_key() {
+        let json = serde_json::json!({"not a key": 1});
         assert_eq!(
-            ParamValue::try_from(&obj),
-            Err(ParamValueConversionError::Object)
+            ParamValue::try_from(&json),
+            Err(ParamValueConversionError::InvalidObjectKey(
+                "not a key".to_owned()
+            ))
         );
     }
 

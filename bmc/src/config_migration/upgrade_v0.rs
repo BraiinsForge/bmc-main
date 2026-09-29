@@ -360,8 +360,7 @@ fn with_no_bindings(
 }
 
 /// Convert a legacy free-form JSON params blob into the current typed
-/// param map. v0 stored params as arbitrary JSON; the current
-/// [`Widget`] constrains them to a flat map of scalar [`ParamValue`]s.
+/// param map. v0 stored params as arbitrary JSON; only its scalars carry over.
 ///
 /// A non-object blob yields an empty map. Individual entries whose key
 /// is not a valid [`ParamKey`] or whose value is not a scalar the new
@@ -382,6 +381,13 @@ fn params_from_value(value: Value) -> BTreeMap<ParamKey, ParamValue> {
             warn!(key = %key, "legacy param key is not a valid ParamKey; dropping");
             continue;
         };
+        if raw.is_array() || raw.is_object() {
+            warn!(
+                key = %key,
+                "legacy param value is not a scalar the current schema can hold; dropping"
+            );
+            continue;
+        }
         match serde_json::from_value::<ParamValue>(raw) {
             Ok(param_value) => {
                 out.insert(param_key, param_value);
@@ -1080,6 +1086,16 @@ mod tests {
     /// Shorthand for a `ParamValue::String`.
     fn str_param(value: &str) -> ParamValue {
         ParamValue::String(value.to_owned())
+    }
+
+    #[test]
+    fn a_legacy_list_or_object_param_is_dropped_rather_than_carried() {
+        let params = params_from_value(json!({
+            "label": "kept",
+            "symbols": ["NVDA", "AAPL"],
+            "nested": {"a": 1},
+        }));
+        assert_eq!(params, param_map(&[("label", str_param("kept"))]));
     }
 
     // --- clock ---------------------------------------------------------------

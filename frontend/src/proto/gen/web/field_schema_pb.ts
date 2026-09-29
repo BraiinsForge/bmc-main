@@ -14,7 +14,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_field_schema: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChZ3ZWIvZmllbGRfc2NoZW1hLnByb3RvEg9icmFpaW5zLmJtYy53ZWIikQMKF01hbmlmZXN0UGFyYW1EZWZpbml0aW9uEgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJEhgKC2Rlc2NyaXB0aW9uGAMgASgJSAGIAQESEwoLaXNfb3B0aW9uYWwYBCABKAgSNAoMcGFyYW1fc3RyaW5nGAUgASgLMhwuYnJhaWlucy5ibWMud2ViLlBhcmFtU3RyaW5nSAASNAoMcGFyYW1fZG91YmxlGAYgASgLMhwuYnJhaWlucy5ibWMud2ViLlBhcmFtRG91YmxlSAASNgoNcGFyYW1faW50ZWdlchgHIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5QYXJhbUludGVnZXJIABI2Cg1wYXJhbV9ib29sZWFuGAggASgLMh0uYnJhaWlucy5ibWMud2ViLlBhcmFtQm9vbGVhbkgAEjgKDnBhcmFtX3RpbWV6b25lGAkgASgLMh4uYnJhaWlucy5ibWMud2ViLlBhcmFtVGltZXpvbmVIAEIGCgRraW5kQg4KDF9kZXNjcmlwdGlvbiKuAQoLUGFyYW1TdHJpbmcSMgoGZm9ybWF0GAEgASgOMh0uYnJhaWlucy5ibWMud2ViLlN0cmluZ0Zvcm1hdEgAiAEBEjIKC2VudW1fdmFsdWVzGAIgAygLMh0uYnJhaWlucy5ibWMud2ViLlN0cmluZ09wdGlvbhIaCg1kZWZhdWx0X3ZhbHVlGAMgASgJSAGIAQFCCQoHX2Zvcm1hdEIQCg5fZGVmYXVsdF92YWx1ZSIsCgxTdHJpbmdPcHRpb24SDQoFdmFsdWUYASABKAkSDQoFbGFiZWwYAiABKAkivwEKC1BhcmFtRG91YmxlEhAKA21pbhgBIAEoAUgAiAEBEhAKA21heBgCIAEoAUgBiAEBEhEKBHN0ZXAYAyABKAFIAogBARIyCgtlbnVtX3ZhbHVlcxgEIAMoCzIdLmJyYWlpbnMuYm1jLndlYi5Eb3VibGVPcHRpb24SGgoNZGVmYXVsdF92YWx1ZRgFIAEoAUgDiAEBQgYKBF9taW5CBgoEX21heEIHCgVfc3RlcEIQCg5fZGVmYXVsdF92YWx1ZSIsCgxEb3VibGVPcHRpb24SDQoFdmFsdWUYASABKAESDQoFbGFiZWwYAiABKAkiwQEKDFBhcmFtSW50ZWdlchIQCgNtaW4YASABKAVIAIgBARIQCgNtYXgYAiABKAVIAYgBARIRCgRzdGVwGAMgASgFSAKIAQESMwoLZW51bV92YWx1ZXMYBCADKAsyHi5icmFpaW5zLmJtYy53ZWIuSW50ZWdlck9wdGlvbhIaCg1kZWZhdWx0X3ZhbHVlGAUgASgFSAOIAQFCBgoEX21pbkIGCgRfbWF4QgcKBV9zdGVwQhAKDl9kZWZhdWx0X3ZhbHVlIi0KDUludGVnZXJPcHRpb24SDQoFdmFsdWUYASABKAUSDQoFbGFiZWwYAiABKAkiPAoMUGFyYW1Cb29sZWFuEhoKDWRlZmF1bHRfdmFsdWUYASABKAhIAIgBAUIQCg5fZGVmYXVsdF92YWx1ZSI9Cg1QYXJhbVRpbWV6b25lEhoKDWRlZmF1bHRfdmFsdWUYASABKAlIAIgBAUIQCg5fZGVmYXVsdF92YWx1ZSKkAQoKRmllbGRWYWx1ZRIsCgpudWxsX3ZhbHVlGAEgASgLMhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5SAASFwoNYm9vbGVhbl92YWx1ZRgCIAEoCEgAEhcKDWludGVnZXJfdmFsdWUYAyABKAVIABIWCgxkb3VibGVfdmFsdWUYBCABKAFIABIWCgxzdHJpbmdfdmFsdWUYBSABKAlIAEIGCgRraW5kIpMBCgtGaWVsZFZhbHVlcxI4CgZmaWVsZHMYASADKAsyKC5icmFpaW5zLmJtYy53ZWIuRmllbGRWYWx1ZXMuRmllbGRzRW50cnkaSgoLRmllbGRzRW50cnkSCwoDa2V5GAEgASgJEioKBXZhbHVlGAIgASgLMhsuYnJhaWlucy5ibWMud2ViLkZpZWxkVmFsdWU6AjgBKqkBCgxTdHJpbmdGb3JtYXQSHQoZU1RSSU5HX0ZPUk1BVF9VTlNQRUNJRklFRBAAEhYKElNUUklOR19GT1JNQVRfREFURRABEhYKElNUUklOR19GT1JNQVRfVElNRRACEhcKE1NUUklOR19GT1JNQVRfRU1BSUwQAxIVChFTVFJJTkdfRk9STUFUX1VSSRAEEhoKFlNUUklOR19GT1JNQVRfUEFTU1dPUkQQBWIGcHJvdG8z',
+        'ChZ3ZWIvZmllbGRfc2NoZW1hLnByb3RvEg9icmFpaW5zLmJtYy53ZWIikQMKF01hbmlmZXN0UGFyYW1EZWZpbml0aW9uEgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJEhgKC2Rlc2NyaXB0aW9uGAMgASgJSAGIAQESEwoLaXNfb3B0aW9uYWwYBCABKAgSNAoMcGFyYW1fc3RyaW5nGAUgASgLMhwuYnJhaWlucy5ibWMud2ViLlBhcmFtU3RyaW5nSAASNAoMcGFyYW1fZG91YmxlGAYgASgLMhwuYnJhaWlucy5ibWMud2ViLlBhcmFtRG91YmxlSAASNgoNcGFyYW1faW50ZWdlchgHIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5QYXJhbUludGVnZXJIABI2Cg1wYXJhbV9ib29sZWFuGAggASgLMh0uYnJhaWlucy5ibWMud2ViLlBhcmFtQm9vbGVhbkgAEjgKDnBhcmFtX3RpbWV6b25lGAkgASgLMh4uYnJhaWlucy5ibWMud2ViLlBhcmFtVGltZXpvbmVIAEIGCgRraW5kQg4KDF9kZXNjcmlwdGlvbiKuAQoLUGFyYW1TdHJpbmcSMgoGZm9ybWF0GAEgASgOMh0uYnJhaWlucy5ibWMud2ViLlN0cmluZ0Zvcm1hdEgAiAEBEjIKC2VudW1fdmFsdWVzGAIgAygLMh0uYnJhaWlucy5ibWMud2ViLlN0cmluZ09wdGlvbhIaCg1kZWZhdWx0X3ZhbHVlGAMgASgJSAGIAQFCCQoHX2Zvcm1hdEIQCg5fZGVmYXVsdF92YWx1ZSIsCgxTdHJpbmdPcHRpb24SDQoFdmFsdWUYASABKAkSDQoFbGFiZWwYAiABKAkivwEKC1BhcmFtRG91YmxlEhAKA21pbhgBIAEoAUgAiAEBEhAKA21heBgCIAEoAUgBiAEBEhEKBHN0ZXAYAyABKAFIAogBARIyCgtlbnVtX3ZhbHVlcxgEIAMoCzIdLmJyYWlpbnMuYm1jLndlYi5Eb3VibGVPcHRpb24SGgoNZGVmYXVsdF92YWx1ZRgFIAEoAUgDiAEBQgYKBF9taW5CBgoEX21heEIHCgVfc3RlcEIQCg5fZGVmYXVsdF92YWx1ZSIsCgxEb3VibGVPcHRpb24SDQoFdmFsdWUYASABKAESDQoFbGFiZWwYAiABKAkiwQEKDFBhcmFtSW50ZWdlchIQCgNtaW4YASABKAVIAIgBARIQCgNtYXgYAiABKAVIAYgBARIRCgRzdGVwGAMgASgFSAKIAQESMwoLZW51bV92YWx1ZXMYBCADKAsyHi5icmFpaW5zLmJtYy53ZWIuSW50ZWdlck9wdGlvbhIaCg1kZWZhdWx0X3ZhbHVlGAUgASgFSAOIAQFCBgoEX21pbkIGCgRfbWF4QgcKBV9zdGVwQhAKDl9kZWZhdWx0X3ZhbHVlIi0KDUludGVnZXJPcHRpb24SDQoFdmFsdWUYASABKAUSDQoFbGFiZWwYAiABKAkiPAoMUGFyYW1Cb29sZWFuEhoKDWRlZmF1bHRfdmFsdWUYASABKAhIAIgBAUIQCg5fZGVmYXVsdF92YWx1ZSI9Cg1QYXJhbVRpbWV6b25lEhoKDWRlZmF1bHRfdmFsdWUYASABKAlIAIgBAUIQCg5fZGVmYXVsdF92YWx1ZSKRAgoKRmllbGRWYWx1ZRIsCgpudWxsX3ZhbHVlGAEgASgLMhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5SAASFwoNYm9vbGVhbl92YWx1ZRgCIAEoCEgAEhcKDWludGVnZXJfdmFsdWUYAyABKAVIABIWCgxkb3VibGVfdmFsdWUYBCABKAFIABIWCgxzdHJpbmdfdmFsdWUYBSABKAlIABI1CgpsaXN0X3ZhbHVlGAYgASgLMh8uYnJhaWlucy5ibWMud2ViLkZpZWxkVmFsdWVMaXN0SAASNAoMc3RydWN0X3ZhbHVlGAcgASgLMhwuYnJhaWlucy5ibWMud2ViLkZpZWxkVmFsdWVzSABCBgoEa2luZCI8Cg5GaWVsZFZhbHVlTGlzdBIqCgVpdGVtcxgBIAMoCzIbLmJyYWlpbnMuYm1jLndlYi5GaWVsZFZhbHVlIpMBCgtGaWVsZFZhbHVlcxI4CgZmaWVsZHMYASADKAsyKC5icmFpaW5zLmJtYy53ZWIuRmllbGRWYWx1ZXMuRmllbGRzRW50cnkaSgoLRmllbGRzRW50cnkSCwoDa2V5GAEgASgJEioKBXZhbHVlGAIgASgLMhsuYnJhaWlucy5ibWMud2ViLkZpZWxkVmFsdWU6AjgBKqkBCgxTdHJpbmdGb3JtYXQSHQoZU1RSSU5HX0ZPUk1BVF9VTlNQRUNJRklFRBAAEhYKElNUUklOR19GT1JNQVRfREFURRABEhYKElNUUklOR19GT1JNQVRfVElNRRACEhcKE1NUUklOR19GT1JNQVRfRU1BSUwQAxIVChFTVFJJTkdfRk9STUFUX1VSSRAEEhoKFlNUUklOR19GT1JNQVRfUEFTU1dPUkQQBWIGcHJvdG8z',
         [file_google_protobuf_empty],
     );
 
@@ -340,6 +340,20 @@ export type FieldValue = Message<'braiins.bmc.web.FieldValue'> & {
               value: string;
               case: 'stringValue';
           }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.FieldValueList list_value = 6;
+               */
+              value: FieldValueList;
+              case: 'listValue';
+          }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.FieldValues struct_value = 7;
+               */
+              value: FieldValues;
+              case: 'structValue';
+          }
         | { case: undefined; value?: undefined };
 };
 
@@ -348,6 +362,22 @@ export type FieldValue = Message<'braiins.bmc.web.FieldValue'> & {
  * Use `create(FieldValueSchema)` to create a new message.
  */
 export const FieldValueSchema: GenMessage<FieldValue> = /*@__PURE__*/ messageDesc(file_web_field_schema, 9);
+
+/**
+ * @generated from message braiins.bmc.web.FieldValueList
+ */
+export type FieldValueList = Message<'braiins.bmc.web.FieldValueList'> & {
+    /**
+     * @generated from field: repeated braiins.bmc.web.FieldValue items = 1;
+     */
+    items: FieldValue[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.FieldValueList.
+ * Use `create(FieldValueListSchema)` to create a new message.
+ */
+export const FieldValueListSchema: GenMessage<FieldValueList> = /*@__PURE__*/ messageDesc(file_web_field_schema, 10);
 
 /**
  * @generated from message braiins.bmc.web.FieldValues
@@ -363,7 +393,7 @@ export type FieldValues = Message<'braiins.bmc.web.FieldValues'> & {
  * Describes the message braiins.bmc.web.FieldValues.
  * Use `create(FieldValuesSchema)` to create a new message.
  */
-export const FieldValuesSchema: GenMessage<FieldValues> = /*@__PURE__*/ messageDesc(file_web_field_schema, 10);
+export const FieldValuesSchema: GenMessage<FieldValues> = /*@__PURE__*/ messageDesc(file_web_field_schema, 11);
 
 /**
  * @generated from enum braiins.bmc.web.StringFormat

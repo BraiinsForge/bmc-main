@@ -34,4 +34,6 @@ pub mod kind {
     pub const F64: u8 = 2;
     pub const BOOL: u8 = 3;
     pub const NULL: u8 = 4;
+    pub const LIST: u8 = 5;
+    pub const OBJECT: u8 = 6;
 }

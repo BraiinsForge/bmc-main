@@ -114,7 +114,13 @@ message FieldValue {
     int32 integer_value = 3;
     double double_value = 4;
     string string_value = 5;
+    FieldValueList list_value = 6;
+    FieldValues struct_value = 7;
   }
+}
+
+message FieldValueList {
+  repeated FieldValue items = 1;
 }
 
 message FieldValues {
