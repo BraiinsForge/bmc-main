@@ -27,7 +27,10 @@ use std::time::Duration;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_shared_time::time::Timezone;
-use bmc_widget_manifest::{CredentialKey, ParamDefinition, ParamKind};
+use bmc_widget_manifest::{
+    BooleanParam, CredentialKey, DoubleParam, IntegerParam, ParamDefinition, ParamKind,
+    StringParam, TimezoneParam,
+};
 use futures::stream::{BoxStream, StreamExt};
 use indexmap::IndexMap;
 use tokio::sync::{Mutex, RwLock};
@@ -710,11 +713,11 @@ pub(crate) fn param_definition_to_proto(
 ) -> web::ManifestParamDefinition {
     use web::manifest_param_definition::Kind as PK;
     let kind = match &def.kind {
-        ParamKind::String {
+        ParamKind::String(StringParam {
             format,
             enum_values,
             default_value,
-        } => PK::ParamString(web::ParamString {
+        }) => PK::ParamString(web::ParamString {
             format: format.map(string_format_to_proto).map(i32::from),
             enum_values: enum_values
                 .iter()
@@ -725,13 +728,13 @@ pub(crate) fn param_definition_to_proto(
                 .collect(),
             default_value: default_value.clone(),
         }),
-        ParamKind::Double {
+        ParamKind::Double(DoubleParam {
             min,
             max,
             step,
             enum_values,
             default_value,
-        } => PK::ParamDouble(web::ParamDouble {
+        }) => PK::ParamDouble(web::ParamDouble {
             min: *min,
             max: *max,
             step: *step,
@@ -744,13 +747,13 @@ pub(crate) fn param_definition_to_proto(
                 .collect(),
             default_value: *default_value,
         }),
-        ParamKind::Integer {
+        ParamKind::Integer(IntegerParam {
             min,
             max,
             step,
             enum_values,
             default_value,
-        } => PK::ParamInteger(web::ParamInteger {
+        }) => PK::ParamInteger(web::ParamInteger {
             min: *min,
             max: *max,
             step: *step,
@@ -763,12 +766,14 @@ pub(crate) fn param_definition_to_proto(
                 .collect(),
             default_value: *default_value,
         }),
-        ParamKind::Boolean { default_value } => PK::ParamBoolean(web::ParamBoolean {
+        ParamKind::Boolean(BooleanParam { default_value }) => PK::ParamBoolean(web::ParamBoolean {
             default_value: *default_value,
         }),
-        ParamKind::Timezone { default_value } => PK::ParamTimezone(web::ParamTimezone {
-            default_value: default_value.clone(),
-        }),
+        ParamKind::Timezone(TimezoneParam { default_value }) => {
+            PK::ParamTimezone(web::ParamTimezone {
+                default_value: default_value.clone(),
+            })
+        }
     };
     web::ManifestParamDefinition {
         key: key.to_owned(),
@@ -1033,11 +1038,11 @@ pub(crate) fn validate_credential_bindings(
 
 fn type_mismatch_message(kind: &ParamKind) -> &'static str {
     match kind {
-        ParamKind::String { .. } => "Must be text",
-        ParamKind::Integer { .. } => "Must be a whole number",
-        ParamKind::Double { .. } => "Must be a number",
-        ParamKind::Boolean { .. } => "Must be true or false",
-        ParamKind::Timezone { .. } => "Must be a timezone",
+        ParamKind::String(_) => "Must be text",
+        ParamKind::Integer(_) => "Must be a whole number",
+        ParamKind::Double(_) => "Must be a number",
+        ParamKind::Boolean(_) => "Must be true or false",
+        ParamKind::Timezone(_) => "Must be a timezone",
     }
 }
 
@@ -1050,28 +1055,28 @@ fn validate_and_project_param_value(
     use bmc_widget_manifest::ParamValue as PV;
     use web::widget_data_value::Kind as VK;
     match (param_kind, kind) {
-        (ParamKind::String { enum_values, .. }, VK::StringValue(s)) => {
+        (ParamKind::String(StringParam { enum_values, .. }), VK::StringValue(s)) => {
             if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
                 violations.push(path.to_owned(), "Must be one of the listed options");
                 return None;
             }
             Some(PV::String(s.clone()))
         }
-        (ParamKind::Timezone { .. }, VK::StringValue(s)) => {
+        (ParamKind::Timezone(_), VK::StringValue(s)) => {
             if !Timezone::list().iter().any(|tz| tz.iana() == s) {
                 violations.push(path.to_owned(), "Must be a valid timezone");
                 return None;
             }
             Some(PV::String(s.clone()))
         }
-        (ParamKind::Boolean { .. }, VK::BooleanValue(b)) => Some(PV::Boolean(*b)),
+        (ParamKind::Boolean(_), VK::BooleanValue(b)) => Some(PV::Boolean(*b)),
         (
-            ParamKind::Integer {
+            ParamKind::Integer(IntegerParam {
                 min,
                 max,
                 enum_values,
                 ..
-            },
+            }),
             VK::IntegerValue(i),
         ) => {
             let mut ok = true;
@@ -1094,12 +1099,12 @@ fn validate_and_project_param_value(
             if ok { Some(PV::Integer(*i)) } else { None }
         }
         (
-            ParamKind::Double {
+            ParamKind::Double(DoubleParam {
                 min,
                 max,
                 enum_values,
                 ..
-            },
+            }),
             VK::DoubleValue(d),
         ) => {
             if !d.is_finite() {
@@ -1944,11 +1949,11 @@ mod tests {
         use bmc_widget_manifest::ParamValue as PV;
         let manifest = single_param_manifest(
             "name",
-            ParamKind::String {
+            ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("hello".into()),
-            },
+            }),
             false,
         );
         let resolved = validate_widget_params(
@@ -1966,11 +1971,11 @@ mod tests {
         use bmc_widget_manifest::ParamValue as PV;
         let manifest = single_param_manifest(
             "name",
-            ParamKind::String {
+            ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: None,
-            },
+            }),
             true,
         );
         let resolved = validate_widget_params(
@@ -1987,11 +1992,11 @@ mod tests {
         use bmc_widget_manifest::ParamValue as PV;
         let manifest = single_param_manifest(
             "name",
-            ParamKind::String {
+            ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("hello".into()),
-            },
+            }),
             false,
         );
         let mut overrides = web::WidgetDataStruct::default();
@@ -2009,47 +2014,47 @@ mod tests {
         let manifest = manifest_with_params(&[
             (
                 "s",
-                ParamKind::String {
+                ParamKind::String(StringParam {
                     format: None,
                     enum_values: vec![],
                     default_value: Some("x".into()),
-                },
+                }),
                 false,
             ),
             (
                 "i",
-                ParamKind::Integer {
+                ParamKind::Integer(IntegerParam {
                     min: None,
                     max: None,
                     step: None,
                     enum_values: vec![],
                     default_value: Some(7),
-                },
+                }),
                 false,
             ),
             (
                 "d",
-                ParamKind::Double {
+                ParamKind::Double(DoubleParam {
                     min: None,
                     max: None,
                     step: None,
                     enum_values: vec![],
                     default_value: Some(2.5),
-                },
+                }),
                 false,
             ),
             (
                 "b",
-                ParamKind::Boolean {
+                ParamKind::Boolean(BooleanParam {
                     default_value: Some(true),
-                },
+                }),
                 false,
             ),
             (
                 "t",
-                ParamKind::Timezone {
+                ParamKind::Timezone(TimezoneParam {
                     default_value: Some("UTC".into()),
-                },
+                }),
                 false,
             ),
         ]);
@@ -2489,11 +2494,11 @@ mod tests {
     fn validate_widget_params_string_string_value_accepts() {
         let manifest = single_param_manifest(
             "color",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
-            },
+            }),
             false,
         );
         let params = fields_one("color", wdv_string("blue"));
@@ -2504,11 +2509,11 @@ mod tests {
     fn validate_widget_params_string_double_value_rejects() {
         let manifest = single_param_manifest(
             "color",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
-            },
+            }),
             false,
         );
         let params = fields_one("color", wdv_double(1.0));
@@ -2519,13 +2524,13 @@ mod tests {
     fn validate_widget_params_double_for_integer_rejects() {
         let manifest = single_param_manifest(
             "count",
-            bmc_widget_manifest::ParamKind::Integer {
+            bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                 min: None,
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0),
-            },
+            }),
             false,
         );
         let params = fields_one("count", wdv_double(5.0));
@@ -2536,13 +2541,13 @@ mod tests {
     fn validate_widget_params_integer_for_double_rejects() {
         let manifest = single_param_manifest(
             "ratio",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: None,
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
-            },
+            }),
             false,
         );
         let params = fields_one("ratio", wdv_integer(1));
@@ -2553,9 +2558,9 @@ mod tests {
     fn validate_widget_params_unset_kind_rejects() {
         let manifest = single_param_manifest(
             "flag",
-            bmc_widget_manifest::ParamKind::Boolean {
+            bmc_widget_manifest::ParamKind::Boolean(BooleanParam {
                 default_value: Some(false),
-            },
+            }),
             false,
         );
         let params = fields_one("flag", wdv_unset_kind());
@@ -2566,11 +2571,11 @@ mod tests {
     fn validate_widget_params_null_value_on_required_rejects() {
         let manifest = single_param_manifest(
             "name",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("x".into()),
-            },
+            }),
             false,
         );
         let params = fields_one("name", wdv_null());
@@ -2581,11 +2586,11 @@ mod tests {
     fn validate_widget_params_null_value_on_optional_accepts() {
         let manifest = single_param_manifest(
             "label",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: None,
-            },
+            }),
             true,
         );
         let params = fields_one("label", wdv_null());
@@ -2596,13 +2601,13 @@ mod tests {
     fn validate_widget_params_double_nan_rejects() {
         let manifest = single_param_manifest(
             "val",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: None,
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(1.0),
-            },
+            }),
             false,
         );
         let params = fields_one("val", wdv_double(f64::NAN));
@@ -2613,13 +2618,13 @@ mod tests {
     fn validate_widget_params_double_inf_rejects() {
         let manifest = single_param_manifest(
             "val",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: None,
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(1.0),
-            },
+            }),
             false,
         );
         let params = fields_one("val", wdv_double(f64::INFINITY));
@@ -2630,13 +2635,13 @@ mod tests {
     fn validate_widget_params_integer_below_min_rejects() {
         let manifest = single_param_manifest(
             "n",
-            bmc_widget_manifest::ParamKind::Integer {
+            bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                 min: Some(5),
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
-            },
+            }),
             false,
         );
         let params = fields_one("n", wdv_integer(4));
@@ -2647,13 +2652,13 @@ mod tests {
     fn validate_widget_params_integer_above_max_rejects() {
         let manifest = single_param_manifest(
             "n",
-            bmc_widget_manifest::ParamKind::Integer {
+            bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                 min: None,
                 max: Some(10),
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
-            },
+            }),
             false,
         );
         let params = fields_one("n", wdv_integer(11));
@@ -2664,13 +2669,13 @@ mod tests {
     fn validate_widget_params_double_below_min_rejects() {
         let manifest = single_param_manifest(
             "ratio",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
-            },
+            }),
             false,
         );
         let params = fields_one("ratio", wdv_double(-0.1));
@@ -2681,7 +2686,7 @@ mod tests {
     fn validate_widget_params_enum_value_not_in_options_rejects() {
         let manifest = single_param_manifest(
             "style",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![
                     bmc_widget_manifest::StringOption {
@@ -2694,7 +2699,7 @@ mod tests {
                     },
                 ],
                 default_value: Some("dark".into()),
-            },
+            }),
             false,
         );
         let params = fields_one("style", wdv_string("solarized"));
@@ -2705,7 +2710,7 @@ mod tests {
     fn validate_widget_params_enum_value_in_options_accepts() {
         let manifest = single_param_manifest(
             "style",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![
                     bmc_widget_manifest::StringOption {
@@ -2718,7 +2723,7 @@ mod tests {
                     },
                 ],
                 default_value: Some("dark".into()),
-            },
+            }),
             false,
         );
         let params = fields_one("style", wdv_string("light"));
@@ -2729,9 +2734,9 @@ mod tests {
     fn validate_widget_params_unknown_key_rejects() {
         let manifest = single_param_manifest(
             "known",
-            bmc_widget_manifest::ParamKind::Boolean {
+            bmc_widget_manifest::ParamKind::Boolean(BooleanParam {
                 default_value: Some(true),
-            },
+            }),
             false,
         );
         let params = fields_one("unknown", wdv_boolean(true));
@@ -2742,9 +2747,9 @@ mod tests {
     fn validate_widget_params_update_missing_key_rejects() {
         let manifest = single_param_manifest(
             "flag",
-            bmc_widget_manifest::ParamKind::Boolean {
+            bmc_widget_manifest::ParamKind::Boolean(BooleanParam {
                 default_value: Some(false),
-            },
+            }),
             false,
         );
         let params = web::WidgetDataStruct {
@@ -2757,9 +2762,9 @@ mod tests {
     fn validate_widget_params_add_missing_key_accepts() {
         let manifest = single_param_manifest(
             "flag",
-            bmc_widget_manifest::ParamKind::Boolean {
+            bmc_widget_manifest::ParamKind::Boolean(BooleanParam {
                 default_value: Some(false),
-            },
+            }),
             false,
         );
         let params = web::WidgetDataStruct {
@@ -2773,25 +2778,25 @@ mod tests {
         let manifest = manifest_with_params(&[
             (
                 "n",
-                bmc_widget_manifest::ParamKind::Integer {
+                bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                     min: Some(0),
                     max: Some(10),
                     step: None,
                     enum_values: vec![],
                     default_value: Some(5),
-                },
+                }),
                 false,
             ),
             (
                 "color",
-                bmc_widget_manifest::ParamKind::String {
+                bmc_widget_manifest::ParamKind::String(StringParam {
                     format: None,
                     enum_values: vec![bmc_widget_manifest::StringOption {
                         value: "red".into(),
                         label: "Red".into(),
                     }],
                     default_value: Some("red".into()),
-                },
+                }),
                 false,
             ),
         ]);
@@ -2838,7 +2843,7 @@ mod tests {
             name: "Style".into(),
             description: None,
             is_optional: false,
-            kind: ParamKind::String {
+            kind: ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![
                     StringOption {
@@ -2851,7 +2856,7 @@ mod tests {
                     },
                 ],
                 default_value: Some("a".into()),
-            },
+            }),
         };
         let proto = param_definition_to_proto("style", &p);
         assert_eq!(proto.key, "style");
@@ -2872,13 +2877,13 @@ mod tests {
             name: "Brightness".into(),
             description: Some("Brightness level".into()),
             is_optional: false,
-            kind: ParamKind::Double {
+            kind: ParamKind::Double(DoubleParam {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: Some(0.1),
                 enum_values: vec![],
                 default_value: Some(0.5),
-            },
+            }),
         };
         let proto = param_definition_to_proto("brightness", &p);
         assert_eq!(proto.key, "brightness");
@@ -2899,13 +2904,13 @@ mod tests {
             name: "Count".into(),
             description: None,
             is_optional: false,
-            kind: ParamKind::Integer {
+            kind: ParamKind::Integer(IntegerParam {
                 min: Some(0),
                 max: Some(10),
                 step: Some(1),
                 enum_values: vec![],
                 default_value: Some(5),
-            },
+            }),
         };
         let proto = param_definition_to_proto("count", &p);
         assert_eq!(proto.key, "count");
@@ -2926,9 +2931,9 @@ mod tests {
             name: "Show seconds".into(),
             description: None,
             is_optional: false,
-            kind: ParamKind::Boolean {
+            kind: ParamKind::Boolean(BooleanParam {
                 default_value: Some(true),
-            },
+            }),
         };
         let proto = param_definition_to_proto("show-seconds", &p);
         assert_eq!(proto.key, "show-seconds");
@@ -2946,9 +2951,9 @@ mod tests {
             name: "Timezone".into(),
             description: None,
             is_optional: false,
-            kind: ParamKind::Timezone {
+            kind: ParamKind::Timezone(TimezoneParam {
                 default_value: Some("Europe/Prague".into()),
-            },
+            }),
         };
         let proto = param_definition_to_proto("tz", &p);
         assert_eq!(proto.key, "tz");
@@ -3497,11 +3502,11 @@ mod tests {
     fn validate_widget_params_message_string_type_mismatch() {
         let manifest = single_param_manifest(
             "color",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
-            },
+            }),
             false,
         );
         let params = fields_one("color", wdv_double(1.0));
@@ -3512,13 +3517,13 @@ mod tests {
     fn validate_widget_params_message_integer_type_mismatch() {
         let manifest = single_param_manifest(
             "count",
-            bmc_widget_manifest::ParamKind::Integer {
+            bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                 min: None,
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0),
-            },
+            }),
             false,
         );
         let params = fields_one("count", wdv_string("abc"));
@@ -3532,13 +3537,13 @@ mod tests {
     fn validate_widget_params_message_double_type_mismatch() {
         let manifest = single_param_manifest(
             "ratio",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: None,
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
-            },
+            }),
             false,
         );
         let params = fields_one("ratio", wdv_string("abc"));
@@ -3549,9 +3554,9 @@ mod tests {
     fn validate_widget_params_message_boolean_type_mismatch() {
         let manifest = single_param_manifest(
             "flag",
-            bmc_widget_manifest::ParamKind::Boolean {
+            bmc_widget_manifest::ParamKind::Boolean(BooleanParam {
                 default_value: Some(false),
-            },
+            }),
             false,
         );
         let params = fields_one("flag", wdv_string("yes"));
@@ -3565,9 +3570,9 @@ mod tests {
     fn validate_widget_params_message_timezone_type_mismatch() {
         let manifest = single_param_manifest(
             "tz",
-            bmc_widget_manifest::ParamKind::Timezone {
+            bmc_widget_manifest::ParamKind::Timezone(TimezoneParam {
                 default_value: None,
-            },
+            }),
             true,
         );
         let params = fields_one("tz", wdv_integer(0));
@@ -3581,13 +3586,13 @@ mod tests {
     fn validate_widget_params_message_integer_below_min() {
         let manifest = single_param_manifest(
             "n",
-            bmc_widget_manifest::ParamKind::Integer {
+            bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                 min: Some(5),
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
-            },
+            }),
             false,
         );
         let params = fields_one("n", wdv_integer(4));
@@ -3601,13 +3606,13 @@ mod tests {
     fn validate_widget_params_message_integer_above_max() {
         let manifest = single_param_manifest(
             "n",
-            bmc_widget_manifest::ParamKind::Integer {
+            bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                 min: None,
                 max: Some(10),
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
-            },
+            }),
             false,
         );
         let params = fields_one("n", wdv_integer(11));
@@ -3621,13 +3626,13 @@ mod tests {
     fn validate_widget_params_message_double_not_finite() {
         let manifest = single_param_manifest(
             "v",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: None,
                 max: None,
                 step: None,
                 enum_values: vec![],
                 default_value: Some(1.0),
-            },
+            }),
             false,
         );
         let params = fields_one("v", wdv_double(f64::NAN));
@@ -3641,13 +3646,13 @@ mod tests {
     fn validate_widget_params_message_double_below_min() {
         let manifest = single_param_manifest(
             "ratio",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
-            },
+            }),
             false,
         );
         let params = fields_one("ratio", wdv_double(-0.1));
@@ -3661,13 +3666,13 @@ mod tests {
     fn validate_widget_params_message_double_above_max() {
         let manifest = single_param_manifest(
             "ratio",
-            bmc_widget_manifest::ParamKind::Double {
+            bmc_widget_manifest::ParamKind::Double(DoubleParam {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
-            },
+            }),
             false,
         );
         let params = fields_one("ratio", wdv_double(1.5));
@@ -3681,14 +3686,14 @@ mod tests {
     fn validate_widget_params_message_enum_string_mismatch() {
         let manifest = single_param_manifest(
             "style",
-            bmc_widget_manifest::ParamKind::String {
+            bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![bmc_widget_manifest::StringOption {
                     value: "dark".into(),
                     label: "Dark".into(),
                 }],
                 default_value: Some("dark".into()),
-            },
+            }),
             false,
         );
         let params = fields_one("style", wdv_string("solarized"));
@@ -3702,7 +3707,7 @@ mod tests {
     fn validate_widget_params_message_enum_integer_mismatch() {
         let manifest = single_param_manifest(
             "level",
-            bmc_widget_manifest::ParamKind::Integer {
+            bmc_widget_manifest::ParamKind::Integer(IntegerParam {
                 min: None,
                 max: None,
                 step: None,
@@ -3711,7 +3716,7 @@ mod tests {
                     label: "One".into(),
                 }],
                 default_value: Some(1),
-            },
+            }),
             false,
         );
         let params = fields_one("level", wdv_integer(99));

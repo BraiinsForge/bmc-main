@@ -205,18 +205,17 @@ impl ParamValue {
     #[must_use]
     pub fn from_param_kind_default(kind: &ParamKind) -> Self {
         match kind {
-            ParamKind::String { default_value, .. } | ParamKind::Timezone { default_value } => {
-                default_value
-                    .clone()
-                    .map_or(ParamValue::Null, ParamValue::String)
-            }
-            ParamKind::Double { default_value, .. } => {
+            ParamKind::String(StringParam { default_value, .. })
+            | ParamKind::Timezone(TimezoneParam { default_value }) => default_value
+                .clone()
+                .map_or(ParamValue::Null, ParamValue::String),
+            ParamKind::Double(DoubleParam { default_value, .. }) => {
                 default_value.map_or(ParamValue::Null, ParamValue::Double)
             }
-            ParamKind::Integer { default_value, .. } => {
+            ParamKind::Integer(IntegerParam { default_value, .. }) => {
                 default_value.map_or(ParamValue::Null, ParamValue::Integer)
             }
-            ParamKind::Boolean { default_value } => {
+            ParamKind::Boolean(BooleanParam { default_value }) => {
                 default_value.map_or(ParamValue::Null, ParamValue::Boolean)
             }
         }
@@ -376,78 +375,103 @@ pub struct ParamDefinition {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ParamKind {
     /// A UTF-8 string.
-    String {
-        /// Optional structural hint to the operator UI.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        format: Option<StringFormat>,
-        /// Optional closed set of allowed values.
-        /// When non-empty, the `default_value` must be one of these.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        enum_values: Vec<StringOption>,
-        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-        /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
-        default_value: Option<String>,
-    },
+    String(StringParam),
     /// A finite f64 — JSON Schema "number".
-    Double {
-        /// Inclusive lower bound.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        min: Option<f64>,
-        /// Inclusive upper bound.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        max: Option<f64>,
-        /// UI step granularity. Strictly positive.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(extend("exclusiveMinimum" = 0.0))]
-        step: Option<f64>,
-        /// Optional closed set of allowed values.
-        /// When non-empty, the `default_value` must be one of these.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        enum_values: Vec<DoubleOption>,
-        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-        /// Required when `optional == false`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        default_value: Option<f64>,
-    },
+    Double(DoubleParam),
     /// A 32-bit signed integer — JSON Schema "integer" with i32 range.
-    Integer {
-        /// Inclusive lower bound.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        min: Option<i32>,
-        /// Inclusive upper bound.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        max: Option<i32>,
-        /// UI step granularity. Strictly positive.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(extend("exclusiveMinimum" = 0))]
-        step: Option<i32>,
-        /// Optional closed set of allowed values.
-        /// When non-empty, the `default_value` must be one of these.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        enum_values: Vec<IntegerOption>,
-        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-        /// Required when `optional == false`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        default_value: Option<i32>,
-    },
+    Integer(IntegerParam),
     /// A boolean.
-    Boolean {
-        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-        /// Required when `optional == false`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        default_value: Option<bool>,
-    },
+    Boolean(BooleanParam),
     /// An IANA timezone identifier. Wire form is a string;
     /// the dedicated variant lets the operator UI render a zone picker instead of a free-form text input.
-    Timezone {
-        /// Initial zone seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-        /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
-        default_value: Option<String>,
-    },
+    Timezone(TimezoneParam),
+}
+
+/// The options of a [`ParamKind::String`] field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct StringParam {
+    /// Optional structural hint to the operator UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<StringFormat>,
+    /// Optional closed set of allowed values.
+    /// When non-empty, the `default_value` must be one of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enum_values: Vec<StringOption>,
+    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+    /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
+    pub default_value: Option<String>,
+}
+
+/// The options of a [`ParamKind::Double`] field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct DoubleParam {
+    /// Inclusive lower bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    /// Inclusive upper bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// UI step granularity. Strictly positive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("exclusiveMinimum" = 0.0))]
+    pub step: Option<f64>,
+    /// Optional closed set of allowed values.
+    /// When non-empty, the `default_value` must be one of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enum_values: Vec<DoubleOption>,
+    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+    /// Required when `optional == false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<f64>,
+}
+
+/// The options of a [`ParamKind::Integer`] field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct IntegerParam {
+    /// Inclusive lower bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<i32>,
+    /// Inclusive upper bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<i32>,
+    /// UI step granularity. Strictly positive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("exclusiveMinimum" = 0))]
+    pub step: Option<i32>,
+    /// Optional closed set of allowed values.
+    /// When non-empty, the `default_value` must be one of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enum_values: Vec<IntegerOption>,
+    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+    /// Required when `optional == false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<i32>,
+}
+
+/// The options of a [`ParamKind::Boolean`] field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct BooleanParam {
+    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+    /// Required when `optional == false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<bool>,
+}
+
+/// The options of a [`ParamKind::Timezone`] field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct TimezoneParam {
+    /// Initial zone seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+    /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
+    pub default_value: Option<String>,
 }
 
 impl ParamDefinition {
@@ -467,83 +491,77 @@ impl ParamDefinition {
 impl ParamKind {
     fn has_default_value(&self) -> bool {
         match self {
-            ParamKind::String { default_value, .. } | ParamKind::Timezone { default_value } => {
-                default_value.is_some()
-            }
-            ParamKind::Double { default_value, .. } => default_value.is_some(),
-            ParamKind::Integer { default_value, .. } => default_value.is_some(),
-            ParamKind::Boolean { default_value } => default_value.is_some(),
+            ParamKind::String(StringParam { default_value, .. })
+            | ParamKind::Timezone(TimezoneParam { default_value }) => default_value.is_some(),
+            ParamKind::Double(DoubleParam { default_value, .. }) => default_value.is_some(),
+            ParamKind::Integer(IntegerParam { default_value, .. }) => default_value.is_some(),
+            ParamKind::Boolean(BooleanParam { default_value }) => default_value.is_some(),
         }
     }
 
     fn validate(&self, name: &str) -> Result<(), FieldSchemaError> {
-        let invalid = |reason: String| FieldSchemaError::InvalidParam {
+        match self {
+            ParamKind::String(p) => p.validate(),
+            ParamKind::Double(p) => p.validate(),
+            ParamKind::Integer(p) => p.validate(),
+            ParamKind::Boolean(_) => Ok(()),
+            ParamKind::Timezone(p) => p.validate(),
+        }
+        .map_err(|reason| FieldSchemaError::InvalidParam {
             name: name.to_owned(),
             reason,
-        };
+        })
+    }
+}
 
-        match self {
-            ParamKind::String {
-                enum_values,
-                default_value,
-                ..
-            } => {
-                check_string_options(enum_values).map_err(&invalid)?;
-                if let Some(d) = default_value
-                    && d.len() > MAX_PARAM_STRING_LENGTH
-                {
-                    return Err(invalid(format!(
-                        "default_value exceeds max length of {MAX_PARAM_STRING_LENGTH} bytes (got {})",
-                        d.len()
-                    )));
-                }
-                if !enum_values.is_empty()
-                    && let Some(d) = default_value
-                    && !enum_values.iter().any(|o| &o.value == d)
-                {
-                    return Err(invalid(format!("default_value {d:?} not in enum_values")));
-                }
-            }
-            ParamKind::Double {
-                min,
-                max,
-                step,
-                enum_values,
-                default_value,
-            } => {
-                check_finite(*default_value, "default_value").map_err(&invalid)?;
-                check_finite(*min, "min").map_err(&invalid)?;
-                check_finite(*max, "max").map_err(&invalid)?;
-                check_finite(*step, "step").map_err(&invalid)?;
-                for o in enum_values {
-                    check_finite(Some(o.value), "enum_values[].value").map_err(&invalid)?;
-                }
-                check_double_range(*min, *max, *step, *default_value).map_err(&invalid)?;
-                check_double_options(enum_values, *default_value).map_err(&invalid)?;
-            }
-            ParamKind::Integer {
-                min,
-                max,
-                step,
-                enum_values,
-                default_value,
-            } => {
-                check_int_range(*min, *max, *step, *default_value).map_err(&invalid)?;
-                check_int_options(enum_values, *default_value).map_err(&invalid)?;
-            }
-            ParamKind::Boolean { .. } => {}
-            ParamKind::Timezone { default_value } => {
-                if let Some(d) = default_value
-                    && d.len() > MAX_PARAM_STRING_LENGTH
-                {
-                    return Err(invalid(format!(
-                        "default_value exceeds max length of {MAX_PARAM_STRING_LENGTH} bytes (got {})",
-                        d.len()
-                    )));
-                }
-            }
+impl StringParam {
+    fn validate(&self) -> Result<(), String> {
+        check_string_options(&self.enum_values)?;
+        check_string_default_length(self.default_value.as_deref())?;
+        if !self.enum_values.is_empty()
+            && let Some(d) = &self.default_value
+            && !self.enum_values.iter().any(|o| &o.value == d)
+        {
+            return Err(format!("default_value {d:?} not in enum_values"));
         }
         Ok(())
+    }
+}
+
+impl DoubleParam {
+    fn validate(&self) -> Result<(), String> {
+        check_finite(self.default_value, "default_value")?;
+        check_finite(self.min, "min")?;
+        check_finite(self.max, "max")?;
+        check_finite(self.step, "step")?;
+        for o in &self.enum_values {
+            check_finite(Some(o.value), "enum_values[].value")?;
+        }
+        check_double_range(self.min, self.max, self.step, self.default_value)?;
+        check_double_options(&self.enum_values, self.default_value)
+    }
+}
+
+impl IntegerParam {
+    fn validate(&self) -> Result<(), String> {
+        check_int_range(self.min, self.max, self.step, self.default_value)?;
+        check_int_options(&self.enum_values, self.default_value)
+    }
+}
+
+impl TimezoneParam {
+    fn validate(&self) -> Result<(), String> {
+        check_string_default_length(self.default_value.as_deref())
+    }
+}
+
+fn check_string_default_length(default_value: Option<&str>) -> Result<(), String> {
+    match default_value {
+        Some(d) if d.len() > MAX_PARAM_STRING_LENGTH => Err(format!(
+            "default_value exceeds max length of {MAX_PARAM_STRING_LENGTH} bytes (got {})",
+            d.len()
+        )),
+        _ => Ok(()),
     }
 }
 

@@ -236,12 +236,12 @@ fn paint_param_row(
                     // has something to edit.
                     if matches!(value, ParamValue::Null) {
                         *value = match &def.kind {
-                            ParamKind::String { .. } | ParamKind::Timezone { .. } => {
+                            ParamKind::String(_) | ParamKind::Timezone(_) => {
                                 ParamValue::String(String::new())
                             }
-                            ParamKind::Integer { .. } => ParamValue::Integer(0),
-                            ParamKind::Double { .. } => ParamValue::Double(0.0),
-                            ParamKind::Boolean { .. } => ParamValue::Boolean(false),
+                            ParamKind::Integer(_) => ParamValue::Integer(0),
+                            ParamKind::Double(_) => ParamValue::Double(0.0),
+                            ParamKind::Boolean(_) => ParamValue::Boolean(false),
                         };
                     }
                 } else {
@@ -302,7 +302,7 @@ fn paint_typed_input(
     value: &mut bmc_widget_manifest::ParamValue,
     label_resp: &egui::Response,
 ) -> bool {
-    use bmc_widget_manifest::{ParamKind, ParamValue};
+    use bmc_widget_manifest::{DoubleParam, IntegerParam, ParamKind, ParamValue, StringParam};
 
     let row_h = ui.spacing().interact_size.y;
     let cell_w = ui.available_width();
@@ -313,7 +313,7 @@ fn paint_typed_input(
         }
     };
     match (kind, value) {
-        (ParamKind::String { enum_values, .. }, ParamValue::String(s))
+        (ParamKind::String(StringParam { enum_values, .. }), ParamValue::String(s))
             if !enum_values.is_empty() =>
         {
             // Snapshot the collapsed-state label before `populate`
@@ -337,12 +337,12 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (ParamKind::String { .. } | ParamKind::Timezone { .. }, ParamValue::String(s)) => {
+        (ParamKind::String(_) | ParamKind::Timezone(_), ParamValue::String(s)) => {
             let resp = ui.add_sized(cell, egui::TextEdit::singleline(s));
             focus_on_label_click(&resp);
             resp.changed()
         }
-        (ParamKind::Integer { enum_values, .. }, ParamValue::Integer(n))
+        (ParamKind::Integer(IntegerParam { enum_values, .. }), ParamValue::Integer(n))
             if !enum_values.is_empty() =>
         {
             // Combo collapsed-state label snapshot before `populate`
@@ -366,7 +366,7 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (ParamKind::Integer { min, max, step, .. }, ParamValue::Integer(n)) => {
+        (ParamKind::Integer(IntegerParam { min, max, step, .. }), ParamValue::Integer(n)) => {
             // Bounded ranges use a `Slider` with `trailing_fill` so the cell shows
             // the value as a progress fill against `min..=max` (the GIMP-style look).
             // Unbounded integers fall back to a `DragValue` since `Slider` requires a finite range.
@@ -392,7 +392,7 @@ fn paint_typed_input(
                 resp.changed()
             }
         }
-        (ParamKind::Double { enum_values, .. }, ParamValue::Double(f))
+        (ParamKind::Double(DoubleParam { enum_values, .. }), ParamValue::Double(f))
             if !enum_values.is_empty() =>
         {
             // Combo collapsed-state label snapshot before `populate`
@@ -423,7 +423,7 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (ParamKind::Double { min, max, step, .. }, ParamValue::Double(f)) => {
+        (ParamKind::Double(DoubleParam { min, max, step, .. }), ParamValue::Double(f)) => {
             // Same dispatch as Integer: bounded ranges get
             // the filled-slider treatment, unbounded fall back to DragValue.
             if let (Some(lo), Some(hi)) = (min, max) {
@@ -451,7 +451,7 @@ fn paint_typed_input(
         // Checkbox stays at its natural icon size — stretching it
         // would make the entire row a giant click target with
         // the box ghosted in the corner.
-        (ParamKind::Boolean { .. }, ParamValue::Boolean(b)) => {
+        (ParamKind::Boolean(_), ParamValue::Boolean(b)) => {
             let cb_changed = ui.checkbox(b, "").changed();
             let label_clicked = label_resp.clicked();
             if label_clicked {

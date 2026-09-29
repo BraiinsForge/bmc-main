@@ -46,9 +46,10 @@ use std::str::FromStr;
 
 pub use bmc_field_schema::credential;
 pub use bmc_field_schema::{
-    DoubleOption, FieldSchemaError, IntegerOption, MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH,
-    ParamDefinition, ParamKey, ParamKind, ParamValue, ParamValueConversionError, StringFormat,
-    StringOption, f64_canonical_bits,
+    BooleanParam, DoubleOption, DoubleParam, FieldSchemaError, IntegerOption, IntegerParam,
+    MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH, ParamDefinition, ParamKey, ParamKind,
+    ParamValue, ParamValueConversionError, StringFormat, StringOption, StringParam, TimezoneParam,
+    f64_canonical_bits,
 };
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -968,13 +969,13 @@ mod tests {
             .expect("BUG: should have style param");
         assert_eq!(style_param.name, "Clock Style");
         match &style_param.kind {
-            ParamKind::String { default_value, .. } => {
+            ParamKind::String(StringParam { default_value, .. }) => {
                 assert_eq!(default_value.as_deref(), Some("digital"));
             }
-            ParamKind::Double { .. }
-            | ParamKind::Integer { .. }
-            | ParamKind::Boolean { .. }
-            | ParamKind::Timezone { .. } => panic!("BUG: expected String variant"),
+            ParamKind::Double(_)
+            | ParamKind::Integer(_)
+            | ParamKind::Boolean(_)
+            | ParamKind::Timezone(_) => panic!("BUG: expected String variant"),
         }
     }
 
@@ -1069,20 +1070,20 @@ mod tests {
             .get("brightness")
             .expect("BUG: should have brightness");
         match &param.kind {
-            ParamKind::Integer {
+            ParamKind::Integer(IntegerParam {
                 min,
                 max,
                 default_value,
                 ..
-            } => {
+            }) => {
                 assert_eq!(*min, Some(0));
                 assert_eq!(*max, Some(100));
                 assert_eq!(*default_value, Some(50));
             }
-            ParamKind::String { .. }
-            | ParamKind::Double { .. }
-            | ParamKind::Boolean { .. }
-            | ParamKind::Timezone { .. } => panic!("BUG: expected Integer variant"),
+            ParamKind::String(_)
+            | ParamKind::Double(_)
+            | ParamKind::Boolean(_)
+            | ParamKind::Timezone(_) => panic!("BUG: expected Integer variant"),
         }
     }
 
@@ -1190,7 +1191,7 @@ mod tests {
         let mut p: ParamDefinition =
             serde_json::from_str(r#"{"name":"X","type":"double","default_value":1.0}"#)
                 .expect("BUG: parse");
-        if let ParamKind::Double { default_value, .. } = &mut p.kind {
+        if let ParamKind::Double(DoubleParam { default_value, .. }) = &mut p.kind {
             *default_value = Some(f64::NAN);
         }
         assert!(p.validate("x").is_err());
@@ -1201,7 +1202,7 @@ mod tests {
         let mut p: ParamDefinition =
             serde_json::from_str(r#"{"name":"X","type":"double","default_value":1.0}"#)
                 .expect("BUG: parse");
-        if let ParamKind::Double { max, .. } = &mut p.kind {
+        if let ParamKind::Double(DoubleParam { max, .. }) = &mut p.kind {
             *max = Some(f64::INFINITY);
         }
         assert!(p.validate("x").is_err());
@@ -1403,23 +1404,23 @@ mod tests {
 
     #[test]
     fn param_value_from_param_kind_default_picks_default_or_null() {
-        let with_default = ParamKind::Integer {
+        let with_default = ParamKind::Integer(IntegerParam {
             min: None,
             max: None,
             step: None,
             enum_values: vec![],
             default_value: Some(7),
-        };
+        });
         assert_eq!(
             ParamValue::from_param_kind_default(&with_default),
             ParamValue::Integer(7)
         );
 
-        let without_default = ParamKind::String {
+        let without_default = ParamKind::String(StringParam {
             format: None,
             enum_values: vec![],
             default_value: None,
-        };
+        });
         assert_eq!(
             ParamValue::from_param_kind_default(&without_default),
             ParamValue::Null

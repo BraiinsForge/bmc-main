@@ -1928,7 +1928,11 @@ mod tests {
             .params
             .get("driver")
             .expect("BUG: the manifest must declare a driver param");
-        let bmc_widget_manifest::ParamKind::String { enum_values, .. } = &driver.kind else {
+        let bmc_widget_manifest::ParamKind::String(bmc_widget_manifest::StringParam {
+            enum_values,
+            ..
+        }) = &driver.kind
+        else {
             panic!("BUG: the driver param must be a string enum");
         };
         let offered: Vec<&str> = enum_values.iter().map(|o| o.value.as_str()).collect();
@@ -1956,7 +1960,11 @@ mod tests {
             .params
             .get("view")
             .expect("BUG: the manifest must declare a view param");
-        let bmc_widget_manifest::ParamKind::String { enum_values, .. } = &view.kind else {
+        let bmc_widget_manifest::ParamKind::String(bmc_widget_manifest::StringParam {
+            enum_values,
+            ..
+        }) = &view.kind
+        else {
             panic!("BUG: the view param must be a string enum");
         };
         let views: Vec<&str> = enum_values.iter().map(|o| o.value.as_str()).collect();

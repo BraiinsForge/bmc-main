@@ -30,7 +30,7 @@ use std::sync::LazyLock;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{ParamDefinition, ParamKey, ParamKind, StringFormat};
+use crate::{ParamDefinition, ParamKey, ParamKind, StringFormat, StringParam};
 
 /// A kind of account a widget can bind, e.g. a Braiins Pool API token.
 /// `fields` are what the user configures; the variables a widget may embed
@@ -391,11 +391,11 @@ fn string_field(name: &str, description: &str, format: Option<StringFormat>) -> 
         name: name.to_owned(),
         description: Some(description.to_owned()),
         is_optional: false,
-        kind: ParamKind::String {
+        kind: ParamKind::String(StringParam {
             format,
             enum_values: Vec::new(),
             default_value: None,
-        },
+        }),
     }
 }
 
@@ -713,10 +713,10 @@ mod tests {
         let (_, token) = t.fields.first().expect("BUG: braiins-pool has a field");
         assert!(matches!(
             &token.kind,
-            ParamKind::String {
+            ParamKind::String(StringParam {
                 format: Some(StringFormat::Password),
                 ..
-            }
+            })
         ));
     }
 
@@ -835,7 +835,10 @@ mod tests {
         let t = find("local-file-token");
         assert!(t.egress.is_none());
         let (_, path) = t.fields.first().expect("BUG: local-file-token has a field");
-        assert!(matches!(&path.kind, ParamKind::String { format: None, .. }));
+        assert!(matches!(
+            &path.kind,
+            ParamKind::String(StringParam { format: None, .. })
+        ));
     }
 
     #[test]

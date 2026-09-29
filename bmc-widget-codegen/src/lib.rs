@@ -82,7 +82,8 @@
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use bmc_widget_manifest::{
-    CredentialKey, CredentialSlot, Manifest, ParamDefinition, ParamKey, ParamKind, credential,
+    CredentialKey, CredentialSlot, DoubleParam, IntegerParam, Manifest, ParamDefinition, ParamKey,
+    ParamKind, StringParam, credential,
 };
 use heck::{AsShoutySnakeCase, AsSnakeCase, AsUpperCamelCase};
 use indoc::formatdoc;
@@ -367,7 +368,7 @@ impl Resolved {
     fn new(key: &str, def: &ParamDefinition) -> Result<Self> {
         let field_ident = field_ident(key);
         let (field_ty, enum_decl) = match &def.kind {
-            ParamKind::String { enum_values, .. } if !enum_values.is_empty() => {
+            ParamKind::String(StringParam { enum_values, .. }) if !enum_values.is_empty() => {
                 let name = enum_name(key);
                 let variants = enum_values
                     .iter()
@@ -383,7 +384,7 @@ impl Resolved {
                 let ty = quote! { #name };
                 (ty, Some(EnumDecl::Str { name, variants }))
             }
-            ParamKind::Integer { enum_values, .. } if !enum_values.is_empty() => {
+            ParamKind::Integer(IntegerParam { enum_values, .. }) if !enum_values.is_empty() => {
                 let name = enum_name(key);
                 let variants = enum_values
                     .iter()
@@ -399,7 +400,7 @@ impl Resolved {
                 let ty = quote! { #name };
                 (ty, Some(EnumDecl::I32 { name, variants }))
             }
-            ParamKind::Double { enum_values, .. } if !enum_values.is_empty() => {
+            ParamKind::Double(DoubleParam { enum_values, .. }) if !enum_values.is_empty() => {
                 let name = enum_name(key);
                 let variants = enum_values
                     .iter()
@@ -415,10 +416,10 @@ impl Resolved {
                 let ty = quote! { #name };
                 (ty, Some(EnumDecl::F64 { name, variants }))
             }
-            ParamKind::String { .. } | ParamKind::Timezone { .. } => (quote! { String }, None),
-            ParamKind::Integer { .. } => (quote! { i32 }, None),
-            ParamKind::Double { .. } => (quote! { f64 }, None),
-            ParamKind::Boolean { .. } => (quote! { bool }, None),
+            ParamKind::String(_) | ParamKind::Timezone(_) => (quote! { String }, None),
+            ParamKind::Integer(_) => (quote! { i32 }, None),
+            ParamKind::Double(_) => (quote! { f64 }, None),
+            ParamKind::Boolean(_) => (quote! { bool }, None),
         };
 
         let final_ty = if def.is_optional {

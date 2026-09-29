@@ -23,7 +23,9 @@ use std::path::Path;
 use std::str::FromStr;
 
 use bmc::manifest_test_support::{default_widgets, migration_manifest_expectations, widget_uids};
-use bmc_widget_manifest::{CredentialKey, Manifest, ParamKind, ParamValue};
+use bmc_widget_manifest::{
+    BooleanParam, CredentialKey, IntegerParam, Manifest, ParamKind, ParamValue, StringParam,
+};
 
 fn load_wasm_manifest(name: &str) -> Manifest {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -78,13 +80,13 @@ fn every_default_widget_matches_its_manifest() {
             });
             let kind_matches = match value {
                 ParamValue::Null => definition.is_optional,
-                ParamValue::Boolean(_) => matches!(definition.kind, ParamKind::Boolean { .. }),
-                ParamValue::Integer(_) => matches!(definition.kind, ParamKind::Integer { .. }),
-                ParamValue::Double(_) => matches!(definition.kind, ParamKind::Double { .. }),
+                ParamValue::Boolean(_) => matches!(definition.kind, ParamKind::Boolean(_)),
+                ParamValue::Integer(_) => matches!(definition.kind, ParamKind::Integer(_)),
+                ParamValue::Double(_) => matches!(definition.kind, ParamKind::Double(_)),
                 ParamValue::String(_) => {
                     matches!(
                         definition.kind,
-                        ParamKind::String { .. } | ParamKind::Timezone { .. }
+                        ParamKind::String(_) | ParamKind::Timezone(_)
                     )
                 }
             };
@@ -93,7 +95,7 @@ fn every_default_widget_matches_its_manifest() {
                 "{:?} default for {} has wrong type for {key:?}",
                 widget.product, manifest.name
             );
-            if let (ParamValue::String(value), ParamKind::String { enum_values, .. }) =
+            if let (ParamValue::String(value), ParamKind::String(StringParam { enum_values, .. })) =
                 (value, &definition.kind)
             {
                 assert!(
@@ -158,7 +160,7 @@ fn param_kind<'manifest>(manifest: &'manifest Manifest, key: &str) -> &'manifest
 }
 
 fn string_default(manifest: &Manifest, key: &str) -> String {
-    let ParamKind::String { default_value, .. } = param_kind(manifest, key) else {
+    let ParamKind::String(StringParam { default_value, .. }) = param_kind(manifest, key) else {
         panic!("BUG: manifest param {key:?} is not a string");
     };
     default_value
@@ -167,21 +169,21 @@ fn string_default(manifest: &Manifest, key: &str) -> String {
 }
 
 fn integer_default(manifest: &Manifest, key: &str) -> i32 {
-    let ParamKind::Integer { default_value, .. } = param_kind(manifest, key) else {
+    let ParamKind::Integer(IntegerParam { default_value, .. }) = param_kind(manifest, key) else {
         panic!("BUG: manifest param {key:?} is not an integer");
     };
     default_value.unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
 }
 
 fn boolean_default(manifest: &Manifest, key: &str) -> bool {
-    let ParamKind::Boolean { default_value, .. } = param_kind(manifest, key) else {
+    let ParamKind::Boolean(BooleanParam { default_value }) = param_kind(manifest, key) else {
         panic!("BUG: manifest param {key:?} is not a boolean");
     };
     default_value.unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
 }
 
 fn string_enum(manifest: &Manifest, key: &str) -> BTreeSet<String> {
-    let ParamKind::String { enum_values, .. } = param_kind(manifest, key) else {
+    let ParamKind::String(StringParam { enum_values, .. }) = param_kind(manifest, key) else {
         panic!("BUG: manifest param {key:?} is not a string");
     };
     enum_values
