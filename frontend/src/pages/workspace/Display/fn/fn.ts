@@ -463,6 +463,10 @@ const ERR_REQUIRED = 'Value is required';
 const ERR_NOT_NUMBER = 'Not a number';
 const ERR_NOT_INTEGER = 'Not an integer';
 
+// The server's `MAX_PARAM_STRING_LENGTH`, which counts UTF-8 bytes rather than characters.
+const MAX_STRING_BYTES = 1024;
+const utf8 = new TextEncoder();
+
 export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: FormifiedValue): ParseResult {
     if (def.kind.case === 'paramArray') {
         invariant(Array.isArray(raw), `list param "${def.key}" holds a non-list value`);
@@ -483,6 +487,9 @@ function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): S
                 return { ok: false, error: ERR_REQUIRED };
             }
             if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
+            if (utf8.encode(raw).length > MAX_STRING_BYTES)
+                return { ok: false, error: `Must be at most ${MAX_STRING_BYTES} bytes` };
+
             return { ok: true, value: stringValue(raw) };
         }
         case 'paramTimezone': {

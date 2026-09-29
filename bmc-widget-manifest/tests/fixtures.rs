@@ -338,6 +338,23 @@ fn fixtures() -> Vec<Negative> {
             manifest_accepts: false,
         },
         Negative {
+            label: "array: over-cap default item (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": {
+                        "name": "S",
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "max_items": 1,
+                        "default_value": [over_cap_string],
+                    },
+                }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
             label: "array: optional (semantic)",
             manifest: manifest_with(
                 "params",

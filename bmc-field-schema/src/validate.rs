@@ -24,8 +24,8 @@ use bmc_shared_time::time::Timezone;
 use indexmap::IndexMap;
 
 use crate::{
-    ArrayParam, DoubleParam, IntegerParam, ItemKind, ParamDefinition, ParamKey, ParamKind,
-    ParamValue, Scalar, Shape, StringParam, f64_canonical_bits,
+    ArrayParam, DoubleParam, IntegerParam, ItemKind, MAX_PARAM_STRING_LENGTH, ParamDefinition,
+    ParamKey, ParamKind, ParamValue, Scalar, Shape, StringParam, f64_canonical_bits,
 };
 
 /// What a schema key the input omits turns into.
@@ -206,6 +206,13 @@ fn validate_scalar(
 ) -> Option<ParamValue> {
     match (scalar, value) {
         (Scalar::String(StringParam { enum_values, .. }), ParamValue::String(s)) => {
+            if s.len() > MAX_PARAM_STRING_LENGTH {
+                violations.push(Violation::new(
+                    path,
+                    format!("Must be at most {MAX_PARAM_STRING_LENGTH} bytes"),
+                ));
+                return None;
+            }
             if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
                 violations.push(Violation::new(path, "Must be one of the listed options"));
                 return None;

@@ -2224,6 +2224,53 @@ mod tests {
         assert_eq!(first_violation_desc(&manifest, &params), "Must be a list");
     }
 
+    fn over_cap_string() -> web::FieldValue {
+        wdv_string(&"x".repeat(bmc_widget_manifest::MAX_PARAM_STRING_LENGTH + 1))
+    }
+
+    fn string_kind() -> StringParam {
+        StringParam {
+            format: None,
+            enum_values: vec![],
+            default_value: Some("x".into()),
+        }
+    }
+
+    #[test]
+    fn validate_widget_params_string_over_the_length_cap_rejects() {
+        let manifest = single_param_manifest("label", ParamKind::String(string_kind()), false);
+        let params = fields_one("label", over_cap_string());
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            format!(
+                "Must be at most {} bytes",
+                bmc_widget_manifest::MAX_PARAM_STRING_LENGTH
+            )
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_list_item_over_the_length_cap_rejects_at_its_index() {
+        let manifest = single_param_manifest(
+            "symbols",
+            ParamKind::Array(ArrayParam {
+                items: ItemKind::String(string_kind()),
+                min_items: 0,
+                max_items: 2,
+                default_value: vec![],
+            }),
+            false,
+        );
+        let params = fields_one(
+            "symbols",
+            wdv_list(vec![wdv_string("NVDA"), over_cap_string()]),
+        );
+        let [(field, _)] = violations_of(&manifest, &params)
+            .try_into()
+            .expect("BUG: only the over-cap item fails");
+        assert_eq!(field, r#"params["symbols"][1]"#);
+    }
+
     fn wdv_string(s: &str) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::StringValue(s.to_owned())),

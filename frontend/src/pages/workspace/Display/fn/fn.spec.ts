@@ -788,6 +788,15 @@ describe('parseFormifiedValue', () => {
         if (r.ok) expect(r.value.kind).toEqual({ case: 'stringValue', value: 'hi' });
         else throw new Error('expected ok');
     });
+    test('paramString past 1024 UTF-8 bytes → error, though fewer characters', () => {
+        const r = parseFormifiedValue(paramDef('paramString'), 'č'.repeat(600));
+        if (!r.ok) expect(r.error).toBe('Must be at most 1024 bytes');
+        else throw new Error('expected error');
+    });
+    test('paramString of exactly 1024 bytes → stringValue', () => {
+        const r = parseFormifiedValue(paramDef('paramString'), 'x'.repeat(1024));
+        expect(r.ok).toBe(true);
+    });
 
     test('paramInteger required, empty → error', () => {
         const r = parseFormifiedValue(paramDef('paramInteger'), '');
