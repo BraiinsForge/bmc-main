@@ -1,28 +1,154 @@
 settle_delay = 5
 
-[fixtures.bmc100-full]
+[fixtures.bmc100-full-healthy]
 path = "fixtures/bmc100-full.jsonl.gz"
 target = "bmc100:full"
 
-[fixtures.bmc100-large]
+[fixtures.bmc100-large-healthy]
 path = "fixtures/bmc100-large.jsonl.gz"
 target = "bmc100:large"
 
-[fixtures.bmc100-medium]
+[fixtures.bmc100-medium-healthy]
 path = "fixtures/bmc100-medium.jsonl.gz"
 target = "bmc100:medium"
 
-[fixtures.bmc100-small]
+[fixtures.bmc100-small-healthy]
 path = "fixtures/bmc100-small.jsonl.gz"
 target = "bmc100:small"
 
 # A fixture carries no geometry, so one recording serves every viewport. All
 # four takes above request the same single URL, so replaying one covers the
-# remaining platforms without recording anything new.
-[fixtures.bmm100-full]
+# remaining platforms without recording anything new; every scenario below is
+# likewise one take at bmc100:full, replayed at each target.
+[fixtures.bmm100-full-healthy]
 path = "fixtures/bmc100-full.jsonl.gz"
 target = "bmm100:full"
 
-[fixtures.bmm101-full]
+[fixtures.bmm101-full-healthy]
 path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmm101:full"
+
+# Starship from Starbase: a mission name between the hero's sizes, the pad and a ship.
+[fixtures.bmc100-full-starship]
+path = "fixtures/bmc100-full-starship.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmc100-large-starship]
+path = "fixtures/bmc100-full-starship.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium-starship]
+path = "fixtures/bmc100-full-starship.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small-starship]
+path = "fixtures/bmc100-full-starship.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmm100-full-starship]
+path = "fixtures/bmc100-full-starship.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full-starship]
+path = "fixtures/bmc100-full-starship.jsonl.gz"
+target = "bmm101:full"
+
+# Crew Dragon from Kennedy: a named capsule and a crewed payload.
+[fixtures.bmc100-full-crew-dragon]
+path = "fixtures/bmc100-full-crew-dragon.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmc100-large-crew-dragon]
+path = "fixtures/bmc100-full-crew-dragon.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium-crew-dragon]
+path = "fixtures/bmc100-full-crew-dragon.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small-crew-dragon]
+path = "fixtures/bmc100-full-crew-dragon.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmm100-full-crew-dragon]
+path = "fixtures/bmc100-full-crew-dragon.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full-crew-dragon]
+path = "fixtures/bmc100-full-crew-dragon.jsonl.gz"
+target = "bmm101:full"
+
+# A rideshare: a mission name over two lines and a landing not yet confirmed.
+[fixtures.bmc100-full-rideshare]
+path = "fixtures/bmc100-full-rideshare.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmc100-large-rideshare]
+path = "fixtures/bmc100-full-rideshare.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium-rideshare]
+path = "fixtures/bmc100-full-rideshare.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small-rideshare]
+path = "fixtures/bmc100-full-rideshare.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmm100-full-rideshare]
+path = "fixtures/bmc100-full-rideshare.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full-rideshare]
+path = "fixtures/bmc100-full-rideshare.jsonl.gz"
+target = "bmm101:full"
+
+# The launch a minute past its net time: T-0 and Launched.
+[fixtures.bmc100-full-launched]
+path = "fixtures/bmc100-full-launched.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmc100-large-launched]
+path = "fixtures/bmc100-full-launched.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium-launched]
+path = "fixtures/bmc100-full-launched.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small-launched]
+path = "fixtures/bmc100-full-launched.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmm100-full-launched]
+path = "fixtures/bmc100-full-launched.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full-launched]
+path = "fixtures/bmc100-full-launched.jsonl.gz"
+target = "bmm101:full"
+
+# Nexus down from the start: the error view, before any launch has loaded.
+[fixtures.bmc100-full-failed]
+path = "fixtures/bmc100-full-failed.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmc100-large-failed]
+path = "fixtures/bmc100-full-failed.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium-failed]
+path = "fixtures/bmc100-full-failed.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small-failed]
+path = "fixtures/bmc100-full-failed.jsonl.gz"
+target = "bmc100:small"
+
+[fixtures.bmm100-full-failed]
+path = "fixtures/bmc100-full-failed.jsonl.gz"
+target = "bmm100:full"
+
+[fixtures.bmm101-full-failed]
+path = "fixtures/bmc100-full-failed.jsonl.gz"
 target = "bmm101:full"
