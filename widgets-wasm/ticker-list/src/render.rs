@@ -353,8 +353,8 @@ fn deck_cells(slot: Slot, band: &Band) -> Cells {
 struct Grid {
     /// Space at the list's outer edges.
     edge: f32,
-    /// Space on either side of the chart column.
-    chart_gap: f32,
+    /// Space on either side of the chart column, or between name and price without one.
+    column_gap: f32,
     show_charts: bool,
     rule: Color,
     /// Space above and below each rule.
@@ -369,7 +369,7 @@ impl Grid {
     fn deck(band: &Band) -> Self {
         Self {
             edge: band.row_padding,
-            chart_gap: band.row_padding,
+            column_gap: band.row_padding,
             show_charts: band.show_sparkline,
             rule: BORDER,
             rule_gap: 0.0,
@@ -405,7 +405,11 @@ impl Grid {
 
 /// A list laid out a column at a time — names, charts, prices — so every chart starts
 /// where the widest price leaves room, not against its own row's price.
+/// Without charts there is nothing to line up, so each row takes its own price's width.
 fn list(rows: Vec<Cells>, grid: &Grid) -> Node {
+    if !grid.show_charts {
+        return row_list(rows, grid);
+    }
     let mut names = Vec::with_capacity(2 * rows.len());
     let mut charts = Vec::with_capacity(2 * rows.len());
     let mut prices = Vec::with_capacity(2 * rows.len() + 1);
@@ -419,9 +423,9 @@ fn list(rows: Vec<Cells>, grid: &Grid) -> Node {
         charts.push(grid.cell(
             Justify::Start,
             vec![
-                fixed_width(grid.chart_gap),
+                fixed_width(grid.column_gap),
                 cells.chart,
-                fixed_width(grid.chart_gap),
+                fixed_width(grid.column_gap),
             ],
         ));
         prices.push(grid.cell(Justify::End, vec![cells.price, fixed_width(grid.edge)]));
@@ -429,12 +433,39 @@ fn list(rows: Vec<Cells>, grid: &Grid) -> Node {
     if let Some(width) = grid.price_min_width {
         prices.push(fixed_width(width));
     }
-    let mut columns = vec![col(props!(flex: 1.0), names)];
-    if grid.show_charts {
-        columns.push(col(props!(), charts));
+    row(
+        props!(flex: 1.0),
+        [
+            col(props!(flex: 1.0), names),
+            col(props!(), charts),
+            col(props!(), prices),
+        ],
+    )
+}
+
+/// One row after another, each name giving way only to its own price.
+fn row_list(rows: Vec<Cells>, grid: &Grid) -> Node {
+    debug_assert!(
+        grid.price_min_width.is_none(),
+        "a row list has no shared price column to hold a minimum width"
+    );
+    let mut children = Vec::with_capacity(2 * rows.len());
+    for (index, cells) in rows.into_iter().enumerate() {
+        if index > 0 {
+            children.push(grid.rule());
+        }
+        children.push(grid.cell(
+            Justify::Start,
+            vec![
+                fixed_width(grid.edge),
+                cells.name,
+                fixed_width(grid.column_gap),
+                cells.price,
+                fixed_width(grid.edge),
+            ],
+        ));
     }
-    columns.push(col(props!(), prices));
-    row(props!(flex: 1.0), columns)
+    col(props!(flex: 1.0), children)
 }
 
 /// The list for the current size: BMM101's own frame, or the Deck's grid.
@@ -679,6 +710,22 @@ mod tests {
         let lead = |half: &Node| texts(half).first().cloned();
         assert_eq!(lead(&halves[0]).as_deref(), Some("NVDA"));
         assert_eq!(lead(&halves[2]).as_deref(), Some("AAPL"));
+    }
+
+    #[test]
+    fn a_chartless_list_keeps_each_price_in_its_own_row() {
+        let size = WidgetSize::from_dimensions(317, 238);
+        let Node::Column(_, body) = view_of(&fixtures::healthy(), size) else {
+            panic!("BUG: the view is a column");
+        };
+        let Some(Node::Column(_, rows)) = body.first() else {
+            panic!("BUG: a chartless list stacks its rows in a column");
+        };
+        let first = texts(&rows[0]);
+        assert!(
+            first.iter().any(|text| text == "NVDA") && first.iter().any(|text| text == "+8.1%"),
+            "the first row holds its symbol and its own change: {first:?}"
+        );
     }
 
     fn sparkline_stroke_color(node: Node) -> Color {

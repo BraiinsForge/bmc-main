@@ -260,7 +260,7 @@ pub(super) fn view(
         let band = band(row_height);
         let grid = Grid {
             edge: 0.0,
-            chart_gap: CHART_GAP,
+            column_gap: CHART_GAP,
             show_charts: true,
             rule: GRAY_90,
             rule_gap: RULE_GAP,
