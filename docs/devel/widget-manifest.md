@@ -81,7 +81,10 @@ attributes and enforced by any JSON Schema validator. Examples:
 - `ParamKind::Integer.step` and `ParamKind::Double.step` are strictly positive — a zero step makes the operator UI's
   stepper meaningless.
 - `default_value` literal types match the declared `ParamKind` — `default_value: 3.14` on a `boolean` is a typo, not a
-  value the runtime should defend against.
+  value the runtime should defend against. This holds for scalar kinds; a list's items are checked against `items` in
+  Layer 2.
+- An `array` param's `max_items` is within `1..=100` (`MAX_ARRAY_ITEMS`), and its `items` is a scalar kind or an
+  `object` whose `fields` are all scalars — so a list never nests another list or object.
 
 **Layer 2 — cross-field invariants the schema cannot express.** Enforced by `ParamDefinition::validate` in
 `bmc_widget_manifest`. Examples:
@@ -95,7 +98,13 @@ attributes and enforced by any JSON Schema validator. Examples:
   treats them as the same selection.
 - Required params (i.e. `optional: false`) **must** declare a `default_value`. The compositor always delivers a complete
   params object to the widget on every `init` and `on_params_update`; this rule guarantees there is always a value to
-  deliver. The widget never has to handle a missing required key.
+  deliver. The widget never has to handle a missing required key. An `array` param is the exception: an omitted
+  `default_value` is the empty list.
+- `array` params cannot be `optional` — `min_items: 0` is how a list says it may be empty, so the widget always receives
+  a list, never `null`.
+- `min_items` ≤ `max_items`, and an array's `default_value` holds between `min_items` and `max_items` items, each valid
+  against `items` — the same rules an operator's list must pass.
+- An `object` item declares at least one field, and no field key twice.
 
 Viewport constraints are also validated after parsing:
 

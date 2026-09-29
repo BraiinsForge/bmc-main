@@ -65,7 +65,11 @@ firmware rebuild.
 > bespoke config screen.
 
 - Config forms are generated from the widget's manifest parameter schema — string, enum, boolean, number, and timezone
-  fields.
+  fields, and lists of those or of small records built from them.
+- A list shows a row per item that can be dragged into a new order or removed, and an Add button; the manifest's minimum
+  and maximum item counts disable removing and adding at the bounds.
+- An empty field shows the placeholder its manifest declares, such as "e.g. BTC or AAPL", in list rows as well.
+- An enum is a dropdown, or a radio group where the manifest asks for one (`enum_control: radio`).
 - No per-widget form components exist in the frontend; a new parameter kind added once benefits every widget.
 - `UpdateWidget` is a full-map update (not a patch): clients send the complete params object, and the backend validates
   required/missing keys, unknown keys, and per-type constraints (type/range/enum/timezone).

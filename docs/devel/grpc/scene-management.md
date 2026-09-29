@@ -33,6 +33,17 @@ Primary sources:
   - integer/double bounds
   - finite doubles
   - valid timezone strings
+  - string length, at most 1024 bytes
+  - list length within `min_items`/`max_items`, and every item against `items`; an item is never null, and an object
+    item may leave only its optional fields null or out
+
+### List values and violation paths
+
+- Param values travel as `FieldValue` (`field_schema.proto`): a list as `list_value`, an object item as `struct_value`.
+  `GetWidgetManifest` describes a list param as `ParamArray`, with an object item's fields in `ParamObject`.
+- A rejected value fails the call with `InvalidArgument` and a `BadRequest` detail listing every violation at once. Each
+  violation's field names the value it rejects: `params["k"]` for the param, `params["k"][i]` for a list item, and
+  `params["k"][i]["f"]` for a field of an object item.
 
 ## Lifecycle Semantics
 

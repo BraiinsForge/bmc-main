@@ -48,15 +48,55 @@ name.
 }
 ```
 
-Supported param kinds are `string`, `integer`, `double`, `boolean`, and `timezone`. Strings, integers, and doubles may
-also declare `enum_values`; generated code turns those enum values into Rust enum wrappers. Numeric params may declare
-`min`, `max`, and `step`. String params may declare UI `format` hints.
+Supported param kinds are `string`, `integer`, `double`, `boolean`, `timezone`, and `array`. Strings, integers, and
+doubles may also declare `enum_values`; generated code turns those enum values into Rust enum wrappers. Numeric params
+may declare `min`, `max`, and `step`. String params may declare UI `format` hints.
 
-Required params must declare `default_value`. Optional params may omit a default; when unset, the generated Rust field
-is `Option<T>` and evaluates to `None`.
+Required params must declare `default_value`, except an `array`, whose omitted default is the empty list. Optional
+params may omit a default; when unset, the generated Rust field is `Option<T>` and evaluates to `None`.
 
 Use `widgets-wasm-examples/params-demo/manifest.json` as the reference example. It exercises every `ParamKind`, enum
-values, ranges, string formats, and optional-without-default params.
+values, ranges, string formats, optional-without-default params, and a list of every item kind.
+
+### Lists
+
+An `array` param is an ordered list the operator can add to, remove from, and reorder. Its `items` says what every item
+is: any scalar kind, with the same options a scalar param takes, or an `object` whose `fields` are scalars.
+
+```json
+{
+  "params": {
+    "symbols": {
+      "name": "Ticker symbols",
+      "type": "array",
+      "items": { "type": "string", "default_value": "BTC" },
+      "min_items": 1,
+      "max_items": 8,
+      "default_value": ["NVDA", "AAPL"]
+    },
+    "links": {
+      "name": "Links",
+      "type": "array",
+      "max_items": 4,
+      "items": {
+        "type": "object",
+        "fields": {
+          "label": { "name": "Label", "type": "string" },
+          "url": { "name": "URL", "type": "string", "format": "uri", "optional": true }
+        }
+      }
+    }
+  }
+}
+```
+
+`max_items` is required and at most 100; `min_items` defaults to 0. The list's `default_value` seeds a new widget;
+omitting it starts the list empty, so a list with `min_items` above 0 needs a `default_value` that fills it. An item's
+own `default_value`, or each field's for an object, seeds the items the operator adds. In a list's `default_value`, an
+omitted optional field is stored unset (`null`); a field's own `default_value` only seeds the rows the operator adds.
+
+A list is never `null` and neither is any item in it, so array params cannot be `optional`; declare `min_items: 0` for a
+list that may be empty. An `optional` object field is what can be unset, and it is `null` within its row.
 
 ## Generate Typed Accessors
 
@@ -84,6 +124,8 @@ The generated file contains:
 - `Params::previous()` for the snapshot before the latest update, or `None` before the first runtime update.
 - `Params::changed_keys(&previous)` for update-hook diffing.
 - Enum wrapper types for manifest `enum_values`.
+- For an `array` param `links`, a `LinksItem` type when its items need one: an enum for items with `enum_values`, or a
+  struct with one field per object field. An enum-valued object field gets its own enum, such as `LinksItemTone`.
 
 See `widgets-wasm-examples/params-demo/src/manifest_params.rs` for the generated shape.
 
@@ -123,6 +165,16 @@ let subtitle = params
     .unwrap_or("device timezone");
 ```
 
+A list param is a `Vec` of its item type, in the order the operator arranged it. An object item is a generated struct,
+with `Option<T>` for its optional fields:
+
+```rust
+let ticker = params.symbols.join(" · ");
+for link in &params.links {
+    let target = link.url.as_deref().unwrap_or(&link.label);
+}
+```
+
 If a widget is small or intentionally dynamic, it can read the raw SDK snapshot through the generic typed reader:
 
 ```rust
@@ -132,11 +184,18 @@ let params = bmc_wasm_sdk::params::current();
 let city = <String as ParamRead>::read_required(&params, "city");
 let show_seconds = <bool as ParamRead>::read_required(&params, "show_seconds");
 let accent_tz = <String as ParamRead>::read_optional(&params, "accent_tz");
+let symbols = <Vec<String> as ParamRead>::read_required(&params, "symbols");
 ```
 
 Use `read_required` for manifest-required params. It traps with a `BUG:` message if the host snapshot is missing the
 value, because required params should always be filled from manifest defaults before the widget runs. Use
-`read_optional` for manifest-optional params; it returns `None` for missing or `null` values.
+`read_optional` for manifest-optional params; it returns `None` for missing or `null` values. Either read traps on a
+value or list item of another type, or an enum value outside its options, since the host validates every value against
+the manifest.
+
+`ParamRead` reads any type that implements `ValueRead`, and a `Vec` of one. The scalar types and the generated enums and
+row structs all implement it; a hand-written row type can implement it with the `required_field` and `optional_field`
+helpers.
 
 Prefer generated params for normal widgets. They keep the widget code aligned with the manifest and remove repeated
 stringly-typed lookups.
@@ -179,7 +238,9 @@ network fetches and other expensive side effects triggered by params changes.
 
 The WASM testbed reads the widget manifest and shows a Params panel in the right sidebar when the manifest declares
 params. Each control maps to the manifest type: text fields for strings, numeric inputs for numbers, dropdowns for
-`enum_values`, checkboxes for booleans, and clear-to-null controls for optional params.
+`enum_values`, checkboxes for booleans, and clear-to-null controls for optional params. Each list param gets a
+full-width block below them: a row per item with move-up, move-down, and remove buttons, then an add button, with
+`min_items` and `max_items` disabling remove and add at the bounds.
 
 Run the params demo from `bmc-wasm-runtime/`:
 
