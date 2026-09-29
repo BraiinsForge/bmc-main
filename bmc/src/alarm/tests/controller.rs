@@ -87,8 +87,16 @@ impl AlarmHarness {
             .send(alarm.clone().into())
             .await
             .expect("BUG: the alarm handler must be running");
-        self.settle("the alarm to ring", || async { self.ringing().await })
-            .await;
+        self.settle(&format!("alarm {} to ring", alarm.id), || async {
+            self.controller
+                .scheduler
+                .current_alarm
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|current| current.alarm.id == alarm.id)
+        })
+        .await;
     }
 
     /// Snooze the ringing alarm, returning once the snooze is registered.
@@ -382,5 +390,48 @@ async fn a_failed_cancel_still_drops_the_snooze() {
     assert!(
         next_alarm.borrow_and_update().is_none(),
         "a failed cancel must still clear the widget's next alarm"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_overlapping_firing_takes_the_slot() {
+    let harness = AlarmHarness::new().await;
+    let first = harness.add(7, 30).await;
+    let second = harness.add(7, 30).await;
+
+    harness.ring(&first).await;
+    harness.ring(&second).await;
+}
+
+/// A one-shot alarm cut off by an overlapping one counts as rung,
+/// so it is disabled the same way a dismissed one is.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preempted_one_shot_alarm_is_disabled() {
+    let harness = AlarmHarness::new().await;
+    let preempted = harness.add(7, 30).await;
+    let other = harness.add(7, 30).await;
+
+    harness.ring(&preempted).await;
+    harness.ring(&other).await;
+
+    harness
+        .settle("the preempted one-shot alarm to be disabled", || async {
+            harness
+                .controller
+                .alarms()
+                .await
+                .iter()
+                .any(|alarm| alarm.id == preempted.id && !alarm.enabled)
+        })
+        .await;
+
+    assert!(
+        harness
+            .controller
+            .alarms()
+            .await
+            .iter()
+            .any(|alarm| alarm.id == other.id && alarm.enabled),
+        "disabling the preempted alarm must leave the one now ringing enabled"
     );
 }

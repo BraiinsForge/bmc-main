@@ -467,7 +467,6 @@ impl From<SnoozeLimit> for SnoozeLimitProto {
 impl From<AlarmError> for Status {
     fn from(value: AlarmError) -> Self {
         match value {
-            AlarmError::DuplicateAlarm => Status::resource_exhausted(value.to_string()),
             AlarmError::SyncToStorage => Status::internal("Failed to save configuration"),
             AlarmError::NotFound => Status::not_found(value.to_string()),
             AlarmError::RemoveAlarm => Status::internal("Failed to remove alarm"),

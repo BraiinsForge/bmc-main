@@ -1009,20 +1009,6 @@ impl AlarmController {
         let mut config = self.config_handle.write().await;
         let mut temp_config = config.clone();
 
-        if let Some(existing) = config
-            .alarms()
-            .iter()
-            .find(|existing| existing.time == alarm_data.time)
-        {
-            warn!(
-                alarm_id = %alarm_data.id,
-                time = %alarm_data.time,
-                existing_alarm_id = %existing.id,
-                "Failed to add alarm: An alarm with the same time already exists"
-            );
-            return Err(AlarmError::DuplicateAlarm);
-        }
-
         let alarm_id = alarm_data.id.clone();
 
         if alarm_data.enabled {
@@ -1068,20 +1054,6 @@ impl AlarmController {
         {
             warn!(alarm_id = %alarm_id, "Failed to update alarm: Alarm not found");
             return Err(AlarmError::NotFound);
-        }
-
-        if let Some(existing) = config
-            .alarms()
-            .iter()
-            .find(|existing| existing.time == alarm_data.time && existing.id != alarm_id)
-        {
-            warn!(
-                alarm_id = %alarm_id,
-                time = %alarm_data.time,
-                existing_alarm_id = %existing.id,
-                "Failed to update alarm: An alarm with the same time already exists"
-            );
-            return Err(AlarmError::DuplicateAlarm);
         }
 
         self.scheduler.remove(&alarm_id).await.map_err(|err| {
@@ -1209,8 +1181,6 @@ impl AlarmController {
 
 #[derive(Error, Debug)]
 pub(crate) enum AlarmError {
-    #[error("An alarm with the same time already exists.")]
-    DuplicateAlarm,
     #[error("Failed to save configuration.")]
     SyncToStorage,
     #[error("Alarm not found")]
