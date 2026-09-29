@@ -893,6 +893,44 @@ fn ranged_requests_the_server_keeps_failing_fall_back_to_a_plain_request() {
     );
 }
 
+#[test]
+fn transport_errors_do_not_count_toward_giving_up_the_range() {
+    let env = setup();
+    let version = "ranged-blip";
+    let tarball = build_tarball(env.tmp.path(), &[("nix/store/blip/marker", b"complete")]);
+    let signature = sign_with_test_key(&tarball);
+    let split = half(tarball.len());
+
+    seed_partial(&env, &tarball[..split], &signature);
+
+    let server = fixture(
+        &env,
+        version,
+        Some(signature),
+        vec![
+            Reply::Drop,
+            Reply::status(503),
+            Reply::range(&tarball[split..], split, tarball.len()),
+        ],
+    );
+
+    let run = env.run_init(version, &[]);
+
+    assert!(
+        run.status.success(),
+        "a network blip and one ranged error must still resume: {}",
+        run.stderr
+    );
+
+    let ranged = Some(format!("bytes={split}-"));
+
+    assert_eq!(
+        server.ranges(),
+        vec![ranged.clone(), ranged.clone(), ranged],
+        "a network blip says nothing about the server and must not cost the partial"
+    );
+}
+
 /// Chunked-encodes `body` without the terminating chunk,
 /// so the transfer breaks after it.
 fn truncated_chunked(body: &[u8]) -> Reply {

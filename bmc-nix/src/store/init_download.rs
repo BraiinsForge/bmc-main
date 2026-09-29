@@ -641,6 +641,8 @@ async fn download_signed(
     // A refused resume keeps the partial until a plain 200 replaces it,
     // so a server that fails the plain request too leaves it for the next run.
     let mut resume_refused = false;
+    let mut consecutive_ranged_error_statuses = 0;
+
     loop {
         let offset = if resume_refused { 0 } else { paths.part_len()? };
         let ranged = offset > 0;
@@ -672,10 +674,16 @@ async fn download_signed(
                 budget
                     .retry_signed(InitStoreError::DownloadFailed { source }, Progress::None)
                     .await?;
-                if ranged && budget.consecutive_no_progress_failures >= RANGED_ERRORS_BEFORE_PLAIN {
-                    tracing::warn!(%status, "ranged tarball requests keep failing; retrying without a range");
-                    resume_refused = true;
+
+                if ranged {
+                    consecutive_ranged_error_statuses += 1;
+
+                    if consecutive_ranged_error_statuses >= RANGED_ERRORS_BEFORE_PLAIN {
+                        tracing::warn!(%status, "ranged tarball requests keep failing; retrying without a range");
+                        resume_refused = true;
+                    }
                 }
+
                 continue;
             }
             Err(source) => return Err(InitStoreError::DownloadFailed { source }),
@@ -700,6 +708,9 @@ async fn download_signed(
             resume_refused = false;
             accept_restart(paths, &mut metadata, &response, length, progress)?
         };
+
+        consecutive_ranged_error_statuses = 0;
+
         let start = disposition.start(offset);
         match stream_part(paths, response, disposition, offset, progress).await {
             Ok(()) => {}
