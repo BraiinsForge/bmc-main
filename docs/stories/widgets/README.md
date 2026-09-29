@@ -88,8 +88,9 @@ numeral weight, and next-alarm features. Renders full-screen on the round BFM100
 ### [SpaceX Launch Widget](spacex-launch.md)
 
 A widget that counts down to the next SpaceX launch and shows its mission details — status, rocket, launch site,
-landing, booster reuse, payload, and spacecraft — across the four widget sizes, with a rocket illustration at the full
-size. Reads launch data from the Braiins Forge Nexus and keeps the last known launch on screen when a refresh fails.
+landing, booster reuse, payload, and spacecraft — across the four widget sizes and in BMM101's own frame, with a rocket
+illustration at the full size. Reads launch data from the Braiins Forge Nexus and keeps the last known launch on screen
+when a refresh fails.
 
 ### [Nameday Widget](nameday.md)
 
