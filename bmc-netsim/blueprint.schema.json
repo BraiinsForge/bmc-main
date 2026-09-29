@@ -1039,6 +1039,47 @@
           "required": [
             "device"
           ]
+        },
+        {
+          "description": "A Nexus SpaceX next-launch deployment — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "spacex-launch"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/SpacexLaunchParams"
+            },
+            "port": {
+              "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "device"
+          ]
         }
       ]
     },
@@ -1064,6 +1105,69 @@
           "const": "idle"
         }
       ]
+    },
+    "SpacexLaunchKind": {
+      "description": "The launches a scenario can serve, each staging rows the others leave alone.",
+      "oneOf": [
+        {
+          "description": "NROL-179 from Vandenberg, as the widget's capture fixtures recorded it.",
+          "type": "string",
+          "const": "nrol-179"
+        },
+        {
+          "description": "A Starlink batch on Starship from Starbase: a long mission name, the pad, a ship\nand an ocean landing.",
+          "type": "string",
+          "const": "starship"
+        },
+        {
+          "description": "A crewed Dragon from Kennedy: a named capsule and a human exploration payload.",
+          "type": "string",
+          "const": "crew-dragon"
+        },
+        {
+          "description": "A rideshare whose mission name needs two lines, with its landing not yet confirmed.",
+          "type": "string",
+          "const": "rideshare"
+        }
+      ]
+    },
+    "SpacexLaunchParams": {
+      "description": "Scenario controls for the simulated Nexus next-launch endpoint.",
+      "type": "object",
+      "properties": {
+        "fail_after_secs": {
+          "description": "Answer 200 before this point, then switch to `status`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "launch": {
+          "description": "Which launch every read serves.",
+          "$ref": "#/$defs/SpacexLaunchKind"
+        },
+        "launch_in_secs": {
+          "description": "Seconds from scenario start to the launch's `net`.",
+          "type": "integer",
+          "format": "int64",
+          "default": 73719
+        },
+        "status": {
+          "description": "HTTP status returned after startup, or after `fail_after_secs`.",
+          "$ref": "#/$defs/HttpStatus"
+        },
+        "warmup_secs": {
+          "description": "Answer 503 until this many seconds of scenario time have elapsed.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     },
     "UbosParams": {
       "description": "Tunables for a simulated Braiins Forge Miner x4 (Braiins OS Libre).",

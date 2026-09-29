@@ -36,7 +36,7 @@ use serde_json::Value as Json;
 use crate::cache::Cache;
 use crate::devices::{
     axeos, bitcoin_mining_data, bos, braiins_pool, braiins_public_api, formula_1,
-    halving_countdown, ubos, weather,
+    halving_countdown, spacex_launch, ubos, weather,
 };
 use crate::http_status::HttpStatus;
 use crate::value::Value;
@@ -197,6 +197,21 @@ pub enum Instance {
         #[serde(default)]
         port: Option<u16>,
     },
+    /// A Nexus SpaceX next-launch deployment — a cloud API on its port, never announced.
+    #[serde(rename = "spacex-launch")]
+    SpacexLaunch {
+        /// Human label describing this entry's scenario, shown in the readout.
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        params: spacex_launch::Params,
+        #[serde(default = "one")]
+        count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
+    },
 }
 
 fn one() -> usize {
@@ -214,6 +229,7 @@ const DEVICE_KEYS: &[&str] = &[
     "formula-1",
     "halving-countdown",
     "weather",
+    "spacex-launch",
 ];
 const INSTANCE_FIELDS: &[&str] = &["device", "label", "params", "count", "port"];
 
@@ -228,6 +244,7 @@ enum DeviceParams {
     Formula1(formula_1::Params),
     HalvingCountdown(halving_countdown::Params),
     Weather(weather::Params),
+    SpacexLaunch(spacex_launch::Params),
 }
 
 impl DeviceParams {
@@ -244,6 +261,7 @@ impl DeviceParams {
             "formula-1" => DeviceParams::Formula1(map.next_value()?),
             "halving-countdown" => DeviceParams::HalvingCountdown(map.next_value()?),
             "weather" => DeviceParams::Weather(map.next_value()?),
+            "spacex-launch" => DeviceParams::SpacexLaunch(map.next_value()?),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -270,6 +288,9 @@ impl DeviceParams {
                 DeviceParams::HalvingCountdown(serde_json::from_value(json).map_err(E::custom)?)
             }
             "weather" => DeviceParams::Weather(serde_json::from_value(json).map_err(E::custom)?),
+            "spacex-launch" => {
+                DeviceParams::SpacexLaunch(serde_json::from_value(json).map_err(E::custom)?)
+            }
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -291,6 +312,7 @@ impl DeviceParams {
                 DeviceParams::HalvingCountdown(halving_countdown::Params::default())
             }
             "weather" => DeviceParams::Weather(weather::Params::default()),
+            "spacex-launch" => DeviceParams::SpacexLaunch(spacex_launch::Params::default()),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -346,6 +368,12 @@ impl DeviceParams {
                 port,
             },
             DeviceParams::Weather(params) => Instance::Weather {
+                label,
+                params,
+                count,
+                port,
+            },
+            DeviceParams::SpacexLaunch(params) => Instance::SpacexLaunch {
                 label,
                 params,
                 count,
@@ -449,6 +477,7 @@ impl Instance {
             Instance::Formula1 { .. } => "formula-1",
             Instance::HalvingCountdown { .. } => "halving-countdown",
             Instance::Weather { .. } => "weather",
+            Instance::SpacexLaunch { .. } => "spacex-launch",
         }
     }
 
@@ -464,7 +493,8 @@ impl Instance {
             | Instance::BraiinsPublicApi { count, .. }
             | Instance::Formula1 { count, .. }
             | Instance::HalvingCountdown { count, .. }
-            | Instance::Weather { count, .. } => *count,
+            | Instance::Weather { count, .. }
+            | Instance::SpacexLaunch { count, .. } => *count,
         }
     }
 
@@ -480,7 +510,8 @@ impl Instance {
             | Instance::BraiinsPublicApi { label, .. }
             | Instance::Formula1 { label, .. }
             | Instance::HalvingCountdown { label, .. }
-            | Instance::Weather { label, .. } => label.as_deref(),
+            | Instance::Weather { label, .. }
+            | Instance::SpacexLaunch { label, .. } => label.as_deref(),
         }
     }
 
@@ -496,7 +527,8 @@ impl Instance {
             | Instance::BraiinsPublicApi { port, .. }
             | Instance::Formula1 { port, .. }
             | Instance::HalvingCountdown { port, .. }
-            | Instance::Weather { port, .. } => *port,
+            | Instance::Weather { port, .. }
+            | Instance::SpacexLaunch { port, .. } => *port,
         }
     }
 
@@ -513,6 +545,7 @@ impl Instance {
             Instance::Formula1 { params, .. } => params.resource(name, port),
             Instance::HalvingCountdown { params, .. } => params.resource(name, port),
             Instance::Weather { params, .. } => params.resource(name, port),
+            Instance::SpacexLaunch { params, .. } => params.resource(name, port),
         }
     }
 }

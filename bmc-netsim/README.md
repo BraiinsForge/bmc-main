@@ -83,6 +83,7 @@ drifts around `hashrate_ths`.
 | `braiins-public-api` | — (cloud, not announced)       | `/v1/{price-stats, difficulty-stats, price-history}`, `/v2/{blocks, hashrate-stats}`                                              |
 | `halving-countdown`  | — (cloud, not announced)       | Nexus `/api/v1/data/bitcoin/halving-prediction`                                                                                   |
 | `weather`            | — (cloud, not announced)       | Nexus `/api/v1/data/weather/{location}`                                                                                           |
+| `spacex-launch`      | — (cloud, not announced)       | Nexus `/api/v1/data/spacex/next-launch`                                                                                           |
 
 Each device's params — `model_name`, `hashrate_ths`, `power_w`, `temp_c`, `uptime_s`, `status` — live in its module and
 appear in the schema under `BosParams` / `UbosParams` / `AxeosParams` / `BraiinsPoolParams` / `BraiinsPublicApiParams`.
