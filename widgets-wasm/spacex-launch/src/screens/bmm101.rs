@@ -64,8 +64,6 @@ const ROW: RowStyle = RowStyle {
 
 /// The header and hero at the top, the ruled grid on the bottom edge.
 pub(super) fn launch(data: &LaunchData, countdown: &str, status: &str) -> Node {
-    // One line: a countdown broken between its units misreads.
-    let countdown = typography::unbroken(countdown);
     col(
         props!(
             padding: EDGE,
@@ -74,10 +72,7 @@ pub(super) fn launch(data: &LaunchData, countdown: &str, status: &str) -> Node {
         ),
         [
             col(props!(gap: GAP), [header(), hero(&data.mission_name)]),
-            col(
-                props!(gap: GAP),
-                [divider(), grid(data, &countdown, status)],
-            ),
+            col(props!(gap: GAP), [divider(), grid(data, countdown, status)]),
         ],
     )
 }

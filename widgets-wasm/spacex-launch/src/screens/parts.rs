@@ -25,6 +25,7 @@
     reason = "widget render uses many SDK exports"
 )]
 use bmc_wasm_sdk::*;
+use std::time::Duration;
 
 use crate::model::LaunchData;
 
@@ -61,6 +62,10 @@ impl RowStyle {
     }
 }
 
+/// From here out the countdown drops its seconds,
+/// so three digits of days still fit the narrowest table.
+const SECONDS_UNDER: Duration = Duration::from_hours(100 * 24);
+
 /// The countdown to the net time, and the status beside it.
 /// Computed per render, so the timer keeps ticking between nexus refreshes;
 /// once the net time passes, the status reads `Launched`.
@@ -71,7 +76,10 @@ pub(super) fn countdown(data: &LaunchData, now_secs: i64) -> (String, &str) {
     } else {
         "Launched"
     };
-    (format_duration(remaining, true), status)
+    let with_seconds = u64::try_from(remaining).is_ok_and(|secs| secs < SECONDS_UNDER.as_secs());
+    // One line: a countdown broken between its units misreads.
+    let countdown = typography::unbroken(format_duration(remaining, with_seconds));
+    (countdown, status)
 }
 
 fn table_row(label: &str, value: &str, style: RowStyle) -> Node {

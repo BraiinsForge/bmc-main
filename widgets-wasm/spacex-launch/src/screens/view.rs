@@ -329,6 +329,31 @@ mod tests {
     }
 
     #[test]
+    fn every_frame_keeps_the_countdown_on_one_line() {
+        assets::init_test_registrars();
+        let countdown = typography::unbroken("0d 20h 28m 39s");
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+            SizeBucket::Bmm101,
+        ] {
+            let texts = at(bucket, fixtures::healthy);
+            assert!(texts.contains(&countdown), "{bucket:?}: {texts:?}");
+        }
+    }
+
+    #[test]
+    fn a_launch_a_hundred_days_out_counts_down_without_seconds() {
+        let texts = at(SizeBucket::Small, fixtures::widest_values);
+        assert!(
+            texts.contains(&typography::unbroken("888d 08h 08m")),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
     fn a_passed_launch_reads_launched_at_t_zero() {
         for bucket in [SizeBucket::Small, SizeBucket::Bmm101] {
             let texts = at(bucket, fixtures::launched);
