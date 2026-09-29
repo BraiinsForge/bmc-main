@@ -27,18 +27,15 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::model::{LaunchData, SizeBucket, State};
-use crate::screens::parts::{self, BRAND, RowStyle, detail_rows, divider, launch_info_rows};
+use crate::model::{LaunchData, SizeBucket};
+use crate::screens::parts::{BRAND, RowStyle, detail_rows, divider, launch_info_rows};
 
-/// What every value reads before the first launch loads.
-pub(super) const NOT_AVAILABLE: &str = "--";
-
-const EDGE: f32 = 16.0;
+pub(super) const EDGE: f32 = 16.0;
 /// Figma's line boxes: 14 in 18, 16 in 21, 20 in 26.
 const LINE_HEIGHT: f32 = 1.3;
 const HEADER_SIZE: u32 = 14;
-const HEADER_H: f32 = 18.0;
-const BODY_SIZE: u32 = 20;
+const HEADER_H: f32 = (HEADER_SIZE as f32 * LINE_HEIGHT).floor();
+pub(super) const BODY_SIZE: u32 = 20;
 const SUB_SIZE: u32 = 16;
 /// Under the header, and between the rule and the grid.
 const GAP: f32 = 8.0;
@@ -65,53 +62,10 @@ const ROW: RowStyle = RowStyle {
     value_align: TextAlign::Right,
 };
 
-pub(super) fn bmm101(state: &State, now_secs: i64) -> Node {
-    match state {
-        State::Loaded(data) => {
-            let (countdown, status) = parts::countdown(data, now_secs);
-            // One line: a countdown broken between its units misreads.
-            launch_frame(data, &typography::unbroken(countdown), status)
-        }
-        State::Loading => launch_frame(&not_loaded(), NOT_AVAILABLE, NOT_AVAILABLE),
-        State::NoLaunch => message_frame([text(
-            "No upcoming launches",
-            style!(size: BODY_SIZE, color: GRAY_40, line_height: LINE_HEIGHT),
-        )]),
-        State::Error(detail) => message_frame([
-            text(
-                "Failed to load launch data",
-                style!(
-                    size: BODY_SIZE,
-                    weight: FontWeight::SEMIBOLD,
-                    color: WHITE,
-                    line_height: LINE_HEIGHT,
-                ),
-            ),
-            text(
-                detail,
-                style!(size: SUB_SIZE, color: GRAY_40, line_height: LINE_HEIGHT),
-            ),
-        ]),
-    }
-}
-
-fn not_loaded() -> LaunchData {
-    let dash = || NOT_AVAILABLE.to_owned();
-    LaunchData {
-        mission_name: dash(),
-        launch_unix: 0,
-        status: dash(),
-        rocket: dash(),
-        place: dash(),
-        landing: dash(),
-        booster: dash(),
-        payload: dash(),
-        spacecraft: dash(),
-    }
-}
-
 /// The header and hero at the top, the ruled grid on the bottom edge.
-fn launch_frame(data: &LaunchData, countdown: &str, status: &str) -> Node {
+pub(super) fn launch(data: &LaunchData, countdown: &str, status: &str) -> Node {
+    // One line: a countdown broken between its units misreads.
+    let countdown = typography::unbroken(countdown);
     col(
         props!(
             padding: EDGE,
@@ -120,12 +74,15 @@ fn launch_frame(data: &LaunchData, countdown: &str, status: &str) -> Node {
         ),
         [
             col(props!(gap: GAP), [header(), hero(&data.mission_name)]),
-            col(props!(gap: GAP), [divider(), grid(data, countdown, status)]),
+            col(
+                props!(gap: GAP),
+                [divider(), grid(data, &countdown, status)],
+            ),
         ],
     )
 }
 
-fn header() -> Node {
+pub(super) fn header() -> Node {
     row(
         props!(height: HEADER_H, gap: 8.0, cross_align: CrossAlign::Center),
         [
@@ -206,22 +163,13 @@ fn column(width: f32, rows: [Node; 7]) -> Node {
     )
 }
 
-/// The header over a message, where there is no launch to lay out.
-fn message_frame(message: impl IntoIterator<Item = Node>) -> Node {
-    col(
-        props!(padding: EDGE, gap: EDGE, background: BLACK),
-        [header(), col(props!(gap: CAPTION_GAP), message)],
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::screens::fixtures;
+    use crate::screens::{fixtures, launch_view};
 
     fn healthy() -> Node {
-        let view = fixtures::healthy(fixtures::at_bucket(SizeBucket::Bmm101));
-        bmm101(&view.state, view.now_secs)
+        launch_view(&fixtures::healthy(fixtures::at_bucket(SizeBucket::Bmm101)))
     }
 
     /// Width and height of every column the frame sets a width on.

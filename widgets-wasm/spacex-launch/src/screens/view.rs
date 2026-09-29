@@ -43,65 +43,92 @@ pub struct ViewData {
 #[must_use]
 pub fn launch_view(view: &ViewData) -> Node {
     let frame = Frame::of(view.viewport);
-    if frame.bucket == SizeBucket::Bmm101 {
-        return bmm101::bmm101(&view.state, view.now_secs);
-    }
+    let bucket = frame.bucket;
     match &view.state {
-        State::Loaded(data) => current_view(data, frame.size, view.now_secs),
-        State::Loading => loading_view(),
-        State::NoLaunch => empty_view(),
-        State::Error(msg) => error_view(msg),
+        State::Loaded(data) => loaded_view(data, frame, view.now_secs),
+        State::Loading => loading_view(state_type(bucket)),
+        State::NoLaunch => empty_view(state_type(bucket), state_header(bucket)),
+        State::Error(detail) => error_view(detail, state_type(bucket), state_header(bucket)),
     }
 }
 
 /// Dispatch the loaded view by size.
-fn current_view(data: &LaunchData, size: WidgetSize, now_secs: i64) -> Node {
+fn loaded_view(data: &LaunchData, frame: Frame, now_secs: i64) -> Node {
     let (countdown, status) = parts::countdown(data, now_secs);
-    match size.variant {
-        SizeVariant::Full => render_full(size.height, data, &countdown, status),
-        SizeVariant::Large => render_large(data, &countdown, status),
-        SizeVariant::Medium => render_medium(data, &countdown, status),
-        SizeVariant::Small => render_small(data, &countdown, status),
+    match frame.bucket {
+        SizeBucket::Full => render_full(frame.size.height, data, &countdown, status),
+        SizeBucket::Large => render_large(data, &countdown, status),
+        SizeBucket::Medium => render_medium(data, &countdown, status),
+        SizeBucket::Small => render_small(data, &countdown, status),
+        SizeBucket::Bmm101 => bmm101::launch(data, &countdown, status),
     }
 }
 
-/// Centered loading message.
-fn loading_view() -> Node {
+/// The views without a launch share one design everywhere,
+/// set in the device's type under its own header.
+#[derive(Clone, Copy)]
+struct StateType {
+    padding: f32,
+    body: u32,
+}
+
+fn state_type(bucket: SizeBucket) -> StateType {
+    match bucket {
+        SizeBucket::Full | SizeBucket::Large | SizeBucket::Medium | SizeBucket::Small => {
+            StateType {
+                padding: 32.0,
+                body: 24,
+            }
+        }
+        SizeBucket::Bmm101 => StateType {
+            padding: bmm101::EDGE,
+            body: bmm101::BODY_SIZE,
+        },
+    }
+}
+
+fn state_header(bucket: SizeBucket) -> Node {
+    match bucket {
+        SizeBucket::Full | SizeBucket::Large | SizeBucket::Medium | SizeBucket::Small => row(
+            props!(gap: 8.0),
+            [
+                text(BRAND, style!(size: 24, color: GRAY_30)),
+                text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
+            ],
+        ),
+        SizeBucket::Bmm101 => bmm101::header(),
+    }
+}
+
+fn loading_view(set: StateType) -> Node {
     col(
-        props!(padding: 32.0, background: BLACK),
-        [text("Loading\u{2026}", style!(size: 24, color: GRAY_30))],
+        props!(padding: set.padding, background: BLACK),
+        [text(
+            "Loading\u{2026}",
+            style!(size: set.body, color: GRAY_30),
+        )],
     )
 }
 
-/// Plain "no upcoming launches" message (valid empty reply, not an error).
-fn empty_view() -> Node {
+/// A valid reply with nothing upcoming, not an error.
+fn empty_view(set: StateType, header: Node) -> Node {
     col(
-        props!(padding: 32.0, gap: 16.0, background: BLACK),
+        props!(padding: set.padding, gap: 16.0, background: BLACK),
         [
-            row(
-                props!(gap: 8.0),
-                [
-                    text(BRAND, style!(size: 24, color: GRAY_30)),
-                    text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
-                ],
+            header,
+            text(
+                "No upcoming launches",
+                style!(size: set.body, color: GRAY_30),
             ),
-            text("No upcoming launches", style!(size: 24, color: GRAY_30)),
         ],
     )
 }
 
-/// Header plus an error banner with the failure detail.
-fn error_view(detail: &str) -> Node {
+fn error_view(detail: &str, set: StateType, header: Node) -> Node {
     col(
-        props!(padding: 32.0, gap: 16.0, background: BLACK),
+        props!(padding: set.padding, gap: 16.0, background: BLACK),
         [
-            row(
-                props!(gap: 8.0),
-                [
-                    text(BRAND, style!(size: 24, color: GRAY_30)),
-                    text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
-                ],
-            ),
+            header,
             notification(
                 NotificationKind::Error,
                 "Failed to load launch data",
@@ -234,7 +261,6 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::screens::bmm101::NOT_AVAILABLE;
     use crate::screens::fixtures::{self, StateFixture};
     use crate::screens::tree::{overflow_of, texts};
 
@@ -332,26 +358,40 @@ mod tests {
     }
 
     #[test]
-    fn loading_draws_the_bmm101_frame_with_each_value_as_a_dash() {
-        let mut expected = bmm101_top(NOT_AVAILABLE);
-        expected.extend(grid([NOT_AVAILABLE; 8]));
-        assert_eq!(at(SizeBucket::Bmm101, fixtures::loading), expected);
+    fn every_frame_reads_loading_the_same_way() {
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+            SizeBucket::Bmm101,
+        ] {
+            assert_eq!(
+                at(bucket, fixtures::loading),
+                ["Loading\u{2026}"],
+                "{bucket:?}"
+            );
+        }
     }
 
     #[test]
-    fn a_bmm101_failure_reads_under_the_designed_header() {
-        assert_eq!(
-            at(SizeBucket::Bmm101, fixtures::failed),
-            [
-                BRAND,
-                "Next Launch",
-                "Failed to load launch data",
-                "API request failed (503)"
-            ]
-        );
-        assert_eq!(
-            at(SizeBucket::Bmm101, fixtures::no_launch),
-            [BRAND, "Next Launch", "No upcoming launches"]
-        );
+    fn the_deck_and_bmm101_report_failures_the_same_way() {
+        for bucket in [SizeBucket::Large, SizeBucket::Bmm101] {
+            assert_eq!(
+                at(bucket, fixtures::failed),
+                [
+                    BRAND,
+                    "Next Launch",
+                    "Failed to load launch data",
+                    "API request failed (503)"
+                ],
+                "{bucket:?}"
+            );
+            assert_eq!(
+                at(bucket, fixtures::no_launch),
+                [BRAND, "Next Launch", "No upcoming launches"],
+                "{bucket:?}"
+            );
+        }
     }
 }

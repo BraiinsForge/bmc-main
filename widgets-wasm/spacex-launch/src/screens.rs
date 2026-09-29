@@ -49,7 +49,7 @@ mod tree {
         }
     }
 
-    /// Every string the tree would draw, in tree order, canvas text included.
+    /// Every string the tree would draw, in tree order, canvas and banner text included.
     pub(super) fn texts(node: &Node) -> Vec<String> {
         let mut out = Vec::new();
         collect_texts(node, &mut out);
@@ -72,6 +72,11 @@ mod tree {
                         out.push(text.clone());
                     }
                 }
+            }
+            Node::Notification {
+                title, subtitle, ..
+            } => {
+                out.extend([title.clone(), subtitle.clone()]);
             }
             _ => {}
         }

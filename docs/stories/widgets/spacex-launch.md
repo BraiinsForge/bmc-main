@@ -12,7 +12,7 @@ sizes and in BMM101's own frame, with data from the Braiins Forge Nexus.
 - Shows the mission name and a live countdown to the scheduled launch time.
 - The countdown ticks down every second between data refreshes.
 - Once the launch time passes, the status reads `Launched`.
-- While the first data is still loading it reads `Loading…`; BMM101 draws its frame with every value as `--`.
+- While the first data is still loading it reads `Loading…`.
 
 ### Read the mission details
 
@@ -48,7 +48,7 @@ sizes and in BMM101's own frame, with data from the Braiins Forge Nexus.
 - If a refresh fails, the last known launch stays on screen and the countdown keeps running.
 - When there is no upcoming launch, it reads `No upcoming launches`.
 - A connection or data error before any launch has loaded shows a short error message.
-- On BMM101, both messages sit under the frame's header, in its type.
+- BMM101 shows the same loading, empty and error views as the Deck, under its own header and in its smaller type.
 
 ## Constraints
 
