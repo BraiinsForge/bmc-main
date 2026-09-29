@@ -18,15 +18,44 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Launch data model and nexus payload parsing.
+//! The frames the layouts are designed at, and the launch they draw.
 
 use bmc_wasm_sdk::typography::TIMES;
-#[expect(clippy::wildcard_imports, reason = "widget code uses many SDK exports")]
-use bmc_wasm_sdk::*;
+use bmc_wasm_sdk::{fmt, ufmt};
+
+/// The frames the layouts are designed at: the four BMC100 slots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeBucket {
+    Full,
+    Large,
+    Medium,
+    Small,
+}
+
+impl SizeBucket {
+    #[must_use]
+    pub const fn design_size(self) -> (u32, u32) {
+        match self {
+            Self::Full => (1_280, 480),
+            Self::Large => (638, 480),
+            Self::Medium => (638, 238),
+            Self::Small => (317, 238),
+        }
+    }
+}
+
+/// What the widget holds of the next launch.
+#[derive(Clone, Debug)]
+pub enum State {
+    Loading,
+    Loaded(LaunchData),
+    NoLaunch,
+    Error(String),
+}
 
 /// One upcoming-launch snapshot from nexus, flattened to the strings the
 /// panels render.
-#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Debug)]
 pub struct LaunchData {
     pub mission_name: String,
     pub launch_unix: i64,
@@ -37,80 +66,6 @@ pub struct LaunchData {
     pub booster: String,
     pub payload: String,
     pub spacecraft: String,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LaunchParseError {
-    InvalidDocument,
-    /// A launch is present but its `net` timestamp could not be parsed.
-    InvalidDate,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl LaunchData {
-    /// `Some` launch, `None` if none upcoming (`data: null`), `Err` if malformed.
-    pub fn parse(doc: &JsonDoc) -> Result<Option<Self>, LaunchParseError> {
-        if !doc.is_valid() {
-            return Err(LaunchParseError::InvalidDocument);
-        }
-
-        // No `net` means nexus reports nothing upcoming.
-        let Some(net) = doc.str("/data/net") else {
-            return Ok(None);
-        };
-        let launch_unix = parse_datetime(&net).ok_or(LaunchParseError::InvalidDate)?;
-
-        let mission_name = doc
-            .str("/data/mission/name")
-            .or_else(|| doc.str("/data/name"))
-            .unwrap_or_else(|| "Unknown Mission".into());
-
-        let status = doc.str("/data/status/name").unwrap_or_else(|| "TBD".into());
-
-        let rocket = doc
-            .str("/data/rocket/configuration/full_name")
-            .or_else(|| doc.str("/data/rocket/configuration/name"))
-            .unwrap_or_else(|| "Unknown".into());
-
-        let location = doc
-            .str("/data/pad/location/name")
-            .unwrap_or_else(|| "Unknown".into());
-        let pad = doc.str("/data/pad/name").unwrap_or_default();
-        let place = abbreviate_place(&location, &pad);
-
-        let landing = match doc.bool("/data/rocket/launcher_stage/0/landing/attempt") {
-            Some(false) => "No attempt".into(),
-            Some(true) => doc
-                .str("/data/rocket/launcher_stage/0/landing/type/abbrev")
-                .unwrap_or_else(|| "Unknown".into()),
-            None => "Not confirmed".into(),
-        };
-
-        let booster = doc
-            .i64("/data/rocket/launcher_stage/0/launcher_flight_number")
-            .map_or_else(|| "N/A".into(), format_booster);
-
-        let payload = doc
-            .str("/data/mission/type")
-            .unwrap_or_else(|| "N/A".into());
-
-        let spacecraft = doc
-            .str("/data/rocket/spacecraft_stage/0/spacecraft/name")
-            .unwrap_or_else(|| "N/A".into());
-
-        Ok(Some(Self {
-            mission_name,
-            launch_unix,
-            status,
-            rocket,
-            place,
-            landing,
-            booster,
-            payload,
-            spacecraft,
-        }))
-    }
 }
 
 /// Compact "site pad" label, abbreviating known SpaceX sites and pads.

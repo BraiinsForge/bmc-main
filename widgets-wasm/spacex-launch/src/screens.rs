@@ -18,23 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#![allow(clippy::cast_precision_loss)]
+//! The views, their shared parts and the fixtures that stage them.
 
-//! SpaceX Launch widget for the WASM runtime (BDK-285).
-//!
-//! Renders the next SpaceX launch as a countdown plus mission details
-//! (full/large/medium/small). Data comes from nexus
-//! (`/api/v1/data/spacex/next-launch`), which normalizes and caches the
-//! upstream Launch Library 2 feed; the countdown is ticked locally from the
-//! device clock between refreshes.
-//!
-//! - `api` — the Nexus endpoint, what a reply means, and the envelope read into a launch
-//! - `model` — the size buckets and the launch the views draw
-//! - `screens` — the views, their shared parts and the fixtures that stage them
-//! - `live` — the widget entry points the host calls
+pub mod fixtures;
+mod parts;
+mod view;
 
-pub mod api;
-#[cfg(target_arch = "wasm32")]
-mod live;
-pub mod model;
-pub mod screens;
+pub use view::{ViewData, launch_view};

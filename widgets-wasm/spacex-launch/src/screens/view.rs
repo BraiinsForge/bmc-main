@@ -18,8 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! View tree for the SpaceX launch widget: size dispatch, the launch panels,
-//! and the loading/error states.
+//! The layouts as views over a [`ViewData`]: size dispatch,
+//! the launch panels, and the loading/error states.
 
 #[expect(
     clippy::wildcard_imports,
@@ -27,19 +27,36 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::model::LaunchData;
+use crate::model::{LaunchData, State};
+use crate::screens::parts::{ValueLayout, detail_table, launch_info_table, rocket_panel};
 
-const FALCON_9: Bitmap = include_bitmap!("assets/falcon-9.png");
-const FALCON_HEAVY: Bitmap = include_bitmap!("assets/falcon-heavy.png");
-const UNKNOWN_ROCKET: Bitmap = include_bitmap!("assets/unknown.png");
+/// What the widget holds, the viewport it is drawn into,
+/// and the moment the countdown is counted from.
+#[derive(Clone, Debug)]
+pub struct ViewData {
+    pub viewport: WidgetViewport,
+    pub state: State,
+    pub now_secs: i64,
+}
 
-/// Dispatch the loaded view by size. The countdown is computed here from the
-/// device clock so the timer keeps ticking between nexus refreshes; once the
-/// net time passes, the status reads `Launched`.
 #[must_use]
-pub fn current_view(data: &LaunchData, size: WidgetSize) -> Node {
-    let now = SystemTime::now();
-    let remaining = data.launch_unix - now.unix_secs;
+pub fn launch_view(view: &ViewData) -> Node {
+    match &view.state {
+        State::Loaded(data) => {
+            let size = WidgetSize::from_dimensions(view.viewport.width, view.viewport.height);
+            current_view(data, size, view.now_secs)
+        }
+        State::Loading => loading_view(),
+        State::NoLaunch => empty_view(),
+        State::Error(msg) => error_view(msg),
+    }
+}
+
+/// Dispatch the loaded view by size.
+/// The countdown is computed per render, so the timer keeps ticking
+/// between nexus refreshes; once the net time passes, the status reads `Launched`.
+fn current_view(data: &LaunchData, size: WidgetSize, now_secs: i64) -> Node {
+    let remaining = data.launch_unix - now_secs;
     let countdown = format_duration(remaining, true);
     let status = if remaining > 0 {
         data.status.as_str()
@@ -48,10 +65,10 @@ pub fn current_view(data: &LaunchData, size: WidgetSize) -> Node {
     };
     match size.variant {
         SizeVariant::Full => render_full(size.height, data, &countdown, status),
-        // The large view stacks both tables and needs the height it was drawn
-        // for. A shorter viewport still classifies as Large (BMM101 at 480x320
-        // does), and the stack then runs past the bottom edge, so anything
-        // short falls to the side-by-side view that fits a shallow frame.
+        // The large view stacks both tables and needs the height it was drawn for.
+        // A shorter viewport still classifies as Large (BMM101 at 480x320 does),
+        // and the stack then runs past the bottom edge, so anything short falls
+        // to the side-by-side view that fits a shallow frame.
         SizeVariant::Large if size.height >= SizeVariant::Large.height() => {
             render_large(data, &countdown, status)
         }
@@ -65,8 +82,7 @@ pub fn current_view(data: &LaunchData, size: WidgetSize) -> Node {
 }
 
 /// Centered loading message.
-#[must_use]
-pub fn loading_view() -> Node {
+fn loading_view() -> Node {
     col(
         props!(padding: 32.0, background: BLACK),
         [text("Loading\u{2026}", style!(size: 24, color: GRAY_30))],
@@ -74,8 +90,7 @@ pub fn loading_view() -> Node {
 }
 
 /// Plain "no upcoming launches" message (valid empty reply, not an error).
-#[must_use]
-pub fn empty_view() -> Node {
+fn empty_view() -> Node {
     col(
         props!(padding: 32.0, gap: 16.0, background: BLACK),
         [
@@ -92,8 +107,7 @@ pub fn empty_view() -> Node {
 }
 
 /// Header plus an error banner with the failure detail.
-#[must_use]
-pub fn error_view(detail: &str) -> Node {
+fn error_view(detail: &str) -> Node {
     col(
         props!(padding: 32.0, gap: 16.0, background: BLACK),
         [
@@ -112,113 +126,6 @@ pub fn error_view(detail: &str) -> Node {
         ],
     )
 }
-
-// ============================================================================
-// Reusable layout pieces
-// ============================================================================
-
-/// How a table row spends its space on a label and its value.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ValueLayout {
-    /// Label left, value right on one line. Needs width to hold both.
-    Inline,
-    /// Value under its label. Costs a line per row and gives the value the
-    /// row's whole width, for a viewport with height to spare and none to
-    /// waste sideways.
-    Stacked,
-}
-
-/// Single table row: gray label, bold value.
-fn table_row(label: &str, value: &str, font_size: u32, layout: ValueLayout) -> Node {
-    let label = text(
-        label,
-        style!(size: font_size, color: GRAY_30, line_height: 1.2),
-    );
-    let value = text(
-        value,
-        style!(size: font_size, weight: FontWeight::BOLD, line_height: 1.2),
-    );
-    match layout {
-        // The gap is what keeps the two apart once the value grows enough to
-        // wrap: the spacer collapses to nothing at that point, and without it
-        // the label and the value touch.
-        ValueLayout::Inline => row(props!(gap: 8.0), [label, spacer(1.0), value]),
-        ValueLayout::Stacked => col(props!(gap: 2.0), [label, value]),
-    }
-}
-
-/// Thin horizontal separator line.
-fn divider() -> Node {
-    col(props!(height: 1.0, background: GRAY_90), [])
-}
-
-/// Left table: Scheduled, Status, Rocket, Place.
-fn launch_info_table(
-    font_size: u32,
-    gap: f32,
-    data: &LaunchData,
-    countdown: &str,
-    status: &str,
-    layout: ValueLayout,
-) -> Node {
-    col(
-        props!(gap: gap, flex: 1.0),
-        [
-            table_row("Scheduled", countdown, font_size, layout),
-            divider(),
-            table_row("Status", status, font_size, layout),
-            divider(),
-            table_row("Rocket", &data.rocket, font_size, layout),
-            divider(),
-            table_row("Place", &data.place, font_size, layout),
-        ],
-    )
-}
-
-/// Right table: Landing, Booster, Payload, Spacecraft.
-fn detail_table(font_size: u32, gap: f32, data: &LaunchData, layout: ValueLayout) -> Node {
-    col(
-        props!(gap: gap, flex: 1.0),
-        [
-            table_row("Landing", &data.landing, font_size, layout),
-            divider(),
-            table_row("Booster", &data.booster, font_size, layout),
-            divider(),
-            table_row("Payload", &data.payload, font_size, layout),
-            divider(),
-            table_row("Spacecraft", &data.spacecraft, font_size, layout),
-        ],
-    )
-}
-
-/// Rocket image panel (right side, full-height canvas with bitmap).
-fn rocket_panel(rocket_name: &str, h: f32) -> Node {
-    let bmp = rocket_bitmap(rocket_name);
-    canvas(
-        props!(width: 320.0, height: h),
-        [Draw::bitmap(0.0, 0.0, 320.0, h, bmp)],
-    )
-}
-
-fn rocket_bitmap(name: &str) -> &'static Bitmap {
-    let lower = name.as_bytes();
-    let has_falcon = name.contains("Falcon") || name.contains("falcon");
-    if has_falcon && (contains_bytes(lower, b"heavy") || contains_bytes(lower, b"Heavy")) {
-        &FALCON_HEAVY
-    } else if has_falcon && (contains_bytes(lower, b"9") || contains_bytes(lower, b"nine")) {
-        &FALCON_9
-    } else {
-        &UNKNOWN_ROCKET
-    }
-}
-
-fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
-}
-
-// ============================================================================
-// Layout variants
-// ============================================================================
 
 /// Full (1280×480): header + mission + two tables + rocket panel.
 fn render_full(height: u32, data: &LaunchData, countdown: &str, status: &str) -> Node {
@@ -344,4 +251,42 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
             launch_info_table(20, 8.0, data, countdown, status, ValueLayout::Inline),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::SizeBucket;
+    use crate::screens::fixtures;
+
+    /// Every string the tree would draw, in tree order.
+    fn texts(node: &Node) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_texts(node, &mut out);
+        out
+    }
+
+    fn collect_texts(node: &Node, out: &mut Vec<String>) {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                for child in children {
+                    collect_texts(child, out);
+                }
+            }
+            Node::Paragraph { spans, .. } => {
+                out.push(spans.iter().map(|span| span.text.as_str()).collect());
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn a_passed_launch_reads_launched_at_t_zero() {
+        let view = fixtures::launched(fixtures::at_bucket(SizeBucket::Small));
+        let texts = texts(&launch_view(&view));
+        assert!(
+            texts.contains(&"T-0".to_owned()) && texts.contains(&"Launched".to_owned()),
+            "{texts:?}"
+        );
+    }
 }
