@@ -27,11 +27,14 @@ import type { IntlShape } from 'react-intl';
 import * as pb from '@/proto';
 import type { Capabilities } from '@/lib/system';
 import { URLS } from '@/constants';
-import { assertUnreachable } from '@/lib/ts';
+import { assertUnreachable, ownValue } from '@/lib/ts';
 import {
     defaultScalarValue,
     listItem,
     type FieldValue,
+    type ListItem,
+    type ObjectValue,
+    type RowError,
     type ScalarKind,
     type ScalarValue,
 } from '@/components/ParamField/value';
@@ -344,18 +347,36 @@ export interface ParamsFormErrors {
     global: string[];
     fields: Record<string, string[] | undefined>;
     /** A list param's item violations, by item index. */
-    items?: Record<string, Array<string[] | undefined> | undefined>;
+    items?: Record<string, Array<RowErrors | undefined> | undefined>;
     /** Binding violations, keyed by slot key. */
     credentials?: Record<string, string[]>;
 }
 
+export interface RowErrors {
+    errors?: string[];
+    fields?: Record<string, string[] | undefined>;
+}
+
+function hasRowErrors(row: RowErrors | undefined): boolean {
+    return !!row?.errors?.length || Object.values(row?.fields ?? {}).some(errors => !!errors?.length);
+}
+
 export function hasItemErrors(errors: null | ParamsFormErrors): boolean {
-    return Object.values(errors?.items ?? {}).some(rows => rows?.some(row => !!row?.length));
+    return Object.values(errors?.items ?? {}).some(rows => rows?.some(hasRowErrors));
+}
+
+/** Each row's first violation, and each field's, as a list field shows them. */
+export function itemErrorsOf(errors: null | ParamsFormErrors, key: string): Array<RowError | undefined> | undefined {
+    return ownValue(errors?.items, key)?.map(row => {
+        if (!row) return undefined;
+        const fields = row.fields && Object.entries(row.fields).map(([field, list]) => [field, list?.[0]]);
+        return { error: row.errors?.[0], fields: fields && Object.fromEntries(fields) };
+    });
 }
 
 export function clearFieldError(errors: null | ParamsFormErrors, key: string): null | ParamsFormErrors {
     if (!errors) return null;
-    const hadFieldError = !!errors.fields[key]?.length || !!errors.items?.[key]?.some(row => !!row?.length);
+    const hadFieldError = !!ownValue(errors.fields, key)?.length || !!ownValue(errors.items, key)?.some(hasRowErrors);
     return {
         global: hadFieldError ? [] : errors.global,
         fields: { ...errors.fields, [key]: undefined },
@@ -363,11 +384,17 @@ export function clearFieldError(errors: null | ParamsFormErrors, key: string): n
     };
 }
 
+function toRowErrors(row: RowError | undefined): RowErrors | undefined {
+    if (!row) return undefined;
+    const fields = row.fields && Object.entries(row.fields).map(([key, error]) => [key, error ? [error] : undefined]);
+    return { errors: row.error ? [row.error] : undefined, fields: fields && Object.fromEntries(fields) };
+}
+
 function withFailure(errors: ParamsFormErrors, key: string, failure: ParseFailure): ParamsFormErrors {
     return {
         ...errors,
         fields: { ...errors.fields, [key]: failure.error ? [failure.error] : undefined },
-        items: { ...errors.items, [key]: failure.items?.map(error => (error ? [error] : undefined)) },
+        items: { ...errors.items, [key]: failure.items?.map(toRowErrors) },
     };
 }
 
@@ -382,9 +409,10 @@ export function revalidateField(
     return withFailure(cleared ?? { global: [], fields: {} }, def.key, r);
 }
 
-export type ParseFailure = { ok: false; error?: string; items?: Array<string | undefined> };
+export type ParseFailure = { ok: false; error?: string; items?: Array<RowError | undefined> };
 export type ParseResult = { ok: true; value: pb.FieldValue } | ParseFailure;
 type ScalarParseResult = { ok: true; value: pb.FieldValue } | { ok: false; error: string };
+type ItemParseResult = { ok: true; value: pb.FieldValue } | { ok: false; error: RowError };
 
 function nullValue(): pb.FieldValue {
     return pb.create(pb.FieldValueSchema, {
@@ -408,17 +436,37 @@ function listValue(items: pb.FieldValue[]): pb.FieldValue {
         kind: { case: 'listValue', value: pb.create(pb.FieldValueListSchema, { items }) },
     });
 }
+function structValue(fields: Record<string, pb.FieldValue>): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, {
+        kind: { case: 'structValue', value: pb.create(pb.FieldValuesSchema, { fields }) },
+    });
+}
 
-function itemKind(array: pb.ParamArray): ScalarKind {
+function itemKind(array: pb.ParamArray): pb.ArrayItemKind['kind'] {
     return array.items?.kind ?? { case: undefined };
+}
+
+function isObjectValue(v: ListItem['value']): v is ObjectValue {
+    return typeof v === 'object' && v !== null;
 }
 
 export function defaultFormifiedValue(def: pb.ManifestParamDefinition): FormifiedValue {
     if (def.kind.case === 'paramArray') {
         const kind = itemKind(def.kind.value);
-        return def.kind.value.defaultValue.map(v => listItem(readWireScalar(kind, v)));
+        return def.kind.value.defaultValue.map(v => listItem(readWireItem(kind, v)));
     }
     return defaultScalarValue(def.kind);
+}
+
+function readWireItem(kind: pb.ArrayItemKind['kind'], v: pb.FieldValue): ListItem['value'] {
+    if (kind.case !== 'paramObject') return readWireScalar(kind, v);
+    const wire = v.kind.case === 'structValue' ? v.kind.value.fields : {};
+    return Object.fromEntries(
+        kind.value.fields.map(field => {
+            const value = ownValue(wire, field.key);
+            return [field.key, value ? readWireScalar(field.kind, value) : defaultScalarValue(field.kind)];
+        }),
+    );
 }
 
 function readWireScalar(kind: ScalarKind, v: pb.FieldValue): ScalarValue {
@@ -444,7 +492,7 @@ function readWireAsFormified(def: pb.ManifestParamDefinition, v: pb.FieldValue):
     if (def.kind.case !== 'paramArray') return readWireScalar(def.kind, v);
     if (v.kind.case !== 'listValue') return defaultFormifiedValue(def);
     const kind = itemKind(def.kind.value);
-    return v.kind.value.items.map(item => listItem(readWireScalar(kind, item)));
+    return v.kind.value.items.map(item => listItem(readWireItem(kind, item)));
 }
 
 export function widgetParamsToFormifiedState(
@@ -453,7 +501,7 @@ export function widgetParamsToFormifiedState(
 ): FormifiedParams {
     const out: FormifiedParams = {};
     for (const def of manifest.params) {
-        const wire = params?.fields[def.key];
+        const wire = ownValue(params?.fields, def.key);
         out[def.key] = wire ? readWireAsFormified(def, wire) : defaultFormifiedValue(def);
     }
     return out;
@@ -535,13 +583,35 @@ function countError(count: number, array: pb.ParamArray): string | undefined {
     return undefined;
 }
 
-function parseList(array: pb.ParamArray, raw: ScalarValue[]): ParseResult {
+function parseList(array: pb.ParamArray, raw: Array<ListItem['value']>): ParseResult {
     const kind = itemKind(array);
-    const parsed = raw.map(value => parseScalar(kind, value, false));
+    const parsed = raw.map(value => parseItem(kind, value));
     const items = parsed.map(r => (r.ok ? undefined : r.error));
     const error = countError(raw.length, array);
     if (error || items.some(Boolean)) return { ok: false, error, items };
     return { ok: true, value: listValue(parsed.flatMap(r => (r.ok ? [r.value] : []))) };
+}
+
+function parseItem(kind: pb.ArrayItemKind['kind'], raw: ListItem['value']): ItemParseResult {
+    if (kind.case === 'paramObject') {
+        invariant(isObjectValue(raw), 'an object list row holds a scalar');
+        return parseObject(kind.value, raw);
+    }
+    invariant(!isObjectValue(raw), 'a scalar list row holds an object');
+    const r = parseScalar(kind, raw, false);
+    return r.ok ? r : { ok: false, error: { error: r.error } };
+}
+
+function parseObject(object: pb.ParamObject, raw: ObjectValue): ItemParseResult {
+    const fields: Record<string, pb.FieldValue> = {};
+    const errors: Record<string, string> = {};
+    for (const field of object.fields) {
+        const r = parseScalar(field.kind, ownValue(raw, field.key) ?? null, field.isOptional);
+        if (r.ok) fields[field.key] = r.value;
+        else errors[field.key] = r.error;
+    }
+    if (Object.keys(errors).length > 0) return { ok: false, error: { fields: errors } };
+    return { ok: true, value: structValue(fields) };
 }
 
 export function buildFieldValues(
@@ -551,7 +621,7 @@ export function buildFieldValues(
     const fields: Record<string, pb.FieldValue> = {};
     let errors: null | ParamsFormErrors = null;
     for (const def of manifest.params) {
-        const raw = def.key in params ? params[def.key] : defaultFormifiedValue(def);
+        const raw = Object.hasOwn(params, def.key) ? params[def.key] : defaultFormifiedValue(def);
         const r = parseFormifiedValue(def, raw);
         if (r.ok) fields[def.key] = r.value;
         else errors = withFailure(errors ?? { global: [], fields: {} }, def.key, r);

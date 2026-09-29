@@ -24,8 +24,9 @@ use bmc_shared_time::time::Timezone;
 use indexmap::IndexMap;
 
 use crate::{
-    ArrayParam, DoubleParam, IntegerParam, ItemKind, MAX_PARAM_STRING_LENGTH, ParamDefinition,
-    ParamKey, ParamKind, ParamValue, Scalar, Shape, StringParam, f64_canonical_bits,
+    ArrayParam, DoubleParam, IntegerParam, ItemKind, ItemShape, MAX_PARAM_STRING_LENGTH,
+    ObjectParam, ParamDefinition, ParamKey, ParamKind, ParamValue, Scalar, Shape, StringParam,
+    f64_canonical_bits,
 };
 
 /// What a schema key the input omits turns into.
@@ -37,8 +38,8 @@ pub enum MissingValues {
     Reject,
 }
 
-/// A value that failed its schema, addressed relative
-/// to the value map: `["key"]`, or `["key"][i]` for a list item.
+/// A value that failed its schema, addressed relative to the value map:
+/// `["key"]`, `["key"][i]` for a list item, `["key"][i]["field"]` for an object item's field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
     pub path: String,
@@ -187,7 +188,49 @@ pub(crate) fn validate_item(
         violations.push(Violation::new(path, "Value is required"));
         return None;
     }
-    validate_scalar(path, kind.as_scalar(), value, violations)
+    match kind.shape() {
+        ItemShape::Scalar(scalar) => validate_scalar(path, scalar, value, violations),
+        ItemShape::Object(object) => validate_object(path, object, value, violations),
+    }
+}
+
+/// A field the row omits reads as null, which only an optional field accepts.
+fn validate_object(
+    path: &str,
+    object: &ObjectParam,
+    value: &ParamValue,
+    violations: &mut Vec<Violation>,
+) -> Option<ParamValue> {
+    let ParamValue::Object(fields) = value else {
+        violations.push(Violation::new(path, "Must be an object"));
+        return None;
+    };
+    let before = violations.len();
+    let mut typed = BTreeMap::new();
+    for (key, field) in &object.fields {
+        let field_path = format!("{path}{}", key_path(key.as_str()));
+        let value = fields.get(key).unwrap_or(&ParamValue::Null);
+        if matches!(value, ParamValue::Null) {
+            if field.is_optional {
+                typed.insert(key.clone(), ParamValue::Null);
+            } else {
+                violations.push(Violation::new(field_path, "Value is required"));
+            }
+        } else if let Some(value) =
+            validate_scalar(&field_path, field.kind.as_scalar(), value, violations)
+        {
+            typed.insert(key.clone(), value);
+        }
+    }
+    for key in fields.keys() {
+        if !object.fields.contains_key(key) {
+            violations.push(Violation::new(
+                format!("{path}{}", key_path(key.as_str())),
+                "Unknown field",
+            ));
+        }
+    }
+    (violations.len() == before).then_some(ParamValue::Object(typed))
 }
 
 fn item_count(n: usize) -> String {

@@ -355,6 +355,63 @@ fn fixtures() -> Vec<Negative> {
             manifest_accepts: false,
         },
         Negative {
+            label: "object item: fields missing (structural)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "links": { "name": "L", "type": "array", "items": { "type": "object" }, "max_items": 2 },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "object item: a field that is itself a list (structural)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "links": {
+                        "name": "L",
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "fields": {
+                                "tags": {
+                                    "name": "T",
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "max_items": 2,
+                                },
+                            },
+                        },
+                        "max_items": 2,
+                    },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "object item: default row missing a required field (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "links": {
+                        "name": "L",
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "fields": { "label": { "name": "Label", "type": "string" } },
+                        },
+                        "max_items": 2,
+                        "default_value": [{}],
+                    },
+                }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
             label: "array: optional (semantic)",
             manifest: manifest_with(
                 "params",

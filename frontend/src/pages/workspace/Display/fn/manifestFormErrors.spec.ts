@@ -49,9 +49,37 @@ describe('mapManifestUpdateError', () => {
             ]),
         );
         expect(errors.fields.counts).toEqual(['Must have at most 2 items']);
-        expect(errors.items?.counts?.[0]).toEqual(['Must be at most 5']);
+        expect(errors.items?.counts?.[0]).toEqual({ errors: ['Must be at most 5'] });
         expect(errors.items?.counts?.[1]).toBeUndefined();
-        expect(errors.items?.counts?.[2]).toEqual(['Must be a whole number']);
+        expect(errors.items?.counts?.[2]).toEqual({ errors: ['Must be a whole number'] });
+    });
+
+    test("an object row's field violation lands on that field of its row", () => {
+        const errors = mapManifestUpdateError(
+            badRequest([
+                ['params["links"][1]["label"]', 'Value is required'],
+                ['params["links"][1]', 'Must be an object'],
+            ]),
+        );
+        expect(errors.items?.links?.[1]).toEqual({
+            errors: ['Must be an object'],
+            fields: { label: ['Value is required'] },
+        });
+    });
+
+    test('a key named like an Object member keeps its violations', () => {
+        const { fields, items, credentials } = mapManifestUpdateError(
+            badRequest([
+                ['params["constructor"]', 'Must be text'],
+                ['params["toString"][0]["valueOf"]', 'Value is required'],
+                ['credential_bindings["hasOwnProperty"]', 'Unknown account'],
+            ]),
+        );
+        expect({ fields, items, credentials }).toEqual({
+            fields: { constructor: ['Must be text'] },
+            items: { toString: [{ fields: { valueOf: ['Value is required'] } }] },
+            credentials: { hasOwnProperty: ['Unknown account'] },
+        });
     });
 
     test('a binding violation lands on its slot', () => {

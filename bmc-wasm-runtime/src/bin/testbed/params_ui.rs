@@ -24,9 +24,20 @@
 //! path that drives `WasmWidgetRuntime::deliver_params_update` on every tile
 //! plus appends a `ParamDelivery` event when recording is active.
 
-use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
+use std::collections::BTreeMap;
 
-use super::ui_helpers::{RADIO_GROUP_MAX_VARIANTS, combo_cell, key_label, radio_group_cell};
+use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
+use bmc_widget_manifest::{
+    ArrayParam, ItemKind, ItemShape, Manifest, ObjectParam, ParamDefinition, ParamKey, ParamValue,
+    Scalar, Shape,
+};
+
+use super::icon::Icons;
+use super::system_ui::{field_margin, row_height};
+use super::theme::Palette;
+use super::ui_helpers::{
+    Button, RADIO_GROUP_MAX_VARIANTS, combo_cell, key_label, radio_group_cell,
+};
 use super::view::{Delivery, ViewCommand};
 use super::{PARAM_PANEL_W, TestbedApp};
 
@@ -78,10 +89,11 @@ impl TestbedApp {
         // via `apply_params_update` / `apply_system_update`
         // which detect diffs and propagate to every tile.
         let mut working_params = self.state().params.clone();
-        let manifest_params = self.manifest.params.clone();
+        let manifest = &self.manifest;
         let mut working_system = self.state().system.clone();
         let mut working_credentials = self.state().credentials.clone();
         let credential_slots = self.credential_slots();
+        let icons = &mut self.icons;
         let mut credentials_changed = false;
         let mut params_changed = false;
         let mut system_changed = false;
@@ -101,6 +113,9 @@ impl TestbedApp {
             .show(root_ui.ctx(), |area| {
                 area.set_clip_rect(rect);
                 area.painter().rect_filled(rect, 0.0, palette.layer);
+                // `new_child` allocates nothing here, which leaves the area's layer empty,
+                // and an empty layer is never under the pointer to take the wheel.
+                area.expand_to_include_rect(rect);
                 let mut ui = area.new_child(egui::UiBuilder::new().max_rect(rect));
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -108,32 +123,21 @@ impl TestbedApp {
                         if has_params {
                             section_header_bar(scroll, "Params", section_fill);
                             egui::Frame::NONE
-                                .inner_margin(egui::Margin::same(8))
+                                .inner_margin(egui::Margin::same(SECTION_PAD))
                                 .show(scroll, |inner| {
-                                    egui::Grid::new("params_grid")
-                                        .num_columns(2)
-                                        .spacing([12.0, super::system_ui::ROW_GAP])
-                                        .min_col_width(0.0)
-                                        .show(inner, |grid| {
-                                            for (key, def) in &manifest_params {
-                                                let current = working_params
-                                                    .entry(key.clone())
-                                                    .or_insert_with(|| {
-                                                        bmc_widget_manifest::ParamValue::from_param_kind_default(
-                                                            &def.kind,
-                                                        )
-                                                    });
-                                                if paint_param_row(grid, key.as_str(), def, current) {
-                                                    params_changed = true;
-                                                }
-                                            }
-                                        });
+                                    params_changed = paint_params_section(
+                                        inner,
+                                        manifest,
+                                        &mut working_params,
+                                        icons,
+                                        palette,
+                                    );
                                 });
                             scroll.add_space(12.0);
                         }
                         section_header_bar(scroll, "System", section_fill);
                         egui::Frame::NONE
-                            .inner_margin(egui::Margin::same(8))
+                            .inner_margin(egui::Margin::same(SECTION_PAD))
                             .show(scroll, |inner| {
                                 system_changed =
                                     Self::paint_system_section(inner, &mut working_system);
@@ -160,6 +164,9 @@ impl TestbedApp {
     }
 }
 
+/// Inset of a section's controls from the sidebar's edges.
+const SECTION_PAD: i8 = 8;
+
 /// Render a section header as a full-width horizontal accent banner with
 /// black text — no left stripe.
 ///
@@ -185,36 +192,69 @@ pub(super) fn section_header_bar(ui: &mut egui::Ui, text: &str, fill: egui::Colo
 
 // ── Param-mutation inputs ───────────────────────────────────────────
 
+fn paint_params_section(
+    ui: &mut egui::Ui,
+    manifest: &Manifest,
+    values: &mut BTreeMap<ParamKey, ParamValue>,
+    icons: &mut Icons,
+    palette: &Palette,
+) -> bool {
+    let mut changed = false;
+    egui::Grid::new("params_grid")
+        .num_columns(2)
+        .spacing([12.0, super::system_ui::ROW_GAP])
+        .min_col_width(0.0)
+        .show(ui, |grid| {
+            for (key, def) in &manifest.params {
+                if let Shape::Scalar(scalar) = def.kind.shape() {
+                    let value = entry_or_default(values, key, def);
+                    changed |= paint_param_row(grid, key.as_str(), def, scalar, value);
+                }
+            }
+        });
+    // A list needs the sidebar's full width, not the grid's value column.
+    for (key, def) in &manifest.params {
+        if let Shape::Array(array) = def.kind.shape() {
+            let value = entry_or_default(values, key, def);
+            changed |= paint_list_block(ui, key.as_str(), array, value, icons, palette);
+        }
+    }
+    changed
+}
+
+fn entry_or_default<'a>(
+    values: &'a mut BTreeMap<ParamKey, ParamValue>,
+    key: &ParamKey,
+    def: &ParamDefinition,
+) -> &'a mut ParamValue {
+    values
+        .entry(key.clone())
+        .or_insert_with(|| ParamValue::from_param_kind_default(&def.kind))
+}
+
 /// Render one row inside the params Grid: monospace key in the left column,
 /// type-appropriate input + optional clear-to-null toggle in the right column.
 ///
 /// Returns `true` when the operator changed the value this frame.
-///
-/// Caller (`paint_params_panel`) wraps this in `egui::Grid::show`
-/// so the two columns stay aligned across rows regardless
-/// of key length or input width.
 fn paint_param_row(
     grid: &mut egui::Ui,
     key: &str,
-    def: &bmc_widget_manifest::ParamDefinition,
-    value: &mut bmc_widget_manifest::ParamValue,
+    def: &ParamDefinition,
+    scalar: Scalar<'_>,
+    value: &mut ParamValue,
 ) -> bool {
-    use bmc_widget_manifest::{ParamValue, Shape};
-
     let mut changed = false;
-    // Top-align the key label within its cell so a tall row (radio group)
-    // has its label anchored at the first option, not vertically centred
-    // halfway down the group. `left_to_right` keeps the label on a single
-    // line; `Align::TOP` anchors it at the row's top edge.
+    // Centred on the control's first row, so a tall radio group
+    // anchors its label at the first option rather than halfway down.
     let label_resp = grid
-        .with_layout(egui::Layout::left_to_right(egui::Align::TOP), |row| {
-            egui::Frame::NONE
-                .inner_margin(egui::Margin {
-                    top: 3,
-                    ..Default::default()
-                })
-                .show(row, |inner| inner.add(key_label(key)))
-                .inner
+        .with_layout(egui::Layout::left_to_right(egui::Align::TOP), |cell| {
+            let first_row = egui::vec2(0.0, row_height(cell));
+            cell.allocate_ui_with_layout(
+                first_row,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |slot| slot.add(key_label(key)),
+            )
+            .inner
         })
         .inner;
 
@@ -228,14 +268,9 @@ fn paint_param_row(
             // Plain-text labels — `✗` and similar dingbats aren't in egui's bundled font
             // and render as a missing-glyph box.
             let label = if is_null { "(unset)" } else { "clear" };
-            if row.small_button(label).clicked() {
+            if null_toggle(row, label) {
                 if is_null {
-                    *value = ParamValue::from_param_kind_default(&def.kind);
-                    if matches!(value, ParamValue::Null)
-                        && let Shape::Scalar(scalar) = def.kind.shape()
-                    {
-                        *value = zero_value(scalar);
-                    }
+                    *value = seed_value(scalar);
                 } else {
                     *value = ParamValue::Null;
                 }
@@ -246,18 +281,20 @@ fn paint_param_row(
                 return;
             }
         }
-        changed |= match def.kind.shape() {
-            Shape::Scalar(scalar) => paint_typed_input(row, key, scalar, value, Some(&label_resp)),
-            Shape::Array(array) => paint_list_input(row, key, array, value),
-        };
+        changed |= paint_typed_input(row, key, scalar, value, Some(&label_resp), false);
     });
     grid.end_row();
     changed
 }
 
+/// "(unset)" or "clear", as tall as the input it stands in for.
+fn null_toggle(ui: &mut egui::Ui, label: &str) -> bool {
+    let size = egui::vec2(0.0, row_height(ui));
+    ui.add(egui::Button::new(label).min_size(size)).clicked()
+}
+
 /// A type-appropriate zero, so an input without a default has something to edit.
-fn zero_value(scalar: bmc_widget_manifest::Scalar<'_>) -> bmc_widget_manifest::ParamValue {
-    use bmc_widget_manifest::{ParamValue, Scalar};
+fn zero_value(scalar: Scalar<'_>) -> ParamValue {
     match scalar {
         Scalar::String(_) | Scalar::Timezone(_) => ParamValue::String(String::new()),
         Scalar::Integer(_) => ParamValue::Integer(0),
@@ -266,64 +303,205 @@ fn zero_value(scalar: bmc_widget_manifest::Scalar<'_>) -> bmc_widget_manifest::P
     }
 }
 
-fn paint_list_input(
+#[derive(Clone, Copy)]
+enum RowAction {
+    Up(usize),
+    Down(usize),
+    Remove(usize),
+}
+
+/// A list param across the sidebar's full width: its key, a row per item, then `add`.
+fn paint_list_block(
     ui: &mut egui::Ui,
     key: &str,
-    array: &bmc_widget_manifest::ArrayParam,
-    value: &mut bmc_widget_manifest::ParamValue,
+    array: &ArrayParam,
+    value: &mut ParamValue,
+    icons: &mut Icons,
+    palette: &Palette,
 ) -> bool {
-    use bmc_widget_manifest::ParamValue;
-
+    ui.add_space(super::system_ui::ROW_GAP);
+    ui.add(key_label(key));
     let ParamValue::List(items) = value else {
         return paint_type_mismatch(ui);
     };
-    let scalar = array.items.as_scalar();
     let can_remove = items.len() > array.min_items;
     let can_add = items.len() < array.max_items;
+    let last = items.len().saturating_sub(1);
     let mut changed = false;
-    let mut raise = None;
-    let mut remove = None;
-    let mut add = false;
-    ui.vertical(|col| {
-        for (i, item) in items.iter_mut().enumerate() {
-            col.horizontal(|row| {
-                if row
-                    .add_enabled(i > 0, egui::Button::new("up").small())
-                    .clicked()
-                {
-                    raise = Some(i);
-                }
-                if row
-                    .add_enabled(can_remove, egui::Button::new("remove").small())
-                    .clicked()
-                {
-                    remove = Some(i);
-                }
-                changed |= paint_typed_input(row, &format!("{key}[{i}]"), scalar, item, None);
-            });
+    let mut action = None;
+    for (i, item) in items.iter_mut().enumerate() {
+        let item_key = format!("{key}[{i}]");
+        match array.items.shape() {
+            ItemShape::Scalar(scalar) => {
+                buttons_row(ui, |row| {
+                    action = action.or(row_buttons(row, i, last, can_remove, icons, palette));
+                    row.with_layout(egui::Layout::left_to_right(egui::Align::Center), |cell| {
+                        changed |= paint_typed_input(cell, &item_key, scalar, item, None, true);
+                    });
+                });
+            }
+            ItemShape::Object(object) => {
+                egui::Frame::group(ui.style()).show(ui, |group| {
+                    buttons_row(group, |head| {
+                        action = action.or(row_buttons(head, i, last, can_remove, icons, palette));
+                        head.with_layout(
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |cell| {
+                                cell.label(format!("#{}", i + 1));
+                            },
+                        );
+                    });
+                    changed |= paint_object_fields(group, &item_key, object, item);
+                });
+            }
         }
-        add = col
-            .add_enabled(can_add, egui::Button::new("add").small())
-            .clicked();
-    });
-    if let Some(i) = raise {
-        items.swap(i - 1, i);
+    }
+    if Button::inline("add")
+        .icon(&mut icons.add)
+        .enabled(can_add)
+        .min_height(row_height(ui))
+        .show(ui, palette)
+        .clicked()
+    {
+        items.push(seed_item(&array.items));
         changed = true;
     }
-    if let Some(i) = remove {
-        items.remove(i);
-        changed = true;
+    match action {
+        Some(RowAction::Up(i)) => items.swap(i - 1, i),
+        Some(RowAction::Down(i)) => items.swap(i, i + 1),
+        Some(RowAction::Remove(i)) => {
+            items.remove(i);
+        }
+        None => {}
     }
-    if add {
-        let seed = ParamValue::from_scalar_default(scalar);
-        items.push(if matches!(seed, ParamValue::Null) {
-            zero_value(scalar)
-        } else {
-            seed
+    changed || action.is_some()
+}
+
+/// One row tall and filled from the right, so every row's buttons line up.
+///
+/// Not `with_layout`: that takes all the remaining height and centres the row in it.
+fn buttons_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let size = egui::vec2(ui.available_width(), row_height(ui));
+    ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), add);
+}
+
+/// Right to left, as the row lays them out: remove, move down, move up.
+///
+/// Packed into one set, as the toolbar packs its own,
+/// so the row's usual gap sets them apart from the input.
+fn row_buttons(
+    ui: &mut egui::Ui,
+    i: usize,
+    last: usize,
+    can_remove: bool,
+    icons: &mut Icons,
+    palette: &Palette,
+) -> Option<RowAction> {
+    ui.scope(|set| {
+        set.spacing_mut().item_spacing.x = 1.0;
+        let mut action = None;
+        if icon_button(set, &mut icons.remove, can_remove, "Remove", palette) {
+            action = Some(RowAction::Remove(i));
+        }
+        if icon_button(set, &mut icons.move_down, i < last, "Move down", palette) {
+            action = Some(RowAction::Down(i));
+        }
+        if icon_button(set, &mut icons.move_up, i > 0, "Move up", palette) {
+            action = Some(RowAction::Up(i));
+        }
+        action
+    })
+    .inner
+}
+
+fn icon_button(
+    ui: &mut egui::Ui,
+    icon: &mut super::icon::Icon,
+    enabled: bool,
+    hint: &str,
+    palette: &Palette,
+) -> bool {
+    Button::icon_only(icon)
+        .enabled(enabled)
+        .min_height(row_height(ui))
+        .show(ui, palette)
+        .on_hover_text(hint)
+        .clicked()
+}
+
+fn paint_object_fields(
+    ui: &mut egui::Ui,
+    key: &str,
+    object: &ObjectParam,
+    value: &mut ParamValue,
+) -> bool {
+    let ParamValue::Object(fields) = value else {
+        return paint_type_mismatch(ui);
+    };
+    let mut changed = false;
+    egui::Grid::new(key)
+        .num_columns(2)
+        .spacing([12.0, super::system_ui::ROW_GAP])
+        .show(ui, |grid| {
+            for (field_key, field) in &object.fields {
+                let scalar = field.kind.as_scalar();
+                grid.label(&field.name);
+                grid.horizontal(|cell| {
+                    let is_set = fields
+                        .get(field_key)
+                        .is_some_and(|v| !matches!(v, ParamValue::Null));
+                    if !is_set {
+                        if null_toggle(cell, "(unset)") {
+                            fields.insert(field_key.clone(), seed_value(scalar));
+                            changed = true;
+                        }
+                        return;
+                    }
+                    if field.is_optional && null_toggle(cell, "clear") {
+                        fields.insert(field_key.clone(), ParamValue::Null);
+                        changed = true;
+                        return;
+                    }
+                    if let Some(entry) = fields.get_mut(field_key) {
+                        let field_path = format!("{key}[{}]", field_key.as_str());
+                        changed |= paint_typed_input(cell, &field_path, scalar, entry, None, true);
+                    }
+                });
+                grid.end_row();
+            }
         });
-        changed = true;
-    }
     changed
+}
+
+fn seed_value(scalar: Scalar<'_>) -> ParamValue {
+    let seed = ParamValue::from_scalar_default(scalar);
+    if matches!(seed, ParamValue::Null) {
+        zero_value(scalar)
+    } else {
+        seed
+    }
+}
+
+/// Required object fields start set, so a fresh row validates.
+fn seed_item(kind: &ItemKind) -> ParamValue {
+    match kind.shape() {
+        ItemShape::Scalar(scalar) => seed_value(scalar),
+        ItemShape::Object(object) => ParamValue::Object(
+            object
+                .fields
+                .iter()
+                .map(|(key, field)| {
+                    let scalar = field.kind.as_scalar();
+                    let value = if field.is_optional {
+                        ParamValue::from_scalar_default(scalar)
+                    } else {
+                        seed_value(scalar)
+                    };
+                    (key.clone(), value)
+                })
+                .collect(),
+        ),
+    }
 }
 
 /// A well-formed manifest rules a mismatch out; a label beats crashing the testbed.
@@ -336,28 +514,76 @@ fn paint_type_mismatch(ui: &mut egui::Ui) -> bool {
     false
 }
 
-/// Render an `egui::Slider` so its compound widget (track + value box) fills `cell_w`.
-/// `Slider` doesn't honour `add_sized` for its track width — the track size comes from
-/// `ui.spacing().slider_width`. We pre-allocate the cell, scope a temporary `slider_width`
-/// equal to the cell minus the value-box estimate, then run the slider inside the scoped
-/// ui so the operator sees a track that actually fills the column.
+/// A slider track filling `cell_w`, beside its own number box.
 ///
-/// The value-box reserve is derived from `ui.spacing().interact_size.x` (egui's default
-/// minimum interactable width for value-like widgets), not a constant.
-fn stretched_slider<R>(ui: &mut egui::Ui, cell_w: f32, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let row_h = ui.spacing().interact_size.y;
-    let value_box_reserve = ui.spacing().interact_size.x + ui.spacing().item_spacing.x;
-    let track_w = (cell_w - value_box_reserve).max(0.0);
-    let result = ui.allocate_ui(egui::vec2(cell_w, row_h), |slot| {
-        slot.spacing_mut().slider_width = track_w;
-        f(slot)
-    });
-    result.inner
+/// `Slider`'s built-in box sizes to the text it shows, so it outgrows any reserve for it.
+/// This box is as wide as the widest value in `range`: it never overflows the cell,
+/// and the track keeps its length while dragged across a change in digit count.
+fn slider_cell<N: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    cell_w: f32,
+    value: &mut N,
+    range: std::ops::RangeInclusive<N>,
+    step: f64,
+    decimals: usize,
+) -> egui::Response {
+    let row_h = row_height(ui);
+    let (lo, hi) = (range.start().to_f64(), range.end().to_f64());
+    let number_w = [lo, hi]
+        .into_iter()
+        .map(|end| number_width(ui, end, decimals))
+        .fold(ui.spacing().interact_size.x, f32::max);
+    // A continuous range has no step to drag the box by.
+    let speed = if step > 0.0 { step } else { (hi - lo) / 100.0 };
+    ui.allocate_ui_with_layout(
+        egui::vec2(cell_w, row_h),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |slot| {
+            let number = slot.add_sized(
+                [number_w, row_h],
+                egui::DragValue::new(value)
+                    .range(range.clone())
+                    .speed(speed)
+                    .fixed_decimals(decimals),
+            );
+            slot.spacing_mut().slider_width = slot.available_width();
+            let track = slot.add(
+                egui::Slider::new(value, range)
+                    .step_by(step)
+                    .trailing_fill(true)
+                    .show_value(false),
+            );
+            number | track
+        },
+    )
+    .inner
+}
+
+/// A `DragValue`'s width showing `value`, measured the way it lays itself out.
+fn number_width(ui: &egui::Ui, value: f64, decimals: usize) -> f32 {
+    let style = ui.style();
+    let text = style.number_formatter.format(value, decimals..=decimals);
+    let galley = ui.painter().layout_no_wrap(
+        text,
+        style.drag_value_text_style.resolve(style),
+        egui::Color32::PLACEHOLDER,
+    );
+    galley.size().x + 2.0 * ui.spacing().button_padding.x
+}
+
+/// What a double shows when it has no step to take its decimals from.
+const CONTINUOUS_DECIMALS: usize = 2;
+
+/// As many decimals as the step has, so every value it lands on reads in full.
+fn step_decimals(step: f64) -> usize {
+    step.to_string()
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len())
 }
 
 /// Inner dispatch: actual editable widget per kind. Caller has already drawn the label
-/// and (when applicable) the optional toggle. Each branch wraps its widget in `add_sized`
-/// so the column lines up visually with the longest TextEdit-style input.
+/// and (when applicable) the optional toggle. Each branch fills the cell at [`row_height`],
+/// so inputs line up with the sidebar's selects and with each other.
 ///
 /// Control width comes from `ui.available_width()` — the parent Grid + horizontal layout
 /// has already reserved space for the key label and any optional toggle, so what's left is
@@ -365,6 +591,7 @@ fn stretched_slider<R>(ui: &mut egui::Ui, cell_w: f32, f: impl FnOnce(&mut egui:
 /// resizes or label changes.
 ///
 /// List items pass no `label_resp`: one label click must not toggle every item.
+/// They also pass `compact`, so an enum stays one row tall as a dropdown.
 ///
 /// `too_many_lines` is `expect`ed because the match is one arm per `Scalar` variant +
 /// enum-or-not split; pulling each branch into its own function would obscure the otherwise
@@ -376,13 +603,15 @@ fn stretched_slider<R>(ui: &mut egui::Ui, cell_w: f32, f: impl FnOnce(&mut egui:
 fn paint_typed_input(
     ui: &mut egui::Ui,
     key: &str,
-    scalar: bmc_widget_manifest::Scalar<'_>,
-    value: &mut bmc_widget_manifest::ParamValue,
+    scalar: Scalar<'_>,
+    value: &mut ParamValue,
     label_resp: Option<&egui::Response>,
+    compact: bool,
 ) -> bool {
-    use bmc_widget_manifest::{DoubleParam, IntegerParam, ParamValue, Scalar, StringParam};
+    use bmc_widget_manifest::{DoubleParam, IntegerParam, StringParam};
 
-    let row_h = ui.spacing().interact_size.y;
+    let radio = |variants: usize| !compact && variants <= RADIO_GROUP_MAX_VARIANTS;
+    let row_h = row_height(ui);
     let cell_w = ui.available_width();
     let cell = egui::vec2(cell_w, row_h);
     let label_clicked = label_resp.is_some_and(egui::Response::clicked);
@@ -410,14 +639,18 @@ fn paint_typed_input(
                 }
                 changed
             };
-            if enum_values.len() <= RADIO_GROUP_MAX_VARIANTS {
+            if radio(enum_values.len()) {
                 radio_group_cell(ui, key, cell_w, populate)
             } else {
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
         (Scalar::String(_) | Scalar::Timezone(_), ParamValue::String(s)) => {
-            let resp = ui.add_sized(cell, egui::TextEdit::singleline(s));
+            let resp = ui.add(
+                egui::TextEdit::singleline(s)
+                    .desired_width(cell_w)
+                    .margin(field_margin(ui)),
+            );
             focus_on_label_click(&resp);
             resp.changed()
         }
@@ -439,7 +672,7 @@ fn paint_typed_input(
                 }
                 changed
             };
-            if enum_values.len() <= RADIO_GROUP_MAX_VARIANTS {
+            if radio(enum_values.len()) {
                 radio_group_cell(ui, key, cell_w, populate)
             } else {
                 combo_cell(ui, key, cell_w, combo_label, populate)
@@ -450,15 +683,10 @@ fn paint_typed_input(
             // the value as a progress fill against `min..=max` (the GIMP-style look).
             // Unbounded integers fall back to a `DragValue` since `Slider` requires a finite range.
             if let (Some(lo), Some(hi)) = (min, max) {
-                stretched_slider(ui, cell_w, |sl| {
-                    let resp = sl.add(
-                        egui::Slider::new(n, *lo..=*hi)
-                            .step_by(step.map_or(1.0, f64::from))
-                            .trailing_fill(true),
-                    );
-                    focus_on_label_click(&resp);
-                    resp.changed()
-                })
+                let step = step.map_or(1.0, f64::from);
+                let resp = slider_cell(ui, cell_w, n, *lo..=*hi, step, 0);
+                focus_on_label_click(&resp);
+                resp.changed()
             } else {
                 let mut dv = egui::DragValue::new(n).speed(step.map_or(1.0, f64::from));
                 if let Some(lo) = min {
@@ -496,7 +724,7 @@ fn paint_typed_input(
                 }
                 changed
             };
-            if enum_values.len() <= RADIO_GROUP_MAX_VARIANTS {
+            if radio(enum_values.len()) {
                 radio_group_cell(ui, key, cell_w, populate)
             } else {
                 combo_cell(ui, key, cell_w, combo_label, populate)
@@ -506,15 +734,10 @@ fn paint_typed_input(
             // Same dispatch as Integer: bounded ranges get
             // the filled-slider treatment, unbounded fall back to DragValue.
             if let (Some(lo), Some(hi)) = (min, max) {
-                stretched_slider(ui, cell_w, |sl| {
-                    let resp = sl.add(
-                        egui::Slider::new(f, *lo..=*hi)
-                            .step_by(step.unwrap_or(0.0))
-                            .trailing_fill(true),
-                    );
-                    focus_on_label_click(&resp);
-                    resp.changed()
-                })
+                let decimals = step.map_or(CONTINUOUS_DECIMALS, step_decimals);
+                let resp = slider_cell(ui, cell_w, f, *lo..=*hi, step.unwrap_or(0.0), decimals);
+                focus_on_label_click(&resp);
+                resp.changed()
             } else {
                 let mut dv = egui::DragValue::new(f).speed(step.unwrap_or(0.1));
                 if let Some(lo) = min {
@@ -538,5 +761,137 @@ fn paint_typed_input(
             cb_changed || label_clicked
         }
         _ => paint_type_mismatch(ui),
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    use super::super::icon::Icons;
+    use super::super::theme;
+    use super::{Manifest, PARAM_PANEL_W, SECTION_PAD, TestbedApp, paint_params_section};
+
+    const SECTION_W: f32 = PARAM_PANEL_W - 2.0 * SECTION_PAD as f32;
+
+    /// Every kind the sidebar paints, at values that make its controls widest.
+    fn manifest() -> Manifest {
+        let tones = json!([
+            {"value": "info", "label": "Info"},
+            {"value": "warning", "label": "Warning"},
+        ]);
+        json!({
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Layout fixture",
+            "binary": "bin/x",
+            "supported_viewports": [{
+                "type": "rectangular",
+                "min_width": 317,
+                "max_width": 317,
+                "min_height": 238,
+                "max_height": 238,
+                "min_dpi": 1,
+                "max_dpi": 1,
+            }],
+            "params": {
+                "free_string": {"type": "string", "name": "S", "default_value": "Hello"},
+                "string_enum": {"type": "string", "name": "E", "default_value": "info", "enum_values": tones},
+                "integer_range": {
+                    "type": "integer", "name": "I", "min": -100_000, "max": 100_000, "default_value": -100_000,
+                },
+                "double_range": {
+                    "type": "double", "name": "D", "min": 0.0, "max": 1.0, "step": 0.001, "default_value": 0.125,
+                },
+                "boolean_flag": {"type": "boolean", "name": "B", "default_value": true},
+                "tz": {"type": "timezone", "name": "T", "default_value": "Europe/Prague"},
+                "optional_set": {
+                    "type": "integer", "name": "O", "optional": true, "min": 0, "max": 100, "default_value": 50,
+                },
+                "optional_unset": {"type": "string", "name": "U", "optional": true},
+                "string_list": {
+                    "type": "array", "name": "SL", "items": {"type": "string"}, "max_items": 5,
+                    "default_value": ["BTC"],
+                },
+                "integer_list": {
+                    "type": "array", "name": "IL",
+                    "items": {"type": "integer", "min": -100_000, "max": 100_000},
+                    "max_items": 5, "default_value": [-100_000],
+                },
+                "double_list": {
+                    "type": "array", "name": "DL",
+                    "items": {"type": "double", "min": 0.0, "max": 1.0, "step": 0.001},
+                    "max_items": 5, "default_value": [0.125],
+                },
+                "boolean_list": {
+                    "type": "array", "name": "BL", "items": {"type": "boolean"}, "max_items": 5,
+                    "default_value": [true],
+                },
+                "enum_list": {
+                    "type": "array", "name": "EL", "items": {"type": "string", "enum_values": tones},
+                    "max_items": 5, "default_value": ["warning"],
+                },
+                "links": {
+                    "type": "array", "name": "L", "max_items": 5,
+                    "items": {"type": "object", "fields": {
+                        "label": {"type": "string", "name": "Label"},
+                        "url": {"type": "string", "name": "URL", "optional": true},
+                        "missing": {"type": "string", "name": "Missing", "optional": true},
+                        "tone": {"type": "string", "name": "Tone", "enum_values": tones},
+                    }},
+                    "default_value": [{"label": "Braiins", "url": "https://braiins.com", "tone": "info"}],
+                },
+            },
+        })
+        .to_string()
+        .parse()
+        .expect("BUG: the layout fixture must be a valid manifest")
+    }
+
+    /// How far `paint` lays out past either side of a `width`-wide column.
+    /// Several frames, as a `Grid` sizes its columns from the frame before.
+    fn overflow(width: f32, mut paint: impl FnMut(&mut egui::Ui)) -> f32 {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, &theme::DARK);
+        let column = egui::Rect::from_min_size(egui::pos2(100.0, 0.0), egui::vec2(width, 4_000.0));
+        let mut overflow = 0.0;
+        for _ in 0..3 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |root| {
+                let mut ui = root.new_child(egui::UiBuilder::new().max_rect(column));
+                paint(&mut ui);
+                let used = ui.min_rect();
+                overflow = f32::max(column.left() - used.left(), used.right() - column.right());
+            });
+        }
+        overflow.max(0.0)
+    }
+
+    #[test]
+    fn every_param_kind_fits_the_sidebar() {
+        let manifest = manifest();
+        let mut icons = Icons::new();
+        let mut values = BTreeMap::new();
+        let overflow = overflow(SECTION_W, |ui| {
+            paint_params_section(ui, &manifest, &mut values, &mut icons, &theme::DARK);
+        });
+        assert!(
+            overflow < 0.5,
+            "params overflow the sidebar by {overflow} px"
+        );
+    }
+
+    #[test]
+    fn the_system_section_fits_the_sidebar() {
+        let mut system = bmc_wasm_runtime::SystemSnapshot::default();
+        let overflow = overflow(SECTION_W, |ui| {
+            TestbedApp::paint_system_section(ui, &mut system);
+        });
+        assert!(
+            overflow < 0.5,
+            "the system section overflows the sidebar by {overflow} px"
+        );
     }
 }

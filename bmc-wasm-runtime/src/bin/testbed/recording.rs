@@ -1482,6 +1482,8 @@ impl TestbedApp {
                     egui::Stroke::new(1.0_f32, record_accent),
                     egui::StrokeKind::Inside,
                 );
+                // As in the params sidebar: without it the event log never takes the wheel.
+                area.expand_to_include_rect(rect);
                 let mut ui = area.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)));
                 let icons = &mut self.icons;
                 if let Some(rec) = self.recording_mode.active_mut() {

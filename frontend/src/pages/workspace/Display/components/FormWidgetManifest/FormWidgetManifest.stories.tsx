@@ -23,7 +23,7 @@ import { action } from 'storybook/actions';
 
 import * as pb from '@/proto';
 import { create } from '@/proto';
-import { ParamField } from '@/components/ParamField';
+import { ParamField, type RowError } from '@/components/ParamField';
 import {
     defaultFormifiedValue,
     widgetParamsToFormifiedState,
@@ -35,6 +35,7 @@ import { FormWidgetManifest, WidgetManifestForm, type WidgetManifestFormProps } 
 
 // Styles
 import css from './FormWidgetManifest.stories.scss';
+import cn from 'clsx';
 
 interface Args {
     invalid: boolean;
@@ -78,8 +79,13 @@ const ACCOUNTS: pb.Account[] = [
     }),
 ];
 
-function param(key: string, name: string, kind: pb.ManifestParamDefinition['kind']): pb.ManifestParamDefinition {
-    return create(pb.ManifestParamDefinitionSchema, { key, name, kind });
+function param(
+    key: string,
+    name: string,
+    kind: pb.ManifestParamDefinition['kind'],
+    description?: string,
+): pb.ManifestParamDefinition {
+    return create(pb.ManifestParamDefinitionSchema, { key, name, kind, description });
 }
 
 function slot(key: string, typeId: string, label: string, required: boolean): pb.CredentialSlotDefinition {
@@ -149,27 +155,70 @@ function list(
     key: string,
     name: string,
     items: pb.ArrayItemKind['kind'],
-    bounds: { minItems?: number; maxItems: number },
+    options: { minItems?: number; maxItems: number; description?: string },
     defaultValue: Array<pb.FieldValue['kind']>,
 ): pb.ManifestParamDefinition {
-    return param(key, name, {
-        case: 'paramArray',
-        value: create(pb.ParamArraySchema, {
-            items: { kind: items },
-            ...bounds,
-            defaultValue: defaultValue.map(kind => create(pb.FieldValueSchema, { kind })),
-        }),
-    });
+    const { description, ...bounds } = options;
+    return param(
+        key,
+        name,
+        {
+            case: 'paramArray',
+            value: create(pb.ParamArraySchema, {
+                items: { kind: items },
+                ...bounds,
+                defaultValue: defaultValue.map(kind => create(pb.FieldValueSchema, { kind })),
+            }),
+        },
+        description,
+    );
 }
 
 const SYMBOLS = list(
     'symbols',
     'Ticker symbols',
     { case: 'paramString', value: create(pb.ParamStringSchema) },
-    { minItems: 1, maxItems: 8 },
+    { minItems: 1, maxItems: 8, description: 'Shown one after another, in this order.' },
     [
         { case: 'stringValue', value: 'NVDA' },
         { case: 'stringValue', value: 'AAPL' },
+    ],
+);
+
+const LINKS = list(
+    'links',
+    'Objects',
+    {
+        case: 'paramObject',
+        value: create(pb.ParamObjectSchema, {
+            fields: [
+                {
+                    key: 'label',
+                    name: 'Label',
+                    description: 'The text the widget shows for the link.',
+                    kind: { case: 'paramString', value: {} },
+                },
+                {
+                    key: 'url',
+                    name: 'URL',
+                    description: 'Leave empty to show the label as plain text.',
+                    isOptional: true,
+                    kind: { case: 'paramString', value: { format: pb.StringFormat.URI } },
+                },
+            ],
+        }),
+    },
+    { maxItems: 4, description: 'Shown as a list of links.' },
+    [
+        {
+            case: 'structValue',
+            value: create(pb.FieldValuesSchema, {
+                fields: {
+                    label: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: 'Braiins' } }),
+                    url: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: 'https://braiins.com' } }),
+                },
+            }),
+        },
     ],
 );
 
@@ -178,7 +227,7 @@ const ITEM_KIND_LISTS: pb.ManifestParamDefinition[] = [
         'thresholds',
         'Whole numbers',
         { case: 'paramInteger', value: create(pb.ParamIntegerSchema, { min: 0, max: 100 }) },
-        { maxItems: 5 },
+        { maxItems: 5, description: 'Each between 0 and 100.' },
         [
             { case: 'integerValue', value: 10 },
             { case: 'integerValue', value: 50 },
@@ -188,18 +237,24 @@ const ITEM_KIND_LISTS: pb.ManifestParamDefinition[] = [
         'weights',
         'Decimals',
         { case: 'paramDouble', value: create(pb.ParamDoubleSchema, { defaultValue: 1.0, step: 0.1 }) },
-        { minItems: 1, maxItems: 4 },
+        { minItems: 1, maxItems: 4, description: 'At least one, in steps of 0.1.' },
         [{ case: 'doubleValue', value: 0.5 }],
     ),
-    list('flags', 'Toggles', { case: 'paramBoolean', value: create(pb.ParamBooleanSchema) }, { maxItems: 3 }, [
-        { case: 'booleanValue', value: true },
-        { case: 'booleanValue', value: false },
-    ]),
+    list(
+        'flags',
+        'Toggles',
+        { case: 'paramBoolean', value: create(pb.ParamBooleanSchema) },
+        { maxItems: 3, description: 'Up to three switches.' },
+        [
+            { case: 'booleanValue', value: true },
+            { case: 'booleanValue', value: false },
+        ],
+    ),
     list(
         'zones',
         'Timezones',
         { case: 'paramTimezone', value: create(pb.ParamTimezoneSchema, { defaultValue: 'UTC' }) },
-        { maxItems: 3 },
+        { maxItems: 3, description: 'Clocks shown next to the local one.' },
         [{ case: 'stringValue', value: 'Europe/Prague' }],
     ),
     list(
@@ -216,12 +271,13 @@ const ITEM_KIND_LISTS: pb.ManifestParamDefinition[] = [
                 ],
             }),
         },
-        { minItems: 1, maxItems: 3 },
+        { minItems: 1, maxItems: 3, description: 'Pick at least one side.' },
         [
             { case: 'stringValue', value: 'left' },
             { case: 'stringValue', value: 'right' },
         ],
     ),
+    LINKS,
 ];
 
 const SLOTS: pb.CredentialSlotDefinition[] = [
@@ -263,7 +319,7 @@ function invalidErrors(manifest: pb.WidgetManifest): ParamsFormErrors {
     return {
         global: ['The widget could not be saved.'],
         fields: Object.fromEntries(manifest.params.map(p => [p.key, [`${p.name} is not acceptable.`]])),
-        items: { [SYMBOLS.key]: [undefined, ['Unknown symbol.']] },
+        items: { [SYMBOLS.key]: [undefined, { errors: ['Unknown symbol.'] }] },
         credentials: Object.fromEntries(manifest.credentials.map(s => [s.key, ['Account not found']])),
     };
 }
@@ -304,16 +360,24 @@ export function ScalarFields({ invalid }: Args) {
     return <Boxed {...useDemoProps(SCALARS_MANIFEST, invalid)} />;
 }
 
+function invalidRow(definition: pb.ManifestParamDefinition): RowError {
+    const items = definition.kind.case === 'paramArray' ? definition.kind.value.items?.kind : undefined;
+    const firstField = items?.case === 'paramObject' ? items.value.fields[0]?.key : undefined;
+    return firstField ? { fields: { [firstField]: 'Not acceptable.' } } : { error: 'Not acceptable.' };
+}
+
 function ListCell({ definition, invalid }: { definition: pb.ManifestParamDefinition; invalid: boolean }) {
     const [value, setValue] = useState<FormifiedValue>(() => defaultFormifiedValue(definition));
+    const isObjectList =
+        definition.kind.case === 'paramArray' && definition.kind.value.items?.kind.case === 'paramObject';
     return (
-        <div className={css.cell}>
+        <div className={cn(css.cell, isObjectList && css.wide)}>
             <ParamField
                 id={`story-${definition.key}`}
                 definition={definition}
                 value={value}
                 error={invalid ? `${definition.name} is not acceptable.` : undefined}
-                itemErrors={invalid ? [undefined, 'Not acceptable.'] : undefined}
+                itemErrors={invalid ? [invalidRow(definition), invalidRow(definition)] : undefined}
                 onChange={(_key, next) => setValue(next)}
                 timezones={TIMEZONES}
             />
@@ -321,11 +385,24 @@ function ListCell({ definition, invalid }: { definition: pb.ManifestParamDefinit
     );
 }
 
+function withErrors(definition: pb.ManifestParamDefinition): pb.ManifestParamDefinition {
+    return pb.create(pb.ManifestParamDefinitionSchema, {
+        ...definition,
+        key: `${definition.key}Invalid`,
+        name: `${definition.name}, with errors`,
+    });
+}
+
+const ERROR_DEMOS = [SYMBOLS, LINKS].map(withErrors);
+
 export function ListField({ invalid }: Args) {
     return (
         <div className={css.grid}>
             {[SYMBOLS, ...ITEM_KIND_LISTS].map(definition => (
                 <ListCell key={definition.key} definition={definition} invalid={invalid} />
+            ))}
+            {ERROR_DEMOS.map(definition => (
+                <ListCell key={definition.key} definition={definition} invalid />
             ))}
         </div>
     );

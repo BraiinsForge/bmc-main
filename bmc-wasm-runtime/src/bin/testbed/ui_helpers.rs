@@ -82,6 +82,7 @@ enum Layout {
     Inline,
     /// Keeps the icon's row whether or not the button has one.
     Stacked,
+    IconOnly,
 }
 
 /// Laid out by hand rather than as an `egui::Button`.
@@ -114,6 +115,14 @@ impl<'a> Button<'a> {
         Self {
             layout: Layout::Inline,
             ..Self::bar(label)
+        }
+    }
+
+    /// Name it with `on_hover_text` on the response: there is no label to read.
+    pub(super) fn icon_only(icon: &'a mut super::icon::Icon) -> Self {
+        Self {
+            layout: Layout::IconOnly,
+            ..Self::bar("").icon(icon)
         }
     }
 
@@ -216,6 +225,7 @@ fn allocate_slot(
             ),
             MIN_STACK_W,
         ),
+        Layout::IconOnly => (egui::Vec2::splat(ICON_SIZE), 0.0),
     };
     let size = egui::vec2(
         (content.x + 2.0 * padding.x).max(floor),
@@ -249,6 +259,10 @@ fn paint_slot(
                 inner.center().x - text.size().x / 2.0,
                 inner.max.y - text.size().y,
             ),
+        ),
+        Layout::IconOnly => (
+            inner.center() - egui::Vec2::splat(ICON_SIZE / 2.0),
+            inner.center(),
         ),
     };
     if let Some(icon) = icon {

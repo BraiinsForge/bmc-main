@@ -54,7 +54,8 @@
 //! - `enum_values` of any of the above → a generated `enum <FieldPascalCase>`
 //!   with `ALL`, `as_manifest_value`, `from_manifest_value`
 //! - `Array` → `Vec<T>` of its item type, where an `enum_values` item
-//!   generates `enum <FieldPascalCase>Item`
+//!   generates `enum <FieldPascalCase>Item`, and an object item
+//!   a `struct <FieldPascalCase>Item` with a field per object field
 //!
 //! The reads route through [`bmc_wasm_sdk::params::typed::ParamRead`]; enums
 //! use the `impl_manifest_{str,i32,f64}_enum!` macros from the SDK so each
@@ -79,19 +80,22 @@
 //!
 //! Enum variants: string-valued enums derive from each option's `value`
 //! (PascalCased via [`heck::AsUpperCamelCase`]); int/double enums use the
-//! `label` since their `value` is a number. Identical generated variants in
-//! the same enum are a hard error.
+//! `label` since their `value` is a number.
+//!
+//! Distinct manifest entries that map to one name in the same scope are a hard error,
+//! reported all at once: `my-label` and `my_label` fields,
+//! or a `links_item` enum next to the `LinksItem` row of `links`.
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use bmc_widget_manifest::{
-    ArrayParam, CredentialKey, CredentialSlot, DoubleParam, IntegerParam, Manifest,
-    ParamDefinition, ParamKey, Scalar, Shape, StringParam, credential,
+    ArrayParam, CredentialKey, CredentialSlot, DoubleParam, IntegerParam, ItemShape, Manifest,
+    ObjectParam, ParamDefinition, ParamKey, Scalar, Shape, StringParam, credential,
 };
 use heck::{AsShoutySnakeCase, AsSnakeCase, AsUpperCamelCase};
 use indoc::formatdoc;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::{format_ident, quote};
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 
 pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -102,8 +106,8 @@ pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// the generated file lives (e.g. `../manifest.json`).
 ///
 /// Returns `Err` if the manifest declares neither params nor credentials (the
-/// caller should not emit a file in that case) or if name-mapping produces a
-/// collision.
+/// caller should not emit a file in that case), if a key maps to a name Rust
+/// rejects, or if name-mapping produces a collision.
 pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
     let mut params: Vec<(&ParamKey, &ParamDefinition)> = manifest.params.iter().collect();
     params.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
@@ -112,12 +116,14 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
         bail!("manifest has no params or credentials; do not emit a file");
     }
 
+    let mut symbols = Symbols::default();
     let params_block = if params.is_empty() {
         TokenStream::new()
     } else {
-        emit_params_block(&params)?
+        emit_params_block(&params, &mut symbols)?
     };
-    let credentials_block = emit_credentials_block(manifest)?;
+    let credentials_block = emit_credentials_block(manifest, &mut symbols)?;
+    symbols.check()?;
 
     let body = quote! {
         #params_block
@@ -144,18 +150,29 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
     })
 }
 
-fn emit_params_block(params: &[(&ParamKey, &ParamDefinition)]) -> Result<TokenStream> {
+fn emit_params_block(
+    params: &[(&ParamKey, &ParamDefinition)],
+    symbols: &mut Symbols,
+) -> Result<TokenStream> {
+    for scaffolding in ["Params", "ParamRead", "snapshot"] {
+        symbols.declare(
+            MODULE,
+            &format_ident!("{scaffolding}"),
+            "the generated scaffolding",
+        );
+    }
+    // The emitted code and the SDK's enum macros name these unqualified.
+    for prelude in ["Option", "String", "Vec"] {
+        symbols.declare(MODULE, &format_ident!("{prelude}"), "the Rust prelude");
+    }
     // Resolve identifiers once so the same name is used consistently across the struct
     // declaration, the helper-enum declarations, and the `from_snapshot` body.
     let resolved: Vec<Resolved> = params
         .iter()
-        .map(|(k, d)| Resolved::new(k.as_str(), d))
+        .map(|(k, d)| Resolved::new(k.as_str(), d, symbols))
         .collect::<Result<Vec<_>>>()?;
 
-    let helper_enums: Vec<TokenStream> = resolved
-        .iter()
-        .filter_map(|r| r.enum_decl.as_ref().map(emit_enum_decl))
-        .collect();
+    let helpers = resolved.iter().flat_map(|r| &r.helpers);
 
     let struct_fields = resolved.iter().map(|r| {
         let field = &r.field_ident;
@@ -188,7 +205,7 @@ fn emit_params_block(params: &[(&ParamKey, &ParamDefinition)]) -> Result<TokenSt
         use bmc_wasm_sdk::params as snapshot;
         use bmc_wasm_sdk::params::typed::ParamRead;
 
-        #(#helper_enums)*
+        #(#helpers)*
 
         #[derive(Clone, Debug, PartialEq)]
         pub struct Params {
@@ -256,10 +273,15 @@ fn emit_params_block(params: &[(&ParamKey, &ParamDefinition)]) -> Result<TokenSt
     })
 }
 
-fn emit_credentials_block(manifest: &Manifest) -> Result<TokenStream> {
+fn emit_credentials_block(manifest: &Manifest, symbols: &mut Symbols) -> Result<TokenStream> {
     if manifest.credentials.is_empty() {
         return Ok(TokenStream::new());
     }
+    symbols.declare(
+        MODULE,
+        &format_ident!("credentials"),
+        "the generated scaffolding",
+    );
 
     let catalog = credential::builtins();
     let mut slots: Vec<(&CredentialKey, &CredentialSlot)> = manifest.credentials.iter().collect();
@@ -267,7 +289,7 @@ fn emit_credentials_block(manifest: &Manifest) -> Result<TokenStream> {
 
     let modules = slots
         .into_iter()
-        .map(|(key, slot)| emit_credential_slot(&catalog, key.as_str(), slot))
+        .map(|(key, slot)| emit_credential_slot(&catalog, key.as_str(), slot, symbols))
         .collect::<Result<Vec<_>>>()?;
 
     Ok(quote! {
@@ -282,6 +304,7 @@ fn emit_credential_slot(
     catalog: &[credential::CredentialType],
     slot_key: &str,
     slot: &CredentialSlot,
+    symbols: &mut Symbols,
 ) -> Result<TokenStream> {
     let cred_type = catalog
         .iter()
@@ -294,21 +317,35 @@ fn emit_credential_slot(
             )
         })?;
 
+    let module = field_ident(slot_key)?;
+    symbols.declare(
+        "mod credentials",
+        &module,
+        format!("credential slot {slot_key:?}"),
+    );
+
     let mut field_keys = cred_type.spendable_fields();
     field_keys.sort_by(|a, b| a.as_str().cmp(b.as_str()));
 
-    let consts = field_keys.into_iter().map(|field| {
+    let module_scope = format!("mod credentials::{module} of credential slot {slot_key:?}");
+    let mut consts = Vec::with_capacity(field_keys.len());
+    for field in field_keys {
         let name = format_ident!("{}", AsShoutySnakeCase(field.as_str()).to_string());
+        symbols.declare(
+            module_scope.clone(),
+            &name,
+            format!("field {:?}", field.as_str()),
+        );
         let placeholder = Literal::string(&format!(
             "{{{{ credential.{slot_key}.{} }}}}",
             field.as_str()
         ));
         let doc = format!("Placeholder for this slot's `{}` field.", field.as_str());
-        quote! {
+        consts.push(quote! {
             #[doc = #doc]
             pub const #name: &str = #placeholder;
-        }
-    });
+        });
+    }
 
     let requiredness = if slot.required {
         "Required — the widget cannot work until an account is bound."
@@ -325,7 +362,6 @@ fn emit_credential_slot(
         doc_lines.push(description.clone());
     }
     let docs = doc_lines.iter().map(|line| quote! { #[doc = #line] });
-    let module = field_ident(slot_key);
 
     Ok(quote! {
         #(#docs)*
@@ -335,6 +371,68 @@ fn emit_credential_slot(
     })
 }
 
+// ── Collisions: distinct manifest entries mapped to one Rust name ────
+
+const MODULE: &str = "module";
+
+/// Every name the emitted file declares, with the manifest entry behind it,
+/// so all collisions are reported at once instead of failing the widget's build.
+#[derive(Default)]
+struct Symbols(Vec<Symbol>);
+
+struct Symbol {
+    scope: String,
+    name: String,
+    origin: String,
+}
+
+impl Symbols {
+    fn declare(&mut self, scope: impl Into<String>, name: &Ident, origin: impl Into<String>) {
+        self.0.push(Symbol {
+            scope: scope.into(),
+            name: name.to_string(),
+            origin: origin.into(),
+        });
+    }
+
+    fn check(&self) -> Result<()> {
+        let mut origins: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+        for symbol in &self.0 {
+            origins
+                .entry((&symbol.scope, &symbol.name))
+                .or_default()
+                .push(&symbol.origin);
+        }
+        let collisions: Vec<String> = origins
+            .into_iter()
+            .filter(|(_, origins)| origins.len() > 1)
+            .map(|((scope, name), origins)| {
+                format!("- {scope}: `{name}` from {}", origins.join(", "))
+            })
+            .collect();
+        if collisions.is_empty() {
+            Ok(())
+        } else {
+            bail!("generated names collide:\n{}", collisions.join("\n"))
+        }
+    }
+}
+
+/// Variants are scoped by `origin` too,
+/// so two params colliding on the enum name do not also report each other's options.
+fn declare_enum<'a>(
+    symbols: &mut Symbols,
+    origin: &str,
+    name: &Ident,
+    variants: impl IntoIterator<Item = (&'a Ident, &'a str)>,
+) {
+    symbols.declare(MODULE, name, origin);
+    let scope = format!("enum {name} of {origin}");
+    for (ident, option) in variants {
+        symbols.declare(scope.clone(), ident, format!("option {option:?}"));
+    }
+}
+
 // ── Resolution: manifest key → emitted identifier set ───────────────
 
 struct Resolved {
@@ -342,7 +440,8 @@ struct Resolved {
     field_ident: Ident,
     field_ty: TokenStream,
     is_optional: bool,
-    enum_decl: Option<EnumDecl>,
+    /// The enums and row structs `field_ty` names.
+    helpers: Vec<TokenStream>,
 }
 
 enum EnumDecl {
@@ -367,13 +466,30 @@ struct Variant<V> {
 }
 
 impl Resolved {
-    fn new(key: &str, def: &ParamDefinition) -> Result<Self> {
-        let field_ident = field_ident(key);
-        let (field_ty, enum_decl) = match def.kind.shape() {
-            Shape::Scalar(scalar) => scalar_ty(key, enum_name(key), scalar)?,
+    fn new(key: &str, def: &ParamDefinition, symbols: &mut Symbols) -> Result<Self> {
+        let field_ident = field_ident(key)?;
+        symbols.declare("struct Params", &field_ident, format!("param {key:?}"));
+        let mut helpers = Vec::new();
+        let field_ty = match def.kind.shape() {
+            Shape::Scalar(scalar) => scalar_ty(
+                &format!("param {key:?}"),
+                enum_name(key),
+                scalar,
+                &mut helpers,
+                symbols,
+            )?,
             Shape::Array(ArrayParam { items, .. }) => {
-                let (item_ty, enum_decl) = scalar_ty(key, item_enum_name(key), items.as_scalar())?;
-                (quote! { Vec<#item_ty> }, enum_decl)
+                let item_ty = match items.shape() {
+                    ItemShape::Scalar(scalar) => scalar_ty(
+                        &format!("items of param {key:?}"),
+                        item_type_name(key),
+                        scalar,
+                        &mut helpers,
+                        symbols,
+                    )?,
+                    ItemShape::Object(object) => row_ty(key, object, &mut helpers, symbols)?,
+                };
+                quote! { Vec<#item_ty> }
             }
         };
 
@@ -388,17 +504,20 @@ impl Resolved {
             field_ident,
             field_ty: final_ty,
             is_optional: def.is_optional,
-            enum_decl,
+            helpers,
         })
     }
 }
 
+/// `origin` names the manifest entry the type comes from, for collision reports.
 fn scalar_ty(
-    key: &str,
+    origin: &str,
     enum_ident: Ident,
     scalar: Scalar<'_>,
-) -> Result<(TokenStream, Option<EnumDecl>)> {
-    Ok(match scalar {
+    helpers: &mut Vec<TokenStream>,
+    symbols: &mut Symbols,
+) -> Result<TokenStream> {
+    let (ty, decl) = match scalar {
         Scalar::String(StringParam { enum_values, .. }) if !enum_values.is_empty() => {
             let variants = enum_values
                 .iter()
@@ -410,7 +529,12 @@ fn scalar_ty(
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
+            declare_enum(
+                symbols,
+                origin,
+                &enum_ident,
+                variants.iter().map(|v| (&v.ident, v.value.as_str())),
+            );
             let ty = quote! { #enum_ident };
             (
                 ty,
@@ -431,7 +555,12 @@ fn scalar_ty(
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
+            declare_enum(
+                symbols,
+                origin,
+                &enum_ident,
+                variants.iter().map(|v| (&v.ident, v.label.as_str())),
+            );
             let ty = quote! { #enum_ident };
             (
                 ty,
@@ -452,7 +581,12 @@ fn scalar_ty(
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
+            declare_enum(
+                symbols,
+                origin,
+                &enum_ident,
+                variants.iter().map(|v| (&v.ident, v.label.as_str())),
+            );
             let ty = quote! { #enum_ident };
             (
                 ty,
@@ -466,7 +600,63 @@ fn scalar_ty(
         Scalar::Integer(_) => (quote! { i32 }, None),
         Scalar::Double(_) => (quote! { f64 }, None),
         Scalar::Boolean(_) => (quote! { bool }, None),
-    })
+    };
+    helpers.extend(decl.as_ref().map(emit_enum_decl));
+    Ok(ty)
+}
+
+fn row_ty(
+    key: &str,
+    object: &ObjectParam,
+    helpers: &mut Vec<TokenStream>,
+    symbols: &mut Symbols,
+) -> Result<TokenStream> {
+    let row = item_type_name(key);
+    symbols.declare(MODULE, &row, format!("rows of param {key:?}"));
+    let row_scope = format!("struct {row} of param {key:?}");
+    let mut fields = Vec::new();
+    let mut reads = Vec::new();
+    for (field_key, field) in &object.fields {
+        let ident = field_ident(field_key.as_str())?;
+        symbols.declare(
+            row_scope.clone(),
+            &ident,
+            format!("field {:?}", field_key.as_str()),
+        );
+        let origin = format!("field {:?} of param {key:?}", field_key.as_str());
+        let enum_ident = format_ident!("{row}{}", enum_name(field_key.as_str()));
+        let ty = scalar_ty(
+            &origin,
+            enum_ident,
+            field.kind.as_scalar(),
+            helpers,
+            symbols,
+        )?;
+        let key_lit = Literal::string(field_key.as_str());
+        if field.is_optional {
+            fields.push(quote! { pub #ident: Option<#ty>, });
+            reads.push(quote! { #ident: snapshot::typed::optional_field(&row, #key_lit)?, });
+        } else {
+            fields.push(quote! { pub #ident: #ty, });
+            reads.push(quote! { #ident: snapshot::typed::required_field(&row, #key_lit)?, });
+        }
+    }
+    helpers.push(quote! {
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct #row {
+            #(#fields)*
+        }
+
+        impl snapshot::typed::ValueRead for #row {
+            fn from_value(value: snapshot::Value<'_>) -> Option<Self> {
+                let row = value.as_object()?;
+                Some(Self {
+                    #(#reads)*
+                })
+            }
+        }
+    });
+    Ok(quote! { #row })
 }
 
 #[expect(
@@ -648,13 +838,16 @@ fn emit_enum_decl(decl: &EnumDecl) -> TokenStream {
 
 // ── Identifier helpers ──────────────────────────────────────────────
 
-fn field_ident(key: &str) -> Ident {
+fn field_ident(key: &str) -> Result<Ident> {
     let snake = AsSnakeCase(key).to_string();
-    if is_rust_keyword(&snake) {
+    if matches!(snake.as_str(), "self" | "super" | "crate") {
+        bail!("key {key:?} maps to `{snake}`, which Rust cannot take even as a raw identifier");
+    }
+    Ok(if is_rust_keyword(&snake) {
         Ident::new_raw(&snake, Span::call_site())
     } else {
         format_ident!("{snake}")
-    }
+    })
 }
 
 fn enum_name(key: &str) -> Ident {
@@ -662,7 +855,7 @@ fn enum_name(key: &str) -> Ident {
     format_ident!("{pascal}")
 }
 
-fn item_enum_name(key: &str) -> Ident {
+fn item_type_name(key: &str) -> Ident {
     format_ident!("{}Item", enum_name(key))
 }
 
@@ -682,23 +875,6 @@ fn variant_ident(s: &str) -> Result<Ident> {
     Ok(format_ident!("{pascal}"))
 }
 
-fn assert_unique_variants<'a, I: Iterator<Item = &'a Ident>>(
-    field_key: &str,
-    variants: I,
-) -> Result<()> {
-    let mut seen: HashSet<String> = HashSet::new();
-    for v in variants {
-        let s = v.to_string();
-        if !seen.insert(s.clone()) {
-            return Err(anyhow!(
-                "field {field_key:?}: enum_values produce a duplicate Rust variant identifier \
-                 {s:?} — distinct manifest options yielded the same PascalCase name"
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn is_rust_keyword(s: &str) -> bool {
     // 2024-edition reserved + strict keywords. Wrapping in raw identifiers is
     // harmless on weak keywords (`union`, `dyn`), so the set is generous.
@@ -707,7 +883,6 @@ fn is_rust_keyword(s: &str) -> bool {
         "as" | "break"
             | "const"
             | "continue"
-            | "crate"
             | "else"
             | "enum"
             | "extern"
@@ -726,11 +901,8 @@ fn is_rust_keyword(s: &str) -> bool {
             | "pub"
             | "ref"
             | "return"
-            | "self"
-            | "Self"
             | "static"
             | "struct"
-            | "super"
             | "trait"
             | "true"
             | "type"
@@ -807,21 +979,24 @@ fn optional_inner_ty(opt: &TokenStream) -> TokenStream {
 mod tests {
     use super::*;
 
+    fn ident(key: &str) -> String {
+        field_ident(key)
+            .expect("BUG: test key maps to a usable identifier")
+            .to_string()
+    }
+
     #[test]
     fn snake_case_field_ident() {
-        assert_eq!(
-            field_ident("refresh-seconds").to_string(),
-            "refresh_seconds"
-        );
-        assert_eq!(field_ident("RefreshSeconds").to_string(), "refresh_seconds");
-        assert_eq!(field_ident("free_string").to_string(), "free_string");
+        assert_eq!(ident("refresh-seconds"), "refresh_seconds");
+        assert_eq!(ident("RefreshSeconds"), "refresh_seconds");
+        assert_eq!(ident("free_string"), "free_string");
     }
 
     #[test]
     fn keyword_clashes_use_raw_idents() {
         // `Ident::new_raw("type", ...).to_string()` includes the raw prefix
         // (unlike a regular `Ident`), so the round-trip is `r#type`.
-        let id = field_ident("type");
+        let id = field_ident("type").expect("BUG: `type` takes a raw identifier");
         assert_eq!(id.to_string(), "r#type");
         let tokens = quote! { #id };
         assert!(tokens.to_string().contains("r#type"));
@@ -832,7 +1007,7 @@ mod tests {
         assert_eq!(enum_name("theme").to_string(), "Theme");
         assert_eq!(enum_name("string_enum").to_string(), "StringEnum");
         assert_eq!(enum_name("night-mode").to_string(), "NightMode");
-        assert_eq!(item_enum_name("night-mode").to_string(), "NightModeItem");
+        assert_eq!(item_type_name("night-mode").to_string(), "NightModeItem");
     }
 
     #[test]
@@ -854,45 +1029,137 @@ mod tests {
     }
 
     #[test]
-    fn assert_unique_variants_flags_collisions() {
-        let v = [
-            format_ident!("Foo"),
-            format_ident!("Bar"),
-            format_ident!("Foo"),
-        ];
-        assert!(assert_unique_variants("k", v.iter()).is_err());
+    fn keys_rust_cannot_take_even_raw_are_an_error() {
+        for key in ["self", "Self", "super", "crate"] {
+            assert!(field_ident(key).is_err(), "{key}");
+        }
+    }
+
+    fn collisions(params: serde_json::Value, credentials: serde_json::Value) -> String {
+        generate(&manifest_with(params, credentials), "test://")
+            .expect_err("BUG: the test manifest maps entries to one name")
+            .to_string()
+    }
+
+    fn tone(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "name": name,
+            "type": "string",
+            "enum_values": [{ "value": "calm", "label": "Calm" }],
+            "default_value": "calm",
+        })
+    }
+
+    #[test]
+    fn every_collision_is_reported_at_once() {
+        let report = collisions(
+            serde_json::json!({
+                "links": {
+                    "name": "Links",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "fields": {
+                            "tone": tone("Tone"),
+                            "my-label": { "name": "Label", "type": "string" },
+                            "my_label": { "name": "Label", "type": "string" },
+                        },
+                    },
+                    "max_items": 3,
+                },
+                "links_item": tone("Links item"),
+                "links_item_tone": tone("Links item tone"),
+                "option": tone("Option"),
+            }),
+            serde_json::json!({}),
+        );
+
+        for line in [
+            r#"- module: `LinksItem` from rows of param "links", param "links_item""#,
+            r#"- module: `LinksItemTone` from field "tone" of param "links", param "links_item_tone""#,
+            r#"- module: `Option` from the Rust prelude, param "option""#,
+            r#"- struct LinksItem of param "links": `my_label` from field "my-label", field "my_label""#,
+        ] {
+            assert!(report.contains(line), "missing {line:?} in:\n{report}");
+        }
+    }
+
+    #[test]
+    fn options_mapping_to_one_variant_collide() {
+        let report = collisions(
+            serde_json::json!({
+                "color": {
+                    "name": "Color",
+                    "type": "string",
+                    "enum_values": [
+                        { "value": "red", "label": "Red" },
+                        { "value": "RED", "label": "Loud red" },
+                    ],
+                    "default_value": "red",
+                },
+            }),
+            serde_json::json!({}),
+        );
+
+        assert!(
+            report.contains(
+                r#"- enum Color of param "color": `Red` from option "red", option "RED""#
+            ),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn colliding_enums_do_not_also_report_each_others_options() {
+        let report = collisions(
+            serde_json::json!({ "tone": tone("Tone"), "Tone": tone("Tone") }),
+            serde_json::json!({}),
+        );
+
+        assert!(
+            report.contains(r#"- module: `Tone` from param "Tone", param "tone""#),
+            "{report}"
+        );
+        assert!(!report.contains("`Calm`"), "{report}");
+    }
+
+    #[test]
+    fn slot_keys_mapping_to_one_module_collide() {
+        let report = collisions(
+            serde_json::json!({}),
+            serde_json::json!({
+                "main-pool": { "type": "braiins-pool", "label": "Pool" },
+                "main_pool": { "type": "braiins-pool", "label": "Pool" },
+            }),
+        );
+
+        assert!(
+            report.contains(
+                r#"- mod credentials: `main_pool` from credential slot "main-pool", credential slot "main_pool""#
+            ),
+            "{report}"
+        );
     }
 
     /// End-to-end sanity check: parse a small manifest, run codegen, verify the
     /// emitted file is valid Rust and carries the expected top-level items.
     #[test]
     fn emitted_module_parses() {
-        let json = r#"{
-            "uid": "00000000-0000-4000-8000-000000000000",
-            "version": "0.1.0",
-            "name": "T",
-            "description": "T",
-            "binary": "t.wasm",
-            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
-            "params": {
+        let manifest = manifest_with(
+            serde_json::json!({
                 "theme": {
                     "name": "Theme",
                     "type": "string",
                     "enum_values": [
-                        {"value": "light", "label": "Light"},
-                        {"value": "dark",  "label": "Dark"}
+                        { "value": "light", "label": "Light" },
+                        { "value": "dark", "label": "Dark" },
                     ],
-                    "default_value": "light"
+                    "default_value": "light",
                 },
-                "ratio": {
-                    "name": "Ratio",
-                    "type": "double",
-                    "optional": true
-                }
-            }
-        }"#;
-        let manifest = <Manifest as std::str::FromStr>::from_str(json)
-            .expect("BUG: hand-crafted test manifest must parse");
+                "ratio": { "name": "Ratio", "type": "double", "optional": true },
+            }),
+            serde_json::json!({}),
+        );
         let src = generate(&manifest, "test://")
             .expect("BUG: test manifest has non-empty params, codegen must produce a file");
         let parsed: syn::File =
@@ -918,14 +1185,13 @@ mod tests {
 
     #[test]
     fn an_array_param_reads_as_a_vec_of_its_item_type() {
-        let manifest = manifest_with_credentials(
-            "{}",
-            r#"{
+        let manifest = manifest_with(
+            serde_json::json!({
                 "symbols": {
                     "name": "Symbols",
                     "type": "array",
-                    "items": {"type": "string"},
-                    "max_items": 8
+                    "items": { "type": "string" },
+                    "max_items": 8,
                 },
                 "sides": {
                     "name": "Sides",
@@ -933,13 +1199,14 @@ mod tests {
                     "items": {
                         "type": "string",
                         "enum_values": [
-                            {"value": "left", "label": "Left"},
-                            {"value": "right", "label": "Right"}
-                        ]
+                            { "value": "left", "label": "Left" },
+                            { "value": "right", "label": "Right" },
+                        ],
                     },
-                    "max_items": 2
-                }
-            }"#,
+                    "max_items": 2,
+                },
+            }),
+            serde_json::json!({}),
         );
         let src = generate(&manifest, "test://").expect("BUG: array params must emit a file");
         syn::parse_str::<syn::File>(&src).expect("BUG: codegen output must be valid Rust");
@@ -953,28 +1220,76 @@ mod tests {
         );
     }
 
-    fn manifest_with_credentials(credentials: &str, params: &str) -> Manifest {
-        let json = format!(
-            r#"{{
+    #[test]
+    fn an_object_list_reads_as_a_vec_of_its_row_struct() {
+        let manifest = manifest_with(
+            serde_json::json!({
+                "links": {
+                    "name": "Links",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "fields": {
+                            "label": { "name": "Label", "type": "string" },
+                            "side": {
+                                "name": "Side",
+                                "type": "string",
+                                "optional": true,
+                                "enum_values": [
+                                    { "value": "left", "label": "Left" },
+                                    { "value": "right", "label": "Right" },
+                                ],
+                            },
+                        },
+                    },
+                    "max_items": 3,
+                },
+            }),
+            serde_json::json!({}),
+        );
+        let src = generate(&manifest, "test://").expect("BUG: an object list must emit a file");
+        syn::parse_str::<syn::File>(&src).expect("BUG: codegen output must be valid Rust");
+
+        assert!(src.contains("pub links: Vec<LinksItem>"), "{src}");
+        assert!(src.contains("pub struct LinksItem"), "{src}");
+        assert!(src.contains("pub label: String"), "{src}");
+        assert!(src.contains("pub side: Option<LinksItemSide>"), "{src}");
+        assert!(
+            src.contains("impl_manifest_str_enum!(LinksItemSide)"),
+            "{src}"
+        );
+        assert!(
+            src.contains("impl snapshot::typed::ValueRead for LinksItem"),
+            "the row needs the SDK's list-item read: {src}"
+        );
+    }
+
+    fn manifest_with(params: serde_json::Value, credentials: serde_json::Value) -> Manifest {
+        let mut json = serde_json::json!({
             "uid": "00000000-0000-4000-8000-000000000000",
             "version": "0.1.0",
             "name": "T",
             "description": "T",
             "binary": "t.wasm",
-            "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}],
-            "params": {params},
-            "credentials": {credentials}
-        }}"#
-        );
-        <Manifest as std::str::FromStr>::from_str(&json)
+            "supported_viewports": [{
+                "type": "rectangular",
+                "min_width": 317,
+                "max_width": 317,
+                "min_height": 238,
+                "max_height": 238,
+            }],
+        });
+        json["params"] = params;
+        json["credentials"] = credentials;
+        <Manifest as std::str::FromStr>::from_str(&json.to_string())
             .expect("BUG: hand-crafted test manifest must parse")
     }
 
     #[test]
     fn credential_slots_emit_placeholder_consts_for_every_field_of_their_type() {
-        let manifest = manifest_with_credentials(
-            r#"{"media": {"type": "generic-userpass", "label": "Media server"}}"#,
-            "{}",
+        let manifest = manifest_with(
+            serde_json::json!({}),
+            serde_json::json!({ "media": { "type": "generic-userpass", "label": "Media server" } }),
         );
         let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
         syn::parse_str::<syn::File>(&src).expect("BUG: codegen output must be valid Rust");
@@ -995,9 +1310,9 @@ mod tests {
     /// and must have no placeholder for the path that only the operator sees.
     #[test]
     fn a_local_file_token_slot_exposes_token_and_never_path() {
-        let manifest = manifest_with_credentials(
-            r#"{"bos_local": {"type": "local-file-token", "label": "Local BOS token"}}"#,
-            "{}",
+        let manifest = manifest_with(
+            serde_json::json!({}),
+            serde_json::json!({ "bos_local": { "type": "local-file-token", "label": "Local BOS token" } }),
         );
         let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
         assert!(
@@ -1009,9 +1324,9 @@ mod tests {
 
     #[test]
     fn a_credentials_only_manifest_emits_no_params_scaffolding() {
-        let manifest = manifest_with_credentials(
-            r#"{"pool": {"type": "braiins-pool", "label": "Pool"}}"#,
-            "{}",
+        let manifest = manifest_with(
+            serde_json::json!({}),
+            serde_json::json!({ "pool": { "type": "braiins-pool", "label": "Pool" } }),
         );
         let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
 
@@ -1028,9 +1343,9 @@ mod tests {
 
     #[test]
     fn a_slot_key_becomes_a_snake_case_module_while_the_placeholder_keeps_the_manifest_key() {
-        let manifest = manifest_with_credentials(
-            r#"{"main-pool": {"type": "braiins-pool", "label": "Pool"}}"#,
-            "{}",
+        let manifest = manifest_with(
+            serde_json::json!({}),
+            serde_json::json!({ "main-pool": { "type": "braiins-pool", "label": "Pool" } }),
         );
         let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
         syn::parse_str::<syn::File>(&src).expect("BUG: codegen output must be valid Rust");
@@ -1044,7 +1359,7 @@ mod tests {
 
     #[test]
     fn a_manifest_with_neither_params_nor_credentials_emits_nothing() {
-        let manifest = manifest_with_credentials("{}", "{}");
+        let manifest = manifest_with(serde_json::json!({}), serde_json::json!({}));
         assert!(generate(&manifest, "test://").is_err());
     }
 }

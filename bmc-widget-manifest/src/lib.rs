@@ -47,9 +47,10 @@ use std::str::FromStr;
 pub use bmc_field_schema::credential;
 pub use bmc_field_schema::{
     ArrayParam, BooleanParam, DoubleOption, DoubleParam, FieldSchemaError, IntegerOption,
-    IntegerParam, ItemKind, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH,
-    ParamDefinition, ParamKey, ParamKind, ParamValue, ParamValueConversionError, Scalar, Shape,
-    StringFormat, StringOption, StringParam, TimezoneParam, f64_canonical_bits,
+    IntegerParam, ItemKind, ItemShape, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH,
+    MAX_PARAM_STRING_LENGTH, ObjectField, ObjectParam, ParamDefinition, ParamKey, ParamKind,
+    ParamValue, ParamValueConversionError, Scalar, ScalarKind, Shape, StringFormat, StringOption,
+    StringParam, TimezoneParam, f64_canonical_bits,
 };
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -1113,18 +1114,44 @@ mod tests {
     #[test]
     fn param_definition_round_trips_each_variant() {
         let cases = [
-            r#"{"name":"S","type":"string","default_value":"x"}"#,
-            r#"{"name":"D","type":"double","default_value":1.5,"min":0.0,"max":10.0}"#,
-            r#"{"name":"I","type":"integer","default_value":2,"min":1,"max":5}"#,
-            r#"{"name":"B","type":"boolean","default_value":true}"#,
-            r#"{"name":"T","type":"timezone","default_value":"Europe/Prague"}"#,
-            r#"{"name":"A","type":"array","items":{"type":"integer","min":0},"min_items":1,"max_items":4,"default_value":[1,2]}"#,
+            serde_json::json!({ "name": "S", "type": "string", "default_value": "x" }),
+            serde_json::json!({
+                "name": "D",
+                "type": "double",
+                "default_value": 1.5,
+                "min": 0.0,
+                "max": 10.0,
+            }),
+            serde_json::json!({ "name": "I", "type": "integer", "default_value": 2, "min": 1, "max": 5 }),
+            serde_json::json!({ "name": "B", "type": "boolean", "default_value": true }),
+            serde_json::json!({ "name": "T", "type": "timezone", "default_value": "Europe/Prague" }),
+            serde_json::json!({
+                "name": "A",
+                "type": "array",
+                "items": { "type": "integer", "min": 0 },
+                "min_items": 1,
+                "max_items": 4,
+                "default_value": [1, 2],
+            }),
+            serde_json::json!({
+                "name": "L",
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "fields": {
+                        "label": { "name": "Label", "type": "string" },
+                        "url": { "name": "URL", "type": "string", "format": "uri", "optional": true },
+                    },
+                },
+                "max_items": 4,
+                "default_value": [{ "label": "Home", "url": null }],
+            }),
         ];
         for case in cases {
-            let p: ParamDefinition =
-                serde_json::from_str(case).unwrap_or_else(|e| panic!("BUG: parse {case:?}: {e}"));
-            let back = serde_json::to_string(&p).expect("BUG: serialize");
-            let p2: ParamDefinition = serde_json::from_str(&back).expect("BUG: re-parse");
+            let p: ParamDefinition = serde_json::from_value(case.clone())
+                .unwrap_or_else(|e| panic!("BUG: parse {case}: {e}"));
+            let back = serde_json::to_value(&p).expect("BUG: serialize");
+            let p2: ParamDefinition = serde_json::from_value(back).expect("BUG: re-parse");
             assert_eq!(p, p2);
         }
     }
@@ -1256,6 +1283,73 @@ mod tests {
         assert_eq!(reason, "default_value[0]: Must be at most 5");
     }
 
+    fn links(default_value: serde_json::Value) -> serde_json::Value {
+        let mut def = serde_json::json!({
+            "name": "L",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "fields": {
+                    "label": { "name": "Label", "type": "string" },
+                    "value": { "name": "URL", "type": "string", "optional": true },
+                },
+            },
+            "max_items": 3,
+        });
+        def["default_value"] = default_value;
+        def
+    }
+
+    #[test]
+    fn validate_object_items_pass() {
+        array_param(links(
+            serde_json::json!([{ "label": "Home", "value": "https://braiins.com" }]),
+        ))
+        .validate("x")
+        .expect("BUG: a row with its required field set must validate");
+    }
+
+    #[test]
+    fn validate_object_items_without_fields_fail() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "L",
+            "type": "array",
+            "items": { "type": "object", "fields": {} },
+            "max_items": 3,
+        }));
+        assert!(reason.contains("at least one field"), "{reason}");
+    }
+
+    #[test]
+    fn validate_object_field_options_name_the_field() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "L",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "fields": {
+                    "count": { "name": "Count", "type": "integer", "min": 5, "max": 1 },
+                },
+            },
+            "max_items": 3,
+        }));
+        assert!(reason.starts_with(r#"field "count": "#), "{reason}");
+    }
+
+    #[test]
+    fn validate_object_default_missing_a_required_field_fails() {
+        let reason = array_rejection(links(
+            serde_json::json!([{ "value": "https://braiins.com" }]),
+        ));
+        assert_eq!(reason, r#"default_value[0]["label"]: Value is required"#);
+    }
+
+    #[test]
+    fn validate_object_default_with_an_unknown_field_fails() {
+        let reason = array_rejection(links(serde_json::json!([{ "label": "Home", "icon": "x" }])));
+        assert_eq!(reason, r#"default_value[0]["icon"]: Unknown field"#);
+    }
+
     /// The list default a normalized param stores, as JSON: `1.0` and `1` compare unequal.
     fn stored_default(json: serde_json::Value) -> serde_json::Value {
         let mut param = array_param(json);
@@ -1284,6 +1378,30 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_number_default_for_a_double_field_is_stored_as_a_double() {
+        let stored = stored_default(serde_json::json!({
+            "name": "R",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "fields": { "ratio": { "name": "Ratio", "type": "double" } },
+            },
+            "max_items": 3,
+            "default_value": [{ "ratio": 1 }],
+        }));
+        assert_eq!(stored, serde_json::json!([{ "ratio": 1.0 }]));
+    }
+
+    #[test]
+    fn a_default_row_stores_an_omitted_optional_field_as_null() {
+        let stored = stored_default(links(serde_json::json!([{ "label": "Home" }])));
+        assert_eq!(
+            stored,
+            serde_json::json!([{ "label": "Home", "value": null }])
+        );
+    }
+
+    #[test]
     fn validate_refuses_a_default_left_unnormalized() {
         let reason = array_rejection(serde_json::json!({
             "name": "R",
@@ -1295,6 +1413,47 @@ mod tests {
         assert_eq!(
             reason,
             "default_value is not normalized; normalize the param first"
+        );
+    }
+
+    #[test]
+    fn object_items_reject_a_duplicate_field_key() {
+        // Raw text: a `json!` map cannot hold the repeated key under test.
+        let json = r#"{"name":"L","type":"array","max_items":3,"items":{"type":"object","fields":{
+            "label":{"name":"A","type":"string"},
+            "label":{"name":"B","type":"string"}}}}"#;
+        let err = serde_json::from_str::<ParamDefinition>(json)
+            .expect_err("BUG: a repeated field key must not parse");
+        assert!(
+            err.to_string().contains(r#"duplicate field key "label""#),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn array_default_rejects_a_repeated_row_key() {
+        // Raw text: a `json!` map cannot hold the repeated key under test.
+        let json = r#"{"name":"L","type":"array","max_items":3,
+            "items":{"type":"object","fields":{"label":{"name":"A","type":"string"}}},
+            "default_value":[{"label":"a","label":"b"}]}"#;
+        let err = serde_json::from_str::<ParamDefinition>(json)
+            .expect_err("BUG: a repeated key in a default row must not parse");
+        assert!(
+            err.to_string().contains(r#"duplicate object key "label""#),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn array_default_names_an_invalid_row_key() {
+        let json = r#"{"name":"L","type":"array","max_items":3,
+            "items":{"type":"object","fields":{"label":{"name":"A","type":"string"}}},
+            "default_value":[{"1bad":"x"}]}"#;
+        let err = serde_json::from_str::<ParamDefinition>(json)
+            .expect_err("BUG: a malformed key in a default row must not parse");
+        assert!(
+            err.to_string().contains(r#"invalid object key "1bad""#),
+            "{err}"
         );
     }
 

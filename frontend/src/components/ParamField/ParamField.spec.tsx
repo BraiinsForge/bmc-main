@@ -20,10 +20,11 @@
 
 import { beforeEach, describe, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, fireEvent } from '@testing-library/react/pure';
+import { useState } from 'react';
 import { IntlProvider } from 'react-intl';
 import * as pb from '@/proto';
 import { ParamField } from './ParamField';
-import { listItem, type FieldValue, type ListItem } from './value';
+import { listItem, type FieldValue, type ListItem, type RowError } from './value';
 
 beforeEach(cleanup);
 
@@ -81,13 +82,40 @@ const listField = pb.create(pb.ManifestParamDefinitionSchema, {
     },
 });
 
-function renderList(value: ListItem[], itemErrors?: Array<string | undefined>) {
+const linksField = pb.create(pb.ManifestParamDefinitionSchema, {
+    key: 'links',
+    name: 'Links',
+    kind: {
+        case: 'paramArray',
+        value: pb.create(pb.ParamArraySchema, {
+            items: {
+                kind: {
+                    case: 'paramObject',
+                    value: {
+                        fields: [
+                            { key: 'label', name: 'Label', kind: { case: 'paramString', value: {} } },
+                            {
+                                key: 'url',
+                                name: 'URL',
+                                isOptional: true,
+                                kind: { case: 'paramString', value: { defaultValue: 'https://' } },
+                            },
+                        ],
+                    },
+                },
+            },
+            maxItems: 3,
+        }),
+    },
+});
+
+function renderList(value: ListItem[], itemErrors?: Array<RowError | undefined>, definition = listField) {
     const onChange = rstest.fn<(key: string, value: FieldValue) => void>();
     const view = render(
         <IntlProvider locale="en">
             <ParamField
                 id="f"
-                definition={listField}
+                definition={definition}
                 value={value}
                 itemErrors={itemErrors}
                 onChange={onChange}
@@ -96,6 +124,22 @@ function renderList(value: ListItem[], itemErrors?: Array<string | undefined>) {
         </IntlProvider>,
     );
     return { ...view, onChange };
+}
+
+/** Feeds every change back in, as the params form does, so an added row actually renders. */
+function LiveList(props: { initial: ListItem[]; definition: pb.ManifestParamDefinition }) {
+    const [value, setValue] = useState(props.initial);
+    return (
+        <IntlProvider locale="en">
+            <ParamField
+                id="f"
+                definition={props.definition}
+                value={value}
+                onChange={(_, next) => setValue(next as ListItem[])}
+                timezones={[]}
+            />
+        </IntlProvider>
+    );
 }
 
 describe('ParamField list', () => {
@@ -112,6 +156,12 @@ describe('ParamField list', () => {
         const [key, value] = onChange.mock.calls[0];
         expect(key).toBe('symbols');
         expect((value as ListItem[]).map(x => x.value)).toEqual(['NVDA', 'BTC']);
+    });
+
+    test('focuses the input of an added row', () => {
+        const { getByRole, getByLabelText } = render(<LiveList initial={[listItem('NVDA')]} definition={listField} />);
+        fireEvent.click(getByRole('button', { name: 'Add' }));
+        expect(document.activeElement).toBe(getByLabelText('Symbols, item 2'));
     });
 
     test('removes the row whose minus was clicked', () => {
@@ -152,7 +202,42 @@ describe('ParamField list', () => {
     });
 
     test("shows an item's error on its own row", () => {
-        const { getByText } = renderList([listItem('NVDA'), listItem('')], [undefined, 'Value is required']);
+        const { getByText } = renderList([listItem('NVDA'), listItem('')], [undefined, { error: 'Value is required' }]);
+        expect(getByText('Value is required')).toBeTruthy();
+    });
+});
+
+describe('ParamField object list', () => {
+    test('renders an input per field of each row, under one header', () => {
+        const { getByLabelText, getByText } = renderList(
+            [listItem({ label: 'Pool', url: 'https://pool' })],
+            undefined,
+            linksField,
+        );
+        expect(getByLabelText('Links, item 1, Label')).toHaveProperty('value', 'Pool');
+        expect(getByLabelText('Links, item 1, URL')).toHaveProperty('value', 'https://pool');
+        expect(getByText('URL (optional)')).toBeTruthy();
+    });
+
+    test('adds a row seeded from each field default', () => {
+        const { getByRole, onChange } = renderList([], undefined, linksField);
+        fireEvent.click(getByRole('button', { name: 'Add' }));
+        const [, value] = onChange.mock.calls[0];
+        expect((value as ListItem[]).map(row => row.value)).toEqual([{ label: '', url: 'https://' }]);
+    });
+
+    test('focuses the first field of an added row, not its drag handle', () => {
+        const { getByRole, getByLabelText } = render(<LiveList initial={[]} definition={linksField} />);
+        fireEvent.click(getByRole('button', { name: 'Add' }));
+        expect(document.activeElement).toBe(getByLabelText('Links, item 1, Label'));
+    });
+
+    test("shows a field's error on its own input", () => {
+        const { getByText } = renderList(
+            [listItem({ label: '', url: null })],
+            [{ fields: { label: 'Value is required' } }],
+            linksField,
+        );
         expect(getByText('Value is required')).toBeTruthy();
     });
 });

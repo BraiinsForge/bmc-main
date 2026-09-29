@@ -35,3 +35,11 @@ export function assertUndefined(x: undefined, label?: string) {
     const message = label ? `Unexected ${label} value has been reached!` : 'Unexected value has been reached!';
     if (typeof x !== 'undefined') throw new Error(`${message} - ${JSON.stringify(x)}`);
 }
+
+/**
+ * The record's own value for `key`, never an inherited one:
+ * a key such as `constructor` would otherwise find an `Object.prototype` member.
+ */
+export function ownValue<T>(record: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+    return record && Object.hasOwn(record, key) ? record[key] : undefined;
+}

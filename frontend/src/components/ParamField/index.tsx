@@ -27,4 +27,11 @@ export {
     type BoundToggleProps,
     type OptionItem,
 } from './ParamField';
-export { listItem, type FieldValue, type ListItem, type ScalarValue } from './value';
+export {
+    listItem,
+    type FieldValue,
+    type ListItem,
+    type ObjectValue,
+    type RowError,
+    type ScalarValue,
+} from './value';

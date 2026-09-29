@@ -107,6 +107,11 @@ pub(crate) struct Icons {
     pub(crate) delivery: Icon,
     pub(crate) network: Icon,
     pub(crate) output: Icon,
+    // The params sidebar's list rows.
+    pub(crate) add: Icon,
+    pub(crate) move_up: Icon,
+    pub(crate) move_down: Icon,
+    pub(crate) remove: Icon,
 }
 
 impl Icons {
@@ -135,6 +140,10 @@ impl Icons {
             delivery: Icon::new(include_bytes!("assets/icons/delivery.svg")),
             network: Icon::new(include_bytes!("assets/icons/network.svg")),
             output: Icon::new(include_bytes!("assets/icons/output.svg")),
+            add: Icon::new(include_bytes!("assets/icons/add.svg")),
+            move_up: Icon::new(include_bytes!("assets/icons/chevron-up.svg")),
+            move_down: Icon::new(include_bytes!("assets/icons/chevron-down.svg")),
+            remove: Icon::new(include_bytes!("assets/icons/trash-can.svg")),
         }
     }
 }
@@ -180,7 +189,7 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 23] = [
+        let named: [(&str, &Icon); 27] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
@@ -204,12 +213,20 @@ mod tests {
             ("camera", &icons.camera),
             ("save", &icons.save),
             ("close", &icons.close),
+            ("add", &icons.add),
+            ("chevron-up", &icons.move_up),
+            ("chevron-down", &icons.move_down),
+            ("trash-can", &icons.remove),
         ];
         for (name, icon) in named {
             let image = mask(icon.svg, 32);
             assert!(
                 image.pixels.iter().any(|p| p.a() > 0),
                 "`{name}` rasterized to nothing"
+            );
+            assert!(
+                image.pixels.iter().any(|p| p.a() == 0),
+                "`{name}` rasterized to a solid square: its transparent padding rect was filled"
             );
         }
     }

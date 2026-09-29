@@ -21,7 +21,7 @@
 
 // The shared field renderer — one control per field kind — plus the bound form controls it needs.
 
-import { Fragment, useMemo, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 import {
     ComboBox,
@@ -34,19 +34,27 @@ import {
     TextInput,
     Toggle,
 } from '@carbon/react';
-import { Add as IconAdd, Draggable as IconDraggable, SubtractAlt as IconSubtract } from '@carbon/react/icons';
+import {
+    Add as IconAdd,
+    Draggable as IconDraggable,
+    Information as IconInfo,
+    SubtractAlt as IconSubtract,
+} from '@carbon/react/icons';
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
 import { useIsTouchDevice } from '@/lib/react';
-import { assertUnreachable } from '@/lib/ts';
+import { assertUnreachable, ownValue } from '@/lib/ts';
 import { Button } from '@/components/Button';
 import { CarbonFormField } from '@/components/CarbonFormField';
 import { Sortable } from '@/components/Sortable';
+import { Tooltip } from '@/components/Tooltip';
 import {
-    defaultScalarValue,
+    defaultItemValue,
     listItem,
     type FieldValue,
     type ListItem,
+    type ObjectValue,
+    type RowError,
     type ScalarKind,
     type ScalarValue,
 } from './value';
@@ -373,6 +381,85 @@ function ScalarField(props: ScalarFieldProps) {
     }
 }
 
+function asRowScalar(v: ListItem['value']): ScalarValue {
+    return typeof v === 'object' && v !== null ? null : v;
+}
+function asRowObject(v: ListItem['value']): ObjectValue {
+    return typeof v === 'object' && v !== null ? v : {};
+}
+
+function ColumnLabel({ field }: { field: pb.ObjectFieldDefinition }) {
+    const { formatMessage } = useIntl();
+    const name = field.isOptional
+        ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: field.name })
+        : field.name;
+    if (!field.description) return <span className={css.columnLabel} children={name} />;
+    return (
+        <Tooltip
+            placement="top"
+            content={field.description}
+            render={ref => (
+                <span ref={ref} className={css.columnLabel}>
+                    <span children={name} />
+                    <IconInfo size={14} />
+                </span>
+            )}
+        />
+    );
+}
+
+function ObjectHeader({ object }: { object: pb.ParamObject }) {
+    return (
+        <div className={css.header} aria-hidden>
+            <div className={css.handleSpacer} />
+            <div className={css.headerFields}>
+                {object.fields.map(field => (
+                    <div key={field.key} className={css.objectField} children={<ColumnLabel field={field} />} />
+                ))}
+            </div>
+            <div className={css.actionSpacer} />
+        </div>
+    );
+}
+
+interface ObjectRowProps {
+    id: string;
+    object: pb.ParamObject;
+    labelText: string;
+    value: ObjectValue;
+    error?: RowError;
+    onChange(value: ObjectValue): void;
+    timezones: pb.Timezone[];
+}
+
+function ObjectRow({ id, object, labelText, value, error, onChange, timezones }: ObjectRowProps) {
+    const { formatMessage } = useIntl();
+    return (
+        <CarbonFormField error={error?.error}>
+            <div className={css.objectFields}>
+                {object.fields.map(field => (
+                    <div key={field.key} className={css.objectField}>
+                        <ScalarField
+                            id={`${id}-${field.key}`}
+                            kind={field.kind}
+                            labelText={formatMessage(
+                                { defaultMessage: '{row}, {field}' },
+                                { row: labelText, field: field.name },
+                            )}
+                            hideLabel
+                            isOptional={field.isOptional}
+                            value={ownValue(value, field.key) ?? null}
+                            error={ownValue(error?.fields, field.key)}
+                            onChange={next => onChange({ ...value, [field.key]: next })}
+                            timezones={timezones}
+                        />
+                    </div>
+                ))}
+            </div>
+        </CarbonFormField>
+    );
+}
+
 interface ArrayFieldProps {
     id: string;
     array: pb.ParamArray;
@@ -380,7 +467,7 @@ interface ArrayFieldProps {
     helperText?: string;
     value: ListItem[];
     error?: string;
-    itemErrors?: Array<string | undefined>;
+    itemErrors?: Array<RowError | undefined>;
     onChange(value: ListItem[]): void;
     timezones: pb.Timezone[];
 }
@@ -388,40 +475,76 @@ interface ArrayFieldProps {
 function ArrayField(props: ArrayFieldProps) {
     const { id, array, labelText, helperText, value, error, itemErrors, onChange, timezones } = props;
     const { formatMessage } = useIntl();
-    const itemKind: ScalarKind = array.items?.kind ?? { case: undefined };
+    const itemKind: pb.ArrayItemKind['kind'] = array.items?.kind ?? { case: undefined };
     const canRemove = value.length > array.minItems;
     const canAdd = value.length < array.maxItems;
 
-    const setItem = (row: ListItem, next: ScalarValue) =>
+    const setItem = (row: ListItem, next: ListItem['value']) =>
         onChange(value.map(x => (x.id === row.id ? { ...x, value: next } : x)));
 
+    const listRef = useRef<HTMLDivElement>(null);
+    const addedRow = useRef<ListItem['id'] | null>(null);
+    // No deps: the added row only renders once the parent passes the new value back down.
+    useEffect(() => {
+        if (addedRow.current === null) return;
+        const field = listRef.current?.querySelector(`[data-list-row="${addedRow.current}"]`);
+        if (!field) return;
+        addedRow.current = null;
+        field.querySelector<HTMLElement>('input, button, textarea, select')?.focus();
+    });
+    const add = () => {
+        const row = listItem(defaultItemValue(itemKind));
+        addedRow.current = row.id;
+        onChange([...value, row]);
+    };
+
     return (
-        <CarbonFormField labelText={labelText} helperText={helperText} error={error}>
+        <CarbonFormField labelText={labelText}>
+            {error ? (
+                <div role="alert" className={css.listError} children={error} />
+            ) : helperText ? (
+                <div className={css.listHelper} children={helperText} />
+            ) : null}
+            {itemKind.case === 'paramObject' ? <ObjectHeader object={itemKind.value} /> : null}
             <Sortable<ListItem>
+                wrapperRef={listRef}
                 className={css.list}
                 items={value}
                 onChange={onChange}
                 renderItem={({ index, item, rootProps, dragHandleProps }) => {
                     // The drag overlay renders a second copy of the row, without `rootProps`.
                     const rowId = rootProps ? `${id}-${item.id}` : `${id}-${item.id}-dragged`;
+                    const rowLabel = formatMessage(
+                        { defaultMessage: '{name}, item {n}' },
+                        { name: labelText, n: index + 1 },
+                    );
                     return (
                         <div {...rootProps} className={css.row}>
                             <div {...dragHandleProps} className={css.dragHandle} children={<IconDraggable />} />
-                            <div className={css.rowField}>
-                                <ScalarField
-                                    id={rowId}
-                                    kind={itemKind}
-                                    labelText={formatMessage(
-                                        { defaultMessage: '{name}, item {n}' },
-                                        { name: labelText, n: index + 1 },
-                                    )}
-                                    hideLabel
-                                    isOptional={false}
-                                    value={item.value}
-                                    error={itemErrors?.[index]}
-                                    onChange={next => setItem(item, next)}
-                                    timezones={timezones}
-                                />
+                            <div className={css.rowField} data-list-row={item.id}>
+                                {itemKind.case === 'paramObject' ? (
+                                    <ObjectRow
+                                        id={rowId}
+                                        object={itemKind.value}
+                                        labelText={rowLabel}
+                                        value={asRowObject(item.value)}
+                                        error={itemErrors?.[index]}
+                                        onChange={next => setItem(item, next)}
+                                        timezones={timezones}
+                                    />
+                                ) : (
+                                    <ScalarField
+                                        id={rowId}
+                                        kind={itemKind}
+                                        labelText={rowLabel}
+                                        hideLabel
+                                        isOptional={false}
+                                        value={asRowScalar(item.value)}
+                                        error={itemErrors?.[index]?.error}
+                                        onChange={next => setItem(item, next)}
+                                        timezones={timezones}
+                                    />
+                                )}
                             </div>
                             <div className={css.rowAction}>
                                 <Button
@@ -438,16 +561,17 @@ function ArrayField(props: ArrayFieldProps) {
                     );
                 }}
             />
-            <Button
-                id={`${id}-add`}
-                className={css.add}
-                kind="tertiary"
-                size="sm"
-                icon={IconAdd}
-                disabled={!canAdd}
-                onClick={() => onChange([...value, listItem(defaultScalarValue(itemKind))])}
-                children={formatMessage({ defaultMessage: 'Add' })}
-            />
+            <div className={css.footer}>
+                <Button
+                    id={`${id}-add`}
+                    kind="tertiary"
+                    size="sm"
+                    icon={IconAdd}
+                    disabled={!canAdd}
+                    onClick={add}
+                    children={formatMessage({ defaultMessage: 'Add' })}
+                />
+            </div>
         </CarbonFormField>
     );
 }
@@ -457,7 +581,7 @@ export function ParamField(props: {
     definition: pb.ManifestParamDefinition;
     value: FieldValue;
     error?: string;
-    itemErrors?: Array<string | undefined>;
+    itemErrors?: Array<RowError | undefined>;
     onChange(key: string, value: FieldValue): void;
     timezones: pb.Timezone[];
 }) {

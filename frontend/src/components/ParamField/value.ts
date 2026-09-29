@@ -21,24 +21,36 @@
 import type * as pb from '@/proto';
 import { assertUnreachable } from '@/lib/ts';
 
-/** A scalar field's kind, whether a param's own or a list param's item kind. */
-export type ScalarKind = pb.ArrayItemKind['kind'];
+/** The scalar-only oneof; a param's or a list item's scalar kind narrows to it. */
+export type ScalarKind = pb.ObjectFieldDefinition['kind'];
 
 export type ScalarValue = string | boolean | null;
+
+export type ObjectValue = Record<string, ScalarValue>;
 
 /** One row of a list field; `id` keeps the row's identity through reorders and removals. */
 export interface ListItem {
     id: number;
-    value: ScalarValue;
+    value: ScalarValue | ObjectValue;
 }
 
 export type FieldValue = ScalarValue | ListItem[];
 
+export interface RowError {
+    error?: string;
+    fields?: Record<string, string | undefined>;
+}
+
 let lastListItemId = 0;
 
-export function listItem(value: ScalarValue): ListItem {
+export function listItem(value: ListItem['value']): ListItem {
     lastListItemId += 1;
     return { id: lastListItemId, value };
+}
+
+export function defaultItemValue(kind: pb.ArrayItemKind['kind']): ListItem['value'] {
+    if (kind.case !== 'paramObject') return defaultScalarValue(kind);
+    return Object.fromEntries(kind.value.fields.map(field => [field.key, defaultScalarValue(field.kind)]));
 }
 
 export function defaultScalarValue(kind: ScalarKind): ScalarValue {

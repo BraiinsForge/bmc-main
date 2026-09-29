@@ -169,7 +169,7 @@ pub enum StringFormat {
 /// Typed value for a stored field: null, bool, i32, finite f64, string, and lists and objects of those.
 /// Both the compositor's in-memory form and the wire shape sent to widgets.
 /// Which shapes a field accepts is its [`ParamKind`]'s call, enforced by [`validate_values`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ParamValue {
     /// Absence of a value. Sent for optional params the operator cleared.
@@ -179,7 +179,6 @@ pub enum ParamValue {
     /// An i32 — the integer width the manifest declares.
     Integer(i32),
     /// A finite f64. NaN / ±infinity are rejected at parse time.
-    #[serde(deserialize_with = "deserialize_finite_f64")]
     Double(f64),
     /// A UTF-8 string.
     String(String),
@@ -197,6 +196,89 @@ fn deserialize_finite_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Err
         Err(D::Error::custom(format!(
             "ParamValue::Double must be finite (got {v})"
         )))
+    }
+}
+
+impl<'de> Deserialize<'de> for ParamValue {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        ParamValueRepr::deserialize(d)?
+            .try_into()
+            .map_err(D::Error::custom)
+    }
+}
+
+/// A [`ParamValue`] as read, its object keys unchecked:
+/// the untagged parse would swallow a repeated or malformed key into a vague mismatch.
+#[derive(Deserialize)]
+#[serde(
+    untagged,
+    expecting = "null, a boolean, a number, text, a list or an object"
+)]
+enum ParamValueRepr {
+    Null,
+    Boolean(bool),
+    Integer(i32),
+    #[serde(deserialize_with = "deserialize_finite_f64")]
+    Double(f64),
+    String(String),
+    List(Vec<ParamValueRepr>),
+    #[serde(deserialize_with = "deserialize_entries")]
+    Object(Vec<(String, ParamValueRepr)>),
+}
+
+fn deserialize_entries<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<(String, ParamValueRepr)>, D::Error> {
+    struct Entries;
+
+    impl<'de> Visitor<'de> for Entries {
+        type Value = Vec<(String, ParamValueRepr)>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("an object")
+        }
+
+        fn visit_map<M: MapAccess<'de>>(self, mut access: M) -> Result<Self::Value, M::Error> {
+            let mut entries = Vec::with_capacity(access.size_hint().unwrap_or(0));
+            while let Some(entry) = access.next_entry()? {
+                entries.push(entry);
+            }
+            Ok(entries)
+        }
+    }
+
+    d.deserialize_map(Entries)
+}
+
+impl TryFrom<ParamValueRepr> for ParamValue {
+    type Error = String;
+
+    fn try_from(repr: ParamValueRepr) -> Result<Self, String> {
+        Ok(match repr {
+            ParamValueRepr::Null => Self::Null,
+            ParamValueRepr::Boolean(b) => Self::Boolean(b),
+            ParamValueRepr::Integer(i) => Self::Integer(i),
+            ParamValueRepr::Double(d) => Self::Double(d),
+            ParamValueRepr::String(s) => Self::String(s),
+            ParamValueRepr::List(items) => Self::List(
+                items
+                    .into_iter()
+                    .map(Self::try_from)
+                    .collect::<Result<_, _>>()?,
+            ),
+            ParamValueRepr::Object(entries) => {
+                let mut fields = BTreeMap::new();
+                for (key, value) in entries {
+                    let key = ParamKey::try_new(key)
+                        .map_err(|key| format!("invalid object key {key:?}"))?;
+                    if fields.contains_key(&key) {
+                        return Err(format!("duplicate object key {:?}", key.as_str()));
+                    }
+                    fields.insert(key, Self::try_from(value)?);
+                }
+                Self::Object(fields)
+            }
+        })
     }
 }
 
@@ -437,8 +519,8 @@ pub enum ParamKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct ArrayParam {
-    /// What every item is. A newly added item starts
-    /// at the item's `default_value`, which is not required.
+    /// What every item is. A newly added item starts at the item's `default_value`,
+    /// or an object item at each field's; neither is required.
     pub items: ItemKind,
     /// Fewest items the list may hold.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -474,6 +556,61 @@ pub enum ItemKind {
     Boolean(BooleanParam),
     /// An IANA timezone identifier.
     Timezone(TimezoneParam),
+    /// A row of named scalar fields.
+    Object(ObjectParam),
+}
+
+/// The fields of an [`ItemKind::Object`] item, in display order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ObjectParam {
+    /// The row's fields, keyed like params.
+    #[serde(deserialize_with = "deserialize_unique_fields")]
+    pub fields: IndexMap<ParamKey, ObjectField>,
+}
+
+fn deserialize_unique_fields<'de, D>(
+    deserializer: D,
+) -> Result<IndexMap<ParamKey, ObjectField>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_unique_keyed(deserializer, "field key")
+}
+
+/// One field of an object item; always a scalar, so objects never nest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ObjectField {
+    /// Human-readable field name, shown in the operator UI.
+    pub name: String,
+    /// Optional one-line field description, shown in the operator UI as help text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Whether the operator can leave this field unset; an unset field is delivered as `Null` in its row.
+    #[serde(
+        default,
+        rename = "optional",
+        skip_serializing_if = "core::ops::Not::not"
+    )]
+    pub is_optional: bool,
+    /// Value-kind-specific shape — discriminated on `type`.
+    #[serde(flatten)]
+    pub kind: ScalarKind,
+}
+
+/// The kind of an [`ObjectField`], tagged like [`ParamKind`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ScalarKind {
+    /// A UTF-8 string.
+    String(StringParam),
+    /// A finite f64.
+    Double(DoubleParam),
+    /// A 32-bit signed integer.
+    Integer(IntegerParam),
+    /// A boolean.
+    Boolean(BooleanParam),
+    /// An IANA timezone identifier.
+    Timezone(TimezoneParam),
 }
 
 /// A scalar field's options, borrowed from whichever kind holds them.
@@ -492,6 +629,12 @@ pub enum Shape<'a> {
     Array(&'a ArrayParam),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ItemShape<'a> {
+    Scalar(Scalar<'a>),
+    Object(&'a ObjectParam),
+}
+
 /// The options of a [`ParamKind::String`] field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -503,7 +646,7 @@ pub struct StringParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<StringOption>,
-    /// The starting value, as the param or list item holding these options defines it.
+    /// The starting value, as the param, list item or object field holding these options defines it.
     /// Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
@@ -528,7 +671,7 @@ pub struct DoubleParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<DoubleOption>,
-    /// The starting value, as the param or list item holding these options defines it.
+    /// The starting value, as the param, list item or object field holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<f64>,
 }
@@ -551,7 +694,7 @@ pub struct IntegerParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<IntegerOption>,
-    /// The starting value, as the param or list item holding these options defines it.
+    /// The starting value, as the param, list item or object field holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<i32>,
 }
@@ -560,7 +703,7 @@ pub struct IntegerParam {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct BooleanParam {
-    /// The starting value, as the param or list item holding these options defines it.
+    /// The starting value, as the param, list item or object field holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<bool>,
 }
@@ -569,7 +712,7 @@ pub struct BooleanParam {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct TimezoneParam {
-    /// The starting zone, as the param or list item holding these options defines it.
+    /// The starting zone, as the param, list item or object field holding these options defines it.
     /// Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
@@ -649,14 +792,51 @@ impl ParamKind {
 
 impl ItemKind {
     #[must_use]
+    pub fn shape(&self) -> ItemShape<'_> {
+        match self {
+            ItemKind::String(p) => ItemShape::Scalar(Scalar::String(p)),
+            ItemKind::Double(p) => ItemShape::Scalar(Scalar::Double(p)),
+            ItemKind::Integer(p) => ItemShape::Scalar(Scalar::Integer(p)),
+            ItemKind::Boolean(p) => ItemShape::Scalar(Scalar::Boolean(p)),
+            ItemKind::Timezone(p) => ItemShape::Scalar(Scalar::Timezone(p)),
+            ItemKind::Object(p) => ItemShape::Object(p),
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match self.shape() {
+            ItemShape::Scalar(scalar) => scalar.validate(),
+            ItemShape::Object(object) => object.validate(),
+        }
+    }
+}
+
+impl ScalarKind {
+    #[must_use]
     pub fn as_scalar(&self) -> Scalar<'_> {
         match self {
-            ItemKind::String(p) => Scalar::String(p),
-            ItemKind::Double(p) => Scalar::Double(p),
-            ItemKind::Integer(p) => Scalar::Integer(p),
-            ItemKind::Boolean(p) => Scalar::Boolean(p),
-            ItemKind::Timezone(p) => Scalar::Timezone(p),
+            ScalarKind::String(p) => Scalar::String(p),
+            ScalarKind::Double(p) => Scalar::Double(p),
+            ScalarKind::Integer(p) => Scalar::Integer(p),
+            ScalarKind::Boolean(p) => Scalar::Boolean(p),
+            ScalarKind::Timezone(p) => Scalar::Timezone(p),
         }
+    }
+}
+
+impl ObjectParam {
+    fn validate(&self) -> Result<(), String> {
+        if self.fields.is_empty() {
+            return Err("object items need at least one field".into());
+        }
+        for (key, field) in &self.fields {
+            field
+                .kind
+                .as_scalar()
+                .validate()
+                .map_err(|reason| format!("field {:?}: {reason}", key.as_str()))?;
+        }
+        Ok(())
     }
 }
 
@@ -673,7 +853,8 @@ impl Scalar<'_> {
 }
 
 impl ArrayParam {
-    /// The default as the validator types it: a whole number for a double as a double.
+    /// The default as the validator types it:
+    /// a whole number for a double as a double, an omitted optional row field as null.
     fn projected_default(&self) -> Result<Vec<ParamValue>, String> {
         let mut projected = Vec::with_capacity(self.default_value.len());
         for (i, item) in self.default_value.iter().enumerate() {
@@ -693,7 +874,7 @@ impl ArrayParam {
     }
 
     fn validate(&self) -> Result<(), String> {
-        self.items.as_scalar().validate()?;
+        self.items.validate()?;
         if !(1..=MAX_ARRAY_ITEMS).contains(&self.max_items) {
             return Err(format!(
                 "max_items must be within 1..={MAX_ARRAY_ITEMS} (got {})",

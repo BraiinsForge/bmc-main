@@ -69,6 +69,26 @@ message ArrayItemKind {
     ParamInteger param_integer = 3;
     ParamBoolean param_boolean = 4;
     ParamTimezone param_timezone = 5;
+    ParamObject param_object = 6;
+  }
+}
+
+message ParamObject {
+  repeated ObjectFieldDefinition fields = 1;
+}
+
+// A ManifestParamDefinition narrowed to scalar kinds, so objects never nest.
+message ObjectFieldDefinition {
+  string key = 1;
+  string name = 2;
+  optional string description = 3;
+  bool is_optional = 4;
+  oneof kind {
+    ParamString param_string = 5;
+    ParamDouble param_double = 6;
+    ParamInteger param_integer = 7;
+    ParamBoolean param_boolean = 8;
+    ParamTimezone param_timezone = 9;
   }
 }
 

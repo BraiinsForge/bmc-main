@@ -39,82 +39,62 @@
 //!
 //! [`ParamRead::read_optional`] returns `None` for missing or null entries.
 //!
-//! ## Lists
+//! ## Values of another type
 //!
-//! A list item of another type is a host bug, so the read panics rather than skipping it.
+//! The host validates every value against the manifest,
+//! so a value or list item of another type, or an enum value outside its options, is a host bug:
+//! required and optional reads alike panic rather than skip it.
 //!
 //! ## Enums
 //!
-//! Manifest `enum_values` types implement [`ParamRead`] and [`ValueRead`]
+//! Manifest `enum_values` types implement [`ValueRead`], and through it [`ParamRead`],
 //! via the [`crate::impl_manifest_str_enum!`], [`crate::impl_manifest_i32_enum!`]
 //! and [`crate::impl_manifest_f64_enum!`] macros below. Each macro expects the enum
 //! to already provide an inherent `fn from_manifest_value(...) -> Option<Self>`
 //! — the codegen emits both alongside the macro invocation.
 
-use super::{Params, Value};
+use super::{Object, Params, Value};
 
 /// Materialise a typed value out of a dynamic [`Params`] snapshot.
 ///
-/// Implemented in this module for `String`, `i32`, `f64`, `bool`,
-/// and `Vec<T>` of any [`ValueRead`] item;
-/// widget-side codegen plugs in manifest `enum_values` types
-/// via the `impl_manifest_{str,i32,f64}_enum!` macros.
+/// Implemented for every [`ValueRead`] type and for a `Vec` of one.
 pub trait ParamRead: Sized {
     /// Read a required key. Panics (BUG:) when the host snapshot is missing or null
     /// for `key`, since the compositor's validator should always inject the manifest
     /// default for required keys.
-    fn read_required(snap: &Params, key: &str) -> Self;
+    #[must_use]
+    fn read_required(snap: &Params, key: &str) -> Self {
+        Self::read_optional(snap, key)
+            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
+    }
 
     /// Read an optional key. Returns `None` for missing or null entries.
     fn read_optional(snap: &Params, key: &str) -> Option<Self>;
 }
 
-impl ParamRead for String {
-    fn read_required(snap: &Params, key: &str) -> Self {
-        snap.get_str(key)
-            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
-            .to_owned()
-    }
-
+impl<T: ValueRead> ParamRead for T {
     fn read_optional(snap: &Params, key: &str) -> Option<Self> {
-        snap.get_str(key).map(str::to_owned)
+        read_present(snap, key, T::from_value)
     }
 }
 
-impl ParamRead for i32 {
-    fn read_required(snap: &Params, key: &str) -> Self {
-        snap.get_i32(key)
-            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
+/// `None` when `key` is missing or null; a value `read` refuses is a host bug.
+fn read_present<'s, T>(
+    snap: &'s Params,
+    key: &str,
+    read: impl FnOnce(Value<'s>) -> Option<T>,
+) -> Option<T> {
+    let value = snap.get(key)?;
+    if matches!(value, Value::Null) {
+        return None;
     }
-
-    fn read_optional(snap: &Params, key: &str) -> Option<Self> {
-        snap.get_i32(key)
-    }
+    Some(
+        read(value)
+            .unwrap_or_else(|| panic!("BUG: param `{key}` does not match the manifest type")),
+    )
 }
 
-impl ParamRead for f64 {
-    fn read_required(snap: &Params, key: &str) -> Self {
-        snap.get_f64(key)
-            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
-    }
-
-    fn read_optional(snap: &Params, key: &str) -> Option<Self> {
-        snap.get_f64(key)
-    }
-}
-
-impl ParamRead for bool {
-    fn read_required(snap: &Params, key: &str) -> Self {
-        snap.get_bool(key)
-            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
-    }
-
-    fn read_optional(snap: &Params, key: &str) -> Option<Self> {
-        snap.get_bool(key)
-    }
-}
-
-/// Materialise a typed list item out of one [`Value`].
+/// Materialise a typed value out of one [`Value`].
 pub trait ValueRead: Sized {
     /// `None` for a null or a value of another type.
     fn from_value(value: Value<'_>) -> Option<Self>;
@@ -145,13 +125,8 @@ impl ValueRead for bool {
 }
 
 impl<T: ValueRead> ParamRead for Vec<T> {
-    fn read_required(snap: &Params, key: &str) -> Self {
-        Self::read_optional(snap, key)
-            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
-    }
-
     fn read_optional(snap: &Params, key: &str) -> Option<Self> {
-        let list = snap.get_list(key)?;
+        let list = read_present(snap, key, |value| value.as_list())?;
         Some(
             list.iter()
                 .enumerate()
@@ -165,35 +140,29 @@ impl<T: ValueRead> ParamRead for Vec<T> {
     }
 }
 
-/// Implement [`ParamRead`] and [`ValueRead`] for a manifest string-enum.
+/// A required field of an object item; `None` when it is absent, null or of another type.
+#[must_use]
+pub fn required_field<T: ValueRead>(row: &Object<'_>, key: &str) -> Option<T> {
+    T::from_value(row.get(key)?)
+}
+
+/// An optional field of an object item: `Some(None)` when absent or null,
+/// but `None` when of another type, which fails the whole row.
+#[must_use]
+pub fn optional_field<T: ValueRead>(row: &Object<'_>, key: &str) -> Option<Option<T>> {
+    match row.get(key) {
+        None | Some(Value::Null) => Some(None),
+        Some(value) => T::from_value(value).map(Some),
+    }
+}
+
+/// Implement [`ValueRead`], and through it [`ParamRead`], for a manifest string-enum.
 ///
 /// The enum must provide an inherent `fn from_manifest_value(s: &str) -> Option<Self>`
 /// — the codegen emits both this macro call and the function next to each other.
 #[macro_export]
 macro_rules! impl_manifest_str_enum {
     ($t:ty) => {
-        impl $crate::params::typed::ParamRead for $t {
-            fn read_required(snap: &$crate::params::Params, key: &str) -> Self {
-                let s = snap
-                    .get_str(key)
-                    .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"));
-                <$t>::from_manifest_value(s).unwrap_or_else(|| {
-                    // Value is not interpolated into the panic message —
-                    // strings can be operator-typed in future, so the format
-                    // avoids leaking the value into trap logs by default.
-                    // Inspect the snapshot directly if a value is needed.
-                    panic!("BUG: required param `{key}` value not in manifest enum_values")
-                })
-            }
-
-            fn read_optional(snap: &$crate::params::Params, key: &str) -> Option<Self> {
-                let s = snap.get_str(key)?;
-                Some(<$t>::from_manifest_value(s).unwrap_or_else(|| {
-                    panic!("BUG: optional param `{key}` value not in manifest enum_values")
-                }))
-            }
-        }
-
         impl $crate::params::typed::ValueRead for $t {
             fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
                 <$t>::from_manifest_value(value.as_str()?)
@@ -202,28 +171,11 @@ macro_rules! impl_manifest_str_enum {
     };
 }
 
-/// Implement [`ParamRead`] and [`ValueRead`] for a manifest integer-enum (`enum_values` of `i32`).
+/// Implement [`ValueRead`], and through it [`ParamRead`],
+/// for a manifest integer-enum (`enum_values` of `i32`).
 #[macro_export]
 macro_rules! impl_manifest_i32_enum {
     ($t:ty) => {
-        impl $crate::params::typed::ParamRead for $t {
-            fn read_required(snap: &$crate::params::Params, key: &str) -> Self {
-                let v = snap
-                    .get_i32(key)
-                    .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"));
-                <$t>::from_manifest_value(v).unwrap_or_else(|| {
-                    panic!("BUG: required param `{key}` has value {v} not in manifest enum_values")
-                })
-            }
-
-            fn read_optional(snap: &$crate::params::Params, key: &str) -> Option<Self> {
-                let v = snap.get_i32(key)?;
-                Some(<$t>::from_manifest_value(v).unwrap_or_else(|| {
-                    panic!("BUG: optional param `{key}` has value {v} not in manifest enum_values")
-                }))
-            }
-        }
-
         impl $crate::params::typed::ValueRead for $t {
             fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
                 <$t>::from_manifest_value(value.as_i32()?)
@@ -232,28 +184,11 @@ macro_rules! impl_manifest_i32_enum {
     };
 }
 
-/// Implement [`ParamRead`] and [`ValueRead`] for a manifest double-enum (`enum_values` of `f64`).
+/// Implement [`ValueRead`], and through it [`ParamRead`],
+/// for a manifest double-enum (`enum_values` of `f64`).
 #[macro_export]
 macro_rules! impl_manifest_f64_enum {
     ($t:ty) => {
-        impl $crate::params::typed::ParamRead for $t {
-            fn read_required(snap: &$crate::params::Params, key: &str) -> Self {
-                let v = snap
-                    .get_f64(key)
-                    .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"));
-                <$t>::from_manifest_value(v).unwrap_or_else(|| {
-                    panic!("BUG: required param `{key}` has value {v} not in manifest enum_values")
-                })
-            }
-
-            fn read_optional(snap: &$crate::params::Params, key: &str) -> Option<Self> {
-                let v = snap.get_f64(key)?;
-                Some(<$t>::from_manifest_value(v).unwrap_or_else(|| {
-                    panic!("BUG: optional param `{key}` has value {v} not in manifest enum_values")
-                }))
-            }
-        }
-
         impl $crate::params::typed::ValueRead for $t {
             fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
                 <$t>::from_manifest_value(value.as_f64()?)
@@ -272,6 +207,11 @@ mod tests {
     /// Layout matches `params.rs` (count header + per-entry tag/key/payload).
     fn build(entries: &[(&str, Entry<'_>)]) -> Params {
         let mut buf = Vec::new();
+        write_entries(&mut buf, entries);
+        Params::from_bytes(buf)
+    }
+
+    fn write_entries(buf: &mut Vec<u8>, entries: &[(&str, Entry<'_>)]) {
         let count = u32::try_from(entries.len()).expect("BUG: test entry count fits u32");
         buf.extend_from_slice(&count.to_le_bytes());
         for (key, ent) in entries {
@@ -280,9 +220,8 @@ mod tests {
             buf.push(ent.kind());
             buf.extend_from_slice(&key_len.to_le_bytes());
             buf.extend_from_slice(key_bytes);
-            ent.write_payload(&mut buf);
+            ent.write_payload(buf);
         }
-        Params::from_bytes(buf)
     }
 
     enum Entry<'a> {
@@ -292,6 +231,7 @@ mod tests {
         Bool(bool),
         Null,
         List(&'a [Entry<'a>]),
+        Object(&'a [(&'a str, Entry<'a>)]),
     }
 
     impl Entry<'_> {
@@ -303,6 +243,7 @@ mod tests {
                 Entry::Bool(_) => kind::BOOL,
                 Entry::Null => kind::NULL,
                 Entry::List(_) => kind::LIST,
+                Entry::Object(_) => kind::OBJECT,
             }
         }
 
@@ -326,6 +267,7 @@ mod tests {
                         item.write_payload(buf);
                     }
                 }
+                Entry::Object(fields) => write_entries(buf, fields),
             }
         }
     }
@@ -365,6 +307,20 @@ mod tests {
         let _: String = ParamRead::read_required(&p, "missing");
     }
 
+    #[test]
+    #[should_panic(expected = "BUG: param `s` does not match the manifest type")]
+    fn required_panics_on_a_value_of_another_type() {
+        let p = build(&[("s", Entry::I32(1))]);
+        let _: String = ParamRead::read_required(&p, "s");
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: param `s` does not match the manifest type")]
+    fn optional_panics_on_a_value_of_another_type() {
+        let p = build(&[("s", Entry::I32(1))]);
+        let _ = <String as ParamRead>::read_optional(&p, "s");
+    }
+
     // ── List coverage ───────────────────────────────────────────────
 
     #[test]
@@ -387,6 +343,81 @@ mod tests {
     fn list_item_of_another_type_panics() {
         let p = build(&[("l", Entry::List(&[Entry::I32(1), Entry::Str("two")]))]);
         let _ = <Vec<i32> as ParamRead>::read_required(&p, "l");
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: param `l` does not match the manifest type")]
+    fn list_param_holding_no_list_panics() {
+        let p = build(&[("l", Entry::I32(1))]);
+        let _ = <Vec<i32> as ParamRead>::read_required(&p, "l");
+    }
+
+    // ── Object-item coverage ────────────────────────────────────────
+
+    #[derive(Debug, PartialEq)]
+    struct Link {
+        label: String,
+        url: Option<String>,
+    }
+
+    impl ValueRead for Link {
+        fn from_value(value: Value<'_>) -> Option<Self> {
+            let row = value.as_object()?;
+            Some(Self {
+                label: required_field(&row, "label")?,
+                url: optional_field(&row, "url")?,
+            })
+        }
+    }
+
+    #[test]
+    fn object_rows_read_their_fields() {
+        let p = build(&[(
+            "links",
+            Entry::List(&[
+                Entry::Object(&[
+                    ("label", Entry::Str("Pool")),
+                    ("url", Entry::Str("https://x")),
+                ]),
+                Entry::Object(&[("label", Entry::Str("Home")), ("url", Entry::Null)]),
+            ]),
+        )]);
+        assert_eq!(
+            <Vec<Link> as ParamRead>::read_required(&p, "links"),
+            [
+                Link {
+                    label: "Pool".into(),
+                    url: Some("https://x".into()),
+                },
+                Link {
+                    label: "Home".into(),
+                    url: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: param `links` item 0 does not match the manifest item type")]
+    fn object_row_without_a_required_field_panics() {
+        let p = build(&[(
+            "links",
+            Entry::List(&[Entry::Object(&[("url", Entry::Str("https://x"))])]),
+        )]);
+        let _ = <Vec<Link> as ParamRead>::read_required(&p, "links");
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: param `links` item 0 does not match the manifest item type")]
+    fn object_row_with_an_optional_field_of_another_type_panics() {
+        let p = build(&[(
+            "links",
+            Entry::List(&[Entry::Object(&[
+                ("label", Entry::Str("Pool")),
+                ("url", Entry::I32(1)),
+            ])]),
+        )]);
+        let _ = <Vec<Link> as ParamRead>::read_required(&p, "links");
     }
 
     // ── String-enum macro coverage ──────────────────────────────────
@@ -422,10 +453,17 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: required param `c` value not in manifest enum_values")]
+    #[should_panic(expected = "BUG: param `c` does not match the manifest type")]
     fn str_enum_panics_on_unknown_value() {
         let p = build(&[("c", Entry::Str("green"))]);
         let _ = <Color as ParamRead>::read_required(&p, "c");
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: param `c` does not match the manifest type")]
+    fn str_enum_optional_panics_on_unknown_value() {
+        let p = build(&[("c", Entry::Str("green"))]);
+        let _ = <Color as ParamRead>::read_optional(&p, "c");
     }
 
     #[test]

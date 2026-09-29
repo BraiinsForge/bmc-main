@@ -23,9 +23,10 @@ import { FormattedMessage, useIntl } from 'react-intl';
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
 import { Form, hasFormErrors } from '@/lib/form';
+import { ownValue } from '@/lib/ts';
 import { getID } from '../const';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
-import { hasItemErrors, isMisbound } from '../../fn';
+import { hasItemErrors, isMisbound, itemErrorsOf } from '../../fn';
 
 import { ParamField } from '@/components/ParamField';
 import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
@@ -233,8 +234,8 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
                           slot={slot}
                           accounts={accounts}
                           credentialTypes={credentialTypes}
-                          boundAccountId={credentialBindings[slot.key] ?? ''}
-                          error={errors?.credentials?.[slot.key]?.[0]}
+                          boundAccountId={ownValue(credentialBindings, slot.key) ?? ''}
+                          error={ownValue(errors?.credentials, slot.key)?.[0]}
                           onChange={onCredentialBindingChange}
                           firstOfType={manifest.credentials.findIndex(s => s.typeId === slot.typeId) === i}
                       />
@@ -248,7 +249,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
                     definition={def}
                     value={params[def.key] ?? null}
                     error={fieldErrors[def.key]?.[0]}
-                    itemErrors={errors?.items?.[def.key]?.map(row => row?.[0])}
+                    itemErrors={itemErrorsOf(errors, def.key)}
                     onChange={onParamChange}
                     timezones={timezones}
                 />
@@ -284,7 +285,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
     const misbound =
         !!onCredentialBindingChange &&
         !!accounts &&
-        manifest.credentials.some(slot => isMisbound(slot, accounts, credentialBindings[slot.key] ?? ''));
+        manifest.credentials.some(slot => isMisbound(slot, accounts, ownValue(credentialBindings, slot.key) ?? ''));
 
     return (
         <ModalCustom

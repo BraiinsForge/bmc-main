@@ -30,3 +30,7 @@
     padding: mini-units(2);
     background: $layer-01;
 }
+
+.wide {
+    grid-column: span 2;
+}

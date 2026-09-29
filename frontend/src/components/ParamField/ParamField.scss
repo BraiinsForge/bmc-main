@@ -58,6 +58,7 @@
 $row-height: mini-units(5);
 $row-gap: mini-units(1);
 $drag-handle-size: mini-units(4);
+$remove-button-size: mini-units(5);
 
 .list {
     composes: selfStretch from 'styles/layout.scss';
@@ -66,6 +67,45 @@ $drag-handle-size: mini-units(4);
 .row {
     composes: horizontal start from 'styles/layout.scss';
     gap: $row-gap;
+}
+
+.header {
+    composes: row;
+    composes: selfStretch from 'styles/layout.scss';
+}
+
+.handleSpacer {
+    flex-shrink: 0;
+    inline-size: $drag-handle-size;
+}
+
+.actionSpacer {
+    flex-shrink: 0;
+    inline-size: $remove-button-size;
+}
+
+.headerFields {
+    composes: flex horizontal start from 'styles/layout.scss';
+    gap: $row-gap;
+    min-inline-size: 0;
+}
+
+.objectFields {
+    composes: horizontal start selfStretch from 'styles/layout.scss';
+    gap: $row-gap;
+}
+
+.objectField {
+    composes: flex from 'styles/layout.scss';
+    min-inline-size: 0;
+}
+
+.columnLabel {
+    composes: helper-text-01 from 'styles/carbon/typography.scss';
+    composes: inline center from 'styles/layout.scss';
+    gap: mini-units(0.5);
+    margin-block-end: mini-units(1);
+    color: $text-helper;
 }
 
 .dragHandle {
@@ -77,16 +117,31 @@ $drag-handle-size: mini-units(4);
 }
 
 .rowField {
-    composes: flex from 'styles/layout.scss';
+    composes: flex vertical centerJustified from 'styles/layout.scss';
     min-inline-size: 0;
+    min-block-size: $row-height;
 }
 
 .rowAction {
     composes: horizontal center from 'styles/layout.scss';
+    flex-shrink: 0;
+    inline-size: $remove-button-size;
     block-size: $row-height;
 }
 
-.add {
+.listHelper {
+    composes: helper-text-01 from 'styles/carbon/typography.scss';
+    margin-block-end: mini-units(2);
+    color: $text-helper;
+}
+
+.listError {
+    composes: listHelper;
+    color: $text-error;
+}
+
+.footer {
+    composes: horizontal selfStretch from 'styles/layout.scss';
     margin-block-start: $row-gap;
-    margin-inline-start: $drag-handle-size + $row-gap;
+    padding-inline-start: $drag-handle-size + $row-gap;
 }

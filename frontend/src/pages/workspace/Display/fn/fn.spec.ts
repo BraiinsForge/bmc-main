@@ -751,7 +751,40 @@ describe('defaultFormifiedValue', () => {
         expect(rows.map(row => row.value)).toEqual(['1', '2']);
         expect(new Set(rows.map(row => row.id)).size).toBe(2);
     });
+    test('paramArray of objects → a row per default item, an omitted field at its default', () => {
+        const rows = defaultFormifiedValue(linksDef({ defaultValue: [wireRow({ label: 'Home' })] }));
+        if (!Array.isArray(rows)) throw new Error('expected rows');
+        expect(rows.map(row => row.value)).toEqual([{ label: 'Home', url: '' }]);
+    });
 });
+
+function linksDef(overrides: Record<string, any> = {}): pb.ManifestParamDefinition {
+    return paramDef('paramArray', 'links', false, {
+        items: {
+            kind: {
+                case: 'paramObject',
+                value: {
+                    fields: [
+                        { key: 'label', name: 'Label', kind: { case: 'paramString', value: {} } },
+                        { key: 'url', name: 'URL', isOptional: true, kind: { case: 'paramString', value: {} } },
+                    ],
+                },
+            },
+        },
+        maxItems: 3,
+        ...overrides,
+    });
+}
+
+function wireRow(fields: Record<string, string>): pb.FieldValue {
+    const wire = Object.entries(fields).map(([key, value]) => [
+        key,
+        pb.create(pb.FieldValueSchema, { kind: { case: 'stringValue', value } }),
+    ]);
+    return pb.create(pb.FieldValueSchema, {
+        kind: { case: 'structValue', value: { fields: Object.fromEntries(wire) } },
+    });
+}
 
 function countsDef(overrides: Record<string, any> = {}): pb.ManifestParamDefinition {
     return paramDef('paramArray', 'counts', false, {
@@ -760,6 +793,11 @@ function countsDef(overrides: Record<string, any> = {}): pb.ManifestParamDefinit
         ...overrides,
     });
 }
+
+const listNamedConstructor = paramDef('paramArray', 'constructor', false, {
+    items: { kind: { case: 'paramInteger', value: {} } },
+    maxItems: 3,
+});
 
 function wireInteger(value: number): pb.FieldValue {
     return pb.create(pb.FieldValueSchema, { kind: { case: 'integerValue', value } });
@@ -907,7 +945,21 @@ describe('parseFormifiedValue', () => {
         const r = parseFormifiedValue(countsDef(), rows('1', '9', ''));
         if (r.ok) throw new Error('expected error');
         expect(r.error).toBeUndefined();
-        expect(r.items).toEqual([undefined, 'Must be at most 5', 'Value is required']);
+        expect(r.items).toEqual([undefined, { error: 'Must be at most 5' }, { error: 'Value is required' }]);
+    });
+    test('paramArray of objects → a struct per row, a blank optional field as null', () => {
+        const r = parseFormifiedValue(linksDef(), [listItem({ label: 'Home', url: '' })]);
+        if (!r.ok) throw new Error('expected ok');
+        if (r.value.kind.case !== 'listValue') throw new Error('expected listValue');
+        const [row] = r.value.kind.value.items;
+        if (row?.kind.case !== 'structValue') throw new Error('expected structValue');
+        expect(row.kind.value.fields.label.kind).toEqual({ case: 'stringValue', value: 'Home' });
+        expect(row.kind.value.fields.url.kind.case).toBe('nullValue');
+    });
+    test('paramArray of objects, a required field left blank → error on that field of its row', () => {
+        const r = parseFormifiedValue(linksDef(), [listItem({ label: '', url: 'https://braiins.com' })]);
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([{ fields: { label: 'Value is required' } }]);
     });
 });
 
@@ -989,6 +1041,12 @@ describe('widgetParamsToFormifiedState', () => {
         const r = widgetParamsToFormifiedState(manifest, struct);
         expect((r as Record<string, unknown>).ghost).toBeUndefined();
     });
+
+    test('a param named like an Object member, not stored, takes its default', () => {
+        const named = pb.create(pb.WidgetManifestSchema, { params: [listNamedConstructor] });
+        const r = widgetParamsToFormifiedState(named, pb.create(pb.FieldValuesSchema));
+        expect(r).toEqual({ constructor: [] });
+    });
 });
 
 describe('buildFieldValues', () => {
@@ -1028,12 +1086,17 @@ describe('buildFieldValues', () => {
         if (!r.ok) expect(r.errors.fields.name).toBeTruthy();
     });
 
+    test('a param named like an Object member, left out, builds from its default', () => {
+        const named = pb.create(pb.WidgetManifestSchema, { params: [listNamedConstructor] });
+        expect(buildFieldValues(named, {}).ok).toBe(true);
+    });
+
     test('a bad list item → error in items[key][index]', () => {
         const withList = pb.create(pb.WidgetManifestSchema, { params: [countsDef()] });
         const r = buildFieldValues(withList, { counts: rows('1', '9') });
         if (r.ok) throw new Error('expected error');
         expect(r.errors.fields.counts).toBeUndefined();
-        expect(r.errors.items?.counts).toEqual([undefined, ['Must be at most 5']]);
+        expect(r.errors.items?.counts).toEqual([undefined, { errors: ['Must be at most 5'] }]);
     });
 });
 

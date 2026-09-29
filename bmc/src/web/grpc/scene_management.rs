@@ -28,8 +28,8 @@ use bmc_field_schema::MissingValues;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_widget_manifest::{
-    ArrayParam, BooleanParam, CredentialKey, DoubleParam, IntegerParam, ItemKind, ParamDefinition,
-    ParamKind, StringParam, TimezoneParam,
+    ArrayParam, BooleanParam, CredentialKey, DoubleParam, IntegerParam, ItemKind, ObjectParam,
+    ParamDefinition, ParamKind, ScalarKind, StringParam, TimezoneParam,
 };
 use futures::stream::{BoxStream, StreamExt};
 use indexmap::IndexMap;
@@ -748,6 +748,7 @@ fn array_param_to_proto(
         ItemKind::Integer(p) => IK::ParamInteger(integer_param_to_proto(p)),
         ItemKind::Boolean(p) => IK::ParamBoolean(boolean_param_to_proto(p)),
         ItemKind::Timezone(p) => IK::ParamTimezone(timezone_param_to_proto(p)),
+        ItemKind::Object(p) => IK::ParamObject(object_param_to_proto(p)),
     };
     let item_count = |n: usize| {
         u32::try_from(n).expect("BUG: manifest validation caps item counts at MAX_ARRAY_ITEMS")
@@ -757,6 +758,28 @@ fn array_param_to_proto(
         min_items: item_count(*min_items),
         max_items: item_count(*max_items),
         default_value: default_value.iter().map(param_value_to_wire).collect(),
+    }
+}
+
+fn object_param_to_proto(ObjectParam { fields }: &ObjectParam) -> web::ParamObject {
+    use web::object_field_definition::Kind as FK;
+    web::ParamObject {
+        fields: fields
+            .iter()
+            .map(|(key, field)| web::ObjectFieldDefinition {
+                key: key.as_str().to_owned(),
+                name: field.name.clone(),
+                description: field.description.clone(),
+                is_optional: field.is_optional,
+                kind: Some(match &field.kind {
+                    ScalarKind::String(p) => FK::ParamString(string_param_to_proto(p)),
+                    ScalarKind::Double(p) => FK::ParamDouble(double_param_to_proto(p)),
+                    ScalarKind::Integer(p) => FK::ParamInteger(integer_param_to_proto(p)),
+                    ScalarKind::Boolean(p) => FK::ParamBoolean(boolean_param_to_proto(p)),
+                    ScalarKind::Timezone(p) => FK::ParamTimezone(timezone_param_to_proto(p)),
+                }),
+            })
+            .collect(),
     }
 }
 
@@ -2247,6 +2270,129 @@ mod tests {
                 bmc_widget_manifest::MAX_PARAM_STRING_LENGTH
             )
         );
+    }
+
+    fn links_manifest() -> bmc_widget_manifest::Manifest {
+        let def: ParamDefinition = serde_json::from_value(serde_json::json!({
+            "name": "Links",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "fields": {
+                    "label": { "name": "Label", "type": "string" },
+                    "url": { "name": "URL", "type": "string", "optional": true },
+                },
+            },
+            "max_items": 3,
+        }))
+        .expect("BUG: the links definition parses");
+        single_param_manifest("links", def.kind, false)
+    }
+
+    fn wdv_struct(fields: &[(&str, web::FieldValue)]) -> web::FieldValue {
+        web::FieldValue {
+            kind: Some(web::field_value::Kind::StructValue(web::FieldValues {
+                fields: fields
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), value.clone()))
+                    .collect(),
+            })),
+        }
+    }
+
+    #[test]
+    fn validate_widget_params_object_row_fills_an_omitted_optional_field_with_null() {
+        use bmc_widget_manifest::ParamValue as PV;
+        let params = fields_one(
+            "links",
+            wdv_list(vec![wdv_struct(&[("label", wdv_string("Home"))])]),
+        );
+        let params = validate_widget_params(&links_manifest(), &params, ValidateMode::Update)
+            .expect("BUG: a row with its required field set validates");
+        let key =
+            |k: &str| bmc_widget_manifest::ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
+        let row = PV::Object(
+            [
+                (key("label"), PV::String("Home".into())),
+                (key("url"), PV::Null),
+            ]
+            .into(),
+        );
+        assert_eq!(params.values().next(), Some(&PV::List(vec![row])));
+    }
+
+    #[test]
+    fn validate_widget_params_object_row_reports_each_field_at_its_path() {
+        let params = fields_one(
+            "links",
+            wdv_list(vec![
+                wdv_struct(&[("url", wdv_string("https://braiins.com"))]),
+                wdv_struct(&[("label", wdv_string("Pool")), ("icon", wdv_string("x"))]),
+                wdv_string("not a row"),
+            ]),
+        );
+        assert_eq!(
+            violations_of(&links_manifest(), &params),
+            [
+                (
+                    r#"params["links"][0]["label"]"#.to_owned(),
+                    "Value is required".to_owned()
+                ),
+                (
+                    r#"params["links"][1]["icon"]"#.to_owned(),
+                    "Unknown field".to_owned()
+                ),
+                (
+                    r#"params["links"][2]"#.to_owned(),
+                    "Must be an object".to_owned()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_object_row_checks_each_field_against_its_kind() {
+        let params = fields_one(
+            "links",
+            wdv_list(vec![wdv_struct(&[("label", wdv_integer(7))])]),
+        );
+        assert_eq!(
+            violations_of(&links_manifest(), &params),
+            [(
+                r#"params["links"][0]["label"]"#.to_owned(),
+                "Must be text".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn param_definition_to_proto_object_items() {
+        use web::array_item_kind::Kind as ItemKindProto;
+        use web::manifest_param_definition::Kind;
+        use web::object_field_definition::Kind as FieldKind;
+        let manifest = links_manifest();
+        let (key, def) = manifest
+            .params
+            .first()
+            .expect("BUG: the manifest has one param");
+        let Some(Kind::ParamArray(pa)) = param_definition_to_proto(key.as_str(), def).kind else {
+            panic!("BUG: expected param_array arm");
+        };
+        let Some(ItemKindProto::ParamObject(object)) = pa.items.and_then(|i| i.kind) else {
+            panic!("BUG: expected a param_object item kind");
+        };
+        let fields: Vec<_> = object
+            .fields
+            .iter()
+            .map(|f| {
+                (
+                    f.key.as_str(),
+                    f.is_optional,
+                    matches!(f.kind, Some(FieldKind::ParamString(_))),
+                )
+            })
+            .collect();
+        assert_eq!(fields, [("label", false, true), ("url", true, true)]);
     }
 
     #[test]

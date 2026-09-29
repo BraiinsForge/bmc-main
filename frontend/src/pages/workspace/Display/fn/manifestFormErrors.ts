@@ -19,9 +19,16 @@
 // the grant above.
 
 import * as pb from '@/proto';
-import type { ParamsFormErrors } from './fn';
+import { ownValue } from '@/lib/ts';
+import type { ParamsFormErrors, RowErrors } from './fn';
 
 const ITEM_INDEX = /^\d+$/;
+
+function ownList<T>(record: Record<string, T[] | undefined>, key: string): T[] {
+    const list = ownValue(record, key) ?? [];
+    record[key] = list;
+    return list;
+}
 
 /**
  * Not `parseFormErrors`: it nests paths into one object, where a param's own
@@ -30,16 +37,16 @@ const ITEM_INDEX = /^\d+$/;
 export function mapManifestUpdateError(rawError: unknown): ParamsFormErrors {
     const { message, fieldViolations } = pb.parseError(rawError);
     const fields: Record<string, string[] | undefined> = {};
-    const items: Record<string, Array<string[] | undefined> | undefined> = {};
+    const items: Record<string, Array<RowErrors | undefined> | undefined> = {};
     const credentials: Record<string, string[]> = {};
     const global = message ? [message] : [];
 
     for (const { field, description } of fieldViolations) {
         // Field names arrive camelCased:
         // `credential_bindings` → `credentialBindings`.
-        const [root, key, index, ...rest] = pb.parseFieldPath(field);
+        const [root, key, index, rowField, ...rest] = pb.parseFieldPath(field);
         if (root === 'params' && key !== undefined && index === undefined) {
-            (fields[key] ??= []).push(description);
+            ownList(fields, key).push(description);
         } else if (
             root === 'params' &&
             key !== undefined &&
@@ -47,10 +54,11 @@ export function mapManifestUpdateError(rawError: unknown): ParamsFormErrors {
             ITEM_INDEX.test(index) &&
             rest.length === 0
         ) {
-            const rows = (items[key] ??= []);
-            (rows[Number(index)] ??= []).push(description);
+            const row = (ownList(items, key)[Number(index)] ??= {});
+            if (rowField === undefined) (row.errors ??= []).push(description);
+            else ownList((row.fields ??= {}), rowField).push(description);
         } else if (root === 'credentialBindings' && key !== undefined && index === undefined) {
-            (credentials[key] ??= []).push(description);
+            ownList(credentials, key).push(description);
         } else {
             global.push(description);
         }
