@@ -44,9 +44,13 @@ pub use validate::{MissingValues, Violation, validate_values};
 /// encoder's `u16::try_from` is statically infallible.
 pub const MAX_PARAM_KEY_LENGTH: usize = 64;
 
-/// Maximum byte length of any string-shaped value. Under the wire-format `u32` length field, so the
-/// encoder's `u32::try_from` is statically infallible.
+/// The most bytes a string value may hold,
+/// checked when a value is written and when the widget host reads the params it is sent.
 pub const MAX_PARAM_STRING_LENGTH: usize = 1024;
+
+/// The most `max_items` an array field may declare:
+/// a limit for the operator form, which edits every item as a row.
+pub const MAX_ARRAY_ITEMS: usize = 100;
 
 /// Errors from the field-schema validators; wrapped by the manifest / credential-type error types.
 #[derive(Debug, Error)]
@@ -222,18 +226,28 @@ impl ParamValue {
     /// Build the default value for a field; optional fields without a default yield `Null`.
     #[must_use]
     pub fn from_param_kind_default(kind: &ParamKind) -> Self {
-        match kind {
-            ParamKind::String(StringParam { default_value, .. })
-            | ParamKind::Timezone(TimezoneParam { default_value }) => default_value
+        match kind.shape() {
+            Shape::Scalar(scalar) => Self::from_scalar_default(scalar),
+            Shape::Array(ArrayParam { default_value, .. }) => {
+                ParamValue::List(default_value.clone())
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn from_scalar_default(scalar: Scalar<'_>) -> Self {
+        match scalar {
+            Scalar::String(StringParam { default_value, .. })
+            | Scalar::Timezone(TimezoneParam { default_value }) => default_value
                 .clone()
                 .map_or(ParamValue::Null, ParamValue::String),
-            ParamKind::Double(DoubleParam { default_value, .. }) => {
+            Scalar::Double(DoubleParam { default_value, .. }) => {
                 default_value.map_or(ParamValue::Null, ParamValue::Double)
             }
-            ParamKind::Integer(IntegerParam { default_value, .. }) => {
+            Scalar::Integer(IntegerParam { default_value, .. }) => {
                 default_value.map_or(ParamValue::Null, ParamValue::Integer)
             }
-            ParamKind::Boolean(BooleanParam { default_value }) => {
+            Scalar::Boolean(BooleanParam { default_value }) => {
                 default_value.map_or(ParamValue::Null, ParamValue::Boolean)
             }
         }
@@ -385,7 +399,8 @@ pub struct ParamDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Whether the operator can leave this field unset.
-    /// Optional fields may have a default; required fields *must* (and the host always delivers a value).
+    /// A required field must declare a `default_value`, except an `array`, whose omitted default is the empty list.
+    /// The `default_value` is seeded at widget creation, and an unset optional field is delivered as `Null`.
     #[serde(
         default,
         rename = "optional",
@@ -399,7 +414,7 @@ pub struct ParamDefinition {
 
 /// Tagged enum carrying the value-type-specific shape of a [`ParamDefinition`].
 /// The discriminator field is `type`; variant names are lowercased on the wire
-/// (`"string"`, `"double"`, `"integer"`, `"boolean"`, `"timezone"`).
+/// (`"string"`, `"double"`, `"integer"`, `"boolean"`, `"timezone"`, `"array"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ParamKind {
@@ -414,6 +429,67 @@ pub enum ParamKind {
     /// An IANA timezone identifier. Wire form is a string;
     /// the dedicated variant lets the operator UI render a zone picker instead of a free-form text input.
     Timezone(TimezoneParam),
+    /// An ordered list the operator can add to, remove from and reorder.
+    Array(ArrayParam),
+}
+
+/// The options of a [`ParamKind::Array`] field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct ArrayParam {
+    /// What every item is. A newly added item starts
+    /// at the item's `default_value`, which is not required.
+    pub items: ItemKind,
+    /// Fewest items the list may hold.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[schemars(range(max = MAX_ARRAY_ITEMS))]
+    pub min_items: usize,
+    /// Most items the list may hold, capped at [`MAX_ARRAY_ITEMS`].
+    #[schemars(range(min = 1, max = MAX_ARRAY_ITEMS))]
+    pub max_items: usize,
+    /// Items seeded at widget creation; must fit `min_items..=max_items`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_value: Vec<ParamValue>,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the predicate a reference"
+)]
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// The kind of an [`ArrayParam`]'s items, tagged like [`ParamKind`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ItemKind {
+    /// A UTF-8 string.
+    String(StringParam),
+    /// A finite f64.
+    Double(DoubleParam),
+    /// A 32-bit signed integer.
+    Integer(IntegerParam),
+    /// A boolean.
+    Boolean(BooleanParam),
+    /// An IANA timezone identifier.
+    Timezone(TimezoneParam),
+}
+
+/// A scalar field's options, borrowed from whichever kind holds them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Scalar<'a> {
+    String(&'a StringParam),
+    Double(&'a DoubleParam),
+    Integer(&'a IntegerParam),
+    Boolean(&'a BooleanParam),
+    Timezone(&'a TimezoneParam),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Shape<'a> {
+    Scalar(Scalar<'a>),
+    Array(&'a ArrayParam),
 }
 
 /// The options of a [`ParamKind::String`] field.
@@ -427,8 +503,8 @@ pub struct StringParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<StringOption>,
-    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-    /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
+    /// The starting value, as the param or list item holding these options defines it.
+    /// Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
     pub default_value: Option<String>,
@@ -452,8 +528,7 @@ pub struct DoubleParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<DoubleOption>,
-    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-    /// Required when `optional == false`.
+    /// The starting value, as the param or list item holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<f64>,
 }
@@ -476,8 +551,7 @@ pub struct IntegerParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<IntegerOption>,
-    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-    /// Required when `optional == false`.
+    /// The starting value, as the param or list item holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<i32>,
 }
@@ -486,8 +560,7 @@ pub struct IntegerParam {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct BooleanParam {
-    /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-    /// Required when `optional == false`.
+    /// The starting value, as the param or list item holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<bool>,
 }
@@ -496,20 +569,37 @@ pub struct BooleanParam {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct TimezoneParam {
-    /// Initial zone seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
-    /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
+    /// The starting zone, as the param or list item holding these options defines it.
+    /// Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
     pub default_value: Option<String>,
 }
 
 impl ParamDefinition {
+    /// Stores a list's default as the validator projects it,
+    /// so it reaches every consumer in the shape an operator's list would.
+    /// A default the validator refuses stays as written, for [`Self::validate`] to report.
+    pub fn normalize(&mut self) {
+        if let ParamKind::Array(array) = &mut self.kind
+            && let Ok(items) = array.projected_default()
+        {
+            array.default_value = items;
+        }
+    }
+
+    /// Also refuses a list default that [`Self::normalize`] would still change.
     pub fn validate(&self, name: &str) -> Result<(), FieldSchemaError> {
         let invalid = |reason: String| FieldSchemaError::InvalidParam {
             name: name.to_owned(),
             reason,
         };
 
+        if self.is_optional && matches!(self.kind, ParamKind::Array(_)) {
+            return Err(invalid(
+                "array params cannot be optional; min_items: 0 allows an empty list".into(),
+            ));
+        }
         if !self.is_optional && !self.kind.has_default_value() {
             return Err(invalid("required param needs default_value".into()));
         }
@@ -518,6 +608,18 @@ impl ParamDefinition {
 }
 
 impl ParamKind {
+    #[must_use]
+    pub fn shape(&self) -> Shape<'_> {
+        match self {
+            ParamKind::String(p) => Shape::Scalar(Scalar::String(p)),
+            ParamKind::Double(p) => Shape::Scalar(Scalar::Double(p)),
+            ParamKind::Integer(p) => Shape::Scalar(Scalar::Integer(p)),
+            ParamKind::Boolean(p) => Shape::Scalar(Scalar::Boolean(p)),
+            ParamKind::Timezone(p) => Shape::Scalar(Scalar::Timezone(p)),
+            ParamKind::Array(p) => Shape::Array(p),
+        }
+    }
+
     fn has_default_value(&self) -> bool {
         match self {
             ParamKind::String(StringParam { default_value, .. })
@@ -525,21 +627,96 @@ impl ParamKind {
             ParamKind::Double(DoubleParam { default_value, .. }) => default_value.is_some(),
             ParamKind::Integer(IntegerParam { default_value, .. }) => default_value.is_some(),
             ParamKind::Boolean(BooleanParam { default_value }) => default_value.is_some(),
+            ParamKind::Array(_) => true,
         }
     }
 
     fn validate(&self, name: &str) -> Result<(), FieldSchemaError> {
         match self {
-            ParamKind::String(p) => p.validate(),
-            ParamKind::Double(p) => p.validate(),
-            ParamKind::Integer(p) => p.validate(),
-            ParamKind::Boolean(_) => Ok(()),
-            ParamKind::Timezone(p) => p.validate(),
+            ParamKind::String(p) => Scalar::String(p).validate(),
+            ParamKind::Double(p) => Scalar::Double(p).validate(),
+            ParamKind::Integer(p) => Scalar::Integer(p).validate(),
+            ParamKind::Boolean(p) => Scalar::Boolean(p).validate(),
+            ParamKind::Timezone(p) => Scalar::Timezone(p).validate(),
+            ParamKind::Array(array) => array.validate(),
         }
         .map_err(|reason| FieldSchemaError::InvalidParam {
             name: name.to_owned(),
             reason,
         })
+    }
+}
+
+impl ItemKind {
+    #[must_use]
+    pub fn as_scalar(&self) -> Scalar<'_> {
+        match self {
+            ItemKind::String(p) => Scalar::String(p),
+            ItemKind::Double(p) => Scalar::Double(p),
+            ItemKind::Integer(p) => Scalar::Integer(p),
+            ItemKind::Boolean(p) => Scalar::Boolean(p),
+            ItemKind::Timezone(p) => Scalar::Timezone(p),
+        }
+    }
+}
+
+impl Scalar<'_> {
+    fn validate(self) -> Result<(), String> {
+        match self {
+            Scalar::String(p) => p.validate(),
+            Scalar::Double(p) => p.validate(),
+            Scalar::Integer(p) => p.validate(),
+            Scalar::Boolean(_) => Ok(()),
+            Scalar::Timezone(p) => p.validate(),
+        }
+    }
+}
+
+impl ArrayParam {
+    /// The default as the validator types it: a whole number for a double as a double.
+    fn projected_default(&self) -> Result<Vec<ParamValue>, String> {
+        let mut projected = Vec::with_capacity(self.default_value.len());
+        for (i, item) in self.default_value.iter().enumerate() {
+            let mut violations = Vec::new();
+            let value = validate::validate_item(
+                &format!("default_value[{i}]"),
+                &self.items,
+                item,
+                &mut violations,
+            );
+            if let Some(violation) = violations.into_iter().next() {
+                return Err(format!("{}: {}", violation.path, violation.message));
+            }
+            projected.push(value.expect("BUG: an item without violations has a projection"));
+        }
+        Ok(projected)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        self.items.as_scalar().validate()?;
+        if !(1..=MAX_ARRAY_ITEMS).contains(&self.max_items) {
+            return Err(format!(
+                "max_items must be within 1..={MAX_ARRAY_ITEMS} (got {})",
+                self.max_items
+            ));
+        }
+        if self.min_items > self.max_items {
+            return Err(format!(
+                "min_items ({}) > max_items ({})",
+                self.min_items, self.max_items
+            ));
+        }
+        let len = self.default_value.len();
+        if !(self.min_items..=self.max_items).contains(&len) {
+            return Err(format!(
+                "default_value has {len} items, outside min_items..=max_items ({}..={})",
+                self.min_items, self.max_items
+            ));
+        }
+        if self.projected_default()? != self.default_value {
+            return Err("default_value is not normalized; normalize the param first".into());
+        }
+        Ok(())
     }
 }
 

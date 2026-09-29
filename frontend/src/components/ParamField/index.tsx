@@ -26,5 +26,5 @@ export {
     type BoundComboBoxProps,
     type BoundToggleProps,
     type OptionItem,
-    type FieldValue,
 } from './ParamField';
+export { listItem, type FieldValue, type ListItem, type ScalarValue } from './value';

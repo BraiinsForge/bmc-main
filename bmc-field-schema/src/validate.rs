@@ -24,8 +24,8 @@ use bmc_shared_time::time::Timezone;
 use indexmap::IndexMap;
 
 use crate::{
-    DoubleParam, IntegerParam, ParamDefinition, ParamKey, ParamKind, ParamValue, StringParam,
-    f64_canonical_bits,
+    ArrayParam, DoubleParam, IntegerParam, ItemKind, ParamDefinition, ParamKey, ParamKind,
+    ParamValue, Scalar, Shape, StringParam, f64_canonical_bits,
 };
 
 /// What a schema key the input omits turns into.
@@ -37,7 +37,8 @@ pub enum MissingValues {
     Reject,
 }
 
-/// A value that failed its schema, addressed relative to the value map: `["key"]`.
+/// A value that failed its schema, addressed relative
+/// to the value map: `["key"]`, or `["key"][i]` for a list item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
     pub path: String,
@@ -118,13 +119,13 @@ fn key_path(key: &str) -> String {
     format!("[{key:?}]")
 }
 
-fn type_mismatch_message(kind: &ParamKind) -> &'static str {
-    match kind {
-        ParamKind::String(_) => "Must be text",
-        ParamKind::Integer(_) => "Must be a whole number",
-        ParamKind::Double(_) => "Must be a number",
-        ParamKind::Boolean(_) => "Must be true or false",
-        ParamKind::Timezone(_) => "Must be a timezone",
+fn type_mismatch_message(scalar: Scalar<'_>) -> &'static str {
+    match scalar {
+        Scalar::String(_) => "Must be text",
+        Scalar::Integer(_) => "Must be a whole number",
+        Scalar::Double(_) => "Must be a number",
+        Scalar::Boolean(_) => "Must be true or false",
+        Scalar::Timezone(_) => "Must be a timezone",
     }
 }
 
@@ -134,24 +135,93 @@ fn validate_value(
     value: &ParamValue,
     violations: &mut Vec<Violation>,
 ) -> Option<ParamValue> {
-    match (kind, value) {
-        (ParamKind::String(StringParam { enum_values, .. }), ParamValue::String(s)) => {
+    match kind.shape() {
+        Shape::Scalar(scalar) => validate_scalar(path, scalar, value, violations),
+        Shape::Array(array) => validate_list(path, array, value, violations),
+    }
+}
+
+fn validate_list(
+    path: &str,
+    array: &ArrayParam,
+    value: &ParamValue,
+    violations: &mut Vec<Violation>,
+) -> Option<ParamValue> {
+    let ParamValue::List(items) = value else {
+        violations.push(Violation::new(path, "Must be a list"));
+        return None;
+    };
+    let before = violations.len();
+    if items.len() < array.min_items {
+        violations.push(Violation::new(
+            path,
+            format!("Must have at least {}", item_count(array.min_items)),
+        ));
+    }
+    if items.len() > array.max_items {
+        // Past the bound, item checks add nothing but one violation per item to the response.
+        violations.push(Violation::new(
+            path,
+            format!("Must have at most {}", item_count(array.max_items)),
+        ));
+        return None;
+    }
+    let typed: Vec<ParamValue> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            validate_item(&format!("{path}[{i}]"), &array.items, item, violations)
+        })
+        .collect();
+    (violations.len() == before).then_some(ParamValue::List(typed))
+}
+
+/// Unlike an optional field, an item is never null.
+pub(crate) fn validate_item(
+    path: &str,
+    kind: &ItemKind,
+    value: &ParamValue,
+    violations: &mut Vec<Violation>,
+) -> Option<ParamValue> {
+    if matches!(value, ParamValue::Null) {
+        violations.push(Violation::new(path, "Value is required"));
+        return None;
+    }
+    validate_scalar(path, kind.as_scalar(), value, violations)
+}
+
+fn item_count(n: usize) -> String {
+    if n == 1 {
+        "1 item".to_owned()
+    } else {
+        format!("{n} items")
+    }
+}
+
+fn validate_scalar(
+    path: &str,
+    scalar: Scalar<'_>,
+    value: &ParamValue,
+    violations: &mut Vec<Violation>,
+) -> Option<ParamValue> {
+    match (scalar, value) {
+        (Scalar::String(StringParam { enum_values, .. }), ParamValue::String(s)) => {
             if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
                 violations.push(Violation::new(path, "Must be one of the listed options"));
                 return None;
             }
             Some(ParamValue::String(s.clone()))
         }
-        (ParamKind::Timezone(_), ParamValue::String(s)) => {
-            if !Timezone::list().iter().any(|tz| tz.iana() == s) {
+        (Scalar::Timezone(_), ParamValue::String(s)) => {
+            if Timezone::lookup(s).is_none() {
                 violations.push(Violation::new(path, "Must be a valid timezone"));
                 return None;
             }
             Some(ParamValue::String(s.clone()))
         }
-        (ParamKind::Boolean(_), ParamValue::Boolean(b)) => Some(ParamValue::Boolean(*b)),
+        (Scalar::Boolean(_), ParamValue::Boolean(b)) => Some(ParamValue::Boolean(*b)),
         (
-            ParamKind::Integer(IntegerParam {
+            Scalar::Integer(IntegerParam {
                 min,
                 max,
                 enum_values,
@@ -182,49 +252,89 @@ fn validate_value(
                 None
             }
         }
-        (
-            ParamKind::Double(DoubleParam {
-                min,
-                max,
-                enum_values,
-                ..
-            }),
-            ParamValue::Double(d),
-        ) => {
-            if !d.is_finite() {
-                violations.push(Violation::new(path, "Must be a finite number"));
-                return None;
-            }
-            let mut ok = true;
-            if let Some(lo) = min
-                && d < lo
-            {
-                violations.push(Violation::new(path, format!("Must be at least {lo}")));
-                ok = false;
-            }
-            if let Some(hi) = max
-                && d > hi
-            {
-                violations.push(Violation::new(path, format!("Must be at most {hi}")));
-                ok = false;
-            }
-            if !enum_values.is_empty()
-                && !enum_values
-                    .iter()
-                    .any(|o| f64_canonical_bits(o.value) == f64_canonical_bits(*d))
-            {
-                violations.push(Violation::new(path, "Must be one of the listed options"));
-                ok = false;
-            }
-            if ok {
-                Some(ParamValue::Double(*d))
-            } else {
-                None
-            }
+        (Scalar::Double(param), ParamValue::Double(d)) => {
+            validate_double(path, param, *d, violations)
+        }
+        // JSON has one number type, so a manifest's `1` parses as an integer even for a double.
+        (Scalar::Double(param), ParamValue::Integer(i)) => {
+            validate_double(path, param, f64::from(*i), violations)
         }
         (other_kind, _) => {
             violations.push(Violation::new(path, type_mismatch_message(other_kind)));
             None
         }
+    }
+}
+
+fn validate_double(
+    path: &str,
+    param: &DoubleParam,
+    d: f64,
+    violations: &mut Vec<Violation>,
+) -> Option<ParamValue> {
+    if !d.is_finite() {
+        violations.push(Violation::new(path, "Must be a finite number"));
+        return None;
+    }
+    let mut ok = true;
+    if let Some(lo) = param.min
+        && d < lo
+    {
+        violations.push(Violation::new(path, format!("Must be at least {lo}")));
+        ok = false;
+    }
+    if let Some(hi) = param.max
+        && d > hi
+    {
+        violations.push(Violation::new(path, format!("Must be at most {hi}")));
+        ok = false;
+    }
+    if !param.enum_values.is_empty()
+        && !param
+            .enum_values
+            .iter()
+            .any(|o| f64_canonical_bits(o.value) == f64_canonical_bits(d))
+    {
+        violations.push(Violation::new(path, "Must be one of the listed options"));
+        ok = false;
+    }
+    ok.then_some(ParamValue::Double(d))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    type Values = BTreeMap<String, Result<ParamValue, String>>;
+
+    fn violations(
+        result: Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>>,
+    ) -> Vec<Violation> {
+        result.err().unwrap_or_default()
+    }
+
+    fn ratio(value: i32) -> Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>> {
+        let fields: IndexMap<ParamKey, ParamDefinition> = serde_json::from_value(json!({
+            "ratio": { "name": "Ratio", "type": "double", "max": 2.0, "default_value": 1.0 },
+        }))
+        .expect("BUG: the ratio schema parses");
+        let values = Values::from([("ratio".to_owned(), Ok(ParamValue::Integer(value)))]);
+        validate_values(&fields, &values, MissingValues::Default)
+    }
+
+    #[test]
+    fn a_whole_number_for_a_double_reads_as_a_double() {
+        let typed = ratio(2).expect("BUG: 2 is within the double's bounds");
+        assert_eq!(typed["ratio"], ParamValue::Double(2.0));
+    }
+
+    #[test]
+    fn a_whole_number_for_a_double_meets_the_double_bounds() {
+        assert_eq!(
+            violations(ratio(3)),
+            [Violation::new(r#"["ratio"]"#, "Must be at most 2")],
+        );
     }
 }

@@ -23,8 +23,18 @@ import { action } from 'storybook/actions';
 
 import * as pb from '@/proto';
 import { create } from '@/proto';
-import type { FormifiedParams, ParamsFormErrors } from '../../fn';
+import { ParamField } from '@/components/ParamField';
+import {
+    defaultFormifiedValue,
+    widgetParamsToFormifiedState,
+    type FormifiedParams,
+    type FormifiedValue,
+    type ParamsFormErrors,
+} from '../../fn';
 import { FormWidgetManifest, WidgetManifestForm, type WidgetManifestFormProps } from './FormWidgetManifest';
+
+// Styles
+import css from './FormWidgetManifest.stories.scss';
 
 interface Args {
     invalid: boolean;
@@ -82,72 +92,162 @@ function slot(key: string, typeId: string, label: string, required: boolean): pb
     });
 }
 
-const MANIFEST = pb.create(pb.WidgetManifestSchema, {
-    uid: 'storybook-manifest',
-    name: 'Storybook Widget',
-    subname: 'every field kind',
-    description: 'Manifest covering each param kind and each credential-slot state.',
-    version: '0.0.0',
-    supportedSizes: [pb.WidgetSize.SMALL, pb.WidgetSize.MEDIUM, pb.WidgetSize.LARGE, pb.WidgetSize.FULL],
-    params: [
-        param('label', 'Label', {
-            case: 'paramString',
-            value: create(pb.ParamStringSchema, { defaultValue: 'Demo' }),
+const SCALAR_PARAMS: pb.ManifestParamDefinition[] = [
+    param('label', 'Label', {
+        case: 'paramString',
+        value: create(pb.ParamStringSchema, { defaultValue: 'Demo' }),
+    }),
+    param('theme', 'Theme', {
+        case: 'paramString',
+        value: create(pb.ParamStringSchema, {
+            defaultValue: 'light',
+            enumValues: [
+                create(pb.StringOptionSchema, { value: 'light', label: 'Light' }),
+                create(pb.StringOptionSchema, { value: 'dark', label: 'Dark' }),
+                create(pb.StringOptionSchema, { value: 'auto', label: 'Auto' }),
+            ],
         }),
-        param('theme', 'Theme', {
+    }),
+    param('enabled', 'Enabled', {
+        case: 'paramBoolean',
+        value: create(pb.ParamBooleanSchema, { defaultValue: true }),
+    }),
+    param('refreshSeconds', 'Refresh interval (s)', {
+        case: 'paramInteger',
+        value: create(pb.ParamIntegerSchema, { defaultValue: 30, min: 1, max: 600 }),
+    }),
+    param('multiplier', 'Multiplier', {
+        case: 'paramInteger',
+        value: create(pb.ParamIntegerSchema, {
+            defaultValue: 2,
+            enumValues: [
+                create(pb.IntegerOptionSchema, { value: 1, label: '1×' }),
+                create(pb.IntegerOptionSchema, { value: 2, label: '2×' }),
+                create(pb.IntegerOptionSchema, { value: 4, label: '4×' }),
+            ],
+        }),
+    }),
+    param('scale', 'Scale factor', {
+        case: 'paramDouble',
+        value: create(pb.ParamDoubleSchema, { defaultValue: 1.0, min: 0.1, max: 10.0, step: 0.1 }),
+    }),
+    param('gain', 'Gain', {
+        case: 'paramDouble',
+        value: create(pb.ParamDoubleSchema, {
+            defaultValue: 1.0,
+            enumValues: [
+                create(pb.DoubleOptionSchema, { value: 0.5, label: '0.5×' }),
+                create(pb.DoubleOptionSchema, { value: 1.0, label: '1.0×' }),
+                create(pb.DoubleOptionSchema, { value: 2.0, label: '2.0×' }),
+            ],
+        }),
+    }),
+    param('tz', 'Timezone', { case: 'paramTimezone', value: create(pb.ParamTimezoneSchema) }),
+];
+
+function list(
+    key: string,
+    name: string,
+    items: pb.ArrayItemKind['kind'],
+    bounds: { minItems?: number; maxItems: number },
+    defaultValue: Array<pb.FieldValue['kind']>,
+): pb.ManifestParamDefinition {
+    return param(key, name, {
+        case: 'paramArray',
+        value: create(pb.ParamArraySchema, {
+            items: { kind: items },
+            ...bounds,
+            defaultValue: defaultValue.map(kind => create(pb.FieldValueSchema, { kind })),
+        }),
+    });
+}
+
+const SYMBOLS = list(
+    'symbols',
+    'Ticker symbols',
+    { case: 'paramString', value: create(pb.ParamStringSchema) },
+    { minItems: 1, maxItems: 8 },
+    [
+        { case: 'stringValue', value: 'NVDA' },
+        { case: 'stringValue', value: 'AAPL' },
+    ],
+);
+
+const ITEM_KIND_LISTS: pb.ManifestParamDefinition[] = [
+    list(
+        'thresholds',
+        'Whole numbers',
+        { case: 'paramInteger', value: create(pb.ParamIntegerSchema, { min: 0, max: 100 }) },
+        { maxItems: 5 },
+        [
+            { case: 'integerValue', value: 10 },
+            { case: 'integerValue', value: 50 },
+        ],
+    ),
+    list(
+        'weights',
+        'Decimals',
+        { case: 'paramDouble', value: create(pb.ParamDoubleSchema, { defaultValue: 1.0, step: 0.1 }) },
+        { minItems: 1, maxItems: 4 },
+        [{ case: 'doubleValue', value: 0.5 }],
+    ),
+    list('flags', 'Toggles', { case: 'paramBoolean', value: create(pb.ParamBooleanSchema) }, { maxItems: 3 }, [
+        { case: 'booleanValue', value: true },
+        { case: 'booleanValue', value: false },
+    ]),
+    list(
+        'zones',
+        'Timezones',
+        { case: 'paramTimezone', value: create(pb.ParamTimezoneSchema, { defaultValue: 'UTC' }) },
+        { maxItems: 3 },
+        [{ case: 'stringValue', value: 'Europe/Prague' }],
+    ),
+    list(
+        'sides',
+        'Choices',
+        {
             case: 'paramString',
             value: create(pb.ParamStringSchema, {
-                defaultValue: 'light',
+                defaultValue: 'left',
                 enumValues: [
-                    create(pb.StringOptionSchema, { value: 'light', label: 'Light' }),
-                    create(pb.StringOptionSchema, { value: 'dark', label: 'Dark' }),
-                    create(pb.StringOptionSchema, { value: 'auto', label: 'Auto' }),
+                    create(pb.StringOptionSchema, { value: 'left', label: 'Left' }),
+                    create(pb.StringOptionSchema, { value: 'center', label: 'Center' }),
+                    create(pb.StringOptionSchema, { value: 'right', label: 'Right' }),
                 ],
             }),
-        }),
-        param('enabled', 'Enabled', {
-            case: 'paramBoolean',
-            value: create(pb.ParamBooleanSchema, { defaultValue: true }),
-        }),
-        param('refreshSeconds', 'Refresh interval (s)', {
-            case: 'paramInteger',
-            value: create(pb.ParamIntegerSchema, { defaultValue: 30, min: 1, max: 600 }),
-        }),
-        param('multiplier', 'Multiplier', {
-            case: 'paramInteger',
-            value: create(pb.ParamIntegerSchema, {
-                defaultValue: 2,
-                enumValues: [
-                    create(pb.IntegerOptionSchema, { value: 1, label: '1×' }),
-                    create(pb.IntegerOptionSchema, { value: 2, label: '2×' }),
-                    create(pb.IntegerOptionSchema, { value: 4, label: '4×' }),
-                ],
-            }),
-        }),
-        param('scale', 'Scale factor', {
-            case: 'paramDouble',
-            value: create(pb.ParamDoubleSchema, { defaultValue: 1.0, min: 0.1, max: 10.0, step: 0.1 }),
-        }),
-        param('gain', 'Gain', {
-            case: 'paramDouble',
-            value: create(pb.ParamDoubleSchema, {
-                defaultValue: 1.0,
-                enumValues: [
-                    create(pb.DoubleOptionSchema, { value: 0.5, label: '0.5×' }),
-                    create(pb.DoubleOptionSchema, { value: 1.0, label: '1.0×' }),
-                    create(pb.DoubleOptionSchema, { value: 2.0, label: '2.0×' }),
-                ],
-            }),
-        }),
-        param('tz', 'Timezone', { case: 'paramTimezone', value: create(pb.ParamTimezoneSchema) }),
-    ],
-    credentials: [
-        slot('pool', 'braiins-pool', 'Pool Account', true),
-        slot('backup', 'braiins-pool', 'Backup Pool Account', true),
-        slot('api', 'generic-token', 'Weather Service', false),
-        slot('stale', 'generic-token', 'Retired Service', false),
-    ],
-});
+        },
+        { minItems: 1, maxItems: 3 },
+        [
+            { case: 'stringValue', value: 'left' },
+            { case: 'stringValue', value: 'right' },
+        ],
+    ),
+];
+
+const SLOTS: pb.CredentialSlotDefinition[] = [
+    slot('pool', 'braiins-pool', 'Pool Account', true),
+    slot('backup', 'braiins-pool', 'Backup Pool Account', true),
+    slot('api', 'generic-token', 'Weather Service', false),
+    slot('stale', 'generic-token', 'Retired Service', false),
+];
+
+function storyManifest(
+    subname: string,
+    fields: { params?: pb.ManifestParamDefinition[]; credentials?: pb.CredentialSlotDefinition[] },
+): pb.WidgetManifest {
+    return pb.create(pb.WidgetManifestSchema, {
+        uid: `storybook-${subname}`,
+        name: 'Storybook Widget',
+        subname,
+        version: '0.0.0',
+        supportedSizes: [pb.WidgetSize.SMALL, pb.WidgetSize.MEDIUM, pb.WidgetSize.LARGE, pb.WidgetSize.FULL],
+        ...fields,
+    });
+}
+
+const SCALARS_MANIFEST = storyManifest('scalar params', { params: SCALAR_PARAMS });
+const CREDENTIALS_MANIFEST = storyManifest('credential slots', { credentials: SLOTS });
+const FULL_MANIFEST = storyManifest('every field kind', { params: [...SCALAR_PARAMS, SYMBOLS], credentials: SLOTS });
 
 // `backup` is left unbound and `stale` holds an account of the wrong type,
 // so the required-slot warning and the misbound-slot error are both on screen.
@@ -159,28 +259,25 @@ const INITIAL_BINDINGS: Record<string, string> = {
     stale: 'acct-pool-1',
 };
 
-function invalidErrors(): ParamsFormErrors {
+function invalidErrors(manifest: pb.WidgetManifest): ParamsFormErrors {
     return {
         global: ['The widget could not be saved.'],
-        fields: Object.fromEntries(MANIFEST.params.map(p => [p.key, [`${p.name} is not acceptable.`]])),
-        credentials: Object.fromEntries(MANIFEST.credentials.map(s => [s.key, ['Account not found']])),
+        fields: Object.fromEntries(manifest.params.map(p => [p.key, [`${p.name} is not acceptable.`]])),
+        items: { [SYMBOLS.key]: [undefined, ['Unknown symbol.']] },
+        credentials: Object.fromEntries(manifest.credentials.map(s => [s.key, ['Account not found']])),
     };
 }
 
-function useDemoProps(invalid: boolean): WidgetManifestFormProps {
-    const [params, setParams] = useState<FormifiedParams>({});
-    const [size, setSize] = useState<pb.WidgetSize>(pb.WidgetSize.MEDIUM);
+function useDemoProps(manifest: pb.WidgetManifest, invalid: boolean): WidgetManifestFormProps {
+    const [params, setParams] = useState<FormifiedParams>(() => widgetParamsToFormifiedState(manifest, undefined));
     const [bindings, setBindings] = useState<Record<string, string>>(INITIAL_BINDINGS);
 
     return {
-        manifest: MANIFEST,
+        manifest,
         params,
-        errors: invalid ? invalidErrors() : null,
+        errors: invalid ? invalidErrors(manifest) : null,
         onParamChange: (key, value) => setParams(prev => ({ ...prev, [key]: value })),
         timezones: TIMEZONES,
-        size,
-        sizeOptions: [pb.WidgetSize.SMALL, pb.WidgetSize.MEDIUM, pb.WidgetSize.LARGE],
-        onSizeChange: setSize,
         accounts: ACCOUNTS,
         credentialBindings: bindings,
         onCredentialBindingChange: (slotKey, accountId) => {
@@ -195,8 +292,7 @@ function useDemoProps(invalid: boolean): WidgetManifestFormProps {
     };
 }
 
-export function AllFields({ invalid }: Args) {
-    const props = useDemoProps(invalid);
+function Boxed(props: WidgetManifestFormProps) {
     return (
         <div className="ui-box" style={{ maxWidth: 560 }}>
             <WidgetManifestForm {...props} />
@@ -204,7 +300,53 @@ export function AllFields({ invalid }: Args) {
     );
 }
 
+export function ScalarFields({ invalid }: Args) {
+    return <Boxed {...useDemoProps(SCALARS_MANIFEST, invalid)} />;
+}
+
+function ListCell({ definition, invalid }: { definition: pb.ManifestParamDefinition; invalid: boolean }) {
+    const [value, setValue] = useState<FormifiedValue>(() => defaultFormifiedValue(definition));
+    return (
+        <div className={css.cell}>
+            <ParamField
+                id={`story-${definition.key}`}
+                definition={definition}
+                value={value}
+                error={invalid ? `${definition.name} is not acceptable.` : undefined}
+                itemErrors={invalid ? [undefined, 'Not acceptable.'] : undefined}
+                onChange={(_key, next) => setValue(next)}
+                timezones={TIMEZONES}
+            />
+        </div>
+    );
+}
+
+export function ListField({ invalid }: Args) {
+    return (
+        <div className={css.grid}>
+            {[SYMBOLS, ...ITEM_KIND_LISTS].map(definition => (
+                <ListCell key={definition.key} definition={definition} invalid={invalid} />
+            ))}
+        </div>
+    );
+}
+
+export function CredentialSlots({ invalid }: Args) {
+    return <Boxed {...useDemoProps(CREDENTIALS_MANIFEST, invalid)} />;
+}
+
 export function InDialog({ invalid }: Args) {
-    const props = useDemoProps(invalid);
-    return <FormWidgetManifest {...props} isOpen onSave={action('onSave')} onCancel={action('onCancel')} />;
+    const props = useDemoProps(FULL_MANIFEST, invalid);
+    const [size, setSize] = useState<pb.WidgetSize>(pb.WidgetSize.MEDIUM);
+    return (
+        <FormWidgetManifest
+            {...props}
+            size={size}
+            sizeOptions={[pb.WidgetSize.SMALL, pb.WidgetSize.MEDIUM, pb.WidgetSize.LARGE]}
+            onSizeChange={setSize}
+            isOpen
+            onSave={action('onSave')}
+            onCancel={action('onCancel')}
+        />
+    );
 }

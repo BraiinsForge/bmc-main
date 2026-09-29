@@ -43,6 +43,7 @@ import {
 } from './fn';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { fakeIntlProp } from '@/mocks/intl';
+import { listItem, type ListItem } from '@/components/ParamField/value';
 import { paramDef } from './test-helpers';
 
 const emptyParams = pb.create(pb.FieldValuesSchema, { fields: {} });
@@ -744,7 +745,29 @@ describe('defaultFormifiedValue', () => {
     test('paramTimezone optional, no default → null', () => {
         expect(defaultFormifiedValue(paramDef('paramTimezone', 'k', true))).toBeNull();
     });
+    test('paramArray → one row per default item, each with its own id', () => {
+        const rows = defaultFormifiedValue(countsDef({ defaultValue: [wireInteger(1), wireInteger(2)] }));
+        if (!Array.isArray(rows)) throw new Error('expected rows');
+        expect(rows.map(row => row.value)).toEqual(['1', '2']);
+        expect(new Set(rows.map(row => row.id)).size).toBe(2);
+    });
 });
+
+function countsDef(overrides: Record<string, any> = {}): pb.ManifestParamDefinition {
+    return paramDef('paramArray', 'counts', false, {
+        items: { kind: { case: 'paramInteger', value: { max: 5 } } },
+        maxItems: 3,
+        ...overrides,
+    });
+}
+
+function wireInteger(value: number): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, { kind: { case: 'integerValue', value } });
+}
+
+function rows(...values: string[]): ListItem[] {
+    return values.map(listItem);
+}
 
 describe('parseFormifiedValue', () => {
     test('paramString required, null → error', () => {
@@ -851,6 +874,32 @@ describe('parseFormifiedValue', () => {
         if (r.ok) expect(r.value.kind).toEqual({ case: 'stringValue', value: 'Europe/Prague' });
         else throw new Error('expected ok');
     });
+
+    test('paramArray within its bounds → listValue of the parsed items', () => {
+        const r = parseFormifiedValue(countsDef(), rows('3', '1'));
+        if (!r.ok) throw new Error('expected ok');
+        if (r.value.kind.case !== 'listValue') throw new Error('expected listValue');
+        expect(r.value.kind.value.items.map(item => item.kind)).toEqual([
+            { case: 'integerValue', value: 3 },
+            { case: 'integerValue', value: 1 },
+        ]);
+    });
+    test('paramArray below min_items → error on the list', () => {
+        const r = parseFormifiedValue(countsDef({ minItems: 1 }), []);
+        if (!r.ok) expect(r.error).toBe('Must have at least 1 item');
+        else throw new Error('expected error');
+    });
+    test('paramArray above max_items → error on the list', () => {
+        const r = parseFormifiedValue(countsDef({ maxItems: 2 }), rows('1', '2', '3'));
+        if (!r.ok) expect(r.error).toBe('Must have at most 2 items');
+        else throw new Error('expected error');
+    });
+    test('paramArray bad items → errors at their indices, none on the list', () => {
+        const r = parseFormifiedValue(countsDef(), rows('1', '9', ''));
+        if (r.ok) throw new Error('expected error');
+        expect(r.error).toBeUndefined();
+        expect(r.items).toEqual([undefined, 'Must be at most 5', 'Value is required']);
+    });
 });
 
 describe('widgetParamsToFormifiedState', () => {
@@ -908,6 +957,20 @@ describe('widgetParamsToFormifiedState', () => {
         expect(r.enabled).toBe(false);
     });
 
+    test('list value from BE → one row per item', () => {
+        const withList = pb.create(pb.WidgetManifestSchema, { params: [countsDef()] });
+        const struct = pb.create(pb.FieldValuesSchema, {
+            fields: {
+                counts: pb.create(pb.FieldValueSchema, {
+                    kind: { case: 'listValue', value: { items: [wireInteger(4), wireInteger(2)] } },
+                }),
+            },
+        });
+        const r = widgetParamsToFormifiedState(withList, struct);
+        if (!Array.isArray(r.counts)) throw new Error('expected rows');
+        expect(r.counts.map(row => row.value)).toEqual(['4', '2']);
+    });
+
     test('unknown keys are not surfaced', () => {
         const struct = pb.create(pb.FieldValuesSchema, {
             fields: {
@@ -954,6 +1017,14 @@ describe('buildFieldValues', () => {
         const r = buildFieldValues(manifest, { count: '1', enabled: false });
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.fields.name).toBeTruthy();
+    });
+
+    test('a bad list item → error in items[key][index]', () => {
+        const withList = pb.create(pb.WidgetManifestSchema, { params: [countsDef()] });
+        const r = buildFieldValues(withList, { counts: rows('1', '9') });
+        if (r.ok) throw new Error('expected error');
+        expect(r.errors.fields.counts).toBeUndefined();
+        expect(r.errors.items?.counts).toEqual([undefined, ['Must be at most 5']]);
     });
 });
 

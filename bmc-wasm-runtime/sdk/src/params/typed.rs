@@ -39,21 +39,26 @@
 //!
 //! [`ParamRead::read_optional`] returns `None` for missing or null entries.
 //!
+//! ## Lists
+//!
+//! A list item of another type is a host bug, so the read panics rather than skipping it.
+//!
 //! ## Enums
 //!
-//! Manifest `enum_values` types implement [`ParamRead`] via the
-//! [`crate::impl_manifest_str_enum!`], [`crate::impl_manifest_i32_enum!`] and
-//! [`crate::impl_manifest_f64_enum!`] macros below. Each macro expects the enum
-//! to already provide an inherent `fn from_manifest_value(...) -> Option<Self>` —
-//! the codegen emits both alongside the macro invocation.
+//! Manifest `enum_values` types implement [`ParamRead`] and [`ValueRead`]
+//! via the [`crate::impl_manifest_str_enum!`], [`crate::impl_manifest_i32_enum!`]
+//! and [`crate::impl_manifest_f64_enum!`] macros below. Each macro expects the enum
+//! to already provide an inherent `fn from_manifest_value(...) -> Option<Self>`
+//! — the codegen emits both alongside the macro invocation.
 
-use super::Params;
+use super::{Params, Value};
 
 /// Materialise a typed value out of a dynamic [`Params`] snapshot.
 ///
-/// Implemented in this module for `String`, `i32`, `f64`, `bool`; widget-side
-/// codegen plugs in manifest `enum_values` types via the
-/// `impl_manifest_{str,i32,f64}_enum!` macros.
+/// Implemented in this module for `String`, `i32`, `f64`, `bool`,
+/// and `Vec<T>` of any [`ValueRead`] item;
+/// widget-side codegen plugs in manifest `enum_values` types
+/// via the `impl_manifest_{str,i32,f64}_enum!` macros.
 pub trait ParamRead: Sized {
     /// Read a required key. Panics (BUG:) when the host snapshot is missing or null
     /// for `key`, since the compositor's validator should always inject the manifest
@@ -109,7 +114,58 @@ impl ParamRead for bool {
     }
 }
 
-/// Implement [`ParamRead`] for a manifest string-enum.
+/// Materialise a typed list item out of one [`Value`].
+pub trait ValueRead: Sized {
+    /// `None` for a null or a value of another type.
+    fn from_value(value: Value<'_>) -> Option<Self>;
+}
+
+impl ValueRead for String {
+    fn from_value(value: Value<'_>) -> Option<Self> {
+        value.as_str().map(str::to_owned)
+    }
+}
+
+impl ValueRead for i32 {
+    fn from_value(value: Value<'_>) -> Option<Self> {
+        value.as_i32()
+    }
+}
+
+impl ValueRead for f64 {
+    fn from_value(value: Value<'_>) -> Option<Self> {
+        value.as_f64()
+    }
+}
+
+impl ValueRead for bool {
+    fn from_value(value: Value<'_>) -> Option<Self> {
+        value.as_bool()
+    }
+}
+
+impl<T: ValueRead> ParamRead for Vec<T> {
+    fn read_required(snap: &Params, key: &str) -> Self {
+        Self::read_optional(snap, key)
+            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
+    }
+
+    fn read_optional(snap: &Params, key: &str) -> Option<Self> {
+        let list = snap.get_list(key)?;
+        Some(
+            list.iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    T::from_value(item).unwrap_or_else(|| {
+                        panic!("BUG: param `{key}` item {i} does not match the manifest item type")
+                    })
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Implement [`ParamRead`] and [`ValueRead`] for a manifest string-enum.
 ///
 /// The enum must provide an inherent `fn from_manifest_value(s: &str) -> Option<Self>`
 /// — the codegen emits both this macro call and the function next to each other.
@@ -137,10 +193,16 @@ macro_rules! impl_manifest_str_enum {
                 }))
             }
         }
+
+        impl $crate::params::typed::ValueRead for $t {
+            fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
+                <$t>::from_manifest_value(value.as_str()?)
+            }
+        }
     };
 }
 
-/// Implement [`ParamRead`] for a manifest integer-enum (`enum_values` of `i32`).
+/// Implement [`ParamRead`] and [`ValueRead`] for a manifest integer-enum (`enum_values` of `i32`).
 #[macro_export]
 macro_rules! impl_manifest_i32_enum {
     ($t:ty) => {
@@ -161,10 +223,16 @@ macro_rules! impl_manifest_i32_enum {
                 }))
             }
         }
+
+        impl $crate::params::typed::ValueRead for $t {
+            fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
+                <$t>::from_manifest_value(value.as_i32()?)
+            }
+        }
     };
 }
 
-/// Implement [`ParamRead`] for a manifest double-enum (`enum_values` of `f64`).
+/// Implement [`ParamRead`] and [`ValueRead`] for a manifest double-enum (`enum_values` of `f64`).
 #[macro_export]
 macro_rules! impl_manifest_f64_enum {
     ($t:ty) => {
@@ -185,6 +253,12 @@ macro_rules! impl_manifest_f64_enum {
                 }))
             }
         }
+
+        impl $crate::params::typed::ValueRead for $t {
+            fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
+                <$t>::from_manifest_value(value.as_f64()?)
+            }
+        }
     };
 }
 
@@ -192,6 +266,7 @@ macro_rules! impl_manifest_f64_enum {
 mod tests {
     use super::super::Params;
     use super::*;
+    use bmc_wasm_protocol::params::kind;
 
     /// Build a `Params` from a tiny inline byte buffer for testing.
     /// Layout matches `params.rs` (count header + per-entry tag/key/payload).
@@ -202,40 +277,10 @@ mod tests {
         for (key, ent) in entries {
             let key_bytes = key.as_bytes();
             let key_len = u16::try_from(key_bytes.len()).expect("BUG: test key under 64 KiB");
-            match ent {
-                Entry::Str(v) => {
-                    buf.push(0);
-                    buf.extend_from_slice(&key_len.to_le_bytes());
-                    buf.extend_from_slice(key_bytes);
-                    let vb = v.as_bytes();
-                    let val_len = u32::try_from(vb.len()).expect("BUG: test value under 4 GiB");
-                    buf.extend_from_slice(&val_len.to_le_bytes());
-                    buf.extend_from_slice(vb);
-                }
-                Entry::I32(v) => {
-                    buf.push(1);
-                    buf.extend_from_slice(&key_len.to_le_bytes());
-                    buf.extend_from_slice(key_bytes);
-                    buf.extend_from_slice(&v.to_le_bytes());
-                }
-                Entry::F64(v) => {
-                    buf.push(2);
-                    buf.extend_from_slice(&key_len.to_le_bytes());
-                    buf.extend_from_slice(key_bytes);
-                    buf.extend_from_slice(&v.to_le_bytes());
-                }
-                Entry::Bool(v) => {
-                    buf.push(3);
-                    buf.extend_from_slice(&key_len.to_le_bytes());
-                    buf.extend_from_slice(key_bytes);
-                    buf.push(u8::from(*v));
-                }
-                Entry::Null => {
-                    buf.push(4);
-                    buf.extend_from_slice(&key_len.to_le_bytes());
-                    buf.extend_from_slice(key_bytes);
-                }
-            }
+            buf.push(ent.kind());
+            buf.extend_from_slice(&key_len.to_le_bytes());
+            buf.extend_from_slice(key_bytes);
+            ent.write_payload(&mut buf);
         }
         Params::from_bytes(buf)
     }
@@ -246,6 +291,43 @@ mod tests {
         F64(f64),
         Bool(bool),
         Null,
+        List(&'a [Entry<'a>]),
+    }
+
+    impl Entry<'_> {
+        fn kind(&self) -> u8 {
+            match self {
+                Entry::Str(_) => kind::STR,
+                Entry::I32(_) => kind::I32,
+                Entry::F64(_) => kind::F64,
+                Entry::Bool(_) => kind::BOOL,
+                Entry::Null => kind::NULL,
+                Entry::List(_) => kind::LIST,
+            }
+        }
+
+        fn write_payload(&self, buf: &mut Vec<u8>) {
+            match self {
+                Entry::Str(v) => {
+                    let vb = v.as_bytes();
+                    let val_len = u32::try_from(vb.len()).expect("BUG: test value under 4 GiB");
+                    buf.extend_from_slice(&val_len.to_le_bytes());
+                    buf.extend_from_slice(vb);
+                }
+                Entry::I32(v) => buf.extend_from_slice(&v.to_le_bytes()),
+                Entry::F64(v) => buf.extend_from_slice(&v.to_le_bytes()),
+                Entry::Bool(v) => buf.push(u8::from(*v)),
+                Entry::Null => {}
+                Entry::List(items) => {
+                    let count = u32::try_from(items.len()).expect("BUG: test list fits u32");
+                    buf.extend_from_slice(&count.to_le_bytes());
+                    for item in *items {
+                        buf.push(item.kind());
+                        item.write_payload(buf);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -281,6 +363,30 @@ mod tests {
     fn required_panics_on_missing() {
         let p = build(&[]);
         let _: String = ParamRead::read_required(&p, "missing");
+    }
+
+    // ── List coverage ───────────────────────────────────────────────
+
+    #[test]
+    fn list_reads_its_items_in_order() {
+        let p = build(&[
+            ("s", Entry::List(&[Entry::Str("NVDA"), Entry::Str("AAPL")])),
+            ("i", Entry::List(&[Entry::I32(3), Entry::I32(1)])),
+            ("e", Entry::List(&[])),
+        ]);
+        assert_eq!(
+            <Vec<String> as ParamRead>::read_required(&p, "s"),
+            ["NVDA", "AAPL"]
+        );
+        assert_eq!(<Vec<i32> as ParamRead>::read_required(&p, "i"), [3, 1]);
+        assert!(<Vec<bool> as ParamRead>::read_required(&p, "e").is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: param `l` item 1 does not match the manifest item type")]
+    fn list_item_of_another_type_panics() {
+        let p = build(&[("l", Entry::List(&[Entry::I32(1), Entry::Str("two")]))]);
+        let _ = <Vec<i32> as ParamRead>::read_required(&p, "l");
     }
 
     // ── String-enum macro coverage ──────────────────────────────────
@@ -320,6 +426,22 @@ mod tests {
     fn str_enum_panics_on_unknown_value() {
         let p = build(&[("c", Entry::Str("green"))]);
         let _ = <Color as ParamRead>::read_required(&p, "c");
+    }
+
+    #[test]
+    fn str_enum_list_reads_each_item() {
+        let p = build(&[("c", Entry::List(&[Entry::Str("red"), Entry::Str("blue")]))]);
+        assert_eq!(
+            <Vec<Color> as ParamRead>::read_required(&p, "c"),
+            [Color::Red, Color::Blue]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: param `c` item 0 does not match the manifest item type")]
+    fn str_enum_list_panics_on_an_unknown_item() {
+        let p = build(&[("c", Entry::List(&[Entry::Str("green")]))]);
+        let _ = <Vec<Color> as ParamRead>::read_required(&p, "c");
     }
 
     // ── i32-enum macro coverage ─────────────────────────────────────

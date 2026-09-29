@@ -19,6 +19,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+@use 'styles/carbon' as *;
+
 // The param form is one full-width column, and Carbon pins the single-date
 // input to a fixed width, so stretch the whole picker chain — locally, since
 // other DatePicker placements have no business being full-width.
@@ -51,4 +53,40 @@
     button[class*='selection'] {
         display: none;
     }
+}
+
+$row-height: mini-units(5);
+$row-gap: mini-units(1);
+$drag-handle-size: mini-units(4);
+
+.list {
+    composes: selfStretch from 'styles/layout.scss';
+}
+
+.row {
+    composes: horizontal start from 'styles/layout.scss';
+    gap: $row-gap;
+}
+
+.dragHandle {
+    composes: horizontal centerCenter from 'styles/layout.scss';
+    flex-shrink: 0;
+    inline-size: $drag-handle-size;
+    block-size: $row-height;
+    cursor: grab;
+}
+
+.rowField {
+    composes: flex from 'styles/layout.scss';
+    min-inline-size: 0;
+}
+
+.rowAction {
+    composes: horizontal center from 'styles/layout.scss';
+    block-size: $row-height;
+}
+
+.add {
+    margin-block-start: $row-gap;
+    margin-inline-start: $drag-handle-size + $row-gap;
 }

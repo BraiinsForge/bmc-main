@@ -33,7 +33,7 @@ import "google/protobuf/empty.proto";
 // possible param states:
 //
 //   is_optional=false + default_value present: required field with default
-//   is_optional=false + default_value absent:  manifest rejected at load
+//   is_optional=false + default_value absent:  manifest rejected at load, except an array, which defaults to the empty list
 //   is_optional=true  + default_value present: optional, default-on-add
 //   is_optional=true  + default_value absent:  optional, null-on-add
 //
@@ -49,6 +49,26 @@ message ManifestParamDefinition {
     ParamInteger param_integer = 7;
     ParamBoolean param_boolean = 8;
     ParamTimezone param_timezone = 9;
+    ParamArray param_array = 10;
+  }
+}
+
+// Never optional: min_items = 0 allows an empty list.
+message ParamArray {
+  ArrayItemKind items = 1;
+  uint32 min_items = 2;
+  uint32 max_items = 3;
+  repeated FieldValue default_value = 4;
+}
+
+// A newly added item starts at the item kind's default_value.
+message ArrayItemKind {
+  oneof kind {
+    ParamString param_string = 1;
+    ParamDouble param_double = 2;
+    ParamInteger param_integer = 3;
+    ParamBoolean param_boolean = 4;
+    ParamTimezone param_timezone = 5;
   }
 }
 

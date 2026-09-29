@@ -53,6 +53,8 @@
 //! - `Boolean` → `bool` / `Option<bool>`
 //! - `enum_values` of any of the above → a generated `enum <FieldPascalCase>`
 //!   with `ALL`, `as_manifest_value`, `from_manifest_value`
+//! - `Array` → `Vec<T>` of its item type, where an `enum_values` item
+//!   generates `enum <FieldPascalCase>Item`
 //!
 //! The reads route through [`bmc_wasm_sdk::params::typed::ParamRead`]; enums
 //! use the `impl_manifest_{str,i32,f64}_enum!` macros from the SDK so each
@@ -82,8 +84,8 @@
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use bmc_widget_manifest::{
-    CredentialKey, CredentialSlot, DoubleParam, IntegerParam, Manifest, ParamDefinition, ParamKey,
-    ParamKind, StringParam, credential,
+    ArrayParam, CredentialKey, CredentialSlot, DoubleParam, IntegerParam, Manifest,
+    ParamDefinition, ParamKey, Scalar, Shape, StringParam, credential,
 };
 use heck::{AsShoutySnakeCase, AsSnakeCase, AsUpperCamelCase};
 use indoc::formatdoc;
@@ -367,59 +369,12 @@ struct Variant<V> {
 impl Resolved {
     fn new(key: &str, def: &ParamDefinition) -> Result<Self> {
         let field_ident = field_ident(key);
-        let (field_ty, enum_decl) = match &def.kind {
-            ParamKind::String(StringParam { enum_values, .. }) if !enum_values.is_empty() => {
-                let name = enum_name(key);
-                let variants = enum_values
-                    .iter()
-                    .map(|o| {
-                        Ok(Variant {
-                            ident: variant_ident(&o.value)?,
-                            value: o.value.clone(),
-                            label: o.label.clone(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
-                let ty = quote! { #name };
-                (ty, Some(EnumDecl::Str { name, variants }))
+        let (field_ty, enum_decl) = match def.kind.shape() {
+            Shape::Scalar(scalar) => scalar_ty(key, enum_name(key), scalar)?,
+            Shape::Array(ArrayParam { items, .. }) => {
+                let (item_ty, enum_decl) = scalar_ty(key, item_enum_name(key), items.as_scalar())?;
+                (quote! { Vec<#item_ty> }, enum_decl)
             }
-            ParamKind::Integer(IntegerParam { enum_values, .. }) if !enum_values.is_empty() => {
-                let name = enum_name(key);
-                let variants = enum_values
-                    .iter()
-                    .map(|o| {
-                        Ok(Variant {
-                            ident: variant_ident(&o.label)?,
-                            value: o.value,
-                            label: o.label.clone(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
-                let ty = quote! { #name };
-                (ty, Some(EnumDecl::I32 { name, variants }))
-            }
-            ParamKind::Double(DoubleParam { enum_values, .. }) if !enum_values.is_empty() => {
-                let name = enum_name(key);
-                let variants = enum_values
-                    .iter()
-                    .map(|o| {
-                        Ok(Variant {
-                            ident: variant_ident(&o.label)?,
-                            value: o.value,
-                            label: o.label.clone(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
-                let ty = quote! { #name };
-                (ty, Some(EnumDecl::F64 { name, variants }))
-            }
-            ParamKind::String(_) | ParamKind::Timezone(_) => (quote! { String }, None),
-            ParamKind::Integer(_) => (quote! { i32 }, None),
-            ParamKind::Double(_) => (quote! { f64 }, None),
-            ParamKind::Boolean(_) => (quote! { bool }, None),
         };
 
         let final_ty = if def.is_optional {
@@ -436,6 +391,82 @@ impl Resolved {
             enum_decl,
         })
     }
+}
+
+fn scalar_ty(
+    key: &str,
+    enum_ident: Ident,
+    scalar: Scalar<'_>,
+) -> Result<(TokenStream, Option<EnumDecl>)> {
+    Ok(match scalar {
+        Scalar::String(StringParam { enum_values, .. }) if !enum_values.is_empty() => {
+            let variants = enum_values
+                .iter()
+                .map(|o| {
+                    Ok(Variant {
+                        ident: variant_ident(&o.value)?,
+                        value: o.value.clone(),
+                        label: o.label.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
+            let ty = quote! { #enum_ident };
+            (
+                ty,
+                Some(EnumDecl::Str {
+                    name: enum_ident,
+                    variants,
+                }),
+            )
+        }
+        Scalar::Integer(IntegerParam { enum_values, .. }) if !enum_values.is_empty() => {
+            let variants = enum_values
+                .iter()
+                .map(|o| {
+                    Ok(Variant {
+                        ident: variant_ident(&o.label)?,
+                        value: o.value,
+                        label: o.label.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
+            let ty = quote! { #enum_ident };
+            (
+                ty,
+                Some(EnumDecl::I32 {
+                    name: enum_ident,
+                    variants,
+                }),
+            )
+        }
+        Scalar::Double(DoubleParam { enum_values, .. }) if !enum_values.is_empty() => {
+            let variants = enum_values
+                .iter()
+                .map(|o| {
+                    Ok(Variant {
+                        ident: variant_ident(&o.label)?,
+                        value: o.value,
+                        label: o.label.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            assert_unique_variants(key, variants.iter().map(|v| &v.ident))?;
+            let ty = quote! { #enum_ident };
+            (
+                ty,
+                Some(EnumDecl::F64 {
+                    name: enum_ident,
+                    variants,
+                }),
+            )
+        }
+        Scalar::String(_) | Scalar::Timezone(_) => (quote! { String }, None),
+        Scalar::Integer(_) => (quote! { i32 }, None),
+        Scalar::Double(_) => (quote! { f64 }, None),
+        Scalar::Boolean(_) => (quote! { bool }, None),
+    })
 }
 
 #[expect(
@@ -631,6 +662,10 @@ fn enum_name(key: &str) -> Ident {
     format_ident!("{pascal}")
 }
 
+fn item_enum_name(key: &str) -> Ident {
+    format_ident!("{}Item", enum_name(key))
+}
+
 fn variant_ident(s: &str) -> Result<Ident> {
     let mut pascal = AsUpperCamelCase(s).to_string();
     if pascal.is_empty() {
@@ -797,6 +832,7 @@ mod tests {
         assert_eq!(enum_name("theme").to_string(), "Theme");
         assert_eq!(enum_name("string_enum").to_string(), "StringEnum");
         assert_eq!(enum_name("night-mode").to_string(), "NightMode");
+        assert_eq!(item_enum_name("night-mode").to_string(), "NightModeItem");
     }
 
     #[test]
@@ -878,6 +914,43 @@ mod tests {
         assert!(items.contains(&"Theme".to_owned()), "items: {items:?}");
         // `ratio` is optional, no enum → no helper enum emitted.
         assert!(!items.contains(&"Ratio".to_owned()));
+    }
+
+    #[test]
+    fn an_array_param_reads_as_a_vec_of_its_item_type() {
+        let manifest = manifest_with_credentials(
+            "{}",
+            r#"{
+                "symbols": {
+                    "name": "Symbols",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "max_items": 8
+                },
+                "sides": {
+                    "name": "Sides",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum_values": [
+                            {"value": "left", "label": "Left"},
+                            {"value": "right", "label": "Right"}
+                        ]
+                    },
+                    "max_items": 2
+                }
+            }"#,
+        );
+        let src = generate(&manifest, "test://").expect("BUG: array params must emit a file");
+        syn::parse_str::<syn::File>(&src).expect("BUG: codegen output must be valid Rust");
+
+        assert!(src.contains("pub symbols: Vec<String>"), "{src}");
+        assert!(src.contains("pub sides: Vec<SidesItem>"), "{src}");
+        assert!(src.contains("pub enum SidesItem"), "{src}");
+        assert!(
+            src.contains("impl_manifest_str_enum!(SidesItem)"),
+            "the item enum needs the SDK's list-item read: {src}"
+        );
     }
 
     fn manifest_with_credentials(credentials: &str, params: &str) -> Manifest {

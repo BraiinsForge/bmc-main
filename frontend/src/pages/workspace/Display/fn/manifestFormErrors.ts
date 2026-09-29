@@ -19,16 +19,42 @@
 // the grant above.
 
 import * as pb from '@/proto';
-import type { FormifiedParams, ParamsFormErrors } from './fn';
+import type { ParamsFormErrors } from './fn';
 
+const ITEM_INDEX = /^\d+$/;
+
+/**
+ * Not `parseFormErrors`: it nests paths into one object, where a param's own
+ * error list and its items' index steps would land on the same array.
+ */
 export function mapManifestUpdateError(rawError: unknown): ParamsFormErrors {
-    // Field names arrive camelCased: `credential_bindings` → `credentialBindings`.
-    type Input = { params: FormifiedParams; credentialBindings: Record<string, string> };
-    const { global, fields } = pb.parseFormErrors<Input>(rawError, ['params', 'credentialBindings']);
+    const { message, fieldViolations } = pb.parseError(rawError);
+    const fields: Record<string, string[] | undefined> = {};
+    const items: Record<string, Array<string[] | undefined> | undefined> = {};
+    const credentials: Record<string, string[]> = {};
+    const global = message ? [message] : [];
 
-    return {
-        global,
-        fields: (fields.params ?? {}) as pb.FieldBasedErrors<FormifiedParams>,
-        credentials: (fields.credentialBindings ?? {}) as Record<string, string[]>,
-    };
+    for (const { field, description } of fieldViolations) {
+        // Field names arrive camelCased:
+        // `credential_bindings` → `credentialBindings`.
+        const [root, key, index, ...rest] = pb.parseFieldPath(field);
+        if (root === 'params' && key !== undefined && index === undefined) {
+            (fields[key] ??= []).push(description);
+        } else if (
+            root === 'params' &&
+            key !== undefined &&
+            index !== undefined &&
+            ITEM_INDEX.test(index) &&
+            rest.length === 0
+        ) {
+            const rows = (items[key] ??= []);
+            (rows[Number(index)] ??= []).push(description);
+        } else if (root === 'credentialBindings' && key !== undefined && index === undefined) {
+            (credentials[key] ??= []).push(description);
+        } else {
+            global.push(description);
+        }
+    }
+
+    return { global, fields, items, credentials };
 }

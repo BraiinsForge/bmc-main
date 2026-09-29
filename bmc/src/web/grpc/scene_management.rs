@@ -28,8 +28,8 @@ use bmc_field_schema::MissingValues;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_widget_manifest::{
-    BooleanParam, CredentialKey, DoubleParam, IntegerParam, ParamDefinition, ParamKind,
-    StringParam, TimezoneParam,
+    ArrayParam, BooleanParam, CredentialKey, DoubleParam, IntegerParam, ItemKind, ParamDefinition,
+    ParamKind, StringParam, TimezoneParam,
 };
 use futures::stream::{BoxStream, StreamExt};
 use indexmap::IndexMap;
@@ -717,67 +717,12 @@ pub(crate) fn param_definition_to_proto(
 ) -> web::ManifestParamDefinition {
     use web::manifest_param_definition::Kind as PK;
     let kind = match &def.kind {
-        ParamKind::String(StringParam {
-            format,
-            enum_values,
-            default_value,
-        }) => PK::ParamString(web::ParamString {
-            format: format.map(string_format_to_proto).map(i32::from),
-            enum_values: enum_values
-                .iter()
-                .map(|o| web::StringOption {
-                    value: o.value.clone(),
-                    label: o.label.clone(),
-                })
-                .collect(),
-            default_value: default_value.clone(),
-        }),
-        ParamKind::Double(DoubleParam {
-            min,
-            max,
-            step,
-            enum_values,
-            default_value,
-        }) => PK::ParamDouble(web::ParamDouble {
-            min: *min,
-            max: *max,
-            step: *step,
-            enum_values: enum_values
-                .iter()
-                .map(|o| web::DoubleOption {
-                    value: o.value,
-                    label: o.label.clone(),
-                })
-                .collect(),
-            default_value: *default_value,
-        }),
-        ParamKind::Integer(IntegerParam {
-            min,
-            max,
-            step,
-            enum_values,
-            default_value,
-        }) => PK::ParamInteger(web::ParamInteger {
-            min: *min,
-            max: *max,
-            step: *step,
-            enum_values: enum_values
-                .iter()
-                .map(|o| web::IntegerOption {
-                    value: o.value,
-                    label: o.label.clone(),
-                })
-                .collect(),
-            default_value: *default_value,
-        }),
-        ParamKind::Boolean(BooleanParam { default_value }) => PK::ParamBoolean(web::ParamBoolean {
-            default_value: *default_value,
-        }),
-        ParamKind::Timezone(TimezoneParam { default_value }) => {
-            PK::ParamTimezone(web::ParamTimezone {
-                default_value: default_value.clone(),
-            })
-        }
+        ParamKind::String(p) => PK::ParamString(string_param_to_proto(p)),
+        ParamKind::Double(p) => PK::ParamDouble(double_param_to_proto(p)),
+        ParamKind::Integer(p) => PK::ParamInteger(integer_param_to_proto(p)),
+        ParamKind::Boolean(p) => PK::ParamBoolean(boolean_param_to_proto(p)),
+        ParamKind::Timezone(p) => PK::ParamTimezone(timezone_param_to_proto(p)),
+        ParamKind::Array(p) => PK::ParamArray(array_param_to_proto(p)),
     };
     web::ManifestParamDefinition {
         key: key.to_owned(),
@@ -785,6 +730,113 @@ pub(crate) fn param_definition_to_proto(
         description: def.description.clone(),
         is_optional: def.is_optional,
         kind: Some(kind),
+    }
+}
+
+fn array_param_to_proto(
+    ArrayParam {
+        items,
+        min_items,
+        max_items,
+        default_value,
+    }: &ArrayParam,
+) -> web::ParamArray {
+    use web::array_item_kind::Kind as IK;
+    let items = match items {
+        ItemKind::String(p) => IK::ParamString(string_param_to_proto(p)),
+        ItemKind::Double(p) => IK::ParamDouble(double_param_to_proto(p)),
+        ItemKind::Integer(p) => IK::ParamInteger(integer_param_to_proto(p)),
+        ItemKind::Boolean(p) => IK::ParamBoolean(boolean_param_to_proto(p)),
+        ItemKind::Timezone(p) => IK::ParamTimezone(timezone_param_to_proto(p)),
+    };
+    let item_count = |n: usize| {
+        u32::try_from(n).expect("BUG: manifest validation caps item counts at MAX_ARRAY_ITEMS")
+    };
+    web::ParamArray {
+        items: Some(web::ArrayItemKind { kind: Some(items) }),
+        min_items: item_count(*min_items),
+        max_items: item_count(*max_items),
+        default_value: default_value.iter().map(param_value_to_wire).collect(),
+    }
+}
+
+fn string_param_to_proto(
+    StringParam {
+        format,
+        enum_values,
+        default_value,
+    }: &StringParam,
+) -> web::ParamString {
+    web::ParamString {
+        format: format.map(string_format_to_proto).map(i32::from),
+        enum_values: enum_values
+            .iter()
+            .map(|o| web::StringOption {
+                value: o.value.clone(),
+                label: o.label.clone(),
+            })
+            .collect(),
+        default_value: default_value.clone(),
+    }
+}
+
+fn double_param_to_proto(
+    DoubleParam {
+        min,
+        max,
+        step,
+        enum_values,
+        default_value,
+    }: &DoubleParam,
+) -> web::ParamDouble {
+    web::ParamDouble {
+        min: *min,
+        max: *max,
+        step: *step,
+        enum_values: enum_values
+            .iter()
+            .map(|o| web::DoubleOption {
+                value: o.value,
+                label: o.label.clone(),
+            })
+            .collect(),
+        default_value: *default_value,
+    }
+}
+
+fn integer_param_to_proto(
+    IntegerParam {
+        min,
+        max,
+        step,
+        enum_values,
+        default_value,
+    }: &IntegerParam,
+) -> web::ParamInteger {
+    web::ParamInteger {
+        min: *min,
+        max: *max,
+        step: *step,
+        enum_values: enum_values
+            .iter()
+            .map(|o| web::IntegerOption {
+                value: o.value,
+                label: o.label.clone(),
+            })
+            .collect(),
+        default_value: *default_value,
+    }
+}
+
+fn boolean_param_to_proto(BooleanParam { default_value }: &BooleanParam) -> web::ParamBoolean {
+    web::ParamBoolean {
+        default_value: *default_value,
+    }
+}
+
+fn timezone_param_to_proto(TimezoneParam { default_value }: &TimezoneParam) -> web::ParamTimezone {
+    web::ParamTimezone {
+        default_value: default_value.clone(),
     }
 }
 
@@ -2047,6 +2099,131 @@ mod tests {
         );
     }
 
+    fn counts_manifest(
+        min_items: usize,
+        max_items: usize,
+        default_value: Vec<bmc_widget_manifest::ParamValue>,
+    ) -> bmc_widget_manifest::Manifest {
+        single_param_manifest(
+            "counts",
+            ParamKind::Array(ArrayParam {
+                items: ItemKind::Integer(IntegerParam {
+                    min: None,
+                    max: Some(5),
+                    step: None,
+                    enum_values: vec![],
+                    default_value: None,
+                }),
+                min_items,
+                max_items,
+                default_value,
+            }),
+            false,
+        )
+    }
+
+    fn wdv_list(items: Vec<web::FieldValue>) -> web::FieldValue {
+        web::FieldValue {
+            kind: Some(web::field_value::Kind::ListValue(web::FieldValueList {
+                items,
+            })),
+        }
+    }
+
+    fn violations_of(
+        manifest: &bmc_widget_manifest::Manifest,
+        params: &web::FieldValues,
+    ) -> Vec<(String, String)> {
+        let violations = validate_widget_params(manifest, params, ValidateMode::Add)
+            .expect_err("BUG: expected at least one violation");
+        let v: Vec<tonic_types::FieldViolation> = violations.into();
+        v.into_iter().map(|v| (v.field, v.description)).collect()
+    }
+
+    #[test]
+    fn validate_widget_params_array_seeds_its_default_list() {
+        use bmc_widget_manifest::ParamValue as PV;
+        let default_list = vec![PV::Integer(1), PV::Integer(2)];
+        let manifest = counts_manifest(0, 3, default_list.clone());
+        let params =
+            validate_widget_params(&manifest, &web::FieldValues::default(), ValidateMode::Add)
+                .expect("BUG: an omitted array takes its default");
+        assert_eq!(params.values().next(), Some(&PV::List(default_list)));
+    }
+
+    #[test]
+    fn validate_widget_params_array_accepts_a_list_within_its_bounds() {
+        use bmc_widget_manifest::ParamValue as PV;
+        let manifest = counts_manifest(1, 3, vec![PV::Integer(1)]);
+        let params = fields_one("counts", wdv_list(vec![wdv_integer(5), wdv_integer(0)]));
+        let params = validate_widget_params(&manifest, &params, ValidateMode::Update)
+            .expect("BUG: the list fits its bounds");
+        assert_eq!(
+            params.values().next(),
+            Some(&PV::List(vec![PV::Integer(5), PV::Integer(0)]))
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_array_reports_its_count_at_the_param() {
+        use bmc_widget_manifest::ParamValue as PV;
+        let manifest = counts_manifest(1, 2, vec![PV::Integer(1)]);
+        let too_few = fields_one("counts", wdv_list(vec![]));
+        assert_eq!(
+            violations_of(&manifest, &too_few),
+            [(
+                r#"params["counts"]"#.to_owned(),
+                "Must have at least 1 item".to_owned()
+            )]
+        );
+        let too_many = fields_one("counts", wdv_list(vec![wdv_integer(1); 3]));
+        assert_eq!(
+            violations_of(&manifest, &too_many),
+            [(
+                r#"params["counts"]"#.to_owned(),
+                "Must have at most 2 items".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_array_reports_each_bad_item_at_its_index() {
+        let manifest = counts_manifest(0, 4, vec![]);
+        let params = fields_one(
+            "counts",
+            wdv_list(vec![
+                wdv_integer(1),
+                wdv_integer(9),
+                wdv_string("x"),
+                wdv_null(),
+            ]),
+        );
+        assert_eq!(
+            violations_of(&manifest, &params),
+            [
+                (
+                    r#"params["counts"][1]"#.to_owned(),
+                    "Must be at most 5".to_owned()
+                ),
+                (
+                    r#"params["counts"][2]"#.to_owned(),
+                    "Must be a whole number".to_owned()
+                ),
+                (
+                    r#"params["counts"][3]"#.to_owned(),
+                    "Value is required".to_owned()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_array_rejects_a_scalar() {
+        let manifest = counts_manifest(0, 4, vec![]);
+        let params = fields_one("counts", wdv_integer(1));
+        assert_eq!(first_violation_desc(&manifest, &params), "Must be a list");
+    }
+
     fn wdv_string(s: &str) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::StringValue(s.to_owned())),
@@ -2486,7 +2663,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_widget_params_integer_for_double_rejects() {
+    fn validate_widget_params_integer_for_double_reads_as_a_double() {
         let manifest = single_param_manifest(
             "ratio",
             bmc_widget_manifest::ParamKind::Double(DoubleParam {
@@ -2499,7 +2676,9 @@ mod tests {
             false,
         );
         let params = fields_one("ratio", wdv_integer(1));
-        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+        let typed = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect("BUG: a whole number is a valid double");
+        assert_eq!(typed["ratio"], bmc_widget_manifest::ParamValue::Double(1.0));
     }
 
     #[test]
@@ -2909,6 +3088,38 @@ mod tests {
             panic!("BUG: expected param_timezone arm");
         };
         assert_eq!(pt.default_value.as_deref(), Some("Europe/Prague"));
+    }
+
+    #[test]
+    fn param_definition_to_proto_array() {
+        use bmc_widget_manifest::{ParamDefinition, ParamValue};
+        use web::array_item_kind::Kind as ItemKindProto;
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Symbols".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::Array(ArrayParam {
+                items: ItemKind::String(StringParam {
+                    format: None,
+                    enum_values: vec![],
+                    default_value: Some("BTC".into()),
+                }),
+                min_items: 1,
+                max_items: 8,
+                default_value: vec![ParamValue::String("NVDA".into())],
+            }),
+        };
+        let proto = param_definition_to_proto("symbols", &p);
+        let Some(Kind::ParamArray(pa)) = proto.kind else {
+            panic!("BUG: expected param_array arm");
+        };
+        assert_eq!((pa.min_items, pa.max_items), (1, 8));
+        assert_eq!(pa.default_value, [wdv_string("NVDA")]);
+        let Some(ItemKindProto::ParamString(item)) = pa.items.and_then(|i| i.kind) else {
+            panic!("BUG: expected a param_string item kind");
+        };
+        assert_eq!(item.default_value.as_deref(), Some("BTC"));
     }
 
     fn scene_with_widget(

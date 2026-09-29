@@ -25,7 +25,7 @@ import { URLS } from '@/constants';
 import { Form, hasFormErrors } from '@/lib/form';
 import { getID } from '../const';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
-import { isMisbound } from '../../fn';
+import { hasItemErrors, isMisbound } from '../../fn';
 
 import { ParamField } from '@/components/ParamField';
 import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
@@ -213,8 +213,8 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
     if (!manifest) return null;
 
     const showSizeSelector = !!sizeOptions && sizeOptions.length > 0 && !!onSizeChange && size != null;
-    const fieldErrors = (errors?.fields ?? {}) as Record<string, string[] | undefined>;
-    const hasFieldErrors = Object.values(fieldErrors).some(errs => errs?.some(Boolean));
+    const fieldErrors = errors?.fields ?? {};
+    const hasFieldErrors = Object.values(fieldErrors).some(errs => errs?.some(Boolean)) || hasItemErrors(errors);
     const globalErrors = errors?.global?.filter(Boolean) ?? [];
     const showGlobalError = !hasFieldErrors && globalErrors.length > 0;
 
@@ -248,6 +248,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
                     definition={def}
                     value={params[def.key] ?? null}
                     error={fieldErrors[def.key]?.[0]}
+                    itemErrors={errors?.items?.[def.key]?.map(row => row?.[0])}
                     onChange={onParamChange}
                     timezones={timezones}
                 />
@@ -302,7 +303,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     kind="primary"
                     children={formatMessage({ defaultMessage: 'Done' })}
                     onClick={onSave}
-                    disabled={hasFormErrors(errors ?? undefined) || misbound}
+                    disabled={hasFormErrors(errors ?? undefined) || hasItemErrors(errors) || misbound}
                 />
             }
         />

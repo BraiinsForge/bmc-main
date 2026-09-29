@@ -89,7 +89,8 @@ fn every_default_widget_matches_its_manifest() {
                         ParamKind::String(_) | ParamKind::Timezone(_)
                     )
                 }
-                ParamValue::List(_) | ParamValue::Object(_) => false,
+                ParamValue::List(_) => matches!(definition.kind, ParamKind::Array(_)),
+                ParamValue::Object(_) => false,
             };
             assert!(
                 kind_matches,

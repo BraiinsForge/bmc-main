@@ -46,10 +46,10 @@ use std::str::FromStr;
 
 pub use bmc_field_schema::credential;
 pub use bmc_field_schema::{
-    BooleanParam, DoubleOption, DoubleParam, FieldSchemaError, IntegerOption, IntegerParam,
-    MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH, ParamDefinition, ParamKey, ParamKind,
-    ParamValue, ParamValueConversionError, StringFormat, StringOption, StringParam, TimezoneParam,
-    f64_canonical_bits,
+    ArrayParam, BooleanParam, DoubleOption, DoubleParam, FieldSchemaError, IntegerOption,
+    IntegerParam, ItemKind, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH,
+    ParamDefinition, ParamKey, ParamKind, ParamValue, ParamValueConversionError, Scalar, Shape,
+    StringFormat, StringOption, StringParam, TimezoneParam, f64_canonical_bits,
 };
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -402,7 +402,7 @@ impl Manifest {
                 source: e,
             })?;
 
-        let manifest = Self {
+        let mut manifest = Self {
             uid: raw.uid,
             version,
             name: raw.name,
@@ -419,6 +419,9 @@ impl Manifest {
             credentials: raw.credentials,
         };
 
+        for param in manifest.params.values_mut() {
+            param.normalize();
+        }
         manifest.validate()?;
         Ok(manifest)
     }
@@ -975,7 +978,8 @@ mod tests {
             ParamKind::Double(_)
             | ParamKind::Integer(_)
             | ParamKind::Boolean(_)
-            | ParamKind::Timezone(_) => panic!("BUG: expected String variant"),
+            | ParamKind::Timezone(_)
+            | ParamKind::Array(_) => panic!("BUG: expected String variant"),
         }
     }
 
@@ -1083,7 +1087,8 @@ mod tests {
             ParamKind::String(_)
             | ParamKind::Double(_)
             | ParamKind::Boolean(_)
-            | ParamKind::Timezone(_) => panic!("BUG: expected Integer variant"),
+            | ParamKind::Timezone(_)
+            | ParamKind::Array(_) => panic!("BUG: expected Integer variant"),
         }
     }
 
@@ -1113,6 +1118,7 @@ mod tests {
             r#"{"name":"I","type":"integer","default_value":2,"min":1,"max":5}"#,
             r#"{"name":"B","type":"boolean","default_value":true}"#,
             r#"{"name":"T","type":"timezone","default_value":"Europe/Prague"}"#,
+            r#"{"name":"A","type":"array","items":{"type":"integer","min":0},"min_items":1,"max_items":4,"default_value":[1,2]}"#,
         ];
         for case in cases {
             let p: ParamDefinition =
@@ -1158,6 +1164,138 @@ mod tests {
                 .expect("BUG: parse");
         p.validate("x")
             .expect("BUG: optional without default must validate");
+    }
+
+    fn array_param(json: serde_json::Value) -> ParamDefinition {
+        serde_json::from_value(json).unwrap_or_else(|e| panic!("BUG: parse array param: {e}"))
+    }
+
+    fn array_rejection(json: serde_json::Value) -> String {
+        match array_param(json).validate("x") {
+            Err(FieldSchemaError::InvalidParam { reason, .. }) => reason,
+            other => panic!("BUG: expected an InvalidParam rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_array_within_its_bounds_passes() {
+        array_param(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "items": { "type": "string" },
+            "min_items": 1,
+            "max_items": 3,
+            "default_value": ["NVDA"],
+        }))
+        .validate("x")
+        .expect("BUG: a default inside min_items..=max_items must validate");
+    }
+
+    #[test]
+    fn validate_optional_array_fails() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "optional": true,
+            "items": { "type": "string" },
+            "max_items": 3,
+        }));
+        assert!(reason.contains("cannot be optional"), "{reason}");
+    }
+
+    #[test]
+    fn validate_array_max_items_outside_its_range_fails() {
+        for max_items in [0, MAX_ARRAY_ITEMS + 1] {
+            let reason = array_rejection(serde_json::json!({
+                "name": "S",
+                "type": "array",
+                "items": { "type": "string" },
+                "max_items": max_items,
+            }));
+            assert!(
+                reason.contains(&format!("max_items must be within 1..={MAX_ARRAY_ITEMS}")),
+                "max_items {max_items}: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_array_min_items_above_max_items_fails() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "items": { "type": "string" },
+            "min_items": 3,
+            "max_items": 2,
+            "default_value": ["a", "b", "c"],
+        }));
+        assert!(reason.contains("min_items (3) > max_items (2)"), "{reason}");
+    }
+
+    #[test]
+    fn validate_array_default_longer_than_max_items_fails() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "items": { "type": "string" },
+            "max_items": 1,
+            "default_value": ["a", "b"],
+        }));
+        assert!(reason.contains("default_value has 2 items"), "{reason}");
+    }
+
+    #[test]
+    fn validate_array_default_item_outside_the_item_bounds_fails() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "items": { "type": "integer", "max": 5 },
+            "max_items": 2,
+            "default_value": [7],
+        }));
+        assert_eq!(reason, "default_value[0]: Must be at most 5");
+    }
+
+    /// The list default a normalized param stores, as JSON: `1.0` and `1` compare unequal.
+    fn stored_default(json: serde_json::Value) -> serde_json::Value {
+        let mut param = array_param(json);
+        param.normalize();
+        param.validate("x").expect("BUG: the default must validate");
+        let ParamKind::Array(array) = param.kind else {
+            panic!("BUG: the param under test is a list");
+        };
+        array
+            .default_value
+            .iter()
+            .map(ParamValue::to_json_value)
+            .collect()
+    }
+
+    #[test]
+    fn a_whole_number_default_for_double_items_is_stored_as_a_double() {
+        let stored = stored_default(serde_json::json!({
+            "name": "R",
+            "type": "array",
+            "items": { "type": "double" },
+            "max_items": 3,
+            "default_value": [1, 0.5],
+        }));
+        assert_eq!(stored, serde_json::json!([1.0, 0.5]));
+    }
+
+    #[test]
+    fn validate_refuses_a_default_left_unnormalized() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "R",
+            "type": "array",
+            "items": { "type": "double" },
+            "max_items": 3,
+            "default_value": [1],
+        }));
+        assert_eq!(
+            reason,
+            "default_value is not normalized; normalize the param first"
+        );
     }
 
     #[test]
@@ -1471,6 +1609,18 @@ mod tests {
         assert_eq!(
             ParamValue::from_param_kind_default(&without_default),
             ParamValue::Null
+        );
+
+        let list = array_param(serde_json::json!({
+            "name": "A",
+            "type": "array",
+            "items": { "type": "integer" },
+            "max_items": 3,
+            "default_value": [1, 2],
+        }));
+        assert_eq!(
+            ParamValue::from_param_kind_default(&list.kind),
+            ParamValue::List(vec![ParamValue::Integer(1), ParamValue::Integer(2)])
         );
     }
 

@@ -199,7 +199,7 @@ fn paint_param_row(
     def: &bmc_widget_manifest::ParamDefinition,
     value: &mut bmc_widget_manifest::ParamValue,
 ) -> bool {
-    use bmc_widget_manifest::{ParamKind, ParamValue};
+    use bmc_widget_manifest::{ParamValue, Shape};
 
     let mut changed = false;
     // Top-align the key label within its cell so a tall row (radio group)
@@ -231,18 +231,10 @@ fn paint_param_row(
             if row.small_button(label).clicked() {
                 if is_null {
                     *value = ParamValue::from_param_kind_default(&def.kind);
-                    // If the default is also Null (optional-without-default),
-                    // seed with a type-appropriate zero so the input below
-                    // has something to edit.
-                    if matches!(value, ParamValue::Null) {
-                        *value = match &def.kind {
-                            ParamKind::String(_) | ParamKind::Timezone(_) => {
-                                ParamValue::String(String::new())
-                            }
-                            ParamKind::Integer(_) => ParamValue::Integer(0),
-                            ParamKind::Double(_) => ParamValue::Double(0.0),
-                            ParamKind::Boolean(_) => ParamValue::Boolean(false),
-                        };
+                    if matches!(value, ParamValue::Null)
+                        && let Shape::Scalar(scalar) = def.kind.shape()
+                    {
+                        *value = zero_value(scalar);
                     }
                 } else {
                     *value = ParamValue::Null;
@@ -254,10 +246,94 @@ fn paint_param_row(
                 return;
             }
         }
-        changed |= paint_typed_input(row, key, &def.kind, value, &label_resp);
+        changed |= match def.kind.shape() {
+            Shape::Scalar(scalar) => paint_typed_input(row, key, scalar, value, Some(&label_resp)),
+            Shape::Array(array) => paint_list_input(row, key, array, value),
+        };
     });
     grid.end_row();
     changed
+}
+
+/// A type-appropriate zero, so an input without a default has something to edit.
+fn zero_value(scalar: bmc_widget_manifest::Scalar<'_>) -> bmc_widget_manifest::ParamValue {
+    use bmc_widget_manifest::{ParamValue, Scalar};
+    match scalar {
+        Scalar::String(_) | Scalar::Timezone(_) => ParamValue::String(String::new()),
+        Scalar::Integer(_) => ParamValue::Integer(0),
+        Scalar::Double(_) => ParamValue::Double(0.0),
+        Scalar::Boolean(_) => ParamValue::Boolean(false),
+    }
+}
+
+fn paint_list_input(
+    ui: &mut egui::Ui,
+    key: &str,
+    array: &bmc_widget_manifest::ArrayParam,
+    value: &mut bmc_widget_manifest::ParamValue,
+) -> bool {
+    use bmc_widget_manifest::ParamValue;
+
+    let ParamValue::List(items) = value else {
+        return paint_type_mismatch(ui);
+    };
+    let scalar = array.items.as_scalar();
+    let can_remove = items.len() > array.min_items;
+    let can_add = items.len() < array.max_items;
+    let mut changed = false;
+    let mut raise = None;
+    let mut remove = None;
+    let mut add = false;
+    ui.vertical(|col| {
+        for (i, item) in items.iter_mut().enumerate() {
+            col.horizontal(|row| {
+                if row
+                    .add_enabled(i > 0, egui::Button::new("up").small())
+                    .clicked()
+                {
+                    raise = Some(i);
+                }
+                if row
+                    .add_enabled(can_remove, egui::Button::new("remove").small())
+                    .clicked()
+                {
+                    remove = Some(i);
+                }
+                changed |= paint_typed_input(row, &format!("{key}[{i}]"), scalar, item, None);
+            });
+        }
+        add = col
+            .add_enabled(can_add, egui::Button::new("add").small())
+            .clicked();
+    });
+    if let Some(i) = raise {
+        items.swap(i - 1, i);
+        changed = true;
+    }
+    if let Some(i) = remove {
+        items.remove(i);
+        changed = true;
+    }
+    if add {
+        let seed = ParamValue::from_scalar_default(scalar);
+        items.push(if matches!(seed, ParamValue::Null) {
+            zero_value(scalar)
+        } else {
+            seed
+        });
+        changed = true;
+    }
+    changed
+}
+
+/// A well-formed manifest rules a mismatch out; a label beats crashing the testbed.
+fn paint_type_mismatch(ui: &mut egui::Ui) -> bool {
+    ui.label(
+        egui::RichText::new("(type mismatch)")
+            .color(egui::Color32::from_rgb(200, 80, 80))
+            .font(egui::FontId::monospace(10.0)),
+    );
+    false
 }
 
 /// Render an `egui::Slider` so its compound widget (track + value box) fills `cell_w`.
@@ -288,32 +364,35 @@ fn stretched_slider<R>(ui: &mut egui::Ui, cell_w: f32, f: impl FnOnce(&mut egui:
 /// exactly what we want the input to fill. No constant, layout naturally follows sidebar
 /// resizes or label changes.
 ///
-/// `too_many_lines` is `expect`ed because the match is one arm per `ParamKind` variant +
+/// List items pass no `label_resp`: one label click must not toggle every item.
+///
+/// `too_many_lines` is `expect`ed because the match is one arm per `Scalar` variant +
 /// enum-or-not split; pulling each branch into its own function would obscure the otherwise
 /// trivial widget construction at every site.
 #[expect(
     clippy::too_many_lines,
-    reason = "linear ParamKind dispatch — splitting hurts readability"
+    reason = "linear Scalar dispatch — splitting hurts readability"
 )]
 fn paint_typed_input(
     ui: &mut egui::Ui,
     key: &str,
-    kind: &bmc_widget_manifest::ParamKind,
+    scalar: bmc_widget_manifest::Scalar<'_>,
     value: &mut bmc_widget_manifest::ParamValue,
-    label_resp: &egui::Response,
+    label_resp: Option<&egui::Response>,
 ) -> bool {
-    use bmc_widget_manifest::{DoubleParam, IntegerParam, ParamKind, ParamValue, StringParam};
+    use bmc_widget_manifest::{DoubleParam, IntegerParam, ParamValue, Scalar, StringParam};
 
     let row_h = ui.spacing().interact_size.y;
     let cell_w = ui.available_width();
     let cell = egui::vec2(cell_w, row_h);
+    let label_clicked = label_resp.is_some_and(egui::Response::clicked);
     let focus_on_label_click = |r: &egui::Response| {
-        if label_resp.clicked() {
+        if label_clicked {
             r.request_focus();
         }
     };
-    match (kind, value) {
-        (ParamKind::String(StringParam { enum_values, .. }), ParamValue::String(s))
+    match (scalar, value) {
+        (Scalar::String(StringParam { enum_values, .. }), ParamValue::String(s))
             if !enum_values.is_empty() =>
         {
             // Snapshot the collapsed-state label before `populate`
@@ -337,12 +416,12 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (ParamKind::String(_) | ParamKind::Timezone(_), ParamValue::String(s)) => {
+        (Scalar::String(_) | Scalar::Timezone(_), ParamValue::String(s)) => {
             let resp = ui.add_sized(cell, egui::TextEdit::singleline(s));
             focus_on_label_click(&resp);
             resp.changed()
         }
-        (ParamKind::Integer(IntegerParam { enum_values, .. }), ParamValue::Integer(n))
+        (Scalar::Integer(IntegerParam { enum_values, .. }), ParamValue::Integer(n))
             if !enum_values.is_empty() =>
         {
             // Combo collapsed-state label snapshot before `populate`
@@ -366,7 +445,7 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (ParamKind::Integer(IntegerParam { min, max, step, .. }), ParamValue::Integer(n)) => {
+        (Scalar::Integer(IntegerParam { min, max, step, .. }), ParamValue::Integer(n)) => {
             // Bounded ranges use a `Slider` with `trailing_fill` so the cell shows
             // the value as a progress fill against `min..=max` (the GIMP-style look).
             // Unbounded integers fall back to a `DragValue` since `Slider` requires a finite range.
@@ -392,7 +471,7 @@ fn paint_typed_input(
                 resp.changed()
             }
         }
-        (ParamKind::Double(DoubleParam { enum_values, .. }), ParamValue::Double(f))
+        (Scalar::Double(DoubleParam { enum_values, .. }), ParamValue::Double(f))
             if !enum_values.is_empty() =>
         {
             // Combo collapsed-state label snapshot before `populate`
@@ -423,7 +502,7 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (ParamKind::Double(DoubleParam { min, max, step, .. }), ParamValue::Double(f)) => {
+        (Scalar::Double(DoubleParam { min, max, step, .. }), ParamValue::Double(f)) => {
             // Same dispatch as Integer: bounded ranges get
             // the filled-slider treatment, unbounded fall back to DragValue.
             if let (Some(lo), Some(hi)) = (min, max) {
@@ -451,24 +530,13 @@ fn paint_typed_input(
         // Checkbox stays at its natural icon size — stretching it
         // would make the entire row a giant click target with
         // the box ghosted in the corner.
-        (ParamKind::Boolean(_), ParamValue::Boolean(b)) => {
+        (Scalar::Boolean(_), ParamValue::Boolean(b)) => {
             let cb_changed = ui.checkbox(b, "").changed();
-            let label_clicked = label_resp.clicked();
             if label_clicked {
                 *b = !*b;
             }
             cb_changed || label_clicked
         }
-        // Type mismatch (value's variant doesn't match kind)
-        // — shouldn't happen with a well-formed manifest + default-init path,
-        // but render a read-only label rather than crashing if it does.
-        _ => {
-            ui.label(
-                egui::RichText::new("(type mismatch)")
-                    .color(egui::Color32::from_rgb(200, 80, 80))
-                    .font(egui::FontId::monospace(10.0)),
-            );
-            false
-        }
+        _ => paint_type_mismatch(ui),
     }
 }

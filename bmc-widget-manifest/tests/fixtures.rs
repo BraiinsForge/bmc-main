@@ -27,7 +27,9 @@
 //! Structural constraints live in the schema; cross-field
 //! invariants live in `ParamDefinition::validate`.
 
-use bmc_widget_manifest::{MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH, Manifest};
+use bmc_widget_manifest::{
+    MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH, Manifest,
+};
 use serde_json::{Value, json};
 use std::str::FromStr;
 
@@ -238,6 +240,118 @@ fn fixtures() -> Vec<Negative> {
                 }),
             ),
             schema_accepts: false,
+            manifest_accepts: false,
+        },
+        // ── Array variant ─────────────────────────────────────────────────
+        Negative {
+            label: "array: max_items missing (structural)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": { "name": "S", "type": "array", "items": { "type": "string" } },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: max_items zero (structural via minimum)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": {
+                        "name": "S",
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "max_items": 0,
+                    },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: max_items above the cap (structural via maximum)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": {
+                        "name": "S",
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "max_items": MAX_ARRAY_ITEMS + 1,
+                    },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: default_value is not a list (structural)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": {
+                        "name": "S",
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "max_items": 4,
+                        "default_value": "NVDA",
+                    },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: min_items above max_items (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": {
+                        "name": "S",
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "min_items": 5,
+                        "max_items": 2,
+                    },
+                }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: default item outside the item bounds (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "counts": {
+                        "name": "C",
+                        "type": "array",
+                        "items": { "type": "integer", "max": 5 },
+                        "max_items": 3,
+                        "default_value": [7],
+                    },
+                }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: optional (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": {
+                        "name": "S",
+                        "type": "array",
+                        "optional": true,
+                        "items": { "type": "string" },
+                        "max_items": 4,
+                    },
+                }),
+            ),
+            schema_accepts: true,
             manifest_accepts: false,
         },
         // ── Envelope-level rejects ────────────────────────────────────────

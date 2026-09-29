@@ -44,6 +44,9 @@ export function paramDef(
         case 'paramTimezone':
             kind = { case: 'paramTimezone', value: pb.create(pb.ParamTimezoneSchema, overrides) };
             break;
+        case 'paramArray':
+            kind = { case: 'paramArray', value: pb.create(pb.ParamArraySchema, overrides) };
+            break;
         case undefined:
             kind = { case: undefined };
             break;

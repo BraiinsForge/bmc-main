@@ -21,7 +21,7 @@
 
 // The shared field renderer — one control per field kind — plus the bound form controls it needs.
 
-import { useMemo, type ReactNode } from 'react';
+import { Fragment, useMemo, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 import {
     ComboBox,
@@ -34,16 +34,25 @@ import {
     TextInput,
     Toggle,
 } from '@carbon/react';
+import { Add as IconAdd, Draggable as IconDraggable, SubtractAlt as IconSubtract } from '@carbon/react/icons';
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
 import { useIsTouchDevice } from '@/lib/react';
 import { assertUnreachable } from '@/lib/ts';
+import { Button } from '@/components/Button';
+import { CarbonFormField } from '@/components/CarbonFormField';
+import { Sortable } from '@/components/Sortable';
+import {
+    defaultScalarValue,
+    listItem,
+    type FieldValue,
+    type ListItem,
+    type ScalarKind,
+    type ScalarValue,
+} from './value';
 
 // Styles
 import css from './ParamField.scss';
-
-// Structurally identical to the widget form's `FormifiedValue`, so either is accepted.
-export type FieldValue = string | boolean | null;
 
 export interface OptionItem<T extends string | number> {
     value: T;
@@ -53,12 +62,13 @@ export interface OptionItem<T extends string | number> {
 export interface BoundComboBoxProps<T extends string | number> extends iField<T> {
     id: string;
     labelText: string;
+    hideLabel?: boolean;
     items: Array<OptionItem<T>>;
     decorator?: ReactNode;
     helperText?: ReactNode;
 }
 export function BoundComboBox<T extends string | number>(props: BoundComboBoxProps<T>) {
-    const { id, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
+    const { id, labelText, hideLabel, helperText, decorator, value, items, onChange, disabled, error } = props;
     const isTouchDevice = useIsTouchDevice();
 
     const selectedItemStruct = useMemo<undefined | OptionItem<T>>(() => {
@@ -73,6 +83,7 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
             <Select
                 id={id}
                 labelText={labelText}
+                hideLabel={hideLabel}
                 helperText={helperText}
                 decorator={decorator}
                 value={value ?? undefined}
@@ -103,7 +114,8 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
             itemToString={x => (x?.label ? String(x.label) : '')}
             items={items}
             selectedItem={selectedItemStruct}
-            titleText={labelText}
+            titleText={hideLabel ? undefined : labelText}
+            aria-label={hideLabel ? labelText : undefined}
             decorator={decorator}
             helperText={helperText}
             invalid={!!error}
@@ -116,26 +128,33 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
 export interface BoundToggleProps extends iField<boolean> {
     id: string;
     labelText: string;
+    hideLabel?: boolean;
 }
 export function BoundToggle(props: BoundToggleProps) {
-    const { id, labelText, value, onChange, disabled } = props;
+    const { id, labelText, hideLabel, value, onChange, disabled } = props;
     const { formatMessage } = useIntl();
+    const hiddenLabelId = `${id}-label`;
 
     return (
-        <Toggle
-            id={id}
-            // This little shit seems to really need thrashing because otherwise
-            // it remembers the last selected value even when it's on a different
-            // parent entity and it should be nullified by the new one.
-            key={`${id}-${value}`}
-            size="md"
-            toggled={!!value}
-            onToggle={onChange}
-            disabled={disabled}
-            labelA={formatMessage({ defaultMessage: 'Off' })}
-            labelB={formatMessage({ defaultMessage: 'On' })}
-            labelText={labelText}
-        />
+        <Fragment>
+            {/* Not Carbon's `hideLabel`: it shows `labelText` in place of the On/Off side label. */}
+            {hideLabel ? <span id={hiddenLabelId} className="cds--visually-hidden" children={labelText} /> : null}
+            <Toggle
+                id={id}
+                // This little shit seems to really need thrashing because otherwise
+                // it remembers the last selected value even when it's on a different
+                // parent entity and it should be nullified by the new one.
+                key={`${id}-${value}`}
+                size="md"
+                toggled={!!value}
+                onToggle={onChange}
+                disabled={disabled}
+                labelA={formatMessage({ defaultMessage: 'Off' })}
+                labelB={formatMessage({ defaultMessage: 'On' })}
+                labelText={hideLabel ? undefined : labelText}
+                aria-labelledby={hideLabel ? hiddenLabelId : undefined}
+            />
+        </Fragment>
     );
 }
 
@@ -154,31 +173,39 @@ function stringFormatToInputType(format: pb.StringFormat | undefined): string {
     }
 }
 
-function asString(v: FieldValue): string {
+function asString(v: ScalarValue): string {
     return typeof v === 'string' ? v : '';
 }
-function asBoolean(v: FieldValue): boolean {
+function asBoolean(v: ScalarValue): boolean {
     return v === true;
 }
+function asScalar(v: FieldValue): ScalarValue {
+    return Array.isArray(v) ? null : v;
+}
+function asList(v: FieldValue): ListItem[] {
+    return Array.isArray(v) ? v : [];
+}
 
-export function ParamField(props: {
+interface ScalarFieldProps {
     id: string;
-    definition: pb.ManifestParamDefinition;
-    value: FieldValue;
+    kind: ScalarKind;
+    labelText: string;
+    hideLabel?: boolean;
+    helperText?: string;
+    isOptional: boolean;
+    value: ScalarValue;
     error?: string;
-    onChange(key: string, value: FieldValue): void;
+    onChange(value: ScalarValue): void;
     timezones: pb.Timezone[];
-}) {
-    const { id, definition, value, onChange, timezones, error } = props;
-    const { formatMessage } = useIntl();
-    // Carbon convention: required is the norm (unmarked); flag only the optional fields.
-    const labelText = definition.isOptional
-        ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: definition.name })
-        : definition.name;
+}
 
-    switch (definition.kind.case) {
+function ScalarField(props: ScalarFieldProps) {
+    const { id, kind, labelText, hideLabel, helperText, isOptional, value, error, onChange, timezones } = props;
+    const { formatMessage } = useIntl();
+
+    switch (kind.case) {
         case 'paramString': {
-            const { enumValues, format } = definition.kind.value;
+            const { enumValues, format } = kind.value;
             if (enumValues.length > 0) {
                 const items: Array<OptionItem<string>> = enumValues.map(opt => ({
                     value: opt.value,
@@ -188,10 +215,11 @@ export function ParamField(props: {
                     <BoundComboBox<string>
                         id={id}
                         labelText={labelText}
+                        hideLabel={hideLabel}
                         error={error}
                         items={items}
                         value={asString(value) || null}
-                        onChange={v => onChange(definition.key, v)}
+                        onChange={onChange}
                     />
                 );
             }
@@ -207,12 +235,13 @@ export function ParamField(props: {
                         datePickerType="single"
                         dateFormat="Y-m-d"
                         value={asString(value)}
-                        onChange={(_dates, dateStr) => onChange(definition.key, dateStr)}
+                        onChange={(_dates, dateStr) => onChange(dateStr)}
                     >
                         <DatePickerInput
                             id={id}
                             labelText={labelText}
-                            helperText={definition.description}
+                            hideLabel={hideLabel}
+                            helperText={helperText}
                             invalid={!!error}
                             invalidText={error}
                             placeholder="yyyy-mm-dd"
@@ -225,12 +254,13 @@ export function ParamField(props: {
                     <PasswordInput
                         id={id}
                         labelText={labelText}
-                        helperText={definition.description}
+                        hideLabel={hideLabel}
+                        helperText={helperText}
                         invalid={!!error}
                         invalidText={error}
                         tooltipPosition="left"
                         value={asString(value)}
-                        onChange={e => onChange(definition.key, e.target.value)}
+                        onChange={e => onChange(e.target.value)}
                     />
                 );
             }
@@ -238,20 +268,21 @@ export function ParamField(props: {
                 <TextInput
                     id={id}
                     labelText={labelText}
-                    helperText={definition.description}
+                    hideLabel={hideLabel}
+                    helperText={helperText}
                     invalid={!!error}
                     invalidText={error}
                     type={stringFormatToInputType(format)}
                     value={asString(value)}
-                    onChange={e => onChange(definition.key, e.target.value)}
+                    onChange={e => onChange(e.target.value)}
                 />
             );
         }
 
         case 'paramInteger':
         case 'paramDouble': {
-            const isInt = definition.kind.case === 'paramInteger';
-            const inner = definition.kind.value;
+            const isInt = kind.case === 'paramInteger';
+            const inner = kind.value;
             if (inner.enumValues.length > 0) {
                 const items: Array<OptionItem<string>> = inner.enumValues.map(opt => ({
                     value: String(opt.value),
@@ -261,10 +292,11 @@ export function ParamField(props: {
                     <BoundComboBox<string>
                         id={id}
                         labelText={labelText}
+                        hideLabel={hideLabel}
                         error={error}
                         items={items}
                         value={asString(value)}
-                        onChange={v => onChange(definition.key, v)}
+                        onChange={onChange}
                     />
                 );
             }
@@ -278,16 +310,17 @@ export function ParamField(props: {
                 // badInput ⇒ browser sends empty string, only validity.badInput distinguishes "empty" from
                 // "non-numeric", so we emit 'NaN' as a parse-shape signal.
                 if (tgt instanceof HTMLInputElement && tgt.validity.badInput) {
-                    onChange(definition.key, 'NaN');
+                    onChange('NaN');
                 } else {
-                    onChange(definition.key, String(state.value));
+                    onChange(String(state.value));
                 }
             };
             return (
                 <NumberInput
                     id={id}
                     label={labelText}
-                    helperText={definition.description}
+                    hideLabel={hideLabel}
+                    helperText={helperText}
                     invalid={!!error}
                     invalidText={error}
                     type="number"
@@ -306,28 +339,28 @@ export function ParamField(props: {
                 <BoundToggle
                     id={id}
                     labelText={labelText}
+                    hideLabel={hideLabel}
                     error={error}
                     value={asBoolean(value)}
-                    onChange={v => onChange(definition.key, v)}
+                    onChange={onChange}
                 />
             );
 
         case 'paramTimezone': {
             const tzItems: Array<OptionItem<string>> = [
-                ...(definition.isOptional
-                    ? [{ value: '', label: formatMessage({ defaultMessage: 'System Timezone' }) }]
-                    : []),
+                ...(isOptional ? [{ value: '', label: formatMessage({ defaultMessage: 'System Timezone' }) }] : []),
                 ...timezones.map(tz => ({ value: tz.id, label: `${tz.offset} ${tz.label}` })),
             ];
             return (
                 <BoundComboBox<string>
                     id={id}
                     labelText={labelText}
-                    helperText={definition.description}
+                    hideLabel={hideLabel}
+                    helperText={helperText}
                     error={error}
                     items={tzItems}
                     value={value === null ? '' : asString(value)}
-                    onChange={v => onChange(definition.key, v)}
+                    onChange={onChange}
                 />
             );
         }
@@ -336,6 +369,132 @@ export function ParamField(props: {
             return null;
 
         default:
-            return assertUnreachable(definition.kind, 'manifest param kind');
+            return assertUnreachable(kind, 'scalar param kind');
     }
+}
+
+interface ArrayFieldProps {
+    id: string;
+    array: pb.ParamArray;
+    labelText: string;
+    helperText?: string;
+    value: ListItem[];
+    error?: string;
+    itemErrors?: Array<string | undefined>;
+    onChange(value: ListItem[]): void;
+    timezones: pb.Timezone[];
+}
+
+function ArrayField(props: ArrayFieldProps) {
+    const { id, array, labelText, helperText, value, error, itemErrors, onChange, timezones } = props;
+    const { formatMessage } = useIntl();
+    const itemKind: ScalarKind = array.items?.kind ?? { case: undefined };
+    const canRemove = value.length > array.minItems;
+    const canAdd = value.length < array.maxItems;
+
+    const setItem = (row: ListItem, next: ScalarValue) =>
+        onChange(value.map(x => (x.id === row.id ? { ...x, value: next } : x)));
+
+    return (
+        <CarbonFormField labelText={labelText} helperText={helperText} error={error}>
+            <Sortable<ListItem>
+                className={css.list}
+                items={value}
+                onChange={onChange}
+                renderItem={({ index, item, rootProps, dragHandleProps }) => {
+                    // The drag overlay renders a second copy of the row, without `rootProps`.
+                    const rowId = rootProps ? `${id}-${item.id}` : `${id}-${item.id}-dragged`;
+                    return (
+                        <div {...rootProps} className={css.row}>
+                            <div {...dragHandleProps} className={css.dragHandle} children={<IconDraggable />} />
+                            <div className={css.rowField}>
+                                <ScalarField
+                                    id={rowId}
+                                    kind={itemKind}
+                                    labelText={formatMessage(
+                                        { defaultMessage: '{name}, item {n}' },
+                                        { name: labelText, n: index + 1 },
+                                    )}
+                                    hideLabel
+                                    isOptional={false}
+                                    value={item.value}
+                                    error={itemErrors?.[index]}
+                                    onChange={next => setItem(item, next)}
+                                    timezones={timezones}
+                                />
+                            </div>
+                            <div className={css.rowAction}>
+                                <Button
+                                    id={`${rowId}-remove`}
+                                    kind="danger--ghost"
+                                    size="sm"
+                                    icon={IconSubtract}
+                                    title={formatMessage({ defaultMessage: 'Remove' })}
+                                    disabled={!canRemove}
+                                    onClick={() => onChange(value.filter(x => x.id !== item.id))}
+                                />
+                            </div>
+                        </div>
+                    );
+                }}
+            />
+            <Button
+                id={`${id}-add`}
+                className={css.add}
+                kind="tertiary"
+                size="sm"
+                icon={IconAdd}
+                disabled={!canAdd}
+                onClick={() => onChange([...value, listItem(defaultScalarValue(itemKind))])}
+                children={formatMessage({ defaultMessage: 'Add' })}
+            />
+        </CarbonFormField>
+    );
+}
+
+export function ParamField(props: {
+    id: string;
+    definition: pb.ManifestParamDefinition;
+    value: FieldValue;
+    error?: string;
+    itemErrors?: Array<string | undefined>;
+    onChange(key: string, value: FieldValue): void;
+    timezones: pb.Timezone[];
+}) {
+    const { id, definition, value, error, itemErrors, onChange, timezones } = props;
+    const { formatMessage } = useIntl();
+    // Carbon convention: required is the norm (unmarked); flag only the optional fields.
+    const labelText = definition.isOptional
+        ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: definition.name })
+        : definition.name;
+    const { kind } = definition;
+
+    if (kind.case === 'paramArray') {
+        return (
+            <ArrayField
+                id={id}
+                array={kind.value}
+                labelText={labelText}
+                helperText={definition.description}
+                value={asList(value)}
+                error={error}
+                itemErrors={itemErrors}
+                onChange={v => onChange(definition.key, v)}
+                timezones={timezones}
+            />
+        );
+    }
+    return (
+        <ScalarField
+            id={id}
+            kind={kind}
+            labelText={labelText}
+            helperText={definition.description}
+            isOptional={definition.isOptional}
+            value={asScalar(value)}
+            error={error}
+            onChange={v => onChange(definition.key, v)}
+            timezones={timezones}
+        />
+    );
 }

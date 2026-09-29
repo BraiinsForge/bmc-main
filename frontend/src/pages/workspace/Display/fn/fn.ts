@@ -28,6 +28,13 @@ import * as pb from '@/proto';
 import type { Capabilities } from '@/lib/system';
 import { URLS } from '@/constants';
 import { assertUnreachable } from '@/lib/ts';
+import {
+    defaultScalarValue,
+    listItem,
+    type FieldValue,
+    type ScalarKind,
+    type ScalarValue,
+} from '@/components/ParamField/value';
 
 import * as C from './const';
 import type { WidgetOrPlaceholder, WidgetsOccupandyMap, WidgetsWithPlaceholders } from './const';
@@ -324,26 +331,43 @@ export function getValidDropSlots(pool: C.Located[], widget: C.Located): C.Valid
 }
 
 // ---------------------------------------------------------------------------
-// Formified params: raw user-input shape that mirrors the manifest's declared
-// types. Numbers ride as raw strings (parsed at submit), booleans stay
-// boolean, optional/empty as null. The formified→wire converter has no path
-// to emit a type-mismatched payload — the parse-shape gate catches every
-// failure mode the type system can't express.
+// Formified params: raw user-input shape that mirrors the manifest's declared types.
+// Numbers ride as raw strings (parsed at submit), booleans stay boolean,
+// optional/empty as null, and a list param holds its rows.
+// The formified→wire converter has no path to emit a type-mismatched payload —
+// the parse-shape gate catches every failure mode the type system can't express.
 // ---------------------------------------------------------------------------
 
-export type FormifiedValue = string | boolean | null;
+export type FormifiedValue = FieldValue;
 export type FormifiedParams = Record<string, FormifiedValue>;
-export type ParamsFormErrors = pb.FormErrors<FormifiedParams> & {
+export interface ParamsFormErrors {
+    global: string[];
+    fields: Record<string, string[] | undefined>;
+    /** A list param's item violations, by item index. */
+    items?: Record<string, Array<string[] | undefined> | undefined>;
     /** Binding violations, keyed by slot key. */
     credentials?: Record<string, string[]>;
-};
+}
+
+export function hasItemErrors(errors: null | ParamsFormErrors): boolean {
+    return Object.values(errors?.items ?? {}).some(rows => rows?.some(row => !!row?.length));
+}
 
 export function clearFieldError(errors: null | ParamsFormErrors, key: string): null | ParamsFormErrors {
     if (!errors) return null;
-    const hadFieldError = !!errors.fields?.[key]?.length;
+    const hadFieldError = !!errors.fields[key]?.length || !!errors.items?.[key]?.some(row => !!row?.length);
     return {
         global: hadFieldError ? [] : errors.global,
         fields: { ...errors.fields, [key]: undefined },
+        items: { ...errors.items, [key]: undefined },
+    };
+}
+
+function withFailure(errors: ParamsFormErrors, key: string, failure: ParseFailure): ParamsFormErrors {
+    return {
+        ...errors,
+        fields: { ...errors.fields, [key]: failure.error ? [failure.error] : undefined },
+        items: { ...errors.items, [key]: failure.items?.map(error => (error ? [error] : undefined)) },
     };
 }
 
@@ -355,11 +379,12 @@ export function revalidateField(
     const cleared = clearFieldError(errors, def.key);
     const r = parseFormifiedValue(def, value);
     if (r.ok) return cleared;
-    const base = cleared ?? { global: [], fields: {} };
-    return { ...base, fields: { ...base.fields, [def.key]: [r.error] } };
+    return withFailure(cleared ?? { global: [], fields: {} }, def.key, r);
 }
 
-export type ParseResult = { ok: true; value: pb.FieldValue } | { ok: false; error: string };
+export type ParseFailure = { ok: false; error?: string; items?: Array<string | undefined> };
+export type ParseResult = { ok: true; value: pb.FieldValue } | ParseFailure;
+type ScalarParseResult = { ok: true; value: pb.FieldValue } | { ok: false; error: string };
 
 function nullValue(): pb.FieldValue {
     return pb.create(pb.FieldValueSchema, {
@@ -378,43 +403,48 @@ function doubleValue(n: number): pb.FieldValue {
 function booleanValue(b: boolean): pb.FieldValue {
     return pb.create(pb.FieldValueSchema, { kind: { case: 'booleanValue', value: b } });
 }
+function listValue(items: pb.FieldValue[]): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, {
+        kind: { case: 'listValue', value: pb.create(pb.FieldValueListSchema, { items }) },
+    });
+}
+
+function itemKind(array: pb.ParamArray): ScalarKind {
+    return array.items?.kind ?? { case: undefined };
+}
 
 export function defaultFormifiedValue(def: pb.ManifestParamDefinition): FormifiedValue {
-    switch (def.kind.case) {
+    if (def.kind.case === 'paramArray') {
+        const kind = itemKind(def.kind.value);
+        return def.kind.value.defaultValue.map(v => listItem(readWireScalar(kind, v)));
+    }
+    return defaultScalarValue(def.kind);
+}
+
+function readWireScalar(kind: ScalarKind, v: pb.FieldValue): ScalarValue {
+    if (v.kind.case === 'nullValue') {
+        return kind.case === 'paramBoolean' ? false : null;
+    }
+    switch (kind.case) {
         case 'paramString':
-            return def.kind.value.defaultValue ?? '';
         case 'paramTimezone':
-            return def.kind.value.defaultValue ?? null;
+            return v.kind.case === 'stringValue' ? v.kind.value : defaultScalarValue(kind);
         case 'paramInteger':
-            return def.kind.value.defaultValue !== undefined ? String(def.kind.value.defaultValue) : null;
+            return v.kind.case === 'integerValue' ? String(v.kind.value) : defaultScalarValue(kind);
         case 'paramDouble':
-            return def.kind.value.defaultValue !== undefined ? String(def.kind.value.defaultValue) : null;
+            return v.kind.case === 'doubleValue' ? String(v.kind.value) : defaultScalarValue(kind);
         case 'paramBoolean':
-            return def.kind.value.defaultValue ?? false;
-        case undefined:
-            return null;
+            return v.kind.case === 'booleanValue' ? v.kind.value : false;
         default:
-            return assertUnreachable(def.kind, 'manifest param kind');
+            return defaultScalarValue(kind);
     }
 }
 
 function readWireAsFormified(def: pb.ManifestParamDefinition, v: pb.FieldValue): FormifiedValue {
-    if (v.kind.case === 'nullValue') {
-        return def.kind.case === 'paramBoolean' ? false : null;
-    }
-    switch (def.kind.case) {
-        case 'paramString':
-        case 'paramTimezone':
-            return v.kind.case === 'stringValue' ? v.kind.value : defaultFormifiedValue(def);
-        case 'paramInteger':
-            return v.kind.case === 'integerValue' ? String(v.kind.value) : defaultFormifiedValue(def);
-        case 'paramDouble':
-            return v.kind.case === 'doubleValue' ? String(v.kind.value) : defaultFormifiedValue(def);
-        case 'paramBoolean':
-            return v.kind.case === 'booleanValue' ? v.kind.value : false;
-        default:
-            return defaultFormifiedValue(def);
-    }
+    if (def.kind.case !== 'paramArray') return readWireScalar(def.kind, v);
+    if (v.kind.case !== 'listValue') return defaultFormifiedValue(def);
+    const kind = itemKind(def.kind.value);
+    return v.kind.value.items.map(item => listItem(readWireScalar(kind, item)));
 }
 
 export function widgetParamsToFormifiedState(
@@ -434,10 +464,22 @@ const ERR_NOT_NUMBER = 'Not a number';
 const ERR_NOT_INTEGER = 'Not an integer';
 
 export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: FormifiedValue): ParseResult {
-    switch (def.kind.case) {
+    if (def.kind.case === 'paramArray') {
+        invariant(Array.isArray(raw), `list param "${def.key}" holds a non-list value`);
+        return parseList(
+            def.kind.value,
+            raw.map(row => row.value),
+        );
+    }
+    invariant(!Array.isArray(raw), `scalar param "${def.key}" holds a list value`);
+    return parseScalar(def.kind, raw, def.isOptional);
+}
+
+function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): ScalarParseResult {
+    switch (kind.case) {
         case 'paramString': {
             if (raw === null || raw === '') {
-                if (def.isOptional) return { ok: true, value: nullValue() };
+                if (isOptional) return { ok: true, value: nullValue() };
                 return { ok: false, error: ERR_REQUIRED };
             }
             if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
@@ -445,7 +487,7 @@ export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: Formif
         }
         case 'paramTimezone': {
             if (raw === null || raw === '') {
-                if (def.isOptional) return { ok: true, value: nullValue() };
+                if (isOptional) return { ok: true, value: nullValue() };
                 return { ok: false, error: ERR_REQUIRED };
             }
             if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
@@ -453,10 +495,10 @@ export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: Formif
         }
         case 'paramInteger':
         case 'paramDouble': {
-            const wantInt = def.kind.case === 'paramInteger';
-            const inner = def.kind.value;
+            const wantInt = kind.case === 'paramInteger';
+            const inner = kind.value;
             if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
-                if (def.isOptional) return { ok: true, value: nullValue() };
+                if (isOptional) return { ok: true, value: nullValue() };
                 return { ok: false, error: ERR_REQUIRED };
             }
             if (typeof raw !== 'string') return { ok: false, error: ERR_NOT_NUMBER };
@@ -472,8 +514,27 @@ export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: Formif
         case undefined:
             return { ok: true, value: nullValue() };
         default:
-            return assertUnreachable(def.kind, 'manifest param kind');
+            return assertUnreachable(kind, 'scalar param kind');
     }
+}
+
+function itemCount(n: number): string {
+    return n === 1 ? '1 item' : `${n} items`;
+}
+
+function countError(count: number, array: pb.ParamArray): string | undefined {
+    if (count < array.minItems) return `Must have at least ${itemCount(array.minItems)}`;
+    if (count > array.maxItems) return `Must have at most ${itemCount(array.maxItems)}`;
+    return undefined;
+}
+
+function parseList(array: pb.ParamArray, raw: ScalarValue[]): ParseResult {
+    const kind = itemKind(array);
+    const parsed = raw.map(value => parseScalar(kind, value, false));
+    const items = parsed.map(r => (r.ok ? undefined : r.error));
+    const error = countError(raw.length, array);
+    if (error || items.some(Boolean)) return { ok: false, error, items };
+    return { ok: true, value: listValue(parsed.flatMap(r => (r.ok ? [r.value] : []))) };
 }
 
 export function buildFieldValues(
@@ -481,19 +542,14 @@ export function buildFieldValues(
     params: FormifiedParams,
 ): { ok: true; value: pb.FieldValues } | { ok: false; errors: ParamsFormErrors } {
     const fields: Record<string, pb.FieldValue> = {};
-    const fieldErrors: pb.FieldBasedErrors<FormifiedParams> = {};
-    let hasError = false;
+    let errors: null | ParamsFormErrors = null;
     for (const def of manifest.params) {
         const raw = def.key in params ? params[def.key] : defaultFormifiedValue(def);
         const r = parseFormifiedValue(def, raw);
-        if (r.ok) {
-            fields[def.key] = r.value;
-        } else {
-            (fieldErrors as Record<string, string[]>)[def.key] = [r.error];
-            hasError = true;
-        }
+        if (r.ok) fields[def.key] = r.value;
+        else errors = withFailure(errors ?? { global: [], fields: {} }, def.key, r);
     }
-    if (hasError) return { ok: false, errors: { global: [], fields: fieldErrors } };
+    if (errors) return { ok: false, errors };
     return { ok: true, value: pb.create(pb.FieldValuesSchema, { fields }) };
 }
 

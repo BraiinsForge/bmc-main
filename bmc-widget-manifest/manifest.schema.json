@@ -200,33 +200,15 @@
         "label"
       ]
     },
-    "ParamDefinition": {
-      "description": "Per-field declaration inside a schema's field map.\nThe `kind` field carries the value-type-specific options (`enum_values`, `min`, `max`, etc.)\nvia a serde-flattened tagged enum.",
-      "type": "object",
-      "properties": {
-        "description": {
-          "description": "Optional one-line field description, shown in the operator UI as help text.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "description": "Human-readable field name, shown in the operator UI.",
-          "type": "string"
-        },
-        "optional": {
-          "description": "Whether the operator can leave this field unset.\nOptional fields may have a default; required fields *must* (and the host always delivers a value).",
-          "type": "boolean"
-        }
-      },
+    "ItemKind": {
+      "description": "The kind of an [`ArrayParam`]'s items, tagged like [`ParamKind`].",
       "oneOf": [
         {
           "description": "A UTF-8 string.",
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
+              "description": "The starting value, as the param or list item holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
               "type": [
                 "string",
                 "null"
@@ -261,11 +243,11 @@
           ]
         },
         {
-          "description": "A finite f64 — JSON Schema \"number\".",
+          "description": "A finite f64.",
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`.",
+              "description": "The starting value, as the param or list item holding these options defines it.",
               "type": [
                 "number",
                 "null"
@@ -314,11 +296,11 @@
           ]
         },
         {
-          "description": "A 32-bit signed integer — JSON Schema \"integer\" with i32 range.",
+          "description": "A 32-bit signed integer.",
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`.",
+              "description": "The starting value, as the param or list item holding these options defines it.",
               "type": [
                 "integer",
                 "null"
@@ -371,7 +353,216 @@
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`.",
+              "description": "The starting value, as the param or list item holding these options defines it.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "An IANA timezone identifier.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting zone, as the param or list item holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1024
+            },
+            "type": {
+              "type": "string",
+              "const": "timezone"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "ParamDefinition": {
+      "description": "Per-field declaration inside a schema's field map.\nThe `kind` field carries the value-type-specific options (`enum_values`, `min`, `max`, etc.)\nvia a serde-flattened tagged enum.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Optional one-line field description, shown in the operator UI as help text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Human-readable field name, shown in the operator UI.",
+          "type": "string"
+        },
+        "optional": {
+          "description": "Whether the operator can leave this field unset.\nA required field must declare a `default_value`, except an `array`, whose omitted default is the empty list.\nThe `default_value` is seeded at widget creation, and an unset optional field is delivered as `Null`.",
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "description": "A UTF-8 string.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param or list item holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1024
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/StringOption"
+              }
+            },
+            "format": {
+              "description": "Optional structural hint to the operator UI.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StringFormat"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "string"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A finite f64 — JSON Schema \"number\".",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param or list item holding these options defines it.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DoubleOption"
+              }
+            },
+            "max": {
+              "description": "Inclusive upper bound.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min": {
+              "description": "Inclusive lower bound.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "step": {
+              "description": "UI step granularity. Strictly positive.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double",
+              "exclusiveMinimum": 0.0
+            },
+            "type": {
+              "type": "string",
+              "const": "double"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A 32-bit signed integer — JSON Schema \"integer\" with i32 range.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param or list item holding these options defines it.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IntegerOption"
+              }
+            },
+            "max": {
+              "description": "Inclusive upper bound.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "min": {
+              "description": "Inclusive lower bound.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "step": {
+              "description": "UI step granularity. Strictly positive.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "exclusiveMinimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "integer"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A boolean.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param or list item holding these options defines it.",
               "type": [
                 "boolean",
                 "null"
@@ -391,7 +582,7 @@
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Initial zone seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
+              "description": "The starting zone, as the param or list item holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
               "type": [
                 "string",
                 "null"
@@ -406,10 +597,94 @@
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "An ordered list the operator can add to, remove from and reorder.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "Items seeded at widget creation; must fit `min_items..=max_items`.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ParamValue"
+              }
+            },
+            "items": {
+              "description": "What every item is. A newly added item starts\nat the item's `default_value`, which is not required.",
+              "$ref": "#/$defs/ItemKind"
+            },
+            "max_items": {
+              "description": "Most items the list may hold, capped at [`MAX_ARRAY_ITEMS`].",
+              "type": "integer",
+              "format": "uint",
+              "maximum": 100,
+              "minimum": 1
+            },
+            "min_items": {
+              "description": "Fewest items the list may hold.",
+              "type": "integer",
+              "format": "uint",
+              "maximum": 100,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "array"
+            }
+          },
+          "required": [
+            "type",
+            "items",
+            "max_items"
+          ]
         }
       ],
       "required": [
         "name"
+      ]
+    },
+    "ParamValue": {
+      "description": "Typed value for a stored field: null, bool, i32, finite f64, string, and lists and objects of those.\nBoth the compositor's in-memory form and the wire shape sent to widgets.\nWhich shapes a field accepts is its [`ParamKind`]'s call, enforced by [`validate_values`].",
+      "anyOf": [
+        {
+          "description": "Absence of a value. Sent for optional params the operator cleared.",
+          "type": "null"
+        },
+        {
+          "description": "A boolean.",
+          "type": "boolean"
+        },
+        {
+          "description": "An i32 — the integer width the manifest declares.",
+          "type": "integer",
+          "format": "int32"
+        },
+        {
+          "description": "A finite f64. NaN / ±infinity are rejected at parse time.",
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "description": "A UTF-8 string.",
+          "type": "string"
+        },
+        {
+          "description": "An ordered list of values.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ParamValue"
+          }
+        },
+        {
+          "description": "Values keyed by field name.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z][A-Za-z0-9_\\-]*$": {
+              "$ref": "#/$defs/ParamValue"
+            }
+          }
+        }
       ]
     },
     "SettingKey": {
