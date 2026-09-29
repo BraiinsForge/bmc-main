@@ -32,6 +32,9 @@ const FALCON_9: Bitmap = include_bitmap!("assets/falcon-9.png");
 const FALCON_HEAVY: Bitmap = include_bitmap!("assets/falcon-heavy.png");
 const UNKNOWN_ROCKET: Bitmap = include_bitmap!("assets/unknown.png");
 
+/// The brand, joined so it never breaks across a line.
+pub(super) const BRAND: &str = "Space\u{a0}X";
+
 /// How a table sets its rows: the type of the label and of the value.
 #[derive(Clone, Copy)]
 pub(super) struct RowStyle {

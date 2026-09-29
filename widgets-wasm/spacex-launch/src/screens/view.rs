@@ -29,7 +29,7 @@ use bmc_wasm_sdk::*;
 
 use crate::model::{Frame, LaunchData, SizeBucket, State};
 use crate::screens::bmm101;
-use crate::screens::parts::{self, detail_table, launch_info_table, rocket_panel};
+use crate::screens::parts::{self, BRAND, detail_table, launch_info_table, rocket_panel};
 
 /// What the widget holds, the viewport it is drawn into,
 /// and the moment the countdown is counted from.
@@ -81,7 +81,7 @@ fn empty_view() -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    text("Space X", style!(size: 24, color: GRAY_30)),
+                    text(BRAND, style!(size: 24, color: GRAY_30)),
                     text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
                 ],
             ),
@@ -98,7 +98,7 @@ fn error_view(detail: &str) -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    text("Space X", style!(size: 24, color: GRAY_30)),
+                    text(BRAND, style!(size: 24, color: GRAY_30)),
                     text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
                 ],
             ),
@@ -123,7 +123,7 @@ fn render_full(height: u32, data: &LaunchData, countdown: &str, status: &str) ->
                     row(
                         props!(gap: 8.0),
                         [
-                            text("Space X", style!(size: 24, color: GRAY_30)),
+                            text(BRAND, style!(size: 24, color: GRAY_30)),
                             text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
                         ],
                     ),
@@ -160,7 +160,7 @@ fn render_large(data: &LaunchData, countdown: &str, status: &str) -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    text("Space X", style!(size: 22, color: GRAY_30)),
+                    text(BRAND, style!(size: 22, color: GRAY_30)),
                     text("Next Launch", style!(size: 22, weight: FontWeight::BOLD)),
                 ],
             ),
@@ -195,7 +195,7 @@ fn render_medium(data: &LaunchData, countdown: &str, status: &str) -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    text("Space X", style!(size: 20, color: GRAY_30)),
+                    text(BRAND, style!(size: 20, color: GRAY_30)),
                     text(
                         &data.mission_name,
                         style!(size: 20, weight: FontWeight::BOLD),
@@ -220,9 +220,10 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
     col(
         props!(padding: 24.0, gap: 8.0, background: BLACK),
         [
+            // One line, or a long name pushes the table off the frame.
             text(
                 &data.mission_name,
-                style!(size: 20, weight: FontWeight::BOLD),
+                style!(size: 20, weight: FontWeight::BOLD, text_overflow: TextOverflow::Ellipsis),
             ),
             spacer(1.0),
             launch_info_table(20, 8.0, data, countdown, status),
@@ -235,7 +236,7 @@ mod tests {
     use super::*;
     use crate::screens::bmm101::NOT_AVAILABLE;
     use crate::screens::fixtures::{self, StateFixture};
-    use crate::screens::tree::texts;
+    use crate::screens::tree::{overflow_of, texts};
 
     fn at(bucket: SizeBucket, state: StateFixture) -> Vec<String> {
         texts(&launch_view(&state(fixtures::at_bucket(bucket))))
@@ -262,9 +263,43 @@ mod tests {
 
     /// The header, then the hero over its caption.
     fn bmm101_top(mission: &str) -> Vec<String> {
-        ["Space X", "Next Launch", mission, "Mission name"]
+        [BRAND, "Next Launch", mission, "Mission name"]
             .map(str::to_owned)
             .to_vec()
+    }
+
+    #[test]
+    fn every_frame_keeps_the_brand_on_one_line() {
+        assets::init_test_registrars();
+        let branded = [
+            (SizeBucket::Full, fixtures::healthy as StateFixture),
+            (SizeBucket::Large, fixtures::healthy),
+            (SizeBucket::Medium, fixtures::healthy),
+            (SizeBucket::Bmm101, fixtures::healthy),
+            (SizeBucket::Large, fixtures::no_launch),
+            (SizeBucket::Large, fixtures::failed),
+            (SizeBucket::Bmm101, fixtures::no_launch),
+        ];
+        let brand = typography::unbroken("Space X");
+        for (bucket, state) in branded {
+            let texts = at(bucket, state);
+            assert!(texts.contains(&brand), "{bucket:?}: {texts:?}");
+        }
+    }
+
+    #[test]
+    fn the_small_layout_ends_a_long_mission_in_an_ellipsis() {
+        for viewport in [
+            fixtures::at_bucket(SizeBucket::Small),
+            fixtures::rectangular(320, 240),
+        ] {
+            let view = fixtures::longest_mission(viewport);
+            assert_eq!(
+                overflow_of(&launch_view(&view), fixtures::LONGEST_MISSION),
+                Some(TextOverflow::Ellipsis),
+                "{viewport:?}"
+            );
+        }
     }
 
     #[test]
@@ -308,7 +343,7 @@ mod tests {
         assert_eq!(
             at(SizeBucket::Bmm101, fixtures::failed),
             [
-                "Space X",
+                BRAND,
                 "Next Launch",
                 "Failed to load launch data",
                 "API request failed (503)"
@@ -316,7 +351,7 @@ mod tests {
         );
         assert_eq!(
             at(SizeBucket::Bmm101, fixtures::no_launch),
-            ["Space X", "Next Launch", "No upcoming launches"]
+            [BRAND, "Next Launch", "No upcoming launches"]
         );
     }
 }

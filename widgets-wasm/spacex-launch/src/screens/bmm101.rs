@@ -28,7 +28,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::model::{LaunchData, SizeBucket, State};
-use crate::screens::parts::{self, RowStyle, detail_rows, divider, launch_info_rows};
+use crate::screens::parts::{self, BRAND, RowStyle, detail_rows, divider, launch_info_rows};
 
 /// What every value reads before the first launch loads.
 pub(super) const NOT_AVAILABLE: &str = "--";
@@ -130,7 +130,7 @@ fn header() -> Node {
         props!(height: HEADER_H, gap: 8.0, cross_align: CrossAlign::Center),
         [
             text(
-                "Space X",
+                BRAND,
                 style!(
                     size: HEADER_SIZE,
                     weight: FontWeight::BOLD,

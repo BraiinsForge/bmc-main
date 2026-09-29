@@ -29,7 +29,25 @@ pub use view::{ViewData, launch_view};
 
 #[cfg(test)]
 mod tree {
-    use bmc_wasm_sdk::{Draw, Node};
+    use bmc_wasm_sdk::{Draw, Node, TextOverflow};
+
+    /// How the paragraph drawing `content` handles running out of room.
+    pub(super) fn overflow_of(node: &Node, content: &str) -> Option<TextOverflow> {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                children
+                    .iter()
+                    .find_map(|child| overflow_of(child, content))
+            }
+            Node::Paragraph {
+                base_style, spans, ..
+            } => spans
+                .iter()
+                .any(|span| span.text == content)
+                .then_some(base_style.text_overflow),
+            _ => None,
+        }
+    }
 
     /// Every string the tree would draw, in tree order, canvas text included.
     pub(super) fn texts(node: &Node) -> Vec<String> {
