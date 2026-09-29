@@ -306,9 +306,9 @@ because a screen-edge overlay is only shown while both revealed *and* `tick`-vis
 
 ### Platform gating
 
-The reconfigure button follows the compositor's `caps.wifi_setup` on v2. On v1 it falls back to
-`wifi_reconfig_supported`, true for `Product::Bmc100` and `Product::Bfm100` only, so BMM boards (ESP32 AP) hide it. The
-panel also adapts its layout to display shape (round vs. wide vs. narrow rectangular).
+The reconfigure button follows the compositor's `caps.wifi_setup`. A v1 compositor sends no capabilities, so the tray
+shows brightness alone there. The tray never reads the product: the layout follows the viewport's size and shape (round
+vs. wide vs. narrow rectangular).
 
 ## Alarm (`bmc-overlay-alarm`)
 

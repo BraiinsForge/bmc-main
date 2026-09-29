@@ -22,8 +22,8 @@
 //! `bmc_render::tree::TreeNode` the GPU renderer lays out and paints. Kept free
 //! of host/GL imports so it compiles and unit-tests on the host.
 
-use bmc_platform::DisplayShape;
 use bmc_render::tree::{PropsData, TreeNode, col};
+use bmc_system_overlay::ViewportShape;
 use bmc_wasm_protocol::{Color, SvgId};
 
 mod compact;
@@ -296,16 +296,13 @@ pub enum WifiView<'a> {
     Cable,
 }
 
-/// Display panel the overlay is laid out for.
+/// The surface the overlay is laid out for.
 #[derive(Debug, Clone, Copy)]
 pub struct Panel {
-    pub shape: DisplayShape,
+    pub shape: ViewportShape,
     pub width: u32,
     pub height: u32,
-    /// Whether to render the WiFi reconfigure button. On a v2 compositor
-    /// `caps.wifi_setup` decides; v1 falls back to the product allowlist,
-    /// since reconfiguration needs the setup AP on a mac80211 radio
-    /// (BMC100, BFM100), not a BMM board's ESP32 firmware path.
+    /// Whether to render the WiFi reconfigure button, as `caps.wifi_setup` decides.
     pub wifi_button: bool,
 }
 
@@ -500,7 +497,7 @@ fn tier_for(panel: &Panel) -> Tier {
             caption_size: 20,
             padding: 24.0,
         }
-    } else if matches!(panel.shape, DisplayShape::Rectangular) {
+    } else if matches!(panel.shape, ViewportShape::Rectangular) {
         // BMM101. The 12pt caption is what keeps the widest label on one
         // line; see `the_widest_label_fits_a_bmm101_group`.
         Tier {
@@ -547,9 +544,9 @@ enum Layout {
 
 fn layout_for(panel: &Panel) -> Layout {
     match panel.shape {
-        DisplayShape::Round => Layout::Round,
-        DisplayShape::Rectangular if panel.width >= WIDE_MIN_WIDTH => Layout::Wide,
-        DisplayShape::Rectangular => Layout::Compact,
+        ViewportShape::Round => Layout::Round,
+        ViewportShape::Rectangular if panel.width >= WIDE_MIN_WIDTH => Layout::Wide,
+        ViewportShape::Rectangular => Layout::Compact,
     }
 }
 

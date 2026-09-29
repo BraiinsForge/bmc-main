@@ -20,20 +20,23 @@
 
 //! Server state and dispatch for the `deck_platform_v1` protocol.
 //!
-//! The capability set and the product name are fixed at compositor start
+//! The capability set, the product name and the display are fixed at compositor start
 //! and sent once per bind, so there is nothing to replay later
 //! and no resource list to keep.
 
-use ::deck_platform_v1::server::deck_platform_v1::{self, Capability, DeckPlatformV1};
-use bmc_platform::{HardwareCapabilities, HardwareProfile};
+use ::deck_platform_v1::server::deck_platform_v1::{
+    self, Capability, DeckPlatformV1, DisplayShape as WireDisplayShape,
+};
+use bmc_platform::{DisplayShape, HardwareCapabilities, HardwareProfile};
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
 use super::state::CompositorState;
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const PRODUCT_NAME_SINCE: u32 = 2;
+const DISPLAY_INFO_SINCE: u32 = 3;
 
 /// The wire bitfield for a hardware profile's capability set.
 #[must_use]
@@ -46,11 +49,20 @@ pub fn caps_wire(caps: HardwareCapabilities) -> Capability {
     wire
 }
 
+/// The display's logical size and shape as `display_info` carries them.
+#[derive(Debug, Clone, Copy)]
+pub struct WireDisplay {
+    pub width: u32,
+    pub height: u32,
+    pub shape: WireDisplayShape,
+}
+
 /// What every `deck_platform_v1` bind is told.
 #[derive(Debug, Clone, Copy)]
 pub struct PlatformState {
     pub caps: Capability,
     pub product_name: &'static str,
+    pub display: WireDisplay,
 }
 
 impl PlatformState {
@@ -59,6 +71,14 @@ impl PlatformState {
         Self {
             caps: caps_wire(profile.capabilities()),
             product_name: profile.product.display_name(),
+            display: WireDisplay {
+                width: profile.display.logical_width,
+                height: profile.display.logical_height,
+                shape: match profile.display.shape {
+                    DisplayShape::Rectangular => WireDisplayShape::Rectangular,
+                    DisplayShape::Round => WireDisplayShape::Round,
+                },
+            },
         }
     }
 }
@@ -76,6 +96,10 @@ impl GlobalDispatch<DeckPlatformV1, ()> for CompositorState {
         resource.capabilities(state.platform.caps);
         if resource.version() >= PRODUCT_NAME_SINCE {
             resource.product_name(state.platform.product_name.to_owned());
+        }
+        if resource.version() >= DISPLAY_INFO_SINCE {
+            let display = state.platform.display;
+            resource.display_info(display.width, display.height, display.shape);
         }
     }
 }
@@ -134,7 +158,8 @@ mod tests {
 /// Drives a real in-process Wayland client/server handshake
 /// so the bind is checked as a client sees it:
 /// the capability event arrives and carries the profile's bits,
-/// and a v2 bind is told the product name after it.
+/// a v2 bind is told the product name after it,
+/// and a v3 bind the display after that.
 #[cfg(test)]
 mod bind_wire_test {
     use std::os::unix::net::UnixStream;
@@ -155,6 +180,15 @@ mod bind_wire_test {
         platform: Option<client_api::DeckPlatformV1>,
         seen: Vec<u32>,
         product_name: Option<String>,
+        display: Option<SeenDisplay>,
+    }
+
+    /// `display_info` as the client receives it: `shape` is the raw wire value.
+    #[derive(Debug, PartialEq, Eq)]
+    struct SeenDisplay {
+        width: u32,
+        height: u32,
+        shape: u32,
     }
 
     impl Dispatch<wl_registry::WlRegistry, ()> for TestClient {
@@ -203,6 +237,31 @@ mod bind_wire_test {
                     assert!(
                         state.product_name.replace(name).is_none(),
                         "BUG: product_name must arrive once per bind"
+                    );
+                }
+                client_api::Event::DisplayInfo {
+                    width,
+                    height,
+                    shape,
+                } => {
+                    assert!(
+                        state.product_name.is_some(),
+                        "BUG: display_info must follow product_name"
+                    );
+                    let shape = match shape {
+                        WEnum::Value(shape) => shape.into(),
+                        WEnum::Unknown(raw) => raw,
+                    };
+                    assert!(
+                        state
+                            .display
+                            .replace(SeenDisplay {
+                                width,
+                                height,
+                                shape
+                            })
+                            .is_none(),
+                        "BUG: display_info must arrive once per bind"
                     );
                 }
                 other => panic!("BUG: unexpected deck_platform_v1 event {other:?}"),
@@ -316,6 +375,35 @@ mod bind_wire_test {
             bind_and_collect(Product::Bmc100, 2).product_name.as_deref(),
             Some("Braiins Deck")
         );
+    }
+
+    #[test]
+    fn a_v3_bind_is_told_the_display() {
+        let round = client_api::DisplayShape::Round.into();
+        let rectangular = client_api::DisplayShape::Rectangular.into();
+        assert_eq!(
+            bind_and_collect(Product::Bfm100, 3).display,
+            Some(SeenDisplay {
+                width: 480,
+                height: 480,
+                shape: round
+            })
+        );
+        assert_eq!(
+            bind_and_collect(Product::Bmm101, 3).display,
+            Some(SeenDisplay {
+                width: 480,
+                height: 320,
+                shape: rectangular
+            })
+        );
+    }
+
+    #[test]
+    fn a_v2_bind_is_not_sent_the_display() {
+        let client = bind_and_collect(Product::Bmm101, 2);
+        assert!(client.product_name.is_some());
+        assert_eq!(client.display, None);
     }
 
     #[test]

@@ -35,11 +35,10 @@ pub mod ui;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use bmc_platform::{BmcInfo, DisplayShape, HardwareProfile, Product};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, InputRegion, Layer, LayerConfig, ScreenEdge, SettingsRequest, SnapshotVersion,
-    SystemOverlay, TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
+    Anchor, InputRegion, Layer, LayerConfig, OverlayViewport, ScreenEdge, SettingsRequest,
+    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -62,14 +61,6 @@ const STEP_ECHO_SETTLE: Duration = Duration::from_millis(300);
 /// Fast wake cadence while a hold FSM is animating, so the hold/timeout edges
 /// fire without a touch/network event to wake the loop.
 const FAST_WAKE: Duration = Duration::from_millis(33);
-
-/// Whether WiFi reconfiguration is supported on this platform. It only works
-/// where the setup AP runs over the mac80211 radio (BMC100, BFM100).
-/// The BMM boards drive their ESP32 AP through a separate firmware path
-/// the overlay does not implement, so the reconfigure button is hidden there.
-fn wifi_reconfig_supported(product: Product) -> bool {
-    matches!(product, Product::Bmc100 | Product::Bfm100)
-}
 
 /// Injected connectivity source for testing.
 trait Env {
@@ -268,7 +259,6 @@ pub struct StatusView {
     reason = "independent per-control visibility flags mirroring the capability bits"
 )]
 pub struct SettingsTrayView {
-    pub shape: DisplayShape,
     pub brightness: u8,
     pub show_brightness: bool,
     pub volume: u8,
@@ -291,16 +281,14 @@ pub struct SettingsTrayView {
 }
 
 impl SettingsTrayView {
-    /// Build a deterministic gallery-facing view shell for a hardware product.
-    #[doc(hidden)]
+    /// Every control shown, nothing held, no network yet.
     #[must_use]
-    pub fn for_product(product: SettingsTrayProduct) -> Self {
+    pub fn resting() -> Self {
         Self {
-            shape: HardwareProfile::for_product(product).display.shape,
             brightness: 50,
             show_brightness: true,
             volume: 50,
-            show_volume: matches!(product, SettingsTrayProduct::Bmc100),
+            show_volume: true,
             night_mode: Some(NightModeView {
                 active: false,
                 until: None,
@@ -313,8 +301,22 @@ impl SettingsTrayView {
             ssid: None,
             setup_ssid: None,
             cable_uplink: false,
-            wifi_button: wifi_reconfig_supported(product),
+            wifi_button: true,
             pressed_key: None,
+        }
+    }
+
+    /// Build a deterministic gallery-facing view shell for a hardware product.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn for_product(product: SettingsTrayProduct) -> Self {
+        Self {
+            show_volume: matches!(product, SettingsTrayProduct::Bmc100),
+            wifi_button: matches!(
+                product,
+                SettingsTrayProduct::Bmc100 | SettingsTrayProduct::Bfm100
+            ),
+            ..Self::resting()
         }
     }
 }
@@ -386,9 +388,6 @@ fn step_value(current: u8, step: Step, min: u8, max: u8) -> u8 {
     reason = "each bool is a distinct single-bit latch with no natural enum pairing"
 )]
 pub struct SettingsTrayOverlay {
-    product: Product,
-    shape: DisplayShape,
-
     brightness: u8,
     /// End of the post-tap brightness echo settle window.
     brightness_settle_until: Option<Instant>,
@@ -434,8 +433,7 @@ pub struct SettingsTrayOverlay {
 
     /// Capability set from the compositor. `None` until the first (v2-only)
     /// capabilities event — and forever against a v1 compositor, which is the
-    /// centralized v1-fallback signal: hide every v2 control and fall back to
-    /// the locally derived product gates.
+    /// centralized v1-fallback signal: hide every v2 control.
     caps: Option<bmc_system_overlay::SettingsCaps>,
 
     pending_requests: Vec<SettingsRequest>,
@@ -445,18 +443,13 @@ pub struct SettingsTrayOverlay {
 
 impl Default for SettingsTrayOverlay {
     fn default() -> Self {
-        let product = BmcInfo::load()
-            .map(|info| info.bmc_platform.product())
-            .expect("BUG: platform detection must succeed for the settings tray");
-        Self::new_for_product(product, bmc_net_observe::hostname(), Instant::now())
+        Self::new(bmc_net_observe::hostname(), Instant::now())
     }
 }
 
 impl SettingsTrayOverlay {
-    fn new_for_product(product: Product, hostname: Option<String>, now: Instant) -> Self {
+    fn new(hostname: Option<String>, now: Instant) -> Self {
         Self {
-            product,
-            shape: HardwareProfile::for_product(product).display.shape,
             brightness: 50,
             brightness_settle_until: None,
             volume: 50,
@@ -488,8 +481,7 @@ impl SettingsTrayOverlay {
 
     #[must_use]
     fn view(&self, now: Instant) -> SettingsTrayView {
-        let mut view = SettingsTrayView::for_product(self.product);
-        view.shape = self.shape;
+        let mut view = SettingsTrayView::resting();
         view.brightness = self.brightness;
         view.volume = self.volume;
         view.night_mode = Some(NightModeView {
@@ -503,20 +495,18 @@ impl SettingsTrayOverlay {
         view.ssid.clone_from(&self.ssid);
         view.setup_ssid.clone_from(&self.setup_ssid);
         view.cable_uplink = self.cable_uplink;
-        view.wifi_button = wifi_reconfig_supported(self.product);
         if let Some(caps) = self.caps {
             view.show_brightness = caps.brightness;
             view.show_volume = caps.sound;
             view.wifi_button = caps.wifi_setup;
         } else {
-            // v1 compositor: exactly today's tray. Brightness + the
-            // product-gated WiFi button; every v2 control is hidden (its
-            // requests would be protocol violations and its events never
-            // arrive).
+            // v1 compositor: brightness only. Every v2 control is hidden,
+            // since its requests would be protocol violations and its events never arrive,
+            // and so is the WiFi button: v1 cannot say whether the board supports it.
             view.show_volume = false;
             view.night_mode = None;
             view.show_restart = false;
-            view.wifi_button = wifi_reconfig_supported(self.product);
+            view.wifi_button = false;
         }
         view
     }
@@ -879,7 +869,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
         // One full off-screen render at host startup, so the first screen-edge
         // reveal does not stall mid-swipe paying these one-time costs: the
         // Wi-Fi SVG icon compile/upload, rasterizing the panel's text into the
@@ -896,13 +886,13 @@ impl SystemOverlay for SettingsTrayOverlay {
             until: Some("06:30".to_owned()),
         });
         view.show_restart = true;
-        let _ = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
+        let _ = render_settings_tray(renderer, viewport, &mut self.render_state, &view, now);
     }
 
-    fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
+    fn render(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
         let now = Instant::now();
         let view = self.view(now);
-        let output = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
+        let output = render_settings_tray(renderer, viewport, &mut self.render_state, &view, now);
         self.apply_render_output(output, now);
     }
 
@@ -927,12 +917,12 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     /// The tray fills the surface, so the slide travels the surface height.
-    fn layer_shell_offset(&self, now: Instant, size: (u32, u32)) -> Option<f32> {
+    fn layer_shell_offset(&self, now: Instant, viewport: OverlayViewport) -> Option<f32> {
         #[expect(
             clippy::cast_precision_loss,
             reason = "surface height is well within f32 mantissa precision"
         )]
-        Some(self.slide.offset(now, size.1 as f32))
+        Some(self.slide.offset(now, viewport.height as f32))
     }
 
     fn on_frame_submitted(&mut self, now: Instant) {
@@ -967,7 +957,7 @@ const PRESSABLE: [&str; 7] = [
 
 pub fn render_settings_tray(
     renderer: &mut dyn Renderer,
-    size: (u32, u32),
+    viewport: OverlayViewport,
     state: &mut SettingsTrayRenderState,
     view: &SettingsTrayView,
     now: Instant,
@@ -1008,9 +998,9 @@ pub fn render_settings_tray(
         view.ssid.as_deref(),
         icons.wifi,
         Panel {
-            shape: view.shape,
-            width: size.0,
-            height: size.1,
+            shape: viewport.shape,
+            width: viewport.width,
+            height: viewport.height,
             wifi_button: view.wifi_button,
         },
         wifi_view,
@@ -1018,7 +1008,10 @@ pub fn render_settings_tray(
         controls,
     );
 
-    let result = match state.tree.render(&node, size, delta_ms, renderer) {
+    let result = match state
+        .tree
+        .render(&node, viewport.size(), delta_ms, renderer)
+    {
         Ok(result) => result,
         Err(err) => {
             tracing::error!("settings-tray tree render failed: {err}");
@@ -1065,11 +1058,12 @@ mod view_tests {
     #[test]
     fn view_contains_runtime_state_and_setup_ap_status() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(
-            Product::Bmc100,
-            Some("braiins-deck".to_owned()),
-            now,
-        );
+        let mut overlay = SettingsTrayOverlay::new(Some("braiins-deck".to_owned()), now);
+        overlay.on_capabilities(bmc_system_overlay::SettingsCaps {
+            brightness: true,
+            sound: true,
+            wifi_setup: true,
+        });
         overlay.brightness = 70;
         overlay.ip = Some("192.168.1.42".to_owned());
         overlay.wifi_signal = Some(-52);
@@ -1094,7 +1088,7 @@ mod view_tests {
     #[test]
     fn a_decline_reaches_the_status_with_its_reason() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_restart_declined("upgrade in progress");
         assert_eq!(
             overlay.view(Instant::now()).status,
@@ -1109,7 +1103,7 @@ mod view_tests {
     #[test]
     fn restart_wins_a_tie() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.restart.tick(true, now);
         overlay.button.tick(true, now);
         let status = overlay
@@ -1123,7 +1117,7 @@ mod view_tests {
     #[test]
     fn night_mode_event_reflects_into_view() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         // Night mode shows only on a v2 compositor; establish one so the event
         // is not gated off by the v1 fallback.
         overlay.on_capabilities(bmc_system_overlay::SettingsCaps {
@@ -1145,7 +1139,7 @@ mod view_tests {
     #[test]
     fn empty_setup_ap_ssid_does_not_enter_setup_view() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_wifi_ap(Some(""));
         assert_eq!(
             overlay.view(now).setup_ssid,
@@ -1155,40 +1149,40 @@ mod view_tests {
     }
 
     #[test]
-    fn v1_compositor_falls_back_to_product_gates_and_hides_v2_controls() {
+    fn v1_compositor_shows_brightness_only() {
         let now = Instant::now();
-        let overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let overlay = SettingsTrayOverlay::new(None, now);
         // No capabilities event ever arrived (v1 compositor).
         let view = overlay.view(now);
+        assert!(view.show_brightness, "brightness is v1");
         assert!(!view.show_volume, "volume is v2-only");
         assert!(view.night_mode.is_none(), "night mode is v2-only");
         assert!(!view.show_restart, "restart is v2-only");
         assert!(
-            view.wifi_button,
-            "BMC100 keeps its product-gated WiFi button"
+            !view.wifi_button,
+            "v1 cannot say whether the board supports WiFi setup"
         );
     }
 
     #[test]
-    fn capabilities_event_supersedes_the_local_product_gate() {
+    fn capabilities_decide_the_optional_controls() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
-        overlay.on_capabilities(bmc_system_overlay::SettingsCaps {
-            brightness: true,
-            sound: false,
-            wifi_setup: false,
-        });
-        let view = overlay.view(now);
-        assert!(!view.show_volume);
-        assert!(
-            !view.wifi_button,
-            "the compositor's word beats wifi_reconfig_supported(product)"
-        );
-        assert!(
-            view.night_mode.is_some(),
-            "night mode shows on every v2 compositor"
-        );
-        assert!(view.show_restart, "restart shows on every v2 compositor");
+        for (sound, wifi_setup) in [(false, false), (true, true)] {
+            let mut overlay = SettingsTrayOverlay::new(None, now);
+            overlay.on_capabilities(bmc_system_overlay::SettingsCaps {
+                brightness: true,
+                sound,
+                wifi_setup,
+            });
+            let view = overlay.view(now);
+            assert_eq!(view.show_volume, sound);
+            assert_eq!(view.wifi_button, wifi_setup);
+            assert!(
+                view.night_mode.is_some(),
+                "night mode shows on every v2 compositor"
+            );
+            assert!(view.show_restart, "restart shows on every v2 compositor");
+        }
     }
 
     struct StaticEnv {
@@ -1212,7 +1206,7 @@ mod view_tests {
     #[test]
     fn tick_reflects_snapshot_into_view() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.env = Box::new(StaticEnv {
             snapshot: Some(Snapshot {
                 ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
@@ -1264,7 +1258,7 @@ mod view_tests {
         }
 
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.env = Box::new(VersionAssertEnv);
 
         let _ = overlay.tick(now);
@@ -1274,7 +1268,7 @@ mod view_tests {
     #[test]
     fn unknown_snapshot_keeps_placeholders() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.env = Box::new(StaticEnv { snapshot: None });
 
         let _ = overlay.tick(now);
@@ -1288,7 +1282,7 @@ mod view_tests {
     #[test]
     fn signal_jitter_within_one_icon_band_does_not_dirty_content() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.ip = Some("192.168.1.42".to_owned());
         overlay.ssid = Some("Braiins-WiFi".to_owned());
         overlay.wifi_signal = Some(-52);
@@ -1315,7 +1309,7 @@ mod view_tests {
     #[test]
     fn an_ip_change_alone_dirties_content() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.ip = Some("192.168.1.42".to_owned());
         overlay.ssid = Some("Braiins-WiFi".to_owned());
         overlay.wifi_signal = Some(-52);
@@ -1341,7 +1335,7 @@ mod view_tests {
     #[test]
     fn signal_crossing_into_another_icon_band_dirties_content() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.wifi_signal = Some(-52);
         overlay.env = Box::new(StaticEnv {
             snapshot: Some(Snapshot {
@@ -1365,7 +1359,7 @@ mod view_tests {
     #[test]
     fn plugging_the_cable_in_dirties_content() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.ip = Some("10.33.50.103".to_owned());
         overlay.env = Box::new(StaticEnv {
             snapshot: Some(Snapshot {
@@ -1386,7 +1380,7 @@ mod view_tests {
 
     #[test]
     fn the_cable_outranks_a_running_setup() {
-        let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmm101);
+        let mut view = SettingsTrayView::resting();
         view.setup_ssid = Some("Mini-Setup".to_owned());
         assert!(matches!(wifi_view(&view), WifiView::Setup { .. }));
         view.cable_uplink = true;
@@ -1414,7 +1408,7 @@ mod wake_tests {
     #[test]
     fn finger_down_schedules_a_fast_wake() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.env = Box::new(StaticEnv);
         // Drop the construction-time dirty flag the way a first render would.
         let _ = overlay.take_content_dirty();
@@ -1445,7 +1439,7 @@ mod volume_echo_tests {
     use super::*;
 
     fn overlay() -> SettingsTrayOverlay {
-        SettingsTrayOverlay::new_for_product(Product::Bmc100, None, Instant::now())
+        SettingsTrayOverlay::new(None, Instant::now())
     }
 
     #[test]
@@ -1510,7 +1504,7 @@ mod step_tests {
     #[test]
     fn a_brightness_drag_writes_once_per_stop_it_reaches() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.brightness = 50;
         for _ in 0..10 {
             overlay.apply_render_output(brightness_drag(0.45), t0);
@@ -1532,7 +1526,7 @@ mod step_tests {
     #[test]
     fn dragging_to_the_left_end_stops_at_the_floor() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.brightness = 50;
         overlay.apply_render_output(brightness_drag(0.0), t0);
         assert_eq!(overlay.brightness, ui::MIN_BRIGHTNESS);
@@ -1545,7 +1539,7 @@ mod step_tests {
     #[test]
     fn a_drag_holds_the_echo_off_the_way_a_tap_does() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmm101, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.brightness = 50;
         overlay.apply_render_output(brightness_drag(1.0), t0);
         overlay.on_brightness_at(50, t0 + Duration::from_millis(100));
@@ -1558,7 +1552,7 @@ mod step_tests {
     #[test]
     fn volume_taps_compound_locally_and_extend_the_settle_window() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.volume = 40;
         overlay.apply_render_output(volume_up(), t0);
         let t1 = t0 + Duration::from_millis(300);
@@ -1590,7 +1584,7 @@ mod step_tests {
     #[test]
     fn brightness_taps_compound_locally_and_extend_the_settle_window() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.brightness = 40;
         let brightness_up = || SettingsTrayRenderOutput {
             brightness_step: Some(Step::Up),
@@ -1626,7 +1620,7 @@ mod step_tests {
     #[test]
     fn boundary_taps_stay_clamped_but_still_send() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.volume = 100;
         overlay.brightness = ui::MIN_BRIGHTNESS;
         overlay.apply_render_output(volume_up(), now);
@@ -1653,7 +1647,7 @@ mod step_tests {
     #[test]
     fn close_tap_starts_the_dismiss_slide_next_tick() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.apply_render_output(
             SettingsTrayRenderOutput {
                 close_tapped: true,
@@ -1672,7 +1666,7 @@ mod step_tests {
     #[test]
     fn held_finger_defers_inactivity_dismiss_until_release() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
 
         // Finger down, then held perfectly still: libinput emits no further
         // touch events, so on_touch never runs again to refresh the timer.
@@ -1714,7 +1708,7 @@ mod step_tests {
     #[test]
     fn cancelled_touch_still_auto_dismisses() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
 
         // Finger down, then the compositor cancels the sequence (no Up): the
         // Cancel arm must clear touch_track, otherwise the leaked Some would
@@ -1740,7 +1734,7 @@ mod step_tests {
     #[test]
     fn read_back_changes_repaint_on_the_next_tick() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.content_dirty = false;
         overlay.apply_render_output(volume_up(), now);
         assert!(
@@ -1772,12 +1766,16 @@ mod slide_tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    const SURFACE: (u32, u32) = (1_280, 200);
+    const SURFACE: OverlayViewport = OverlayViewport {
+        width: 1_280,
+        height: 200,
+        shape: bmc_system_overlay::ViewportShape::Rectangular,
+    };
 
     #[test]
     fn only_clean_slide_frames_reuse_attached_content() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_reveal();
         overlay.content_dirty = false;
         assert!(overlay.layer_shell_offset(now, SURFACE).is_some());
@@ -1789,7 +1787,7 @@ mod slide_tests {
     #[test]
     fn layer_shell_slide_keeps_its_offset_when_content_changes() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_reveal();
         overlay.content_dirty = true;
         assert_eq!(overlay.layer_shell_offset(now, SURFACE), Some(-200.0));
@@ -1815,10 +1813,16 @@ mod slide_tests {
     #[test]
     fn a_pending_reveal_hides_behind_the_height_of_each_pass() {
         let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_reveal();
-        assert_eq!(overlay.layer_shell_offset(now, (480, 320)), Some(-320.0));
-        assert_eq!(overlay.layer_shell_offset(now, (1_280, 480)), Some(-480.0));
+        assert_eq!(
+            overlay.layer_shell_offset(now, OverlayViewport::rectangular((480, 320))),
+            Some(-320.0)
+        );
+        assert_eq!(
+            overlay.layer_shell_offset(now, OverlayViewport::rectangular((1_280, 480))),
+            Some(-480.0)
+        );
     }
 
     #[test]
@@ -1878,7 +1882,7 @@ mod slide_tests {
     #[test]
     fn pending_reveal_keeps_requesting_frames_after_dirty_consumed() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.on_reveal();
         let _ = overlay.take_content_dirty();
         assert!(
@@ -1890,7 +1894,7 @@ mod slide_tests {
     #[test]
     fn transition_phases_discard_touch_without_dirtying_content() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
 
         overlay.on_reveal();
         let _ = overlay.take_content_dirty();
@@ -1919,7 +1923,7 @@ mod slide_tests {
     #[test]
     fn dismiss_swipe_arms_pending_phase_without_dirtying_release() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         let _ = overlay.take_content_dirty();
 
         overlay.on_touch(TouchEvent::Down {
@@ -1947,7 +1951,7 @@ mod slide_tests {
     #[test]
     fn first_presented_frame_anchors_the_reveal_ramp() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.on_reveal();
         let _ = overlay.take_content_dirty();
         let t1 = t0 + Duration::from_millis(60);
@@ -1985,7 +1989,7 @@ mod slide_tests {
     #[test]
     fn ramp_end_between_ticks_still_renders_the_settle_frame() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.on_reveal();
         // Drop the reveal-time dirty flag the way the first paint would.
         let _ = overlay.take_content_dirty();
@@ -2004,7 +2008,7 @@ mod slide_tests {
     #[test]
     fn settle_frame_reuses_content_then_a_submit_finishes_the_reveal() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.on_reveal();
         let _ = overlay.take_content_dirty();
         overlay.on_frame_submitted(t0);
@@ -2063,8 +2067,7 @@ mod slide_tests {
 
     #[test]
     fn content_dirty_accessor_is_non_consuming() {
-        let mut overlay =
-            SettingsTrayOverlay::new_for_product(Product::Bmc100, None, Instant::now());
+        let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
         assert!(overlay.content_dirty(), "constructed dirty");
         assert!(overlay.content_dirty(), "observing must not consume");
         let _ = overlay.take_content_dirty();
@@ -2074,7 +2077,7 @@ mod slide_tests {
     #[test]
     fn reveal_repaints_when_reset_discards_transient_ui() {
         let t0 = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
         let _ = overlay.take_content_dirty();
 
         overlay.on_reveal();

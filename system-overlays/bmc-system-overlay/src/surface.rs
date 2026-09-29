@@ -37,6 +37,7 @@ use ::deck_device_info_v1::client::deck_device_info_v1::{
 };
 use ::deck_platform_v1::client::deck_platform_v1::{
     self, Capability as PlatformCapability, DeckPlatformV1,
+    DisplayShape as WirePlatformDisplayShape,
 };
 use ::deck_upgrade_v1::UpgradeDecoder;
 use ::deck_upgrade_v1::client::deck_upgrade_v1::{self, DeckUpgradeV1};
@@ -152,10 +153,12 @@ struct State {
     /// and the second would only restart a hold the first had barely begun.
     pending_report_ip: bool,
 
-    /// Whether this overlay opted into `deck_platform_v1`
-    /// (its `SystemOverlay::uses_platform`).
-    wants_platform: bool,
+    /// Bound for every overlay: the framework reads the display from it.
+    /// Whether its capabilities and product name reach the overlay
+    /// is `SystemOverlay::uses_platform`'s call, at delivery.
     platform: Option<DeckPlatformV1>,
+    /// Set on the `display_info` event a v3 compositor sends after `product_name`.
+    platform_display: Option<crate::overlay::PlatformDisplay>,
     /// Set on the `capabilities` event, the first event the bind answers with.
     pending_platform_caps: Option<crate::overlay::PlatformCaps>,
     /// Set on the `product_name` event a v2 compositor sends after `capabilities`.
@@ -225,8 +228,8 @@ impl Default for State {
             pending_setup_progress: None,
             pending_access_point: None,
             pending_report_ip: false,
-            wants_platform: false,
             platform: None,
+            platform_display: None,
             pending_platform_caps: None,
             pending_platform_product_name: None,
             configured: false,
@@ -403,7 +406,6 @@ pub struct ProtocolOptIns {
     pub alarm: bool,
     pub upgrade: bool,
     pub device_info: bool,
-    pub platform: bool,
 }
 
 impl ProtocolOptIns {
@@ -413,7 +415,6 @@ impl ProtocolOptIns {
             alarm: overlay.uses_alarm(),
             upgrade: overlay.uses_upgrade(),
             device_info: overlay.uses_device_info(),
-            platform: overlay.uses_platform(),
         }
     }
 }
@@ -436,7 +437,6 @@ impl LayerSurfaceClient {
             wants_alarm: opt_ins.alarm,
             wants_upgrade: opt_ins.upgrade,
             wants_device_info: opt_ins.device_info,
-            wants_platform: opt_ins.platform,
             ..State::default()
         };
         queue
@@ -772,6 +772,12 @@ impl LayerSurfaceClient {
         std::mem::take(&mut self.state.pending_report_ip)
     }
 
+    /// What an overlay drawing into a surface of `size` is told it draws into.
+    #[must_use]
+    pub fn viewport(&self, size: (u32, u32)) -> crate::overlay::OverlayViewport {
+        crate::overlay::overlay_viewport(size, self.state.platform_display)
+    }
+
     pub(crate) fn take_platform_events(&mut self) -> crate::overlay::PlatformEvents {
         crate::overlay::PlatformEvents {
             caps: self.state.pending_platform_caps.take(),
@@ -950,9 +956,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                         registry.bind::<DeckDeviceInfoV1, _, _>(name, version.min(2), qh, ());
                     state.device_info = Some(device_info);
                 }
-                "deck_platform_v1" if state.wants_platform => {
+                "deck_platform_v1" => {
                     let platform =
-                        registry.bind::<DeckPlatformV1, _, _>(name, version.min(2), qh, ());
+                        registry.bind::<DeckPlatformV1, _, _>(name, version.min(3), qh, ());
                     state.platform = Some(platform);
                 }
                 _ => {}
@@ -1095,6 +1101,33 @@ impl Dispatch<DeckPlatformV1, ()> for State {
             }
             deck_platform_v1::Event::ProductName { name } => {
                 state.pending_platform_product_name = Some(name);
+            }
+            deck_platform_v1::Event::DisplayInfo {
+                width,
+                height,
+                shape,
+            } => {
+                let shape = match shape {
+                    WEnum::Value(WirePlatformDisplayShape::Round) => {
+                        bmc_wasm_protocol::DisplayShape::Round
+                    }
+                    WEnum::Value(WirePlatformDisplayShape::Rectangular) => {
+                        bmc_wasm_protocol::DisplayShape::Rectangular
+                    }
+                    WEnum::Value(other) => {
+                        tracing::warn!(?other, "unhandled display shape; laying out rectangular");
+                        bmc_wasm_protocol::DisplayShape::Rectangular
+                    }
+                    WEnum::Unknown(raw) => {
+                        tracing::warn!(raw, "unknown display shape; laying out rectangular");
+                        bmc_wasm_protocol::DisplayShape::Rectangular
+                    }
+                };
+                state.platform_display = Some(crate::overlay::PlatformDisplay {
+                    width,
+                    height,
+                    shape,
+                });
             }
             other => tracing::debug!(?other, "unhandled deck_platform_v1 event"),
         }
@@ -1546,7 +1579,7 @@ mod tests {
         fn render(
             &mut self,
             _renderer: &mut dyn bmc_render::renderer::Renderer,
-            _size: (u32, u32),
+            _viewport: crate::overlay::OverlayViewport,
         ) {
         }
 

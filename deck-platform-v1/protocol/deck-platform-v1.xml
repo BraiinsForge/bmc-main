@@ -5,22 +5,24 @@
     SPDX-License-Identifier: MIT
 
     A protocol exposing the hardware platform's capability set
-    to overlay clients
+    and display geometry to overlay clients
   </copyright>
 
-  <interface name="deck_platform_v1" version="2">
+  <interface name="deck_platform_v1" version="3">
     <description summary="Deck platform capability feed">
       Tells a client what the hardware it runs on can do,
       so an overlay can decide which of its functions to run
       without reading the product name itself,
       and what the product is called, so a screen can address the user
-      with the name on the box.
-      Both are fixed for the compositor's lifetime: they are derived from
+      with the name on the box,
+      and what the display looks like, so a full-screen surface can lay out
+      for a round panel.
+      All are fixed for the compositor's lifetime: they are derived from
       the hardware profile the compositor was started with,
       the same source bmc reports over gRPC.
 
-      The interface is event-only. Capabilities and the product name
-      describe the board, not anything a client could change,
+      The interface is event-only. Capabilities, the product name
+      and the display describe the board, not anything a client could change,
       so there is no request beyond the destructor.
     </description>
 
@@ -58,6 +60,29 @@
         and static for the compositor's lifetime.
       </description>
       <arg name="name" type="string" summary="product display name"/>
+    </event>
+
+    <enum name="display_shape" since="3">
+      <description summary="visible display shape">
+        Shape of the visible display area.
+        The coordinate space stays rectangular regardless of shape:
+        on a round panel the corners of a full-screen surface are not seen.
+      </description>
+      <entry name="rectangular" value="0"/>
+      <entry name="round" value="1"/>
+    </enum>
+
+    <event name="display_info" since="3">
+      <description summary="the display's logical size and shape">
+        The logical pixel size and the shape of the panel.
+        A surface that covers the whole display is seen in that shape;
+        a smaller one sits inside it and stays rectangular.
+        Emitted exactly once per resource, right after product_name,
+        and static for the compositor's lifetime.
+      </description>
+      <arg name="width" type="uint" summary="logical display width in pixels"/>
+      <arg name="height" type="uint" summary="logical display height in pixels"/>
+      <arg name="shape" type="uint" enum="display_shape"/>
     </event>
   </interface>
 </protocol>

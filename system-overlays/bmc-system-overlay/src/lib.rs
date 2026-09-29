@@ -31,14 +31,16 @@ mod surface;
 pub(crate) mod test_support;
 mod tree;
 
+pub use bmc_wasm_protocol::ViewportShape;
 pub use connectivity::{Snapshot, SnapshotVersion, VersionedSnapshot, snapshot_if_changed};
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
 pub use icon::register_icon;
 pub use overlay::{
     AccessPoint, AlarmEvent, AlarmRequest, DeviceState, DownloadProgress, InputRegion, LayerConfig,
-    PlatformCaps, ScreenEdge, SettingsCaps, SettingsRequest, SetupStep, SystemOverlay, TickOutcome,
-    TouchEvent, UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState, UpgradeUpdate,
+    OverlayViewport, PlatformCaps, ScreenEdge, SettingsCaps, SettingsRequest, SetupStep,
+    SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase, UpgradeSnapshot,
+    UpgradeState, UpgradeUpdate,
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;

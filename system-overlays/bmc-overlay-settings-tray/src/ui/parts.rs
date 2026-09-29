@@ -25,8 +25,8 @@ use super::{
     CIRCLE_FILL, CIRCLE_PRESSED, CLOSE_GLYPH, CLOSE_KEY, CLOSE_TARGET, HOLD_ALPHA_FULL_AT,
     HOLD_FILL, ICON_PRESSED_TINT, Panel, Tier, WIDE_QR_QUIET_ZONE, WifiIcons,
 };
-use bmc_platform::DisplayShape;
 use bmc_render::tree::{DrawCommand, PropsData, TextStyle, TreeNode, col, row, text};
+use bmc_system_overlay::ViewportShape;
 use bmc_wasm_protocol::colors::{BLACK, GREEN_50, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign, TextOverflow};
 
@@ -279,8 +279,8 @@ pub(super) fn close_origin(panel: &Panel, tier: Tier) -> (f32, f32) {
     )]
     let w = panel.width as f32;
     match panel.shape {
-        DisplayShape::Rectangular => (w - tier.padding - CLOSE_TARGET, tier.padding),
-        DisplayShape::Round => {
+        ViewportShape::Rectangular => (w - tier.padding - CLOSE_TARGET, tier.padding),
+        ViewportShape::Round => {
             let r = w / 2.0;
             let d = (r - 56.0) * std::f32::consts::FRAC_1_SQRT_2;
             (r + d - CLOSE_TARGET / 2.0, r - d - CLOSE_TARGET / 2.0)

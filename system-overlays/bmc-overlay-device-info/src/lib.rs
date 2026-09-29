@@ -38,9 +38,9 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DeviceState, Layer, LayerConfig, PlatformCaps, SetupStep, SnapshotVersion,
-    SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot, UpgradeState,
-    VersionedSnapshot,
+    AccessPoint, DeviceState, Layer, LayerConfig, OverlayViewport, PlatformCaps, SetupStep,
+    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot,
+    UpgradeState, VersionedSnapshot,
 };
 
 /// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
@@ -560,7 +560,7 @@ impl SystemOverlay for DeviceInfoOverlay {
         self.dirty = true;
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer, _size: (u32, u32)) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, _viewport: OverlayViewport) {
         let _ = self.render_state.ensure_icons(renderer);
     }
 
@@ -719,11 +719,11 @@ impl SystemOverlay for DeviceInfoOverlay {
         }
     }
 
-    fn render(&mut self, r: &mut dyn Renderer, size: (u32, u32)) {
+    fn render(&mut self, r: &mut dyn Renderer, viewport: OverlayViewport) {
         let view = self.view();
         render_device_info(
             r,
-            size,
+            viewport.size(),
             &mut self.render_state,
             &view,
             &self.device_name,

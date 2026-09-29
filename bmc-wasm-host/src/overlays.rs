@@ -138,7 +138,8 @@ pub fn prewarm_hosted_overlay(
     ptr: NonNull<dyn Renderer>,
     shared: &mut SharedHost,
 ) -> anyhow::Result<()> {
-    let (w, h) = overlay.size();
+    let viewport = overlay.viewport();
+    let (w, h) = viewport.size();
     anyhow::ensure!(
         shared.scratch.supports_size(w, h),
         "host scratch FBO {:?} cannot prewarm overlay {:?}",
@@ -159,7 +160,7 @@ pub fn prewarm_hosted_overlay(
             let renderer = unsafe { ptr.as_ptr().as_mut() }
                 .expect("BUG: NonNull renderer is non-null by construction");
             renderer.begin_frame_with_clear(w, h, 1.0, FrameClear::TransparentBlack);
-            overlay.overlay_mut().prewarm(renderer, (w, h));
+            overlay.overlay_mut().prewarm(renderer, viewport);
             renderer.flush();
             Ok(())
         },
@@ -183,7 +184,8 @@ pub fn render_hosted_overlay(
             target.resize(&shared.egl, client, width, height)
         })
     })?;
-    let size = overlay.size();
+    let viewport = overlay.viewport();
+    let size = viewport.size();
     anyhow::ensure!(
         shared.scratch.supports_size(size.0, size.1),
         "host scratch FBO {:?} cannot render resized overlay {:?}",
@@ -196,7 +198,7 @@ pub fn render_hosted_overlay(
     )]
     let layer_offset = overlay
         .overlay_mut()
-        .layer_shell_offset(now, size)
+        .layer_shell_offset(now, viewport)
         .map(|y| y.round() as i32);
     if let Some(offset) = layer_offset
         && overlay.overlay_mut().can_reuse_content(now)
@@ -218,7 +220,7 @@ pub fn render_hosted_overlay(
             let renderer = unsafe { ptr.as_ptr().as_mut() }
                 .expect("BUG: NonNull renderer is non-null by construction");
             renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
-            overlay.overlay_mut().render(renderer, size);
+            overlay.overlay_mut().render(renderer, viewport);
             renderer.flush();
             let _ = overlay.overlay_mut().take_content_dirty();
             let fbo = overlay.target_mut().current_fbo();

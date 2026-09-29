@@ -48,13 +48,22 @@ use bmc_overlay_settings_tray::{
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::{FrameClear, Renderer};
 use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
+use bmc_system_overlay::{OverlayViewport, ViewportShape};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
 };
 
-const DECK: (u32, u32) = (1_280, 480);
-const BMM101: (u32, u32) = (480, 320);
+const DECK: OverlayViewport = OverlayViewport {
+    width: 1_280,
+    height: 480,
+    shape: ViewportShape::Rectangular,
+};
+const BMM101: OverlayViewport = OverlayViewport {
+    width: 480,
+    height: 320,
+    shape: ViewportShape::Rectangular,
+};
 
 /// Records circle fills at absolute coordinates, and the box width
 /// every paragraph is drawn into; text measurement wraps.
@@ -409,7 +418,7 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
     // The probe's coarse text metrics shift the flow by a few pixels, so
     // assert the circle centers (not edges) against the middle: the collapsed
     // layout put them a full hundred pixels above it.
-    let middle = DECK.1 as f32 / 2.0;
+    let middle = DECK.height as f32 / 2.0;
     for (cx, cy, r) in &renderer.circles {
         assert!(
             *cy >= middle,
@@ -417,7 +426,7 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
              panel middle {middle}"
         );
         assert!(
-            cy + r <= DECK.1 as f32 + 1e-3,
+            cy + r <= DECK.height as f32 + 1e-3,
             "control circle at ({cx}, {cy}) r={r} must stay on the panel"
         );
     }

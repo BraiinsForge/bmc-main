@@ -460,7 +460,7 @@ fn render_frame(
     // The renderer was constructed against that id, so the returned value is unused.
     let _staging = scratch.begin_frame(egl, size.0, size.1);
     renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
-    overlay.render(renderer, size);
+    overlay.render(renderer, client.viewport(size));
     renderer.flush();
     scratch.blit_to(egl, target.current_fbo(), size.0, size.1);
     wait_for_gpu(egl);

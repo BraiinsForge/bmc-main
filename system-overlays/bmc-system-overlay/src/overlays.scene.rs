@@ -42,10 +42,12 @@ use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayRenderState, SettingsTrayView, StatusView, render_settings_tray,
 };
 use bmc_overlay_upgrade::{Surface, SurfaceTier, UpgradeRenderState, UpgradeView, render_upgrade};
-use bmc_platform::{HardwareProfile, Product};
+use bmc_platform::{DisplayShape, HardwareProfile, Product};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
-use bmc_system_overlay::{AccessPoint, DownloadProgress, UpgradeKind, UpgradePhase};
+use bmc_system_overlay::{
+    AccessPoint, DownloadProgress, OverlayViewport, UpgradeKind, UpgradePhase, ViewportShape,
+};
 
 scene_meta! { title: "Overlays" }
 
@@ -317,13 +319,19 @@ render_states!(
 )]
 fn settings_tray_cell(
     view: SettingsTrayView,
+    shape: ViewportShape,
     state_key: &'static LocalKey<RefCell<SettingsTrayRenderState>>,
     flat: bool,
 ) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
+        let viewport = OverlayViewport {
+            width: w as u32,
+            height: h as u32,
+            shape,
+        };
         state_key.with_borrow_mut(|state| {
-            let _ = render_settings_tray(r, (w as u32, h as u32), state, &view, Instant::now());
+            let _ = render_settings_tray(r, viewport, state, &view, Instant::now());
         });
         // Reveal and press feedback are timed off the clock it is handed, and it
         // reports taps rather than whether either is still running.
@@ -704,6 +712,10 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
     let resting = tray_view(product);
     let display = HardwareProfile::for_product(product).display;
     let size = (display.logical_width, display.logical_height);
+    let shape = match display.shape {
+        DisplayShape::Rectangular => ViewportShape::Rectangular,
+        DisplayShape::Round => ViewportShape::Round,
+    };
     let has_volume = resting.show_volume;
     let variant = |edit: fn(&mut SettingsTrayView)| {
         let mut view = tray_view(product);
@@ -847,7 +859,11 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
         let (caption, view, state) = &cards[at];
         ui.vertical(|ui| {
             ui.label(*caption);
-            ctx.custom_stage(ui, size, settings_tray_cell(view.clone(), state, flat));
+            ctx.custom_stage(
+                ui,
+                size,
+                settings_tray_cell(view.clone(), shape, state, flat),
+            );
         });
     });
 }

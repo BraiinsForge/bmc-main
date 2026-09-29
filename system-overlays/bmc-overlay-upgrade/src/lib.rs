@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TreeUi,
-    UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
+    Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, OverlayViewport, SystemOverlay,
+    TickOutcome, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -396,8 +396,8 @@ impl SystemOverlay for UpgradeOverlay {
         self.state.tick(now)
     }
 
-    fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
-        self.state.render(renderer, size);
+    fn render(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
+        self.state.render(renderer, viewport.size());
     }
 }
 

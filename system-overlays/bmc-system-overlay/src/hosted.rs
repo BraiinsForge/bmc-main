@@ -119,6 +119,12 @@ impl HostedOverlay {
         self.size
     }
 
+    /// The surface size, with the shape the overlay is seen in.
+    #[must_use]
+    pub fn viewport(&self) -> crate::overlay::OverlayViewport {
+        self.client.viewport(self.size)
+    }
+
     /// Drain Wayland events, deliver touch, and pick up surface-dirty.
     pub fn dispatch(&mut self, egl: &EglContext) -> anyhow::Result<()> {
         self.dispatch_with_target_resize(|target, client, free_before_resize, width, height| {

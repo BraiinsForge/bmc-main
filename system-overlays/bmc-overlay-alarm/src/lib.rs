@@ -35,8 +35,8 @@ use bmc_render::tree::{
     fixed_height, row, text,
 };
 use bmc_system_overlay::{
-    AlarmRequest, Anchor, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TouchEvent,
-    TreeUi,
+    AlarmRequest, Anchor, InputRegion, Layer, LayerConfig, OverlayViewport, SystemOverlay,
+    TickOutcome, TouchEvent, TreeUi,
 };
 use bmc_wasm_protocol::{
     ArcCap, ArcFill, ArcSegments, CrossAlign, Fill, PathPaint, PropsData, TRANSPARENT,
@@ -465,7 +465,7 @@ impl SystemOverlay for AlarmOverlay {
         std::mem::take(&mut self.pending)
     }
 
-    fn render(&mut self, r: &mut dyn Renderer, size: (u32, u32)) {
+    fn render(&mut self, r: &mut dyn Renderer, viewport: OverlayViewport) {
         let Some(ring) = self.ringing.as_ref() else {
             return;
         };
@@ -477,7 +477,7 @@ impl SystemOverlay for AlarmOverlay {
             snooze_allowed: ring.snooze_allowed,
         };
 
-        let output = render_alarm(r, size, &mut self.render_state, &view);
+        let output = render_alarm(r, viewport.size(), &mut self.render_state, &view);
 
         if output.stop {
             self.pending.push(AlarmRequest::Dismiss);

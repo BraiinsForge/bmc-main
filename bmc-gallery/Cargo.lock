@@ -941,6 +941,7 @@ dependencies = [
  "bmc-gpu-render-lock",
  "bmc-net-observe",
  "bmc-render",
+ "bmc-wasm-protocol",
  "bmc-widget",
  "deck-alarm-v1",
  "deck-device-info-v1",

@@ -224,21 +224,22 @@ left, not a fresh full interval.
 ## `deck_platform_v1`
 
 New for the mining-status pickaxe, and generic on purpose: it carries the subset of the hardware platform's capability
-set that system overlays consume, and since version 2 the product's display name. The values come from
-`bmc_platform::HardwareCapabilities`, which bmc also serves to browsers as `window.SYSTEM.capabilities`, so an overlay
-can gate a function on what the board supports without reading the product name itself; the name is for copy that
-addresses the user ("Your Braiins Deck is connected!"), and no client branches on it. A capability needed by an overlay
-goes here first (see the "Geometry versus capability" rule in [`README.md`](README.md)); `deck_settings_v1`'s own
-`capabilities` bitfield predates it and stays where it is because its bits describe controls the tray offers, not the
-board.
+set that system overlays consume, since version 2 the product's display name, and since version 3 the display's size and
+shape. The values come from `bmc_platform::HardwareCapabilities`, which bmc also serves to browsers as
+`window.SYSTEM.capabilities`, so an overlay can gate a function on what the board supports without reading the product
+name itself; the name is for copy that addresses the user ("Your Braiins Deck is connected!"), and no client branches on
+it. A capability needed by an overlay goes here first (see the "Geometry versus capability" rule in
+[`README.md`](README.md)); `deck_settings_v1`'s own `capabilities` bitfield predates it and stays where it is because
+its bits describe controls the tray offers, not the board.
 
-### `deck_platform_v1` (version 2)
+### `deck_platform_v1` (version 3)
 
-| Member               | Kind    | Args                                 | Notes                                                                                                                                                                                                               |
-| -------------------- | ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `destroy`            | request | —                                    | Destructor.                                                                                                                                                                                                         |
-| `capabilities(caps)` | event   | `capabilities: uint` (enum bitfield) | Emitted exactly once per resource, as the first event on bind; static for the compositor's lifetime.                                                                                                                |
-| `product_name(name)` | event   | `name: string`                       | Since v2. The product's marketing name ("Braiins Deck", "Braiins Mini Miner"). Emitted exactly once per resource, right after `capabilities`; static for the compositor's lifetime. A label for copy, never a gate. |
+| Member                               | Kind    | Args                                                | Notes                                                                                                                                                                                                               |
+| ------------------------------------ | ------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `destroy`                            | request | —                                                   | Destructor.                                                                                                                                                                                                         |
+| `capabilities(caps)`                 | event   | `capabilities: uint` (enum bitfield)                | Emitted exactly once per resource, as the first event on bind; static for the compositor's lifetime.                                                                                                                |
+| `product_name(name)`                 | event   | `name: string`                                      | Since v2. The product's marketing name ("Braiins Deck", "Braiins Mini Miner"). Emitted exactly once per resource, right after `capabilities`; static for the compositor's lifetime. A label for copy, never a gate. |
+| `display_info(width, height, shape)` | event   | `width: uint`, `height: uint`, `shape: uint` (enum) | Since v3. The panel's logical size and shape (`rectangular = 0`, `round = 1`). Emitted exactly once per resource, right after `product_name`; static for the compositor's lifetime.                                 |
 
 The `capability` bitfield is `wifi = 1`, `ethernet = 2`, `mining = 4` (the board mines, and a BOS API answers on the
 local host), `boser_managed = 8` (boser owns the device configuration). A client decodes unknown bits with
@@ -251,6 +252,7 @@ forgotten. On the client side the framework delivers the set through `SystemOver
 name through `SystemOverlay::on_platform_product_name`, both before any other protocol's events and before the first
 `tick`, gated on `uses_platform`, the same way the tray receives `SettingsCaps`. The device-info overlay is the consumer
 of the name: it addresses the user by it and picks its wording and artwork from the `wifi`, `ethernet` and `mining`
-bits.
+bits. The framework binds the protocol for every overlay and keeps `display_info` for itself: it becomes the `shape` of
+the `OverlayViewport` passed to `render`, round only for a surface that covers the whole panel.
 
 Anything else the board can tell an overlay about itself goes here as a version bump, not as a protocol of its own.

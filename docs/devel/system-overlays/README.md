@@ -28,20 +28,20 @@ in widget code"), and it holds here for the same reason. A product name in a lay
 actually about, and the next display that ships has to be added to a match arm instead of just landing in a bucket.
 
 So: sizes, thresholds and tier tables read width and height. `bmc_overlay_upgrade::SurfaceTier` is keyed that way. Round
-versus rectangular is display *shape*, part of the geometry, not a product gate.
+versus rectangular is display *shape*, part of the geometry, not a product gate: it arrives with the size, as the
+`shape` of the `OverlayViewport` the framework passes in.
 
-`Product` stays legitimate for capabilities — whether the board has a speaker, or drives its setup AP through a radio
-the overlay can speak to. Those are not readable off a screen size. The settings tray's `wifi_reconfig_supported` and
-`show_volume` are the current examples. Even they are the fallback path: the compositor sends `caps` over
-`deck_settings_v1` and the tray prefers it. A board capability outside the tray's controls goes over `deck_platform_v1`.
-Its bitfield carries the subset of `bmc_platform::HardwareCapabilities` consumed by system overlays; the corner status
-gates its mining poller on the `mining` bit and never reads the product.
+Capabilities — whether the board has a speaker, or drives its setup AP through a radio the overlay can speak to — are
+not readable off a screen size either, and an overlay does not derive them from `Product`. The compositor sends them:
+the tray's controls as `caps` over `deck_settings_v1`, and any other board capability over `deck_platform_v1`. Its
+bitfield carries the subset of `bmc_platform::HardwareCapabilities` consumed by system overlays; the corner status gates
+its mining poller on the `mining` bit and never reads the product.
 
 ### Where the numbers come from
 
-Two sources, and they are not interchangeable. `SystemOverlay::render(renderer, size)` receives the size the compositor
-configured, which is the authoritative one. `HardwareProfile::for_product(…).display` is what the platform *expects* the
-display to be.
+Two sources, and they are not interchangeable. `SystemOverlay::render(renderer, viewport)` receives the size the
+compositor configured, which is the authoritative one. `HardwareProfile::for_product(…).display` is what the platform
+*expects* the display to be.
 
 Prefer the configured size. Reach for the profile only where the configured size does not exist yet: `layer_config()` is
 read before any configure arrives, so an overlay asking for a concrete surface size has to state one up front.
@@ -49,13 +49,12 @@ read before any configure arrives, so an overlay asking for a concrete surface s
 numbers to `SurfaceTier::for_package_display`, and never consults the product again.
 
 An overlay that anchors to all four edges avoids the problem entirely by passing `size: (0, 0)` and taking whatever the
-compositor gives it. The settings tray does that in `layer_config`, and the configured size becomes the taffy root box
-in `TreeUi::render`. But it feeds a second, independent size into the same layout: `view()` stamps the construction-time
-`width`/`height` onto the view, `build_tree` reads them off `Panel`, and they pick the tier, the usable content width
-and padding, and the close button's absolute origin. `panel_height_for` — the slide travel — comes off the profile too.
-The two sources agree on every current product and are never compared, so nothing is broken today; a configure that
-disagreed would lay the content out at one size inside a root box of another. Copy the tray for the capability split
-above, not for geometry.
+compositor gives it. The settings tray does that in `layer_config`. Its layout, touch targets and slide travel all read
+the viewport the framework hands to `render`, `prewarm` and `layer_shell_offset`, and it keeps no copy, so a later
+configure lands on the next pass.
+
+The viewport's `shape` comes from the display: the compositor describes the panel once over `deck_platform_v1`
+(`display_info`), and a surface covering the whole of it is seen in its shape. A smaller surface stays rectangular.
 
 ## Run modes
 
@@ -108,7 +107,8 @@ the compositor free of a dependency into the overlay folder:
   (`deck_device_info_v1`).
 - `deck-alarm-v1` — firing-alarm ring/stop signalling and dismiss/snooze return path (`deck_alarm_v1`).
 - `deck-upgrade-v1` — one-way upgrade-progress snapshots (`deck_upgrade_v1`).
-- `deck-platform-v1` — the hardware platform's capability set and product name, sent once on bind (`deck_platform_v1`).
+- `deck-platform-v1` — the hardware platform's capability set, product name and display, sent once on bind
+  (`deck_platform_v1`).
 
 See [`protocols.md`](protocols.md) for all six.
 

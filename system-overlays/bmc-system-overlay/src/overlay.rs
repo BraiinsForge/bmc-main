@@ -21,6 +21,7 @@
 use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
+use bmc_wasm_protocol::{DisplayShape, ViewportShape};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
 
@@ -353,6 +354,57 @@ impl LayerConfig {
     }
 }
 
+/// The surface an overlay draws into, in logical pixels,
+/// and the shape it is seen in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlayViewport {
+    pub width: u32,
+    pub height: u32,
+    pub shape: ViewportShape,
+}
+
+impl OverlayViewport {
+    #[must_use]
+    pub fn rectangular((width, height): (u32, u32)) -> Self {
+        Self {
+            width,
+            height,
+            shape: ViewportShape::Rectangular,
+        }
+    }
+
+    #[must_use]
+    pub fn size(self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+}
+
+/// The panel as `deck_platform_v1.display_info` describes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlatformDisplay {
+    pub width: u32,
+    pub height: u32,
+    pub shape: DisplayShape,
+}
+
+/// A surface covering the whole display is seen in the display's shape;
+/// a smaller one sits inside the panel and stays rectangular.
+/// Until the compositor has described the display, every surface is rectangular.
+#[must_use]
+pub(crate) fn overlay_viewport(
+    size: (u32, u32),
+    display: Option<PlatformDisplay>,
+) -> OverlayViewport {
+    let covers_display = display.filter(|d| (d.width, d.height) == size);
+    OverlayViewport {
+        shape: match covers_display.map(|d| d.shape) {
+            Some(DisplayShape::Round) => ViewportShape::Round,
+            Some(DisplayShape::Rectangular) | None => ViewportShape::Rectangular,
+        },
+        ..OverlayViewport::rectangular(size)
+    }
+}
+
 #[must_use]
 pub(crate) fn resolved_configured_size(
     config_size: (u32, u32),
@@ -406,17 +458,17 @@ pub trait SystemOverlay {
     /// wake next. Must not block.
     fn tick(&mut self, now: Instant) -> TickOutcome;
 
-    /// Draw the overlay. `size` is the surface size in logical pixels. The
-    /// `&mut dyn Renderer` is valid only for this call: do not store it.
-    fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32));
+    /// Draw the overlay into `viewport`.
+    /// The `&mut dyn Renderer` is valid only for this call: do not store it.
+    fn render(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport);
 
     /// Pay one-time renderer setup costs at host startup instead of on the
     /// first reveal. The host calls this once, before the event loop, with the
     /// GL context current. Use it to register SVG icons and warm font glyphs so
     /// the first swipe-reveal does not stall.
-    /// `size` is the surface size the first render will get.
+    /// `viewport` is the one the first render will get.
     /// Default: no-op. The `&mut dyn Renderer` is valid only for this call: do not store it.
-    fn prewarm(&mut self, _renderer: &mut dyn Renderer, _size: (u32, u32)) {}
+    fn prewarm(&mut self, _renderer: &mut dyn Renderer, _viewport: OverlayViewport) {}
 
     /// Handle a touch event (only delivered when input region is not `None`).
     fn on_touch(&mut self, _event: TouchEvent) {}
@@ -458,9 +510,8 @@ pub trait SystemOverlay {
     /// on screen. Delivered before `tick`, never replayed on bind.
     fn on_report_ip(&mut self) {}
 
-    /// Whether this overlay binds the `deck_platform_v1` feed.
-    /// `false` (default) means the framework neither binds it nor delivers
-    /// platform capabilities or the product name to this overlay.
+    /// Whether this overlay is told the platform capabilities and the product name.
+    /// The framework binds `deck_platform_v1` either way, for the display.
     fn uses_platform(&self) -> bool {
         false
     }
@@ -568,10 +619,10 @@ pub trait SystemOverlay {
 
     /// Vertical surface translation in logical pixels; positive offsets move down.
     /// Applies to hosted frames, including fresh paints.
-    /// `size` is the surface size this pass renders at.
+    /// `viewport` is the one this pass renders into.
     /// Return it independently of content changes; [`Self::can_reuse_content`]
     /// determines whether the attached content can be reused. Standalone ignores it.
-    fn layer_shell_offset(&self, _now: Instant, _size: (u32, u32)) -> Option<f32> {
+    fn layer_shell_offset(&self, _now: Instant, _viewport: OverlayViewport) -> Option<f32> {
         None
     }
 
@@ -666,7 +717,7 @@ mod tests {
             TickOutcome::default()
         }
 
-        fn render(&mut self, _renderer: &mut dyn Renderer, _size: (u32, u32)) {}
+        fn render(&mut self, _renderer: &mut dyn Renderer, _viewport: OverlayViewport) {}
 
         fn uses_upgrade(&self) -> bool {
             self.enabled
@@ -771,7 +822,7 @@ mod tests {
             TickOutcome::default()
         }
 
-        fn render(&mut self, _renderer: &mut dyn Renderer, _size: (u32, u32)) {}
+        fn render(&mut self, _renderer: &mut dyn Renderer, _viewport: OverlayViewport) {}
 
         fn uses_platform(&self) -> bool {
             self.enabled
@@ -824,6 +875,36 @@ mod tests {
         assert_eq!(resolved_configured_size((420, 180), (0, 180)), (420, 180));
         assert_eq!(resolved_configured_size((420, 180), (420, 0)), (420, 180));
         assert_eq!(resolved_configured_size((0, 0), (0, 0)), (1, 1));
+    }
+
+    const ROUND_PANEL: PlatformDisplay = PlatformDisplay {
+        width: 480,
+        height: 480,
+        shape: DisplayShape::Round,
+    };
+
+    #[test]
+    fn a_surface_covering_a_round_panel_is_round() {
+        assert_eq!(
+            overlay_viewport((480, 480), Some(ROUND_PANEL)).shape,
+            ViewportShape::Round
+        );
+    }
+
+    #[test]
+    fn a_surface_smaller_than_a_round_panel_stays_rectangular() {
+        assert_eq!(
+            overlay_viewport((480, 120), Some(ROUND_PANEL)).shape,
+            ViewportShape::Rectangular
+        );
+    }
+
+    #[test]
+    fn a_surface_is_rectangular_until_the_display_is_described() {
+        assert_eq!(
+            overlay_viewport((480, 480), None),
+            OverlayViewport::rectangular((480, 480))
+        );
     }
 
     fn runnable_gate(visible: bool, mapped: bool, wants_render: bool) -> RenderGate {
