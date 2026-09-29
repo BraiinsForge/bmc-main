@@ -290,7 +290,7 @@ mod tests {
             "VSFB SLC-4E",
             "RTLS",
             &booster,
-            "Government/Top Secret",
+            "Classified",
             "N/A",
         ]));
         assert_eq!(at(SizeBucket::Bmm101, fixtures::healthy), expected);

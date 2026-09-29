@@ -58,7 +58,10 @@ pub use payload::LaunchParseError;
 mod payload {
     use bmc_wasm_sdk::{JsonDoc, parse_datetime};
 
-    use crate::model::{LaunchData, abbreviate_place, format_booster};
+    use crate::model::{
+        LaunchData, abbreviate_mission_type, abbreviate_place, abbreviate_spacecraft,
+        format_booster,
+    };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum LaunchParseError {
@@ -112,11 +115,11 @@ mod payload {
 
             let payload = doc
                 .str("/data/mission/type")
-                .unwrap_or_else(|| "N/A".into());
+                .map_or_else(|| "N/A".into(), |kind| abbreviate_mission_type(&kind));
 
             let spacecraft = doc
                 .str("/data/rocket/spacecraft_stage/0/spacecraft/name")
-                .unwrap_or_else(|| "N/A".into());
+                .map_or_else(|| "N/A".into(), |name| abbreviate_spacecraft(&name));
 
             Ok(Some(Self {
                 mission_name,

@@ -130,7 +130,8 @@ pub fn abbreviate_place(location: &str, pad: &str) -> String {
         let short_pad = pad
             .replace("Space Launch Complex ", "SLC-")
             .replace("Launch Complex ", "LC-")
-            .replace("Orbital Launch Mount ", "OLM-");
+            .replace("Orbital Launch Mount ", "OLM-")
+            .replace("Orbital Launch Pad ", "OLP-");
         fmt!("{} {}", loc, short_pad)
     }
 }
@@ -142,6 +143,52 @@ pub fn format_booster(flights: i64) -> String {
         "Flight #1".into()
     } else {
         fmt!("{flights}{TIMES} flown")
+    }
+}
+
+/// Short forms for Launch Library 2's mission types too wide for BMM101's detail column,
+/// each keyed on the word that sets its type apart; the other types fit as they are.
+const SHORT_MISSION_TYPES: [(&str, &str); 9] = [
+    ("secret", "Classified"),
+    ("rideshare", "Rideshare"),
+    ("human", "Crewed"),
+    ("robotic", "Robotic"),
+    ("planetary", "Planetary"),
+    ("lunar", "Lunar"),
+    ("materials", "Materials"),
+    ("situational awareness", "SSA"),
+    ("extension", "Extension"),
+];
+
+/// A key matches anywhere in the type, ignoring case,
+/// so a reworded type still finds its short form.
+#[must_use]
+pub fn abbreviate_mission_type(mission_type: &str) -> String {
+    let lower = mission_type.to_lowercase();
+    SHORT_MISSION_TYPES
+        .iter()
+        .find_map(|&(key, short)| lower.contains(key).then_some(short))
+        .unwrap_or(mission_type)
+        .into()
+}
+
+/// A Dragon by what tells it apart: a crew capsule's name, else its serial.
+/// Launch Library 2 prefixes both with the variant, too wide for BMM101's detail column.
+#[must_use]
+pub fn abbreviate_spacecraft(name: &str) -> String {
+    let Some(capsule) = name
+        .strip_prefix("Crew Dragon ")
+        .or_else(|| name.strip_prefix("Cargo Dragon "))
+    else {
+        return name.into();
+    };
+    let serial = capsule
+        .strip_prefix('C')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    if serial {
+        fmt!("Dragon {}", capsule)
+    } else {
+        capsule.into()
     }
 }
 
@@ -181,8 +228,65 @@ mod tests {
             abbreviate_place("Vandenberg SFB, CA, USA", "Space Launch Complex 4E"),
             "VSFB SLC-4E"
         );
+        assert_eq!(
+            abbreviate_place("SpaceX Starbase, TX, USA", "Orbital Launch Pad 2"),
+            "Starbase OLP-2"
+        );
         // An unknown location passes through; an empty pad drops the suffix.
         assert_eq!(abbreviate_place("Wallops Island", ""), "Wallops Island");
+    }
+
+    /// Every mission type Launch Library 2 lists, and what the widget reads for it.
+    const LL2_MISSION_TYPES: [(&str, &str); 22] = [
+        ("Earth Science", "Earth Science"),
+        ("Planetary Science", "Planetary"),
+        ("Astrophysics", "Astrophysics"),
+        ("Heliophysics", "Heliophysics"),
+        ("Human Exploration", "Crewed"),
+        ("Robotic Exploration", "Robotic"),
+        ("Government/Top Secret", "Classified"),
+        ("Tourism", "Tourism"),
+        ("Unknown", "Unknown"),
+        ("Communications", "Communications"),
+        ("Resupply", "Resupply"),
+        ("Suborbital", "Suborbital"),
+        ("Test Flight", "Test Flight"),
+        ("Dedicated Rideshare", "Rideshare"),
+        ("Navigation", "Navigation"),
+        ("Test Target", "Test Target"),
+        ("Lunar Exploration", "Lunar"),
+        ("Materials Science", "Materials"),
+        ("Biology", "Biology"),
+        ("Space Situational Awareness", "SSA"),
+        ("Technology", "Technology"),
+        ("Mission Extension", "Extension"),
+    ];
+
+    #[test]
+    fn only_the_ll2_mission_types_too_wide_for_their_column_are_shortened() {
+        for (ll2, reads) in LL2_MISSION_TYPES {
+            assert_eq!(abbreviate_mission_type(ll2), reads, "{ll2}");
+        }
+    }
+
+    #[test]
+    fn a_reworded_mission_type_still_finds_its_short_form() {
+        assert_eq!(
+            abbreviate_mission_type("Government / Top Secret"),
+            "Classified"
+        );
+        assert_eq!(abbreviate_mission_type("dedicated rideshare"), "Rideshare");
+        assert_eq!(abbreviate_mission_type("Human Spaceflight"), "Crewed");
+    }
+
+    #[test]
+    fn a_dragon_reads_as_its_crew_capsule_name_or_its_serial() {
+        assert_eq!(abbreviate_spacecraft("Crew Dragon Endeavour"), "Endeavour");
+        assert_eq!(abbreviate_spacecraft("Crew Dragon C205"), "Dragon C205");
+        assert_eq!(abbreviate_spacecraft("Cargo Dragon C208"), "Dragon C208");
+        for fits in ["Crew Dragon", "Cargo Dragon", "Dragon C113", "Ship 29"] {
+            assert_eq!(abbreviate_spacecraft(fits), fits);
+        }
     }
 
     #[test]

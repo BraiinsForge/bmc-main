@@ -22,7 +22,9 @@
 
 use bmc_wasm_sdk::{ViewportShape, WidgetViewport};
 
-use crate::model::{LaunchData, SizeBucket, State, abbreviate_place, format_booster};
+use crate::model::{
+    LaunchData, SizeBucket, State, abbreviate_mission_type, abbreviate_place, format_booster,
+};
 use crate::screens::ViewData;
 
 /// One state, drawn into whichever viewport it is handed.
@@ -44,7 +46,7 @@ fn recorded() -> LaunchData {
         place: abbreviate_place("Vandenberg SFB, CA, USA", "Space Launch Complex 4E"),
         landing: "RTLS".to_owned(),
         booster: format_booster(3),
-        payload: "Government/Top Secret".to_owned(),
+        payload: abbreviate_mission_type("Government/Top Secret"),
         spacecraft: "N/A".to_owned(),
     }
 }
