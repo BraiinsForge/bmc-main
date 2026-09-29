@@ -148,8 +148,9 @@ pub fn format_booster(flights: i64) -> String {
 
 /// Short forms for Launch Library 2's mission types too wide for BMM101's detail column,
 /// each keyed on the word that sets its type apart; the other types fit as they are.
-const SHORT_MISSION_TYPES: [(&str, &str); 9] = [
+const SHORT_MISSION_TYPES: [(&str, &str); 10] = [
     ("secret", "Classified"),
+    ("communications", "Comms"),
     ("rideshare", "Rideshare"),
     ("human", "Crewed"),
     ("robotic", "Robotic"),
@@ -247,7 +248,7 @@ mod tests {
         ("Government/Top Secret", "Classified"),
         ("Tourism", "Tourism"),
         ("Unknown", "Unknown"),
-        ("Communications", "Communications"),
+        ("Communications", "Comms"),
         ("Resupply", "Resupply"),
         ("Suborbital", "Suborbital"),
         ("Test Flight", "Test Flight"),

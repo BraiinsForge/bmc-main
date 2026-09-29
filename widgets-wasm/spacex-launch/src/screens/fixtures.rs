@@ -149,7 +149,7 @@ pub fn widest_values(viewport: WidgetViewport) -> ViewData {
         place: abbreviate_place("SpaceX Starbase, TX, USA", "Orbital Launch Pad 2"),
         landing: "Not confirmed".to_owned(),
         booster: format_booster(29),
-        payload: abbreviate_mission_type("Communications"),
+        payload: abbreviate_mission_type("Earth Science"),
         spacecraft: abbreviate_spacecraft("Cargo Dragon"),
     };
     view(viewport, State::Loaded(launch))
