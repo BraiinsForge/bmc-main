@@ -23,21 +23,20 @@
 
 use bmc_gallery::prelude::*;
 use spacex_launch::model::SizeBucket;
-use spacex_launch::screens::{ViewData, fixtures, launch_view};
+use spacex_launch::screens::fixtures::{self, StateFixture};
+use spacex_launch::screens::launch_view;
 
 scene_meta! { title: "Widgets / SpaceX Launch" }
 
-const BUCKETS: [(SizeBucket, &str); 4] = [
+const BUCKETS: [(SizeBucket, &str); 5] = [
     (SizeBucket::Full, "Fullscreen"),
     (SizeBucket::Large, "Large"),
     (SizeBucket::Medium, "Medium"),
     (SizeBucket::Small, "Small"),
+    (SizeBucket::Bmm101, "BMM101"),
 ];
 
 const BMM100_VIEWPORT: (u32, u32) = (320, 240);
-
-/// One state's fixture, drawn into whichever viewport it is handed.
-type StateFixture = fn(WidgetViewport) -> ViewData;
 
 const STATES: [(&str, StateFixture); 5] = [
     ("Healthy", fixtures::healthy),

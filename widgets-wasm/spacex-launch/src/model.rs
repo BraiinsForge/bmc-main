@@ -18,18 +18,19 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The frames the layouts are designed at, and the launch they draw.
+//! Which layout a viewport gets, and the launch the layouts draw.
 
 use bmc_wasm_sdk::typography::TIMES;
-use bmc_wasm_sdk::{fmt, ufmt};
+use bmc_wasm_sdk::{SizeVariant, WidgetSize, WidgetViewport, fmt, ufmt};
 
-/// The frames the layouts are designed at: the four BMC100 slots.
+/// The frames a layout is picked for: the four BMC100 slots and BMM101's 480×320.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SizeBucket {
     Full,
     Large,
     Medium,
     Small,
+    Bmm101,
 }
 
 impl SizeBucket {
@@ -40,7 +41,48 @@ impl SizeBucket {
             Self::Large => (638, 480),
             Self::Medium => (638, 238),
             Self::Small => (317, 238),
+            Self::Bmm101 => (480, 320),
         }
+    }
+}
+
+/// A rectangular viewport classified once for every layout:
+/// its pixels with their closest BMC100 variant, and the bucket that picks the layout.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    pub size: WidgetSize,
+    pub bucket: SizeBucket,
+}
+
+impl Frame {
+    #[must_use]
+    pub fn of(viewport: WidgetViewport) -> Self {
+        Self {
+            size: WidgetSize::from_dimensions(viewport.width, viewport.height),
+            bucket: size_bucket(viewport.width, viewport.height),
+        }
+    }
+}
+
+/// The two BMM frames the narrow bucket has to tell apart.
+const BMM100_HEIGHT: u32 = 240;
+const BMM101_HEIGHT: u32 = SizeBucket::Bmm101.design_size().1;
+/// Split at their midpoint, so either frame keeps its bucket a few pixels either way.
+const BMM101_MIN_HEIGHT: u32 = u32::midpoint(BMM100_HEIGHT, BMM101_HEIGHT);
+const BMM101_MAX_WIDTH: u32 = SizeBucket::Bmm101.design_size().0;
+
+/// A landscape frame no wider than BMM101 and at least as tall as the BMM split
+/// is BMM101; everything else takes the closest BMC100 variant, as the SDK does.
+#[must_use]
+pub fn size_bucket(width: u32, height: u32) -> SizeBucket {
+    if width <= BMM101_MAX_WIDTH && height < width && height >= BMM101_MIN_HEIGHT {
+        return SizeBucket::Bmm101;
+    }
+    match SizeVariant::closest(width, height) {
+        SizeVariant::Full => SizeBucket::Full,
+        SizeVariant::Large => SizeBucket::Large,
+        SizeVariant::Medium => SizeBucket::Medium,
+        SizeVariant::Small => SizeBucket::Small,
     }
 }
 
@@ -106,6 +148,28 @@ pub fn format_booster(flights: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_design_size_lands_in_its_own_bucket() {
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+            SizeBucket::Bmm101,
+        ] {
+            let (width, height) = bucket.design_size();
+            assert_eq!(size_bucket(width, height), bucket);
+        }
+    }
+
+    #[test]
+    fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
+        assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
+        assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
+        assert_eq!(size_bucket(480, 279), SizeBucket::Medium);
+        assert_eq!(size_bucket(481, 320), SizeBucket::Large);
+    }
 
     #[test]
     fn abbreviates_known_sites_and_pads() {

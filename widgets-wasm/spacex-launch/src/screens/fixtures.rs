@@ -25,6 +25,9 @@ use bmc_wasm_sdk::{ViewportShape, WidgetViewport};
 use crate::model::{LaunchData, SizeBucket, State, abbreviate_place, format_booster};
 use crate::screens::ViewData;
 
+/// One state, drawn into whichever viewport it is handed.
+pub type StateFixture = fn(WidgetViewport) -> ViewData;
+
 /// 18 June 2026, 12:11:21 UTC — when the capture fixtures were recorded.
 const NOW: i64 = 1_781_784_681;
 

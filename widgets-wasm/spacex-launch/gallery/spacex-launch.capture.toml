@@ -1,6 +1,7 @@
 # The recorded launch at every design size and on the panel without
-# a bucket of its own; each state that replaces the launch, which draws
-# alike at every size; and the launch once its net time has passed.
+# a bucket of its own; each state that replaces the launch, which the Deck
+# draws alike at every size and BMM101 in its own frame;
+# and the launch once its net time has passed.
 
 size = "1280x560"
 sheet = "sheet.png"
@@ -40,6 +41,14 @@ frames = 24
 Size = "Small"
 
 [[shot]]
+name = "healthy-bmm101"
+scene = "bmc_gallery::spacex_launch::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
 name = "healthy-bmm100"
 scene = "bmc_gallery::spacex_launch::BMM100"
 frames = 24
@@ -53,6 +62,14 @@ frames = 24
 Size = "Large"
 
 [[shot]]
+name = "loading-bmm101"
+scene = "bmc_gallery::spacex_launch::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
 name = "no-launch-large"
 scene = "bmc_gallery::spacex_launch::No Launch"
 frames = 24
@@ -61,12 +78,28 @@ frames = 24
 Size = "Large"
 
 [[shot]]
+name = "no-launch-bmm101"
+scene = "bmc_gallery::spacex_launch::No Launch"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
+
+[[shot]]
 name = "failed-large"
 scene = "bmc_gallery::spacex_launch::Failed"
 frames = 24
 
 [shot.knobs]
 Size = "Large"
+
+[[shot]]
+name = "failed-bmm101"
+scene = "bmc_gallery::spacex_launch::Failed"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"
 
 [[shot]]
 name = "launched-full"
@@ -83,3 +116,11 @@ frames = 24
 
 [shot.knobs]
 Size = "Small"
+
+[[shot]]
+name = "launched-bmm101"
+scene = "bmc_gallery::spacex_launch::Launched"
+frames = 24
+
+[shot.knobs]
+Size = "BMM101"

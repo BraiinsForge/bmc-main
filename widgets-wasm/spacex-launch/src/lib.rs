@@ -23,7 +23,7 @@
 //! SpaceX Launch widget for the WASM runtime (BDK-285).
 //!
 //! Renders the next SpaceX launch as a countdown plus mission details
-//! (full/large/medium/small). Data comes from nexus
+//! (full/large/medium/small, and BMM101's own frame). Data comes from nexus
 //! (`/api/v1/data/spacex/next-launch`), which normalizes and caches the
 //! upstream Launch Library 2 feed; the countdown is ticked locally from the
 //! device clock between refreshes.

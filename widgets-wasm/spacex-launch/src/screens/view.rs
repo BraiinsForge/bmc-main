@@ -27,8 +27,9 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::model::{LaunchData, State};
-use crate::screens::parts::{ValueLayout, detail_table, launch_info_table, rocket_panel};
+use crate::model::{Frame, LaunchData, SizeBucket, State};
+use crate::screens::bmm101;
+use crate::screens::parts::{self, detail_table, launch_info_table, rocket_panel};
 
 /// What the widget holds, the viewport it is drawn into,
 /// and the moment the countdown is counted from.
@@ -41,11 +42,12 @@ pub struct ViewData {
 
 #[must_use]
 pub fn launch_view(view: &ViewData) -> Node {
+    let frame = Frame::of(view.viewport);
+    if frame.bucket == SizeBucket::Bmm101 {
+        return bmm101::bmm101(&view.state, view.now_secs);
+    }
     match &view.state {
-        State::Loaded(data) => {
-            let size = WidgetSize::from_dimensions(view.viewport.width, view.viewport.height);
-            current_view(data, size, view.now_secs)
-        }
+        State::Loaded(data) => current_view(data, frame.size, view.now_secs),
         State::Loading => loading_view(),
         State::NoLaunch => empty_view(),
         State::Error(msg) => error_view(msg),
@@ -53,30 +55,12 @@ pub fn launch_view(view: &ViewData) -> Node {
 }
 
 /// Dispatch the loaded view by size.
-/// The countdown is computed per render, so the timer keeps ticking
-/// between nexus refreshes; once the net time passes, the status reads `Launched`.
 fn current_view(data: &LaunchData, size: WidgetSize, now_secs: i64) -> Node {
-    let remaining = data.launch_unix - now_secs;
-    let countdown = format_duration(remaining, true);
-    let status = if remaining > 0 {
-        data.status.as_str()
-    } else {
-        "Launched"
-    };
+    let (countdown, status) = parts::countdown(data, now_secs);
     match size.variant {
         SizeVariant::Full => render_full(size.height, data, &countdown, status),
-        // The large view stacks both tables and needs the height it was drawn for.
-        // A shorter viewport still classifies as Large (BMM101 at 480x320 does),
-        // and the stack then runs past the bottom edge, so anything short falls
-        // to the side-by-side view that fits a shallow frame.
-        SizeVariant::Large if size.height >= SizeVariant::Large.height() => {
-            render_large(data, &countdown, status)
-        }
-        // Narrower than the Deck slot the side-by-side view was drawn for,
-        // so its values wrap where they used to fit. Stacking each under
-        // its label spends the height this frame has spare to buy back that width.
-        SizeVariant::Large => render_medium(data, &countdown, status, ValueLayout::Stacked),
-        SizeVariant::Medium => render_medium(data, &countdown, status, ValueLayout::Inline),
+        SizeVariant::Large => render_large(data, &countdown, status),
+        SizeVariant::Medium => render_medium(data, &countdown, status),
         SizeVariant::Small => render_small(data, &countdown, status),
     }
 }
@@ -155,15 +139,8 @@ fn render_full(height: u32, data: &LaunchData, countdown: &str, status: &str) ->
                     row(
                         props!(gap: 40.0),
                         [
-                            launch_info_table(
-                                24,
-                                10.0,
-                                data,
-                                countdown,
-                                status,
-                                ValueLayout::Inline,
-                            ),
-                            detail_table(24, 10.0, data, ValueLayout::Inline),
+                            launch_info_table(24, 10.0, data, countdown, status),
+                            detail_table(24, 10.0, data),
                         ],
                     ),
                     spacer(0.3),
@@ -202,8 +179,8 @@ fn render_large(data: &LaunchData, countdown: &str, status: &str) -> Node {
             col(
                 props!(gap: 32.0),
                 [
-                    launch_info_table(18, 6.0, data, countdown, status, ValueLayout::Inline),
-                    detail_table(18, 6.0, data, ValueLayout::Inline),
+                    launch_info_table(18, 6.0, data, countdown, status),
+                    detail_table(18, 6.0, data),
                 ],
             ),
         ],
@@ -211,7 +188,7 @@ fn render_large(data: &LaunchData, countdown: &str, status: &str) -> Node {
 }
 
 /// Medium (638×238): mission in header, two tables side by side.
-fn render_medium(data: &LaunchData, countdown: &str, status: &str, layout: ValueLayout) -> Node {
+fn render_medium(data: &LaunchData, countdown: &str, status: &str) -> Node {
     col(
         props!(padding: 24.0, gap: 8.0, background: BLACK),
         [
@@ -230,8 +207,8 @@ fn render_medium(data: &LaunchData, countdown: &str, status: &str, layout: Value
             row(
                 props!(gap: 20.0),
                 [
-                    launch_info_table(16, 6.0, data, countdown, status, layout),
-                    detail_table(16, 6.0, data, layout),
+                    launch_info_table(16, 6.0, data, countdown, status),
+                    detail_table(16, 6.0, data),
                 ],
             ),
         ],
@@ -248,7 +225,7 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
                 style!(size: 20, weight: FontWeight::BOLD),
             ),
             spacer(1.0),
-            launch_info_table(20, 8.0, data, countdown, status, ValueLayout::Inline),
+            launch_info_table(20, 8.0, data, countdown, status),
         ],
     )
 }
@@ -256,37 +233,90 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::SizeBucket;
-    use crate::screens::fixtures;
+    use crate::screens::bmm101::NOT_AVAILABLE;
+    use crate::screens::fixtures::{self, StateFixture};
+    use crate::screens::tree::texts;
 
-    /// Every string the tree would draw, in tree order.
-    fn texts(node: &Node) -> Vec<String> {
-        let mut out = Vec::new();
-        collect_texts(node, &mut out);
-        out
+    fn at(bucket: SizeBucket, state: StateFixture) -> Vec<String> {
+        texts(&launch_view(&state(fixtures::at_bucket(bucket))))
     }
 
-    fn collect_texts(node: &Node, out: &mut Vec<String>) {
-        match node {
-            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
-                for child in children {
-                    collect_texts(child, out);
-                }
-            }
-            Node::Paragraph { spans, .. } => {
-                out.push(spans.iter().map(|span| span.text.as_str()).collect());
-            }
-            _ => {}
-        }
+    /// Each label followed by the value it reads, left column first.
+    fn grid(values: [&str; 8]) -> Vec<String> {
+        let labels = [
+            "Scheduled",
+            "Status",
+            "Rocket",
+            "Place",
+            "Landing",
+            "Booster",
+            "Payload",
+            "Spacecraft",
+        ];
+        labels
+            .into_iter()
+            .zip(values)
+            .flat_map(|(label, value)| [label.to_owned(), value.to_owned()])
+            .collect()
+    }
+
+    /// The header, then the hero over its caption.
+    fn bmm101_top(mission: &str) -> Vec<String> {
+        ["Space X", "Next Launch", mission, "Mission name"]
+            .map(str::to_owned)
+            .to_vec()
     }
 
     #[test]
     fn a_passed_launch_reads_launched_at_t_zero() {
-        let view = fixtures::launched(fixtures::at_bucket(SizeBucket::Small));
-        let texts = texts(&launch_view(&view));
-        assert!(
-            texts.contains(&"T-0".to_owned()) && texts.contains(&"Launched".to_owned()),
-            "{texts:?}"
+        for bucket in [SizeBucket::Small, SizeBucket::Bmm101] {
+            let texts = at(bucket, fixtures::launched);
+            assert!(
+                texts.contains(&"T-0".to_owned()) && texts.contains(&"Launched".to_owned()),
+                "{bucket:?}: {texts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bmm101_frame_reads_top_down_as_designed() {
+        let countdown = typography::unbroken("0d 20h 28m 39s");
+        let booster = fmt!("3{} flown", typography::TIMES);
+        let mut expected = bmm101_top("NROL-179");
+        expected.extend(grid([
+            &countdown,
+            "Go for Launch",
+            "Falcon 9 Block 5",
+            "VSFB SLC-4E",
+            "RTLS",
+            &booster,
+            "Government/Top Secret",
+            "N/A",
+        ]));
+        assert_eq!(at(SizeBucket::Bmm101, fixtures::healthy), expected);
+    }
+
+    #[test]
+    fn loading_draws_the_bmm101_frame_with_each_value_as_a_dash() {
+        let mut expected = bmm101_top(NOT_AVAILABLE);
+        expected.extend(grid([NOT_AVAILABLE; 8]));
+        assert_eq!(at(SizeBucket::Bmm101, fixtures::loading), expected);
+    }
+
+    #[test]
+    fn a_bmm101_failure_reads_under_the_designed_header() {
+        assert_eq!(
+            at(SizeBucket::Bmm101, fixtures::failed),
+            [
+                "Space X",
+                "Next Launch",
+                "Failed to load launch data",
+                "API request failed (503)"
+            ]
+        );
+        assert_eq!(
+            at(SizeBucket::Bmm101, fixtures::no_launch),
+            ["Space X", "Next Launch", "No upcoming launches"]
         );
     }
 }

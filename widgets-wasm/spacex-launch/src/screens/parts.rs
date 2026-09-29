@@ -32,39 +32,102 @@ const FALCON_9: Bitmap = include_bitmap!("assets/falcon-9.png");
 const FALCON_HEAVY: Bitmap = include_bitmap!("assets/falcon-heavy.png");
 const UNKNOWN_ROCKET: Bitmap = include_bitmap!("assets/unknown.png");
 
-/// How a table row spends its space on a label and its value.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ValueLayout {
-    /// Label left, value right on one line. Needs width to hold both.
-    Inline,
-    /// Value under its label. Costs a line per row and gives the value the
-    /// row's whole width, for a viewport with height to spare and none to
-    /// waste sideways.
-    Stacked,
+/// How a table sets its rows: the type of the label and of the value.
+#[derive(Clone, Copy)]
+pub(super) struct RowStyle {
+    pub(super) size: u32,
+    pub(super) line_height: f32,
+    pub(super) label_color: Color,
+    pub(super) value_color: Color,
+    pub(super) value_weight: FontWeight,
+    /// Where a value's lines sit once it wraps.
+    pub(super) value_align: TextAlign,
 }
 
-/// Single table row: gray label, bold value.
-fn table_row(label: &str, value: &str, font_size: u32, layout: ValueLayout) -> Node {
-    let label = text(
-        label,
-        style!(size: font_size, color: GRAY_30, line_height: 1.2),
-    );
-    let value = text(
-        value,
-        style!(size: font_size, weight: FontWeight::BOLD, line_height: 1.2),
-    );
-    match layout {
-        // The gap is what keeps the two apart once the value grows enough to
-        // wrap: the spacer collapses to nothing at that point, and without it
-        // the label and the value touch.
-        ValueLayout::Inline => row(props!(gap: 8.0), [label, spacer(1.0), value]),
-        ValueLayout::Stacked => col(props!(gap: 2.0), [label, value]),
+impl RowStyle {
+    /// The Deck tables: gray label, bold value.
+    const fn deck(size: u32) -> Self {
+        Self {
+            size,
+            line_height: 1.2,
+            label_color: GRAY_30,
+            value_color: GRAY_10,
+            value_weight: FontWeight::BOLD,
+            value_align: TextAlign::Left,
+        }
     }
 }
 
+/// The countdown to the net time, and the status beside it.
+/// Computed per render, so the timer keeps ticking between nexus refreshes;
+/// once the net time passes, the status reads `Launched`.
+pub(super) fn countdown(data: &LaunchData, now_secs: i64) -> (String, &str) {
+    let remaining = data.launch_unix - now_secs;
+    let status = if remaining > 0 {
+        data.status.as_str()
+    } else {
+        "Launched"
+    };
+    (format_duration(remaining, true), status)
+}
+
+fn table_row(label: &str, value: &str, style: RowStyle) -> Node {
+    let label = text(
+        label,
+        style!(size: style.size, color: style.label_color, line_height: style.line_height),
+    );
+    let value = text(
+        value,
+        style!(
+            size: style.size,
+            color: style.value_color,
+            weight: style.value_weight,
+            align: style.value_align,
+            line_height: style.line_height,
+        ),
+    );
+    // The gap is what keeps the two apart once the value grows enough to
+    // wrap: the spacer collapses to nothing at that point, and without it
+    // the label and the value touch.
+    row(props!(gap: 8.0), [label, spacer(1.0), value])
+}
+
+pub(super) const DIVIDER_THICKNESS: f32 = 1.0;
+
 /// Thin horizontal separator line.
-fn divider() -> Node {
-    col(props!(height: 1.0, background: GRAY_90), [])
+pub(super) fn divider() -> Node {
+    col(props!(height: DIVIDER_THICKNESS, background: GRAY_90), [])
+}
+
+/// The left table's rows, ruled apart: Scheduled, Status, Rocket, Place.
+pub(super) fn launch_info_rows(
+    data: &LaunchData,
+    countdown: &str,
+    status: &str,
+    style: RowStyle,
+) -> [Node; 7] {
+    [
+        table_row("Scheduled", countdown, style),
+        divider(),
+        table_row("Status", status, style),
+        divider(),
+        table_row("Rocket", &data.rocket, style),
+        divider(),
+        table_row("Place", &data.place, style),
+    ]
+}
+
+/// The right table's rows, ruled apart: Landing, Booster, Payload, Spacecraft.
+pub(super) fn detail_rows(data: &LaunchData, style: RowStyle) -> [Node; 7] {
+    [
+        table_row("Landing", &data.landing, style),
+        divider(),
+        table_row("Booster", &data.booster, style),
+        divider(),
+        table_row("Payload", &data.payload, style),
+        divider(),
+        table_row("Spacecraft", &data.spacecraft, style),
+    ]
 }
 
 /// Left table: Scheduled, Status, Rocket, Place.
@@ -74,40 +137,18 @@ pub(super) fn launch_info_table(
     data: &LaunchData,
     countdown: &str,
     status: &str,
-    layout: ValueLayout,
 ) -> Node {
     col(
         props!(gap: gap, flex: 1.0),
-        [
-            table_row("Scheduled", countdown, font_size, layout),
-            divider(),
-            table_row("Status", status, font_size, layout),
-            divider(),
-            table_row("Rocket", &data.rocket, font_size, layout),
-            divider(),
-            table_row("Place", &data.place, font_size, layout),
-        ],
+        launch_info_rows(data, countdown, status, RowStyle::deck(font_size)),
     )
 }
 
 /// Right table: Landing, Booster, Payload, Spacecraft.
-pub(super) fn detail_table(
-    font_size: u32,
-    gap: f32,
-    data: &LaunchData,
-    layout: ValueLayout,
-) -> Node {
+pub(super) fn detail_table(font_size: u32, gap: f32, data: &LaunchData) -> Node {
     col(
         props!(gap: gap, flex: 1.0),
-        [
-            table_row("Landing", &data.landing, font_size, layout),
-            divider(),
-            table_row("Booster", &data.booster, font_size, layout),
-            divider(),
-            table_row("Payload", &data.payload, font_size, layout),
-            divider(),
-            table_row("Spacecraft", &data.spacecraft, font_size, layout),
-        ],
+        detail_rows(data, RowStyle::deck(font_size)),
     )
 }
 

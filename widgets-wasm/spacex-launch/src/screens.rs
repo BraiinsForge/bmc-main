@@ -20,8 +20,42 @@
 
 //! The views, their shared parts and the fixtures that stage them.
 
+mod bmm101;
 pub mod fixtures;
 mod parts;
 mod view;
 
 pub use view::{ViewData, launch_view};
+
+#[cfg(test)]
+mod tree {
+    use bmc_wasm_sdk::{Draw, Node};
+
+    /// Every string the tree would draw, in tree order, canvas text included.
+    pub(super) fn texts(node: &Node) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_texts(node, &mut out);
+        out
+    }
+
+    fn collect_texts(node: &Node, out: &mut Vec<String>) {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                for child in children {
+                    collect_texts(child, out);
+                }
+            }
+            Node::Paragraph { spans, .. } => {
+                out.push(spans.iter().map(|span| span.text.as_str()).collect());
+            }
+            Node::Canvas { draws, .. } => {
+                for draw in draws {
+                    if let Draw::AutofitText { text, .. } = draw {
+                        out.push(text.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
