@@ -318,13 +318,14 @@ impl PoolSlot {
 /// distinct failures so a device log says *why*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderTargetProbe {
-    /// RGBA8 offscreen target allocated and framebuffer-complete.
+    /// RGBA8 offscreen target with an S8 stencil,
+    /// allocated and framebuffer-complete.
     Working,
     /// femtovg could not allocate the image at all.
     ImageAllocFailed,
     /// Image allocated but exposes no GL texture to attach.
     NoNativeTexture,
-    /// The driver refused to create a framebuffer object.
+    /// The driver refused to create a framebuffer or renderbuffer object.
     FramebufferAllocFailed,
     /// Attached, but the driver reports the framebuffer incomplete.
     FramebufferIncomplete(u32),
@@ -394,10 +395,14 @@ pub struct FemtoVgRenderer {
     /// Entries live as long as the renderer,
     /// bounded by the handful of layer sizes a layout produces.
     stencil_pool: HashMap<PhysicalSize, PoolSlot>,
-    /// Probed in [`FemtoVgRenderer::new`]. Anything but
-    /// [`RenderTargetProbe::Working`] makes `begin_static_layer` refuse, so a
-    /// driver that cannot render into an RGBA8 texture keeps drawing full
-    /// frames instead of blitting a layer it never captured.
+    /// Layers whose framebuffer came back incomplete, and the size it failed at.
+    /// `begin_static_layer` refuses a layer at that size but not at any other.
+    /// Kept apart from `static_layers`, since the refusal drops the layer's entry there.
+    incomplete_static_layers: HashMap<String, PhysicalSize>,
+    /// Probed in [`FemtoVgRenderer::new`].
+    /// Anything but [`RenderTargetProbe::Working`] makes `begin_static_layer` refuse,
+    /// so a driver that cannot render into an RGBA8 texture keeps drawing
+    /// full frames instead of blitting a layer it never captured.
     render_to_texture: RenderTargetProbe,
     /// 1x1 opaque white texture, tinted to paint solid rectangles through
     /// femtovg's texture-copy fast path. See [`FemtoVgRenderer::solid_texture`].
@@ -653,11 +658,13 @@ impl FemtoVgRenderer {
 
     /// Check whether an offscreen RGBA8 render target is usable on this driver.
     ///
-    /// Allocates a femtovg image the way a cached static layer would, attaches
-    /// its texture to a framebuffer and reports completeness. Worth probing
-    /// rather than assuming: GLES2 only guarantees RGBA4/RGB5_A1/RGB565
-    /// *renderbuffers* are colour-renderable, and RGBA8 textures need
-    /// `GL_OES_rgb8_rgba8`.
+    /// Allocates a femtovg image the way a cached static layer would,
+    /// then builds the framebuffer femtovg's `Framebuffer::new` would:
+    /// the texture plus a `STENCIL_INDEX8` renderbuffer,
+    /// which a driver can reject even when it accepts the texture alone.
+    /// Worth probing rather than assuming:
+    /// GLES2 only guarantees RGBA4/RGB5_A1/RGB565 *renderbuffers* are colour-renderable,
+    /// and RGBA8 textures need `GL_OES_rgb8_rgba8`.
     fn probe_render_to_texture(&mut self) -> RenderTargetProbe {
         const PROBE_PX: u32 = 16;
 
@@ -679,8 +686,8 @@ impl FemtoVgRenderer {
                 Ok(native) => {
                     // femtovg hands back the raw GL name; glow wants its newtype.
                     let texture = glow::NativeTexture(native.0);
-                    match self.gl.create_framebuffer() {
-                        Ok(fbo) => {
+                    match (self.gl.create_framebuffer(), self.gl.create_renderbuffer()) {
+                        (Ok(fbo), Ok(stencil)) => {
                             self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
                             self.gl.framebuffer_texture_2d(
                                 glow::FRAMEBUFFER,
@@ -689,9 +696,24 @@ impl FemtoVgRenderer {
                                 Some(texture),
                                 0,
                             );
+                            self.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(stencil));
+                            self.gl.renderbuffer_storage(
+                                glow::RENDERBUFFER,
+                                glow::STENCIL_INDEX8,
+                                PROBE_PX.cast_signed(),
+                                PROBE_PX.cast_signed(),
+                            );
+                            self.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+                            self.gl.framebuffer_renderbuffer(
+                                glow::FRAMEBUFFER,
+                                glow::STENCIL_ATTACHMENT,
+                                glow::RENDERBUFFER,
+                                Some(stencil),
+                            );
                             let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
                             self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                             self.gl.delete_framebuffer(fbo);
+                            self.gl.delete_renderbuffer(stencil);
                             let gl_error = self.gl.get_error();
                             if gl_error != glow::NO_ERROR {
                                 RenderTargetProbe::GlError(gl_error)
@@ -701,7 +723,16 @@ impl FemtoVgRenderer {
                                 RenderTargetProbe::FramebufferIncomplete(status)
                             }
                         }
-                        Err(_) => RenderTargetProbe::FramebufferAllocFailed,
+                        (fbo, stencil) => {
+                            if let Ok(fbo) = fbo {
+                                self.gl.delete_framebuffer(fbo);
+                            }
+                            if let Ok(stencil) = stencil {
+                                self.gl.delete_renderbuffer(stencil);
+                            }
+                            self.drain_gl_errors();
+                            RenderTargetProbe::FramebufferAllocFailed
+                        }
                     }
                 }
                 Err(_) => RenderTargetProbe::NoNativeTexture,
@@ -710,6 +741,27 @@ impl FemtoVgRenderer {
 
         self.canvas.delete_image(image_id);
         probe
+    }
+
+    /// Delete the bound framebuffer and its stencil renderbuffer.
+    ///
+    /// `Framebuffer::new` returns `Err` without owning either, so nothing else frees them,
+    /// and the framebuffer would keep the layer's texture alive after `delete_image`.
+    ///
+    /// # Safety
+    /// The GL context must be current,
+    /// and the framebuffer `Framebuffer::new` has just failed on still bound:
+    /// on any later retarget the bound one is femtovg's.
+    unsafe fn delete_orphaned_framebuffer(&self) {
+        unsafe {
+            let Some(fbo) = self.gl.get_parameter_framebuffer(glow::FRAMEBUFFER_BINDING) else {
+                return;
+            };
+            if let Some(stencil) = self.attached_stencil() {
+                self.gl.delete_renderbuffer(stencil);
+            }
+            self.gl.delete_framebuffer(fbo);
+        }
     }
 
     /// Discard errors an earlier call left queued, so the next check reports
@@ -880,6 +932,7 @@ impl FemtoVgRenderer {
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
             static_layers: HashMap::new(),
             stencil_pool: HashMap::new(),
+            incomplete_static_layers: HashMap::new(),
             render_to_texture: RenderTargetProbe::Working,
             solid_texture: None,
             brightness: 1.0,
@@ -890,7 +943,7 @@ impl FemtoVgRenderer {
         Ok(renderer)
     }
 
-    /// Result of the startup offscreen render-target probe.
+    /// Result of the startup render-target probe.
     pub fn render_to_texture(&self) -> RenderTargetProbe {
         self.render_to_texture
     }
@@ -2600,6 +2653,8 @@ impl Renderer for FemtoVgRenderer {
                 true
             }
         });
+        self.incomplete_static_layers
+            .retain(|key, _| !key.starts_with(prefix));
         n
     }
 
@@ -2656,12 +2711,17 @@ impl Renderer for FemtoVgRenderer {
             self.invalidate_static_layer(key);
             return false;
         };
-        let fits = self.static_layers.get(key).is_some_and(|layer| {
+        if self.incomplete_static_layers.get(key) == Some(&size) {
+            // A layer captured at another size will never be blitted again.
+            self.invalidate_static_layer(key);
+            return false;
+        }
+        let first_retarget = !self.static_layers.get(key).is_some_and(|layer| {
             layer.width == width
                 && layer.height == height
                 && (layer.dpi_scale - dpi_scale).abs() < f32::EPSILON
         });
-        if !fits {
+        if first_retarget {
             // A geometry change makes the existing texture the wrong shape.
             self.invalidate_static_layer(key);
             // FLIP_Y, not a canvas transform: femtovg's cheap
@@ -2698,12 +2758,12 @@ impl Renderer for FemtoVgRenderer {
         // already the frame's, so only the target and the clear change here.
         self.canvas.set_render_target(RenderTarget::Image(image));
 
-        // femtovg swallows a failed retarget: `set_render_target` allocates the
-        // image's framebuffer on first use and drops the error, leaving the
-        // caller's export buffer bound. The static pass would then paint over
-        // the frame, `end_static_layer` would mark the layer captured anyway,
-        // and every later blit would copy an uninitialised texture over the
-        // widget. Ask GL what is bound instead of trusting the call.
+        // femtovg reports no failed retarget,
+        // and a skipped one leaves the caller's export buffer bound.
+        // The static pass would then paint over the frame,
+        // `end_static_layer` would mark the layer captured anyway,
+        // and every later blit would copy an uninitialised texture over the widget.
+        // Ask GL what is bound instead of trusting the call.
         //
         // The flush is what makes the question answerable: `set_render_target`
         // only queues the command, so without it GL still reports the frame's
@@ -2719,6 +2779,38 @@ impl Renderer for FemtoVgRenderer {
                 "static layer retarget failed; falling back to a full pass"
             );
             self.canvas.set_render_target(RenderTarget::Screen);
+            self.invalidate_static_layer(key);
+            return false;
+        }
+        // A non-screen binding is not yet a usable one:
+        // a failing `Framebuffer::new` leaves its incomplete framebuffer bound.
+        // The probe has settled the format, so what fails here is this layer,
+        // most likely its size; it is refused at that size rather than retried every frame.
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        let status = unsafe { self.gl.check_framebuffer_status(glow::FRAMEBUFFER) };
+        if status != glow::FRAMEBUFFER_COMPLETE {
+            tracing::error!(
+                key,
+                status,
+                width,
+                height,
+                "static layer framebuffer incomplete; not caching it at this size"
+            );
+            self.incomplete_static_layers.insert(key.to_owned(), size);
+            self.canvas.set_render_target(RenderTarget::Screen);
+            // SAFETY: the context is current for the frame,
+            // and on a first retarget the framebuffer `Framebuffer::new` failed on is still bound.
+            unsafe {
+                if first_retarget {
+                    self.delete_orphaned_framebuffer();
+                }
+                // Rebind now rather than at the next flush,
+                // so raw passes before it do not draw into the incomplete framebuffer.
+                self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
+                // The failed allocation leaves its error queued,
+                // where a later `get_error` would pin it on an unrelated draw.
+                self.drain_gl_errors();
+            }
             self.invalidate_static_layer(key);
             return false;
         }
@@ -3334,28 +3426,7 @@ mod tests {
             unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
                 .expect("BUG: renderer init failed");
         bind_new_layer_framebuffer(&mut renderer, SIZE);
-        // A colour format on the depth attachment is incomplete on any GL.
-        let side = i32::try_from(SIZE).expect("BUG: the test size fits GLsizei");
-        // SAFETY: the harness context is current, with the layer's framebuffer bound.
-        unsafe {
-            let colour = harness
-                .gl
-                .create_renderbuffer()
-                .expect("BUG: create_renderbuffer failed");
-            harness
-                .gl
-                .bind_renderbuffer(glow::RENDERBUFFER, Some(colour));
-            harness
-                .gl
-                .renderbuffer_storage(glow::RENDERBUFFER, glow::RGBA8, side, side);
-            harness.gl.bind_renderbuffer(glow::RENDERBUFFER, None);
-            harness.gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::DEPTH_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(colour),
-            );
-        }
+        make_bound_framebuffer_incomplete(&harness.gl, SIZE);
 
         // SAFETY: as above.
         unsafe { renderer.share_layer_stencil(physical(SIZE, SIZE)) };
@@ -3789,6 +3860,27 @@ mod tests {
         .expect("BUG: the harness screen target must carry a stencil")
     }
 
+    /// Attach a colour format to the bound framebuffer's depth attachment,
+    /// which is incomplete on any GL.
+    fn make_bound_framebuffer_incomplete(gl: &glow::Context, size: u32) {
+        let side = i32::try_from(size).expect("BUG: the test size fits GLsizei");
+        // SAFETY: the harness context is current on this thread.
+        unsafe {
+            let colour = gl
+                .create_renderbuffer()
+                .expect("BUG: create_renderbuffer failed");
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(colour));
+            gl.renderbuffer_storage(glow::RENDERBUFFER, glow::RGBA8, side, side);
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::DEPTH_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(colour),
+            );
+        }
+    }
+
     fn physical(width: u32, height: u32) -> PhysicalSize {
         PhysicalSize::new(width, height).expect("BUG: test sizes fit a stencil")
     }
@@ -3805,6 +3897,182 @@ mod tests {
             size
         };
         size.expect("BUG: GL reported a size no stencil can have")
+    }
+
+    /// femtovg leaves an incomplete layer framebuffer bound,
+    /// so the capture must check completeness, not only that the binding left the screen.
+    #[test]
+    fn an_incomplete_layer_framebuffer_is_refused_at_that_size() {
+        const KEY: &str = "widget:static";
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let oversized = oversized_layer_width(&harness.gl);
+        renderer.begin_frame(64, 64, 1.0);
+
+        assert!(
+            !renderer.begin_static_layer(KEY, oversized, 1),
+            "an incomplete layer framebuffer must not open a capture"
+        );
+        assert_eq!(
+            unsafe { harness.gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING) },
+            fbo_id.cast_signed(),
+            "the frame's framebuffer must be bound again"
+        );
+        assert_eq!(
+            renderer.incomplete_static_layers.get(KEY),
+            Some(&physical(oversized, 1)),
+            "the failure must be remembered at its size, or every frame retries it"
+        );
+        assert!(
+            !renderer.begin_static_layer(KEY, oversized, 1),
+            "the same size must stay refused rather than retried"
+        );
+        assert!(
+            !renderer.static_layers.contains_key(KEY),
+            "a refused layer must not keep an image"
+        );
+        assert!(
+            !renderer.blit_static_layer(KEY),
+            "nothing was captured, so nothing may be blitted"
+        );
+    }
+
+    /// The failure is one layer's at one size, not the driver's,
+    /// so it must not cost other widgets or a resized one their cache.
+    #[test]
+    fn an_incomplete_layer_framebuffer_spares_other_layers_and_resizes() {
+        const KEY: &str = "widget:static";
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let oversized = oversized_layer_width(&harness.gl);
+        renderer.begin_frame(64, 64, 1.0);
+        assert!(
+            !renderer.begin_static_layer(KEY, oversized, 1),
+            "a layer past the texture limit must fail to open"
+        );
+
+        assert!(
+            renderer.begin_static_layer("widget:other", 64, 64),
+            "another widget's layer must still open"
+        );
+        renderer.end_static_layer("widget:other");
+        assert!(
+            renderer.begin_static_layer(KEY, 64, 64),
+            "a resized layer must be retried"
+        );
+        renderer.end_static_layer(KEY);
+    }
+
+    /// Refusing a layer at the size it failed at
+    /// must not strand the image it was captured into at another size.
+    #[test]
+    fn refusing_a_layer_at_its_failed_size_frees_its_other_capture() {
+        const KEY: &str = "widget:static";
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let oversized = oversized_layer_width(&harness.gl);
+        renderer.begin_frame(64, 64, 1.0);
+        assert!(
+            !renderer.begin_static_layer(KEY, oversized, 1),
+            "a layer past the texture limit must fail to open"
+        );
+        assert!(
+            renderer.begin_static_layer(KEY, 64, 64),
+            "a resized layer must be retried"
+        );
+        renderer.end_static_layer(KEY);
+
+        assert!(
+            !renderer.begin_static_layer(KEY, oversized, 1),
+            "the failed size must stay refused"
+        );
+        assert!(
+            !renderer.static_layers.contains_key(KEY),
+            "the capture at the other size must be freed"
+        );
+    }
+
+    /// Past the first retarget, the incomplete framebuffer is femtovg's
+    /// and carries the pooled stencil, so neither is the refusal's to delete.
+    #[test]
+    fn a_later_incomplete_retarget_leaves_the_pooled_stencil_alone() {
+        const KEY: &str = "widget:static";
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        let pooled = capture_layer_drawing(&mut renderer, KEY, SIZE, SIZE, |_| {
+            make_bound_framebuffer_incomplete(&harness.gl, SIZE);
+        })
+        .expect("BUG: the layer framebuffer must carry a stencil");
+
+        renderer.begin_frame(SIZE, SIZE, 1.0);
+        assert!(
+            !renderer.begin_static_layer(KEY, SIZE, SIZE),
+            "an incomplete layer framebuffer must not open a capture"
+        );
+        assert!(
+            unsafe { harness.gl.is_renderbuffer(pooled) },
+            "the refusal must not delete the stencil the pool still hands out"
+        );
+    }
+
+    /// femtovg allocates a layer texture without checking the driver's limit,
+    /// so a layer one pixel past it gets an incomplete framebuffer.
+    fn oversized_layer_width(gl: &glow::Context) -> u32 {
+        // SAFETY: the harness context is current on this thread.
+        let max = unsafe { gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE) };
+        let width = u32::try_from(max).expect("BUG: GL reports a positive texture limit") + 1;
+        assert!(
+            PhysicalSize::new(width, 1).is_some(),
+            "BUG: no layer size lies past the test driver's texture limit"
+        );
+        width
+    }
+
+    #[test]
+    fn deleting_an_orphaned_framebuffer_frees_its_stencil_renderbuffer() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+        let gl = &harness.gl;
+        let (fbo, stencil) = unsafe {
+            let fbo = gl
+                .create_framebuffer()
+                .expect("BUG: create_framebuffer failed");
+            let stencil = gl
+                .create_renderbuffer()
+                .expect("BUG: create_renderbuffer failed");
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(stencil));
+            gl.renderbuffer_storage(glow::RENDERBUFFER, glow::STENCIL_INDEX8, 4, 4);
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(stencil),
+            );
+            (fbo, stencil)
+        };
+
+        // SAFETY: the harness context is current, with a framebuffer no one owns bound.
+        unsafe { renderer.delete_orphaned_framebuffer() };
+
+        let alive = unsafe { (gl.is_framebuffer(fbo), gl.is_renderbuffer(stencil)) };
+        assert_eq!(
+            alive,
+            (false, false),
+            "both the framebuffer and its stencil must be deleted"
+        );
     }
 
     /// The gate is only safe if the probe itself is right: a false negative
