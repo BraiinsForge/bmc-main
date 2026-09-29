@@ -35,6 +35,8 @@ use bmc_wasm_runtime::{
 #[path = "common/asset_fixtures.rs"]
 mod asset_fixtures;
 mod common;
+#[path = "common/pixel_readback.rs"]
+mod pixel_readback;
 use asset_fixtures::{compiled_empty_svg, one_px_png, renderer_ptr, wat_string_literal};
 use common::headless_egl;
 
@@ -47,24 +49,6 @@ const DORMANT_MESH_TAG: &str = "dormant-mesh";
 const DORMANT_FIT_TAG: &str = "dormant-fit";
 const DORMANT_CACHE_TAG: &str = "dormant-cache";
 
-fn read_pixel(gl: &headless_egl::HeadlessGl, x: i32, y: i32) -> [u8; 4] {
-    use glow::HasContext;
-
-    let mut pixel = [0; 4];
-    // SAFETY: HeadlessGl keeps its GL context current for its lifetime.
-    unsafe {
-        gl.as_ref().read_pixels(
-            x,
-            y,
-            1,
-            1,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            glow::PixelPackData::Slice(Some(&mut pixel)),
-        );
-    }
-    pixel
-}
 const IMAGE_DECODE_COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug)]
@@ -1474,7 +1458,7 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
         RenderStatus::Ok
     );
     renderer.flush();
-    assert_eq!(read_pixel(&gl, 32, 32), [255, 0, 0, 255]);
+    assert_eq!(gl.read_pixel(32, 32), [255, 0, 0, 255]);
 
     renderer.begin_frame(64, 64, 1.0);
     assert_eq!(
@@ -1486,7 +1470,7 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
     );
     renderer.flush();
     assert_eq!(
-        read_pixel(&gl, 32, 32),
+        gl.read_pixel(32, 32),
         [0, 0, 0, 255],
         "the stale tree must not draw the second widget's bitmap"
     );
