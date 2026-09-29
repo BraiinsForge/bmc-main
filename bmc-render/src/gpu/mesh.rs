@@ -213,6 +213,35 @@ pub struct MeshDrawArgs {
     pub highlight: MeshHighlight,
 }
 
+#[cfg(test)]
+impl MeshDrawArgs {
+    /// Not dirty against itself, unlike a fixture carrying the `NaN` sentinels.
+    pub(crate) const ZERO: Self = Self {
+        transform: MeshTransform {
+            fov: 0.0,
+            distance: 0.0,
+            quat: [0.0; 4],
+            position: [0.0; 3],
+            scale: 0.0,
+        },
+        lighting: MeshLighting {
+            pitch: 0.0,
+            yaw: 0.0,
+            ambient: 0.0,
+            specular: 0.0,
+        },
+        highlight: MeshHighlight {
+            u_min: 0.0,
+            v_min: 0.0,
+            u_max: 0.0,
+            v_max: 0.0,
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        },
+    };
+}
+
 impl MeshDrawArgs {
     /// Field-by-field dirty check. Treats `NaN` either-side as "changed" so
     /// `Some(...) ↔ None` lighting / highlight transitions invalidate the
@@ -1353,8 +1382,7 @@ mod profile {
 #[cfg(target_os = "linux")]
 mod tests {
     use super::{
-        MeshDrawArgs, MeshHighlight, MeshLighting, MeshRenderer, MeshReservations, MeshTransform,
-        UploadedMesh, atlas, release_mesh_index,
+        MeshDrawArgs, MeshRenderer, MeshReservations, UploadedMesh, atlas, release_mesh_index,
     };
     use crate::renderer::{AssetSuspendResult, AssetTagState};
     use crate::test_harness::{GlHarness, create_real_buffer, create_real_texture};
@@ -1370,33 +1398,6 @@ mod tests {
         data[12..16].copy_from_slice(&offset);
         data[16..20].copy_from_slice(&offset);
         data
-    }
-
-    fn mesh_draw_args() -> MeshDrawArgs {
-        MeshDrawArgs {
-            transform: MeshTransform {
-                fov: 0.0,
-                distance: 0.0,
-                quat: [0.0; 4],
-                position: [0.0; 3],
-                scale: 0.0,
-            },
-            lighting: MeshLighting {
-                pitch: 0.0,
-                yaw: 0.0,
-                ambient: 0.0,
-                specular: 0.0,
-            },
-            highlight: MeshHighlight {
-                u_min: 0.0,
-                v_min: 0.0,
-                u_max: 0.0,
-                v_max: 0.0,
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-            },
-        }
     }
 
     #[test]
@@ -1589,7 +1590,7 @@ mod tests {
         let id = renderer
             .register_mesh(gl, "old", &mesh)
             .expect("BUG: initial registration must succeed");
-        let args = mesh_draw_args();
+        let args = MeshDrawArgs::ZERO;
         assert!(renderer.slots[0].check_and_update(id, &args));
         assert!(!renderer.slots[0].check_and_update(id, &args));
 

@@ -2128,33 +2128,6 @@ mod tests {
         }
     }
 
-    fn test_mesh_draw_args() -> MeshDrawArgs {
-        MeshDrawArgs {
-            transform: MeshTransform {
-                fov: 0.0,
-                distance: 0.0,
-                quat: [0.0; 4],
-                position: [0.0; 3],
-                scale: 1.0,
-            },
-            lighting: MeshLighting {
-                pitch: f32::NAN,
-                yaw: 0.0,
-                ambient: 0.0,
-                specular: 0.0,
-            },
-            highlight: crate::gpu::mesh::MeshHighlight {
-                u_min: f32::NAN,
-                v_min: 0.0,
-                u_max: 0.0,
-                v_max: 0.0,
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-            },
-        }
-    }
-
     #[test]
     fn render_target_resolves_asset_ids_at_each_draw_including_shadow_content() {
         let svg = SvgId::from_wire(1).expect("BUG: fixture SVG ID must be non-zero");
@@ -2195,7 +2168,7 @@ mod tests {
                 0.0,
                 false,
             );
-            target.draw_mesh(0.0, 0.0, 1.0, 1.0, 0, mesh, test_mesh_draw_args());
+            target.draw_mesh(0.0, 0.0, 1.0, 1.0, 0, mesh, MeshDrawArgs::ZERO);
         }
 
         let expected = [
