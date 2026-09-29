@@ -825,7 +825,10 @@ impl SystemOverlay for SettingsTrayOverlay {
         // refresh the activity timer; treat any in-progress touch as activity
         // so the tray never dismisses out from under a held finger. The
         // timeout counts from finger-up.
-        if self.touch_track.is_some() {
+        // A notice still waiting for its outcome counts too, mainly so the user sees
+        // a failure: closing mid-wait would hide it, and reopening resets the button.
+        // The timeout then counts from the notice clearing.
+        if self.touch_track.is_some() || self.status(now).is_some() {
             self.last_interaction = now;
         } else if now.duration_since(self.last_interaction) >= INACTIVITY_TIMEOUT {
             self.begin_dismiss();
@@ -1691,6 +1694,39 @@ mod step_tests {
         assert!(
             overlay.slide.is_dismissing(),
             "the tray still auto-dismisses once idle after the touch ends"
+        );
+    }
+
+    #[test]
+    fn a_reconfigure_awaiting_its_outcome_keeps_the_tray_up_to_show_a_failure() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
+        overlay.button = ButtonState::Pending { since: t0 };
+
+        let _ = overlay.tick(t0 + INACTIVITY_TIMEOUT + Duration::from_secs(1));
+        assert!(
+            !overlay.slide.is_dismissing(),
+            "the tray must not close while the AP may still come up"
+        );
+
+        let failed = t0 + fsm::RECONFIGURE_TIMEOUT;
+        let _ = overlay.tick(failed);
+        assert_eq!(
+            overlay.status(failed).map(|status| status.phase),
+            Some(ui::Phase::Failed)
+        );
+        assert!(
+            !overlay.slide.is_dismissing(),
+            "the failure must stay on screen"
+        );
+
+        let cleared = failed + fsm::ERROR_DISPLAY;
+        let _ = overlay.tick(cleared);
+        assert_eq!(overlay.status(cleared), None);
+        let _ = overlay.tick(failed + INACTIVITY_TIMEOUT + Duration::from_millis(1));
+        assert!(
+            overlay.slide.is_dismissing(),
+            "the inactivity window counts from the notice clearing"
         );
     }
 

@@ -300,9 +300,11 @@ because a screen-edge overlay is only shown while both revealed *and* `tick`-vis
 - **WiFi setup view** — when `on_wifi_ap` reports a non-empty setup-AP SSID, the panel replaces the station info with a
   setup badge and the AP SSID for the user to join from their phone, and hides the reconfigure button. The other
   controls stay.
-- **Reconfigure WiFi** — a hold-to-confirm button (`HOLD` = 3 s) that sends `SettingsRequest::ReconfigureWifi`; the FSM
-  advances through holding/pending/active states from the `wifi_ap` event, with a timeout and error label if setup never
-  starts.
+- **Reconfigure WiFi** — a hold-to-confirm button (`HOLD` = 5 s) that sends `SettingsRequest::ReconfigureWifi`; the FSM
+  advances through holding/pending/active states from the `wifi_ap` event, and reports a failure if setup has not
+  started within `RECONFIGURE_TIMEOUT` (30 s). bmc confirms only once the AP is up, and bringing it up takes it tens of
+  seconds, so the timeout matches its own setup-AP window. The tray stays open while a notice awaits its outcome, so the
+  user sees a failure rather than the tray closing on it; the inactivity timer counts from the notice clearing.
 
 ### Platform gating
 

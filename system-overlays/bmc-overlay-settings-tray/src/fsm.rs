@@ -29,9 +29,18 @@ use crate::ui::Phase;
 /// Hold duration to confirm a WiFi action.
 const HOLD: Duration = Duration::from_secs(5);
 /// Max wait after firing reconfigure before giving up and showing the error.
-const PENDING_TIMEOUT: Duration = Duration::from_secs(10);
+/// bmc confirms only once the setup AP is up, and it keeps trying for about 24 s:
+/// the AP activation wait polls 20 × 1 s (`ATTEMPTS_TO_ACTIVATE_AP` in bmc-net-drv),
+/// then the SSID lookup retries 4 × 1 s (`SETUP_AP_SSID_ATTEMPTS` in bmc).
+/// 30 s is bmc's own setup-AP window (`SETUP_AP_WINDOW`),
+/// so the tray gives up only after bmc has.
+/// That is the mac80211 path. The ESP32 path reflashes the module first,
+/// about 20 s more, and its button stays off until the wait covers that.
+pub(crate) const RECONFIGURE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Max wait after firing restart before giving up and showing the error.
+const RESTART_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the transient failure message stays up.
-const ERROR_DISPLAY: Duration = Duration::from_secs(3);
+pub(crate) const ERROR_DISPLAY: Duration = Duration::from_secs(3);
 
 /// Fraction of `hold` elapsed since `since`, clamped to 0..=1.
 fn hold_fraction(since: Instant, now: Instant, hold: Duration) -> f32 {
@@ -87,7 +96,7 @@ impl ButtonState {
                 }
             }
             ButtonState::Pending { since } => {
-                if now.duration_since(since) >= PENDING_TIMEOUT {
+                if now.duration_since(since) >= RECONFIGURE_TIMEOUT {
                     (
                         ButtonState::Idle {
                             error_since: Some(now),
@@ -213,7 +222,7 @@ impl RestartState {
                 }
             }
             RestartState::Pending { since } => {
-                if now.duration_since(since) >= PENDING_TIMEOUT {
+                if now.duration_since(since) >= RESTART_TIMEOUT {
                     (
                         RestartState::Cooldown { message_since: now },
                         RestartAction::None,
@@ -325,8 +334,17 @@ mod tests {
         let t0 = Instant::now();
         let mut b = ButtonState::default();
         b.tick(true, t0);
-        b.tick(true, t0 + Duration::from_secs(5));
-        b.tick(true, t0 + Duration::from_secs(15));
+        let fired = t0 + Duration::from_secs(5);
+        b.tick(true, fired);
+        b.tick(
+            true,
+            fired + RECONFIGURE_TIMEOUT.saturating_sub(Duration::from_millis(1)),
+        );
+        assert!(
+            matches!(b, ButtonState::Pending { .. }),
+            "bmc may still be bringing the AP up"
+        );
+        b.tick(true, fired + RECONFIGURE_TIMEOUT);
         assert!(matches!(
             b,
             ButtonState::Idle {
@@ -508,7 +526,7 @@ mod tests {
         let fired = t0 + Duration::from_secs(5);
         b.tick(true, fired);
         assert_eq!(b.phase(fired), Some(Phase::Pending));
-        let timed_out = t0 + Duration::from_secs(15);
+        let timed_out = fired + RECONFIGURE_TIMEOUT;
         b.tick(true, timed_out);
         assert_eq!(b.phase(timed_out), Some(Phase::Failed));
         b.on_wifi_ap(true);
