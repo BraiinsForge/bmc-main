@@ -464,9 +464,9 @@ describe('cancelling an edit', () => {
             size: pb.WidgetSize.SMALL,
             config: pb.create(pb.WidgetConfigSchema, {
                 widgetUid: resizable.uid,
-                params: pb.create(pb.WidgetDataStructSchema, {
+                params: pb.create(pb.FieldValuesSchema, {
                     fields: {
-                        count: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: 7 } }),
+                        count: pb.create(pb.FieldValueSchema, { kind: { case: 'integerValue', value: 7 } }),
                     },
                 }),
             }),

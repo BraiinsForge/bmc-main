@@ -26,7 +26,6 @@ package braiins.bmc.web;
 import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
 import "web/field_schema.proto";
-import "web/widget_data.proto";
 
 message Scene {
   string id = 1;
@@ -106,7 +105,7 @@ message CredentialBindings {
 
 message WidgetConfig {
   string widget_uid = 1;
-  WidgetDataStruct params = 2;
+  FieldValues params = 2;
   CredentialBindings credential_bindings = 3;
 }
 
@@ -131,7 +130,7 @@ message UpdateWidgetRequest {
   string scene_id = 2;
   WidgetPosition position = 3;
   WidgetSize size = 4;
-  WidgetDataStruct params = 5;
+  FieldValues params = 5;
   // Absent keeps the stored bindings, so a caller that rebuilds this request
   // from a cached widget cannot unbind an account it never knew about.
   CredentialBindings credential_bindings = 6;

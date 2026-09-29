@@ -357,7 +357,7 @@ struct ParsedUpdateWidgetShape {
     proto_position: web::WidgetPosition,
     position: scene::WidgetPosition,
     placement: scene::WidgetPlacement,
-    params: Option<web::WidgetDataStruct>,
+    params: Option<web::FieldValues>,
     /// Unlike `params`, `None` here keeps the stored bindings rather than clearing them.
     credential_bindings: Option<web::CredentialBindings>,
 }
@@ -685,8 +685,8 @@ impl SceneManagementService {
 
 fn params_to_widget_data_struct(
     params: &BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-) -> web::WidgetDataStruct {
-    web::WidgetDataStruct {
+) -> web::FieldValues {
+    web::FieldValues {
         fields: params
             .iter()
             .map(|(k, v)| (k.as_str().to_owned(), param_value_to_wire(v)))
@@ -694,9 +694,9 @@ fn params_to_widget_data_struct(
     }
 }
 
-fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::WidgetDataValue {
+fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::FieldValue {
     use bmc_widget_manifest::ParamValue as PV;
-    use web::widget_data_value::Kind as VK;
+    use web::field_value::Kind as VK;
     let arm = match v {
         PV::Null => VK::NullValue(()),
         PV::Boolean(b) => VK::BooleanValue(*b),
@@ -704,7 +704,7 @@ fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::WidgetDataVa
         PV::Double(d) => VK::DoubleValue(*d),
         PV::String(s) => VK::StringValue(s.clone()),
     };
-    web::WidgetDataValue { kind: Some(arm) }
+    web::FieldValue { kind: Some(arm) }
 }
 
 pub(crate) fn param_definition_to_proto(
@@ -920,14 +920,14 @@ pub(crate) enum ValidateMode {
     clippy::needless_pass_by_value,
     reason = "enum is cheap; by-value keeps call-site ergonomic"
 )]
-/// Validate a `WidgetDataStruct` against the manifest and project it onto
+/// Validate `FieldValues` against the manifest and project them onto
 /// a typed `BTreeMap<ParamKey, ParamValue>`. On `Add`, manifest keys missing
 /// from `params` are seeded with the manifest's default (or `Null` for
 /// optional params without a default). On `Update`, missing keys are
 /// reported as violations. Unknown override keys are also reported.
 pub(crate) fn validate_widget_params(
     manifest: &bmc_widget_manifest::Manifest,
-    params: &web::WidgetDataStruct,
+    params: &web::FieldValues,
     mode: ValidateMode,
 ) -> Result<BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>, FieldViolations>
 {
@@ -950,12 +950,12 @@ pub(crate) fn validate_widget_params(
 }
 
 fn param_value_from_wire(
-    value: &web::WidgetDataValue,
+    value: &web::FieldValue,
 ) -> Result<bmc_widget_manifest::ParamValue, String> {
     use bmc_widget_manifest::ParamValue as PV;
-    use web::widget_data_value::Kind as VK;
+    use web::field_value::Kind as VK;
     match &value.kind {
-        None => Err("WidgetDataValue.kind unset".to_owned()),
+        None => Err("FieldValue.kind unset".to_owned()),
         Some(VK::NullValue(())) => Ok(PV::Null),
         Some(VK::BooleanValue(b)) => Ok(PV::Boolean(*b)),
         Some(VK::IntegerValue(i)) => Ok(PV::Integer(*i)),
@@ -1829,12 +1829,9 @@ mod tests {
             }),
             false,
         );
-        let resolved = validate_widget_params(
-            &manifest,
-            &web::WidgetDataStruct::default(),
-            ValidateMode::Add,
-        )
-        .expect("BUG: defaults-only must validate");
+        let resolved =
+            validate_widget_params(&manifest, &web::FieldValues::default(), ValidateMode::Add)
+                .expect("BUG: defaults-only must validate");
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved.get("name"), Some(&PV::String("hello".into())));
     }
@@ -1851,12 +1848,9 @@ mod tests {
             }),
             true,
         );
-        let resolved = validate_widget_params(
-            &manifest,
-            &web::WidgetDataStruct::default(),
-            ValidateMode::Add,
-        )
-        .expect("BUG: defaults-only must validate");
+        let resolved =
+            validate_widget_params(&manifest, &web::FieldValues::default(), ValidateMode::Add)
+                .expect("BUG: defaults-only must validate");
         assert_eq!(resolved.get("name"), Some(&PV::Null));
     }
 
@@ -1872,7 +1866,7 @@ mod tests {
             }),
             false,
         );
-        let mut overrides = web::WidgetDataStruct::default();
+        let mut overrides = web::FieldValues::default();
         overrides
             .fields
             .insert("name".to_owned(), wdv_string("world"));
@@ -1931,12 +1925,9 @@ mod tests {
                 false,
             ),
         ]);
-        let resolved = validate_widget_params(
-            &manifest,
-            &web::WidgetDataStruct::default(),
-            ValidateMode::Add,
-        )
-        .expect("BUG: defaults-only must validate");
+        let resolved =
+            validate_widget_params(&manifest, &web::FieldValues::default(), ValidateMode::Add)
+                .expect("BUG: defaults-only must validate");
         assert_eq!(resolved.len(), 5);
         assert_eq!(resolved.get("s"), Some(&PV::String("x".into())));
         assert_eq!(resolved.get("i"), Some(&PV::Integer(7)));
@@ -1948,7 +1939,7 @@ mod tests {
     #[test]
     fn params_to_widget_data_struct_round_trips_each_arm() {
         use bmc_widget_manifest::{ParamKey, ParamValue as PV};
-        use web::widget_data_value::Kind as VK;
+        use web::field_value::Kind as VK;
         let key = |k: &str| ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
 
         let map: BTreeMap<ParamKey, PV> = [
@@ -1972,33 +1963,33 @@ mod tests {
         assert!(matches!(wire.fields["n"].kind, Some(VK::NullValue(()))));
     }
 
-    fn wdv_string(s: &str) -> web::WidgetDataValue {
-        web::WidgetDataValue {
-            kind: Some(web::widget_data_value::Kind::StringValue(s.to_owned())),
+    fn wdv_string(s: &str) -> web::FieldValue {
+        web::FieldValue {
+            kind: Some(web::field_value::Kind::StringValue(s.to_owned())),
         }
     }
-    fn wdv_integer(i: i32) -> web::WidgetDataValue {
-        web::WidgetDataValue {
-            kind: Some(web::widget_data_value::Kind::IntegerValue(i)),
+    fn wdv_integer(i: i32) -> web::FieldValue {
+        web::FieldValue {
+            kind: Some(web::field_value::Kind::IntegerValue(i)),
         }
     }
-    fn wdv_double(d: f64) -> web::WidgetDataValue {
-        web::WidgetDataValue {
-            kind: Some(web::widget_data_value::Kind::DoubleValue(d)),
+    fn wdv_double(d: f64) -> web::FieldValue {
+        web::FieldValue {
+            kind: Some(web::field_value::Kind::DoubleValue(d)),
         }
     }
-    fn wdv_boolean(b: bool) -> web::WidgetDataValue {
-        web::WidgetDataValue {
-            kind: Some(web::widget_data_value::Kind::BooleanValue(b)),
+    fn wdv_boolean(b: bool) -> web::FieldValue {
+        web::FieldValue {
+            kind: Some(web::field_value::Kind::BooleanValue(b)),
         }
     }
-    fn wdv_null() -> web::WidgetDataValue {
-        web::WidgetDataValue {
-            kind: Some(web::widget_data_value::Kind::NullValue(())),
+    fn wdv_null() -> web::FieldValue {
+        web::FieldValue {
+            kind: Some(web::field_value::Kind::NullValue(())),
         }
     }
-    fn wdv_unset_kind() -> web::WidgetDataValue {
-        web::WidgetDataValue { kind: None }
+    fn wdv_unset_kind() -> web::FieldValue {
+        web::FieldValue { kind: None }
     }
 
     fn single_param_manifest(
@@ -2083,8 +2074,8 @@ mod tests {
         }
     }
 
-    fn fields_one(key: &str, value: web::WidgetDataValue) -> web::WidgetDataStruct {
-        web::WidgetDataStruct {
+    fn fields_one(key: &str, value: web::FieldValue) -> web::FieldValues {
+        web::FieldValues {
             fields: [(key.to_owned(), value)].into_iter().collect(),
         }
     }
@@ -2351,7 +2342,7 @@ mod tests {
 
     fn violation_count(
         manifest: &bmc_widget_manifest::Manifest,
-        params: &web::WidgetDataStruct,
+        params: &web::FieldValues,
         mode: ValidateMode,
     ) -> usize {
         match validate_widget_params(manifest, params, mode) {
@@ -2625,7 +2616,7 @@ mod tests {
             }),
             false,
         );
-        let params = web::WidgetDataStruct {
+        let params = web::FieldValues {
             fields: std::collections::HashMap::new(),
         };
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Update), 1);
@@ -2640,7 +2631,7 @@ mod tests {
             }),
             false,
         );
-        let params = web::WidgetDataStruct {
+        let params = web::FieldValues {
             fields: std::collections::HashMap::new(),
         };
         assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
@@ -2673,7 +2664,7 @@ mod tests {
                 false,
             ),
         ]);
-        let params = web::WidgetDataStruct {
+        let params = web::FieldValues {
             fields: [
                 ("n".to_owned(), wdv_integer(99)),
                 ("color".to_owned(), wdv_string("blue")),
@@ -2949,7 +2940,7 @@ mod tests {
     #[test]
     fn scene_to_proto_emits_typed_params_directly() {
         use bmc_widget_manifest::{ParamKey, ParamValue as PV};
-        use web::widget_data_value::Kind as VK;
+        use web::field_value::Kind as VK;
 
         let widget_uid = uuid::Uuid::new_v4();
         let key = ParamKey::try_new("x".to_owned()).expect("BUG: valid key");
@@ -2966,7 +2957,7 @@ mod tests {
     #[test]
     fn scene_to_proto_emits_each_param_value_arm() {
         use bmc_widget_manifest::{ParamKey, ParamValue as PV};
-        use web::widget_data_value::Kind as VK;
+        use web::field_value::Kind as VK;
 
         let widget_uid = uuid::Uuid::new_v4();
         let key = |k: &str| ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
@@ -3359,7 +3350,7 @@ mod tests {
 
     fn first_violation_desc(
         manifest: &bmc_widget_manifest::Manifest,
-        params: &web::WidgetDataStruct,
+        params: &web::FieldValues,
     ) -> String {
         let violations = validate_widget_params(manifest, params, ValidateMode::Add)
             .expect_err("BUG: expected at least one violation");
@@ -4079,7 +4070,7 @@ mod tests {
             size: web::WidgetSize::Small.into(),
             config: Some(web::WidgetConfig {
                 widget_uid: fixture.widget_uid.to_string(),
-                params: Some(web::WidgetDataStruct::default()),
+                params: Some(web::FieldValues::default()),
                 credential_bindings: Some(web::CredentialBindings::default()),
             }),
         }
@@ -4091,7 +4082,7 @@ mod tests {
         web::AddFullscreenSceneRequest {
             config: Some(web::WidgetConfig {
                 widget_uid: fixture.widget_uid.to_string(),
-                params: Some(web::WidgetDataStruct::default()),
+                params: Some(web::FieldValues::default()),
                 credential_bindings: Some(web::CredentialBindings::default()),
             }),
         }

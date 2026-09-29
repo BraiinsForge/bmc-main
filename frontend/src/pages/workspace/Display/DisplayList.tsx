@@ -367,7 +367,7 @@ class View extends Component<Props, State> {
                     {
                         config: {
                             widgetUid: manifest.uid,
-                            params: pb.create(pb.WidgetDataStructSchema, { fields: {} }),
+                            params: pb.create(pb.FieldValuesSchema, { fields: {} }),
                         },
                     },
                     options,
@@ -464,7 +464,7 @@ class View extends Component<Props, State> {
         }
 
         if (!manifest || !widgetID || !sceneID) return DialogCloseResult.Closed;
-        const built = fn.buildWidgetDataStruct(manifest, originalParams);
+        const built = fn.buildFieldValues(manifest, originalParams);
         if (!built.ok) return DialogCloseResult.Closed;
         const credentialBindings = this.#credentialBindingsFor('cancel');
         try {
@@ -550,7 +550,7 @@ class View extends Component<Props, State> {
         const { manifestForm } = this.state;
         const { manifest, sceneID, widgetID, params } = manifestForm;
         if (!manifest || !widgetID) return;
-        const built = fn.buildWidgetDataStruct(manifest, params);
+        const built = fn.buildFieldValues(manifest, params);
         if (!built.ok) {
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
             return;
@@ -634,7 +634,7 @@ class View extends Component<Props, State> {
             return;
         }
 
-        const built = fn.buildWidgetDataStruct(manifest, params);
+        const built = fn.buildFieldValues(manifest, params);
         if (!built.ok) {
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
             return;

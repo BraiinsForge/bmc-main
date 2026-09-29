@@ -35,7 +35,7 @@ import {
     defaultFormifiedValue,
     widgetParamsToFormifiedState,
     parseFormifiedValue,
-    buildWidgetDataStruct,
+    buildFieldValues,
     credentialBindingsValid,
     credentialBindingsFor,
     withoutDeletedAccounts,
@@ -45,7 +45,7 @@ import { Code, ConnectError } from '@connectrpc/connect';
 import { fakeIntlProp } from '@/mocks/intl';
 import { paramDef } from './test-helpers';
 
-const emptyParams = pb.create(pb.WidgetDataStructSchema, { fields: {} });
+const emptyParams = pb.create(pb.FieldValuesSchema, { fields: {} });
 
 const testOneInp: pb.Widget[] = [
     {
@@ -875,9 +875,9 @@ describe('widgetParamsToFormifiedState', () => {
     });
 
     test('integer value from BE → string', () => {
-        const struct = pb.create(pb.WidgetDataStructSchema, {
+        const struct = pb.create(pb.FieldValuesSchema, {
             fields: {
-                count: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: 7 } }),
+                count: pb.create(pb.FieldValueSchema, { kind: { case: 'integerValue', value: 7 } }),
             },
         });
         const r = widgetParamsToFormifiedState(manifest, struct);
@@ -885,9 +885,9 @@ describe('widgetParamsToFormifiedState', () => {
     });
 
     test('null value from BE → null', () => {
-        const struct = pb.create(pb.WidgetDataStructSchema, {
+        const struct = pb.create(pb.FieldValuesSchema, {
             fields: {
-                tz: pb.create(pb.WidgetDataValueSchema, {
+                tz: pb.create(pb.FieldValueSchema, {
                     kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
                 }),
             },
@@ -897,9 +897,9 @@ describe('widgetParamsToFormifiedState', () => {
     });
 
     test('null value from BE for boolean → false', () => {
-        const struct = pb.create(pb.WidgetDataStructSchema, {
+        const struct = pb.create(pb.FieldValuesSchema, {
             fields: {
-                enabled: pb.create(pb.WidgetDataValueSchema, {
+                enabled: pb.create(pb.FieldValueSchema, {
                     kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
                 }),
             },
@@ -909,9 +909,9 @@ describe('widgetParamsToFormifiedState', () => {
     });
 
     test('unknown keys are not surfaced', () => {
-        const struct = pb.create(pb.WidgetDataStructSchema, {
+        const struct = pb.create(pb.FieldValuesSchema, {
             fields: {
-                ghost: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: 'x' } }),
+                ghost: pb.create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: 'x' } }),
             },
         });
         const r = widgetParamsToFormifiedState(manifest, struct);
@@ -919,7 +919,7 @@ describe('widgetParamsToFormifiedState', () => {
     });
 });
 
-describe('buildWidgetDataStruct', () => {
+describe('buildFieldValues', () => {
     const manifest = pb.create(pb.WidgetManifestSchema, {
         uid: 'w',
         name: 'W',
@@ -932,7 +932,7 @@ describe('buildWidgetDataStruct', () => {
     });
 
     test('all valid → ok with struct', () => {
-        const r = buildWidgetDataStruct(manifest, { name: 'a', count: '3', enabled: true });
+        const r = buildFieldValues(manifest, { name: 'a', count: '3', enabled: true });
         expect(r.ok).toBe(true);
         if (r.ok) {
             expect(r.value.fields.name.kind).toEqual({ case: 'stringValue', value: 'a' });
@@ -942,7 +942,7 @@ describe('buildWidgetDataStruct', () => {
     });
 
     test('one bad field → ok=false with error in fields[key]', () => {
-        const r = buildWidgetDataStruct(manifest, { name: 'a', count: 'abc', enabled: true });
+        const r = buildFieldValues(manifest, { name: 'a', count: 'abc', enabled: true });
         expect(r.ok).toBe(false);
         if (!r.ok) {
             expect(r.errors.fields.count).toBeTruthy();
@@ -951,7 +951,7 @@ describe('buildWidgetDataStruct', () => {
     });
 
     test('missing required → error', () => {
-        const r = buildWidgetDataStruct(manifest, { count: '1', enabled: false });
+        const r = buildFieldValues(manifest, { count: '1', enabled: false });
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.fields.name).toBeTruthy();
     });

@@ -359,24 +359,24 @@ export function revalidateField(
     return { ...base, fields: { ...base.fields, [def.key]: [r.error] } };
 }
 
-export type ParseResult = { ok: true; value: pb.WidgetDataValue } | { ok: false; error: string };
+export type ParseResult = { ok: true; value: pb.FieldValue } | { ok: false; error: string };
 
-function nullValue(): pb.WidgetDataValue {
-    return pb.create(pb.WidgetDataValueSchema, {
+function nullValue(): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, {
         kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
     });
 }
-function stringValue(v: string): pb.WidgetDataValue {
-    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: v } });
+function stringValue(v: string): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: v } });
 }
-function integerValue(n: number): pb.WidgetDataValue {
-    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: n } });
+function integerValue(n: number): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, { kind: { case: 'integerValue', value: n } });
 }
-function doubleValue(n: number): pb.WidgetDataValue {
-    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'doubleValue', value: n } });
+function doubleValue(n: number): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, { kind: { case: 'doubleValue', value: n } });
 }
-function booleanValue(b: boolean): pb.WidgetDataValue {
-    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'booleanValue', value: b } });
+function booleanValue(b: boolean): pb.FieldValue {
+    return pb.create(pb.FieldValueSchema, { kind: { case: 'booleanValue', value: b } });
 }
 
 export function defaultFormifiedValue(def: pb.ManifestParamDefinition): FormifiedValue {
@@ -398,7 +398,7 @@ export function defaultFormifiedValue(def: pb.ManifestParamDefinition): Formifie
     }
 }
 
-function readWireAsFormified(def: pb.ManifestParamDefinition, v: pb.WidgetDataValue): FormifiedValue {
+function readWireAsFormified(def: pb.ManifestParamDefinition, v: pb.FieldValue): FormifiedValue {
     if (v.kind.case === 'nullValue') {
         return def.kind.case === 'paramBoolean' ? false : null;
     }
@@ -419,7 +419,7 @@ function readWireAsFormified(def: pb.ManifestParamDefinition, v: pb.WidgetDataVa
 
 export function widgetParamsToFormifiedState(
     manifest: pb.WidgetManifest,
-    params: pb.WidgetDataStruct | undefined,
+    params: pb.FieldValues | undefined,
 ): FormifiedParams {
     const out: FormifiedParams = {};
     for (const def of manifest.params) {
@@ -476,11 +476,11 @@ export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: Formif
     }
 }
 
-export function buildWidgetDataStruct(
+export function buildFieldValues(
     manifest: pb.WidgetManifest,
     params: FormifiedParams,
-): { ok: true; value: pb.WidgetDataStruct } | { ok: false; errors: ParamsFormErrors } {
-    const fields: Record<string, pb.WidgetDataValue> = {};
+): { ok: true; value: pb.FieldValues } | { ok: false; errors: ParamsFormErrors } {
+    const fields: Record<string, pb.FieldValue> = {};
     const fieldErrors: pb.FieldBasedErrors<FormifiedParams> = {};
     let hasError = false;
     for (const def of manifest.params) {
@@ -494,7 +494,7 @@ export function buildWidgetDataStruct(
         }
     }
     if (hasError) return { ok: false, errors: { global: [], fields: fieldErrors } };
-    return { ok: true, value: pb.create(pb.WidgetDataStructSchema, { fields }) };
+    return { ok: true, value: pb.create(pb.FieldValuesSchema, { fields }) };
 }
 
 // A binding whose account is *gone* never arrives — `effective_bindings` drops it server-side.

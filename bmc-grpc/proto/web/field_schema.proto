@@ -23,6 +23,8 @@ syntax = "proto3";
 
 package braiins.bmc.web;
 
+import "google/protobuf/empty.proto";
+
 // Shared schema-driven form field vocabulary — the wire mirror of the Rust `bmc-field-schema` crate.
 // Reused by every schema that wants the same declarative form rendering: widget manifest params and
 // credential-type fields.
@@ -35,7 +37,7 @@ package braiins.bmc.web;
 //   is_optional=true  + default_value present: optional, default-on-add
 //   is_optional=true  + default_value absent:  optional, null-on-add
 //
-// On the wire WidgetDataValue.null_value is only legal for is_optional=true.
+// On the wire FieldValue.null_value is only legal for is_optional=true.
 message ManifestParamDefinition {
   string key = 1;
   string name = 2;
@@ -102,4 +104,19 @@ message ParamBoolean {
 
 message ParamTimezone {
   optional string default_value = 1;
+}
+
+// A value for a field declared by a ManifestParamDefinition.
+message FieldValue {
+  oneof kind {
+    google.protobuf.Empty null_value = 1;
+    bool boolean_value = 2;
+    int32 integer_value = 3;
+    double double_value = 4;
+    string string_value = 5;
+  }
+}
+
+message FieldValues {
+  map<string, FieldValue> fields = 1;
 }
