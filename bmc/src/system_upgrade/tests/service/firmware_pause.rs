@@ -183,6 +183,24 @@ async fn a_dead_widget_listener_fails_the_run_before_downloading() {
     assert_eq!(lab.image.requests(), 0);
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_stop_that_never_completes_fails_the_run_in_time() {
+    let lab = self_managed(StopBehaviour::Held).await;
+    let run = lab.start_firmware_upgrade().await;
+    lab.widgets.wait_for_calls(&[Call::Stop]).await;
+
+    tokio::time::advance(WIDGET_PAUSE_TIMEOUT).await;
+
+    let last = tokio::time::timeout(Duration::from_secs(5), drain(run))
+        .await
+        .expect("a run stuck at starting must fail visibly, not hold the run gate until a restart");
+    assert_eq!(
+        last,
+        Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed))
+    );
+    assert_eq!(lab.image.requests(), 0);
+}
+
 #[tokio::test]
 async fn a_run_whose_pause_another_generation_took_over_fails_before_downloading() {
     let lab = self_managed(StopBehaviour::Held).await;

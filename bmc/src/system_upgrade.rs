@@ -70,6 +70,10 @@ const AUTOUPGRADE_RETRY_DELAY_COEFF: u32 = 2;
 /// events; without it every written chunk becomes an event on the run
 /// channel and the gRPC-web stream.
 const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
+/// Well above the 10 s each widget gets to exit; a stop that hangs on
+/// a deactivation receipt or behind a restart then fails the run visibly
+/// instead of holding the run gate until the BMC application restarts.
+const WIDGET_PAUSE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// No overall request timeout: it serves the long firmware image download,
 /// which is instead guarded by a per-chunk idle timeout in the downloader.
@@ -168,20 +172,33 @@ async fn await_widget_pause(
     widget_pause: &mut widget_pause::Acknowledgement,
     generation: UpgradeGeneration,
 ) -> Result<(), SystemUpgradeError> {
-    let Ok(paused) = widget_pause
-        .wait_for(|paused| paused.is_some_and(|paused| paused >= generation))
-        .await
-    else {
-        error!(
-            ?generation,
-            "BUG: the widget pause listener is gone; refusing to download firmware next to running widgets"
-        );
-        return Err(SystemUpgradeError::UpgradeFailed);
+    let paused = match tokio::time::timeout(
+        WIDGET_PAUSE_TIMEOUT,
+        widget_pause.wait_for(|paused| paused.is_some_and(|paused| paused >= generation)),
+    )
+    .await
+    {
+        Ok(Ok(paused)) => *paused,
+        Ok(Err(_)) => {
+            error!(
+                ?generation,
+                "BUG: the widget pause listener is gone; refusing to download firmware next to running widgets"
+            );
+            return Err(SystemUpgradeError::UpgradeFailed);
+        }
+        Err(_) => {
+            error!(
+                ?generation,
+                timeout = ?WIDGET_PAUSE_TIMEOUT,
+                "widgets did not stop in time; refusing to download firmware next to them"
+            );
+            return Err(SystemUpgradeError::UpgradeFailed);
+        }
     };
-    if *paused != Some(generation) {
+    if paused != Some(generation) {
         error!(
             ?generation,
-            paused = ?*paused,
+            ?paused,
             "BUG: another firmware run took over the widget pause; refusing to download beside it"
         );
         return Err(SystemUpgradeError::UpgradeFailed);
