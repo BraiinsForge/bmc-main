@@ -1,0 +1,59 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  instances: [
+    {
+      device: "spacex-launch",
+      label: "Healthy Nexus next launch",
+      port: 20600,
+    },
+    {
+      device: "spacex-launch",
+      label: "Warming up — 503 until a minute in",
+      port: 20601,
+      params: { warmup_secs: 60 },
+    },
+    {
+      device: "spacex-launch",
+      label: "Initial hard failure",
+      port: 20602,
+      params: { status: 503 },
+    },
+    {
+      device: "spacex-launch",
+      label: "Nexus goes down a minute in — the launch stays",
+      port: 20603,
+      params: { status: 503, fail_after_secs: 60 },
+    },
+    {
+      device: "spacex-launch",
+      label: "Launching in 90 seconds",
+      port: 20604,
+      params: { launch_in_secs: 90 },
+    },
+    {
+      device: "spacex-launch",
+      label: "Starship from Starbase — a long mission, the pad and a ship",
+      port: 20605,
+      params: { launch: "starship" },
+    },
+    {
+      device: "spacex-launch",
+      label: "Crew Dragon from Kennedy — a named capsule",
+      port: 20606,
+      params: { launch: "crew-dragon" },
+    },
+    {
+      device: "spacex-launch",
+      label: "Rideshare — a two-line mission, landing not confirmed",
+      port: 20607,
+      params: { launch: "rideshare" },
+    },
+    {
+      device: "spacex-launch",
+      label: "Launched a minute ago",
+      port: 20608,
+      params: { launch_in_secs: -60 },
+    },
+  ],
+}

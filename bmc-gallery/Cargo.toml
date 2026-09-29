@@ -109,6 +109,7 @@ formula-1 = { path = "../widgets-wasm/formula-1" }
 halving-countdown = { path = "../widgets-wasm/halving-countdown" }
 miner-info = { path = "../widgets-wasm/lib/miner-info" }
 prices = { path = "../widgets-wasm/lib/prices" }
+spacex-launch = { path = "../widgets-wasm/spacex-launch" }
 ticker-list = { path = "../widgets-wasm/ticker-list", features = ["scene"] }
 ticker-single = { path = "../widgets-wasm/ticker-single", features = ["scene"] }
 weather = { path = "../widgets-wasm/weather" }
@@ -150,6 +151,7 @@ ignored = [
     "halving-countdown",
     "miner-info",
     "prices",
+    "spacex-launch",
     "ticker-single",
     "ticker-list",
     "weather",
