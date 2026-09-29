@@ -783,6 +783,8 @@ mod tests {
     /// same `Tier` fields the builders use so the test cannot drift from the
     /// layout silently. The flex filler reports 0 (its worst case);
     /// so does anything out of flow, such as the hold notice.
+    /// A row holding a bare canvas is the disc's station line, so the model
+    /// covers the wide and round layouts only.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
     fn expected_flow_height(node: &TreeNode, tier: Tier, layout: Layout, setup: bool) -> f32 {
         let node = undimmed(node);
@@ -884,6 +886,12 @@ mod tests {
                 let panel_h = panel.height as f32;
                 if layout_for(&panel) == Layout::Wide {
                     assert_wide_halves(&panel, tier, setup, kids, close_bottom, panel_h);
+                    continue;
+                }
+                // Its canvas rows are far taller than the model's station line;
+                // `bmm101_controls_fit_between_the_close_target_and_the_bottom_edge`
+                // measures it against the real layout.
+                if layout_for(&panel) == Layout::Compact {
                     continue;
                 }
 

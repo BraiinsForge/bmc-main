@@ -233,10 +233,6 @@ impl Slide {
     }
 }
 
-/// Product selector for deterministic gallery tray views.
-#[doc(hidden)]
-pub use bmc_platform::Product as SettingsTrayProduct;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NightModeView {
     pub active: bool,
@@ -306,18 +302,24 @@ impl SettingsTrayView {
         }
     }
 
-    /// Build a deterministic gallery-facing view shell for a hardware product.
-    #[doc(hidden)]
+    /// Show the controls the compositor's capabilities allow.
+    /// `None` is a v1 compositor, which sends none: brightness only.
+    /// Every v2 control is hidden there,
+    /// since its requests would be protocol violations and its events never arrive,
+    /// and so is the WiFi button: v1 cannot say whether the board supports it.
     #[must_use]
-    pub fn for_product(product: SettingsTrayProduct) -> Self {
-        Self {
-            show_volume: matches!(product, SettingsTrayProduct::Bmc100),
-            wifi_button: matches!(
-                product,
-                SettingsTrayProduct::Bmc100 | SettingsTrayProduct::Bfm100
-            ),
-            ..Self::resting()
+    pub fn with_caps(mut self, caps: Option<bmc_system_overlay::SettingsCaps>) -> Self {
+        if let Some(caps) = caps {
+            self.show_brightness = caps.brightness;
+            self.show_volume = caps.sound;
+            self.wifi_button = caps.wifi_setup;
+        } else {
+            self.show_volume = false;
+            self.night_mode = None;
+            self.show_restart = false;
+            self.wifi_button = false;
         }
+        self
     }
 }
 
@@ -495,20 +497,7 @@ impl SettingsTrayOverlay {
         view.ssid.clone_from(&self.ssid);
         view.setup_ssid.clone_from(&self.setup_ssid);
         view.cable_uplink = self.cable_uplink;
-        if let Some(caps) = self.caps {
-            view.show_brightness = caps.brightness;
-            view.show_volume = caps.sound;
-            view.wifi_button = caps.wifi_setup;
-        } else {
-            // v1 compositor: brightness only. Every v2 control is hidden,
-            // since its requests would be protocol violations and its events never arrive,
-            // and so is the WiFi button: v1 cannot say whether the board supports it.
-            view.show_volume = false;
-            view.night_mode = None;
-            view.show_restart = false;
-            view.wifi_button = false;
-        }
-        view
+        view.with_caps(self.caps)
     }
 }
 

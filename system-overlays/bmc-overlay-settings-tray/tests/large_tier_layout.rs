@@ -42,13 +42,12 @@ use std::time::Instant;
 
 use bmc_overlay_settings_tray::ui::{Action, Phase};
 use bmc_overlay_settings_tray::{
-    SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView, StatusView,
-    render_settings_tray,
+    SettingsTrayRenderState, SettingsTrayView, StatusView, render_settings_tray,
 };
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::{FrameClear, Renderer};
 use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
-use bmc_system_overlay::{OverlayViewport, ViewportShape};
+use bmc_system_overlay::{OverlayViewport, SettingsCaps, ViewportShape};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
@@ -64,15 +63,27 @@ const BMM101: OverlayViewport = OverlayViewport {
     height: 320,
     shape: ViewportShape::Rectangular,
 };
+const DECK_CAPS: SettingsCaps = SettingsCaps {
+    brightness: true,
+    sound: true,
+    wifi_setup: true,
+};
+const BMM101_CAPS: SettingsCaps = SettingsCaps {
+    brightness: true,
+    sound: false,
+    wifi_setup: false,
+};
 
-/// Records circle fills at absolute coordinates, and the box width
-/// every paragraph is drawn into; text measurement wraps.
+/// Records circle fills at absolute coordinates, the box width every
+/// paragraph is drawn into and the absolute bottom edge it reaches;
+/// text measurement wraps.
 #[derive(Default)]
 struct ProbeRenderer {
     offset: (f32, f32),
     saved: Vec<(f32, f32)>,
     circles: Vec<(f32, f32, f32)>,
     paragraphs: Vec<(String, f32)>,
+    paragraph_bottoms: Vec<(String, f32)>,
     next_svg: u16,
 }
 
@@ -212,13 +223,16 @@ impl Renderer for ProbeRenderer {
     }
     fn draw_paragraph(
         &mut self,
-        _style: &TextStyle,
+        style: &TextStyle,
         spans: &[SpanData],
         _x: f32,
-        _y: f32,
+        y: f32,
         max_width: f32,
     ) {
-        let text = spans.iter().map(|s| s.text.as_str()).collect();
+        let (_, height) = self.measure_paragraph(style, spans, Some(max_width));
+        let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+        self.paragraph_bottoms
+            .push((text.clone(), self.offset.1 + y + height));
         self.paragraphs.push((text, max_width));
     }
     fn draw_paragraph_clipped(
@@ -400,7 +414,7 @@ fn a_long_hostname_and_ssid_keep_the_controls_in_the_bottom_half() {
 }
 
 fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
-    let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmc100);
+    let mut view = SettingsTrayView::resting().with_caps(Some(DECK_CAPS));
     view.hostname = Some(hostname.to_owned());
     view.ip = Some("192.168.1.42".to_owned());
     view.wifi_signal = Some(-52);
@@ -432,9 +446,70 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
     }
 }
 
+/// Bottom edge of BMM101's close target: the compact tier's 16 px corner inset
+/// plus the 48 px square.
+const BMM101_CLOSE_BOTTOM: f32 = 64.0;
+
+/// Radius of a BMM101 control button; the slider thumb is a 16 px circle.
+const BMM101_BUTTON_RADIUS: f32 = 32.0;
+
+/// The compact stack is fixed-height from the address table down, so the
+/// buttons have nowhere to give: they either fit under the close target
+/// and above the panel's bottom edge, or they run off it. The captions
+/// under them are what runs off first, so every paragraph is checked too.
+#[test]
+fn bmm101_controls_fit_between_the_close_target_and_the_bottom_edge() {
+    for wifi_setup in [false, true] {
+        let caps = SettingsCaps {
+            wifi_setup,
+            ..BMM101_CAPS
+        };
+        let mut view = SettingsTrayView::resting().with_caps(Some(caps));
+        view.hostname = Some("braiins-mini".to_owned());
+        view.ip = Some("10.0.0.42".to_owned());
+        view.wifi_signal = Some(-52);
+        view.ssid = Some("Workshop-WiFi".to_owned());
+
+        let now = Instant::now();
+        let mut state = SettingsTrayRenderState::new(now);
+        let mut renderer = ProbeRenderer::default();
+        render_settings_tray(&mut renderer, BMM101, &mut state, &view, now);
+
+        let buttons: Vec<_> = renderer
+            .circles
+            .iter()
+            .filter(|(_, _, r)| (*r - BMM101_BUTTON_RADIUS).abs() < 1e-3)
+            .collect();
+        assert!(
+            !buttons.is_empty(),
+            "wifi_setup={wifi_setup}: no control buttons"
+        );
+        let panel_bottom = BMM101.height as f32;
+        for (cx, cy, r) in buttons {
+            assert!(
+                cy - r >= BMM101_CLOSE_BOTTOM - 1e-3,
+                "wifi_setup={wifi_setup}: button at ({cx}, {cy}) starts above the \
+                 close target's bottom edge {BMM101_CLOSE_BOTTOM}"
+            );
+            assert!(
+                cy + r <= panel_bottom + 1e-3,
+                "wifi_setup={wifi_setup}: button at ({cx}, {cy}) runs past the \
+                 panel's {panel_bottom} px"
+            );
+        }
+        for (text, bottom) in &renderer.paragraph_bottoms {
+            assert!(
+                *bottom <= panel_bottom + 1e-3,
+                "wifi_setup={wifi_setup}: {text:?} ends at {bottom}, past the \
+                 panel's {panel_bottom} px"
+            );
+        }
+    }
+}
+
 #[test]
 fn large_tier_hold_circle_is_centered_on_its_button() {
-    let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmc100);
+    let mut view = SettingsTrayView::resting().with_caps(Some(DECK_CAPS));
     view.status = Some(StatusView {
         action: Action::Restart,
         phase: Phase::Holding { progress: 0.5 },
@@ -461,7 +536,7 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
 
 #[test]
 fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
-    let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmm101);
+    let mut view = SettingsTrayView::resting().with_caps(Some(BMM101_CAPS));
     view.hostname = Some("braiins-mini-".repeat(4));
     view.ip = Some("10.0.0.42".to_owned());
     view.wifi_signal = Some(-52);
@@ -489,7 +564,7 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
 
 #[test]
 fn the_layout_follows_the_size_the_tray_renders_at() {
-    let view = SettingsTrayView::for_product(SettingsTrayProduct::Bmc100);
+    let view = SettingsTrayView::resting().with_caps(Some(DECK_CAPS));
     let labels_at = |size| {
         let now = Instant::now();
         let mut state = SettingsTrayRenderState::new(now);

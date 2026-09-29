@@ -42,11 +42,12 @@ use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayRenderState, SettingsTrayView, StatusView, render_settings_tray,
 };
 use bmc_overlay_upgrade::{Surface, SurfaceTier, UpgradeRenderState, UpgradeView, render_upgrade};
-use bmc_platform::{DisplayShape, HardwareProfile, Product};
+use bmc_platform::{HardwareProfile, Product};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DownloadProgress, OverlayViewport, UpgradeKind, UpgradePhase, ViewportShape,
+    AccessPoint, DownloadProgress, OverlayViewport, SettingsCaps, UpgradeKind, UpgradePhase,
+    ViewportShape,
 };
 
 scene_meta! { title: "Overlays" }
@@ -63,31 +64,94 @@ fn draw_backdrop(r: &mut dyn Renderer, w: f32, h: f32, flat: bool) {
     }
 }
 
-/// The tray at rest on one product: connected, night mode scheduled, nothing held.
-fn tray_view(product: Product) -> SettingsTrayView {
-    let (hostname, ip, ssid, brightness) = match product {
-        Product::Bmc100 => ("braiins-deck", "192.168.1.42", "Braiins-WiFi", 70),
-        Product::Bmm100 => unreachable!("BUG: BMM100 has no settings tray, so no page stages one"),
-        Product::Bmm101 => ("braiins-mini", "10.0.0.42", "Workshop-WiFi", 55),
-        Product::Bfm100 => ("braiins-frame", "10.0.0.7", "Studio-WiFi", 60),
-    };
-    let mut view = SettingsTrayView::for_product(product);
-    view.brightness = brightness;
-    view.hostname = Some(hostname.to_owned());
-    view.ip = Some(ip.to_owned());
-    view.wifi_signal = Some(-52);
-    view.ssid = Some(ssid.to_owned());
-    view.volume = 40;
-    view.night_mode = Some(NightModeView {
-        active: false,
-        until: Some("22:00".to_owned()),
-    });
-    view.show_restart = true;
-    view
+/// One tray page: the surface the compositor would configure,
+/// the capabilities it would advertise, and the sample data shown.
+#[derive(Clone, Copy)]
+struct TrayStage {
+    viewport: OverlayViewport,
+    caps: SettingsCaps,
+    hostname: &'static str,
+    ip: &'static str,
+    ssid: &'static str,
+    brightness: u8,
+    /// Whether this layout's table has a connection row to show the cable in.
+    names_the_cable: bool,
+}
+
+const BMC100_TRAY: TrayStage = TrayStage {
+    viewport: OverlayViewport {
+        width: 1_280,
+        height: 480,
+        shape: ViewportShape::Rectangular,
+    },
+    caps: SettingsCaps {
+        brightness: true,
+        sound: true,
+        wifi_setup: true,
+    },
+    hostname: "braiins-deck",
+    ip: "192.168.1.42",
+    ssid: "Braiins-WiFi",
+    brightness: 70,
+    names_the_cable: false,
+};
+
+const BMM101_TRAY: TrayStage = TrayStage {
+    viewport: OverlayViewport {
+        width: 480,
+        height: 320,
+        shape: ViewportShape::Rectangular,
+    },
+    caps: SettingsCaps {
+        brightness: true,
+        sound: false,
+        wifi_setup: false,
+    },
+    hostname: "braiins-mini",
+    ip: "10.0.0.42",
+    ssid: "Workshop-WiFi",
+    brightness: 55,
+    names_the_cable: true,
+};
+
+const BFM100_TRAY: TrayStage = TrayStage {
+    viewport: OverlayViewport {
+        width: 480,
+        height: 480,
+        shape: ViewportShape::Round,
+    },
+    caps: SettingsCaps {
+        brightness: true,
+        sound: false,
+        wifi_setup: true,
+    },
+    hostname: "braiins-frame",
+    ip: "10.0.0.7",
+    ssid: "Studio-WiFi",
+    brightness: 60,
+    names_the_cable: false,
+};
+
+/// The tray at rest on one stage: connected, night mode scheduled, nothing held.
+fn tray_view(stage: TrayStage, caps: SettingsCaps) -> SettingsTrayView {
+    SettingsTrayView {
+        brightness: stage.brightness,
+        hostname: Some(stage.hostname.to_owned()),
+        ip: Some(stage.ip.to_owned()),
+        wifi_signal: Some(-52),
+        ssid: Some(stage.ssid.to_owned()),
+        volume: 40,
+        night_mode: Some(NightModeView {
+            active: false,
+            until: Some("22:00".to_owned()),
+        }),
+        ..SettingsTrayView::resting()
+    }
+    .with_caps(Some(caps))
 }
 
 /// Worst-case view: every control group visible at once (volume, brightness,
-/// night mode, restart, the WiFi hold) on the given product.
+/// night mode, restart, the WiFi hold) on the given stage.
 fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
     let mut view = base;
     view.show_volume = true;
@@ -699,26 +763,29 @@ mod device_info_bmm100 {
     }
 }
 
-/// Every tray state at one product's display: the tray at rest, each control group's variants,
-/// and the worst case with every group on at once. The size comes from the product,
-/// so a geometry change there shows up here.
+/// Every tray state on one stage: the tray at rest, each control group's variants,
+/// and the worst case with every group on at once.
+/// The capability knobs start at the stage's set and turn each bit on or off.
 #[expect(
     clippy::too_many_lines,
     reason = "a flat catalogue: one card per tray state, which reads worse \
               split across helpers than listed in one place"
 )]
-fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
+fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
     let flat = ctx.toggle("Flat backdrop", false);
-    let resting = tray_view(product);
-    let display = HardwareProfile::for_product(product).display;
-    let size = (display.logical_width, display.logical_height);
-    let shape = match display.shape {
-        DisplayShape::Rectangular => ViewportShape::Rectangular,
-        DisplayShape::Round => ViewportShape::Round,
+    let caps = SettingsCaps {
+        brightness: ctx.toggle("Brightness capability", stage.caps.brightness),
+        // Only a stage with a speaker offers the knob: the compact layout
+        // draws no volume control, so on BMM101 it would change nothing.
+        sound: stage.caps.sound && ctx.toggle("Sound capability", true),
+        wifi_setup: ctx.toggle("Wi-Fi setup capability", stage.caps.wifi_setup),
     };
+    let resting = tray_view(stage, caps);
+    let size = stage.viewport.size();
+    let shape = stage.viewport.shape;
     let has_volume = resting.show_volume;
     let variant = |edit: fn(&mut SettingsTrayView)| {
-        let mut view = tray_view(product);
+        let mut view = tray_view(stage, caps);
         edit(&mut view);
         view
     };
@@ -746,7 +813,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
             &TRAY_NIGHT_MODE_UNSCHEDULED,
         ),
     ];
-    // Only where the product has a speaker: elsewhere the row is absent
+    // Only with the sound capability: without it the row is absent
     // and both cards would repeat the resting tray.
     if has_volume {
         cards.extend([
@@ -815,7 +882,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
         ),
         (
             "All groups",
-            all_groups_view(tray_view(product)),
+            all_groups_view(tray_view(stage, caps)),
             &TRAY_ALL_GROUPS,
         ),
         (
@@ -834,8 +901,8 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
             &TRAY_NO_SIGNAL,
         ),
     ]);
-    // Only the compact table names the cable; elsewhere these repeat the resting tray.
-    if product == Product::Bmm101 {
+    // Elsewhere these repeat the resting tray.
+    if stage.names_the_cable {
         cards.extend([
             (
                 "Ethernet cable",
@@ -1127,42 +1194,39 @@ mod upgrade_bmm101 {
 
 mod settings_tray_bmc100 {
     use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
-    use bmc_platform::Product;
 
-    use super::settings_tray_screens;
+    use super::{BMC100_TRAY, settings_tray_screens};
 
     scene_meta! { title: "Overlays / Settings Tray / BMC100" }
 
     #[scene("Settings Tray", default)]
     fn bmc100(ctx: &mut SceneCtx, ui: &mut Ui) {
-        settings_tray_screens(ctx, ui, Product::Bmc100);
+        settings_tray_screens(ctx, ui, BMC100_TRAY);
     }
 }
 
 mod settings_tray_bmm101 {
     use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
-    use bmc_platform::Product;
 
-    use super::settings_tray_screens;
+    use super::{BMM101_TRAY, settings_tray_screens};
 
     scene_meta! { title: "Overlays / Settings Tray / BMM101" }
 
     #[scene("Settings Tray", default)]
     fn bmm101(ctx: &mut SceneCtx, ui: &mut Ui) {
-        settings_tray_screens(ctx, ui, Product::Bmm101);
+        settings_tray_screens(ctx, ui, BMM101_TRAY);
     }
 }
 
 mod settings_tray_bfm100 {
     use bmc_gallery::prelude::{SceneCtx, Ui, scene, scene_meta};
-    use bmc_platform::Product;
 
-    use super::settings_tray_screens;
+    use super::{BFM100_TRAY, settings_tray_screens};
 
     scene_meta! { title: "Overlays / Settings Tray / BFM100" }
 
     #[scene("Settings Tray", default)]
     fn bfm100(ctx: &mut SceneCtx, ui: &mut Ui) {
-        settings_tray_screens(ctx, ui, Product::Bfm100);
+        settings_tray_screens(ctx, ui, BFM100_TRAY);
     }
 }
