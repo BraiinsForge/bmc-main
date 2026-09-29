@@ -5322,6 +5322,66 @@ mod frame_pass_tests {
         assert_dynamic_draws_land_inside_span(&translated_centred_dot(), &translated_centred_dot());
     }
 
+    /// When the layer blit fails, the frame falls back to a full walk,
+    /// which paints only where a draw paints.
+    /// Without a base under it, last frame's dynamic pixels show through.
+    #[test]
+    fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+        let damage = [crate::interaction::Rect::new(0.0, 0.0, 30.0, 30.0)];
+        let mut ctx = ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter: 1,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit: super::EmitMode::All,
+            // Nothing was captured under this key, so the layer blit fails.
+            static_layer: LayerUse::Reuse,
+            static_layer_key: "failed-blit-test",
+            damage_rects: &damage,
+        };
+        let mut timings = FrameTimings::default();
+        let (result, _) = layout_and_render(
+            &moving_dot(60.0),
+            100.0,
+            100.0,
+            &mut renderer,
+            &mut timings,
+            &mut ctx,
+        )
+        .expect("BUG: layout_and_render must succeed for the moving dot");
+
+        let first = renderer
+            .draws
+            .first()
+            .expect("BUG: the fallback walk must paint something");
+        assert!(
+            first.x <= 0.0 && first.y <= 0.0 && first.w >= 100.0 && first.h >= 100.0,
+            "the first draw must cover the surface, got {:?}",
+            renderer.draws
+        );
+        let (_, base, _) = renderer
+            .fills
+            .first()
+            .expect("BUG: the base is a fill_rect, so it must be recorded");
+        assert_eq!(
+            *base,
+            Color::from_rgb(0, 0, 0),
+            "a base that is not opaque lets last frame's pixels show through",
+        );
+        assert!(
+            result.static_layer_missed,
+            "a failed blit must report the miss, or the host keeps reusing the layer \
+             and never repaints the other export buffers",
+        );
+    }
+
     /// The backdrop dims the whole surface from outside the walk, so a frame
     /// scissored to the walk's rects darkens only those.
     #[test]
