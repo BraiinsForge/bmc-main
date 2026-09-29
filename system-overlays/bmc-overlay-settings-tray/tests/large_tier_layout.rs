@@ -53,6 +53,9 @@ use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
 };
 
+const DECK: (u32, u32) = (1_280, 480);
+const BMM101: (u32, u32) = (480, 320);
+
 /// Records circle fills at absolute coordinates, and the box width
 /// every paragraph is drawn into; text measurement wraps.
 #[derive(Default)]
@@ -397,13 +400,7 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);
     let mut renderer = ProbeRenderer::default();
-    render_settings_tray(
-        &mut renderer,
-        (view.width, view.height),
-        &mut state,
-        &view,
-        now,
-    );
+    render_settings_tray(&mut renderer, DECK, &mut state, &view, now);
 
     assert!(
         !renderer.circles.is_empty(),
@@ -412,7 +409,7 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
     // The probe's coarse text metrics shift the flow by a few pixels, so
     // assert the circle centers (not edges) against the middle: the collapsed
     // layout put them a full hundred pixels above it.
-    let middle = view.height as f32 / 2.0;
+    let middle = DECK.1 as f32 / 2.0;
     for (cx, cy, r) in &renderer.circles {
         assert!(
             *cy >= middle,
@@ -420,7 +417,7 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
              panel middle {middle}"
         );
         assert!(
-            cy + r <= view.height as f32 + 1e-3,
+            cy + r <= DECK.1 as f32 + 1e-3,
             "control circle at ({cx}, {cy}) r={r} must stay on the panel"
         );
     }
@@ -438,13 +435,7 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);
     let mut renderer = ProbeRenderer::default();
-    render_settings_tray(
-        &mut renderer,
-        (view.width, view.height),
-        &mut state,
-        &view,
-        now,
-    );
+    render_settings_tray(&mut renderer, DECK, &mut state, &view, now);
 
     let &(hold_x, hold_y, _) = renderer
         .circles
@@ -470,13 +461,7 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);
     let mut renderer = ProbeRenderer::default();
-    render_settings_tray(
-        &mut renderer,
-        (view.width, view.height),
-        &mut state,
-        &view,
-        now,
-    );
+    render_settings_tray(&mut renderer, BMM101, &mut state, &view, now);
 
     for label in ["Hostname", "IP Address", "Connection"] {
         let (_, width) = renderer
@@ -491,4 +476,31 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
             "{label} was squeezed to {width}px of its {natural}px, so it wraps"
         );
     }
+}
+
+#[test]
+fn the_layout_follows_the_size_the_tray_renders_at() {
+    let view = SettingsTrayView::for_product(SettingsTrayProduct::Bmc100);
+    let labels_at = |size| {
+        let now = Instant::now();
+        let mut state = SettingsTrayRenderState::new(now);
+        let mut renderer = ProbeRenderer::default();
+        render_settings_tray(&mut renderer, size, &mut state, &view, now);
+        renderer
+            .paragraphs
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect::<Vec<_>>()
+    };
+
+    let wide = labels_at(DECK);
+    assert!(
+        !wide.iter().any(|t| t == "Connection"),
+        "{DECK:?} lays out wide: {wide:?}"
+    );
+    let compact = labels_at(BMM101);
+    assert!(
+        compact.iter().any(|t| t == "Connection"),
+        "{BMM101:?} lays out compact: {compact:?}"
+    );
 }

@@ -413,9 +413,10 @@ pub trait SystemOverlay {
     /// Pay one-time renderer setup costs at host startup instead of on the
     /// first reveal. The host calls this once, before the event loop, with the
     /// GL context current. Use it to register SVG icons and warm font glyphs so
-    /// the first swipe-reveal does not stall. Default: no-op. The `&mut dyn
-    /// Renderer` is valid only for this call: do not store it.
-    fn prewarm(&mut self, _renderer: &mut dyn Renderer) {}
+    /// the first swipe-reveal does not stall.
+    /// `size` is the surface size the first render will get.
+    /// Default: no-op. The `&mut dyn Renderer` is valid only for this call: do not store it.
+    fn prewarm(&mut self, _renderer: &mut dyn Renderer, _size: (u32, u32)) {}
 
     /// Handle a touch event (only delivered when input region is not `None`).
     fn on_touch(&mut self, _event: TouchEvent) {}
@@ -567,9 +568,10 @@ pub trait SystemOverlay {
 
     /// Vertical surface translation in logical pixels; positive offsets move down.
     /// Applies to hosted frames, including fresh paints.
+    /// `size` is the surface size this pass renders at.
     /// Return it independently of content changes; [`Self::can_reuse_content`]
     /// determines whether the attached content can be reused. Standalone ignores it.
-    fn layer_shell_offset(&self, _now: Instant) -> Option<f32> {
+    fn layer_shell_offset(&self, _now: Instant, _size: (u32, u32)) -> Option<f32> {
         None
     }
 

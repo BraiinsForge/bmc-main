@@ -702,7 +702,8 @@ mod device_info_bmm100 {
 fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
     let flat = ctx.toggle("Flat backdrop", false);
     let resting = tray_view(product);
-    let size = (resting.width, resting.height);
+    let display = HardwareProfile::for_product(product).display;
+    let size = (display.logical_width, display.logical_height);
     let has_volume = resting.show_volume;
     let variant = |edit: fn(&mut SettingsTrayView)| {
         let mut view = tray_view(product);

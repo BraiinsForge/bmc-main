@@ -345,7 +345,7 @@ impl SystemOverlay for OfflineOverlay {
         }
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, _size: (u32, u32)) {
         register_pickaxe(renderer);
     }
 

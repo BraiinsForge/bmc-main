@@ -189,10 +189,9 @@ impl Slide {
         }
     }
 
-    /// Placement for a clean slide or settle frame that can reuse attached content.
-    fn reusable_offset(&self, now: Instant, content_dirty: bool, height: f32) -> Option<f32> {
-        ((self.animating(now) || self.needs_settle_frame()) && !content_dirty)
-            .then(|| self.offset(now, height))
+    /// Whether this is a clean slide or settle frame that can reuse attached content.
+    fn reuses_content(&self, now: Instant, content_dirty: bool) -> bool {
+        (self.animating(now) || self.needs_settle_frame()) && !content_dirty
     }
 
     /// Eased progress (0→1) of the active ramp at `now`. `ease-out` cubic so the
@@ -270,8 +269,6 @@ pub struct StatusView {
 )]
 pub struct SettingsTrayView {
     pub shape: DisplayShape,
-    pub width: u32,
-    pub height: u32,
     pub brightness: u8,
     pub show_brightness: bool,
     pub volume: u8,
@@ -298,11 +295,8 @@ impl SettingsTrayView {
     #[doc(hidden)]
     #[must_use]
     pub fn for_product(product: SettingsTrayProduct) -> Self {
-        let profile = HardwareProfile::for_product(product);
         Self {
-            shape: profile.display.shape,
-            width: profile.display.logical_width,
-            height: profile.display.logical_height,
+            shape: HardwareProfile::for_product(product).display.shape,
             brightness: 50,
             show_brightness: true,
             volume: 50,
@@ -394,10 +388,6 @@ fn step_value(current: u8, step: Step, min: u8, max: u8) -> u8 {
 pub struct SettingsTrayOverlay {
     product: Product,
     shape: DisplayShape,
-    width: u32,
-    height: u32,
-    /// Full panel height (px); sets the slide-animation travel distance.
-    panel_height: f32,
 
     brightness: u8,
     /// End of the post-tap brightness echo settle window.
@@ -464,18 +454,9 @@ impl Default for SettingsTrayOverlay {
 
 impl SettingsTrayOverlay {
     fn new_for_product(product: Product, hostname: Option<String>, now: Instant) -> Self {
-        let profile = HardwareProfile::for_product(product);
-        let width = profile.display.logical_width;
-        let height = profile.display.logical_height;
-        let shape = profile.display.shape;
-        let panel_height = panel_height_for(height);
-
         Self {
             product,
-            shape,
-            width,
-            height,
-            panel_height,
+            shape: HardwareProfile::for_product(product).display.shape,
             brightness: 50,
             brightness_settle_until: None,
             volume: 50,
@@ -509,8 +490,6 @@ impl SettingsTrayOverlay {
     fn view(&self, now: Instant) -> SettingsTrayView {
         let mut view = SettingsTrayView::for_product(self.product);
         view.shape = self.shape;
-        view.width = self.width;
-        view.height = self.height;
         view.brightness = self.brightness;
         view.volume = self.volume;
         view.night_mode = Some(NightModeView {
@@ -541,17 +520,6 @@ impl SettingsTrayOverlay {
         }
         view
     }
-}
-
-/// Panel height in logical pixels. The tray is always display-sized, so this is
-/// the full display height; it sets the slide-animation travel distance.
-fn panel_height_for(height: u32) -> f32 {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "display height is well within f32 mantissa precision"
-    )]
-    let h = height as f32;
-    h
 }
 
 impl SettingsTrayOverlay {
@@ -911,7 +879,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
         // One full off-screen render at host startup, so the first screen-edge
         // reveal does not stall mid-swipe paying these one-time costs: the
         // Wi-Fi SVG icon compile/upload, rasterizing the panel's text into the
@@ -928,13 +896,7 @@ impl SystemOverlay for SettingsTrayOverlay {
             until: Some("06:30".to_owned()),
         });
         view.show_restart = true;
-        let _ = render_settings_tray(
-            renderer,
-            (self.width, self.height),
-            &mut self.render_state,
-            &view,
-            now,
-        );
+        let _ = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
     }
 
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
@@ -961,13 +923,16 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     fn can_reuse_content(&self, now: Instant) -> bool {
-        self.slide
-            .reusable_offset(now, self.content_dirty, self.panel_height)
-            .is_some()
+        self.slide.reuses_content(now, self.content_dirty)
     }
 
-    fn layer_shell_offset(&self, now: Instant) -> Option<f32> {
-        Some(self.slide.offset(now, self.panel_height))
+    /// The tray fills the surface, so the slide travels the surface height.
+    fn layer_shell_offset(&self, now: Instant, size: (u32, u32)) -> Option<f32> {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "surface height is well within f32 mantissa precision"
+        )]
+        Some(self.slide.offset(now, size.1 as f32))
     }
 
     fn on_frame_submitted(&mut self, now: Instant) {
@@ -1044,8 +1009,8 @@ pub fn render_settings_tray(
         icons.wifi,
         Panel {
             shape: view.shape,
-            width: view.width,
-            height: view.height,
+            width: size.0,
+            height: size.1,
             wifi_button: view.wifi_button,
         },
         wifi_view,
@@ -1224,15 +1189,6 @@ mod view_tests {
             "night mode shows on every v2 compositor"
         );
         assert!(view.show_restart, "restart shows on every v2 compositor");
-    }
-
-    #[test]
-    fn view_for_product_exposes_bmm101_dimensions_for_stories() {
-        let view = SettingsTrayView::for_product(SettingsTrayProduct::Bmm101);
-
-        assert_eq!(view.width, 480);
-        assert_eq!(view.height, 320);
-        assert!(!view.wifi_button);
     }
 
     struct StaticEnv {
@@ -1816,13 +1772,15 @@ mod slide_tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    const SURFACE: (u32, u32) = (1_280, 200);
+
     #[test]
     fn only_clean_slide_frames_reuse_attached_content() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
         overlay.on_reveal();
         overlay.content_dirty = false;
-        assert!(overlay.layer_shell_offset(now).is_some());
+        assert!(overlay.layer_shell_offset(now, SURFACE).is_some());
         assert!(overlay.can_reuse_content(now));
         overlay.content_dirty = true;
         assert!(!overlay.can_reuse_content(now));
@@ -1832,27 +1790,35 @@ mod slide_tests {
     fn layer_shell_slide_keeps_its_offset_when_content_changes() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
-        overlay.panel_height = 200.0;
         overlay.on_reveal();
         overlay.content_dirty = true;
-        assert_eq!(overlay.layer_shell_offset(now), Some(-200.0));
+        assert_eq!(overlay.layer_shell_offset(now, SURFACE), Some(-200.0));
         assert!(!overlay.can_reuse_content(now));
         overlay.on_frame_submitted(now);
         let halfway = now + Duration::from_millis(SLIDE_MS) / 2;
-        assert_eq!(overlay.layer_shell_offset(halfway), Some(-25.0));
+        assert_eq!(overlay.layer_shell_offset(halfway, SURFACE), Some(-25.0));
         overlay.content_dirty = false;
         assert!(overlay.can_reuse_content(halfway));
         let end = now + Duration::from_millis(SLIDE_MS);
         overlay.slide.advance(end);
         overlay.on_frame_submitted(end);
-        assert_eq!(overlay.layer_shell_offset(end), Some(0.0));
+        assert_eq!(overlay.layer_shell_offset(end, SURFACE), Some(0.0));
         assert!(overlay.slide.accepts_input());
         overlay.begin_dismiss();
         overlay.on_frame_submitted(end);
         assert_eq!(
-            overlay.layer_shell_offset(end + Duration::from_millis(SLIDE_MS)),
+            overlay.layer_shell_offset(end + Duration::from_millis(SLIDE_MS), SURFACE),
             Some(-200.0)
         );
+    }
+
+    #[test]
+    fn a_pending_reveal_hides_behind_the_height_of_each_pass() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.on_reveal();
+        assert_eq!(overlay.layer_shell_offset(now, (480, 320)), Some(-320.0));
+        assert_eq!(overlay.layer_shell_offset(now, (1_280, 480)), Some(-480.0));
     }
 
     #[test]
@@ -1884,14 +1850,8 @@ mod slide_tests {
         // Pending: panel rests at the settled position, clock not started.
         assert!(s.offset(t0 + Duration::from_millis(500), 200.0).abs() < 1e-3);
         assert!(!s.dismiss_done(t0 + Duration::from_millis(500)));
-        assert_eq!(
-            s.reusable_offset(t0 + Duration::from_millis(10), false, 200.0),
-            Some(0.0)
-        );
-        assert_eq!(
-            s.reusable_offset(t0 + Duration::from_millis(10), true, 200.0),
-            None
-        );
+        assert!(s.reuses_content(t0 + Duration::from_millis(10), false));
+        assert!(!s.reuses_content(t0 + Duration::from_millis(10), true));
         let t1 = t0 + Duration::from_millis(60);
         s.anchor(t1);
         assert!(s.offset(t1 + Duration::from_millis(400), 200.0) <= -199.0);
@@ -1996,9 +1956,8 @@ mod slide_tests {
         // -0.125*height. A trigger-time anchor (t0) would be ~150/180 elapsed
         // and nearly settled (~ -0.004*height), so demand a deep mid-flight
         // offset to distinguish the two.
-        #[expect(clippy::cast_precision_loss, reason = "display height fits f32")]
-        let h = overlay.view(t1).height as f32;
-        let mid = overlay.layer_shell_offset(t1 + Duration::from_millis(90));
+        let h = 200.0;
+        let mid = overlay.layer_shell_offset(t1 + Duration::from_millis(90), SURFACE);
         assert!(
             mid.is_some_and(|off| off < -h / 16.0),
             "ramp must be anchored at t1, not the reveal trigger: {mid:?}"
@@ -2055,7 +2014,7 @@ mod slide_tests {
         assert!(overlay.can_reuse_content(after));
         assert!(
             overlay
-                .layer_shell_offset(after)
+                .layer_shell_offset(after, SURFACE)
                 .is_some_and(|off| off.abs() < 1e-3),
             "settle frame must place the surface at offset 0"
         );
@@ -2078,12 +2037,11 @@ mod slide_tests {
         s.advance(after);
         assert!(s.needs_settle_frame());
         assert!(
-            s.reusable_offset(after, false, 200.0)
-                .is_some_and(|off| off.abs() < 1e-3),
-            "settle frame must reuse content at offset 0"
+            s.reuses_content(after, false),
+            "settle frame must reuse content"
         );
         // A content-dirty settle frame still full-paints.
-        assert_eq!(s.reusable_offset(after, true, 200.0), None);
+        assert!(!s.reuses_content(after, true));
         assert!(s.offset(after, 200.0).abs() < 1e-3);
 
         s.mark_settled();
@@ -2097,13 +2055,10 @@ mod slide_tests {
         s.start_reveal();
         s.anchor(t0);
         let mid = t0 + Duration::from_millis(90);
-        assert_eq!(s.reusable_offset(mid, true, 200.0), None);
-        let offset = s.reusable_offset(mid, false, 200.0);
-        assert!(offset.is_some_and(|off| (-200.0..0.0).contains(&off)));
-        assert_eq!(
-            s.reusable_offset(t0 + Duration::from_millis(200), false, 200.0),
-            None
-        );
+        assert!(!s.reuses_content(mid, true));
+        assert!(s.reuses_content(mid, false));
+        assert!((-200.0..0.0).contains(&s.offset(mid, 200.0)));
+        assert!(!s.reuses_content(t0 + Duration::from_millis(200), false));
     }
 
     #[test]

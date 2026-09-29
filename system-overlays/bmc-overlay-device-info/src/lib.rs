@@ -560,7 +560,7 @@ impl SystemOverlay for DeviceInfoOverlay {
         self.dirty = true;
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, _size: (u32, u32)) {
         let _ = self.render_state.ensure_icons(renderer);
     }
 

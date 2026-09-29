@@ -159,7 +159,7 @@ pub fn prewarm_hosted_overlay(
             let renderer = unsafe { ptr.as_ptr().as_mut() }
                 .expect("BUG: NonNull renderer is non-null by construction");
             renderer.begin_frame_with_clear(w, h, 1.0, FrameClear::TransparentBlack);
-            overlay.overlay_mut().prewarm(renderer);
+            overlay.overlay_mut().prewarm(renderer, (w, h));
             renderer.flush();
             Ok(())
         },
@@ -196,7 +196,7 @@ pub fn render_hosted_overlay(
     )]
     let layer_offset = overlay
         .overlay_mut()
-        .layer_shell_offset(now)
+        .layer_shell_offset(now, size)
         .map(|y| y.round() as i32);
     if let Some(offset) = layer_offset
         && overlay.overlay_mut().can_reuse_content(now)
