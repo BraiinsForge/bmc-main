@@ -1,6 +1,12 @@
 {
     "name": "bmc-frontend",
     "packageManager": "yarn@4.18.0",
+    "devEngines": {
+        "runtime": {
+            "name": "node",
+            "version": "24.14.1"
+        }
+    },
     "version": "1.0.0",
     "license": "GPL-3.0-or-later",
     "private": true,
@@ -111,8 +117,5 @@
         "react-refresh@npm:^0.17.0": "0.18.0",
         "core-js": "3.48.0",
         "sass-embedded": "1.97.3"
-    },
-    "volta": {
-        "node": "24.14.1"
     }
 }

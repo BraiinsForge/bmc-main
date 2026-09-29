@@ -1,0 +1,3 @@
+# Take the node and yarn versions from package.json (devEngines, packageManager) rather than a pin of our own.
+[settings]
+idiomatic_version_file_enable_tools = ["node", "yarn"]

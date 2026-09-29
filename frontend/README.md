@@ -2,7 +2,7 @@
 
 ## TOOLS
  - [Yarn](https://yarnpkg.com)
- - [Volta](https://volta.sh)
+ - [mise](https://mise.jdx.dev)
  - [Biome](https://biomejs.dev)
  - [RSpack](https://rspack.dev)
  - [Storybook](https://storybook.js.org)

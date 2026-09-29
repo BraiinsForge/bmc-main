@@ -2,10 +2,15 @@ For building, linting, testing we use justfile.
 
 ### Frontend Development
 
-The frontend uses Yarn 4.x and requires Node.js 24 (managed by Volta; the exact version is pinned in `package.json`):
+The frontend uses Yarn 4.x and requires Node.js 24. Both are pinned in `package.json` (`packageManager` for yarn,
+`devEngines` for node), which mise reads through `frontend/mise.toml`; the default `nix develop` shell provides mise.
+mise refuses to run under an untrusted project config, hence the one-time `mise trust` per checkout:
 
 ```bash
 cd frontend/
+
+# Once per checkout: let mise read the version pins
+mise trust
 
 # Install dependencies
 yarn install

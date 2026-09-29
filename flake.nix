@@ -146,6 +146,7 @@
             ffmpeg-headless
             grpcurl
             just
+            mise
             odiff
             python3
             ruff
