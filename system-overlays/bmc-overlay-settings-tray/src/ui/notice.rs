@@ -43,10 +43,6 @@ pub(super) const NOTICE_SIZE: u32 = 20;
 const KEEP_HOLDING: &str = "Keep holding, or release to cancel";
 const TRY_AGAIN: &str = "Try again";
 
-/// The decline reasons bmc sends with `restart_declined`.
-const DECLINED_FOR_UPGRADE: &str = "upgrade in progress";
-const DECLINED_AS_FAILED: &str = "restart failed";
-
 /// The notice's lines: what is happening, then, if anything,
 /// what the user can do about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,17 +52,15 @@ pub(super) struct NoticeText<'a> {
 }
 
 impl<'a> NoticeText<'a> {
-    /// A decline reason bmc has no wording for here shows as it came.
+    /// bmc words its own decline: the reason is a sentence, shown as the
+    /// body under the tray's title. A timeout with no word from bmc is the tray's.
     pub(super) fn for_status(status: Status<'a>) -> Self {
         let (title, body) = match (status.action, status.phase) {
             (Action::Restart, Phase::Holding { .. }) => ("Restart the device?", Some(KEEP_HOLDING)),
             (Action::Restart, Phase::Pending) => ("Restarting the device…", None),
             (Action::Restart, Phase::Failed) => match status.reason {
-                Some(DECLINED_FOR_UPGRADE) => {
-                    ("Can't restart now", Some("An upgrade is in progress"))
-                }
-                None | Some(DECLINED_AS_FAILED) => ("Restart failed", Some(TRY_AGAIN)),
                 Some(reason) => ("Can't restart now", Some(reason)),
+                None => ("Restart failed", Some(TRY_AGAIN)),
             },
             (Action::WifiReconfig, Phase::Holding { .. }) => {
                 ("Reconfigure Wi-Fi?", Some(KEEP_HOLDING))
@@ -320,22 +314,14 @@ mod tests {
             ("Restarting the device…", None)
         );
         assert_eq!(
-            text(restart, Phase::Failed, Some(DECLINED_FOR_UPGRADE)),
-            ("Can't restart now", Some("An upgrade is in progress"))
-        );
-        assert_eq!(
-            text(restart, Phase::Failed, Some(DECLINED_AS_FAILED)),
-            ("Restart failed", Some(TRY_AGAIN))
+            text(restart, Phase::Failed, Some("An upgrade is in progress")),
+            ("Can't restart now", Some("An upgrade is in progress")),
+            "bmc's sentence is the body, as it came"
         );
         assert_eq!(
             text(restart, Phase::Failed, None),
             ("Restart failed", Some(TRY_AGAIN)),
             "a pending timeout carries no reason"
-        );
-        assert_eq!(
-            text(restart, Phase::Failed, Some("battery low")),
-            ("Can't restart now", Some("battery low")),
-            "a reason with no wording here shows as it came"
         );
         assert_eq!(
             text(wifi, holding, None),

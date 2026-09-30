@@ -223,14 +223,15 @@ async fn dispatch_settings_command<T, U>(
                 .is_some_and(SystemUpgradeState::blocks_restart);
             if blocked {
                 info!("settings overlay restart declined: upgrade in progress");
-                if let Err(e) = compositor.broadcast_restart_declined("upgrade in progress") {
+                if let Err(e) = compositor.broadcast_restart_declined("An upgrade is in progress") {
                     warn!("broadcast_restart_declined failed: {e}");
                 }
             } else if let Err(e) = manager.reboot().await {
                 // Never leave the overlay hanging in its pending state: a
                 // failed reboot call must surface as a decline.
                 warn!("settings overlay restart failed: {e:#}");
-                if let Err(e) = compositor.broadcast_restart_declined("restart failed") {
+                if let Err(e) = compositor.broadcast_restart_declined("The restart command failed")
+                {
                     warn!("broadcast_restart_declined failed: {e}");
                 }
             }

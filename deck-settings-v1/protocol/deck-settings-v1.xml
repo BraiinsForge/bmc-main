@@ -129,9 +129,10 @@
     <event name="restart_declined" since="2">
       <description summary="a restart request was declined">
         One-shot notification that a restart request was not honored, with a
-        short human-readable reason. Not state: never replayed on bind.
+        short human-readable reason the tray shows as it is, as one sentence
+        under its own title. Not state: never replayed on bind.
       </description>
-      <arg name="reason" type="string" summary="why the restart was declined"/>
+      <arg name="reason" type="string" summary="why the restart was declined, as shown"/>
     </event>
 
     <event name="preempted" since="3">

@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn restart_declined_populates_no_replay_cache() {
         let mut s = SettingsState::new(caps_for_product(Product::Bmc100));
-        s.restart_declined("upgrade in progress");
+        s.restart_declined("An upgrade is in progress");
         assert_eq!(s.last_brightness, None);
         assert_eq!(s.last_volume, None);
         assert_eq!(s.last_wifi_ap, None);

@@ -863,7 +863,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
                 view.status = Some(StatusView {
                     action: Action::Restart,
                     phase: Phase::Failed,
-                    reason: Some("upgrade in progress".to_owned()),
+                    reason: Some("An upgrade is in progress".to_owned()),
                 });
             }),
             &TRAY_RESTART_DECLINED,

@@ -1136,13 +1136,13 @@ mod view_tests {
     fn a_decline_reaches_the_status_with_its_reason() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, now);
-        overlay.on_restart_declined("upgrade in progress");
+        overlay.on_restart_declined("An upgrade is in progress");
         assert_eq!(
             overlay.view(Instant::now()).status,
             Some(StatusView {
                 action: ui::Action::Restart,
                 phase: ui::Phase::Failed,
-                reason: Some("upgrade in progress".to_owned()),
+                reason: Some("An upgrade is in progress".to_owned()),
             })
         );
     }
