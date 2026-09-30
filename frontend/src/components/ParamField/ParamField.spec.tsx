@@ -286,6 +286,22 @@ describe('ParamField list', () => {
         expect(getByText('On')).toBeTruthy();
     });
 
+    test.each([
+        ['text', { case: 'paramString', value: { placeholder: 'e.g. BTC or AAPL' } }, 'e.g. BTC or AAPL'],
+        ['number', { case: 'paramInteger', value: { placeholder: 'e.g. 42' } }, 'e.g. 42'],
+    ] as const)('shows the item placeholder in an empty %s row', (_, itemKind, placeholder) => {
+        const hinted = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'symbols',
+            name: 'Symbols',
+            kind: {
+                case: 'paramArray',
+                value: pb.create(pb.ParamArraySchema, { items: { kind: itemKind }, maxItems: 2 }),
+            },
+        });
+        const { getByLabelText } = renderList([listItem('')], undefined, hinted);
+        expect(getByLabelText('Symbols, item 1')).toHaveProperty('placeholder', placeholder);
+    });
+
     test("shows an item's error on its own row", () => {
         const { getByText } = renderList([listItem('NVDA'), listItem('')], [undefined, { error: 'Value is required' }]);
         expect(getByText('Value is required')).toBeTruthy();

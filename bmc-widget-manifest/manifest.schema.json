@@ -233,6 +233,13 @@
                 }
               ]
             },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. BTC or AAPL\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "type": "string",
               "const": "string"
@@ -276,6 +283,13 @@
                 "null"
               ],
               "format": "double"
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 0.5\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "step": {
               "description": "UI step granularity. Strictly positive.",
@@ -330,6 +344,13 @@
               ],
               "format": "int32"
             },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 42\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "step": {
               "description": "UI step granularity. Strictly positive.",
               "type": [
@@ -379,6 +400,13 @@
                 "null"
               ],
               "maxLength": 1024
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. Europe/Prague\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "type": "string",
@@ -456,6 +484,13 @@
                 }
               ]
             },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. BTC or AAPL\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "type": "string",
               "const": "string"
@@ -499,6 +534,13 @@
                 "null"
               ],
               "format": "double"
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 0.5\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "step": {
               "description": "UI step granularity. Strictly positive.",
@@ -553,6 +595,13 @@
               ],
               "format": "int32"
             },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 42\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "step": {
               "description": "UI step granularity. Strictly positive.",
               "type": [
@@ -602,6 +651,13 @@
                 "null"
               ],
               "maxLength": 1024
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. Europe/Prague\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "type": "string",
@@ -687,6 +743,13 @@
                 }
               ]
             },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. BTC or AAPL\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "type": "string",
               "const": "string"
@@ -730,6 +793,13 @@
                 "null"
               ],
               "format": "double"
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 0.5\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "step": {
               "description": "UI step granularity. Strictly positive.",
@@ -784,6 +854,13 @@
               ],
               "format": "int32"
             },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 42\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "step": {
               "description": "UI step granularity. Strictly positive.",
               "type": [
@@ -833,6 +910,13 @@
                 "null"
               ],
               "maxLength": 1024
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. Europe/Prague\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "type": "string",

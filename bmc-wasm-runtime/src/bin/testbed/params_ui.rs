@@ -648,6 +648,7 @@ fn paint_typed_input(
         (Scalar::String(_) | Scalar::Timezone(_), ParamValue::String(s)) => {
             let resp = ui.add(
                 egui::TextEdit::singleline(s)
+                    .hint_text(scalar.placeholder().unwrap_or_default())
                     .desired_width(cell_w)
                     .margin(field_margin(ui)),
             );

@@ -395,6 +395,7 @@ fn string_field(name: &str, description: &str, format: Option<StringFormat>) -> 
             format,
             enum_values: Vec::new(),
             default_value: None,
+            placeholder: None,
         }),
     }
 }

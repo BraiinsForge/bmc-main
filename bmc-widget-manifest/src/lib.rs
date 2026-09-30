@@ -1754,6 +1754,7 @@ mod tests {
             step: None,
             enum_values: vec![],
             default_value: Some(7),
+            placeholder: None,
         });
         assert_eq!(
             ParamValue::from_param_kind_default(&with_default),
@@ -1764,6 +1765,7 @@ mod tests {
             format: None,
             enum_values: vec![],
             default_value: None,
+            placeholder: None,
         });
         assert_eq!(
             ParamValue::from_param_kind_default(&without_default),

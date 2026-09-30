@@ -320,7 +320,7 @@ impl ParamValue {
     pub fn from_scalar_default(scalar: Scalar<'_>) -> Self {
         match scalar {
             Scalar::String(StringParam { default_value, .. })
-            | Scalar::Timezone(TimezoneParam { default_value }) => default_value
+            | Scalar::Timezone(TimezoneParam { default_value, .. }) => default_value
                 .clone()
                 .map_or(ParamValue::Null, ParamValue::String),
             Scalar::Double(DoubleParam { default_value, .. }) => {
@@ -651,6 +651,9 @@ pub struct StringParam {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
     pub default_value: Option<String>,
+    /// Example text shown in the empty input, such as "e.g. BTC or AAPL"; never a value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
 }
 
 /// The options of a [`ParamKind::Double`] field.
@@ -674,6 +677,9 @@ pub struct DoubleParam {
     /// The starting value, as the param, list item or object field holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<f64>,
+    /// Example text shown in the empty input, such as "e.g. 0.5"; never a value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
 }
 
 /// The options of a [`ParamKind::Integer`] field.
@@ -697,6 +703,9 @@ pub struct IntegerParam {
     /// The starting value, as the param, list item or object field holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<i32>,
+    /// Example text shown in the empty input, such as "e.g. 42"; never a value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
 }
 
 /// The options of a [`ParamKind::Boolean`] field.
@@ -717,6 +726,9 @@ pub struct TimezoneParam {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
     pub default_value: Option<String>,
+    /// Example text shown in the empty input, such as "e.g. Europe/Prague"; never a value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
 }
 
 impl ParamDefinition {
@@ -766,7 +778,7 @@ impl ParamKind {
     fn has_default_value(&self) -> bool {
         match self {
             ParamKind::String(StringParam { default_value, .. })
-            | ParamKind::Timezone(TimezoneParam { default_value }) => default_value.is_some(),
+            | ParamKind::Timezone(TimezoneParam { default_value, .. }) => default_value.is_some(),
             ParamKind::Double(DoubleParam { default_value, .. }) => default_value.is_some(),
             ParamKind::Integer(IntegerParam { default_value, .. }) => default_value.is_some(),
             ParamKind::Boolean(BooleanParam { default_value }) => default_value.is_some(),
@@ -840,7 +852,18 @@ impl ObjectParam {
     }
 }
 
-impl Scalar<'_> {
+impl<'a> Scalar<'a> {
+    #[must_use]
+    pub fn placeholder(self) -> Option<&'a str> {
+        match self {
+            Scalar::String(p) => p.placeholder.as_deref(),
+            Scalar::Double(p) => p.placeholder.as_deref(),
+            Scalar::Integer(p) => p.placeholder.as_deref(),
+            Scalar::Timezone(p) => p.placeholder.as_deref(),
+            Scalar::Boolean(_) => None,
+        }
+    }
+
     fn validate(self) -> Result<(), String> {
         match self {
             Scalar::String(p) => p.validate(),

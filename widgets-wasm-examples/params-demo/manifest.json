@@ -166,7 +166,8 @@
       "description": "List of free-form strings",
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "placeholder": "e.g. BTC or AAPL"
       },
       "max_items": 5,
       "default_value": [

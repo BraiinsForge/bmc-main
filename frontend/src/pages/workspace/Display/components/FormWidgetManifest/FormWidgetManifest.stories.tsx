@@ -103,6 +103,13 @@ const SCALAR_PARAMS: pb.ManifestParamDefinition[] = [
         case: 'paramString',
         value: create(pb.ParamStringSchema, { defaultValue: 'Demo' }),
     }),
+    create(pb.ManifestParamDefinitionSchema, {
+        key: 'city',
+        name: 'City',
+        description: 'Where the forecast is for.',
+        isOptional: true,
+        kind: { case: 'paramString', value: create(pb.ParamStringSchema, { placeholder: 'e.g. Prague' }) },
+    }),
     param('theme', 'Theme', {
         case: 'paramString',
         value: create(pb.ParamStringSchema, {
@@ -148,7 +155,10 @@ const SCALAR_PARAMS: pb.ManifestParamDefinition[] = [
             ],
         }),
     }),
-    param('tz', 'Timezone', { case: 'paramTimezone', value: create(pb.ParamTimezoneSchema) }),
+    param('tz', 'Timezone', {
+        case: 'paramTimezone',
+        value: create(pb.ParamTimezoneSchema, { placeholder: 'e.g. Europe/Prague' }),
+    }),
 ];
 
 function list(
@@ -177,7 +187,7 @@ function list(
 const SYMBOLS = list(
     'symbols',
     'Ticker symbols',
-    { case: 'paramString', value: create(pb.ParamStringSchema) },
+    { case: 'paramString', value: create(pb.ParamStringSchema, { placeholder: 'e.g. BTC or AAPL' }) },
     { minItems: 1, maxItems: 8, description: 'Shown one after another, in this order.' },
     [
         { case: 'stringValue', value: 'NVDA' },
@@ -196,14 +206,14 @@ const LINKS = list(
                     key: 'label',
                     name: 'Label',
                     description: 'The text the widget shows for the link.',
-                    kind: { case: 'paramString', value: {} },
+                    kind: { case: 'paramString', value: { placeholder: 'e.g. Braiins' } },
                 },
                 {
                     key: 'url',
                     name: 'URL',
                     description: 'Leave empty to show the label as plain text.',
                     isOptional: true,
-                    kind: { case: 'paramString', value: { format: pb.StringFormat.URI } },
+                    kind: { case: 'paramString', value: { format: pb.StringFormat.URI, placeholder: 'https://…' } },
                 },
             ],
         }),
@@ -226,7 +236,7 @@ const ITEM_KIND_LISTS: pb.ManifestParamDefinition[] = [
     list(
         'thresholds',
         'Whole numbers',
-        { case: 'paramInteger', value: create(pb.ParamIntegerSchema, { min: 0, max: 100 }) },
+        { case: 'paramInteger', value: create(pb.ParamIntegerSchema, { min: 0, max: 100, placeholder: 'e.g. 42' }) },
         { maxItems: 5, description: 'Each between 0 and 100.' },
         [
             { case: 'integerValue', value: 10 },

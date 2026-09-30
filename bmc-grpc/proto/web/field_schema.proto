@@ -96,6 +96,7 @@ message ParamString {
   optional StringFormat format = 1;
   repeated StringOption enum_values = 2;
   optional string default_value = 3;
+  optional string placeholder = 4;
 }
 
 message StringOption {
@@ -118,6 +119,7 @@ message ParamDouble {
   optional double step = 3;
   repeated DoubleOption enum_values = 4;
   optional double default_value = 5;
+  optional string placeholder = 6;
 }
 
 message DoubleOption {
@@ -131,6 +133,7 @@ message ParamInteger {
   optional int32 step = 3;
   repeated IntegerOption enum_values = 4;
   optional int32 default_value = 5;
+  optional string placeholder = 6;
 }
 
 message IntegerOption {
@@ -144,6 +147,7 @@ message ParamBoolean {
 
 message ParamTimezone {
   optional string default_value = 1;
+  optional string placeholder = 2;
 }
 
 // A value for a field declared by a ManifestParamDefinition.

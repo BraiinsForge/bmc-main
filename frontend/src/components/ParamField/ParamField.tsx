@@ -74,9 +74,11 @@ export interface BoundComboBoxProps<T extends string | number> extends iField<T>
     items: Array<OptionItem<T>>;
     decorator?: ReactNode;
     helperText?: ReactNode;
+    placeholder?: string;
 }
 export function BoundComboBox<T extends string | number>(props: BoundComboBoxProps<T>) {
-    const { id, labelText, hideLabel, helperText, decorator, value, items, onChange, disabled, error } = props;
+    const { id, labelText, hideLabel, helperText, decorator, placeholder, value, items, onChange, disabled, error } =
+        props;
     const isTouchDevice = useIsTouchDevice();
 
     const selectedItemStruct = useMemo<undefined | OptionItem<T>>(() => {
@@ -126,6 +128,7 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
             aria-label={hideLabel ? labelText : undefined}
             decorator={decorator}
             helperText={helperText}
+            placeholder={placeholder}
             invalid={!!error}
             invalidText={error}
             disabled={disabled}
@@ -213,7 +216,7 @@ function ScalarField(props: ScalarFieldProps) {
 
     switch (kind.case) {
         case 'paramString': {
-            const { enumValues, format } = kind.value;
+            const { enumValues, format, placeholder } = kind.value;
             if (enumValues.length > 0) {
                 const items: Array<OptionItem<string>> = enumValues.map(opt => ({
                     value: opt.value,
@@ -224,6 +227,7 @@ function ScalarField(props: ScalarFieldProps) {
                         id={id}
                         labelText={labelText}
                         hideLabel={hideLabel}
+                        placeholder={placeholder}
                         error={error}
                         items={items}
                         value={asString(value) || null}
@@ -252,7 +256,7 @@ function ScalarField(props: ScalarFieldProps) {
                             helperText={helperText}
                             invalid={!!error}
                             invalidText={error}
-                            placeholder="yyyy-mm-dd"
+                            placeholder={placeholder ?? 'yyyy-mm-dd'}
                             pattern="\d{4}-\d{2}-\d{2}"
                         />
                     </DatePicker>
@@ -268,6 +272,7 @@ function ScalarField(props: ScalarFieldProps) {
                         invalid={!!error}
                         invalidText={error}
                         tooltipPosition="left"
+                        placeholder={placeholder}
                         value={asString(value)}
                         onChange={e => onChange(e.target.value)}
                     />
@@ -282,6 +287,7 @@ function ScalarField(props: ScalarFieldProps) {
                     invalid={!!error}
                     invalidText={error}
                     type={stringFormatToInputType(format)}
+                    placeholder={placeholder}
                     value={asString(value)}
                     onChange={e => onChange(e.target.value)}
                 />
@@ -302,6 +308,7 @@ function ScalarField(props: ScalarFieldProps) {
                         id={id}
                         labelText={labelText}
                         hideLabel={hideLabel}
+                        placeholder={inner.placeholder}
                         error={error}
                         items={items}
                         value={asString(value)}
@@ -334,6 +341,7 @@ function ScalarField(props: ScalarFieldProps) {
                     invalidText={error}
                     type="number"
                     allowEmpty
+                    placeholder={inner.placeholder}
                     value={numericValue}
                     min={inner.min}
                     max={inner.max}
@@ -366,6 +374,7 @@ function ScalarField(props: ScalarFieldProps) {
                     labelText={labelText}
                     hideLabel={hideLabel}
                     helperText={helperText}
+                    placeholder={kind.value.placeholder}
                     error={error}
                     items={tzItems}
                     value={value === null ? '' : asString(value)}

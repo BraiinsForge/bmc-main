@@ -788,6 +788,7 @@ fn string_param_to_proto(
         format,
         enum_values,
         default_value,
+        placeholder,
     }: &StringParam,
 ) -> web::ParamString {
     web::ParamString {
@@ -800,6 +801,7 @@ fn string_param_to_proto(
             })
             .collect(),
         default_value: default_value.clone(),
+        placeholder: placeholder.clone(),
     }
 }
 
@@ -810,6 +812,7 @@ fn double_param_to_proto(
         step,
         enum_values,
         default_value,
+        placeholder,
     }: &DoubleParam,
 ) -> web::ParamDouble {
     web::ParamDouble {
@@ -824,6 +827,7 @@ fn double_param_to_proto(
             })
             .collect(),
         default_value: *default_value,
+        placeholder: placeholder.clone(),
     }
 }
 
@@ -834,6 +838,7 @@ fn integer_param_to_proto(
         step,
         enum_values,
         default_value,
+        placeholder,
     }: &IntegerParam,
 ) -> web::ParamInteger {
     web::ParamInteger {
@@ -848,6 +853,7 @@ fn integer_param_to_proto(
             })
             .collect(),
         default_value: *default_value,
+        placeholder: placeholder.clone(),
     }
 }
 
@@ -857,9 +863,15 @@ fn boolean_param_to_proto(BooleanParam { default_value }: &BooleanParam) -> web:
     }
 }
 
-fn timezone_param_to_proto(TimezoneParam { default_value }: &TimezoneParam) -> web::ParamTimezone {
+fn timezone_param_to_proto(
+    TimezoneParam {
+        default_value,
+        placeholder,
+    }: &TimezoneParam,
+) -> web::ParamTimezone {
     web::ParamTimezone {
         default_value: default_value.clone(),
+        placeholder: placeholder.clone(),
     }
 }
 
@@ -1921,6 +1933,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("hello".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -1940,6 +1953,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: None,
+                placeholder: None,
             }),
             true,
         );
@@ -1958,6 +1972,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("hello".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -1980,6 +1995,7 @@ mod tests {
                     format: None,
                     enum_values: vec![],
                     default_value: Some("x".into()),
+                    placeholder: None,
                 }),
                 false,
             ),
@@ -1991,6 +2007,7 @@ mod tests {
                     step: None,
                     enum_values: vec![],
                     default_value: Some(7),
+                    placeholder: None,
                 }),
                 false,
             ),
@@ -2002,6 +2019,7 @@ mod tests {
                     step: None,
                     enum_values: vec![],
                     default_value: Some(2.5),
+                    placeholder: None,
                 }),
                 false,
             ),
@@ -2016,6 +2034,7 @@ mod tests {
                 "t",
                 ParamKind::Timezone(TimezoneParam {
                     default_value: Some("UTC".into()),
+                    placeholder: None,
                 }),
                 false,
             ),
@@ -2086,6 +2105,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -2106,6 +2126,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -2136,6 +2157,7 @@ mod tests {
                     step: None,
                     enum_values: vec![],
                     default_value: None,
+                    placeholder: None,
                 }),
                 min_items,
                 max_items,
@@ -2256,6 +2278,7 @@ mod tests {
             format: None,
             enum_values: vec![],
             default_value: Some("x".into()),
+            placeholder: None,
         }
     }
 
@@ -2816,6 +2839,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -2831,6 +2855,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -2848,6 +2873,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0),
+                placeholder: None,
             }),
             false,
         );
@@ -2865,6 +2891,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
+                placeholder: None,
             }),
             false,
         );
@@ -2895,6 +2922,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("x".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -2910,6 +2938,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: None,
+                placeholder: None,
             }),
             true,
         );
@@ -2927,6 +2956,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(1.0),
+                placeholder: None,
             }),
             false,
         );
@@ -2944,6 +2974,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(1.0),
+                placeholder: None,
             }),
             false,
         );
@@ -2961,6 +2992,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
+                placeholder: None,
             }),
             false,
         );
@@ -2978,6 +3010,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
+                placeholder: None,
             }),
             false,
         );
@@ -2995,6 +3028,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
+                placeholder: None,
             }),
             false,
         );
@@ -3019,6 +3053,7 @@ mod tests {
                     },
                 ],
                 default_value: Some("dark".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -3043,6 +3078,7 @@ mod tests {
                     },
                 ],
                 default_value: Some("dark".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -3104,6 +3140,7 @@ mod tests {
                     step: None,
                     enum_values: vec![],
                     default_value: Some(5),
+                    placeholder: None,
                 }),
                 false,
             ),
@@ -3116,6 +3153,7 @@ mod tests {
                         label: "Red".into(),
                     }],
                     default_value: Some("red".into()),
+                    placeholder: None,
                 }),
                 false,
             ),
@@ -3176,6 +3214,7 @@ mod tests {
                     },
                 ],
                 default_value: Some("a".into()),
+                placeholder: None,
             }),
         };
         let proto = param_definition_to_proto("style", &p);
@@ -3203,6 +3242,7 @@ mod tests {
                 step: Some(0.1),
                 enum_values: vec![],
                 default_value: Some(0.5),
+                placeholder: Some("e.g. 0.5".into()),
             }),
         };
         let proto = param_definition_to_proto("brightness", &p);
@@ -3214,6 +3254,7 @@ mod tests {
         assert_eq!(pd.min, Some(0.0));
         assert_eq!(pd.max, Some(1.0));
         assert_eq!(pd.step, Some(0.1));
+        assert_eq!(pd.placeholder.as_deref(), Some("e.g. 0.5"));
     }
 
     #[test]
@@ -3230,6 +3271,7 @@ mod tests {
                 step: Some(1),
                 enum_values: vec![],
                 default_value: Some(5),
+                placeholder: Some("e.g. 5".into()),
             }),
         };
         let proto = param_definition_to_proto("count", &p);
@@ -3241,6 +3283,7 @@ mod tests {
         assert_eq!(pi.min, Some(0));
         assert_eq!(pi.max, Some(10));
         assert_eq!(pi.step, Some(1));
+        assert_eq!(pi.placeholder.as_deref(), Some("e.g. 5"));
     }
 
     #[test]
@@ -3273,6 +3316,7 @@ mod tests {
             is_optional: false,
             kind: ParamKind::Timezone(TimezoneParam {
                 default_value: Some("Europe/Prague".into()),
+                placeholder: Some("e.g. Europe/Prague".into()),
             }),
         };
         let proto = param_definition_to_proto("tz", &p);
@@ -3281,6 +3325,7 @@ mod tests {
             panic!("BUG: expected param_timezone arm");
         };
         assert_eq!(pt.default_value.as_deref(), Some("Europe/Prague"));
+        assert_eq!(pt.placeholder.as_deref(), Some("e.g. Europe/Prague"));
     }
 
     #[test]
@@ -3297,6 +3342,7 @@ mod tests {
                     format: None,
                     enum_values: vec![],
                     default_value: Some("BTC".into()),
+                    placeholder: Some("e.g. BTC or AAPL".into()),
                 }),
                 min_items: 1,
                 max_items: 8,
@@ -3313,6 +3359,7 @@ mod tests {
             panic!("BUG: expected a param_string item kind");
         };
         assert_eq!(item.default_value.as_deref(), Some("BTC"));
+        assert_eq!(item.placeholder.as_deref(), Some("e.g. BTC or AAPL"));
     }
 
     fn scene_with_widget(
@@ -3858,6 +3905,7 @@ mod tests {
                 format: None,
                 enum_values: vec![],
                 default_value: Some("red".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -3875,6 +3923,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0),
+                placeholder: None,
             }),
             false,
         );
@@ -3895,6 +3944,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
+                placeholder: None,
             }),
             false,
         );
@@ -3924,6 +3974,7 @@ mod tests {
             "tz",
             bmc_widget_manifest::ParamKind::Timezone(TimezoneParam {
                 default_value: None,
+                placeholder: None,
             }),
             true,
         );
@@ -3944,6 +3995,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
+                placeholder: None,
             }),
             false,
         );
@@ -3964,6 +4016,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(5),
+                placeholder: None,
             }),
             false,
         );
@@ -3984,6 +4037,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(1.0),
+                placeholder: None,
             }),
             false,
         );
@@ -4004,6 +4058,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
+                placeholder: None,
             }),
             false,
         );
@@ -4024,6 +4079,7 @@ mod tests {
                 step: None,
                 enum_values: vec![],
                 default_value: Some(0.5),
+                placeholder: None,
             }),
             false,
         );
@@ -4045,6 +4101,7 @@ mod tests {
                     label: "Dark".into(),
                 }],
                 default_value: Some("dark".into()),
+                placeholder: None,
             }),
             false,
         );
@@ -4068,6 +4125,7 @@ mod tests {
                     label: "One".into(),
                 }],
                 default_value: Some(1),
+                placeholder: None,
             }),
             false,
         );

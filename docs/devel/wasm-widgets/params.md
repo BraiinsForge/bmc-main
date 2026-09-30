@@ -50,7 +50,9 @@ name.
 
 Supported param kinds are `string`, `integer`, `double`, `boolean`, `timezone`, and `array`. Strings, integers, and
 doubles may also declare `enum_values`; generated code turns those enum values into Rust enum wrappers. Numeric params
-may declare `min`, `max`, and `step`. String params may declare UI `format` hints.
+may declare `min`, `max`, and `step`. String params may declare UI `format` hints. Strings, integers, doubles, and
+timezones may declare a `placeholder`, as params, list items, or object fields alike: example text the operator UI shows
+in the empty input, such as "e.g. BTC or AAPL". It is never a value, so the widget never receives it.
 
 Required params must declare `default_value`, except an `array`, whose omitted default is the empty list. Optional
 params may omit a default; when unset, the generated Rust field is `Option<T>` and evaluates to `None`.
@@ -69,7 +71,7 @@ is: any scalar kind, with the same options a scalar param takes, or an `object` 
     "symbols": {
       "name": "Ticker symbols",
       "type": "array",
-      "items": { "type": "string", "default_value": "BTC" },
+      "items": { "type": "string", "placeholder": "e.g. BTC or AAPL" },
       "min_items": 1,
       "max_items": 8,
       "default_value": ["NVDA", "AAPL"]
