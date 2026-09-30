@@ -30,7 +30,7 @@ use log::debug;
 use serde::Deserialize;
 use strum::{Display, EnumString};
 use tokio::process::Command;
-use tokio::time::{self, Duration, MissedTickBehavior};
+use tokio::time::{self, Duration, Instant, MissedTickBehavior};
 
 use crate::wifi::supplicant::JoinDiagnosis;
 use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
@@ -207,27 +207,87 @@ pub(crate) fn parse_iw_link_ssid(output: &str) -> Option<String> {
         .filter(|ssid| !ssid.is_empty())
 }
 
-/// Wait until `device` is associated with `ssid`, polling once per second.
+/// Whether `iw dev <device> station dump` reports the peer authorized:
+/// the kernel sets the flag once the key handshake completes,
+/// so a station that associated with a wrong passphrase never shows it.
+pub(crate) fn parse_iw_station_authorized(output: &str) -> bool {
+    output
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("authorized:"))
+        .any(|value| value.trim() == "yes")
+}
+
+/// How long the peer in `iw dev <device> station dump` has been associated,
+/// from its `connected time: N seconds` line.
+pub(crate) fn parse_iw_station_connected_time(output: &str) -> Option<Duration> {
+    output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("connected time:"))
+        .and_then(|value| value.split_whitespace().next()?.parse().ok())
+        .map(Duration::from_secs)
+}
+
+/// Whether the station dump shows an authorized session begun within `window`.
+/// A reload that applies a new key re-associates, so a session older than the
+/// reload is the one it replaces, still up because the reload is asynchronous.
+fn fresh_authorized_session(output: &str, window: Duration) -> bool {
+    parse_iw_station_authorized(output)
+        && parse_iw_station_connected_time(output).is_some_and(|connected| connected <= window)
+}
+
+/// The station dump for `device`, or `None` unless its link names `ssid`.
+async fn station_dump_on(device: &str, ssid: &str) -> Option<String> {
+    match CommandUtils::call_iw_cmd(&["dev", device, "link"]).await {
+        Ok(output) if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid) => {}
+        Ok(_) => return None,
+        Err(e) => {
+            debug!("Unable to query the {device} link: {e}");
+            return None;
+        }
+    }
+    CommandUtils::call_iw_cmd(&["dev", device, "station", "dump"])
+        .await
+        .inspect_err(|e| debug!("Unable to query the {device} station: {e}"))
+        .ok()
+}
+
+/// Whether `device` is authorized on `ssid` right now.
+pub(crate) async fn station_authorized_on(device: &str, ssid: &str) -> bool {
+    station_dump_on(device, ssid)
+        .await
+        .is_some_and(|dump| parse_iw_station_authorized(&dump))
+}
+
+/// Wait until `device` is authorized on `ssid` in a session begun after
+/// `reloaded_at`, polling once per second.
 ///
-/// An address check alone is not enough for a connect: right after the
-/// station is reconfigured the previous lease can still sit on the netdev, so
-/// "has an IPv4 address" reports success for an SSID that does not exist.
-/// Requiring the live link to name the target SSID first closes that hole.
-pub(crate) async fn wait_for_station_joined(device: &str, ssid: &str, attempts: u8) -> Result<()> {
+/// Neither an address nor the association proves a join. The previous lease
+/// can still sit on the netdev, a wrong passphrase associates first
+/// and only fails the key handshake afterwards, and joining the network
+/// the station is already on finds the old session up until the reload lands.
+pub(crate) async fn wait_for_station_authorized(
+    device: &str,
+    ssid: &str,
+    attempts: u8,
+    reloaded_at: Instant,
+) -> Result<()> {
     let mut interval = time::interval(IP_CHECK_INTERVAL);
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut associated = false;
     for i in 0..attempts {
         interval.tick().await;
-        debug!("{i}/{attempts} attempt to see {device} associated with {ssid}");
-        match CommandUtils::call_iw_cmd(&["dev", device, "link"]).await {
-            Ok(output) => {
-                if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid) {
-                    debug!("{device} is associated with {ssid}");
-                    return Ok(());
-                }
-            }
-            Err(e) => debug!("Unable to query the {device} link: {e}"),
+        debug!("{i}/{attempts} attempt to see {device} authorized on {ssid}");
+        let Some(dump) = station_dump_on(device, ssid).await else {
+            continue;
+        };
+        associated = true;
+        if fresh_authorized_session(&dump, reloaded_at.elapsed()) {
+            debug!("{device} is authorized on {ssid}");
+            return Ok(());
         }
+    }
+    if associated {
+        bail!("Could not connect to {ssid}. The password may be wrong.")
     }
     bail!("{device} did not associate with {ssid}")
 }
@@ -493,9 +553,12 @@ impl WifiCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_sort_by_strongest_signal, mark_connected, parse_iw_link_ssid, redact_wifi_key,
+        filter_sort_by_strongest_signal, fresh_authorized_session, mark_connected,
+        parse_iw_link_ssid, parse_iw_station_authorized, parse_iw_station_connected_time,
+        redact_wifi_key,
     };
     use bmc_net_types::wifi::{EncryptionType, WifiScanItem};
+    use std::time::Duration;
 
     #[test]
     fn dedups_matching_networks_keeping_strongest_signal() {
@@ -535,6 +598,56 @@ mod tests {
             parse_iw_link_ssid("Connected to 11:22:33:44:55:66 (on wlan0)\n\tSSID: \n"),
             None
         );
+    }
+
+    /// `iw dev wlan0 station dump` for a station associated `connected` seconds ago.
+    fn station_dump(authorized: &str, connected: u64) -> String {
+        format!(
+            "Station 11:22:33:44:55:66 (on wlan0)\n\tinactive time:\t30 ms\n\tsignal:  \t-47 dBm\n\tauthorized:\t{authorized}\n\tauthenticated:\tyes\n\tassociated:\tyes\n\tconnected time:\t{connected} seconds\n"
+        )
+    }
+
+    #[test]
+    fn reads_the_authorized_flag_from_iw_station_dump() {
+        assert!(parse_iw_station_authorized(&station_dump("yes", 3)));
+        assert!(
+            !parse_iw_station_authorized(&station_dump("no", 3)),
+            "associated and authenticated is not enough: the key handshake failed"
+        );
+    }
+
+    #[test]
+    fn a_station_dump_without_the_flag_is_not_authorized() {
+        assert!(!parse_iw_station_authorized(""));
+        assert!(!parse_iw_station_authorized(
+            "Station 11:22:33:44:55:66 (on wlan0)\n\tsignal:  \t-47 dBm\n"
+        ));
+    }
+
+    #[test]
+    fn reads_the_association_age_from_iw_station_dump() {
+        assert_eq!(
+            parse_iw_station_connected_time(&station_dump("yes", 42)),
+            Some(Duration::from_secs(42))
+        );
+        assert_eq!(parse_iw_station_connected_time(""), None);
+    }
+
+    #[test]
+    fn only_a_session_begun_since_the_reload_counts() {
+        let since_reload = Duration::from_secs(5);
+        assert!(fresh_authorized_session(
+            &station_dump("yes", 2),
+            since_reload
+        ));
+        assert!(
+            !fresh_authorized_session(&station_dump("yes", 3600), since_reload),
+            "the session the reload replaces is still up"
+        );
+        assert!(!fresh_authorized_session(
+            &station_dump("no", 2),
+            since_reload
+        ));
     }
 
     #[test]

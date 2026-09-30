@@ -67,6 +67,19 @@ impl SavedStation {
         &self.0.ssid
     }
 
+    /// Whether joining `ssid` with `password` and `encryption` would write
+    /// back what this section already holds.
+    pub(crate) fn matches(
+        &self,
+        ssid: &str,
+        password: Option<&str>,
+        encryption: EncryptionType,
+    ) -> bool {
+        self.0.ssid == ssid
+            && self.0.encryption == encryption.to_uci_str()
+            && self.0.key.as_deref().unwrap_or_default() == password.unwrap_or_default()
+    }
+
     /// The section name and the values that put it back, enabled.
     /// A section saved without a key gets an empty one:
     /// the attempt may have written a key there, and ubus takes no `null`.
@@ -514,6 +527,21 @@ mod tests {
         assert_eq!(values["encryption"], "psk2");
         assert_eq!(values["disabled"], "0");
         assert!(values.get(".name").is_none() && values.get("name").is_none());
+    }
+
+    #[test]
+    fn a_resubmitted_station_matches_only_with_the_same_key() {
+        let saved = SavedStation(UciWirelessIface {
+            ssid: "Home".to_owned(),
+            key: Some("right".to_owned()),
+            encryption: EncryptionType::Wpa2.to_uci_str().to_owned(),
+            ..iface("cfg_sta", "sta")
+        });
+
+        assert!(saved.matches("Home", Some("right"), EncryptionType::Wpa2));
+        assert!(!saved.matches("Home", Some("wrong"), EncryptionType::Wpa2));
+        assert!(!saved.matches("Other", Some("right"), EncryptionType::Wpa2));
+        assert!(!saved.matches("Home", Some("right"), EncryptionType::Wpa3));
     }
 
     #[test]

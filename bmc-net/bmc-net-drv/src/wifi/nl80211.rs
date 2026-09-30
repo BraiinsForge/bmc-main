@@ -31,7 +31,7 @@ use sta::WifiSta;
 use std::fmt::Debug;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::{self, Duration, MissedTickBehavior};
+use tokio::time::{self, Duration, Instant, MissedTickBehavior};
 use wl_nl80211::Nl80211Handle;
 
 use super::uci::{
@@ -39,8 +39,9 @@ use super::uci::{
 };
 use super::utils::{
     ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
-    filter_empty_ssid, filter_unsupported_enc, mark_connected, wait_for_interface_up,
-    wait_for_network_ip_address, wait_for_station_joined, wait_for_wireless_config,
+    filter_empty_ssid, filter_unsupported_enc, mark_connected, station_authorized_on,
+    wait_for_interface_up, wait_for_network_ip_address, wait_for_station_authorized,
+    wait_for_wireless_config,
 };
 use super::{SharedCache, WifiDriver};
 use crate::WIRELESS_CONFIG_FILE_PATH;
@@ -266,12 +267,23 @@ impl WifiDriver for OpenwrtWifiManager {
         let device = WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await?;
         // Remember the station we are leaving so a failed join can put it back.
         let previous = UciHelper::new(&self.wlan_dev_syspath).saved_station().await;
+        // Rewriting an unchanged config may not re-associate,
+        // and the join waits for a session begun after the reload.
+        if previous
+            .as_ref()
+            .is_some_and(|saved| saved.matches(&ssid, password.as_deref(), encryption))
+            && station_authorized_on(&device, &ssid).await
+        {
+            debug!("{device} is already joined to {ssid} with this config");
+            return wait_for_network_ip_address(&device, ATTEMPTS_TO_GET_IP).await;
+        }
         self.configure_wifi_iface(WifiMode::Station, ssid.clone(), password, encryption)
             .await?;
+        let reloaded_at = Instant::now();
         self.enable_radio(true).await?;
 
         let joined = async {
-            wait_for_station_joined(&device, &ssid, ATTEMPTS_TO_GET_IP).await?;
+            wait_for_station_authorized(&device, &ssid, ATTEMPTS_TO_GET_IP, reloaded_at).await?;
             wait_for_network_ip_address(&device, ATTEMPTS_TO_GET_IP).await
         }
         .await;
