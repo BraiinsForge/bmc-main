@@ -56,6 +56,7 @@ const ERROR_ROW_ALPHA: f32 = 0.6;
 /// The SDK stale pill's space between its icon and label.
 const STALE_ICON_GAP: f32 = 8.0;
 const NO_SYMBOLS: &str = "No symbols provided";
+const NOT_AVAILABLE: &str = "N/A";
 
 fn fixed_width(width: f32) -> Node {
     col(props!(width: width), Vec::<Node>::new())
@@ -76,11 +77,25 @@ struct Cells {
     price: Node,
 }
 
-fn empty_cells(band: &Band) -> Cells {
-    Cells {
-        name: col(props!(flex: 1.0), Vec::<Node>::new()),
-        chart: fixed_width(band.chart_width),
-        price: col(props!(), Vec::<Node>::new()),
+/// Why a row has no price to show.
+#[derive(Clone, Copy)]
+enum Pending {
+    Loading,
+    Failed,
+    NoData,
+    Closed,
+    NotFound,
+}
+
+impl Pending {
+    fn label(self) -> &'static str {
+        match self {
+            Pending::Loading => "Loading\u{2026}",
+            Pending::Failed => "Unavailable",
+            Pending::NoData => "No data",
+            Pending::Closed => "Closed",
+            Pending::NotFound => "Not found",
+        }
     }
 }
 
@@ -95,8 +110,7 @@ enum Slot<'a> {
     },
     Placeholder {
         symbol: &'a str,
-        status: &'static str,
-        not_found: bool,
+        reason: Pending,
     },
 }
 
@@ -110,23 +124,22 @@ fn slot<'a>(
     let (Some(symbol), Some(row_state)) = (symbols.get(index), states.get(index)) else {
         return Slot::Empty;
     };
-    let placeholder = |status, not_found| Slot::Placeholder {
-        symbol,
-        status,
-        not_found,
-    };
+    let placeholder = |reason| Slot::Placeholder { symbol, reason };
     match row_state {
         RowState::Resolved { data } => Slot::Resolved {
             data,
             name: names.get(index).and_then(Option::as_deref),
             stale: stale.get(index).copied().flatten(),
         },
-        RowState::InputError { .. } => placeholder("Not found", true),
-        RowState::NoData { market_closed } => {
-            placeholder(if *market_closed { "Closed" } else { "No data" }, false)
-        }
-        RowState::Failed => placeholder("Unavailable", false),
-        RowState::Loading => placeholder("Loading\u{2026}", false),
+        RowState::InputError { .. } => placeholder(Pending::NotFound),
+        RowState::NoData {
+            market_closed: true,
+        } => placeholder(Pending::Closed),
+        RowState::NoData {
+            market_closed: false,
+        } => placeholder(Pending::NoData),
+        RowState::Failed => placeholder(Pending::Failed),
+        RowState::Loading => placeholder(Pending::Loading),
     }
 }
 
@@ -141,18 +154,20 @@ fn price_text(row_data: &TickerRow) -> String {
     }
 }
 
-fn closed_marker(band: &Band, color: Color) -> Node {
-    let diameter = band.marker_size;
+fn closed_marker(diameter: f32, color: Color) -> Node {
     let draws = pause_marker(diameter, color, BACKGROUND);
     canvas(props!(width: diameter, height: diameter), draws)
 }
 
-/// The `symbol` node, with a pause marker in `marker` after it when the market is closed.
-fn symbol_line(symbol: Node, band: &Band, marker: Color, closed: bool) -> Node {
+/// The `symbol` node, with a pause marker after it when the market is closed.
+fn symbol_line(row_style: &impl RowStyle, symbol: Node, closed: bool) -> Node {
     let mut children = vec![symbol];
     if closed {
-        children.push(fixed_width(band.row_gap));
-        children.push(closed_marker(band, marker));
+        children.push(fixed_width(row_style.marker_gap()));
+        children.push(closed_marker(
+            row_style.marker_size(),
+            row_style.secondary(),
+        ));
     }
     row(props!(cross_align: CrossAlign::Center), children)
 }
@@ -161,8 +176,7 @@ fn symbol_line(symbol: Node, band: &Band, marker: Color, closed: bool) -> Node {
 /// the SDK pill's warning icon and the age of the last good load, in the name's type.
 /// Per row, because the SDK's `with_stale_overlay` floats one pill over the whole root
 /// and so cannot say *which* rows hold an old series.
-fn stale_line(anchor: SystemTime, name: TextStyle, band: &Band) -> Node {
-    let icon = band.marker_size;
+fn stale_line(anchor: SystemTime, name: TextStyle, icon: f32) -> Node {
     row(
         props!(gap: STALE_ICON_GAP, cross_align: CrossAlign::Center),
         [
@@ -204,20 +218,7 @@ struct Paint {
     stroke: f32,
 }
 
-/// A closed market greys the line, a live one takes the trend's colour.
-fn deck_paint(trend: Color, closed: bool) -> Paint {
-    let color = if closed { SECONDARY } else { trend };
-    let alpha = if closed { CLOSED_CHART_ALPHA } else { 1.0 };
-    Paint {
-        line: color.with_alpha(alpha),
-        fill_top: color.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
-        fill_bottom: color.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha),
-        stroke: CHART_STROKE,
-    }
-}
-
-fn sparkline(series: &[f64], paint: &Paint, band: &Band) -> Node {
-    let (w, h) = (band.chart_width, band.chart_height);
+fn sparkline(series: &[f64], paint: &Paint, (w, h): (f32, f32)) -> Node {
     let line = chart::series_points(series, w, h, CHART_INSET);
     if line.len() < 2 {
         return fixed_width(w);
@@ -234,118 +235,194 @@ fn sparkline(series: &[f64], paint: &Paint, band: &Band) -> Node {
     )
 }
 
-fn badge_node(text_str: String, trend: Color, band: &Band) -> Node {
-    row(
-        props!(background: trend.with_alpha(BADGE_BG_ALPHA), padding: band.badge_padding),
-        [text(
-            text_str,
-            style!(size: band.change_font, weight: FontWeight::BOLD, color: trend),
-        )],
-    )
+/// How a frame draws the pieces every row is made of, so the rows themselves are built once.
+trait RowStyle {
+    fn symbol(&self, symbol: &str, color: Color) -> Node;
+    /// The type of the line under the symbol: a company name, why a price is missing,
+    /// or how old a stale one is.
+    fn sub_style(&self, color: Color) -> StyleResult;
+    /// Seats a line under the symbol; a frame of fixed line boxes wraps it in one.
+    fn sub_line(&self, line: Node) -> Node {
+        line
+    }
+    fn price(&self, price: String, color: Color) -> Node;
+    fn change(&self, change: String, rising: bool) -> Node;
+    fn paint(&self, rising: bool, closed: bool) -> Paint;
+    /// The symbol and the price.
+    fn primary(&self) -> Color;
+    /// The name, the pause marker and a placeholder's text.
+    fn secondary(&self) -> Color;
+    /// A placeholder's symbol, before the row dims.
+    fn placeholder_color(&self, reason: Pending) -> Color;
+    /// Between a symbol and its name, and between a price and its change.
+    fn line_gap(&self) -> f32;
+    fn marker_gap(&self) -> f32;
+    /// The pause marker's diameter, and the stale warning's icon.
+    fn marker_size(&self) -> f32;
+    fn chart_size(&self) -> (f32, f32);
+    fn show_chart(&self) -> bool;
 }
 
-fn right_col(price_str: String, change_str: String, trend: Color, band: &Band) -> Node {
-    col(
-        props!(cross_align: CrossAlign::End, gap: band.row_gap),
-        [
-            text(
-                price_str,
-                style!(size: band.price_font, weight: FontWeight::BOLD, color: PRIMARY, align: TextAlign::Right),
-            ),
-            badge_node(change_str, trend, band),
-        ],
-    )
+/// The Deck's rows, sized by the band of the current frame.
+struct Deck(Band);
+
+fn trend(rising: bool) -> Color {
+    if rising { TREND_UP } else { TREND_DOWN }
+}
+
+impl RowStyle for Deck {
+    fn symbol(&self, symbol: &str, color: Color) -> Node {
+        text(
+            symbol,
+            style!(size: self.0.symbol_font, weight: FontWeight::BOLD, color: color, text_overflow: TextOverflow::Ellipsis),
+        )
+    }
+
+    fn sub_style(&self, color: Color) -> StyleResult {
+        style!(size: self.0.company_font, color: color, text_overflow: TextOverflow::Ellipsis)
+    }
+
+    fn price(&self, price: String, color: Color) -> Node {
+        text(
+            price,
+            style!(size: self.0.price_font, weight: FontWeight::BOLD, color: color, align: TextAlign::Right),
+        )
+    }
+
+    fn change(&self, change: String, rising: bool) -> Node {
+        let color = trend(rising);
+        row(
+            props!(background: color.with_alpha(BADGE_BG_ALPHA), padding: self.0.badge_padding),
+            [text(
+                change,
+                style!(size: self.0.change_font, weight: FontWeight::BOLD, color: color),
+            )],
+        )
+    }
+
+    /// A closed market greys the line, a live one takes the trend's colour.
+    fn paint(&self, rising: bool, closed: bool) -> Paint {
+        let color = if closed { SECONDARY } else { trend(rising) };
+        let alpha = if closed { CLOSED_CHART_ALPHA } else { 1.0 };
+        Paint {
+            line: color.with_alpha(alpha),
+            fill_top: color.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
+            fill_bottom: color.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha),
+            stroke: CHART_STROKE,
+        }
+    }
+
+    fn primary(&self) -> Color {
+        PRIMARY
+    }
+
+    fn secondary(&self) -> Color {
+        SECONDARY
+    }
+
+    fn placeholder_color(&self, reason: Pending) -> Color {
+        match reason {
+            Pending::NotFound => ERROR,
+            Pending::Loading | Pending::Failed | Pending::NoData | Pending::Closed => SECONDARY,
+        }
+    }
+
+    fn line_gap(&self) -> f32 {
+        self.0.row_gap
+    }
+
+    fn marker_gap(&self) -> f32 {
+        self.0.row_gap
+    }
+
+    fn marker_size(&self) -> f32 {
+        self.0.marker_size
+    }
+
+    fn chart_size(&self) -> (f32, f32) {
+        (self.0.chart_width, self.0.chart_height)
+    }
+
+    fn show_chart(&self) -> bool {
+        self.0.show_sparkline
+    }
+}
+
+fn empty_cells(row_style: &impl RowStyle) -> Cells {
+    Cells {
+        name: col(props!(flex: 1.0), Vec::<Node>::new()),
+        chart: fixed_width(row_style.chart_size().0),
+        price: col(props!(), Vec::<Node>::new()),
+    }
 }
 
 fn resolved_cells(
-    row_data: &TickerRow,
+    row_style: &impl RowStyle,
+    data: &TickerRow,
     name: Option<&str>,
     stale: Option<SystemTime>,
-    band: &Band,
 ) -> Cells {
-    let trend = if row_data.is_positive() {
-        TREND_UP
-    } else {
-        TREND_DOWN
-    };
-    let closed = row_data.is_closed_marked();
-    let name_style =
-        style!(size: band.company_font, color: SECONDARY, text_overflow: TextOverflow::Ellipsis);
+    let rising = data.is_positive();
+    let closed = data.is_closed_marked();
+    let sub = row_style.sub_style(row_style.secondary());
     Cells {
         name: col(
-            props!(flex: 1.0, gap: band.row_gap),
+            props!(flex: 1.0, gap: row_style.line_gap()),
             [
                 symbol_line(
-                    deck_symbol(&row_data.symbol, PRIMARY, band),
-                    band,
-                    SECONDARY,
+                    row_style,
+                    row_style.symbol(&data.symbol, row_style.primary()),
                     closed,
                 ),
-                match stale {
-                    Some(anchor) => stale_line(anchor, name_style.0, band),
-                    None => text(name.unwrap_or_default(), name_style),
-                },
+                row_style.sub_line(match stale {
+                    Some(anchor) => stale_line(anchor, sub.0, row_style.marker_size()),
+                    None => text(name.unwrap_or_default(), sub),
+                }),
             ],
         ),
-        chart: if band.show_sparkline {
-            sparkline(&row_data.series, &deck_paint(trend, closed), band)
+        chart: if row_style.show_chart() {
+            sparkline(
+                &data.series,
+                &row_style.paint(rising, closed),
+                row_style.chart_size(),
+            )
         } else {
             fixed_width(0.0)
         },
-        price: right_col(
-            price_text(row_data),
-            change_text(row_data.change_pct),
-            trend,
-            band,
-        ),
-    }
-}
-
-fn deck_symbol(symbol: &str, color: Color, band: &Band) -> Node {
-    text(
-        symbol,
-        style!(size: band.symbol_font, weight: FontWeight::BOLD, color: color, text_overflow: TextOverflow::Ellipsis),
-    )
-}
-
-/// A placeholder row: symbol (error-colored for not-found, gray otherwise) +
-/// a short status, price `N/A`, and the whole row dimmed to 0.6.
-fn placeholder_cells(symbol: &str, status: &str, symbol_color: Color, band: &Band) -> Cells {
-    let sym = symbol_color.with_alpha(ERROR_ROW_ALPHA);
-    let muted = SECONDARY.with_alpha(ERROR_ROW_ALPHA);
-    Cells {
-        name: col(
-            props!(flex: 1.0, gap: band.row_gap),
+        price: col(
+            props!(cross_align: CrossAlign::End, gap: row_style.line_gap()),
             [
-                symbol_line(deck_symbol(symbol, sym, band), band, SECONDARY, false),
-                text(status, style!(size: band.company_font, color: muted)),
+                row_style.price(price_text(data), row_style.primary()),
+                row_style.change(change_text(data.change_pct), rising),
             ],
         ),
-        chart: fixed_width(band.chart_width),
-        price: col(
-            props!(cross_align: CrossAlign::End),
-            [text(
-                "N/A",
-                style!(size: band.price_font, weight: FontWeight::BOLD, color: muted, align: TextAlign::Right),
-            )],
-        ),
     }
 }
 
-fn deck_cells(slot: Slot, band: &Band) -> Cells {
-    match slot {
-        Slot::Empty => empty_cells(band),
-        Slot::Resolved { data, name, stale } => resolved_cells(data, name, stale, band),
-        Slot::Placeholder {
-            symbol,
-            status,
-            not_found,
-        } => placeholder_cells(
-            symbol,
-            status,
-            if not_found { ERROR } else { SECONDARY },
-            band,
+/// A row without a price: its symbol, why the price is missing and `N/A`, all dimmed.
+fn placeholder_cells(row_style: &impl RowStyle, symbol: &str, reason: Pending) -> Cells {
+    let muted = row_style.secondary().with_alpha(ERROR_ROW_ALPHA);
+    let symbol_color = row_style
+        .placeholder_color(reason)
+        .with_alpha(ERROR_ROW_ALPHA);
+    Cells {
+        name: col(
+            props!(flex: 1.0, gap: row_style.line_gap()),
+            [
+                symbol_line(row_style, row_style.symbol(symbol, symbol_color), false),
+                row_style.sub_line(text(reason.label(), row_style.sub_style(muted))),
+            ],
         ),
+        chart: fixed_width(row_style.chart_size().0),
+        price: row_style.price(String::from(NOT_AVAILABLE), muted),
+    }
+}
+
+fn row_cells(row_style: &impl RowStyle, slot: Slot) -> Cells {
+    match slot {
+        Slot::Empty => empty_cells(row_style),
+        Slot::Resolved { data, name, stale } => resolved_cells(row_style, data, name, stale),
+        Slot::Placeholder { symbol, reason } => placeholder_cells(row_style, symbol, reason),
     }
 }
 
@@ -505,8 +582,9 @@ fn deck_view(
     )]
     let (w, h) = (ws.width as f32, ws.height as f32);
 
+    let row_style = Deck(band);
     let rows: Vec<Cells> = (0..band.rows)
-        .map(|index| deck_cells(slot(index, symbols, states, names, stale), &band))
+        .map(|index| row_cells(&row_style, slot(index, symbols, states, names, stale)))
         .collect();
     let body = if band.columns == 2 {
         // Filled left to right, so the first two symbols share the top row.
@@ -630,7 +708,7 @@ mod tests {
             "the header, then each row's symbol over its name or status: {texts:?}"
         );
         assert_eq!(
-            texts.iter().filter(|text| *text == "N/A").count(),
+            texts.iter().filter(|text| *text == NOT_AVAILABLE).count(),
             2,
             "the shut market and the unknown symbol carry no price: {texts:?}"
         );
@@ -749,16 +827,17 @@ mod tests {
 
     #[test]
     fn a_closed_sparkline_uses_the_grey_deck_alpha() {
-        let band = band_for(SizeVariant::Full);
+        let deck = Deck(band_for(SizeVariant::Full));
         let series = [1.0, 2.0];
-        assert_eq!(
-            sparkline_stroke_color(sparkline(&series, &deck_paint(TREND_UP, false), &band)),
-            TREND_UP
-        );
-        assert_eq!(
-            sparkline_stroke_color(sparkline(&series, &deck_paint(TREND_UP, true), &band)),
-            SECONDARY.with_alpha(CLOSED_CHART_ALPHA)
-        );
+        let stroke = |closed| {
+            sparkline_stroke_color(sparkline(
+                &series,
+                &deck.paint(true, closed),
+                deck.chart_size(),
+            ))
+        };
+        assert_eq!(stroke(false), TREND_UP);
+        assert_eq!(stroke(true), SECONDARY.with_alpha(CLOSED_CHART_ALPHA));
     }
 
     #[test]
@@ -780,7 +859,12 @@ mod tests {
         };
         let row_data = TickerRow::from_candles("BTC", &candles).expect("BUG: candles build a row");
 
-        let cells = resolved_cells(&row_data, Some(NAME), None, &band_for(SizeVariant::Small));
+        let cells = resolved_cells(
+            &Deck(band_for(SizeVariant::Small)),
+            &row_data,
+            Some(NAME),
+            None,
+        );
         let Node::Column(_, left) = cells.name else {
             panic!("BUG: the name cell is a column");
         };

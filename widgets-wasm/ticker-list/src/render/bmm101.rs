@@ -30,14 +30,10 @@
 )]
 use bmc_wasm_sdk::*;
 
-use super::{
-    Cells, Grid, NO_SYMBOLS, Paint, Slot, fixed_width, list, price_text, slot, sparkline,
-    stale_line, symbol_line,
-};
-use crate::layout::{BMM101_ROWS, Band};
-use crate::model::{RowState, TickerRow};
+use super::{Grid, NO_SYMBOLS, Paint, Pending, RowStyle, fixed_width, list, row_cells, slot};
+use crate::layout::BMM101_ROWS;
+use crate::model::RowState;
 use prices::closed_market::CLOSED_CHART_ALPHA;
-use prices::format::change_text;
 
 const EDGE: f32 = 16.0;
 /// Figma's `normal` line box for Braiins Sans, which every slot below is measured in.
@@ -66,168 +62,133 @@ const TAG_RADIUS: f32 = 4.0;
 /// Between a symbol and its pause marker.
 const MARKER_GAP: f32 = 4.0;
 const MARKER_SIZE: f32 = 16.0;
-/// A placeholder row dims as it does on the Deck.
-const PLACEHOLDER_ALPHA: f32 = 0.6;
-
-/// The sizes the shared row helpers read, for rows `row_height` tall.
-fn band(row_height: f32) -> Band {
-    Band {
-        symbol_font: BODY_SIZE,
-        company_font: SUB_SIZE,
-        price_font: BODY_SIZE,
-        change_font: BODY_SIZE,
-        chart_width: CHART_WIDTH,
-        chart_height: row_height,
-        badge_padding: 0.0,
-        row_padding: 0.0,
-        row_gap: MARKER_GAP,
-        rows: BMM101_ROWS,
-        columns: 1,
-        show_sparkline: true,
-        marker_size: MARKER_SIZE,
-    }
-}
 
 fn line_box(height: f32, content: Node) -> Node {
     col(props!(height: height), [content])
 }
 
-fn symbol(symbol: &str, color: Color) -> Node {
-    text(
-        symbol,
+/// BMM101's rows, `row_height` tall.
+struct Bmm101 {
+    row_height: f32,
+}
+
+impl RowStyle for Bmm101 {
+    fn symbol(&self, symbol: &str, color: Color) -> Node {
+        text(
+            symbol,
+            style!(
+                size: BODY_SIZE,
+                weight: FontWeight::SEMIBOLD,
+                color: color,
+                line_height: LINE_HEIGHT,
+                text_overflow: TextOverflow::Ellipsis
+            ),
+        )
+    }
+
+    fn sub_style(&self, color: Color) -> StyleResult {
         style!(
-            size: BODY_SIZE,
-            weight: FontWeight::SEMIBOLD,
+            size: SUB_SIZE,
             color: color,
             line_height: LINE_HEIGHT,
             text_overflow: TextOverflow::Ellipsis
-        ),
-    )
-}
-
-fn sub_style(color: Color) -> StyleResult {
-    style!(
-        size: SUB_SIZE,
-        color: color,
-        line_height: LINE_HEIGHT,
-        text_overflow: TextOverflow::Ellipsis
-    )
-}
-
-fn sub_line(value: &str, color: Color) -> Node {
-    line_box(SUB_SLOT, text(value, sub_style(color)))
-}
-
-fn figure(value: impl Into<String>, color: Color) -> Node {
-    text(
-        value,
-        style!(
-            size: BODY_SIZE,
-            weight: FontWeight::SEMIBOLD,
-            color: color,
-            line_height: LINE_HEIGHT,
-            align: TextAlign::Right
-        ),
-    )
-}
-
-fn name_cell(symbol_line: Node, sub: Node) -> Node {
-    col(props!(flex: 1.0, gap: LINE_GAP), [symbol_line, sub])
-}
-
-fn paint(rising: bool, closed: bool) -> Paint {
-    let (color, fill) = if rising {
-        (GREEN_40, RISING_FILL_ALPHA)
-    } else {
-        (RED_50, FALLING_FILL_ALPHA)
-    };
-    let (color, alpha) = if closed {
-        (GRAY_40, CLOSED_CHART_ALPHA)
-    } else {
-        (color, 1.0)
-    };
-    Paint {
-        line: color.with_alpha(alpha),
-        fill_top: color.with_alpha(fill * alpha),
-        fill_bottom: color.with_alpha(0.0),
-        stroke: CHART_STROKE,
+        )
     }
-}
 
-fn tag(change: String, rising: bool) -> Node {
-    let (background, color) = if rising {
-        (GREEN_90, GREEN_30)
-    } else {
-        (RED_90, RED_30)
-    };
-    let side = TAG_PADDING_X - TAG_PADDING_Y;
-    row(
-        props!(background: background, border_radius: TAG_RADIUS, padding: TAG_PADDING_Y),
-        [
-            fixed_width(side),
-            text(
-                change,
-                style!(
-                    size: BODY_SIZE,
-                    weight: FontWeight::SEMIBOLD,
-                    color: color,
-                    line_height: LINE_HEIGHT
-                ),
+    fn sub_line(&self, line: Node) -> Node {
+        line_box(SUB_SLOT, line)
+    }
+
+    fn price(&self, price: String, color: Color) -> Node {
+        text(
+            price,
+            style!(
+                size: BODY_SIZE,
+                weight: FontWeight::SEMIBOLD,
+                color: color,
+                line_height: LINE_HEIGHT,
+                align: TextAlign::Right
             ),
-            fixed_width(side),
-        ],
-    )
-}
+        )
+    }
 
-fn resolved(data: &TickerRow, name: Option<&str>, stale: Option<SystemTime>, band: &Band) -> Cells {
-    let rising = data.is_positive();
-    let closed = data.is_closed_marked();
-    Cells {
-        name: name_cell(
-            symbol_line(symbol(&data.symbol, WHITE), band, GRAY_40, closed),
-            match stale {
-                Some(anchor) => line_box(SUB_SLOT, stale_line(anchor, sub_style(GRAY_40).0, band)),
-                None => sub_line(name.unwrap_or_default(), GRAY_40),
-            },
-        ),
-        chart: sparkline(&data.series, &paint(rising, closed), band),
-        price: col(
-            props!(cross_align: CrossAlign::End, gap: LINE_GAP),
+    fn change(&self, change: String, rising: bool) -> Node {
+        let (background, color) = if rising {
+            (GREEN_90, GREEN_30)
+        } else {
+            (RED_90, RED_30)
+        };
+        let side = TAG_PADDING_X - TAG_PADDING_Y;
+        row(
+            props!(background: background, border_radius: TAG_RADIUS, padding: TAG_PADDING_Y),
             [
-                figure(price_text(data), WHITE),
-                tag(change_text(data.change_pct), rising),
+                fixed_width(side),
+                text(
+                    change,
+                    style!(
+                        size: BODY_SIZE,
+                        weight: FontWeight::SEMIBOLD,
+                        color: color,
+                        line_height: LINE_HEIGHT
+                    ),
+                ),
+                fixed_width(side),
             ],
-        ),
+        )
     }
-}
 
-fn placeholder(symbol_text: &str, status: &str, not_found: bool, band: &Band) -> Cells {
-    let symbol_color = if not_found { RED_50 } else { GRAY_40 };
-    let muted = GRAY_40.with_alpha(PLACEHOLDER_ALPHA);
-    Cells {
-        name: name_cell(
-            symbol_line(
-                symbol(symbol_text, symbol_color.with_alpha(PLACEHOLDER_ALPHA)),
-                band,
-                GRAY_40,
-                false,
-            ),
-            sub_line(status, muted),
-        ),
-        chart: fixed_width(CHART_WIDTH),
-        price: figure("N/A", muted),
+    fn paint(&self, rising: bool, closed: bool) -> Paint {
+        let (color, fill) = if rising {
+            (GREEN_40, RISING_FILL_ALPHA)
+        } else {
+            (RED_50, FALLING_FILL_ALPHA)
+        };
+        let (color, alpha) = if closed {
+            (GRAY_40, CLOSED_CHART_ALPHA)
+        } else {
+            (color, 1.0)
+        };
+        Paint {
+            line: color.with_alpha(alpha),
+            fill_top: color.with_alpha(fill * alpha),
+            fill_bottom: color.with_alpha(0.0),
+            stroke: CHART_STROKE,
+        }
     }
-}
 
-fn cells(slot: Slot, band: &Band) -> Cells {
-    match slot {
-        Slot::Empty => super::empty_cells(band),
-        Slot::Resolved { data, name, stale } => resolved(data, name, stale, band),
-        Slot::Placeholder {
-            symbol,
-            status,
-            not_found,
-        } => placeholder(symbol, status, not_found, band),
+    fn primary(&self) -> Color {
+        WHITE
+    }
+
+    fn secondary(&self) -> Color {
+        GRAY_40
+    }
+
+    fn placeholder_color(&self, reason: Pending) -> Color {
+        match reason {
+            Pending::NotFound => RED_50,
+            Pending::Loading | Pending::Failed | Pending::NoData | Pending::Closed => GRAY_40,
+        }
+    }
+
+    fn line_gap(&self) -> f32 {
+        LINE_GAP
+    }
+
+    fn marker_gap(&self) -> f32 {
+        MARKER_GAP
+    }
+
+    fn marker_size(&self) -> f32 {
+        MARKER_SIZE
+    }
+
+    fn chart_size(&self) -> (f32, f32) {
+        (CHART_WIDTH, self.row_height)
+    }
+
+    fn show_chart(&self) -> bool {
+        true
     }
 }
 
@@ -257,7 +218,7 @@ pub(super) fn view(
     } else {
         let rules = (row_count - 1.0) * (2.0 * RULE_GAP + 1.0);
         let row_height = (h - 3.0 * EDGE - TITLE_SLOT - rules) / row_count;
-        let band = band(row_height);
+        let row_style = Bmm101 { row_height };
         let grid = Grid {
             edge: 0.0,
             column_gap: CHART_GAP,
@@ -268,7 +229,7 @@ pub(super) fn view(
             price_min_width: Some(PRICE_MIN_WIDTH),
         };
         let rows = (0..BMM101_ROWS)
-            .map(|index| cells(slot(index, symbols, states, names, stale), &band))
+            .map(|index| row_cells(&row_style, slot(index, symbols, states, names, stale)))
             .collect();
         list(rows, &grid)
     };
