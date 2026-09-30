@@ -76,6 +76,17 @@ impl Env for OsEnv {
     }
 }
 
+/// No prober: `OsEnv` spawns the real one on first read, and a test ticking
+/// against it folds the machine's own address in about a second later.
+#[cfg(test)]
+struct NoNetworkEnv;
+#[cfg(test)]
+impl Env for NoNetworkEnv {
+    fn snapshot_if_changed(&self, _seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+        None
+    }
+}
+
 /// The active touch's start point and latest position, for the dismiss
 /// classifier (`start`→`end` on finger-up).
 #[derive(Debug, Clone, Copy)]
@@ -1385,13 +1396,6 @@ mod wake_tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    struct StaticEnv;
-    impl Env for StaticEnv {
-        fn snapshot_if_changed(&self, _seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
-            None
-        }
-    }
-
     // A finger-down on a hold-to-confirm button only becomes `is_pressed` during
     // the next `render`, so the hold FSM advances a frame later. The tick that
     // schedules the wake must fast-poll right after a touch-down; otherwise the
@@ -1401,7 +1405,7 @@ mod wake_tests {
     fn finger_down_schedules_a_fast_wake() {
         let t0 = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, t0);
-        overlay.env = Box::new(StaticEnv);
+        overlay.env = Box::new(NoNetworkEnv);
         // Drop the construction-time dirty flag the way a first render would.
         let _ = overlay.take_content_dirty();
 
@@ -2034,6 +2038,7 @@ mod slide_tests {
     fn settle_frame_reuses_content_then_a_submit_finishes_the_reveal() {
         let t0 = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, t0);
+        overlay.env = Box::new(NoNetworkEnv);
         overlay.on_reveal();
         let _ = overlay.take_content_dirty();
         overlay.on_frame_submitted(t0);
