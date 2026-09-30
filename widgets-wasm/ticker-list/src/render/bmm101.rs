@@ -53,8 +53,8 @@ const CHART_GAP: f32 = 44.0;
 const PRICE_MIN_WIDTH: f32 = 110.0;
 const CHART_STROKE: f32 = 3.0;
 /// The fill fades from these at the line to nothing;
-/// the falling tint is stronger to read on black, as on the miner faces' charts.
-const RISING_FILL_ALPHA: f32 = 0.16;
+/// red takes a stronger tint to read on black, as on the miner faces' charts.
+const FILL_ALPHA: f32 = 0.16;
 const FALLING_FILL_ALPHA: f32 = 0.30;
 const TAG_PADDING_X: f32 = 4.0;
 const TAG_PADDING_Y: f32 = 2.0;
@@ -138,15 +138,10 @@ impl RowStyle for Bmm101 {
     }
 
     fn paint(&self, rising: bool, closed: bool) -> Paint {
-        let (color, fill) = if rising {
-            (GREEN_40, RISING_FILL_ALPHA)
-        } else {
-            (RED_50, FALLING_FILL_ALPHA)
-        };
-        let (color, alpha) = if closed {
-            (GRAY_40, CLOSED_CHART_ALPHA)
-        } else {
-            (color, 1.0)
+        let (color, fill, alpha) = match (closed, rising) {
+            (true, _) => (GRAY_40, FILL_ALPHA, CLOSED_CHART_ALPHA),
+            (false, true) => (GREEN_40, FILL_ALPHA, 1.0),
+            (false, false) => (RED_50, FALLING_FILL_ALPHA, 1.0),
         };
         Paint {
             line: color.with_alpha(alpha),
@@ -251,4 +246,18 @@ pub(super) fn view(
             body,
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_closed_chart_fills_alike_whichever_way_it_moved() {
+        let row_style = Bmm101 { row_height: 50.0 };
+        assert_eq!(
+            row_style.paint(true, true).fill_top,
+            row_style.paint(false, true).fill_top
+        );
+    }
 }
