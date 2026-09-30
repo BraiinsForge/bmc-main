@@ -62,6 +62,8 @@ class View extends Component<Props> {
 
     componentWillUnmount = () => pb.abort.all(this);
 
+    #title = (scene: pb.Scene) => pb.sceneTitle(this.props.intl, scene, this.props.manifests) || 'N/A';
+
     #renderItem = (
         props: RenderSortableListItemProps<pb.Scene>,
         firstEnabledSceneID: Maybe<pb.Scene['id']>,
@@ -75,13 +77,12 @@ class View extends Component<Props> {
             onClone,
             onDelete,
             onDurationChange,
-            intl,
             useCardLayout,
             manifests,
         } = this.props;
         const { item, state, rootProps, dragHandleProps } = props;
 
-        const title = pb.sceneTitle(intl, item, manifests) || 'N/A';
+        const title = this.#title(item);
         const description = pb.sceneDescription(item, manifests) || '';
 
         const previewKind: Maybe<'combined' | { manifest?: pb.WidgetManifest }> = (() => {
@@ -123,6 +124,7 @@ class View extends Component<Props> {
                 enabled={item.enabled}
                 icon={<ScenePreview kind={previewKind} />}
                 title={titleNode}
+                name={title}
                 type={{ night: isNightModeWidget }}
                 description={description}
                 cycleEnabled={cycleEnabled}
@@ -166,6 +168,7 @@ class View extends Component<Props> {
                 className={css.list}
                 items={scenes}
                 onChange={onMove}
+                getItemLabel={this.#title}
                 isItemDisabled={() => settling}
                 renderItem={x => this.#renderItem(x, firstEnabledSceneID, settling)}
             />

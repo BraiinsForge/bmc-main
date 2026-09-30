@@ -44,6 +44,13 @@ const renderField = (format: pb.StringFormat, value = 'sk-secret') =>
 
 const input = () => document.body.querySelector<HTMLInputElement>('#f');
 
+describe('ParamField date format', () => {
+    test('the ISO date it stores passes the input’s own pattern', () => {
+        renderField(pb.StringFormat.DATE, '2026-01-01');
+        expect(input()?.validity.patternMismatch).toBe(false);
+    });
+});
+
 describe('ParamField password format', () => {
     test('hides the value until revealed', () => {
         renderField(pb.StringFormat.PASSWORD);
@@ -152,7 +159,7 @@ describe('ParamField list', () => {
     test('adds a row seeded from the item default', () => {
         const row = listItem('NVDA');
         const { getByRole, onChange } = renderList([row]);
-        fireEvent.click(getByRole('button', { name: 'Add' }));
+        fireEvent.click(getByRole('button', { name: 'Add to Symbols' }));
         const [key, value] = onChange.mock.calls[0];
         expect(key).toBe('symbols');
         expect((value as ListItem[]).map(x => x.value)).toEqual(['NVDA', 'BTC']);
@@ -160,24 +167,102 @@ describe('ParamField list', () => {
 
     test('focuses the input of an added row', () => {
         const { getByRole, getByLabelText } = render(<LiveList initial={[listItem('NVDA')]} definition={listField} />);
-        fireEvent.click(getByRole('button', { name: 'Add' }));
+        fireEvent.click(getByRole('button', { name: 'Add to Symbols' }));
         expect(document.activeElement).toBe(getByLabelText('Symbols, item 2'));
     });
 
     test('removes the row whose minus was clicked', () => {
         const [first, second] = [listItem('NVDA'), listItem('AAPL')];
-        const { getAllByRole, onChange } = renderList([first, second]);
-        fireEvent.click(getAllByRole('button', { name: 'Remove' })[0]);
+        const { getByRole, onChange } = renderList([first, second]);
+        fireEvent.click(getByRole('button', { name: 'Remove Symbols, item 1' }));
         expect(onChange).toHaveBeenCalledWith('symbols', [second]);
     });
 
     test('offers no add at max_items and no remove at min_items', () => {
         const full = renderList([listItem('NVDA'), listItem('AAPL')]);
-        expect(full.getByRole('button', { name: 'Add' })).toHaveProperty('disabled', true);
+        expect(full.getByRole('button', { name: 'Add to Symbols' })).toHaveProperty('disabled', true);
         cleanup();
 
         const least = renderList([listItem('NVDA')]);
-        expect(least.getByRole('button', { name: 'Remove' })).toHaveProperty('disabled', true);
+        expect(least.getByRole('button', { name: 'Remove Symbols, item 1' })).toHaveProperty('disabled', true);
+    });
+
+    test('names its Add button after the list, keeping the visible text', () => {
+        const { getByRole } = renderList([listItem('NVDA')]);
+        expect(getByRole('button', { name: 'Add to Symbols' }).textContent).toBe('Add');
+    });
+
+    test("names each row's handle and remove button after the row", () => {
+        const { getByRole } = renderList([listItem('NVDA'), listItem('AAPL')]);
+        expect(getByRole('button', { name: 'Move Symbols, item 2' })).toBeTruthy();
+        expect(getByRole('button', { name: 'Remove Symbols, item 2' })).toBeTruthy();
+    });
+
+    // A mouse click leaves no focus anywhere: `Button` blurs after every click.
+    describe('focus after a removal from the keyboard', () => {
+        const openList = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'symbols',
+            name: 'Symbols',
+            kind: {
+                case: 'paramArray',
+                value: pb.create(pb.ParamArraySchema, {
+                    items: { kind: { case: 'paramString', value: {} } },
+                    maxItems: 3,
+                }),
+            },
+        });
+        const live = (values: string[], definition = openList) =>
+            render(<LiveList initial={values.map(listItem)} definition={definition} />);
+        const press = (button: HTMLElement) => fireEvent.keyDown(button, { key: 'Enter' });
+
+        test('moves to the remove button of the row that takes its place', () => {
+            const { getByRole } = live(['A', 'B', 'C']);
+            const next = getByRole('button', { name: 'Remove Symbols, item 2' });
+            press(getByRole('button', { name: 'Remove Symbols, item 1' }));
+            expect(document.activeElement).toBe(next);
+        });
+
+        test('moves to the row above when the last row goes', () => {
+            const { getByRole } = live(['A', 'B']);
+            const above = getByRole('button', { name: 'Remove Symbols, item 1' });
+            press(getByRole('button', { name: 'Remove Symbols, item 2' }));
+            expect(document.activeElement).toBe(above);
+        });
+
+        test('moves to the remaining input once nothing more can be removed', () => {
+            const { getByRole, getByLabelText } = live(['A', 'B'], listField);
+            press(getByRole('button', { name: 'Remove Symbols, item 1' }));
+            expect(document.activeElement).toBe(getByLabelText('Symbols, item 1'));
+        });
+
+        test('moves to Add when the list empties', () => {
+            const { getByRole } = live(['A']);
+            press(getByRole('button', { name: 'Remove Symbols, item 1' }));
+            expect(document.activeElement).toBe(getByRole('button', { name: 'Add to Symbols' }));
+        });
+
+        // jsdom 30 lets a disabled button with a tabindex take focus, checking tabindex
+        // before disabled (`helpers/focusing.js`), where a browser refuses;
+        // so the check is that Add was enabled when it took focus.
+        test('moves to Add only once Add is enabled, at a one-item limit', () => {
+            const oneItemList = pb.create(pb.ManifestParamDefinitionSchema, {
+                key: 'symbols',
+                name: 'Symbols',
+                kind: {
+                    case: 'paramArray',
+                    value: pb.create(pb.ParamArraySchema, {
+                        items: { kind: { case: 'paramString', value: {} } },
+                        maxItems: 1,
+                    }),
+                },
+            });
+            const { getByRole } = live(['A'], oneItemList);
+            const add = getByRole('button', { name: 'Add to Symbols' }) as HTMLButtonElement;
+            const disabledWhenFocused: boolean[] = [];
+            add.addEventListener('focus', () => disabledWhenFocused.push(add.disabled));
+            press(getByRole('button', { name: 'Remove Symbols, item 1' }));
+            expect(disabledWhenFocused).toEqual([false]);
+        });
     });
 
     test('a toggle row is named by its hidden label and keeps its On/Off text', () => {
@@ -215,20 +300,20 @@ describe('ParamField object list', () => {
             linksField,
         );
         expect(getByLabelText('Links, item 1, Label')).toHaveProperty('value', 'Pool');
-        expect(getByLabelText('Links, item 1, URL')).toHaveProperty('value', 'https://pool');
+        expect(getByLabelText('Links, item 1, URL (optional)')).toHaveProperty('value', 'https://pool');
         expect(getByText('URL (optional)')).toBeTruthy();
     });
 
     test('adds a row seeded from each field default', () => {
         const { getByRole, onChange } = renderList([], undefined, linksField);
-        fireEvent.click(getByRole('button', { name: 'Add' }));
+        fireEvent.click(getByRole('button', { name: 'Add to Links' }));
         const [, value] = onChange.mock.calls[0];
         expect((value as ListItem[]).map(row => row.value)).toEqual([{ label: '', url: 'https://' }]);
     });
 
     test('focuses the first field of an added row, not its drag handle', () => {
         const { getByRole, getByLabelText } = render(<LiveList initial={[]} definition={linksField} />);
-        fireEvent.click(getByRole('button', { name: 'Add' }));
+        fireEvent.click(getByRole('button', { name: 'Add to Links' }));
         expect(document.activeElement).toBe(getByLabelText('Links, item 1, Label'));
     });
 

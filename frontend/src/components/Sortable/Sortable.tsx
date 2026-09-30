@@ -19,7 +19,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { useState, useCallback, type RefCallback, type Ref } from 'react';
+import { useState, useCallback, useRef, type RefCallback, type Ref } from 'react';
+import { useIntl } from 'react-intl';
 
 // Drag and drop
 import { CSS } from '@dnd-kit/utilities';
@@ -32,10 +33,12 @@ import {
     TouchSensor,
     useSensor,
     useSensors,
+    type Announcements,
     type DragStartEvent,
     type DragEndEvent,
     type DraggableAttributes,
     type DropAnimation,
+    type UniqueIdentifier,
 } from '@dnd-kit/core';
 import {
     useSortable,
@@ -116,6 +119,8 @@ export interface SortableProps<D extends Datum> {
     items: Array<D>;
     onChange(items: Array<D>, move: { id: D['id']; from: number; into: number }): void;
     renderItem(props: RenderSortableListItemProps<D>): ReactElement;
+    /** What a screen reader calls the item as it is picked up, moved and dropped. */
+    getItemLabel(item: D): string;
     isItemDisabled?(item: D): boolean;
 
     className?: string;
@@ -123,7 +128,8 @@ export interface SortableProps<D extends Datum> {
     wrapperRef?: Ref<HTMLDivElement>;
 }
 export function Sortable<D extends Datum>(props: SortableProps<D>) {
-    const { items, renderItem, onChange, isItemDisabled, className, style, wrapperRef } = props;
+    const { items, renderItem, getItemLabel, onChange, isItemDisabled, className, style, wrapperRef } = props;
+    const announcements = useAnnouncements(items, getItemLabel);
 
     const [activeId, setActiveId] = useState<D['id'] | null>(null);
     const activeIndex = activeId !== null ? items.findIndex(x => x.id === activeId) : -1;
@@ -169,6 +175,7 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
         <div ref={wrapperRef} className={cn(css.root, className)} style={style}>
             <DndContext
                 sensors={sensors}
+                accessibility={{ announcements }}
                 collisionDetection={closestCenter}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
@@ -197,4 +204,56 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
             </DndContext>
         </div>
     );
+}
+
+/**
+ * dnd-kit announces items by id, which reads as "Draggable item 5 was dropped over droppable area 3".
+ * These name the item and the position it holds, counted over the list as it stood when the drag began.
+ */
+function useAnnouncements<D extends Datum>(items: Array<D>, getItemLabel: (item: D) => string): Announcements {
+    const { formatMessage } = useIntl();
+    // The drag starts over the item's own slot, and announcing that would talk over the pick-up.
+    const lastOver = useRef<UniqueIdentifier | null>(null);
+    const count = items.length;
+    const label = (id: UniqueIdentifier) => {
+        const item = items.find(x => x.id === id);
+        return item ? getItemLabel(item) : String(id);
+    };
+    const position = (id: UniqueIdentifier) => items.findIndex(x => x.id === id) + 1;
+
+    return {
+        onDragStart: ({ active }) => {
+            lastOver.current = active.id;
+            return formatMessage(
+                { defaultMessage: 'Picked up {item}, position {position} of {count}.' },
+                { item: label(active.id), position: position(active.id), count },
+            );
+        },
+        onDragOver: ({ active, over }) => {
+            const overId = over?.id ?? null;
+            if (overId === lastOver.current) return undefined;
+            lastOver.current = overId;
+            return overId !== null
+                ? formatMessage(
+                      { defaultMessage: '{item} moved to position {position} of {count}.' },
+                      { item: label(active.id), position: position(overId), count },
+                  )
+                : formatMessage({ defaultMessage: '{item} is outside the list.' }, { item: label(active.id) });
+        },
+        onDragEnd: ({ active, over }) =>
+            over
+                ? formatMessage(
+                      { defaultMessage: '{item} dropped at position {position} of {count}.' },
+                      { item: label(active.id), position: position(over.id), count },
+                  )
+                : formatMessage(
+                      { defaultMessage: '{item} dropped outside the list, back at position {position} of {count}.' },
+                      { item: label(active.id), position: position(active.id), count },
+                  ),
+        onDragCancel: ({ active }) =>
+            formatMessage(
+                { defaultMessage: 'Move cancelled, {item} is back at position {position} of {count}.' },
+                { item: label(active.id), position: position(active.id), count },
+            ),
+    };
 }

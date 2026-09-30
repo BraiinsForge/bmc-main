@@ -62,6 +62,7 @@ export default {
 
         icon: null,
         title: '',
+        name: '',
         type: { night: true },
         description: '',
         layout: 'row',
@@ -93,6 +94,7 @@ export function SceneOverviewRow(args: SceneOverviewRowProps) {
                         {...args}
                         icon={<ScenePreview kind="combined" />}
                         title="Combined Scene"
+                        name="Combined Scene"
                         type={{ night: true }}
                         description="Clock, Clock, Weather, Ticker (BTC-USD)"
                         layout={layout}
@@ -101,6 +103,7 @@ export function SceneOverviewRow(args: SceneOverviewRowProps) {
                         {...args}
                         icon={<ScenePreview kind={{ manifest: clockManifest }} />}
                         title="Clock"
+                        name="Clock"
                         description="Displays the current time."
                         layout={layout}
                     />
@@ -108,6 +111,7 @@ export function SceneOverviewRow(args: SceneOverviewRowProps) {
                         {...args}
                         icon={<ScenePreview kind={null} />}
                         title="N/A"
+                        name="N/A"
                         description="No preview — ScenePreview returns null when kind is missing."
                         layout={layout}
                     />

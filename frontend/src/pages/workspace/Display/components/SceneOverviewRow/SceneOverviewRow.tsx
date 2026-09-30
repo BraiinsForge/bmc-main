@@ -61,6 +61,8 @@ export interface SceneOverviewRowProps {
 
     icon: ReactNode;
     title: ReactNode;
+    /** `title` as plain text, for accessible names that can't hold markup. */
+    name: string;
     description: ReactNode;
     type: Pick<SceneTypeIconsProps, 'night'>;
 
@@ -109,13 +111,17 @@ class View extends Component<Props> {
     };
 
     Handle = (): ReactElement => {
-        const { dndDragHandleProps } = this.props;
+        const { dndDragHandleProps, name, intl } = this.props;
 
         return (
             <div
                 {...dndDragHandleProps}
                 className={cn(css.dragHandle, dndDragHandleProps?.className)}
-                children={<IconDraggable />}
+                children={
+                    <IconDraggable
+                        aria-label={intl.formatMessage({ defaultMessage: 'Move {scene}' }, { scene: name })}
+                    />
+                }
             />
         );
     };
@@ -184,7 +190,7 @@ class View extends Component<Props> {
         );
     };
     Actions = (): ReactElement => {
-        const { intl, onReload, locked } = this.props;
+        const { intl, onReload, locked, name } = this.props;
         const { formatMessage } = intl;
 
         return (
@@ -198,7 +204,7 @@ class View extends Component<Props> {
                         disabled={locked}
                         icon={IconRestart}
                         tooltipPosition="bottom"
-                        title={formatMessage({ defaultMessage: 'Reload' })}
+                        title={formatMessage({ defaultMessage: 'Reload {scene}' }, { scene: name })}
                         onClick={this.#reload}
                     />
                 )}
@@ -210,7 +216,7 @@ class View extends Component<Props> {
                     disabled={locked}
                     icon={IconClone}
                     tooltipPosition="bottom"
-                    title={formatMessage({ defaultMessage: 'Clone' })}
+                    title={formatMessage({ defaultMessage: 'Clone {scene}' }, { scene: name })}
                     onClick={this.#clone}
                 />
                 <Button
@@ -221,7 +227,7 @@ class View extends Component<Props> {
                     disabled={locked}
                     icon={IconDelete}
                     tooltipPosition="bottom"
-                    title={formatMessage({ defaultMessage: 'Delete' })}
+                    title={formatMessage({ defaultMessage: 'Delete {scene}' }, { scene: name })}
                     onClick={this.#delete}
                 />
                 <Button
@@ -230,6 +236,7 @@ class View extends Component<Props> {
                     kind="primary"
                     disabled={locked}
                     tooltipPosition="bottom"
+                    aria-label={formatMessage({ defaultMessage: 'Edit {scene}' }, { scene: name })}
                     children={formatMessage({ defaultMessage: 'Edit' })}
                     onClick={this.#edit}
                 />

@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component, type HTMLAttributes, Fragment, useCallback } from 'react';
+import { Component, type HTMLAttributes, Fragment, useCallback, useId } from 'react';
 import { type IntlShape, useIntl } from 'react-intl';
 
 // App
@@ -260,27 +260,35 @@ interface CellProps {
 function Cell(props: CellProps) {
     const { manifest, onSelection } = props;
     const select = useCallback(() => onSelection(manifest), [manifest, onSelection]);
+    const titleId = useId();
+    const descriptionId = useId();
 
     return (
-        <button type="button" onClick={select} className={css.cell}>
-            <aside
+        <button
+            type="button"
+            onClick={select}
+            className={css.cell}
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+        >
+            <span
                 className={css.icon}
                 children={
                     <Image
                         src={manifest.iconUrl || null}
-                        alt={manifest.name}
+                        alt=""
                         width={56}
                         height={56}
                         render={(img, failed) => (failed ? <IconApps size={56} /> : img())}
                     />
                 }
             />
-            <main>
-                <div className={css.title}>
+            <span className={css.content}>
+                <span id={titleId} className={css.title}>
                     <WidgetName name={manifest.name} subname={manifest.subname} />
-                </div>
-                <div className={css.desc} children={manifest.description} />
-            </main>
+                </span>
+                <span id={descriptionId} className={css.desc} children={manifest.description} />
+            </span>
         </button>
     );
 }

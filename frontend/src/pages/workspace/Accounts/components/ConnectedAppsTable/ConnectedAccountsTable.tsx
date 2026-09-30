@@ -104,7 +104,7 @@ class View extends Component<Props> {
         const { accounts, onEdit, onDelete, layout, intl } = this.props;
 
         return accounts.map((x, index) => {
-            const editLabel: string = intl.formatMessage({ defaultMessage: 'Edit' });
+            const editName: string = intl.formatMessage({ defaultMessage: 'Edit {account}' }, { account: x.name });
             const editProps = {
                 id: $('edit', index + 1),
                 size: 'sm',
@@ -113,9 +113,14 @@ class View extends Component<Props> {
                 onClick: () => onEdit(x),
             } as const;
             const editButton: ReactElement = layout.sm ? (
-                <Button {...editProps} key="edit" title={editLabel} icon={IconEdit} hasIconOnly />
+                <Button {...editProps} key="edit" title={editName} icon={IconEdit} hasIconOnly />
             ) : (
-                <Button {...editProps} key="edit" children={editLabel} />
+                <Button
+                    {...editProps}
+                    key="edit"
+                    aria-label={editName}
+                    children={intl.formatMessage({ defaultMessage: 'Edit' })}
+                />
             );
 
             return {
@@ -138,7 +143,7 @@ class View extends Component<Props> {
                                 kind="secondary"
                                 icon={IconDelete}
                                 hasIconOnly
-                                title={intl.formatMessage({ defaultMessage: 'Delete' })}
+                                title={intl.formatMessage({ defaultMessage: 'Delete {account}' }, { account: x.name })}
                                 tooltipPosition="left"
                                 onClick={() => onDelete(x)}
                             />

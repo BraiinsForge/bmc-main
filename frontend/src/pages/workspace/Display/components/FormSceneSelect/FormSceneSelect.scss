@@ -89,7 +89,7 @@
         align-items: flex-start;
     }
 
-    main {
+    .content {
         display: flex;
         flex-flow: column nowrap;
         gap: mini-units(0.5);

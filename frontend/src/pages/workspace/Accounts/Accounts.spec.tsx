@@ -69,6 +69,19 @@ describe('Accounts page', () => {
         expect(await screen.findByText('Braiins Pool')).toBeTruthy();
     });
 
+    it("names each row's edit and delete buttons after its account", async () => {
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => ({
+                accounts: [pb.create(pb.AccountSchema, { id: '1', typeId: 'braiins-pool', name: 'My Pool' })],
+            }),
+        });
+
+        renderPage();
+
+        expect(await screen.findByRole('button', { name: 'Edit My Pool' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Delete My Pool' })).toBeTruthy();
+    });
+
     it('shows the empty state when there are no accounts', async () => {
         registerMocks(pb.services.AccountManagementService, { getAllAccounts: () => ({ accounts: [] }) });
         registerMocks(pb.services.CredentialManagementService, { getCredentialTypes: () => ({ credentialTypes: [] }) });

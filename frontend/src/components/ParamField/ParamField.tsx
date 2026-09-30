@@ -22,7 +22,7 @@
 // The shared field renderer — one control per field kind — plus the bound form controls it needs.
 
 import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { useIntl } from 'react-intl';
+import { type IntlShape, useIntl } from 'react-intl';
 import {
     ComboBox,
     DatePicker,
@@ -253,6 +253,7 @@ function ScalarField(props: ScalarFieldProps) {
                             invalid={!!error}
                             invalidText={error}
                             placeholder="yyyy-mm-dd"
+                            pattern="\d{4}-\d{2}-\d{2}"
                         />
                     </DatePicker>
                 );
@@ -388,11 +389,13 @@ function asRowObject(v: ListItem['value']): ObjectValue {
     return typeof v === 'object' && v !== null ? v : {};
 }
 
+function fieldName(field: pb.ObjectFieldDefinition, formatMessage: IntlShape['formatMessage']): string {
+    return field.isOptional ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: field.name }) : field.name;
+}
+
 function ColumnLabel({ field }: { field: pb.ObjectFieldDefinition }) {
     const { formatMessage } = useIntl();
-    const name = field.isOptional
-        ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: field.name })
-        : field.name;
+    const name = fieldName(field, formatMessage);
     if (!field.description) return <span className={css.columnLabel} children={name} />;
     return (
         <Tooltip
@@ -444,7 +447,7 @@ function ObjectRow({ id, object, labelText, value, error, onChange, timezones }:
                             kind={field.kind}
                             labelText={formatMessage(
                                 { defaultMessage: '{row}, {field}' },
-                                { row: labelText, field: field.name },
+                                { row: labelText, field: fieldName(field, formatMessage) },
                             )}
                             hideLabel
                             isOptional={field.isOptional}
@@ -481,21 +484,56 @@ function ArrayField(props: ArrayFieldProps) {
 
     const setItem = (row: ListItem, next: ListItem['value']) =>
         onChange(value.map(x => (x.id === row.id ? { ...x, value: next } : x)));
+    const rowLabelOf = (index: number) =>
+        formatMessage({ defaultMessage: '{name}, item {n}' }, { name: labelText, n: index + 1 });
 
     const listRef = useRef<HTMLDivElement>(null);
-    const addedRow = useRef<ListItem['id'] | null>(null);
-    // No deps: the added row only renders once the parent passes the new value back down.
+    const focusAfterRender = useRef<(() => HTMLElement | null | undefined) | null>(null);
+
+    // No deps: the target only renders once
+    // the parent passes the new value back down.
     useEffect(() => {
-        if (addedRow.current === null) return;
-        const field = listRef.current?.querySelector(`[data-list-row="${addedRow.current}"]`);
-        if (!field) return;
-        addedRow.current = null;
-        field.querySelector<HTMLElement>('input, button, textarea, select')?.focus();
+        const target = focusAfterRender.current?.();
+        if (!target) return;
+        focusAfterRender.current = null;
+        target.focus();
     });
-    const add = () => {
+
+    const firstFieldOf = (rowId: ListItem['id']) =>
+        listRef.current
+            ?.querySelector(`[data-list-row="${rowId}"]`)
+            ?.querySelector<HTMLElement>('input, button, textarea, select');
+
+    function add(): void {
         const row = listItem(defaultItemValue(itemKind));
-        addedRow.current = row.id;
+        focusAfterRender.current = () => firstFieldOf(row.id);
         onChange([...value, row]);
+    }
+
+    // A keyboard user's focus leaves the button before
+    // it unmounts, which would drop it to the page;
+    // a mouse click is blurred by `Button` anyway.
+    const remove = (row: ListItem) => {
+        const index = value.indexOf(row);
+        const rest = value.filter(x => x.id !== row.id);
+        const neighbour = rest[index] ?? rest[index - 1];
+        if (neighbour) {
+            // At `min_items` the remaining remove buttons
+            // turn disabled, which would drop focus again.
+            const target =
+                rest.length > array.minItems
+                    ? document.getElementById(`${id}-${neighbour.id}-remove`)
+                    : firstFieldOf(neighbour.id);
+
+            target?.focus();
+        } else {
+            // At `max_items: 1`, Add stays disabled until the emptied list renders.
+            focusAfterRender.current = () => {
+                const button = document.getElementById(`${id}-add`);
+                return button instanceof HTMLButtonElement && !button.disabled ? button : null;
+            };
+        }
+        onChange(rest);
     };
 
     return (
@@ -511,16 +549,22 @@ function ArrayField(props: ArrayFieldProps) {
                 className={css.list}
                 items={value}
                 onChange={onChange}
+                getItemLabel={item => rowLabelOf(value.indexOf(item))}
                 renderItem={({ index, item, rootProps, dragHandleProps }) => {
                     // The drag overlay renders a second copy of the row, without `rootProps`.
                     const rowId = rootProps ? `${id}-${item.id}` : `${id}-${item.id}-dragged`;
-                    const rowLabel = formatMessage(
-                        { defaultMessage: '{name}, item {n}' },
-                        { name: labelText, n: index + 1 },
-                    );
+                    const rowLabel = rowLabelOf(index);
                     return (
                         <div {...rootProps} className={css.row}>
-                            <div {...dragHandleProps} className={css.dragHandle} children={<IconDraggable />} />
+                            <div
+                                {...dragHandleProps}
+                                className={css.dragHandle}
+                                children={
+                                    <IconDraggable
+                                        aria-label={formatMessage({ defaultMessage: 'Move {row}' }, { row: rowLabel })}
+                                    />
+                                }
+                            />
                             <div className={css.rowField} data-list-row={item.id}>
                                 {itemKind.case === 'paramObject' ? (
                                     <ObjectRow
@@ -552,9 +596,10 @@ function ArrayField(props: ArrayFieldProps) {
                                     kind="danger--ghost"
                                     size="sm"
                                     icon={IconSubtract}
-                                    title={formatMessage({ defaultMessage: 'Remove' })}
+                                    tooltipPosition="left"
+                                    title={formatMessage({ defaultMessage: 'Remove {row}' }, { row: rowLabel })}
                                     disabled={!canRemove}
-                                    onClick={() => onChange(value.filter(x => x.id !== item.id))}
+                                    onClick={() => remove(item)}
                                 />
                             </div>
                         </div>
@@ -569,6 +614,7 @@ function ArrayField(props: ArrayFieldProps) {
                     icon={IconAdd}
                     disabled={!canAdd}
                     onClick={add}
+                    aria-label={formatMessage({ defaultMessage: 'Add to {list}' }, { list: labelText })}
                     children={formatMessage({ defaultMessage: 'Add' })}
                 />
             </div>

@@ -580,6 +580,16 @@ test('shows running widget capacity reported by the backend', async () => {
     expect(screen.getByText('Running widgets: 1 / 56')).toBeTruthy();
 });
 
+test("names a scene's drag handle and buttons after the scene", async () => {
+    server = [pb.create(pb.SceneSchema, { id: 'C', enabled: true, kind: { case: 'combined', value: {} } })];
+    renderPage();
+    await flush();
+
+    for (const action of ['Move', 'Clone', 'Delete', 'Edit']) {
+        expect(screen.getByRole('button', { name: `${action} Combined Scene` })).toBeTruthy();
+    }
+});
+
 describe('scene write timeouts', () => {
     test('a timed-out clone tells the user it timed out', async () => {
         registerMocks(pb.services.SceneManagementService, {
