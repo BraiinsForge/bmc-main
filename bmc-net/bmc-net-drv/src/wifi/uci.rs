@@ -57,6 +57,27 @@ pub(crate) struct UciWirelessIface {
     disabled: Option<String>,
 }
 
+/// An enabled station section as it stood before a join rewrote it.
+/// Joining the same SSID overwrites that section's key in place,
+/// so re-enabling the section by name would bring back the attempted key.
+pub(crate) struct SavedStation(UciWirelessIface);
+
+impl SavedStation {
+    pub(crate) fn ssid(&self) -> &str {
+        &self.0.ssid
+    }
+
+    /// The section name and the values that put it back, enabled.
+    /// A section saved without a key gets an empty one:
+    /// the attempt may have written a key there, and ubus takes no `null`.
+    fn restored_values(self) -> Result<(String, Value)> {
+        let Self(mut iface) = self;
+        iface.key.get_or_insert_with(String::new);
+        iface.disabled = Some("0".to_owned());
+        Ok((iface.name.clone(), serde_json::to_value(iface)?))
+    }
+}
+
 impl From<UciWirelessIface> for WifiConfiguration {
     fn from(iface: UciWirelessIface) -> Self {
         let mode = if iface.mode == "ap" {
@@ -266,18 +287,21 @@ impl UciHelper {
     /// The first enabled `wifi-iface` section, or `None` when the radio itself
     /// is disabled: the same rule [`map_uci_iface_to_wifi_status`] applies, so
     /// the SSID helpers and `status()` never disagree on what is active.
-    pub async fn wifi_iface_find_enabled(&self) -> Option<WifiConfiguration> {
+    async fn enabled_iface(&self) -> Option<UciWirelessIface> {
         match self.radio_state_with_ifaces().await {
             Ok((false, _)) => None,
             Ok((true, ifaces)) => ifaces
                 .into_iter()
-                .find(|iface| uci_enabled(iface.disabled.as_deref()))
-                .map(Into::into),
+                .find(|iface| uci_enabled(iface.disabled.as_deref())),
             Err(e) => {
                 log::warn!("Cannot get iface from uci: {e}");
                 None
             }
         }
+    }
+
+    pub async fn wifi_iface_find_enabled(&self) -> Option<WifiConfiguration> {
+        self.enabled_iface().await.map(Into::into)
     }
 
     pub async fn wifi_iface_disable_all(&self) -> Result<()> {
@@ -309,6 +333,22 @@ impl UciHelper {
         };
         UciCommand::set(section, json!({"disabled": "0"})).await?;
         Ok(true)
+    }
+
+    /// The enabled station section, kept whole so a failed join can put it back.
+    /// `None` when the radio is off or the enabled section is not a station.
+    pub(crate) async fn saved_station(&self) -> Option<SavedStation> {
+        self.enabled_iface()
+            .await
+            .filter(|iface| iface.mode == WifiMode::Station.to_uci_mode())
+            .map(SavedStation)
+    }
+
+    /// Makes `saved` the only enabled section again, with the values it had.
+    pub(crate) async fn restore_station(&self, saved: SavedStation) -> Result<()> {
+        self.wifi_iface_disable_all().await?;
+        let (section, values) = saved.restored_values()?;
+        UciCommand::set(section, values).await
     }
 
     /// Disables only the wifi-iface sections configured for `mode`, leaving
@@ -454,6 +494,38 @@ mod tests {
         assert!(!picked.enabled);
         assert_eq!(picked.configuration.map(|c| c.ssid), Some("mmm".to_owned()));
         assert!(pick_reported_status(&[]).is_none());
+    }
+
+    #[test]
+    fn a_restored_station_gets_back_the_key_it_was_saved_with() {
+        let saved = SavedStation(UciWirelessIface {
+            key: Some("right".to_owned()),
+            encryption: "psk2".to_owned(),
+            disabled: Some("1".to_owned()),
+            ..iface("cfg_sta", "sta")
+        });
+
+        let (section, values) = saved
+            .restored_values()
+            .expect("BUG: the section serializes");
+
+        assert_eq!(section, "cfg_sta");
+        assert_eq!(values["key"], "right");
+        assert_eq!(values["encryption"], "psk2");
+        assert_eq!(values["disabled"], "0");
+        assert!(values.get(".name").is_none() && values.get("name").is_none());
+    }
+
+    #[test]
+    fn a_station_saved_without_a_key_is_restored_with_an_empty_one() {
+        let (_, values) = SavedStation(iface("cfg_sta", "sta"))
+            .restored_values()
+            .expect("BUG: the section serializes");
+
+        assert_eq!(
+            values["key"], "",
+            "an attempted key must not survive the restore"
+        );
     }
 
     #[test]

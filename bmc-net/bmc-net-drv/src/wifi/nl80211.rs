@@ -22,7 +22,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
-use bmc_net_types::wifi::{EncryptionType, WifiConfiguration, WifiMode, WifiScanItem, WifiStatus};
+use bmc_net_types::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
 use log::{debug, warn};
 use scanner::WifiScanner;
 use serde::Deserialize;
@@ -34,7 +34,9 @@ use tokio::task::JoinHandle;
 use tokio::time::{self, Duration, MissedTickBehavior};
 use wl_nl80211::Nl80211Handle;
 
-use super::uci::{HtMode, UciHelper, map_uci_iface_to_wifi_status, pick_reported_status};
+use super::uci::{
+    HtMode, SavedStation, UciHelper, map_uci_iface_to_wifi_status, pick_reported_status,
+};
 use super::utils::{
     ATTEMPTS_TO_ACTIVATE_AP, ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils,
     filter_empty_ssid, filter_unsupported_enc, mark_connected, wait_for_interface_up,
@@ -124,34 +126,27 @@ impl OpenwrtWifiManager {
         uci.save_changes().await
     }
 
-    /// After a failed join, re-enable the station that was active before so a
-    /// typo in an SSID does not leave the device without connectivity. Errors
-    /// are logged: the caller reports the join failure itself.
-    async fn restore_station(&self, previous: Option<WifiConfiguration>, attempted: &str) {
+    /// After a failed join, put back the station that was active before,
+    /// so a typo in an SSID or a password does not leave the device offline.
+    /// Errors are logged: the caller reports the join failure itself.
+    async fn restore_station(&self, previous: Option<SavedStation>, attempted: &str) {
         let Some(previous) = previous else {
             return;
         };
+        let previous_ssid = previous.ssid().to_owned();
         let restored = async {
             let uci = UciHelper::new(&self.wlan_dev_syspath);
-            uci.wifi_iface_disable_all().await?;
-            if !uci
-                .wifi_iface_enable(WifiMode::Station, &previous.ssid)
-                .await?
-            {
-                bail!("no saved wifi-iface for {}", previous.ssid);
-            }
+            uci.restore_station(previous).await?;
             uci.save_changes().await?;
             self.enable_radio(true).await
         }
         .await;
         match restored {
-            Ok(()) => warn!(
-                "Joining {attempted} failed; restored the previous station {}",
-                previous.ssid
-            ),
+            Ok(()) => {
+                warn!("Joining {attempted} failed; restored the previous station {previous_ssid}");
+            }
             Err(e) => warn!(
-                "Joining {attempted} failed and the previous station {} could not be restored: {e:#}",
-                previous.ssid
+                "Joining {attempted} failed and the previous station {previous_ssid} could not be restored: {e:#}"
             ),
         }
     }
@@ -270,10 +265,7 @@ impl WifiDriver for OpenwrtWifiManager {
     ) -> Result<()> {
         let device = WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await?;
         // Remember the station we are leaving so a failed join can put it back.
-        let previous = UciHelper::new(&self.wlan_dev_syspath)
-            .wifi_iface_find_enabled()
-            .await
-            .filter(|config| config.mode == WifiMode::Station);
+        let previous = UciHelper::new(&self.wlan_dev_syspath).saved_station().await;
         self.configure_wifi_iface(WifiMode::Station, ssid.clone(), password, encryption)
             .await?;
         self.enable_radio(true).await?;
