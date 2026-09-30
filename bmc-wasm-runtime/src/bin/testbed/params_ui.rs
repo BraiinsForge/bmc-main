@@ -35,9 +35,7 @@ use bmc_widget_manifest::{
 use super::icon::Icons;
 use super::system_ui::{field_margin, row_height};
 use super::theme::Palette;
-use super::ui_helpers::{
-    Button, RADIO_GROUP_MAX_VARIANTS, combo_cell, key_label, radio_group_cell,
-};
+use super::ui_helpers::{Button, combo_cell, key_label, radio_group_cell};
 use super::view::{Delivery, ViewCommand};
 use super::{PARAM_PANEL_W, TestbedApp};
 
@@ -608,9 +606,9 @@ fn paint_typed_input(
     label_resp: Option<&egui::Response>,
     compact: bool,
 ) -> bool {
-    use bmc_widget_manifest::{DoubleParam, IntegerParam, StringParam};
+    use bmc_widget_manifest::{DoubleParam, EnumControl, IntegerParam, StringParam};
 
-    let radio = |variants: usize| !compact && variants <= RADIO_GROUP_MAX_VARIANTS;
+    let radio = |control: EnumControl| !compact && control == EnumControl::Radio;
     let row_h = row_height(ui);
     let cell_w = ui.available_width();
     let cell = egui::vec2(cell_w, row_h);
@@ -621,12 +619,20 @@ fn paint_typed_input(
         }
     };
     match (scalar, value) {
-        (Scalar::String(StringParam { enum_values, .. }), ParamValue::String(s))
-            if !enum_values.is_empty() =>
-        {
+        (
+            Scalar::String(StringParam {
+                enum_values,
+                enum_control,
+                ..
+            }),
+            ParamValue::String(s),
+        ) if !enum_values.is_empty() => {
             // Snapshot the collapsed-state label before `populate`
             // captures `s` mutably; the radio branch ignores it.
-            let combo_label = s.clone();
+            let combo_label = enum_values
+                .iter()
+                .find(|o| o.value == *s)
+                .map_or_else(|| s.clone(), |o| o.label.clone());
             let populate = |inner: &mut egui::Ui| {
                 let mut changed = false;
                 for opt in enum_values {
@@ -639,7 +645,7 @@ fn paint_typed_input(
                 }
                 changed
             };
-            if radio(enum_values.len()) {
+            if radio(*enum_control) {
                 radio_group_cell(ui, key, cell_w, populate)
             } else {
                 combo_cell(ui, key, cell_w, combo_label, populate)
@@ -655,9 +661,14 @@ fn paint_typed_input(
             focus_on_label_click(&resp);
             resp.changed()
         }
-        (Scalar::Integer(IntegerParam { enum_values, .. }), ParamValue::Integer(n))
-            if !enum_values.is_empty() =>
-        {
+        (
+            Scalar::Integer(IntegerParam {
+                enum_values,
+                enum_control,
+                ..
+            }),
+            ParamValue::Integer(n),
+        ) if !enum_values.is_empty() => {
             // Combo collapsed-state label snapshot before `populate`
             // captures `n` mutably (the radio branch doesn't read it).
             let combo_label = enum_values
@@ -673,7 +684,7 @@ fn paint_typed_input(
                 }
                 changed
             };
-            if radio(enum_values.len()) {
+            if radio(*enum_control) {
                 radio_group_cell(ui, key, cell_w, populate)
             } else {
                 combo_cell(ui, key, cell_w, combo_label, populate)
@@ -700,9 +711,14 @@ fn paint_typed_input(
                 resp.changed()
             }
         }
-        (Scalar::Double(DoubleParam { enum_values, .. }), ParamValue::Double(f))
-            if !enum_values.is_empty() =>
-        {
+        (
+            Scalar::Double(DoubleParam {
+                enum_values,
+                enum_control,
+                ..
+            }),
+            ParamValue::Double(f),
+        ) if !enum_values.is_empty() => {
             // Combo collapsed-state label snapshot before `populate`
             // captures `f` mutably (the radio branch doesn't read it).
             let combo_label = enum_values
@@ -725,7 +741,7 @@ fn paint_typed_input(
                 }
                 changed
             };
-            if radio(enum_values.len()) {
+            if radio(*enum_control) {
                 radio_group_cell(ui, key, cell_w, populate)
             } else {
                 combo_cell(ui, key, cell_w, combo_label, populate)
@@ -801,6 +817,10 @@ mod layout_tests {
             "params": {
                 "free_string": {"type": "string", "name": "S", "default_value": "Hello"},
                 "string_enum": {"type": "string", "name": "E", "default_value": "info", "enum_values": tones},
+                "radio_enum": {
+                    "type": "string", "name": "R", "default_value": "info", "enum_values": tones,
+                    "enum_control": "radio",
+                },
                 "integer_range": {
                     "type": "integer", "name": "I", "min": -100_000, "max": 100_000, "default_value": -100_000,
                 },

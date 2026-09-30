@@ -241,10 +241,11 @@ network fetches and other expensive side effects triggered by params changes.
 ## Use The Testbed
 
 The WASM testbed reads the widget manifest and shows a Params panel in the right sidebar when the manifest declares
-params. Each control maps to the manifest type: text fields for strings, numeric inputs for numbers, dropdowns for
-`enum_values`, checkboxes for booleans, and clear-to-null controls for optional params. Each list param gets a
-full-width block below them: a row per item with move-up, move-down, and remove buttons, then an add button, with
-`min_items` and `max_items` disabling remove and add at the bounds.
+params. Each control maps to the manifest type: text fields for strings, numeric inputs for numbers, dropdowns or radio
+groups for `enum_values` as `enum_control` asks, checkboxes for booleans, and clear-to-null controls for optional
+params. Each list param gets a full-width block below them: a row per item with move-up, move-down, and remove buttons,
+then an add button, with `min_items` and `max_items` disabling remove and add at the bounds. An enum inside an item is
+always a dropdown, keeping each row one line tall.
 
 Run the params demo from `bmc-wasm-runtime/`:
 

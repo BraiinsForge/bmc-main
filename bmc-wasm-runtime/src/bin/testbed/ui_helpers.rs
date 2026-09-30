@@ -573,12 +573,6 @@ pub(super) fn key_caption(text: &str) -> egui::Label {
         .selectable(false)
 }
 
-/// Enum params with at most this many variants render as an always-visible
-/// radio group (`radio_group_cell`); larger sets fall back to a `combo_cell`
-/// dropdown. Tweak the threshold here — there's only one call site per
-/// enum kind in `params_ui.rs` / `system_ui.rs`.
-pub(super) const RADIO_GROUP_MAX_VARIANTS: usize = 5;
-
 /// Outer `ComboBox` shell. `populate` runs only while the popup is open
 /// and returns whether the user picked a different option.
 ///
