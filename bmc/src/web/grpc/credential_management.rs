@@ -22,7 +22,7 @@
 use bmc_grpc::web;
 use tonic::{Request, Response, Status};
 
-use super::scene_management::param_definition_to_proto;
+use super::scene_management::scalar_field_to_proto;
 use crate::credential;
 
 pub(crate) struct CredentialManagementService;
@@ -53,7 +53,7 @@ fn credential_type_to_proto(t: &credential::CredentialType) -> web::CredentialTy
         fields: t
             .fields
             .iter()
-            .map(|(key, def)| param_definition_to_proto(key.as_str(), def))
+            .map(|(key, field)| scalar_field_to_proto(key.as_str(), field))
             .collect(),
         egress: t.egress.as_ref().map(|e| web::EgressPolicy {
             allow_hosts: e.allow_hosts.clone(),
@@ -91,5 +91,20 @@ mod tests {
         assert!(userpass.egress.is_none(), "generics carry no egress pin");
         let keys: Vec<_> = userpass.fields.iter().map(|f| f.key.clone()).collect();
         assert_eq!(keys, vec!["username".to_owned(), "password".to_owned()]);
+    }
+
+    #[test]
+    fn every_builtin_field_reaches_the_web_in_order_with_its_metadata() {
+        for t in credential::builtins() {
+            let proto = credential_type_to_proto(&t);
+            assert_eq!(proto.fields.len(), t.fields.len(), "for {}", t.id);
+            for ((key, field), def) in t.fields.iter().zip(&proto.fields) {
+                let at = format!("{}.{}", t.id, key.as_str());
+                assert_eq!(def.key, key.as_str(), "{at}");
+                assert_eq!(def.name, field.name, "{at}");
+                assert_eq!(def.description, field.description, "{at}");
+                assert_eq!(def.is_optional, field.is_optional, "{at}");
+            }
+        }
     }
 }

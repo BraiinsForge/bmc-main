@@ -586,27 +586,28 @@ pub enum ItemKind {
 pub struct ObjectParam {
     /// The row's fields, keyed like params.
     #[serde(deserialize_with = "deserialize_unique_fields")]
-    pub fields: IndexMap<ParamKey, ObjectField>,
+    pub fields: IndexMap<ParamKey, ScalarField>,
 }
 
 fn deserialize_unique_fields<'de, D>(
     deserializer: D,
-) -> Result<IndexMap<ParamKey, ObjectField>, D::Error>
+) -> Result<IndexMap<ParamKey, ScalarField>, D::Error>
 where
     D: Deserializer<'de>,
 {
     deserialize_unique_keyed(deserializer, "field key")
 }
 
-/// One field of an object item; always a scalar, so objects never nest.
+/// A named field that is always a scalar: a field of an object item, or of a credential type.
+/// Being scalar is what keeps objects from nesting and credentials to one piece of text each.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ObjectField {
+pub struct ScalarField {
     /// Human-readable field name, shown in the operator UI.
     pub name: String,
     /// Optional one-line field description, shown in the operator UI as help text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Whether the operator can leave this field unset; an unset field is delivered as `Null` in its row.
+    /// Whether the operator can leave this field unset, which holds it as `Null`.
     #[serde(
         default,
         rename = "optional",
@@ -618,7 +619,7 @@ pub struct ObjectField {
     pub kind: ScalarKind,
 }
 
-/// The kind of an [`ObjectField`], tagged like [`ParamKind`].
+/// The kind of a [`ScalarField`], tagged like [`ParamKind`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ScalarKind {

@@ -29,7 +29,7 @@ use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_widget_manifest::{
     ArrayParam, BooleanParam, CredentialKey, DoubleParam, EnumControl, IntegerParam, ItemKind,
-    ObjectParam, ParamDefinition, ParamKind, ScalarKind, StringParam, TimezoneParam,
+    ObjectParam, ParamDefinition, ParamKind, ScalarField, ScalarKind, StringParam, TimezoneParam,
 };
 use futures::stream::{BoxStream, StreamExt};
 use indexmap::IndexMap;
@@ -729,6 +729,28 @@ pub(crate) fn param_definition_to_proto(
         name: def.name.clone(),
         description: def.description.clone(),
         is_optional: def.is_optional,
+        kind: Some(kind),
+    }
+}
+
+/// A credential field travels as a scalar param, so one form renders both.
+pub(crate) fn scalar_field_to_proto(
+    key: &str,
+    field: &ScalarField,
+) -> web::ManifestParamDefinition {
+    use web::manifest_param_definition::Kind as PK;
+    let kind = match &field.kind {
+        ScalarKind::String(p) => PK::ParamString(string_param_to_proto(p)),
+        ScalarKind::Double(p) => PK::ParamDouble(double_param_to_proto(p)),
+        ScalarKind::Integer(p) => PK::ParamInteger(integer_param_to_proto(p)),
+        ScalarKind::Boolean(p) => PK::ParamBoolean(boolean_param_to_proto(p)),
+        ScalarKind::Timezone(p) => PK::ParamTimezone(timezone_param_to_proto(p)),
+    };
+    web::ManifestParamDefinition {
+        key: key.to_owned(),
+        name: field.name.clone(),
+        description: field.description.clone(),
+        is_optional: field.is_optional,
         kind: Some(kind),
     }
 }
@@ -3282,6 +3304,46 @@ mod tests {
             panic!("BUG: expected param_string arm");
         };
         assert_eq!(ps.enum_control(), web::EnumControl::Radio);
+    }
+
+    #[test]
+    fn scalar_field_to_proto_maps_each_kind_to_its_arm() {
+        use bmc_widget_manifest::ParamKey;
+        use web::manifest_param_definition::Kind;
+        let fields: IndexMap<ParamKey, ScalarField> = serde_json::from_value(serde_json::json!({
+            "s": { "name": "S", "type": "string" },
+            "d": { "name": "D", "type": "double" },
+            "i": { "name": "I", "type": "integer" },
+            "b": { "name": "B", "type": "boolean" },
+            "t": { "name": "T", "type": "timezone" },
+        }))
+        .expect("BUG: the fields parse");
+        let arms: BTreeMap<_, _> = fields
+            .iter()
+            .map(|(key, field)| {
+                let arm = match scalar_field_to_proto(key.as_str(), field).kind {
+                    Some(Kind::ParamString(_)) => "string",
+                    Some(Kind::ParamDouble(_)) => "double",
+                    Some(Kind::ParamInteger(_)) => "integer",
+                    Some(Kind::ParamBoolean(_)) => "boolean",
+                    Some(Kind::ParamTimezone(_)) => "timezone",
+                    other @ (Some(Kind::ParamArray(_)) | None) => {
+                        panic!("BUG: {key:?} reached the web as {other:?}")
+                    }
+                };
+                (key.as_str(), arm)
+            })
+            .collect();
+        assert_eq!(
+            arms,
+            BTreeMap::from([
+                ("b", "boolean"),
+                ("d", "double"),
+                ("i", "integer"),
+                ("s", "string"),
+                ("t", "timezone"),
+            ])
+        );
     }
 
     #[test]

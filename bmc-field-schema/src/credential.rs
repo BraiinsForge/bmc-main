@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Credential-type schema — a named set of secret fields, built on this crate's [`ParamDefinition`]
+//! Credential-type schema — a named set of secret fields, built on this crate's [`ScalarField`]
 //! so one form renderer drives both params and credential fields.
 //!
 //! Here rather than in the firmware crate so `bmc-widget-codegen` can read each type's fields.
@@ -30,7 +30,7 @@ use std::sync::LazyLock;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{EnumControl, ParamDefinition, ParamKey, ParamKind, StringFormat, StringParam};
+use crate::{EnumControl, ParamKey, ScalarField, ScalarKind, StringFormat, StringParam};
 
 /// A kind of account a widget can bind, e.g. a Braiins Pool API token.
 /// `fields` are what the user configures; the variables a widget may embed
@@ -42,7 +42,7 @@ pub struct CredentialType {
     pub name: String,
     pub description: String,
     /// The configured fields; secret fields carry [`StringFormat::Password`].
-    pub fields: IndexMap<ParamKey, ParamDefinition>,
+    pub fields: IndexMap<ParamKey, ScalarField>,
     /// Absent means the secret may be sent anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<EgressPolicy>,
@@ -382,16 +382,16 @@ static GENERIC_USERPASS_ICON: LazyLock<Icon> =
 static LOCAL_FILE_TOKEN_ICON: LazyLock<Icon> =
     LazyLock::new(|| svg_icon(include_str!("../assets/local-file-token.svg")));
 
-fn secret_field(name: &str, description: &str) -> ParamDefinition {
+fn secret_field(name: &str, description: &str) -> ScalarField {
     string_field(name, description, Some(StringFormat::Password))
 }
 
-fn string_field(name: &str, description: &str, format: Option<StringFormat>) -> ParamDefinition {
-    ParamDefinition {
+fn string_field(name: &str, description: &str, format: Option<StringFormat>) -> ScalarField {
+    ScalarField {
         name: name.to_owned(),
         description: Some(description.to_owned()),
         is_optional: false,
-        kind: ParamKind::String(StringParam {
+        kind: ScalarKind::String(StringParam {
             format,
             enum_values: Vec::new(),
             enum_control: EnumControl::Dropdown,
@@ -401,9 +401,7 @@ fn string_field(name: &str, description: &str, format: Option<StringFormat>) -> 
     }
 }
 
-fn field_map<const N: usize>(
-    entries: [(&str, ParamDefinition); N],
-) -> IndexMap<ParamKey, ParamDefinition> {
+fn field_map<const N: usize>(entries: [(&str, ScalarField); N]) -> IndexMap<ParamKey, ScalarField> {
     entries
         .into_iter()
         .map(|(key, def)| {
@@ -715,7 +713,7 @@ mod tests {
         let (_, token) = t.fields.first().expect("BUG: braiins-pool has a field");
         assert!(matches!(
             &token.kind,
-            ParamKind::String(StringParam {
+            ScalarKind::String(StringParam {
                 format: Some(StringFormat::Password),
                 ..
             })
@@ -839,7 +837,7 @@ mod tests {
         let (_, path) = t.fields.first().expect("BUG: local-file-token has a field");
         assert!(matches!(
             &path.kind,
-            ParamKind::String(StringParam { format: None, .. })
+            ScalarKind::String(StringParam { format: None, .. })
         ));
     }
 

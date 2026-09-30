@@ -460,258 +460,6 @@
         }
       ]
     },
-    "ObjectField": {
-      "description": "One field of an object item; always a scalar, so objects never nest.",
-      "type": "object",
-      "properties": {
-        "description": {
-          "description": "Optional one-line field description, shown in the operator UI as help text.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "description": "Human-readable field name, shown in the operator UI.",
-          "type": "string"
-        },
-        "optional": {
-          "description": "Whether the operator can leave this field unset; an unset field is delivered as `Null` in its row.",
-          "type": "boolean"
-        }
-      },
-      "oneOf": [
-        {
-          "description": "A UTF-8 string.",
-          "type": "object",
-          "properties": {
-            "default_value": {
-              "description": "The starting value, as the param, list item or object field holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
-              "type": [
-                "string",
-                "null"
-              ],
-              "maxLength": 1024
-            },
-            "enum_control": {
-              "description": "How the UI presents `enum_values`; needs them to be set.",
-              "$ref": "#/$defs/EnumControl"
-            },
-            "enum_values": {
-              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/StringOption"
-              }
-            },
-            "format": {
-              "description": "Optional structural hint to the operator UI.",
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/StringFormat"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "placeholder": {
-              "description": "Example text shown in the empty input, such as \"e.g. BTC or AAPL\"; never a value.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "string"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "A finite f64.",
-          "type": "object",
-          "properties": {
-            "default_value": {
-              "description": "The starting value, as the param, list item or object field holding these options defines it.",
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double"
-            },
-            "enum_control": {
-              "description": "How the UI presents `enum_values`; needs them to be set.",
-              "$ref": "#/$defs/EnumControl"
-            },
-            "enum_values": {
-              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/DoubleOption"
-              }
-            },
-            "max": {
-              "description": "Inclusive upper bound.",
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double"
-            },
-            "min": {
-              "description": "Inclusive lower bound.",
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double"
-            },
-            "placeholder": {
-              "description": "Example text shown in the empty input, such as \"e.g. 0.5\"; never a value.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "step": {
-              "description": "UI step granularity. Strictly positive.",
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double",
-              "exclusiveMinimum": 0.0
-            },
-            "type": {
-              "type": "string",
-              "const": "double"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "A 32-bit signed integer.",
-          "type": "object",
-          "properties": {
-            "default_value": {
-              "description": "The starting value, as the param, list item or object field holding these options defines it.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            },
-            "enum_control": {
-              "description": "How the UI presents `enum_values`; needs them to be set.",
-              "$ref": "#/$defs/EnumControl"
-            },
-            "enum_values": {
-              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/IntegerOption"
-              }
-            },
-            "max": {
-              "description": "Inclusive upper bound.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            },
-            "min": {
-              "description": "Inclusive lower bound.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            },
-            "placeholder": {
-              "description": "Example text shown in the empty input, such as \"e.g. 42\"; never a value.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "step": {
-              "description": "UI step granularity. Strictly positive.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32",
-              "exclusiveMinimum": 0
-            },
-            "type": {
-              "type": "string",
-              "const": "integer"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "A boolean.",
-          "type": "object",
-          "properties": {
-            "default_value": {
-              "description": "The starting value, as the param, list item or object field holding these options defines it.",
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "boolean"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "An IANA timezone identifier.",
-          "type": "object",
-          "properties": {
-            "default_value": {
-              "description": "The starting zone, as the param, list item or object field holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
-              "type": [
-                "string",
-                "null"
-              ],
-              "maxLength": 1024
-            },
-            "placeholder": {
-              "description": "Example text shown in the empty input, such as \"e.g. Europe/Prague\"; never a value.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "timezone"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        }
-      ],
-      "required": [
-        "name"
-      ]
-    },
     "ObjectParam": {
       "description": "The fields of an [`ItemKind::Object`] item, in display order.",
       "type": "object",
@@ -722,7 +470,7 @@
           "additionalProperties": false,
           "patternProperties": {
             "^[A-Za-z][A-Za-z0-9_\\-]*$": {
-              "$ref": "#/$defs/ObjectField"
+              "$ref": "#/$defs/ScalarField"
             }
           }
         }
@@ -1065,6 +813,258 @@
             }
           }
         }
+      ]
+    },
+    "ScalarField": {
+      "description": "A named field that is always a scalar: a field of an object item, or of a credential type.\nBeing scalar is what keeps objects from nesting and credentials to one piece of text each.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Optional one-line field description, shown in the operator UI as help text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Human-readable field name, shown in the operator UI.",
+          "type": "string"
+        },
+        "optional": {
+          "description": "Whether the operator can leave this field unset, which holds it as `Null`.",
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "description": "A UTF-8 string.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param, list item or object field holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1024
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/StringOption"
+              }
+            },
+            "format": {
+              "description": "Optional structural hint to the operator UI.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StringFormat"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. BTC or AAPL\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "string"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A finite f64.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param, list item or object field holding these options defines it.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DoubleOption"
+              }
+            },
+            "max": {
+              "description": "Inclusive upper bound.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min": {
+              "description": "Inclusive lower bound.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 0.5\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "step": {
+              "description": "UI step granularity. Strictly positive.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double",
+              "exclusiveMinimum": 0.0
+            },
+            "type": {
+              "type": "string",
+              "const": "double"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A 32-bit signed integer.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param, list item or object field holding these options defines it.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IntegerOption"
+              }
+            },
+            "max": {
+              "description": "Inclusive upper bound.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "min": {
+              "description": "Inclusive lower bound.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. 42\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "step": {
+              "description": "UI step granularity. Strictly positive.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "exclusiveMinimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "integer"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A boolean.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting value, as the param, list item or object field holding these options defines it.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "An IANA timezone identifier.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "The starting zone, as the param, list item or object field holding these options defines it.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1024
+            },
+            "placeholder": {
+              "description": "Example text shown in the empty input, such as \"e.g. Europe/Prague\"; never a value.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "timezone"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ],
+      "required": [
+        "name"
       ]
     },
     "SettingKey": {
