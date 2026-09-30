@@ -58,6 +58,13 @@ const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15);
 /// accepted.
 const STEP_ECHO_SETTLE: Duration = Duration::from_millis(300);
 
+/// Least time between two brightness requests from a drag. bmc saves the
+/// config file to flash on every one, and a finger resting on a stop
+/// boundary would otherwise send one per frame; the value itself still
+/// follows the finger every frame. Kept under [`STEP_ECHO_SETTLE`] so the
+/// echo of a held-back request still lands inside its window.
+const BRIGHTNESS_SEND_INTERVAL: Duration = Duration::from_millis(150);
+
 /// Fast wake cadence while a hold FSM is animating, so the hold/timeout edges
 /// fire without a touch/network event to wake the loop.
 const FAST_WAKE: Duration = Duration::from_millis(33);
@@ -404,6 +411,10 @@ pub struct SettingsTrayOverlay {
     brightness: u8,
     /// End of the post-tap brightness echo settle window.
     brightness_settle_until: Option<Instant>,
+    /// A brightness taken locally that bmc has not been asked for yet.
+    brightness_unsent: Option<u8>,
+    /// When the next brightness request may go out; see [`BRIGHTNESS_SEND_INTERVAL`].
+    brightness_next_send: Instant,
     volume: u8,
     /// End of the post-tap volume echo settle window.
     volume_settle_until: Option<Instant>,
@@ -465,6 +476,8 @@ impl SettingsTrayOverlay {
         Self {
             brightness: 50,
             brightness_settle_until: None,
+            brightness_unsent: None,
+            brightness_next_send: now,
             volume: 50,
             volume_settle_until: None,
             night_active: false,
@@ -622,6 +635,10 @@ impl SettingsTrayOverlay {
     /// [`SystemOverlay::on_touch`] with an explicit `now`, so tests drive the
     /// inactivity timer on one injected timeline.
     fn on_touch_at(&mut self, event: TouchEvent, now: Instant) {
+        // Whatever stop the finger left the slider on goes out with it.
+        if matches!(event, TouchEvent::Up { .. } | TouchEvent::Cancel) {
+            self.send_brightness(now);
+        }
         if !self.slide.accepts_input() {
             return;
         }
@@ -668,14 +685,32 @@ impl SettingsTrayOverlay {
         }
     }
 
-    /// Take `value` as the brightness now, ask bmc for it, and hold the echo
-    /// off until the write comes back.
-    fn set_brightness_locally(&mut self, value: u8, now: Instant) {
+    /// Take `value` as the brightness now and hold the echo off until the
+    /// write comes back; the request itself waits for [`Self::send_brightness`].
+    fn take_brightness(&mut self, value: u8, now: Instant) {
         self.brightness = value;
         self.repaint_queued = true;
+        self.brightness_settle_until = Some(now + STEP_ECHO_SETTLE);
+        self.brightness_unsent = Some(value);
+    }
+
+    /// Ask bmc for the brightness taken since the last request, if any.
+    fn send_brightness(&mut self, now: Instant) {
+        let Some(value) = self.brightness_unsent.take() else {
+            return;
+        };
         self.pending_requests
             .push(SettingsRequest::SetBrightness(value));
+        self.brightness_next_send = now + BRIGHTNESS_SEND_INTERVAL;
         self.brightness_settle_until = Some(now + STEP_ECHO_SETTLE);
+    }
+
+    /// [`Self::send_brightness`] once the throttle allows. A still finger
+    /// raises no event, so `tick` calls this too and wakes for it.
+    fn send_brightness_when_due(&mut self, now: Instant) {
+        if now >= self.brightness_next_send {
+            self.send_brightness(now);
+        }
     }
 
     /// Apply a frame's interaction read-back to overlay state and queue the
@@ -683,14 +718,16 @@ impl SettingsTrayOverlay {
     fn apply_render_output(&mut self, output: SettingsTrayRenderOutput, now: Instant) {
         if let Some(step) = output.brightness_step {
             let b = step_value(self.brightness, step, ui::MIN_BRIGHTNESS, 100);
-            self.set_brightness_locally(b, now);
+            self.take_brightness(b, now);
+            self.send_brightness(now);
         }
-        // Only a new stop queues a request. Every request rewrites the config
-        // file on flash, and a held finger reports a position every frame.
+        // A held finger reports a position every frame; only a new stop is
+        // taken, and the request for it is throttled.
         if let Some(fraction) = output.brightness_drag {
             let b = ui::brightness_from_fraction(fraction);
             if b != self.brightness {
-                self.set_brightness_locally(b, now);
+                self.take_brightness(b, now);
+                self.send_brightness_when_due(now);
             }
         }
         if let Some(step) = output.volume_step {
@@ -821,6 +858,7 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
         self.refresh_network();
+        self.send_brightness_when_due(now);
         // Read-back changes queue here instead of setting content_dirty
         // directly: the host consumes content_dirty right after the paint the
         // read-back came from, which was built before the change.
@@ -865,6 +903,12 @@ impl SystemOverlay for SettingsTrayOverlay {
         } else {
             Some(now + NETWORK_REFRESH)
         };
+        // A stop the throttle held back goes out on the tick it comes due,
+        // and a still finger raises nothing to bring that tick sooner.
+        let next_wake = next_wake.map(|wake| match self.brightness_unsent {
+            Some(_) => wake.min(self.brightness_next_send),
+            None => wake,
+        });
         TickOutcome {
             visible,
             wants_render,
@@ -1517,6 +1561,81 @@ mod step_tests {
             "reaching a stop writes once, holding there writes no more"
         );
         assert_eq!(overlay.brightness, 55);
+    }
+
+    /// A finger resting on the boundary between two stops rounds to a
+    /// different one every frame. The value may flap; the requests may not.
+    #[test]
+    fn a_flapping_drag_sends_at_most_one_request_per_interval() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
+        overlay.brightness = 50;
+        let frames = 30;
+        for frame in 0..=frames {
+            let fraction = if frame % 2 == 0 { 0.5 } else { 0.45 };
+            overlay.apply_render_output(brightness_drag(fraction), t0 + FAST_WAKE * frame);
+        }
+        let sent = overlay.drain_settings_requests().len();
+        let span = FAST_WAKE * frames;
+        #[expect(
+            clippy::integer_division,
+            reason = "whole intervals elapsed, plus the send at the first frame"
+        )]
+        let most = 1 + span.as_millis() / BRIGHTNESS_SEND_INTERVAL.as_millis();
+        assert!(
+            (2..=most).contains(&(sent as u128)),
+            "{sent} requests over {span:?}: the throttle allows {most} and must let some through"
+        );
+    }
+
+    #[test]
+    fn lifting_the_finger_sends_the_stop_it_left_on() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
+        overlay.brightness = 50;
+        overlay.apply_render_output(brightness_drag(0.5), t0);
+        overlay.apply_render_output(brightness_drag(0.55), t0 + FAST_WAKE);
+        assert_eq!(
+            overlay.drain_settings_requests(),
+            vec![SettingsRequest::SetBrightness(55)],
+            "the second stop is held back by the throttle"
+        );
+        overlay.on_touch_at(TouchEvent::Up { id: 0 }, t0 + 2 * FAST_WAKE);
+        assert_eq!(
+            overlay.drain_settings_requests(),
+            vec![SettingsRequest::SetBrightness(60)],
+            "the release sends it without waiting"
+        );
+        assert_eq!(overlay.brightness, 60);
+    }
+
+    /// A finger that stops moving raises no touch event and no render,
+    /// so the held-back stop has to go out on a tick, and the tick has to come.
+    #[test]
+    fn a_still_finger_gets_its_stop_on_the_tick_it_comes_due() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(None, t0);
+        overlay.env = Box::new(NoNetworkEnv);
+        overlay.brightness = 50;
+        overlay.apply_render_output(brightness_drag(0.5), t0);
+        overlay.apply_render_output(brightness_drag(0.55), t0 + FAST_WAKE);
+        let _ = overlay.drain_settings_requests();
+
+        let early = t0 + BRIGHTNESS_SEND_INTERVAL / 2;
+        let outcome = overlay.tick(early);
+        assert!(overlay.drain_settings_requests().is_empty(), "not due yet");
+        assert!(
+            outcome
+                .next_wake
+                .is_some_and(|wake| wake <= t0 + BRIGHTNESS_SEND_INTERVAL),
+            "the tick must wake by the time the stop comes due: {outcome:?}"
+        );
+
+        let _ = overlay.tick(t0 + BRIGHTNESS_SEND_INTERVAL);
+        assert_eq!(
+            overlay.drain_settings_requests(),
+            vec![SettingsRequest::SetBrightness(60)]
+        );
     }
 
     #[test]
