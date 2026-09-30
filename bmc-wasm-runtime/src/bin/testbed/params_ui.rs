@@ -291,12 +291,23 @@ fn null_toggle(ui: &mut egui::Ui, label: &str) -> bool {
     ui.add(egui::Button::new(label).min_size(size)).clicked()
 }
 
-/// A type-appropriate zero, so an input without a default has something to edit.
-fn zero_value(scalar: Scalar<'_>) -> ParamValue {
+/// Something to edit in an input without a default:
+/// an enum's first option, since any other value is one the widget cannot read,
+/// or else a type-appropriate zero.
+fn seed_without_default(scalar: Scalar<'_>) -> ParamValue {
     match scalar {
-        Scalar::String(_) | Scalar::Timezone(_) => ParamValue::String(String::new()),
-        Scalar::Integer(_) => ParamValue::Integer(0),
-        Scalar::Double(_) => ParamValue::Double(0.0),
+        Scalar::String(p) => ParamValue::String(
+            p.enum_values
+                .first()
+                .map_or_else(String::new, |option| option.value.clone()),
+        ),
+        Scalar::Timezone(_) => ParamValue::String(String::new()),
+        Scalar::Integer(p) => {
+            ParamValue::Integer(p.enum_values.first().map_or(0, |option| option.value))
+        }
+        Scalar::Double(p) => {
+            ParamValue::Double(p.enum_values.first().map_or(0.0, |option| option.value))
+        }
         Scalar::Boolean(_) => ParamValue::Boolean(false),
     }
 }
@@ -474,7 +485,7 @@ fn paint_object_fields(
 fn seed_value(scalar: Scalar<'_>) -> ParamValue {
     let seed = ParamValue::from_scalar_default(scalar);
     if matches!(seed, ParamValue::Null) {
-        zero_value(scalar)
+        seed_without_default(scalar)
     } else {
         seed
     }
@@ -914,5 +925,65 @@ mod layout_tests {
             overflow < 0.5,
             "the system section overflows the sidebar by {overflow} px"
         );
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use serde_json::json;
+
+    use super::{ItemKind, seed_item};
+
+    fn seeded(kind: serde_json::Value) -> serde_json::Value {
+        let kind: ItemKind = serde_json::from_value(kind).expect("BUG: the item kind parses");
+        seed_item(&kind).to_json_value()
+    }
+
+    #[test]
+    fn an_enum_item_without_a_default_seeds_its_first_option() {
+        for (kind, first) in [
+            (
+                json!({"type": "string", "enum_values": [
+                    {"value": "info", "label": "Info"},
+                    {"value": "warning", "label": "Warning"},
+                ]}),
+                json!("info"),
+            ),
+            (
+                json!({"type": "integer", "enum_values": [
+                    {"value": 5, "label": "Five"},
+                    {"value": 10, "label": "Ten"},
+                ]}),
+                json!(5),
+            ),
+            (
+                json!({"type": "double", "enum_values": [
+                    {"value": 0.5, "label": "Half"},
+                    {"value": 1.5, "label": "One and a half"},
+                ]}),
+                json!(0.5),
+            ),
+        ] {
+            assert_eq!(seeded(kind.clone()), first, "{kind}");
+        }
+    }
+
+    #[test]
+    fn a_new_row_seeds_a_required_enum_field_with_its_first_option() {
+        let row = seeded(json!({"type": "object", "fields": {
+            "label": {"type": "string", "name": "Label"},
+            "tone": {"type": "string", "name": "Tone", "enum_values": [
+                {"value": "info", "label": "Info"},
+            ]},
+            "note": {"type": "string", "name": "Note", "optional": true},
+        }}));
+
+        assert_eq!(row, json!({"label": "", "tone": "info", "note": null}));
+    }
+
+    #[test]
+    fn a_plain_item_without_a_default_seeds_its_zero() {
+        assert_eq!(seeded(json!({"type": "string"})), json!(""));
+        assert_eq!(seeded(json!({"type": "integer"})), json!(0));
     }
 }
