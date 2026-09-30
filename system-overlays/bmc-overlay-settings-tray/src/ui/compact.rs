@@ -177,17 +177,16 @@ fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode 
     )
 }
 
-fn compact_brightness_row(content: Content<'_>) -> TreeNode {
-    let fraction = content.controls.brightness.map_or(0.0, brightness_fraction);
+fn compact_brightness_row(icons: ControlIcons, brightness: u8) -> TreeNode {
     row(
         PropsData {
             cross_align: CrossAlign::Center,
             ..PropsData::default()
         },
         [
-            slider(BRIGHTNESS_SLIDER_KEY, fraction),
+            slider(BRIGHTNESS_SLIDER_KEY, brightness_fraction(brightness)),
             fixed_width(COMPACT_GAP),
-            brightness_icon(content.control_icons),
+            brightness_icon(icons),
         ],
     )
 }
@@ -205,22 +204,28 @@ fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     control_rows(tier, Vec::new(), singles)
 }
 
-/// The BMM101 flow children: address block, brightness slider,
-/// then whichever buttons the product still has.
+/// The BMM101 flow children: address block, the brightness slider where
+/// the capability allows one, then whichever buttons the product still has.
 pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
-    let mut children = vec![content.notice.with_notice(
-        PropsData::default(),
-        NOTICE_SIZE,
-        vec![
-            // Top padding is an explicit spacer, not container padding,
-            // so the close button's absolute insets resolve against the panel box.
-            fixed_height(COMPACT_GAP),
-            compact_info_row(content, panel, tier),
-            fixed_height(COMPACT_GAP),
-            pad_horizontal(compact_brightness_row(content), COMPACT_GAP),
-            fixed_height(COMPACT_GAP),
-        ],
-    )];
+    let mut section = vec![
+        // Top padding is an explicit spacer, not container padding,
+        // so the close button's absolute insets resolve against the panel box.
+        fixed_height(COMPACT_GAP),
+        compact_info_row(content, panel, tier),
+        fixed_height(COMPACT_GAP),
+    ];
+    if let Some(brightness) = content.controls.brightness {
+        section.push(pad_horizontal(
+            compact_brightness_row(content.control_icons, brightness),
+            COMPACT_GAP,
+        ));
+        section.push(fixed_height(COMPACT_GAP));
+    }
+    let mut children = vec![
+        content
+            .notice
+            .with_notice(PropsData::default(), NOTICE_SIZE, section),
+    ];
     children.extend(compact_control_rows(content, tier));
     children
 }
@@ -233,7 +238,7 @@ mod tests {
 
     use super::*;
     use crate::ui::test_support::*;
-    use crate::ui::{ControlIcons, build_tree};
+    use crate::ui::{ControlIcons, Controls, build_tree};
 
     /// BMM101 as it ships: no reconfigure button,
     /// whose glyph would add a second WiFi icon to the tree.
@@ -280,6 +285,22 @@ mod tests {
             ControlIcons::default(),
             all_controls(),
         )
+    }
+
+    /// Like the pairs on the other layouts, the slider follows the
+    /// capability; without it there is nothing for the slider to set.
+    #[test]
+    fn the_slider_goes_with_the_brightness_capability() {
+        let has_slider = |controls: Controls<'_>| {
+            touch_keys(&build_with_controls(bmm101_panel(), controls))
+                .iter()
+                .any(|key| key == BRIGHTNESS_SLIDER_KEY)
+        };
+        assert!(has_slider(all_controls()));
+        assert!(!has_slider(Controls {
+            brightness: None,
+            ..all_controls()
+        }));
     }
 
     #[test]
