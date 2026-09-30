@@ -96,6 +96,11 @@ actually coming; the same failure during WiFi reconfiguration leaves the running
   unfinished: the join clears only the reconfiguration flag and the lifecycle drops back to `setup_pending`, so the
   connected screen goes on to the connect-info instead (`Mode::setup_done` decides) and the wizard finishes at the new
   address.
+- **Wi-Fi change from the web UI** (operational, Deck only: on Boser-managed products `SetWifi` belongs to Boser): bmc
+  reports the join on the setup feed, so the screens run `connecting_to_wifi` → connected (5 s) → the operational
+  connect-info at the new address, as after a reconfiguration. The browser that asked usually loses the device mid-join,
+  which leaves the display as the place the outcome is read. A `wifi_connection_failed` shows the error, which closes on
+  a touch or after 5 s: no setup AP comes back to replace it, and the driver has already put the previous network back.
 - **Unexpected error**: a full-screen failure, in two variants that differ in what happens next rather than in how bad
   the failure is. `unexpected_error_restarting` means bmc is restarting or resetting the device, so the screen says so,
   waits it out, and ignores touch — the restart is coming and there is nothing to dismiss it *to*. `unexpected_error`

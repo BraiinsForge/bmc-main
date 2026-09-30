@@ -138,15 +138,16 @@ resource, so a broadcast that reaches nobody (bmc up before the overlay host) do
 
 **Responsibility split.** bmc broadcasts through the `Compositor` trait (`broadcast_device_state` /
 `broadcast_setup_progress` / `broadcast_access_point`), fed by the device-info listener in `bmc/src/startup.rs`; the
-screen-hold timing lives entirely in the overlay — for the transitions it sees. The client slots are latest-wins, one
-per event kind (`surface.rs`), so two `setup_progress` transitions landing in a single dispatch round collapse to the
-second and the first never gets a screen. That is a real gap in "the overlay owns the hold", not a rounding error, but
-it costs a screen only where two steps are microseconds apart: a join that fails on the spot rather than after trying. A
-queue would fix it and has not been needed. The `access_point` event deliberately duplicates the settings protocol's
-`wifi_ap` (bmc broadcasts once, the compositor fans out to both) so the device-info overlay does not bind
-`deck_settings_v1`, which carries tray semantics (preemption, brightness). A retry/reconfigure control on the failure
-screens was considered and dropped — recovery lives in the settings tray — and would be a version bump adding a request
-plus the inbound command plumbing.
+screen-hold timing lives entirely in the overlay — for the transitions it sees. `setup_progress` also carries a Wi-Fi
+join made while operational (`SetWifi`): `connecting_to_wifi`, then `wifi_connection_success` or
+`wifi_connection_failed`. The client slots are latest-wins, one per event kind (`surface.rs`), so two `setup_progress`
+transitions landing in a single dispatch round collapse to the second and the first never gets a screen. That is a real
+gap in "the overlay owns the hold", not a rounding error, but it costs a screen only where two steps are microseconds
+apart: a join that fails on the spot rather than after trying. A queue would fix it and has not been needed. The
+`access_point` event deliberately duplicates the settings protocol's `wifi_ap` (bmc broadcasts once, the compositor fans
+out to both) so the device-info overlay does not bind `deck_settings_v1`, which carries tray semantics (preemption,
+brightness). A retry/reconfigure control on the failure screens was considered and dropped — recovery lives in the
+settings tray — and would be a version bump adding a request plus the inbound command plumbing.
 
 **The IP-report button.** `report_ip` is the one event that describes neither a condition nor a transition: it is bmc
 asking for a screen on the user's behalf after a short press. Nothing caches it, nothing replays it, and it carries no

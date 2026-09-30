@@ -38,9 +38,12 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-use tokio::sync::{
-    RwLock,
-    watch::{self, Receiver},
+use tokio::{
+    sync::{
+        RwLock,
+        watch::{self, Receiver},
+    },
+    task::JoinHandle,
 };
 use tracing::{error, info, warn};
 
@@ -221,6 +224,14 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
 
     pub(crate) fn subscribe(&self) -> Receiver<Option<InitSetupState>> {
         self.state_service.subscribe()
+    }
+
+    pub(crate) fn wifi_joins(&self) -> WifiJoins<T> {
+        WifiJoins::new(
+            self.manager.clone(),
+            self.in_progress.clone(),
+            self.state_service.clone(),
+        )
     }
 
     async fn apply_device_settings(
@@ -420,6 +431,74 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         info!("Miner setup completed successfully");
 
         Ok(())
+    }
+}
+
+/// Wi-Fi joins on an operational device, reported on the device-info overlay's feed.
+/// The browser that asked usually loses the device mid-join,
+/// so the display is the only place left to read the outcome and new address.
+/// A join holds the same guard as the setup joins:
+/// two joins at once would each restore the station the other left behind.
+#[derive(Clone, Debug)]
+pub(crate) struct WifiJoins<T: BmcManager> {
+    manager: Arc<T>,
+    in_progress: Arc<AtomicBool>,
+    state_service: StateService,
+}
+
+impl<T: BmcManager> WifiJoins<T> {
+    pub(crate) fn new(
+        manager: Arc<T>,
+        in_progress: Arc<AtomicBool>,
+        state_service: StateService,
+    ) -> Self {
+        Self {
+            manager,
+            in_progress,
+            state_service,
+        }
+    }
+
+    /// Starts joining `config` on its own task,
+    /// so a caller that goes away mid-join does not take the join with it:
+    /// the driver would skip restoring the previous station,
+    /// and the overlay would wait on the connecting screen for an outcome.
+    pub(crate) fn join(
+        &self,
+        config: WifiNetworkConfig,
+    ) -> Result<JoinHandle<anyhow::Result<()>>, WifiSetupError> {
+        self.in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .map_err(|_| WifiSetupError::InProgress)?;
+
+        let in_progress = self.in_progress.clone();
+        let state_service = self.state_service.clone();
+        let manager = self.manager.clone();
+        Ok(tokio::spawn(async move {
+            let ssid = config.ssid.clone();
+            state_service.notify(InitSetupState::SwitchingUplink {
+                uplink: Uplink::Wifi { ssid: ssid.clone() },
+            });
+            let joined = match manager.network_manager().wifi() {
+                Some(wifi) => {
+                    wifi.wifi_save_and_connect(config.ssid, config.password, config.encryption)
+                        .await
+                }
+                None => Err(anyhow::anyhow!("Wi-Fi is not supported on this device")),
+            };
+            match &joined {
+                Ok(()) => {
+                    info!(ssid = %ssid, "Wi-Fi join completed successfully");
+                    state_service.notify(InitSetupState::WifiConnectionSuccess);
+                }
+                Err(err) => {
+                    warn!(error = %err, ssid = %ssid, "Failed to join Wi-Fi");
+                    state_service.notify(InitSetupState::WifiConnectionFailed);
+                }
+            }
+            in_progress.store(false, Ordering::Release);
+            joined
+        }))
     }
 }
 

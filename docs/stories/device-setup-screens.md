@@ -56,6 +56,19 @@ Ethernet port.
 - On success the device confirms the join, then shows its new address with a QR code, since the phone that configured it
   has to find it there. It hands over to the scenes on its own.
 
+### Change the Wi-Fi network from the web UI
+
+> As a user changing the Deck's Wi-Fi network in the web UI, I want the device to show how the change went, so that I
+> can find it again when my browser loses the connection.
+
+- While the Deck joins the new network, the screen names it.
+- A successful join is confirmed, then the Deck shows its new address with a QR code, and hands over to the scenes on
+  its own.
+- A failed join says so and goes back to the scenes after a moment or a tap. The Deck stays on the network it was on
+  before, so a wrong password never leaves it unreachable.
+- Another change asked for while the Deck is still joining is refused until the first join ends.
+- On products whose network is managed by Boser, the change is made in Boser and the device shows none of this yet.
+
 ### Understand a setup that cannot continue
 
 > As a user, I want a stuck setup to say what happens next so that I know whether to wait or act.

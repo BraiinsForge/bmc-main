@@ -35,6 +35,7 @@ use tonic_types::{ErrorDetails, FieldViolation, StatusExt};
 use tracing::warn;
 
 use super::GrpcError;
+use crate::initial_setup::{WifiJoins, WifiSetupError};
 use crate::manager::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
 use crate::{
     BmcManager,
@@ -47,14 +48,18 @@ where
     T: BmcManager,
 {
     manager: Arc<T>,
+    wifi_joins: WifiJoins<T>,
 }
 
 impl<T> NetworkService<T>
 where
     T: BmcManager,
 {
-    pub(crate) fn new(manager: Arc<T>) -> Self {
-        Self { manager }
+    pub(crate) fn new(manager: Arc<T>, wifi_joins: WifiJoins<T>) -> Self {
+        Self {
+            manager,
+            wifi_joins,
+        }
     }
 
     async fn check_precondition(&self, state: BmcState) -> Result<(), Status> {
@@ -192,15 +197,17 @@ where
         let request = request.into_inner();
 
         let config = try_into_wifi_network_config(request)?;
+        require_wifi(self.manager.network_manager())?;
 
-        let net_man = self.manager.network_manager();
-        match require_wifi(net_man)?
-            .wifi_save_and_connect(config.ssid, config.password, config.encryption)
-            .await
-        {
-            Ok(()) => Ok(Response::new(())),
-            Err(e) => Err(Status::internal(e.to_string())),
-        }
+        let join = self.wifi_joins.join(config).map_err(|e| match e {
+            WifiSetupError::InProgress => {
+                Status::failed_precondition("A Wi-Fi join is already in progress")
+            }
+        })?;
+        join.await
+            .map_err(|e| Status::internal(format!("Wi-Fi join task failed: {e}")))?
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(()))
     }
 
     async fn scan_wifi(&self, _request: Request<()>) -> Result<Response<ScanWifiResponse>, Status> {

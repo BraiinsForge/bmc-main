@@ -42,6 +42,12 @@ pub struct MockNetworkManager {
     hostname: Mutex<Option<String>>,
     network_config: Mutex<NetworkProtocolConfig>,
     connected_wifi: Mutex<Option<WifiNetworkConfig>>,
+    /// Whether [`WifiControl::wifi_save_and_connect`] fails,
+    /// as a join with a wrong password does.
+    join_fails: bool,
+    /// Holds every [`WifiControl::wifi_save_and_connect`] until notified,
+    /// so a test can act while a join is in flight.
+    join_gate: Option<Arc<Notify>>,
     /// What [`WifiControl::saved_networks`] reports; empty unless seeded.
     saved_networks: Mutex<Vec<WifiStatus>>,
     wifi_enabled: Mutex<bool>,
@@ -69,6 +75,8 @@ impl Default for MockNetworkManager {
             hostname: Mutex::new(Some("mock".to_owned())),
             network_config: Mutex::new(NetworkProtocolConfig::Dhcp),
             connected_wifi: Mutex::new(None),
+            join_fails: false,
+            join_gate: None,
             saved_networks: Mutex::new(Vec::new()),
             wifi_enabled: Mutex::new(true),
             wifi_event_sender: broadcast::channel(WIFI_EVENTS_CAPACITY).0,
@@ -105,6 +113,26 @@ impl MockNetworkManager {
             sta_link_state: None,
         });
         self
+    }
+
+    /// Makes every [`WifiControl::wifi_save_and_connect`] fail and keep the
+    /// station it had, as the real drivers do after a failed join.
+    #[must_use]
+    pub fn with_failing_join(self) -> Self {
+        Self {
+            join_fails: true,
+            ..self
+        }
+    }
+
+    /// Makes every [`WifiControl::wifi_save_and_connect`] wait for `gate`
+    /// before it finishes, as a real join waits on the radio.
+    #[must_use]
+    pub fn with_join_gate(self, gate: Arc<Notify>) -> Self {
+        Self {
+            join_gate: Some(gate),
+            ..self
+        }
     }
 
     /// Sets the host [`WifiControl::captive_portal_redirect_host`] reports, so
@@ -242,6 +270,12 @@ impl WifiControl for MockNetworkManager {
         password: Option<String>,
         encryption: EncryptionType,
     ) -> anyhow::Result<()> {
+        if let Some(gate) = &self.join_gate {
+            gate.notified().await;
+        }
+        if self.join_fails {
+            anyhow::bail!("mock join to {ssid} failed");
+        }
         *lock(&self.connected_wifi) = Some(WifiNetworkConfig {
             ssid,
             password,

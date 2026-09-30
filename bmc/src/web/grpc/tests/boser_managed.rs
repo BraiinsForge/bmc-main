@@ -61,7 +61,7 @@ const UNREACHABLE: &str = "BUG: session manager is not called by these tests";
 const GATED_ROUTE_UNREACHABLE: &str = "BUG: gated production route reached its stub";
 
 #[derive(Clone, Debug)]
-struct StubSession;
+pub(super) struct StubSession;
 
 impl session::Handle for StubSession {
     fn is_valid(&self) -> bool {
@@ -74,7 +74,7 @@ impl session::Handle for StubSession {
 }
 
 #[derive(Debug, Default)]
-struct StubSessionManager;
+pub(super) struct StubSessionManager;
 
 #[async_trait::async_trait]
 impl session::Manager for StubSessionManager {
@@ -197,17 +197,23 @@ impl Buttons for StubButtons {
 }
 
 #[derive(Debug)]
-struct StubBmcManager {
+pub(super) struct StubBmcManager {
     network_manager: MockNetworkManager,
     timezone_sender: watch::Sender<Timezone>,
 }
 
-impl Default for StubBmcManager {
-    fn default() -> Self {
+impl StubBmcManager {
+    pub(super) fn with_network(network_manager: MockNetworkManager) -> Self {
         Self {
-            network_manager: MockNetworkManager::with_provisioning(false, true),
+            network_manager,
             timezone_sender: watch::channel(Timezone::default()).0,
         }
+    }
+}
+
+impl Default for StubBmcManager {
+    fn default() -> Self {
+        Self::with_network(MockNetworkManager::with_provisioning(false, true))
     }
 }
 

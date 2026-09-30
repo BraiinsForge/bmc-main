@@ -121,7 +121,8 @@ success or failure screen, including after the restart that finishes an upgrade.
 The full-screen messages the device shows on its own display when it needs setting up or has just booted: the Wi-Fi
 network to join and a QR code to the setup wizard on a factory-default device, or the address to open when a network
 cable already reaches it, the progress of a Wi-Fi join, and the address the web UI is reachable at after every boot.
-Also covers re-running Wi-Fi setup from the device and the confirmation shown after a firmware update restarts.
+Also covers re-running Wi-Fi setup from the device, changing the Wi-Fi network from the web UI, and the confirmation
+shown after a firmware update restarts.
 
 ### [Physical Buttons](physical-buttons.md)
 

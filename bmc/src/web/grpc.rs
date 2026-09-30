@@ -281,14 +281,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             metadata::MetadataService::new(self.manager.clone()),
         );
 
+        let network_service = web::network_service_server::NetworkServiceServer::new(
+            network::NetworkService::new(self.manager.clone(), self.initial_setup.wifi_joins()),
+        );
+
         let initial_setup_service =
             web::initial_setup_service_server::InitialSetupServiceServer::new(
                 initial_setup::InitialSetupService::new(self.manager.clone(), self.initial_setup),
             );
-
-        let network_service = web::network_service_server::NetworkServiceServer::new(
-            network::NetworkService::new(self.manager.clone()),
-        );
 
         let system_service = web::system_service_server::SystemServiceServer::new(
             system::SystemService::new(self.manager, self.session_manager),
