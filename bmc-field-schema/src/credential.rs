@@ -30,7 +30,7 @@ use std::sync::LazyLock;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{ParamDefinition, ParamKey, ParamKind, StringFormat, StringParam};
+use crate::{EnumControl, ParamDefinition, ParamKey, ParamKind, StringFormat, StringParam};
 
 /// A kind of account a widget can bind, e.g. a Braiins Pool API token.
 /// `fields` are what the user configures; the variables a widget may embed
@@ -394,6 +394,7 @@ fn string_field(name: &str, description: &str, format: Option<StringFormat>) -> 
         kind: ParamKind::String(StringParam {
             format,
             enum_values: Vec::new(),
+            enum_control: EnumControl::Dropdown,
             default_value: None,
             placeholder: None,
         }),

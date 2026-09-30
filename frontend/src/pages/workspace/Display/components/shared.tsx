@@ -25,12 +25,11 @@ import { FormattedMessage } from 'react-intl';
 // App
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
-import type { OptionItem } from '@/components/ParamField';
 
 // Components
 import { ButtonSwitch, Checkbox } from '@/components';
 import { Screen as IconScreen, Information as IconInfo } from '@carbon/react/icons';
-import { RadioButtonGroup, RadioButton, Dropdown } from '@carbon/react';
+import { Dropdown } from '@carbon/react';
 
 // Styles
 import css from './shared.scss';
@@ -150,36 +149,6 @@ export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
             helperText={helperText}
             invalid={!!error}
             invalidText={error}
-            disabled={disabled}
-        />
-    );
-}
-
-export interface BoundRadioGroupProps<T extends string | number> extends iField<T> {
-    id: string;
-    labelText: string;
-    items: Array<OptionItem<T>>;
-    decorator?: ReactNode;
-    helperText?: ReactNode;
-}
-export function BoundRadioGroup<T extends string | number>(props: BoundRadioGroupProps<T>) {
-    const { id, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
-
-    return (
-        <RadioButtonGroup
-            id={id}
-            name={id}
-            // '' keeps the group controlled when nothing is selected:
-            // an undefined valueSelected goes uncontrolled, and a clicked radio
-            // would then outlive the switch to another widget.
-            valueSelected={value ?? ''}
-            legendText={labelText}
-            children={items.map(x => <RadioButton key={x.value} value={x.value} labelText={x.label} />)}
-            onChange={v => onChange?.(v as T)}
-            invalid={!!error}
-            invalidText={error}
-            helperText={helperText}
-            decorator={decorator}
             disabled={disabled}
         />
     );

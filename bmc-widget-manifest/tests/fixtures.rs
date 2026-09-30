@@ -120,6 +120,33 @@ fn fixtures() -> Vec<Negative> {
             manifest_accepts: false,
         },
         Negative {
+            label: "string: radio enum_control without enum_values (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "color": { "name": "C", "type": "string", "enum_control": "radio" },
+                }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "string: unknown enum_control (structural)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "color": {
+                        "name": "C",
+                        "type": "string",
+                        "enum_control": "slider",
+                        "enum_values": [{ "value": "red", "label": "R" }],
+                    },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
             label: "string: over-cap default_value (structural via maxLength)",
             manifest: manifest_with(
                 "params",

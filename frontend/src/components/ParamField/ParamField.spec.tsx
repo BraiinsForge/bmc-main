@@ -23,7 +23,7 @@ import { cleanup, render, fireEvent } from '@testing-library/react/pure';
 import { useState } from 'react';
 import { IntlProvider } from 'react-intl';
 import * as pb from '@/proto';
-import { ParamField } from './ParamField';
+import { BoundRadioGroup, ParamField } from './ParamField';
 import { listItem, type FieldValue, type ListItem, type RowError } from './value';
 
 beforeEach(cleanup);
@@ -73,6 +73,127 @@ describe('ParamField password format', () => {
 
         expect(input()?.type).toBe('text');
         expect(queryByRole('button')).toBeNull();
+    });
+});
+
+const radioGroup = (value: string | null) => (
+    <BoundRadioGroup<string>
+        id="mode"
+        labelText="Mode"
+        items={[
+            { value: 'a', label: 'Option A' },
+            { value: 'b', label: 'Option B' },
+        ]}
+        value={value}
+        onChange={() => {}}
+    />
+);
+
+const checkedValues = () =>
+    Array.from(document.body.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
+        .filter(radio => radio.checked)
+        .map(radio => radio.value);
+
+describe('BoundRadioGroup selection follows the value prop', () => {
+    test('a set value checks its radio', () => {
+        render(radioGroup('a'));
+        expect(checkedValues()).toEqual(['a']);
+    });
+
+    test('changing the value moves the check', () => {
+        const { rerender } = render(radioGroup('a'));
+        rerender(radioGroup('b'));
+        expect(checkedValues()).toEqual(['b']);
+    });
+
+    test('clearing the value unchecks everything', () => {
+        const { rerender } = render(radioGroup('a'));
+        rerender(radioGroup(null));
+        expect(checkedValues()).toEqual([]);
+    });
+
+    /// A click seeds the group's internal selection; switching the editor
+    /// to another widget must still win over that remembered click.
+    test('an entity switch after an accepted click still applies', () => {
+        const { rerender } = render(radioGroup('a'));
+        const radioB = document.body.querySelector<HTMLInputElement>('input[type="radio"][value="b"]');
+        if (!radioB) throw new Error('BUG: radio b must render');
+        fireEvent.click(radioB);
+        rerender(radioGroup('b'));
+
+        rerender(radioGroup('a'));
+        expect(checkedValues()).toEqual(['a']);
+    });
+});
+
+const periods = (enumControl: pb.EnumControl) =>
+    pb.create(pb.ParamStringSchema, {
+        enumControl,
+        enumValues: [
+            pb.create(pb.StringOptionSchema, { value: '1d', label: '1 Day' }),
+            pb.create(pb.StringOptionSchema, { value: '7d', label: '7 Days' }),
+        ],
+    });
+
+const periodField = (enumControl: pb.EnumControl) =>
+    pb.create(pb.ManifestParamDefinitionSchema, {
+        key: 'period',
+        name: 'Time Period',
+        kind: { case: 'paramString', value: periods(enumControl) },
+    });
+
+const renderEnum = (definition: pb.ManifestParamDefinition, value: FieldValue) =>
+    render(
+        <IntlProvider locale="en">
+            <ParamField id="f" definition={definition} value={value} onChange={() => {}} timezones={[]} />
+        </IntlProvider>,
+    );
+
+describe('ParamField enum control', () => {
+    test('radio draws each option as a radio', () => {
+        const { getByRole } = renderEnum(periodField(pb.EnumControl.RADIO), '7d');
+        expect(getByRole('radio', { name: '7 Days' })).toHaveProperty('checked', true);
+        expect(getByRole('radio', { name: '1 Day' })).toHaveProperty('checked', false);
+    });
+
+    test('an unset control keeps the dropdown', () => {
+        const { queryAllByRole } = renderEnum(periodField(pb.EnumControl.UNSPECIFIED), '7d');
+        expect(queryAllByRole('radio')).toHaveLength(0);
+    });
+
+    test('a number enum draws radios too', () => {
+        const columns = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'columns',
+            name: 'Columns',
+            kind: {
+                case: 'paramInteger',
+                value: pb.create(pb.ParamIntegerSchema, {
+                    enumControl: pb.EnumControl.RADIO,
+                    enumValues: [
+                        pb.create(pb.IntegerOptionSchema, { value: 1, label: 'One' }),
+                        pb.create(pb.IntegerOptionSchema, { value: 2, label: 'Two' }),
+                    ],
+                }),
+            },
+        });
+        const { getByRole } = renderEnum(columns, '2');
+        expect(getByRole('radio', { name: 'Two' })).toHaveProperty('checked', true);
+    });
+
+    test('a radio row in a list is named by its hidden label', () => {
+        const periodList = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'periods',
+            name: 'Periods',
+            kind: {
+                case: 'paramArray',
+                value: pb.create(pb.ParamArraySchema, {
+                    items: { kind: { case: 'paramString', value: periods(pb.EnumControl.RADIO) } },
+                    maxItems: 2,
+                }),
+            },
+        });
+        const { getByRole } = renderEnum(periodList, [listItem('1d')]);
+        expect(getByRole('group', { name: 'Periods, item 1' })).toBeTruthy();
     });
 });
 

@@ -29,6 +29,8 @@ import {
     DatePickerInput,
     NumberInput,
     PasswordInput,
+    RadioButton,
+    RadioButtonGroup,
     Select,
     SelectItem,
     TextInput,
@@ -136,6 +138,56 @@ export function BoundComboBox<T extends string | number>(props: BoundComboBoxPro
     );
 }
 
+export interface BoundRadioGroupProps<T extends string | number> extends iField<T> {
+    id: string;
+    labelText: string;
+    hideLabel?: boolean;
+    items: Array<OptionItem<T>>;
+    decorator?: ReactNode;
+    helperText?: ReactNode;
+}
+export function BoundRadioGroup<T extends string | number>(props: BoundRadioGroupProps<T>) {
+    const { id, labelText, hideLabel, helperText, decorator, value, items, onChange, disabled, error } = props;
+
+    return (
+        <RadioButtonGroup
+            id={id}
+            name={id}
+            // '' keeps the group controlled when nothing is selected:
+            // an undefined valueSelected goes uncontrolled, and a clicked radio
+            // would then outlive the switch to another widget.
+            valueSelected={value ?? ''}
+            legendText={hideLabel ? <span className="cds--visually-hidden" children={labelText} /> : labelText}
+            children={items.map(x => <RadioButton key={x.value} value={x.value} labelText={x.label} />)}
+            onChange={v => onChange?.(v as T)}
+            invalid={!!error}
+            invalidText={error}
+            helperText={helperText}
+            decorator={decorator}
+            disabled={disabled}
+        />
+    );
+}
+
+interface EnumFieldProps {
+    id: string;
+    labelText: string;
+    hideLabel?: boolean;
+    control: pb.EnumControl | undefined;
+    items: Array<OptionItem<string>>;
+    placeholder?: string;
+    error?: string;
+    value: string | null;
+    onChange(value: string): void;
+}
+
+/** A choice among `enum_values`, drawn as the manifest's `enum_control` asks. */
+function EnumField(props: EnumFieldProps) {
+    const { control, placeholder, ...field } = props;
+    if (control === pb.EnumControl.RADIO) return <BoundRadioGroup<string> {...field} />;
+    return <BoundComboBox<string> {...field} placeholder={placeholder} />;
+}
+
 export interface BoundToggleProps extends iField<boolean> {
     id: string;
     labelText: string;
@@ -216,17 +268,18 @@ function ScalarField(props: ScalarFieldProps) {
 
     switch (kind.case) {
         case 'paramString': {
-            const { enumValues, format, placeholder } = kind.value;
+            const { enumValues, enumControl, format, placeholder } = kind.value;
             if (enumValues.length > 0) {
                 const items: Array<OptionItem<string>> = enumValues.map(opt => ({
                     value: opt.value,
                     label: opt.label,
                 }));
                 return (
-                    <BoundComboBox<string>
+                    <EnumField
                         id={id}
                         labelText={labelText}
                         hideLabel={hideLabel}
+                        control={enumControl}
                         placeholder={placeholder}
                         error={error}
                         items={items}
@@ -304,10 +357,11 @@ function ScalarField(props: ScalarFieldProps) {
                     label: opt.label,
                 }));
                 return (
-                    <BoundComboBox<string>
+                    <EnumField
                         id={id}
                         labelText={labelText}
                         hideLabel={hideLabel}
+                        control={inner.enumControl}
                         placeholder={inner.placeholder}
                         error={error}
                         items={items}

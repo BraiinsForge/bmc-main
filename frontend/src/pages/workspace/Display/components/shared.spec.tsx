@@ -19,8 +19,8 @@
 // the grant above.
 
 import { afterEach, describe, expect, test } from '@rstest/core';
-import { cleanup, fireEvent, render } from '@testing-library/react/pure';
-import { BoundDropdown, BoundRadioGroup } from './shared';
+import { cleanup, render } from '@testing-library/react/pure';
+import { BoundDropdown } from './shared';
 
 afterEach(cleanup);
 
@@ -73,55 +73,5 @@ describe('BoundDropdown selection follows the value prop', () => {
         const renamed = { ...A, name: 'Pool A2' };
         rerender(dropdown(renamed, [renamed, B]));
         expect(toggle()?.textContent).toContain('Pool A2');
-    });
-});
-
-const radioGroup = (value: string | null) => (
-    <BoundRadioGroup<string>
-        id="mode"
-        labelText="Mode"
-        items={[
-            { value: 'a', label: 'Option A' },
-            { value: 'b', label: 'Option B' },
-        ]}
-        value={value}
-        onChange={() => {}}
-    />
-);
-
-const checkedValues = () =>
-    Array.from(document.body.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
-        .filter(radio => radio.checked)
-        .map(radio => radio.value);
-
-describe('BoundRadioGroup selection follows the value prop', () => {
-    test('a set value checks its radio', () => {
-        render(radioGroup('a'));
-        expect(checkedValues()).toEqual(['a']);
-    });
-
-    test('changing the value moves the check', () => {
-        const { rerender } = render(radioGroup('a'));
-        rerender(radioGroup('b'));
-        expect(checkedValues()).toEqual(['b']);
-    });
-
-    test('clearing the value unchecks everything', () => {
-        const { rerender } = render(radioGroup('a'));
-        rerender(radioGroup(null));
-        expect(checkedValues()).toEqual([]);
-    });
-
-    /// A click seeds the group's internal selection; switching the editor
-    /// to another widget must still win over that remembered click.
-    test('an entity switch after an accepted click still applies', () => {
-        const { rerender } = render(radioGroup('a'));
-        const radioB = document.body.querySelector<HTMLInputElement>('input[type="radio"][value="b"]');
-        if (!radioB) throw new Error('BUG: radio b must render');
-        fireEvent.click(radioB);
-        rerender(radioGroup('b'));
-
-        rerender(radioGroup('a'));
-        expect(checkedValues()).toEqual(['a']);
     });
 });

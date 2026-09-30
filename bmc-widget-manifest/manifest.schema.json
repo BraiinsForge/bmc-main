@@ -181,6 +181,21 @@
         "label"
       ]
     },
+    "EnumControl": {
+      "description": "How the operator UI presents a field's `enum_values`.",
+      "oneOf": [
+        {
+          "description": "A dropdown, which suits any number of options.",
+          "type": "string",
+          "const": "dropdown"
+        },
+        {
+          "description": "Every option on show as a radio group, which suits a few short ones.",
+          "type": "string",
+          "const": "radio"
+        }
+      ]
+    },
     "IntegerOption": {
       "description": "A single entry in a `ParamKind::Integer` `enum_values` list.",
       "type": "object",
@@ -214,6 +229,10 @@
                 "null"
               ],
               "maxLength": 1024
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
@@ -260,6 +279,10 @@
                 "null"
               ],
               "format": "double"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
@@ -320,6 +343,10 @@
                 "null"
               ],
               "format": "int32"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
@@ -466,6 +493,10 @@
               ],
               "maxLength": 1024
             },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
+            },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
               "type": "array",
@@ -511,6 +542,10 @@
                 "null"
               ],
               "format": "double"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
@@ -571,6 +606,10 @@
                 "null"
               ],
               "format": "int32"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
@@ -725,6 +764,10 @@
               ],
               "maxLength": 1024
             },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
+            },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
               "type": "array",
@@ -770,6 +813,10 @@
                 "null"
               ],
               "format": "double"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
@@ -830,6 +877,10 @@
                 "null"
               ],
               "format": "int32"
+            },
+            "enum_control": {
+              "description": "How the UI presents `enum_values`; needs them to be set.",
+              "$ref": "#/$defs/EnumControl"
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",

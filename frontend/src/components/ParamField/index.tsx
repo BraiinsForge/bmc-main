@@ -22,8 +22,10 @@
 export {
     ParamField,
     BoundComboBox,
+    BoundRadioGroup,
     BoundToggle,
     type BoundComboBoxProps,
+    type BoundRadioGroupProps,
     type BoundToggleProps,
     type OptionItem,
 } from './ParamField';

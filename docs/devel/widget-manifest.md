@@ -91,6 +91,7 @@ attributes and enforced by any JSON Schema validator. Examples:
 
 - `default_value` ∈ `enum_values` when both are present — the operator UI offers a closed set; the default must be one
   of them.
+- `enum_control: radio` only alongside `enum_values` — a radio group with no options has nothing to offer.
 - `default_value` ∈ `[min, max]` for numeric variants — same reasoning at the range level.
 - `min` ≤ `max`, `step > 0`, finite f64 bounds — guard against manifests that compile structurally but produce a UI the
   operator cannot use.

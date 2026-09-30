@@ -121,6 +121,18 @@ const SCALAR_PARAMS: pb.ManifestParamDefinition[] = [
             ],
         }),
     }),
+    param('period', 'Period', {
+        case: 'paramString',
+        value: create(pb.ParamStringSchema, {
+            defaultValue: '7d',
+            enumControl: pb.EnumControl.RADIO,
+            enumValues: [
+                create(pb.StringOptionSchema, { value: '1d', label: '1 Day' }),
+                create(pb.StringOptionSchema, { value: '7d', label: '7 Days' }),
+                create(pb.StringOptionSchema, { value: '1mo', label: '1 Month' }),
+            ],
+        }),
+    }),
     param('enabled', 'Enabled', {
         case: 'paramBoolean',
         value: create(pb.ParamBooleanSchema, { defaultValue: true }),
@@ -137,6 +149,17 @@ const SCALAR_PARAMS: pb.ManifestParamDefinition[] = [
                 create(pb.IntegerOptionSchema, { value: 1, label: '1×' }),
                 create(pb.IntegerOptionSchema, { value: 2, label: '2×' }),
                 create(pb.IntegerOptionSchema, { value: 4, label: '4×' }),
+            ],
+        }),
+    }),
+    param('columns', 'Columns', {
+        case: 'paramInteger',
+        value: create(pb.ParamIntegerSchema, {
+            defaultValue: 2,
+            enumControl: pb.EnumControl.RADIO,
+            enumValues: [
+                create(pb.IntegerOptionSchema, { value: 1, label: 'One' }),
+                create(pb.IntegerOptionSchema, { value: 2, label: 'Two' }),
             ],
         }),
     }),

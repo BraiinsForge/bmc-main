@@ -28,8 +28,8 @@ use bmc_field_schema::MissingValues;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_widget_manifest::{
-    ArrayParam, BooleanParam, CredentialKey, DoubleParam, IntegerParam, ItemKind, ObjectParam,
-    ParamDefinition, ParamKind, ScalarKind, StringParam, TimezoneParam,
+    ArrayParam, BooleanParam, CredentialKey, DoubleParam, EnumControl, IntegerParam, ItemKind,
+    ObjectParam, ParamDefinition, ParamKind, ScalarKind, StringParam, TimezoneParam,
 };
 use futures::stream::{BoxStream, StreamExt};
 use indexmap::IndexMap;
@@ -787,6 +787,7 @@ fn string_param_to_proto(
     StringParam {
         format,
         enum_values,
+        enum_control,
         default_value,
         placeholder,
     }: &StringParam,
@@ -800,6 +801,7 @@ fn string_param_to_proto(
                 label: o.label.clone(),
             })
             .collect(),
+        enum_control: Some(i32::from(enum_control_to_proto(*enum_control))),
         default_value: default_value.clone(),
         placeholder: placeholder.clone(),
     }
@@ -811,6 +813,7 @@ fn double_param_to_proto(
         max,
         step,
         enum_values,
+        enum_control,
         default_value,
         placeholder,
     }: &DoubleParam,
@@ -826,6 +829,7 @@ fn double_param_to_proto(
                 label: o.label.clone(),
             })
             .collect(),
+        enum_control: Some(i32::from(enum_control_to_proto(*enum_control))),
         default_value: *default_value,
         placeholder: placeholder.clone(),
     }
@@ -837,6 +841,7 @@ fn integer_param_to_proto(
         max,
         step,
         enum_values,
+        enum_control,
         default_value,
         placeholder,
     }: &IntegerParam,
@@ -852,6 +857,7 @@ fn integer_param_to_proto(
                 label: o.label.clone(),
             })
             .collect(),
+        enum_control: Some(i32::from(enum_control_to_proto(*enum_control))),
         default_value: *default_value,
         placeholder: placeholder.clone(),
     }
@@ -883,6 +889,13 @@ fn string_format_to_proto(f: bmc_widget_manifest::StringFormat) -> web::StringFo
         F::Email => web::StringFormat::Email,
         F::Uri => web::StringFormat::Uri,
         F::Password => web::StringFormat::Password,
+    }
+}
+
+fn enum_control_to_proto(c: EnumControl) -> web::EnumControl {
+    match c {
+        EnumControl::Dropdown => web::EnumControl::Dropdown,
+        EnumControl::Radio => web::EnumControl::Radio,
     }
 }
 
@@ -1932,6 +1945,7 @@ mod tests {
             ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("hello".into()),
                 placeholder: None,
             }),
@@ -1952,6 +1966,7 @@ mod tests {
             ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: None,
                 placeholder: None,
             }),
@@ -1971,6 +1986,7 @@ mod tests {
             ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("hello".into()),
                 placeholder: None,
             }),
@@ -1994,6 +2010,7 @@ mod tests {
                 ParamKind::String(StringParam {
                     format: None,
                     enum_values: vec![],
+                    enum_control: EnumControl::Dropdown,
                     default_value: Some("x".into()),
                     placeholder: None,
                 }),
@@ -2006,6 +2023,7 @@ mod tests {
                     max: None,
                     step: None,
                     enum_values: vec![],
+                    enum_control: EnumControl::Dropdown,
                     default_value: Some(7),
                     placeholder: None,
                 }),
@@ -2018,6 +2036,7 @@ mod tests {
                     max: None,
                     step: None,
                     enum_values: vec![],
+                    enum_control: EnumControl::Dropdown,
                     default_value: Some(2.5),
                     placeholder: None,
                 }),
@@ -2104,6 +2123,7 @@ mod tests {
             ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
                 placeholder: None,
             }),
@@ -2125,6 +2145,7 @@ mod tests {
             ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
                 placeholder: None,
             }),
@@ -2156,6 +2177,7 @@ mod tests {
                     max: Some(5),
                     step: None,
                     enum_values: vec![],
+                    enum_control: EnumControl::Dropdown,
                     default_value: None,
                     placeholder: None,
                 }),
@@ -2277,6 +2299,7 @@ mod tests {
         StringParam {
             format: None,
             enum_values: vec![],
+            enum_control: EnumControl::Dropdown,
             default_value: Some("x".into()),
             placeholder: None,
         }
@@ -2838,6 +2861,7 @@ mod tests {
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
                 placeholder: None,
             }),
@@ -2854,6 +2878,7 @@ mod tests {
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
                 placeholder: None,
             }),
@@ -2872,6 +2897,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0),
                 placeholder: None,
             }),
@@ -2890,6 +2916,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
                 placeholder: None,
             }),
@@ -2921,6 +2948,7 @@ mod tests {
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("x".into()),
                 placeholder: None,
             }),
@@ -2937,6 +2965,7 @@ mod tests {
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: None,
                 placeholder: None,
             }),
@@ -2955,6 +2984,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(1.0),
                 placeholder: None,
             }),
@@ -2973,6 +3003,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(1.0),
                 placeholder: None,
             }),
@@ -2991,6 +3022,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
                 placeholder: None,
             }),
@@ -3009,6 +3041,7 @@ mod tests {
                 max: Some(10),
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
                 placeholder: None,
             }),
@@ -3027,6 +3060,7 @@ mod tests {
                 max: Some(1.0),
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
                 placeholder: None,
             }),
@@ -3052,6 +3086,7 @@ mod tests {
                         label: "Light".into(),
                     },
                 ],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("dark".into()),
                 placeholder: None,
             }),
@@ -3077,6 +3112,7 @@ mod tests {
                         label: "Light".into(),
                     },
                 ],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("dark".into()),
                 placeholder: None,
             }),
@@ -3139,6 +3175,7 @@ mod tests {
                     max: Some(10),
                     step: None,
                     enum_values: vec![],
+                    enum_control: EnumControl::Dropdown,
                     default_value: Some(5),
                     placeholder: None,
                 }),
@@ -3152,6 +3189,7 @@ mod tests {
                         value: "red".into(),
                         label: "Red".into(),
                     }],
+                    enum_control: EnumControl::Dropdown,
                     default_value: Some("red".into()),
                     placeholder: None,
                 }),
@@ -3213,6 +3251,7 @@ mod tests {
                         label: "B".into(),
                     },
                 ],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("a".into()),
                 placeholder: None,
             }),
@@ -3229,6 +3268,23 @@ mod tests {
     }
 
     #[test]
+    fn param_definition_to_proto_keeps_a_radio_enum_control() {
+        use web::manifest_param_definition::Kind;
+        let p: ParamDefinition = serde_json::from_value(serde_json::json!({
+            "name": "Style",
+            "type": "string",
+            "enum_values": [{ "value": "a", "label": "A" }],
+            "enum_control": "radio",
+            "default_value": "a",
+        }))
+        .expect("BUG: the param parses");
+        let Some(Kind::ParamString(ps)) = param_definition_to_proto("style", &p).kind else {
+            panic!("BUG: expected param_string arm");
+        };
+        assert_eq!(ps.enum_control(), web::EnumControl::Radio);
+    }
+
+    #[test]
     fn param_definition_to_proto_double() {
         use bmc_widget_manifest::{ParamDefinition, ParamKind};
         use web::manifest_param_definition::Kind;
@@ -3241,6 +3297,7 @@ mod tests {
                 max: Some(1.0),
                 step: Some(0.1),
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
                 placeholder: Some("e.g. 0.5".into()),
             }),
@@ -3270,6 +3327,7 @@ mod tests {
                 max: Some(10),
                 step: Some(1),
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
                 placeholder: Some("e.g. 5".into()),
             }),
@@ -3341,6 +3399,7 @@ mod tests {
                 items: ItemKind::String(StringParam {
                     format: None,
                     enum_values: vec![],
+                    enum_control: EnumControl::Dropdown,
                     default_value: Some("BTC".into()),
                     placeholder: Some("e.g. BTC or AAPL".into()),
                 }),
@@ -3904,6 +3963,7 @@ mod tests {
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
                 placeholder: None,
             }),
@@ -3922,6 +3982,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0),
                 placeholder: None,
             }),
@@ -3943,6 +4004,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
                 placeholder: None,
             }),
@@ -3994,6 +4056,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
                 placeholder: None,
             }),
@@ -4015,6 +4078,7 @@ mod tests {
                 max: Some(10),
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
                 placeholder: None,
             }),
@@ -4036,6 +4100,7 @@ mod tests {
                 max: None,
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(1.0),
                 placeholder: None,
             }),
@@ -4057,6 +4122,7 @@ mod tests {
                 max: Some(1.0),
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
                 placeholder: None,
             }),
@@ -4078,6 +4144,7 @@ mod tests {
                 max: Some(1.0),
                 step: None,
                 enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
                 placeholder: None,
             }),
@@ -4100,6 +4167,7 @@ mod tests {
                     value: "dark".into(),
                     label: "Dark".into(),
                 }],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some("dark".into()),
                 placeholder: None,
             }),
@@ -4124,6 +4192,7 @@ mod tests {
                     value: 1,
                     label: "One".into(),
                 }],
+                enum_control: EnumControl::Dropdown,
                 default_value: Some(1),
                 placeholder: None,
             }),

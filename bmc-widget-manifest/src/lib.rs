@@ -46,8 +46,8 @@ use std::str::FromStr;
 
 pub use bmc_field_schema::credential;
 pub use bmc_field_schema::{
-    ArrayParam, BooleanParam, DoubleOption, DoubleParam, FieldSchemaError, IntegerOption,
-    IntegerParam, ItemKind, ItemShape, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH,
+    ArrayParam, BooleanParam, DoubleOption, DoubleParam, EnumControl, FieldSchemaError,
+    IntegerOption, IntegerParam, ItemKind, ItemShape, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH,
     MAX_PARAM_STRING_LENGTH, ObjectField, ObjectParam, ParamDefinition, ParamKey, ParamKind,
     ParamValue, ParamValueConversionError, Scalar, ScalarKind, Shape, StringFormat, StringOption,
     StringParam, TimezoneParam, f64_canonical_bits,
@@ -1574,6 +1574,47 @@ mod tests {
     }
 
     #[test]
+    fn an_enum_can_ask_for_a_radio_group() {
+        let p: ParamDefinition = serde_json::from_str(
+            r#"{"name":"X","type":"integer","default_value":1,"enum_control":"radio","enum_values":[
+                  {"value":1,"label":"One"},
+                  {"value":2,"label":"Two"}
+               ]}"#,
+        )
+        .expect("BUG: parse");
+        assert!(p.validate("x").is_ok());
+        let json = serde_json::to_value(&p).expect("BUG: serialize");
+        assert_eq!(json["enum_control"], "radio");
+    }
+
+    #[test]
+    fn a_dropdown_is_the_default_and_goes_unwritten() {
+        let p: ParamDefinition = serde_json::from_str(
+            r#"{"name":"X","type":"string","default_value":"a","enum_values":[
+                  {"value":"a","label":"A"}
+               ]}"#,
+        )
+        .expect("BUG: parse");
+        assert!(matches!(
+            &p.kind,
+            ParamKind::String(StringParam {
+                enum_control: EnumControl::Dropdown,
+                ..
+            })
+        ));
+        let json = serde_json::to_value(&p).expect("BUG: serialize");
+        assert!(json.get("enum_control").is_none(), "{json}");
+    }
+
+    #[test]
+    fn a_radio_group_without_options_fails() {
+        let p: ParamDefinition =
+            serde_json::from_str(r#"{"name":"X","type":"double","enum_control":"radio"}"#)
+                .expect("BUG: parse");
+        assert!(p.validate("x").is_err());
+    }
+
+    #[test]
     fn manifest_rejects_invalid_param_key() {
         let manifest_json = r#"{
             "uid":"550e8400-e29b-41d4-a716-446655440000",
@@ -1753,6 +1794,7 @@ mod tests {
             max: None,
             step: None,
             enum_values: vec![],
+            enum_control: EnumControl::Dropdown,
             default_value: Some(7),
             placeholder: None,
         });
@@ -1764,6 +1806,7 @@ mod tests {
         let without_default = ParamKind::String(StringParam {
             format: None,
             enum_values: vec![],
+            enum_control: EnumControl::Dropdown,
             default_value: None,
             placeholder: None,
         });

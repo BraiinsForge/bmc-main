@@ -97,6 +97,13 @@ message ParamString {
   repeated StringOption enum_values = 2;
   optional string default_value = 3;
   optional string placeholder = 4;
+  optional EnumControl enum_control = 5;
+}
+
+enum EnumControl {
+  ENUM_CONTROL_UNSPECIFIED = 0;
+  ENUM_CONTROL_DROPDOWN = 1;
+  ENUM_CONTROL_RADIO = 2;
 }
 
 message StringOption {
@@ -120,6 +127,7 @@ message ParamDouble {
   repeated DoubleOption enum_values = 4;
   optional double default_value = 5;
   optional string placeholder = 6;
+  optional EnumControl enum_control = 7;
 }
 
 message DoubleOption {
@@ -134,6 +142,7 @@ message ParamInteger {
   repeated IntegerOption enum_values = 4;
   optional int32 default_value = 5;
   optional string placeholder = 6;
+  optional EnumControl enum_control = 7;
 }
 
 message IntegerOption {

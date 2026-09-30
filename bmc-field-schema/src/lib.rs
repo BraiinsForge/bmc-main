@@ -166,6 +166,27 @@ pub enum StringFormat {
     Password,
 }
 
+/// How the operator UI presents a field's `enum_values`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnumControl {
+    /// A dropdown, which suits any number of options.
+    #[default]
+    Dropdown,
+    /// Every option on show as a radio group, which suits a few short ones.
+    Radio,
+}
+
+impl EnumControl {
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if hands the field by reference"
+    )]
+    fn is_dropdown(&self) -> bool {
+        *self == Self::Dropdown
+    }
+}
+
 /// Typed value for a stored field: null, bool, i32, finite f64, string, and lists and objects of those.
 /// Both the compositor's in-memory form and the wire shape sent to widgets.
 /// Which shapes a field accepts is its [`ParamKind`]'s call, enforced by [`validate_values`].
@@ -646,6 +667,9 @@ pub struct StringParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<StringOption>,
+    /// How the UI presents `enum_values`; needs them to be set.
+    #[serde(default, skip_serializing_if = "EnumControl::is_dropdown")]
+    pub enum_control: EnumControl,
     /// The starting value, as the param, list item or object field holding these options defines it.
     /// Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -674,6 +698,9 @@ pub struct DoubleParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<DoubleOption>,
+    /// How the UI presents `enum_values`; needs them to be set.
+    #[serde(default, skip_serializing_if = "EnumControl::is_dropdown")]
+    pub enum_control: EnumControl,
     /// The starting value, as the param, list item or object field holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<f64>,
@@ -700,6 +727,9 @@ pub struct IntegerParam {
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enum_values: Vec<IntegerOption>,
+    /// How the UI presents `enum_values`; needs them to be set.
+    #[serde(default, skip_serializing_if = "EnumControl::is_dropdown")]
+    pub enum_control: EnumControl,
     /// The starting value, as the param, list item or object field holding these options defines it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<i32>,
@@ -927,6 +957,7 @@ impl ArrayParam {
 impl StringParam {
     fn validate(&self) -> Result<(), String> {
         check_string_options(&self.enum_values)?;
+        check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
         check_string_default_length(self.default_value.as_deref())?;
         if !self.enum_values.is_empty()
             && let Some(d) = &self.default_value
@@ -948,6 +979,7 @@ impl DoubleParam {
             check_finite(Some(o.value), "enum_values[].value")?;
         }
         check_double_range(self.min, self.max, self.step, self.default_value)?;
+        check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
         check_double_options(&self.enum_values, self.default_value)
     }
 }
@@ -955,7 +987,17 @@ impl DoubleParam {
 impl IntegerParam {
     fn validate(&self) -> Result<(), String> {
         check_int_range(self.min, self.max, self.step, self.default_value)?;
+        check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
         check_int_options(&self.enum_values, self.default_value)
+    }
+}
+
+fn check_enum_control(control: EnumControl, has_options: bool) -> Result<(), String> {
+    match control {
+        EnumControl::Radio if !has_options => {
+            Err(String::from("enum_control radio needs enum_values"))
+        }
+        EnumControl::Dropdown | EnumControl::Radio => Ok(()),
     }
 }
 
