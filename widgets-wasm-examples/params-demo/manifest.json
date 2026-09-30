@@ -31,7 +31,7 @@
     },
     "string_enum": {
       "name": "String enum",
-      "description": "String with a closed enum_values set",
+      "description": "String with a closed enum_values set, offered as a radio group",
       "type": "string",
       "default_value": "violet",
       "enum_values": [
@@ -47,7 +47,8 @@
           "value": "amber",
           "label": "Amber"
         }
-      ]
+      ],
+      "enum_control": "radio"
     },
     "string_uri": {
       "name": "URI string",
@@ -74,7 +75,7 @@
     },
     "integer_enum": {
       "name": "Integer enum",
-      "description": "Integer with a closed enum_values set",
+      "description": "Integer with a closed enum_values set, offered as a radio group",
       "type": "integer",
       "default_value": 2,
       "enum_values": [
@@ -94,7 +95,8 @@
           "value": 4,
           "label": "Four"
         }
-      ]
+      ],
+      "enum_control": "radio"
     },
     "double_range": {
       "name": "Double with bounds",
@@ -268,7 +270,7 @@
     },
     "links": {
       "name": "Links",
-      "description": "List of object rows: a label, an optional URL and an enum tone",
+      "description": "List of object rows: a label, an optional URL and an enum tone offered as a radio group",
       "type": "array",
       "items": {
         "type": "object",
@@ -298,7 +300,8 @@
                 "value": "warning",
                 "label": "Warning"
               }
-            ]
+            ],
+            "enum_control": "radio"
           }
         }
       },
