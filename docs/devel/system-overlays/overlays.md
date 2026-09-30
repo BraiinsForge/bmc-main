@@ -254,9 +254,14 @@ from the same `decide`, on the bare surface and on a 480×320 BMM101 backdrop.
 
 ## Settings tray (`bmc-overlay-settings-tray`)
 
-The swipe-from-top quick-settings panel: ± brightness and volume controls, a night-mode toggle, and hold-to-confirm
-restart and WiFi reconfigure buttons over the WiFi station info. It is the only overlay that uses both vendored
-protocols. It is ported from the BDK-343 `settings-stub` widget, translated to the native `bmc-render` tree.
+The swipe-from-top quick-settings panel: brightness and volume controls, a night-mode toggle, and hold-to-confirm
+restart and WiFi reconfigure buttons over the address and connection info. It is the only overlay that uses both
+vendored protocols. It is ported from the `settings-stub` widget, translated to the native `bmc-render` tree.
+
+Three arrangements, picked in `ui::layout_for` from the viewport alone: **wide** (960 px and up, which only the Deck's
+1280 reaches) puts a labeled control row under an info header; **compact** (a rectangle below that, BMM101) stacks an
+address table, a brightness slider and labeled buttons; **round** (the BFM100 disc) runs one column of bare buttons
+inside the chord-safe band. The layout modules live under `ui/`, one per arrangement, with the shared parts beside them.
 
 Its `LayerConfig` is built by hand: `Layer::Overlay`, anchored to all four edges, **full** input region (the tray is
 full-screen and blocks scene swipes while it is up). `screen_edge()` returns `ScreenEdge::Top` and `uses_settings()` is
@@ -289,17 +294,37 @@ because a screen-edge overlay is only shown while both revealed *and* `tick`-vis
 - **Brightness and volume** — a ± pair of round buttons each, stepping the value by `STEP` (10) and clamping to
   `ui::MIN_BRIGHTNESS`..100 and 0..100 respectively, sent as `SettingsRequest::SetBrightness` / `SetVolume`. The
   compositor's own event (`on_brightness`, `on_volume`) updates the displayed value, except during the
-  `STEP_ECHO_SETTLE` (300 ms) window after a step, where a stale echo would otherwise bounce the value back.
+  `STEP_ECHO_SETTLE` (300 ms) window after a step, where a stale echo would otherwise bounce the value back. The compact
+  layout has no room for the pair and takes brightness from a slider instead: the drag position comes back every frame
+  as `brightness_drag`, snaps to `BRIGHTNESS_GRID` (5) stops between the floor and 100, and is taken locally at once,
+  but the request goes out at most once per `BRIGHTNESS_SEND_INTERVAL` (150 ms) and once more when the finger lifts,
+  since bmc writes the config file to flash on every one. The compact layout renders no volume control at all: no board
+  of that size has a speaker.
 - **WiFi info** — the configured SSID, the current IP, and a signal-strength icon from the connectivity prober's
   `snapshot_if_changed`, plus the hostname, read once from `/proc/sys/kernel/hostname`; the signal icon is chosen from
   dBm thresholds. The versioned read is polled on every tick (free while the snapshot is unchanged, even at the ~30 Hz
   animation cadence); `NETWORK_REFRESH` (2 s) is the idle wake cadence.
-- **Where the addresses render** — the wide tier's header carries the IP, the hostname, and a QR code of `http://<ip>`;
-  the compact tiers have room for one address, so they head the panel with the IP alone (`---` while unknown) and drop
-  the hostname, keeping SSID and signal on the bottom line.
-- **WiFi setup view** — when `on_wifi_ap` reports a non-empty setup-AP SSID, the panel replaces the station info with a
-  setup badge and the AP SSID for the user to join from their phone, and hides the reconfigure button. The other
-  controls stay.
+- **Where the addresses render** — the wide header carries the IP, the hostname, and a QR code of `http://<ip>`; the
+  compact layout carries the same three as a label/value table beside a smaller QR, with a third "Connection" row; the
+  disc has room for one address, so it heads the panel with the IP alone (`---` while unknown) and drops the hostname,
+  keeping SSID and signal on its bottom line. No layout renders a QR without an IP to encode.
+- **Connection** — the compact table's third row, the wide header's WiFi block and the disc's bottom line show the
+  signal icon and the station SSID, or the Ethernet icon and "Ethernet" while the cable carries the uplink
+  (`Snapshot::cable_uplink`, which holds whenever the observe crate's ranking lands on a wired interface); the wide
+  block's header then reads "Connection". `parts::connection_icon` picks the icon for all three. The cable wins over
+  setup mode too: on the BMM boards the platform's hotplug parks the setup AP while the cable holds an address, and the
+  tray's `wifi_ap` event follows setup-mode transitions only, so the SSID it still holds names a network that is down.
+- **WiFi setup view** — when `on_wifi_ap` reports a non-empty setup-AP SSID, the wide and round layouts replace the
+  station info with the SETUP badge and the AP SSID for the user to join from their phone, and every layout hides the
+  reconfigure button. The compact table's Connection row shows the problem icon and the badge alone: its value cell
+  holds sixteen characters, and the device-info setup screen under the tray names the network in full for as long as
+  setup runs, one swipe away. The other controls stay.
+- **Hold notice** — from the moment a hold starts until its outcome has shown, `ui::notice` lays a two-line notice over
+  the section above the buttons: what the hold will do and how to cancel, then that it is underway, then why it failed.
+  Everything but the held button is wrapped in `TreeNode::Dimmed` at `DIMMED` and loses its touch keys; close dims but
+  stays live. A declined restart shows bmc's own sentence under "Can't restart now"; a pending timeout, where bmc said
+  nothing, shows the tray's "Restart failed / Try again". The failure stays for `ERROR_DISPLAY` (3 s). Restart wins if
+  both FSMs report at once, which single-touch tracking makes unreachable in practice.
 - **Reconfigure WiFi** — a hold-to-confirm button (`HOLD` = 5 s) that sends `SettingsRequest::ReconfigureWifi`; the FSM
   advances through holding/pending/active states from the `wifi_ap` event, and reports a failure if setup has not
   started within `RECONFIGURE_TIMEOUT` (30 s). bmc confirms only once the AP is up, and bringing it up takes it tens of

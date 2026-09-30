@@ -22,8 +22,8 @@ volume, night mode, device restart, and Wi-Fi reconfiguration — without leavin
 > As a user, I want to adjust screen brightness and sound volume from the tray so that changes take effect immediately
 > where I am.
 
-- Brightness and volume each step up or down through a pair of buttons; the value applies immediately and persists after
-  the tray is dismissed.
+- Brightness and volume each step up or down through a pair of buttons, or a slider where the display is too small for
+  the pair; the value applies immediately and persists after the tray is dismissed.
 - The values reflect the current system state when the tray opens, including changes made elsewhere (for example from
   the web UI) while the tray is open.
 - While the user is stepping a value, delayed feedback of earlier values never bounces it back.
@@ -66,7 +66,8 @@ volume, night mode, device restart, and Wi-Fi reconfiguration — without leavin
 
 - A hold-to-confirm "Reconfigure Wi-Fi" button starts the Wi-Fi setup access point; the tray then shows the setup
   network to join from a phone.
-- The tray shows the connection status: the connected network and signal strength.
+- The tray shows the connection status: the connected network and signal strength, or that the Ethernet cable carries
+  the connection.
 
 ### See only the controls the device supports
 
