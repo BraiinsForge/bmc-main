@@ -1221,6 +1221,7 @@ dependencies = [
  "cosmic-text",
  "etagere",
  "femtovg",
+ "foldhash 0.2.0",
  "glam",
  "glow 0.16.0",
  "glutin",

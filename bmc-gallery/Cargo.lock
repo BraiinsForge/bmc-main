@@ -852,6 +852,7 @@ dependencies = [
  "cosmic-text",
  "etagere",
  "femtovg",
+ "foldhash",
  "glam",
  "glow 0.16.0",
  "glutin",

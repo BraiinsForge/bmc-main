@@ -253,8 +253,8 @@ fn submit_tree(
         }
         #[cfg(feature = "frame-timings")]
         let deserialize_started = Instant::now();
-        let tree_node = match tree::deserialize_tree(&data) {
-            Ok(tree_node) => tree_node,
+        let (tree_node, static_bytes) = match tree::deserialize_tree_keyed(&data) {
+            Ok(decoded) => decoded,
             Err(error) => {
                 tracing::error!("tree processing failed: {error}");
                 return;
@@ -264,7 +264,8 @@ fn submit_tree(
         let deserialize_us =
             u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
         let now_unix_secs = state.system_time.timestamp();
-        let (static_key, static_unchanged) = static_layer_key(state, &tree_node, now_unix_secs);
+        let (static_key, static_unchanged) =
+            static_layer_key(state, &tree_node, static_bytes, now_unix_secs);
         // A fully dynamic tree has nothing worth caching, and blitting the
         // resulting black layer costs a full-screen pass per frame.
         let layered = bmc_render::partition::has_static_content(&tree_node);
@@ -346,11 +347,12 @@ fn submit_tree(
 fn static_layer_key(
     state: &HostState,
     tree_node: &bmc_render::tree::TreeNode,
+    static_bytes: u64,
     now_unix_secs: i64,
 ) -> ((u64, u64, u64), bool) {
     let key = (
         bmc_render::partition::static_hash(
-            tree_node,
+            static_bytes,
             &bmc_render::partition::HostPaintState {
                 pressed_key: state.interaction.pressed_key(),
                 scroll_offsets: &state.scroll_states,

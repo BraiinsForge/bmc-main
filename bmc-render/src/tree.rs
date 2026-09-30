@@ -23,6 +23,7 @@
 #![expect(clippy::cast_precision_loss, clippy::cast_lossless)]
 #![allow(clippy::wildcard_imports)]
 
+use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail};
@@ -521,15 +522,25 @@ pub fn fixed_height(height: f32) -> TreeNode {
     )
 }
 
+/// Every node opens with its one-byte `NODE_*` type.
+const NODE_TYPE_LEN: usize = 1;
+
 /// Reader for deserializing tree from bytes
 struct TreeReader<'a> {
     data: &'a [u8],
     pos: usize,
+    /// Byte ranges outside the static half, in wire order; see
+    /// [`crate::partition::static_bytes_key`].
+    dynamic_ranges: Vec<Range<usize>>,
 }
 
 impl<'a> TreeReader<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+        Self {
+            data,
+            pos: 0,
+            dynamic_ranges: Vec::new(),
+        }
     }
 
     fn remaining(&self) -> usize {
@@ -703,8 +714,23 @@ impl<'a> TreeReader<'a> {
         })
     }
 
-    #[expect(clippy::too_many_lines)]
     fn read_node(&mut self) -> Result<TreeNode> {
+        let start = self.pos;
+        let ranges_before = self.dynamic_ranges.len();
+        let node = self.read_node_body()?;
+        if crate::partition::node_self_is_dynamic(&node) {
+            // A modal's body is dynamic along with it,
+            // so its one range replaces any recorded inside.
+            self.dynamic_ranges.truncate(ranges_before);
+            // The type byte stays keyed: a progress bar takes height where a modal takes none,
+            // so swapping one for the other moves the static siblings.
+            self.dynamic_ranges.push(start + NODE_TYPE_LEN..self.pos);
+        }
+        Ok(node)
+    }
+
+    #[expect(clippy::too_many_lines)]
+    fn read_node_body(&mut self) -> Result<TreeNode> {
         let node_type = self.read_u8()?;
 
         match node_type {
@@ -790,10 +816,24 @@ impl<'a> TreeReader<'a> {
                 } else {
                     None
                 };
+                // The count includes dynamic draws,
+                // which may come and go under an unchanged static half.
+                let count_start = self.pos;
                 let draw_count = self.read_u16()?;
+                self.dynamic_ranges.push(count_start..self.pos);
                 let mut draws = Vec::with_capacity(draw_count as usize);
+                let mut first_dynamic = None;
                 for _ in 0..draw_count {
-                    draws.push(self.read_draw()?);
+                    let start = self.pos;
+                    let draw = self.read_draw()?;
+                    if first_dynamic.is_none() && crate::partition::draw_is_dynamic(&draw) {
+                        first_dynamic = Some(start);
+                    }
+                    draws.push(draw);
+                }
+                // Every draw from the first dynamic one on is `Band::Dynamic` or `Band::Above`.
+                if let Some(start) = first_dynamic {
+                    self.dynamic_ranges.push(start..self.pos);
                 }
                 Ok(TreeNode::Canvas {
                     props,
@@ -1629,6 +1669,18 @@ mod fill_decode_tests {
 
 /// Deserialize a tree from bytes
 pub fn deserialize_tree(data: &[u8]) -> Result<TreeNode> {
+    read_tree(data).map(|(node, _)| node)
+}
+
+/// Deserialize a tree from bytes,
+/// along with the [`crate::partition::static_bytes_key`] of its static half.
+pub fn deserialize_tree_keyed(data: &[u8]) -> Result<(TreeNode, u64)> {
+    let (node, reader) = read_tree(data)?;
+    let key = crate::partition::static_bytes_key(&data[..reader.pos], &reader.dynamic_ranges);
+    Ok((node, key))
+}
+
+fn read_tree(data: &[u8]) -> Result<(TreeNode, TreeReader<'_>)> {
     if data.is_empty() {
         bail!("empty tree data");
     }
@@ -1637,7 +1689,7 @@ pub fn deserialize_tree(data: &[u8]) -> Result<TreeNode> {
     if reader.remaining() > 0 {
         tracing::warn!("tree has {} trailing bytes", reader.remaining());
     }
-    Ok(node)
+    Ok((node, reader))
 }
 
 // ============================================================================

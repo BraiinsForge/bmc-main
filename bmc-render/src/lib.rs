@@ -207,7 +207,7 @@ pub struct ScrollState {
 pub struct FrameTimings {
     /// Total WASM interpreter time (outer envelope, includes tree processing).
     pub wasm_us: u32,
-    /// Tree binary deserialization.
+    /// Tree binary deserialization, including the static-half key.
     pub deserialize_us: u32,
     /// Taffy tree build + layout computation.
     pub layout_us: u32,

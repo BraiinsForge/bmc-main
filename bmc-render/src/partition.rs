@@ -34,8 +34,8 @@
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::{self, Write as _};
-use std::hash::{Hash, Hasher};
-use std::mem;
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::ops::Range;
 
 use crate::ScrollState;
 use crate::tree::{DrawCommand, TreeNode};
@@ -175,27 +175,44 @@ pub fn node_self_is_dynamic(node: &TreeNode) -> bool {
     }
 }
 
-/// Hash the static half of a tree.
+/// Key the static half of a tree from the wire bytes it was decoded from.
 ///
-/// Lets a frame that refreshes the cached layer notice that nothing static
-/// changed and blit the existing layer instead.
+/// `dynamic_ranges` are the bytes outside the layer, sorted and disjoint.
+/// The decoder records them against the decoded tree:
+/// every [`node_self_is_dynamic`] node past its type byte, and in each canvas its draw count
+/// plus every draw from the first [`draw_is_dynamic`] one on, as [`canvas_bands`] splits it.
+/// Keying the rest as raw bytes covers a wire field added later without anyone listing it.
 ///
-/// Dynamic nodes and draws are skipped: they change every frame by definition
-/// and are not in the layer. A container hashes only its own props, then
-/// recurses, so a dynamic descendant cannot perturb what this hash covers —
-/// which is paint, not layout. A dynamic node still sizes its static siblings
-/// through the Taffy pass; [`host_layout_key`] is the half that sees that.
-///
-/// Static leaves go through their `Debug` output rather than field by field.
-/// That is slower, but it runs on guest frames only, and `DrawCommand` carries
-/// `f32`, which has no `Hash` — a hand-written arm per variant would let a
-/// field added later escape the hash silently and strand a stale layer on
-/// screen. If the cost ever matters, derive the hash with a float newtype
-/// rather than hand-rolling the arms.
+/// Segments are length-prefixed,
+/// so static bytes moved across a dynamic range move the key.
 #[must_use]
-pub fn static_hash(node: &TreeNode, host: &HostPaintState<'_>) -> u64 {
+pub fn static_bytes_key(data: &[u8], dynamic_ranges: &[Range<usize>]) -> u64 {
+    let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+    let mut start = 0;
+    for range in dynamic_ranges {
+        hash_segment(&data[start..range.start], &mut hasher);
+        start = range.end;
+    }
+    hash_segment(&data[start..], &mut hasher);
+    hasher.finish()
+}
+
+fn hash_segment<H: Hasher>(segment: &[u8], hasher: &mut H) {
+    hasher.write_usize(segment.len());
+    hasher.write(segment);
+}
+
+/// Key the static half of a tree for the host state it paints under.
+///
+/// Lets a frame that refreshes the cached layer notice that nothing static changed
+/// and blit the existing layer instead.
+/// `static_bytes` is the tree's [`static_bytes_key`], which covers paint, not layout:
+/// a dynamic node still sizes its static siblings through the Taffy pass,
+/// and [`host_layout_key`] is the half that sees that.
+#[must_use]
+pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
     let mut hasher = DefaultHasher::new();
-    hash_node(node, &mut hasher);
+    static_bytes.hash(&mut hasher);
     hash_debug(&host.pressed_key, &mut hasher);
     // `HashMap` iteration order varies between runs, so fold with XOR rather
     // than hashing in sequence.
@@ -210,7 +227,7 @@ pub fn static_hash(node: &TreeNode, host: &HostPaintState<'_>) -> u64 {
 
 /// Hash what a dynamic node contributes to *layout*, for the time `now_unix_secs`.
 ///
-/// [`static_hash`] deliberately skips dynamic nodes, which is right for paint
+/// [`static_bytes_key`] deliberately skips dynamic nodes, which is right for paint
 /// and wrong for layout: the Taffy pass still measures a dynamic node, so it
 /// sizes the static siblings and ancestors that do reach the layer. A
 /// [`TreeNode::RelTime`] label growing from "9 seconds" to "10 seconds" widens
@@ -444,7 +461,7 @@ pub fn has_static_content(node: &TreeNode) -> bool {
     }
 }
 
-/// Feeds `Debug` output into a hasher without allocating a `String` per node.
+/// Feeds `Debug` output into a hasher without allocating a `String` per value.
 struct HashWriter<'a, H: Hasher>(&'a mut H);
 
 impl<H: Hasher> fmt::Write for HashWriter<'_, H> {
@@ -459,75 +476,12 @@ fn hash_debug<H: Hasher>(value: &dyn fmt::Debug, hasher: &mut H) {
     let _ = write!(HashWriter(hasher), "{value:?}");
 }
 
-fn hash_node<H: Hasher>(node: &TreeNode, hasher: &mut H) {
-    mem::discriminant(node).hash(hasher);
-    match node {
-        TreeNode::Column(props, children)
-        | TreeNode::Row(props, children)
-        | TreeNode::Center(props, children) => {
-            hash_debug(props, hasher);
-            for child in children {
-                hash_node(child, hasher);
-            }
-        }
-        TreeNode::Scroll {
-            scroll_key,
-            props,
-            children,
-        } => {
-            hash_debug(scroll_key, hasher);
-            hash_debug(props, hasher);
-            for child in children {
-                hash_node(child, hasher);
-            }
-        }
-        TreeNode::Tag {
-            kind,
-            icon,
-            content,
-        } => {
-            hash_debug(kind, hasher);
-            hash_debug(icon, hasher);
-            hash_node(content, hasher);
-        }
-        // The factor changes every pixel beneath it, so it has to stale the layer.
-        TreeNode::Dimmed { brightness, child } => {
-            hash_debug(brightness, hasher);
-            hash_node(child, hasher);
-        }
-        TreeNode::Canvas {
-            props,
-            touch_key,
-            draws,
-        } => {
-            hash_debug(props, hasher);
-            hash_debug(touch_key, hasher);
-            for (draw, _) in draws
-                .iter()
-                .zip(canvas_bands(draws))
-                .filter(|(_, band)| band.is_in_layer())
-            {
-                hash_debug(draw, hasher);
-            }
-        }
-        // None of these paint into the layer, so their own pixels cannot stale
-        // it. Their *layout* can, and [`host_layout_key`] carries that half.
-        TreeNode::RelTime { .. } | TreeNode::ProgressBar { .. } | TreeNode::Modal { .. } => {}
-        TreeNode::Paragraph { .. }
-        | TreeNode::Button { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Notification { .. } => hash_debug(node, hasher),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        Band, HashMap, HostPaintState, ScrollState, canvas_bands, draw_is_dynamic,
+        Band, HashMap, HostPaintState, Range, ScrollState, canvas_bands, draw_is_dynamic,
         has_static_content, host_layout_key, layer_would_invert_paint_order, node_is_dynamic,
-        node_self_is_dynamic, static_hash, static_paints_after_dynamic,
+        node_self_is_dynamic, static_bytes_key, static_hash, static_paints_after_dynamic,
     };
     use crate::tree::{DrawCommand, HostAnimationDef, HostTransitionDef, TreeNode};
     use bmc_wasm_protocol::{
@@ -1096,25 +1050,43 @@ mod tests {
         );
     }
 
-    // ── static_hash ─────────────────────────────────────────────────
+    // ── static_bytes_key / static_hash ──────────────────────────────
 
-    fn leaf_with_radius(radius: f32) -> DrawCommand {
-        DrawCommand::Arc {
-            cx: 20.0,
-            cy: 30.0,
-            radius,
-            start_angle: 0.0,
-            end_angle: 1.0,
-            width: 6.0,
-            fill: ArcFill::Solid(Color::from_rgb(1, 2, 3)),
-            segments: ArcSegments::Continuous,
-            cap: ArcCap::Round,
-        }
+    const DYNAMIC_MIDDLE: Range<usize> = 7..11;
+
+    #[test]
+    fn bytes_inside_a_dynamic_range_do_not_move_the_key() {
+        assert_eq!(
+            static_bytes_key(b"static-AAAA-static", &[DYNAMIC_MIDDLE]),
+            static_bytes_key(b"static-BBBB-static", &[DYNAMIC_MIDDLE]),
+        );
     }
 
-    fn hash_idle(node: &TreeNode) -> u64 {
+    #[test]
+    fn bytes_outside_every_dynamic_range_move_the_key() {
+        assert_ne!(
+            static_bytes_key(b"static-AAAA-static", &[DYNAMIC_MIDDLE]),
+            static_bytes_key(b"statiX-AAAA-static", &[DYNAMIC_MIDDLE]),
+        );
+    }
+
+    const UNDERSCORES_AFTER_B: Range<usize> = 2..4;
+    const UNDERSCORES_BEFORE_B: Range<usize> = 1..3;
+
+    #[test]
+    fn static_bytes_moved_across_a_dynamic_range_move_the_key() {
+        // The static bytes concatenate the same, but `b` moved across the dynamic range.
+        assert_ne!(
+            static_bytes_key(b"ab__c", &[UNDERSCORES_AFTER_B]),
+            static_bytes_key(b"a__bc", &[UNDERSCORES_BEFORE_B]),
+        );
+    }
+
+    const STATIC_BYTES: u64 = 0x5eed;
+
+    fn hash_idle() -> u64 {
         static_hash(
-            node,
+            STATIC_BYTES,
             &HostPaintState {
                 pressed_key: None,
                 scroll_offsets: &HashMap::new(),
@@ -1123,29 +1095,16 @@ mod tests {
     }
 
     #[test]
-    fn changing_a_draw_in_the_layer_invalidates_it() {
+    fn a_changed_static_half_invalidates_the_layer() {
         assert_ne!(
-            hash_idle(&canvas(vec![leaf_with_radius(1.0)])),
-            hash_idle(&canvas(vec![leaf_with_radius(2.0)]))
-        );
-    }
-
-    #[test]
-    fn changing_a_draw_above_the_dynamic_half_does_not() {
-        // Not in the layer, so re-capturing would rewrite an identical texture.
-        assert_eq!(
-            hash_idle(&canvas(vec![transitioned(leaf()), leaf_with_radius(1.0)])),
-            hash_idle(&canvas(vec![transitioned(leaf()), leaf_with_radius(2.0)]))
-        );
-    }
-
-    #[test]
-    fn changing_a_dim_invalidates_the_layer() {
-        let at = |brightness| crate::tree::dimmed(brightness, canvas(vec![leaf()]));
-        assert_ne!(
-            hash_idle(&at(0.5)),
-            hash_idle(&at(0.6)),
-            "a layer painted at one brightness must not serve another"
+            hash_idle(),
+            static_hash(
+                STATIC_BYTES + 1,
+                &HostPaintState {
+                    pressed_key: None,
+                    scroll_offsets: &HashMap::new(),
+                },
+            )
         );
     }
 
@@ -1163,11 +1122,10 @@ mod tests {
 
     #[test]
     fn pressing_an_element_invalidates_the_layer() {
-        let node = canvas(vec![leaf()]);
         assert_ne!(
-            hash_idle(&node),
+            hash_idle(),
             static_hash(
-                &node,
+                STATIC_BYTES,
                 &HostPaintState {
                     pressed_key: Some("open_modal"),
                     scroll_offsets: &HashMap::new(),
@@ -1179,7 +1137,6 @@ mod tests {
 
     #[test]
     fn scrolling_invalidates_the_layer() {
-        let node = canvas(vec![leaf()]);
         let scrolled = HashMap::from([(
             "list".to_owned(),
             ScrollState {
@@ -1187,9 +1144,9 @@ mod tests {
             },
         )]);
         assert_ne!(
-            hash_idle(&node),
+            hash_idle(),
             static_hash(
-                &node,
+                STATIC_BYTES,
                 &HostPaintState {
                     pressed_key: None,
                     scroll_offsets: &scrolled,
@@ -1209,10 +1166,9 @@ mod tests {
             ("b".to_owned(), ScrollState { scroll_offset: 2.0 }),
             ("a".to_owned(), ScrollState { scroll_offset: 1.0 }),
         ]);
-        let node = canvas(vec![leaf()]);
         let hash_with = |scroll_offsets| {
             static_hash(
-                &node,
+                STATIC_BYTES,
                 &HostPaintState {
                     pressed_key: None,
                     scroll_offsets,
