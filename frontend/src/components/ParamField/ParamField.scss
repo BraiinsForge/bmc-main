@@ -40,16 +40,15 @@
 
 .comboBox {
     input {
-        padding-inline-end: 5.5rem !important;
+        // With the clear button and the error icon hidden below,
+        // only the chevron is left: Carbon's own inset for a chevron alone.
+        padding-inline-end: mini-units(6) !important;
     }
 
-    // Hide the error icon
     [class*='invalid-icon'] {
         display: none;
     }
 
-    // Hide the clear button
-    // (covered by the decorator icon)
     button[class*='selection'] {
         display: none;
     }
