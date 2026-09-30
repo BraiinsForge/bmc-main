@@ -180,7 +180,7 @@ fn wide_halves(
 /// the labeled control row in the bottom half.
 pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     let header = wide_header(
-        content.hostname.unwrap_or("N/A"),
+        content.hostname.unwrap_or(NO_DATA_PLACEHOLDER),
         content.ip,
         content.icons,
         content.wifi_signal,
