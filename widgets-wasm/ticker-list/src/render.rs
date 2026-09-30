@@ -57,17 +57,30 @@ const ERROR_ROW_ALPHA: f32 = 0.6;
 const STALE_ICON_GAP: f32 = 8.0;
 const NO_SYMBOLS: &str = "No symbols provided";
 const NOT_AVAILABLE: &str = "N/A";
+/// The thickness of a rule between rows and of Full's divider between halves.
+const HAIRLINE: f32 = 1.0;
 
 fn fixed_width(width: f32) -> Node {
     col(props!(width: width), Vec::<Node>::new())
 }
 
 fn rule_line(color: Color) -> Node {
-    col(props!(height: 1.0, background: color), Vec::<Node>::new())
+    col(
+        props!(height: HAIRLINE, background: color),
+        Vec::<Node>::new(),
+    )
+}
+
+/// A rule's height with `gap` of space above and below it.
+fn rule_height(gap: f32) -> f32 {
+    2.0 * gap + HAIRLINE
 }
 
 fn v_divider() -> Node {
-    col(props!(width: 1.0, background: BORDER), Vec::<Node>::new())
+    col(
+        props!(width: HAIRLINE, background: BORDER),
+        Vec::<Node>::new(),
+    )
 }
 
 /// One row's content, split across the list's columns.
@@ -471,7 +484,7 @@ impl Grid {
     fn rule(&self) -> Node {
         if self.rule_gap > 0.0 {
             col(
-                props!(height: 2.0 * self.rule_gap + 1.0, justify_content: Justify::Center),
+                props!(height: rule_height(self.rule_gap), justify_content: Justify::Center),
                 [rule_line(self.rule)],
             )
         } else {

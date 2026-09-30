@@ -30,7 +30,9 @@
 )]
 use bmc_wasm_sdk::*;
 
-use super::{Grid, NO_SYMBOLS, Paint, Pending, RowStyle, fixed_width, list, row_cells, slot};
+use super::{
+    Grid, NO_SYMBOLS, Paint, Pending, RowStyle, fixed_width, list, row_cells, rule_height, slot,
+};
 use crate::layout::BMM101_ROWS;
 use crate::model::RowState;
 use prices::closed_market::CLOSED_CHART_ALPHA;
@@ -38,12 +40,25 @@ use prices::closed_market::CLOSED_CHART_ALPHA;
 const EDGE: f32 = 16.0;
 /// Figma's `normal` line box for Braiins Sans, which every slot below is measured in.
 const LINE_HEIGHT: f32 = 1.3;
+
+/// The line box of `size` text, rounded to the nearest pixel as Figma rounds it.
+const fn slot_height(size: u32) -> f32 {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "font sizes are small, exact in f32"
+    )]
+    let size = size as f32;
+    (size * LINE_HEIGHT).round()
+}
+
 const TITLE: &str = "Financial Ticker List";
 const TITLE_SIZE: u32 = 14;
-const TITLE_SLOT: f32 = 18.0;
+const TITLE_SLOT: f32 = slot_height(TITLE_SIZE);
+/// Between the title and the list.
+const TITLE_GAP: f32 = EDGE;
 const BODY_SIZE: u32 = 20;
 const SUB_SIZE: u32 = 16;
-const SUB_SLOT: f32 = 21.0;
+const SUB_SLOT: f32 = slot_height(SUB_SIZE);
 /// Between a symbol and its name, and between a price and its change.
 const LINE_GAP: f32 = 2.0;
 const RULE_GAP: f32 = 8.0;
@@ -211,8 +226,8 @@ pub(super) fn view(
             )],
         )
     } else {
-        let rules = (row_count - 1.0) * (2.0 * RULE_GAP + 1.0);
-        let row_height = (h - 3.0 * EDGE - TITLE_SLOT - rules) / row_count;
+        let rules = (row_count - 1.0) * rule_height(RULE_GAP);
+        let row_height = (h - 2.0 * EDGE - TITLE_SLOT - TITLE_GAP - rules) / row_count;
         let row_style = Bmm101 { row_height };
         let grid = Grid {
             edge: 0.0,
@@ -229,7 +244,7 @@ pub(super) fn view(
         list(rows, &grid)
     };
     col(
-        props!(background: BLACK, width: w, height: h, padding: EDGE, gap: EDGE),
+        props!(background: BLACK, width: w, height: h, padding: EDGE, gap: TITLE_GAP),
         [
             line_box(
                 TITLE_SLOT,
