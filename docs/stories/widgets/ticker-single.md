@@ -35,7 +35,8 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 > As a user, I want the direction of the move to be obvious without reading the numbers.
 
 - The change badge is always signed and carries one decimal, for example `+5.3%` or `-2.8%`.
-- A non-negative change is green and a negative change is red; the sparkline and its fill take the same colour.
+- A change that reads `+` is green and one that reads `-` is red, so a loss too small to show as `-0.1%` stays green;
+  the sparkline and its fill take the same colour.
 - The price itself is formatted with as many decimals as its magnitude warrants — none at 1000 and above, two at 1 and
   above, and progressively more for small values, down to `<0.000001` for anything smaller than that.
 - Currency pairs made of two fiat currencies below a rate of 1000 use five decimals, or three when quoted in JPY.

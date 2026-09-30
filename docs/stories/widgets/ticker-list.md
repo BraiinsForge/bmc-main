@@ -38,7 +38,8 @@ fetched independently so one bad symbol never blanks the others.
 
 - The change badge is always signed and carries one decimal, for example `+5.3%` or `-2.8%`, measured from the opening
   price of the selected period to the latest price.
-- A non-negative change is green and a negative change is red; the sparkline and its fill take the same colour.
+- A change that reads `+` is green and one that reads `-` is red, so a loss too small to show as `-0.1%` stays green;
+  the sparkline and its fill take the same colour.
 - The sparkline traces the price across the whole selected period within its row.
 - The sparklines line up down the list: each starts where the widest price leaves room, not against its own row's price.
   At `full` each column lines up on its own.

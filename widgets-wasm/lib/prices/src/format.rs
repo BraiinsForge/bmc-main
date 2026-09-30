@@ -126,17 +126,19 @@ pub fn price_change(first: f64, current: f64) -> f64 {
     }
 }
 
+/// Whether a change reads as a rise: the sign [`change_text`] prints,
+/// so a loss that rounds to `+0.0%` is not drawn falling.
+#[must_use]
+pub fn change_rising(change_pct: f64) -> bool {
+    change_pct >= 0.0 || (change_pct.abs() * 10.0).round() == 0.0
+}
+
 /// The signed change badge text, one decimal, e.g. `+5.3%` / `-2.8%`.
 /// Uses a plain `.` decimal separator regardless of locale. `0.0` → `+0.0%`.
 #[must_use]
 pub fn change_text(change_pct: f64) -> String {
     let mut out = String::new();
-    let rounded_magnitude = (change_pct.abs() * 10.0).round();
-    out.push(if change_pct >= 0.0 || rounded_magnitude == 0.0 {
-        '+'
-    } else {
-        '-'
-    });
+    out.push(if change_rising(change_pct) { '+' } else { '-' });
     push_fixed1(&mut out, change_pct.abs());
     out.push('%');
     out
@@ -256,6 +258,17 @@ mod tests {
         assert_eq!(change_text(0.0), "+0.0%");
         assert_eq!(change_text(0.39), "+0.4%");
         assert_eq!(change_text(-0.04), "+0.0%");
+    }
+
+    #[test]
+    fn a_change_reads_as_a_rise_exactly_when_its_text_is_plus() {
+        for change in [5.31, 0.0, -0.04, -0.05, -0.06, -2.81] {
+            assert_eq!(
+                change_rising(change),
+                change_text(change).starts_with('+'),
+                "{change}"
+            );
+        }
     }
 
     #[test]

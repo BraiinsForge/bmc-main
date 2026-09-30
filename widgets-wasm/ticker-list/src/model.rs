@@ -22,6 +22,7 @@
 
 use prices::candle::Candles;
 use prices::fetch::PriceMiss;
+use prices::format::change_rising;
 
 /// One row's lifecycle. The company name is **not** held here — it lives in a
 /// parallel names cache so a period change (which resets price state) cannot
@@ -89,7 +90,7 @@ impl TickerRow {
 
     #[must_use]
     pub fn is_positive(&self) -> bool {
-        self.change_pct >= 0.0
+        change_rising(self.change_pct)
     }
 
     /// A closed non-index gets a pause marker and a grey sparkline.

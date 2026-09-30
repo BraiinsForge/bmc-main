@@ -22,6 +22,7 @@
 //! currency-icon table. No SDK draw types, so it all unit-tests on the host.
 
 use prices::candle::{CandleBar, Candles};
+use prices::format::change_rising;
 use prices::instrument::{base_symbol, split_pair};
 
 /// The rendered series: the OHLCV bars, the current price, the period change,
@@ -77,7 +78,7 @@ impl Series {
 
     #[must_use]
     pub fn is_positive(&self) -> bool {
-        self.change_pct >= 0.0
+        change_rising(self.change_pct)
     }
 
     /// A market-closed instrument that is not a `^`-prefixed index dims
