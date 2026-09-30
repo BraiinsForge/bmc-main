@@ -19,7 +19,7 @@
 // the grant above.
 
 //! The BMM101 arrangement: the address block,
-//! then the brightness slider, then bare buttons.
+//! then the brightness slider, then labeled buttons.
 
 use super::controls::{control_groups, control_rows};
 use super::notice::NOTICE_SIZE;
@@ -88,9 +88,10 @@ fn compact_info_column(props: PropsData, lines: Vec<TreeNode>) -> TreeNode {
 }
 
 /// What the device is online through: the cable while it carries the uplink,
-/// else the signal icon and the station SSID, or the problem icon and the
-/// SETUP badge while setup runs. The AP SSID is left to the device-info
-/// screen, which has the room for it; this cell has sixteen characters.
+/// else the signal icon and the station SSID,
+/// or the problem icon and the SETUP badge while setup runs.
+/// The AP SSID is left to the device-info screen, which has the room for it;
+/// this cell has sixteen characters.
 fn compact_connection_value(content: Content<'_>, style: TextStyle) -> TreeNode {
     let (icon, name) = match content.wifi_view {
         WifiView::Cable => (
@@ -287,8 +288,8 @@ mod tests {
         )
     }
 
-    /// Like the pairs on the other layouts, the slider follows the
-    /// capability; without it there is nothing for the slider to set.
+    /// Like the pairs on the other layouts, the slider follows the capability;
+    /// without it there is nothing for the slider to set.
     #[test]
     fn the_slider_goes_with_the_brightness_capability() {
         let has_slider = |controls: Controls<'_>| {

@@ -58,11 +58,12 @@ const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15);
 /// accepted.
 const STEP_ECHO_SETTLE: Duration = Duration::from_millis(300);
 
-/// Least time between two brightness requests from a drag. bmc saves the
-/// config file to flash on every one, and a finger resting on a stop
-/// boundary would otherwise send one per frame; the value itself still
-/// follows the finger every frame. Kept under [`STEP_ECHO_SETTLE`] so the
-/// echo of a held-back request still lands inside its window.
+/// Least time between two brightness requests from a drag.
+/// bmc saves the config file to flash on every one, and a finger resting
+/// on a stop boundary would otherwise send one per frame;
+/// the value itself still follows the finger every frame.
+/// Kept under [`STEP_ECHO_SETTLE`], so the echo of a held-back request
+/// still lands inside its window.
 const BRIGHTNESS_SEND_INTERVAL: Duration = Duration::from_millis(150);
 
 /// Fast wake cadence while a hold FSM is animating, so the hold/timeout edges
@@ -685,8 +686,8 @@ impl SettingsTrayOverlay {
         }
     }
 
-    /// Take `value` as the brightness now and hold the echo off until the
-    /// write comes back; the request itself waits for [`Self::send_brightness`].
+    /// Take `value` as the brightness now and hold the echo off
+    /// until the write comes back; the request itself waits for [`Self::send_brightness`].
     fn take_brightness(&mut self, value: u8, now: Instant) {
         self.brightness = value;
         self.repaint_queued = true;
@@ -1563,8 +1564,8 @@ mod step_tests {
         assert_eq!(overlay.brightness, 55);
     }
 
-    /// A finger resting on the boundary between two stops rounds to a
-    /// different one every frame. The value may flap; the requests may not.
+    /// A finger resting on the boundary between two stops
+    /// rounds to a different one every frame. The value may flap; the requests may not.
     #[test]
     fn a_flapping_drag_sends_at_most_one_request_per_interval() {
         let t0 = Instant::now();

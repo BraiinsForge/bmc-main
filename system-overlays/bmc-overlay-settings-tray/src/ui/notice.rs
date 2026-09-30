@@ -18,9 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! While a hold action runs, is pending or has just failed, a notice over the
-//! section above the buttons says so, and everything but the action's own
-//! button dims and stops taking touches.
+//! While a hold action runs, is pending or has just failed, a notice
+//! over the section above the buttons says so, and everything
+//! but the action's own button dims and stops taking touches.
 
 use super::{Action, Controls, Phase, Status};
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, dimmed, text};
@@ -52,8 +52,8 @@ pub(super) struct NoticeText<'a> {
 }
 
 impl<'a> NoticeText<'a> {
-    /// bmc words its own decline: the reason is a sentence, shown as the
-    /// body under the tray's title. A timeout with no word from bmc is the tray's.
+    /// bmc words its own decline: the reason is a sentence,
+    /// shown as the body under the tray's title. A timeout with no word from bmc is the tray's.
     pub(super) fn for_status(status: Status<'a>) -> Self {
         let (title, body) = match (status.action, status.phase) {
             (Action::Restart, Phase::Holding { .. }) => ("Restart the device?", Some(KEEP_HOLDING)),

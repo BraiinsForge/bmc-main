@@ -453,10 +453,10 @@ const BMM101_CLOSE_BOTTOM: f32 = 64.0;
 /// Radius of a BMM101 control button; the slider thumb is a 16 px circle.
 const BMM101_BUTTON_RADIUS: f32 = 32.0;
 
-/// The compact stack is fixed-height from the address table down, so the
-/// buttons have nowhere to give: they either fit under the close target
-/// and above the panel's bottom edge, or they run off it. The captions
-/// under them are what runs off first, so every paragraph is checked too.
+/// The compact stack is fixed-height from the address table down,
+/// so the buttons have nowhere to give: they either fit under the close target
+/// and above the panel's bottom edge, or they run off it.
+/// The captions under them are what runs off first, so every paragraph is checked too.
 #[test]
 fn bmm101_controls_fit_between_the_close_target_and_the_bottom_edge() {
     for wifi_setup in [false, true] {

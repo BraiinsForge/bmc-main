@@ -75,10 +75,10 @@ pub const BRIGHTNESS_SLIDER_KEY: &str = "brightness_slider";
 /// that would undo it, so neither the step buttons nor the slider go lower.
 pub const MIN_BRIGHTNESS: u8 = 10;
 
-/// Percentage points between the slider's stops. Every drag frame reports a
-/// position, so the value has to land on a grid: without one a single sweep
-/// would queue a `SetBrightness` per frame, and each of those rewrites the
-/// config file on flash.
+/// Percentage points between the slider's stops. Every drag frame reports
+/// a position, so the value has to land on a grid: without one a single sweep
+/// would queue a `SetBrightness` per frame, and each of those rewrites
+/// the config file on flash.
 const BRIGHTNESS_GRID: u8 = 5;
 
 /// Stops between the floor and full brightness, the floor not counted.
@@ -98,8 +98,8 @@ pub fn brightness_fraction(percent: u8) -> f32 {
     f32::from(percent.clamp(MIN_BRIGHTNESS, 100) - MIN_BRIGHTNESS) / span
 }
 
-/// The brightness a thumb dragged to `fraction` asks for, snapped to
-/// [`BRIGHTNESS_GRID`]. Inverse of [`brightness_fraction`].
+/// The brightness a thumb dragged to `fraction` asks for,
+/// snapped to [`BRIGHTNESS_GRID`]. Inverse of [`brightness_fraction`].
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
@@ -185,8 +185,8 @@ const WIDE_SSID_WIDTH: u32 = 400;
 const WIDE_QR_SIZE: f32 = 144.0;
 
 /// The same 25-module symbol as [`WIDE_QR_SIZE`], shrunk to share its row
-/// with the address table. With the quiet zone the grid is 33 modules, so
-/// one is 2.9 px: 0.45 mm at BMM101's 165 DPI, the smallest code the tray draws.
+/// with the address table. With the quiet zone the grid is 33 modules,
+/// so one is 2.9 px: 0.45 mm at BMM101's 165 DPI, the smallest code the tray draws.
 const COMPACT_QR_SIZE: f32 = 96.0;
 
 /// The compact layout's one spacing unit, vertical and horizontal alike.
@@ -257,8 +257,8 @@ const ROUND_HEADER_SIZE: u32 = 18;
 const ROUND_ROW_GAP: f32 = 8.0;
 
 /// The disc's station line: the WiFi icon's side, and the text beside it.
-/// Keep the icon no taller than the text. Outgrow it and the icon sets the
-/// line height, which busts the vertical budget.
+/// Keep the icon no taller than the text. Outgrow it and the icon sets
+/// the line height, which busts the vertical budget.
 const ROUND_WIFI_ICON_SIZE: f32 = 20.0;
 const ROUND_WIFI_TEXT_SIZE: u32 = 14;
 
@@ -536,7 +536,7 @@ enum Layout {
     /// The Deck's 1280×480: labeled buttons in one row under an info header.
     Wide,
     /// The BMM101 rectangle: the address table on top,
-    /// the brightness slider under it, bare buttons last.
+    /// the brightness slider under it, labeled buttons last.
     Compact,
     /// The BFM100's disc: one column inside the chord-safe band.
     Round,

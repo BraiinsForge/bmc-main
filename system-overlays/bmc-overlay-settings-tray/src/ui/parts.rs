@@ -145,8 +145,8 @@ pub(super) fn svg_icon(icon_id: Option<SvgId>, size: f32, tint: Color) -> TreeNo
     }
 }
 
-/// An icon inside a round button. `aspect` is width/height — 1.0 for the
-/// square control glyphs; nightmode.svg is 49×48 and keeps its ratio
+/// An icon inside a round button. `aspect` is width/height — 1.0
+/// for the square control glyphs; nightmode.svg is 49×48 and keeps its ratio
 /// instead of stretching.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ButtonIcon {
@@ -163,9 +163,8 @@ impl ButtonIcon {
 /// One round icon button with a centered icon. While held, a larger circle
 /// fades in behind it and shrinks to the button radius; the button becomes
 /// opaque with a black icon so the progress circle cannot show through it.
-/// `icon_tint`
-/// `TRANSPARENT` keeps the SVG's native fill (white for controls); an opaque
-/// tint colorizes the whole icon while the button is not held.
+/// An `icon_tint` of `TRANSPARENT` keeps the SVG's native fill (white for controls);
+/// an opaque tint colorizes the whole icon while the button is not held.
 pub(super) fn round_button(
     key: &str,
     icon: ButtonIcon,
@@ -234,8 +233,8 @@ pub(super) fn round_button(
         touch_key: None,
         draws,
     };
-    // Keep the touch key on the button-sized canvas; putting it on the
-    // oversized visual canvas would expand the interactive area.
+    // Keep the touch key on the button-sized canvas;
+    // putting it on the oversized visual canvas would expand the interactive area.
     let touch_target = TreeNode::Canvas {
         props: PropsData {
             width: diameter,
@@ -316,8 +315,8 @@ pub(super) fn close_button(panel: &Panel, tier: Tier, icon: Option<SvgId>) -> Tr
 }
 
 /// The QR code for the device's web UI, so scanning it opens the address
-/// printed beside it. Callers omit it while the IP is unknown, since a
-/// placeholder would scan as a dead link.
+/// printed beside it. Callers omit it while the IP is unknown,
+/// since a placeholder would scan as a dead link.
 pub(super) fn ip_qr(ip: &str, size: f32) -> TreeNode {
     TreeNode::Canvas {
         props: PropsData {

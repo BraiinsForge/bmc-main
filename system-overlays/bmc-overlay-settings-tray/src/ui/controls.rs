@@ -167,8 +167,8 @@ fn single_group(
 }
 
 /// All control groups in spec order, split into the ± pair groups
-/// (volume/brightness) and the single-button groups. On the Large tier the
-/// two halves concatenate into one row; medium/small render them as two rows.
+/// (volume/brightness) and the single-button groups. On the Large tier
+/// the two halves concatenate into one row; medium/small render them as two rows.
 /// `wifi` is true only when the WiFi button applies (caps gate, not
 /// in setup mode). While the notice is up, every group but the action's own
 /// is dimmed and disabled.
