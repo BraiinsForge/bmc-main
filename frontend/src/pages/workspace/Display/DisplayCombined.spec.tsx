@@ -33,7 +33,7 @@ import * as pb from '@/proto';
 import { store } from '@/store';
 import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
-import { paramDef } from './fn/test-helpers';
+import { badRequest, paramDef } from './fn/test-helpers';
 
 type AnyService = Parameters<typeof mocks.service>[0];
 function registerMocks<S extends AnyService>(service: S, methods: Partial<ServiceMocks<S>>): void {
@@ -819,6 +819,32 @@ describe('editing a placed widget', () => {
 
             await waitFor(() => expect(applied).toHaveLength(2));
             expect(applied).toEqual([8, 9]);
+        });
+
+        test("a preview's late error stays off a form edited since", async () => {
+            const firstHeld = deferred<void>();
+            const requested: Array<number | undefined> = [];
+            mockServer(async ({ req }) => {
+                requested.push(countOf(req));
+                if (countOf(req) === 8) {
+                    await firstHeld;
+                    throw badRequest('params["count"]', 'Must be at most 5');
+                }
+                return {};
+            });
+            const nextTask = () => act(() => new Promise<void>(resolve => setTimeout(resolve, 0)));
+
+            await openEditor();
+            const count = await waitFor(() => elementById(COUNT_INPUT_ID));
+            fireEvent.change(count, { target: { value: '8' } });
+            await waitFor(() => expect(requested).toEqual([8]));
+            fireEvent.change(count, { target: { value: '3' } });
+            // GrpcMockInterceptor hands the page a pending reply on a setTimeout; fail it once the page holds it.
+            await nextTask();
+            firstHeld.resolve();
+            await nextTask();
+
+            expect(screen.queryByText('Must be at most 5')).toBeNull();
         });
 
         test('a timed-out write tells the user it timed out', async () => {

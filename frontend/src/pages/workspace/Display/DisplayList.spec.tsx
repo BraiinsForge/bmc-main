@@ -33,7 +33,7 @@ import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
 import { deferred } from '@/lib/async';
 import { Toaster } from '@/lib/toast';
-import { paramDef } from './fn/test-helpers';
+import { badRequest, paramDef } from './fn/test-helpers';
 
 // `mocks.service` wants every method typed; at runtime it only registers what we
 // pass. This lets us register a typed subset.
@@ -1080,6 +1080,45 @@ describe('dialog session lifecycle', () => {
             await flush();
 
             expect(applied).toEqual(['pool-b', 'pool-a']);
+        });
+
+        test("a preview's late error stays off a form edited since", async () => {
+            const firstHeld = deferred<void>();
+            mockServer(async ({ req }) => {
+                if (req.params?.fields.count?.kind.value === 8) {
+                    await firstHeld;
+                    throw badRequest('params["count"]', 'Must be at most 5');
+                }
+                return {};
+            });
+
+            await openEditor();
+            fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+            await flush(300);
+            fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '3' } });
+            // GrpcMockInterceptor hands the page a pending reply on a setTimeout; fail it once the page holds it.
+            await flush();
+            firstHeld.resolve();
+            await flush();
+
+            expect(screen.queryByText('Must be at most 5')).toBeNull();
+        });
+
+        test("a preview's late success keeps the errors of a form edited since", async () => {
+            const firstHeld = deferred<void>();
+            mockServer(async ({ req }) => {
+                if (req.params?.fields.count?.kind.value === 8) await firstHeld;
+                return {};
+            });
+
+            await openEditor();
+            fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+            await flush(300);
+            fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '' } });
+            firstHeld.resolve();
+            await flush();
+
+            expect(screen.queryByText('Value is required')).not.toBeNull();
         });
 
         test('until the accounts load, the picker says so instead of judging the binding', async () => {

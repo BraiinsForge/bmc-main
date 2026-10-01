@@ -18,8 +18,19 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { Code, ConnectError } from '@connectrpc/connect';
+
 import * as pb from '@/proto';
+import { BadRequestSchema } from '@/proto/gen/google/rpc/error_details_pb';
 import { assertUnreachable } from '@/lib/ts';
+
+/** A server refusal carrying one field violation, as the scene handlers send it. */
+export function badRequest(field: string, description: string): ConnectError {
+    const detail = pb.create(BadRequestSchema, { fieldViolations: [{ field, description }] });
+    return new ConnectError('Bad request', Code.InvalidArgument, undefined, [
+        { desc: BadRequestSchema, value: detail },
+    ]);
+}
 
 export function paramDef(
     kindCase: pb.ManifestParamDefinition['kind']['case'],

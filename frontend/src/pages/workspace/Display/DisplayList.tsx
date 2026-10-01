@@ -573,6 +573,8 @@ class View extends Component<Props, State> {
             );
         } catch ($) {
             if (pb.abort.is($)) return;
+            // A newer edit has its own write on the way, which reports on the params it sends.
+            if (this.state.manifestForm.params !== params) return;
             const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
@@ -585,7 +587,7 @@ class View extends Component<Props, State> {
             return;
         }
         this.setState(s => {
-            if (!s.manifestForm.errors) return null;
+            if (!s.manifestForm.errors || s.manifestForm.params !== params) return null;
             return { manifestForm: { ...s.manifestForm, errors: null } };
         });
     }, 300);

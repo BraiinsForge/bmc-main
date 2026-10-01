@@ -591,6 +591,8 @@ class View extends Component<Props, State> {
             );
         } catch ($) {
             if (pb.abort.is($)) return;
+            // A newer edit has its own write on the way, which reports on the params it sends.
+            if (this.state.manifestForm.params !== params) return;
             const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
@@ -603,7 +605,8 @@ class View extends Component<Props, State> {
             return;
         }
         this.setState(s => {
-            const manifestForm = s.manifestForm.errors ? { ...s.manifestForm, errors: null } : s.manifestForm;
+            const clear = s.manifestForm.errors && s.manifestForm.params === params;
+            const manifestForm = clear ? { ...s.manifestForm, errors: null } : s.manifestForm;
             if (s.scene?.kind.case !== 'combined') return { ...s, manifestForm };
             const widgets = s.scene.kind.value.widgets.map(w =>
                 w.id === widgetID
