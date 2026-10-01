@@ -31,33 +31,9 @@ use super::{
     COMPACT_CONNECTION_ICON_SIZE, COMPACT_GAP, COMPACT_INFO_SIZE, COMPACT_QR_SIZE, Content,
     ControlIcons, NO_DATA_PLACEHOLDER, Panel, SLIDER_TRACK_H, Tier, WifiView, brightness_fraction,
 };
-use bmc_render::tree::{
-    DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
-};
+use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text};
 use bmc_wasm_protocol::colors::{GRAY_40, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{CrossAlign, ProgressKind, TextAlign, TextOverflow};
-
-/// The icon naming the brightness slider; the slider owns the touch key.
-fn brightness_icon(icons: ControlIcons) -> TreeNode {
-    TreeNode::Canvas {
-        props: PropsData {
-            width: BRIGHTNESS_ICON_SIZE,
-            height: BRIGHTNESS_ICON_SIZE,
-            ..PropsData::default()
-        },
-        touch_key: None,
-        draws: vec![DrawCommand::Svg {
-            x: 0.0,
-            y: 0.0,
-            w: BRIGHTNESS_ICON_SIZE,
-            h: BRIGHTNESS_ICON_SIZE,
-            color: TRANSPARENT,
-            icon_id: icons.brightness_high,
-            anti_alias: true,
-            fills: Vec::new(),
-        }],
-    }
-}
 
 /// A draggable slider holding no value of its own. The drag position comes
 /// back on `key`; the caller feeds the new fraction in on the next frame.
@@ -73,18 +49,6 @@ pub(super) fn slider(key: &'static str, fraction: f32) -> TreeNode {
         bg_color: TRANSPARENT,
         skin: None,
     }
-}
-
-/// One column of the compact address table, evenly spaced.
-fn compact_info_column(props: PropsData, lines: Vec<TreeNode>) -> TreeNode {
-    let mut kids = Vec::new();
-    for line in lines {
-        if !kids.is_empty() {
-            kids.push(fixed_height(COMPACT_GAP));
-        }
-        kids.push(line);
-    }
-    col(props, kids)
 }
 
 /// What the device is online through: the cable while it carries the uplink,
@@ -151,18 +115,25 @@ fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode 
         ),
         ("Connection", compact_connection_value(content, value_style)),
     ];
-    let (label_nodes, value_nodes) = rows
+    let (label_nodes, value_nodes): (Vec<_>, Vec<_>) = rows
         .into_iter()
         .map(|(label, value)| (text(label, label_style), value))
         .unzip();
     kids.extend([
-        compact_info_column(PropsData::default(), label_nodes),
+        col(
+            PropsData {
+                gap: COMPACT_GAP,
+                ..PropsData::default()
+            },
+            label_nodes,
+        ),
         fixed_width(COMPACT_GAP),
         // Grown from zero rather than shrunk from its content, so an overlong value
         // gives way inside its own column and never squeezes a label into wrapping.
-        compact_info_column(
+        col(
             PropsData {
                 flex: 1.0,
+                gap: COMPACT_GAP,
                 ..PropsData::default()
             },
             value_nodes,
@@ -187,7 +158,7 @@ fn compact_brightness_row(icons: ControlIcons, brightness: u8) -> TreeNode {
         [
             slider(BRIGHTNESS_SLIDER_KEY, brightness_fraction(brightness)),
             fixed_width(COMPACT_GAP),
-            brightness_icon(icons),
+            svg_icon(icons.brightness_high, BRIGHTNESS_ICON_SIZE, TRANSPARENT),
         ],
     )
 }
