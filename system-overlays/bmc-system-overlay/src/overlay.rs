@@ -366,7 +366,7 @@ pub struct OverlayViewport {
 
 impl OverlayViewport {
     #[must_use]
-    pub fn rectangular((width, height): (u32, u32)) -> Self {
+    pub fn rectangular(width: u32, height: u32) -> Self {
         Self {
             width,
             height,
@@ -396,10 +396,12 @@ pub(crate) fn overlay_viewport(
     size: (u32, u32),
     display: Option<PlatformDisplay>,
 ) -> OverlayViewport {
+    let (width, height) = size;
     let covers_display = display.filter(|d| (d.width, d.height) == size);
     OverlayViewport {
+        width,
+        height,
         shape: covers_display.map_or(DisplayShape::Rectangular, |d| d.shape),
-        ..OverlayViewport::rectangular(size)
     }
 }
 
@@ -901,7 +903,7 @@ mod tests {
     fn a_surface_is_rectangular_until_the_display_is_described() {
         assert_eq!(
             overlay_viewport((480, 480), None),
-            OverlayViewport::rectangular((480, 480))
+            OverlayViewport::rectangular(480, 480)
         );
     }
 

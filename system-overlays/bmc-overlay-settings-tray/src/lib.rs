@@ -1953,11 +1953,11 @@ mod slide_tests {
         let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_reveal();
         assert_eq!(
-            overlay.layer_shell_offset(now, OverlayViewport::rectangular((480, 320))),
+            overlay.layer_shell_offset(now, OverlayViewport::rectangular(480, 320)),
             Some(-320.0)
         );
         assert_eq!(
-            overlay.layer_shell_offset(now, OverlayViewport::rectangular((1_280, 480))),
+            overlay.layer_shell_offset(now, OverlayViewport::rectangular(1_280, 480)),
             Some(-480.0)
         );
     }
