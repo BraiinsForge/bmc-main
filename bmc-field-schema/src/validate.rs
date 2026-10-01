@@ -241,7 +241,7 @@ fn item_count(n: usize) -> String {
     }
 }
 
-fn validate_scalar(
+pub(crate) fn validate_scalar(
     path: &str,
     scalar: Scalar<'_>,
     value: &ParamValue,

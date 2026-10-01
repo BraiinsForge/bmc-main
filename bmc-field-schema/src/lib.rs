@@ -900,8 +900,17 @@ impl<'a> Scalar<'a> {
             Scalar::String(p) => p.validate(),
             Scalar::Double(p) => p.validate(),
             Scalar::Integer(p) => p.validate(),
-            Scalar::Boolean(_) => Ok(()),
-            Scalar::Timezone(p) => p.validate(),
+            Scalar::Boolean(_) | Scalar::Timezone(_) => Ok(()),
+        }?;
+        let default = ParamValue::from_scalar_default(self);
+        if matches!(default, ParamValue::Null) {
+            return Ok(());
+        }
+        let mut violations = Vec::new();
+        validate::validate_scalar("default_value", self, &default, &mut violations);
+        match violations.into_iter().next() {
+            Some(violation) => Err(format!("{}: {}", violation.path, violation.message)),
+            None => Ok(()),
         }
     }
 }
@@ -958,38 +967,29 @@ impl ArrayParam {
 impl StringParam {
     fn validate(&self) -> Result<(), String> {
         check_string_options(&self.enum_values)?;
-        check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
-        check_string_default_length(self.default_value.as_deref())?;
-        if !self.enum_values.is_empty()
-            && let Some(d) = &self.default_value
-            && !self.enum_values.iter().any(|o| &o.value == d)
-        {
-            return Err(format!("default_value {d:?} not in enum_values"));
-        }
-        Ok(())
+        check_enum_control(self.enum_control, !self.enum_values.is_empty())
     }
 }
 
 impl DoubleParam {
     fn validate(&self) -> Result<(), String> {
-        check_finite(self.default_value, "default_value")?;
         check_finite(self.min, "min")?;
         check_finite(self.max, "max")?;
         check_finite(self.step, "step")?;
         for o in &self.enum_values {
             check_finite(Some(o.value), "enum_values[].value")?;
         }
-        check_double_range(self.min, self.max, self.step, self.default_value)?;
+        check_double_range(self.min, self.max, self.step)?;
         check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
-        check_double_options(&self.enum_values, self.default_value)
+        check_double_options(&self.enum_values)
     }
 }
 
 impl IntegerParam {
     fn validate(&self) -> Result<(), String> {
-        check_int_range(self.min, self.max, self.step, self.default_value)?;
+        check_int_range(self.min, self.max, self.step)?;
         check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
-        check_int_options(&self.enum_values, self.default_value)
+        check_int_options(&self.enum_values)
     }
 }
 
@@ -999,22 +999,6 @@ fn check_enum_control(control: EnumControl, has_options: bool) -> Result<(), Str
             Err(String::from("enum_control radio needs enum_values"))
         }
         EnumControl::Dropdown | EnumControl::Radio => Ok(()),
-    }
-}
-
-impl TimezoneParam {
-    fn validate(&self) -> Result<(), String> {
-        check_string_default_length(self.default_value.as_deref())
-    }
-}
-
-fn check_string_default_length(default_value: Option<&str>) -> Result<(), String> {
-    match default_value {
-        Some(d) if d.len() > MAX_PARAM_STRING_LENGTH => Err(format!(
-            "default_value exceeds max length of {MAX_PARAM_STRING_LENGTH} bytes (got {})",
-            d.len()
-        )),
-        _ => Ok(()),
     }
 }
 
@@ -1050,10 +1034,7 @@ fn check_string_options(options: &[StringOption]) -> Result<(), String> {
     Ok(())
 }
 
-fn check_double_options(
-    options: &[DoubleOption],
-    default_value: Option<f64>,
-) -> Result<(), String> {
+fn check_double_options(options: &[DoubleOption]) -> Result<(), String> {
     for o in options {
         if o.label.trim().is_empty() {
             return Err("enum_values entry label must be non-empty after trim".into());
@@ -1066,18 +1047,10 @@ fn check_double_options(
             }
         }
     }
-    if !options.is_empty()
-        && let Some(d) = default_value
-        && !options
-            .iter()
-            .any(|o| f64_canonical_bits(o.value) == f64_canonical_bits(d))
-    {
-        return Err(format!("default_value {d} not in enum_values"));
-    }
     Ok(())
 }
 
-fn check_int_options(options: &[IntegerOption], default_value: Option<i32>) -> Result<(), String> {
+fn check_int_options(options: &[IntegerOption]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for o in options {
         if o.label.trim().is_empty() {
@@ -1086,12 +1059,6 @@ fn check_int_options(options: &[IntegerOption], default_value: Option<i32>) -> R
         if !seen.insert(o.value) {
             return Err(format!("duplicate enum_values entry value {}", o.value));
         }
-    }
-    if !options.is_empty()
-        && let Some(d) = default_value
-        && !options.iter().any(|o| o.value == d)
-    {
-        return Err(format!("default_value {d} not in enum_values"));
     }
     Ok(())
 }
@@ -1103,12 +1070,7 @@ fn check_finite(v: Option<f64>, what: &str) -> Result<(), String> {
     }
 }
 
-fn check_double_range(
-    min: Option<f64>,
-    max: Option<f64>,
-    step: Option<f64>,
-    default_value: Option<f64>,
-) -> Result<(), String> {
+fn check_double_range(min: Option<f64>, max: Option<f64>, step: Option<f64>) -> Result<(), String> {
     if let Some(s) = step
         && s <= 0.0
     {
@@ -1119,25 +1081,10 @@ fn check_double_range(
     {
         return Err(format!("min ({lo}) > max ({hi})"));
     }
-    if let (Some(d), Some(lo)) = (default_value, min)
-        && d < lo
-    {
-        return Err(format!("default_value {d} < min {lo}"));
-    }
-    if let (Some(d), Some(hi)) = (default_value, max)
-        && d > hi
-    {
-        return Err(format!("default_value {d} > max {hi}"));
-    }
     Ok(())
 }
 
-fn check_int_range(
-    min: Option<i32>,
-    max: Option<i32>,
-    step: Option<i32>,
-    default_value: Option<i32>,
-) -> Result<(), String> {
+fn check_int_range(min: Option<i32>, max: Option<i32>, step: Option<i32>) -> Result<(), String> {
     if let Some(s) = step
         && s <= 0
     {
@@ -1147,16 +1094,6 @@ fn check_int_range(
         && lo > hi
     {
         return Err(format!("min ({lo}) > max ({hi})"));
-    }
-    if let (Some(d), Some(lo)) = (default_value, min)
-        && d < lo
-    {
-        return Err(format!("default_value {d} < min {lo}"));
-    }
-    if let (Some(d), Some(hi)) = (default_value, max)
-        && d > hi
-    {
-        return Err(format!("default_value {d} > max {hi}"));
     }
     Ok(())
 }

@@ -1417,6 +1417,58 @@ mod tests {
     }
 
     #[test]
+    fn a_string_param_rejects_a_default_over_the_length_cap() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "string",
+            "default_value": "x".repeat(MAX_PARAM_STRING_LENGTH + 1),
+        }));
+        assert_eq!(
+            reason,
+            format!("default_value: Must be at most {MAX_PARAM_STRING_LENGTH} bytes")
+        );
+    }
+
+    const UNKNOWN_TIMEZONE: &str = "default_value: Must be a valid timezone";
+
+    #[test]
+    fn a_timezone_param_rejects_an_unknown_default() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "Z",
+            "type": "timezone",
+            "default_value": "Mars/Base",
+        }));
+        assert_eq!(reason, UNKNOWN_TIMEZONE);
+    }
+
+    #[test]
+    fn a_timezone_item_rejects_an_unknown_default() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "Z",
+            "type": "array",
+            "items": { "type": "timezone", "default_value": "Mars/Base" },
+            "max_items": 3,
+        }));
+        assert_eq!(reason, UNKNOWN_TIMEZONE);
+    }
+
+    #[test]
+    fn a_timezone_field_rejects_an_unknown_default() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "Z",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "fields": {
+                    "zone": { "name": "Zone", "type": "timezone", "default_value": "Mars/Base" },
+                },
+            },
+            "max_items": 3,
+        }));
+        assert_eq!(reason, format!(r#"field "zone": {UNKNOWN_TIMEZONE}"#));
+    }
+
+    #[test]
     fn object_items_reject_a_duplicate_field_key() {
         // Raw text: a `json!` map cannot hold the repeated key under test.
         let json = r#"{"name":"L","type":"array","max_items":3,"items":{"type":"object","fields":{
