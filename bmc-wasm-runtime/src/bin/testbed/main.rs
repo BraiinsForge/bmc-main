@@ -1322,7 +1322,11 @@ impl ClockPicker {
 /// dropped on the way out, so nothing is ever restored.
 #[derive(Clone)]
 pub(crate) struct SandboxedState {
+    /// The last params the validator passed, which is what the widget sees.
     pub(crate) params:
+        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    /// The sidebar's params, which may not validate yet.
+    pub(crate) params_draft:
         std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
     pub(crate) system: SystemSnapshot,
     pub(crate) credentials: serde_json::Map<String, serde_json::Value>,
@@ -1504,6 +1508,7 @@ impl TestbedApp {
             get_proc,
             manifest,
             playground: SandboxedState {
+                params_draft: params.clone(),
                 params,
                 system: pending_system,
                 credentials: serde_json::Map::new(),

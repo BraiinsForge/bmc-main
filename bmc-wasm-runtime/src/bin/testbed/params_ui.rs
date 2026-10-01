@@ -23,13 +23,16 @@
 //! checkbox / clear-to-null toggle), and the `apply_params_update` delivery
 //! path that drives `WasmWidgetRuntime::deliver_params_update` on every tile
 //! plus appends a `ParamDelivery` event when recording is active.
+//!
+//! Only params the shared validator passes are delivered, as on the device;
+//! the sidebar lists the violations that hold the rest back.
 
 use std::collections::BTreeMap;
 
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 use bmc_widget_manifest::{
-    ArrayParam, ItemKind, ItemShape, Manifest, ObjectParam, ParamDefinition, ParamKey, ParamValue,
-    Scalar, Shape,
+    ArrayParam, ItemKind, ItemShape, Manifest, MissingValues, ObjectParam, ParamDefinition,
+    ParamKey, ParamValue, Scalar, Shape, Violation, validate_values,
 };
 
 use super::icon::Icons;
@@ -86,7 +89,8 @@ impl TestbedApp {
         // the egui closure borrows `self`, then put them back
         // via `apply_params_update` / `apply_system_update`
         // which detect diffs and propagate to every tile.
-        let mut working_params = self.state().params.clone();
+        let mut working_params = self.state().params_draft.clone();
+        let mut validated = None;
         let manifest = &self.manifest;
         let mut working_system = self.state().system.clone();
         let mut working_credentials = self.state().credentials.clone();
@@ -130,6 +134,11 @@ impl TestbedApp {
                                         icons,
                                         palette,
                                     );
+                                    let outcome = validate_draft(manifest, &working_params);
+                                    if let Err(violations) = &outcome {
+                                        paint_violations(inner, violations, palette);
+                                    }
+                                    validated = Some(outcome);
                                 });
                             scroll.add_space(12.0);
                         }
@@ -151,7 +160,10 @@ impl TestbedApp {
             });
 
         if params_changed {
-            self.apply_params_update(working_params);
+            self.state_mut().params_draft = working_params;
+            if let Some(Ok(params)) = validated {
+                self.apply_params_update(params);
+            }
         }
         if system_changed {
             self.apply_system_update(working_system);
@@ -186,6 +198,33 @@ pub(super) fn section_header_bar(ui: &mut egui::Ui, text: &str, fill: egui::Colo
         egui::FontId::proportional(14.0),
         text_colour,
     );
+}
+
+/// What the device would deliver for the sidebar's params,
+/// or every violation it would refuse them with.
+fn validate_draft(
+    manifest: &Manifest,
+    draft: &BTreeMap<ParamKey, ParamValue>,
+) -> Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>> {
+    let values = draft
+        .iter()
+        .map(|(key, value)| (key.as_str().to_owned(), Ok(value.clone())))
+        .collect();
+    validate_values(&manifest.params, &values, MissingValues::Reject)
+}
+
+fn paint_violations(ui: &mut egui::Ui, violations: &[Violation], palette: &Palette) {
+    ui.add_space(super::system_ui::ROW_GAP);
+    ui.label(
+        egui::RichText::new("Not delivered; the widget keeps its last valid params:")
+            .color(palette.support_error),
+    );
+    for violation in violations {
+        ui.label(
+            egui::RichText::new(format!("{}: {}", violation.path, violation.message))
+                .color(palette.support_error),
+        );
+    }
 }
 
 // ── Param-mutation inputs ───────────────────────────────────────────
@@ -291,9 +330,9 @@ fn null_toggle(ui: &mut egui::Ui, label: &str) -> bool {
     ui.add(egui::Button::new(label).min_size(size)).clicked()
 }
 
-/// Something to edit in an input without a default:
-/// an enum's first option, since any other value is one the widget cannot read,
-/// or else a type-appropriate zero.
+/// A value the validator passes, to edit in an input without a default:
+/// an enum's first option, a number's zero clamped into its bounds,
+/// [`SEED_TIMEZONE`] for a timezone, or else an empty string or `false`.
 fn seed_without_default(scalar: Scalar<'_>) -> ParamValue {
     match scalar {
         Scalar::String(p) => ParamValue::String(
@@ -301,16 +340,21 @@ fn seed_without_default(scalar: Scalar<'_>) -> ParamValue {
                 .first()
                 .map_or_else(String::new, |option| option.value.clone()),
         ),
-        Scalar::Timezone(_) => ParamValue::String(String::new()),
-        Scalar::Integer(p) => {
-            ParamValue::Integer(p.enum_values.first().map_or(0, |option| option.value))
-        }
-        Scalar::Double(p) => {
-            ParamValue::Double(p.enum_values.first().map_or(0.0, |option| option.value))
-        }
+        Scalar::Timezone(_) => ParamValue::String(SEED_TIMEZONE.to_owned()),
+        Scalar::Integer(p) => ParamValue::Integer(p.enum_values.first().map_or_else(
+            || 0.clamp(p.min.unwrap_or(i32::MIN), p.max.unwrap_or(i32::MAX)),
+            |option| option.value,
+        )),
+        Scalar::Double(p) => ParamValue::Double(p.enum_values.first().map_or_else(
+            || 0.0_f64.clamp(p.min.unwrap_or(f64::MIN), p.max.unwrap_or(f64::MAX)),
+            |option| option.value,
+        )),
         Scalar::Boolean(_) => ParamValue::Boolean(false),
     }
 }
+
+/// UTC under its name in the device's curated list, which has no plain `UTC`.
+const SEED_TIMEZONE: &str = "Etc/GMT";
 
 #[derive(Clone, Copy)]
 enum RowAction {
@@ -985,5 +1029,121 @@ mod seed_tests {
     fn a_plain_item_without_a_default_seeds_its_zero() {
         assert_eq!(seeded(json!({"type": "string"})), json!(""));
         assert_eq!(seeded(json!({"type": "integer"})), json!(0));
+    }
+
+    #[test]
+    fn a_bounded_number_without_a_default_seeds_its_zero_clamped_into_range() {
+        assert_eq!(
+            seeded(json!({"type": "integer", "min": 5, "max": 10})),
+            json!(5)
+        );
+        assert_eq!(seeded(json!({"type": "integer", "max": -3})), json!(-3));
+        assert_eq!(
+            seeded(json!({"type": "integer", "min": -5, "max": 5})),
+            json!(0)
+        );
+        assert_eq!(seeded(json!({"type": "double", "min": 0.5})), json!(0.5));
+    }
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    use super::{Manifest, ParamKey, ParamValue, Shape, seed_item, validate_draft};
+
+    fn manifest(params: &serde_json::Value) -> Manifest {
+        json!({
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Draft fixture",
+            "binary": "bin/x",
+            "supported_viewports": [{
+                "type": "rectangular",
+                "min_width": 317,
+                "max_width": 317,
+                "min_height": 238,
+                "max_height": 238,
+            }],
+            "params": params,
+        })
+        .to_string()
+        .parse()
+        .expect("BUG: the draft fixture must be a valid manifest")
+    }
+
+    #[test]
+    fn every_seed_passes_the_validator() {
+        let kinds = [
+            json!({"type": "string"}),
+            json!({"type": "timezone"}),
+            json!({"type": "integer", "min": 5, "max": 10}),
+            json!({"type": "integer", "max": -3}),
+            json!({"type": "double", "min": 0.5}),
+            json!({"type": "boolean"}),
+            json!({"type": "object", "fields": {
+                "zone": {"type": "timezone", "name": "Zone"},
+                "count": {"type": "integer", "name": "Count", "min": 1},
+            }}),
+        ];
+        let params: serde_json::Map<String, serde_json::Value> = kinds
+            .into_iter()
+            .enumerate()
+            .map(|(i, items)| {
+                let list = json!({"type": "array", "name": "K", "items": items, "max_items": 1});
+                (format!("k{i}"), list)
+            })
+            .collect();
+        let manifest = manifest(&params.into());
+        let draft: BTreeMap<ParamKey, ParamValue> = manifest
+            .params
+            .iter()
+            .map(|(key, def)| {
+                let Shape::Array(array) = def.kind.shape() else {
+                    panic!("BUG: every fixture param is a list");
+                };
+                (key.clone(), ParamValue::List(vec![seed_item(&array.items)]))
+            })
+            .collect();
+
+        assert_eq!(validate_draft(&manifest, &draft), Ok(draft.clone()));
+    }
+
+    #[test]
+    fn a_draft_the_device_would_refuse_names_every_violation() {
+        let manifest = manifest(&json!({
+            "zones": {"type": "array", "name": "Z", "items": {"type": "timezone"}, "max_items": 2},
+            "count": {"type": "integer", "name": "C", "min": 1, "default_value": 1},
+            "ratio": {"type": "double", "name": "R", "default_value": 0.5},
+        }));
+        let value = |key: &str| match key {
+            "zones" => ParamValue::List(vec![ParamValue::String(String::new())]),
+            "count" => ParamValue::Integer(0),
+            _ => ParamValue::Double(f64::INFINITY),
+        };
+        let draft = manifest
+            .params
+            .keys()
+            .map(|key| (key.clone(), value(key.as_str())))
+            .collect();
+
+        let violations =
+            validate_draft(&manifest, &draft).expect_err("BUG: every value is invalid");
+        let mut found: Vec<String> = violations
+            .iter()
+            .map(|v| format!("{}: {}", v.path, v.message))
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                r#"["count"]: Must be at least 1"#,
+                r#"["ratio"]: Must be a finite number"#,
+                r#"["zones"][0]: Must be a valid timezone"#,
+            ]
+        );
     }
 }

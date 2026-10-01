@@ -1576,6 +1576,7 @@ mod naming_tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let asleep = crate::SandboxedState {
             params: std::collections::BTreeMap::new(),
+            params_draft: std::collections::BTreeMap::new(),
             system: bmc_wasm_runtime::SystemSnapshot::default(),
             credentials: serde_json::Map::new(),
             offline: false,
@@ -1768,6 +1769,7 @@ mod begin_tests {
             "take".to_owned(),
             None,
             &crate::SandboxedState {
+                params_draft: params.clone(),
                 params,
                 system: bmc_wasm_runtime::SystemSnapshot::default(),
                 credentials,

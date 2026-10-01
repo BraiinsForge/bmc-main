@@ -48,9 +48,9 @@ pub use bmc_field_schema::credential;
 pub use bmc_field_schema::{
     ArrayParam, BooleanParam, DoubleOption, DoubleParam, EnumControl, FieldSchemaError,
     IntegerOption, IntegerParam, ItemKind, ItemShape, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH,
-    MAX_PARAM_STRING_LENGTH, ObjectParam, ParamDefinition, ParamKey, ParamKind, ParamValue,
-    ParamValueConversionError, Scalar, ScalarField, ScalarKind, Shape, StringFormat, StringOption,
-    StringParam, TimezoneParam, f64_canonical_bits,
+    MAX_PARAM_STRING_LENGTH, MissingValues, ObjectParam, ParamDefinition, ParamKey, ParamKind,
+    ParamValue, ParamValueConversionError, Scalar, ScalarField, ScalarKind, Shape, StringFormat,
+    StringOption, StringParam, TimezoneParam, Violation, f64_canonical_bits, validate_values,
 };
 use indexmap::IndexMap;
 use schemars::JsonSchema;

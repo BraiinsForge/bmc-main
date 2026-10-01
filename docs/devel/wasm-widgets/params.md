@@ -247,6 +247,9 @@ params. Each list param gets a full-width block below them: a row per item with 
 then an add button, with `min_items` and `max_items` disabling remove and add at the bounds. An enum inside an item is
 always a dropdown, keeping each row one line tall.
 
+Like the device, the testbed delivers only params the shared validator accepts. While an edit fails it, the widget keeps
+its last valid params and the panel lists each violation by its path, such as `["zones"][0]: Must be a valid timezone`.
+
 Run the params demo from `bmc-wasm-runtime/`:
 
 ```bash
