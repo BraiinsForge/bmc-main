@@ -104,7 +104,7 @@ wasmWidgetPackages // {
     version = "0.1.0";
     category = "core";
     description = "Nix package management CLI tool";
-    upgrade_strategy = "reboot";
+    upgrade_strategy = null;
     install_strategy = null;
   };
   nix = {
@@ -112,7 +112,7 @@ wasmWidgetPackages // {
     version = armv7Pkgs.nix.version;
     category = "core";
     description = "Nix package manager";
-    upgrade_strategy = "reboot";
+    upgrade_strategy = null;
     install_strategy = null;
   };
   widget-flip-clock =

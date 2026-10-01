@@ -350,6 +350,6 @@ in
   version = "0.1.0";
   category = "core";
   description = "Core system package (bmc-openwrt + activation/hooks)";
-  upgrade_strategy = "reboot";
+  upgrade_strategy = null;
   install_strategy = null;
 }
