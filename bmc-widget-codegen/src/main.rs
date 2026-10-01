@@ -29,12 +29,16 @@
 //! so the committed artifact matches the workspace's canonical style. Failure is
 //! non-fatal — the file is still written in `prettyplease`'s canonical form.
 
+use std::ffi::OsStr;
+use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitCode};
 
 use anyhow::{Context as _, Result};
+use bmc_widget_codegen::NameCollisions;
 use bmc_widget_manifest::Manifest;
 use clap::Parser;
+use owo_colors::OwoColorize as _;
 
 #[derive(Parser, Debug)]
 #[command(name = "bmc-widget-codegen", about, version)]
@@ -54,7 +58,46 @@ struct Cli {
     skip_format: bool,
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
+    let Err(err) = run() else {
+        return ExitCode::SUCCESS;
+    };
+    let color = use_color();
+    let message = match err.downcast_ref::<NameCollisions>() {
+        Some(collisions) => collisions.render(color),
+        None => format!("{err:?}"),
+    };
+    let label = if color {
+        "error:".red().bold().to_string()
+    } else {
+        "error:".to_owned()
+    };
+    eprintln!("{label} {message}");
+    ExitCode::FAILURE
+}
+
+/// The switch `common.justfile` exports: `FORCE_COLOR=0` is plain,
+/// and any other non-empty value keeps color through a pipe.
+/// A non-empty `NO_COLOR` outranks a forced color, as it does for rich;
+/// with neither set, stderr must be a terminal.
+fn use_color() -> bool {
+    color_enabled(
+        std::env::var_os("FORCE_COLOR").as_deref(),
+        std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()),
+        std::io::stderr().is_terminal(),
+    )
+}
+
+fn color_enabled(force_color: Option<&OsStr>, no_color: bool, stderr_is_terminal: bool) -> bool {
+    match force_color {
+        Some(force) if force == "0" => false,
+        _ if no_color => false,
+        Some(force) => !force.is_empty(),
+        None => stderr_is_terminal,
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     let body = std::fs::read_to_string(&cli.manifest)
@@ -140,4 +183,39 @@ fn pathdiff(target: &Path, from_dir: &Path) -> Option<PathBuf> {
         rel.push(c.as_os_str());
     }
     Some(rel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_agents_force_color_zero_is_plain_even_on_a_terminal() {
+        assert!(!color_enabled(Some(OsStr::new("0")), false, true));
+    }
+
+    #[test]
+    fn force_color_keeps_color_through_a_pipe() {
+        assert!(color_enabled(Some(OsStr::new("1")), false, false));
+    }
+
+    #[test]
+    fn no_color_outranks_a_forced_color() {
+        assert!(!color_enabled(Some(OsStr::new("1")), true, true));
+    }
+
+    #[test]
+    fn an_empty_force_color_is_plain() {
+        assert!(!color_enabled(Some(OsStr::new("")), false, true));
+    }
+
+    #[test]
+    fn unforced_color_follows_the_terminal() {
+        assert!(color_enabled(None, false, true), "a terminal is colored");
+        assert!(!color_enabled(None, false, false), "a pipe is plain");
+        assert!(
+            !color_enabled(None, true, true),
+            "NO_COLOR strips a terminal"
+        );
+    }
 }

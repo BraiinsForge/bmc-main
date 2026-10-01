@@ -93,6 +93,7 @@ use bmc_widget_manifest::{
 };
 use heck::{AsShoutySnakeCase, AsSnakeCase, AsUpperCamelCase};
 use indoc::formatdoc;
+use owo_colors::{OwoColorize as _, Style};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -107,7 +108,7 @@ pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// Returns `Err` if the manifest declares neither params nor credentials (the
 /// caller should not emit a file in that case), if a key maps to a name Rust
-/// rejects, or if name-mapping produces a collision.
+/// rejects, or with [`NameCollisions`] if name-mapping produces a collision.
 pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
     let mut params: Vec<(&ParamKey, &ParamDefinition)> = manifest.params.iter().collect();
     params.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
@@ -395,28 +396,80 @@ impl Symbols {
         });
     }
 
-    fn check(&self) -> Result<()> {
-        let mut origins: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
-        for symbol in &self.0 {
-            origins
-                .entry((&symbol.scope, &symbol.name))
-                .or_default()
-                .push(&symbol.origin);
+    fn check(self) -> Result<(), NameCollisions> {
+        let mut origins: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+        for Symbol {
+            scope,
+            name,
+            origin,
+        } in self.0
+        {
+            origins.entry((scope, name)).or_default().push(origin);
         }
-        let collisions: Vec<String> = origins
+        let collisions: Vec<Collision> = origins
             .into_iter()
             .filter(|(_, origins)| origins.len() > 1)
-            .map(|((scope, name), origins)| {
-                format!("- {scope}: `{name}` from {}", origins.join(", "))
+            .map(|((scope, name), origins)| Collision {
+                scope,
+                name,
+                origins,
             })
             .collect();
         if collisions.is_empty() {
             Ok(())
         } else {
-            bail!("generated names collide:\n{}", collisions.join("\n"))
+            Err(NameCollisions(collisions))
         }
     }
 }
+
+/// Distinct manifest entries that map to one Rust name in the same scope.
+#[derive(Debug)]
+pub struct NameCollisions(Vec<Collision>);
+
+#[derive(Debug)]
+struct Collision {
+    scope: String,
+    name: String,
+    origins: Vec<String>,
+}
+
+impl NameCollisions {
+    /// One line per collision, styled with ANSI escapes when `color` is set.
+    #[must_use]
+    pub fn render(&self, color: bool) -> String {
+        let paint = |text: &str, style: Style| {
+            if color {
+                text.style(style).to_string()
+            } else {
+                text.to_owned()
+            }
+        };
+        let lines = self.0.iter().map(|collision| {
+            format!(
+                "- {}: {} from {}",
+                paint(&collision.scope, Style::new().dimmed()),
+                paint(
+                    &format!("`{}`", collision.name),
+                    Style::new().yellow().bold()
+                ),
+                collision.origins.join(", "),
+            )
+        });
+        std::iter::once("generated names collide:".to_owned())
+            .chain(lines)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+impl std::fmt::Display for NameCollisions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.render(false))
+    }
+}
+
+impl std::error::Error for NameCollisions {}
 
 /// Variants are scoped by `origin` too,
 /// so two params colliding on the enum name do not also report each other's options.
@@ -1121,6 +1174,22 @@ mod tests {
             "{report}"
         );
         assert!(!report.contains("`Calm`"), "{report}");
+    }
+
+    #[test]
+    fn a_colored_report_reads_as_the_plain_one_under_its_escapes() {
+        let manifest = manifest_with(
+            serde_json::json!({ "tone": tone("Tone"), "Tone": tone("Tone") }),
+            serde_json::json!({}),
+        );
+        let report = generate(&manifest, "test://")
+            .expect_err("BUG: `tone` and `Tone` map to one name")
+            .downcast::<NameCollisions>()
+            .expect("BUG: a collision is reported as `NameCollisions`");
+
+        let colored = report.render(true);
+        assert_ne!(colored, report.render(false), "color adds escapes");
+        assert_eq!(console::strip_ansi_codes(&colored), report.to_string());
     }
 
     #[test]
