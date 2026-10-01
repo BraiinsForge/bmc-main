@@ -529,14 +529,10 @@ mod tests {
         let hold_circle_of = |progress| {
             let controls = Controls {
                 restart: true,
-                status: Some(Status {
-                    action: Action::Restart,
-                    phase: Phase::Holding { progress },
-                    reason: None,
-                }),
                 ..Controls::default()
             };
-            let tree = build_with_controls(wide_panel(), controls);
+            let status = status_at(Action::Restart, Phase::Holding { progress });
+            let tree = build_with_controls(wide_panel(), controls, Some(&status));
             assert!(
                 find_canvas(&tree, RESTART_KEY).is_some(),
                 "the restart button remains present at every hold progress",

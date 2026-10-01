@@ -260,14 +260,6 @@ pub struct NightModeView {
     pub until: Option<String>,
 }
 
-/// The owned form of [`ui::Status`]: the action the notice reports on.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StatusView {
-    pub action: ui::Action,
-    pub phase: ui::Phase,
-    pub reason: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -281,7 +273,7 @@ pub struct SettingsTrayView {
     pub night_mode: Option<NightModeView>,
     pub show_restart: bool,
     /// The hold action in progress, pending or just failed; `None` at rest.
-    pub status: Option<StatusView>,
+    pub status: Option<ui::Status>,
     pub hostname: Option<String>,
     pub ip: Option<String>,
     pub wifi_signal: Option<i32>,
@@ -555,16 +547,16 @@ impl SettingsTrayOverlay {
     /// The action the notice reports on. Restart wins a tie, which the input
     /// model keeps unreachable: one key is pressed at a time, and the notice
     /// strips every other button's key besides.
-    fn status(&self, now: Instant) -> Option<StatusView> {
-        let restart = self.restart.phase(now).map(|phase| StatusView {
+    fn status(&self, now: Instant) -> Option<ui::Status> {
+        let restart = self.restart.phase(now).map(|phase| ui::Status {
             action: ui::Action::Restart,
             phase,
-            reason: (phase == ui::Phase::Failed)
+            reason: matches!(phase, ui::Phase::Failed)
                 .then(|| self.declined_reason.clone())
                 .flatten(),
         });
         restart.or_else(|| {
-            self.button.phase(now).map(|phase| StatusView {
+            self.button.phase(now).map(|phase| ui::Status {
                 action: ui::Action::WifiReconfig,
                 phase,
                 reason: None,
@@ -1032,11 +1024,6 @@ pub fn render_settings_tray(
             until: n.until.as_deref(),
         }),
         restart: view.show_restart,
-        status: view.status.as_ref().map(|status| ui::Status {
-            action: status.action,
-            phase: status.phase,
-            reason: status.reason.as_deref(),
-        }),
         pressed,
     };
     let node = ui::build_tree(
@@ -1054,6 +1041,7 @@ pub fn render_settings_tray(
         wifi_view,
         icons.controls,
         controls,
+        view.status.as_ref(),
     );
 
     let result = match state
@@ -1140,7 +1128,7 @@ mod view_tests {
         overlay.on_restart_declined("An upgrade is in progress");
         assert_eq!(
             overlay.view(Instant::now()).status,
-            Some(StatusView {
+            Some(ui::Status {
                 action: ui::Action::Restart,
                 phase: ui::Phase::Failed,
                 reason: Some("An upgrade is in progress".to_owned()),

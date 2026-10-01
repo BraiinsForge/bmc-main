@@ -22,7 +22,7 @@
 //! over the section above the buttons says so, and everything
 //! but the action's own button dims and stops taking touches.
 
-use super::{Action, Controls, Phase, Status};
+use super::{Action, Phase, Status};
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, dimmed, text};
 use bmc_wasm_protocol::colors::WHITE;
 use bmc_wasm_protocol::{CrossAlign, FontWeight, Justify, TextAlign};
@@ -54,11 +54,11 @@ pub(super) struct NoticeText<'a> {
 impl<'a> NoticeText<'a> {
     /// bmc words its own decline: the reason is a sentence,
     /// shown as the body under the tray's title. A timeout with no word from bmc is the tray's.
-    pub(super) fn for_status(status: Status<'a>) -> Self {
+    pub(super) fn for_status(status: &'a Status) -> Self {
         let (title, body) = match (status.action, status.phase) {
             (Action::Restart, Phase::Holding { .. }) => ("Restart the device?", Some(KEEP_HOLDING)),
             (Action::Restart, Phase::Pending) => ("Restarting the device…", None),
-            (Action::Restart, Phase::Failed) => match status.reason {
+            (Action::Restart, Phase::Failed) => match status.reason.as_deref() {
                 Some(reason) => ("Can't restart now", Some(reason)),
                 None => ("Restart failed", Some(TRY_AGAIN)),
             },
@@ -76,11 +76,23 @@ impl<'a> NoticeText<'a> {
 
 /// Dims and disables everything but the action's button while the notice is up.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Notice<'a>(Option<Status<'a>>);
+pub(super) struct Notice<'a>(Option<&'a Status>);
 
 impl<'a> Notice<'a> {
-    pub(super) fn for_controls(controls: &Controls<'a>) -> Self {
-        Self(controls.status)
+    pub(super) fn new(status: Option<&'a Status>) -> Self {
+        Self(status)
+    }
+
+    /// The hold fraction of `action`'s button: zero unless it is being held.
+    pub(super) fn hold_progress(self, action: Action) -> f32 {
+        match self.0 {
+            Some(Status {
+                action: held,
+                phase: Phase::Holding { progress },
+                ..
+            }) if *held == action => *progress,
+            Some(_) | None => 0.0,
+        }
     }
 
     /// `node`, the button owning `key`: every button but the action's own
@@ -217,7 +229,7 @@ mod tests {
     }
 
     /// Every status the notice can report, one per action and phase.
-    fn every_status() -> Vec<Controls<'static>> {
+    fn every_status() -> Vec<Status> {
         [Action::Restart, Action::WifiReconfig]
             .into_iter()
             .flat_map(|action| {
@@ -226,13 +238,9 @@ mod tests {
                     Phase::Pending,
                     Phase::Failed,
                 ]
-                .map(|phase| controls_at(action, phase))
+                .map(|phase| status_at(action, phase))
             })
             .collect()
-    }
-
-    fn status_of(controls: Controls<'static>) -> Status<'static> {
-        controls.status.expect("BUG: the fixture carries a status")
     }
 
     #[test]
@@ -243,7 +251,7 @@ mod tests {
         };
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for controls in [all_controls(), pressed_only] {
-                let tree = build_with_controls(panel, controls);
+                let tree = build_with_controls(panel, controls, None);
                 let mut found = Vec::new();
                 overlays(&tree, &mut found);
                 assert!(
@@ -264,9 +272,9 @@ mod tests {
     #[test]
     fn every_status_dims_everything_around_the_buttons() {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
-            for controls in every_status() {
-                let tree = build_with_controls(panel, controls);
-                let what = format!("{panel:?} {:?}", controls.status);
+            for status in every_status() {
+                let tree = build_with_controls(panel, all_controls(), Some(&status));
+                let what = format!("{panel:?} {status:?}");
                 for needle in ["10.0.0.2", "MyWifi"] {
                     assert_eq!(
                         text_brightness(&tree, needle),
@@ -281,7 +289,7 @@ mod tests {
                     Some(DIMMED),
                     "{what}: close"
                 );
-                let title = NoticeText::for_status(status_of(controls)).title;
+                let title = NoticeText::for_status(&status).title;
                 assert_eq!(
                     text_brightness(&tree, title),
                     Some(1.0),
@@ -293,21 +301,21 @@ mod tests {
 
     #[test]
     fn each_status_reads_its_own_lines() {
-        let text = |action, phase, reason| {
+        let text = |action, phase, reason: Option<&str>| {
             let status = Status {
                 action,
                 phase,
-                reason,
+                reason: reason.map(str::to_owned),
             };
-            let text = NoticeText::for_status(status);
-            (text.title, text.body)
+            let text = NoticeText::for_status(&status);
+            (text.title, text.body.map(str::to_owned))
         };
         let holding = Phase::Holding { progress: 0.5 };
         let restart = Action::Restart;
         let wifi = Action::WifiReconfig;
         assert_eq!(
             text(restart, holding, None),
-            ("Restart the device?", Some(KEEP_HOLDING))
+            ("Restart the device?", Some(KEEP_HOLDING.to_owned()))
         );
         assert_eq!(
             text(restart, Phase::Pending, None),
@@ -315,17 +323,20 @@ mod tests {
         );
         assert_eq!(
             text(restart, Phase::Failed, Some("An upgrade is in progress")),
-            ("Can't restart now", Some("An upgrade is in progress")),
+            (
+                "Can't restart now",
+                Some("An upgrade is in progress".to_owned())
+            ),
             "bmc's sentence is the body, as it came"
         );
         assert_eq!(
             text(restart, Phase::Failed, None),
-            ("Restart failed", Some(TRY_AGAIN)),
+            ("Restart failed", Some(TRY_AGAIN.to_owned())),
             "a pending timeout carries no reason"
         );
         assert_eq!(
             text(wifi, holding, None),
-            ("Reconfigure Wi-Fi?", Some(KEEP_HOLDING))
+            ("Reconfigure Wi-Fi?", Some(KEEP_HOLDING.to_owned()))
         );
         assert_eq!(
             text(wifi, Phase::Pending, None),
@@ -333,14 +344,14 @@ mod tests {
         );
         assert_eq!(
             text(wifi, Phase::Failed, None),
-            ("Couldn't start Wi-Fi setup", Some(TRY_AGAIN))
+            ("Couldn't start Wi-Fi setup", Some(TRY_AGAIN.to_owned()))
         );
     }
 
     #[test]
     fn a_notice_without_a_body_reads_one_line() {
-        let tree =
-            build_with_controls(narrow_panel(), controls_at(Action::Restart, Phase::Pending));
+        let status = status_at(Action::Restart, Phase::Pending);
+        let tree = build_with_controls(narrow_panel(), all_controls(), Some(&status));
         let mut found = Vec::new();
         overlays(&tree, &mut found);
         let [TreeNode::Column(_, lines)] = found.as_slice() else {
@@ -354,7 +365,7 @@ mod tests {
     #[test]
     fn the_notice_stretches_over_its_section() {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
-            let tree = build_with_controls(panel, held_controls());
+            let tree = build_with_controls(panel, all_controls(), Some(&held_status()));
             let mut found = Vec::new();
             overlays(&tree, &mut found);
             let [TreeNode::Column(props, _)] = found.as_slice() else {
@@ -381,7 +392,7 @@ mod tests {
     #[test]
     fn the_notice_sits_above_the_buttons() {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
-            let tree = build_with_controls(panel, held_controls());
+            let tree = build_with_controls(panel, all_controls(), Some(&held_status()));
             let mut found = Vec::new();
             overlays(&tree, &mut found);
             let [TreeNode::Column(_, lines)] = found.as_slice() else {
@@ -471,7 +482,8 @@ mod tests {
             touch_key: Some(key.to_owned()),
             draws: Vec::new(),
         };
-        let notice = Notice::for_controls(&held_controls());
+        let held = held_status();
+        let notice = Notice::new(Some(&held));
         let held = notice.button(RESTART_KEY, probe(RESTART_KEY));
         assert_close(at(&held), 1.0, "the held button");
         assert_eq!(
@@ -498,7 +510,7 @@ mod tests {
             "close keeps taking touches"
         );
 
-        let resting = Notice::for_controls(&all_controls());
+        let resting = Notice::new(None);
         let button = resting.button(WIFI_RECONFIG_KEY, probe(WIFI_RECONFIG_KEY));
         assert_close(at(&button), 1.0, "a resting button");
         assert_eq!(touch_keys(&button), [WIFI_RECONFIG_KEY]);

@@ -40,10 +40,8 @@
 
 use std::time::Instant;
 
-use bmc_overlay_settings_tray::ui::{Action, Phase};
-use bmc_overlay_settings_tray::{
-    SettingsTrayRenderState, SettingsTrayView, StatusView, render_settings_tray,
-};
+use bmc_overlay_settings_tray::ui::{Action, Phase, Status};
+use bmc_overlay_settings_tray::{SettingsTrayRenderState, SettingsTrayView, render_settings_tray};
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::{FrameClear, Renderer};
 use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
@@ -510,7 +508,7 @@ fn bmm101_controls_fit_between_the_close_target_and_the_bottom_edge() {
 #[test]
 fn large_tier_hold_circle_is_centered_on_its_button() {
     let mut view = SettingsTrayView::resting().with_caps(Some(DECK_CAPS));
-    view.status = Some(StatusView {
+    view.status = Some(Status {
         action: Action::Restart,
         phase: Phase::Holding { progress: 0.5 },
         reason: None,

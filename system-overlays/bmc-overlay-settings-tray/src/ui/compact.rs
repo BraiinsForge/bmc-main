@@ -198,6 +198,7 @@ fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     let (_, singles) = control_groups(
         tier,
         &content.controls,
+        content.notice,
         content.control_icons,
         content.icons,
         content.wifi_button,
@@ -285,6 +286,7 @@ mod tests {
             view,
             ControlIcons::default(),
             all_controls(),
+            None,
         )
     }
 
@@ -293,7 +295,7 @@ mod tests {
     #[test]
     fn the_slider_goes_with_the_brightness_capability() {
         let has_slider = |controls: Controls<'_>| {
-            touch_keys(&build_with_controls(bmm101_panel(), controls))
+            touch_keys(&build_with_controls(bmm101_panel(), controls, None))
                 .iter()
                 .any(|key| key == BRIGHTNESS_SLIDER_KEY)
         };

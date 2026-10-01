@@ -175,14 +175,14 @@ fn single_group(
 pub(super) fn control_groups(
     tier: Tier,
     controls: &Controls<'_>,
+    notice: Notice<'_>,
     icons: ControlIcons,
     wifi_icons: WifiIcons,
     wifi: bool,
 ) -> (Vec<TreeNode>, Vec<TreeNode>) {
-    let dim = Notice::for_controls(controls);
     let mut pairs = Vec::new();
     if let Some(v) = controls.volume {
-        pairs.push(dim.button(
+        pairs.push(notice.button(
             VOLUME_UP_KEY,
             pair_group(
                 tier,
@@ -197,7 +197,7 @@ pub(super) fn control_groups(
         ));
     }
     if let Some(b) = controls.brightness {
-        pairs.push(dim.button(
+        pairs.push(notice.button(
             BRIGHTNESS_UP_KEY,
             pair_group(
                 tier,
@@ -220,7 +220,7 @@ pub(super) fn control_groups(
         let sublabel = night
             .until
             .map_or_else(String::new, |until| format!("Until {until}"));
-        singles.push(dim.button(
+        singles.push(notice.button(
             NIGHT_MODE_KEY,
             single_group(
                 tier,
@@ -247,7 +247,7 @@ pub(super) fn control_groups(
     }
     if controls.restart {
         let p = controls.pressed == Some(RESTART_KEY);
-        singles.push(dim.button(
+        singles.push(notice.button(
             RESTART_KEY,
             single_group(
                 tier,
@@ -255,7 +255,7 @@ pub(super) fn control_groups(
                 ButtonIcon::square(icons.restart),
                 press_fill(p),
                 press_tint(p),
-                Some(controls.hold_progress(Action::Restart)),
+                Some(notice.hold_progress(Action::Restart)),
                 "Restart",
                 "hold 5 seconds",
             ),
@@ -263,7 +263,7 @@ pub(super) fn control_groups(
     }
     if wifi {
         let p = controls.pressed == Some(WIFI_RECONFIG_KEY);
-        singles.push(dim.button(
+        singles.push(notice.button(
             WIFI_RECONFIG_KEY,
             single_group(
                 tier,
@@ -271,7 +271,7 @@ pub(super) fn control_groups(
                 ButtonIcon::square(wifi_icons.problem),
                 press_fill(p),
                 press_tint(p),
-                Some(controls.hold_progress(Action::WifiReconfig)),
+                Some(notice.hold_progress(Action::WifiReconfig)),
                 "Reconfigure Wi-Fi",
                 "hold 5 seconds",
             ),
@@ -340,7 +340,10 @@ mod tests {
             (round_panel(), false),
         ] {
             let mut texts = Vec::new();
-            collect_texts(&build_with_controls(panel, all_controls()), &mut texts);
+            collect_texts(
+                &build_with_controls(panel, all_controls(), None),
+                &mut texts,
+            );
             assert_eq!(
                 texts.iter().any(|t| t == "Restart"),
                 labeled,
@@ -387,6 +390,7 @@ mod tests {
                     view,
                     ControlIcons::default(),
                     controls,
+                    None,
                 ),
                 &mut out,
             );
@@ -445,7 +449,7 @@ mod tests {
 
     /// The night button's circle fill and icon tint.
     fn night_colors(controls: Controls<'_>) -> (Color, Color) {
-        let tree = build_with_controls(wide_panel(), controls);
+        let tree = build_with_controls(wide_panel(), controls, None);
         let draws = find_canvas(&tree, NIGHT_MODE_KEY).expect("BUG: night canvas must exist");
         let DrawCommand::Circle {
             fill: Fill::Solid(fill),
@@ -465,7 +469,7 @@ mod tests {
     #[test]
     fn the_notice_dims_and_disables_every_other_button() {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
-            let tree = build_with_controls(panel, held_controls());
+            let tree = build_with_controls(panel, all_controls(), Some(&held_status()));
             let held = canvas_brightness(&tree, RESTART_KEY).expect("BUG: the held button renders");
             assert_close(held, 1.0, "the held button stays lit");
             assert_eq!(
@@ -521,7 +525,7 @@ mod tests {
             pressed: Some(VOLUME_UP_KEY),
             ..Controls::default()
         };
-        let tree = build_with_controls(wide_panel(), controls);
+        let tree = build_with_controls(wide_panel(), controls, None);
         let draws = find_canvas(&tree, VOLUME_UP_KEY).expect("BUG: volume-up canvas must exist");
         let DrawCommand::Circle {
             fill: Fill::Solid(fill),
@@ -552,11 +556,12 @@ mod tests {
     fn large_tier_hold_hint_stays_legible_over_the_progress_circle() {
         let controls = Controls {
             restart: true,
-            ..controls_at(Action::Restart, Phase::Holding { progress: 0.15 })
+            ..Controls::default()
         };
+        let held = status_at(Action::Restart, Phase::Holding { progress: 0.15 });
         assert_eq!(
             text_color(
-                &build_with_controls(wide_panel(), controls),
+                &build_with_controls(wide_panel(), controls, Some(&held)),
                 "hold 5 seconds",
             ),
             Some(WHITE),
@@ -568,7 +573,7 @@ mod tests {
         };
         assert_eq!(
             text_color(
-                &build_with_controls(wide_panel(), resting),
+                &build_with_controls(wide_panel(), resting, None),
                 "hold 5 seconds",
             ),
             Some(GRAY_50),
@@ -579,10 +584,13 @@ mod tests {
     /// no layout keeps a line of its own for it, nor for the night end time.
     #[test]
     fn no_layout_keeps_a_caption_line() {
-        let failed = controls_at(Action::Restart, Phase::Failed);
+        let failed = status_at(Action::Restart, Phase::Failed);
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let mut texts = Vec::new();
-            collect_texts(&build_with_controls(panel, failed), &mut texts);
+            collect_texts(
+                &build_with_controls(panel, all_controls(), Some(&failed)),
+                &mut texts,
+            );
             assert!(
                 !texts.iter().any(|t| t.starts_with("Restart:")),
                 "{panel:?}: no prefixed caption"
@@ -594,7 +602,7 @@ mod tests {
         }
     }
 
-    fn assert_control_rows_fit(controls: Controls<'_>) {
+    fn assert_control_rows_fit(status: Option<&Status>) {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_tree(
                 Some("braiins-deck"),
@@ -605,7 +613,8 @@ mod tests {
                 panel,
                 WifiView::Idle,
                 ControlIcons::default(),
-                controls,
+                all_controls(),
+                status,
             );
             #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
             let panel_w = panel.width as f32;
@@ -632,7 +641,7 @@ mod tests {
 
     #[test]
     fn control_rows_fit_the_panel_width() {
-        assert_control_rows_fit(all_controls());
-        assert_control_rows_fit(held_controls());
+        assert_control_rows_fit(None);
+        assert_control_rows_fit(Some(&held_status()));
     }
 }

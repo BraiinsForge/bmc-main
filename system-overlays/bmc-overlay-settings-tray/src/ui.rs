@@ -412,11 +412,11 @@ pub enum Phase {
 
 /// The action the notice reports on. `reason` is the one bmc gave
 /// for declining a restart, while that failure shows.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Status<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Status {
     pub action: Action,
     pub phase: Phase,
-    pub reason: Option<&'a str>,
+    pub reason: Option<String>,
 }
 
 /// Night-mode toggle state: whether it is active and the formatted end time
@@ -437,22 +437,7 @@ pub struct Controls<'a> {
     pub volume: Option<u8>,
     pub night_mode: Option<NightMode<'a>>,
     pub restart: bool,
-    pub status: Option<Status<'a>>,
     pub pressed: Option<&'a str>,
-}
-
-impl Controls<'_> {
-    /// The hold fraction of `action`'s button: zero unless it is being held.
-    fn hold_progress(&self, action: Action) -> f32 {
-        match self.status {
-            Some(Status {
-                action: held,
-                phase: Phase::Holding { progress },
-                ..
-            }) if held == action => progress,
-            Some(_) | None => 0.0,
-        }
-    }
 }
 
 /// Per-panel control sizing, picked by [`tier_for`] from the panel's width
@@ -572,6 +557,7 @@ fn control_row_nodes(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
     let (pairs, singles) = control_groups(
         tier,
         &content.controls,
+        content.notice,
         content.control_icons,
         content.icons,
         content.wifi_button,
@@ -595,9 +581,10 @@ pub fn build_tree(
     wifi_view: WifiView<'_>,
     controls_icons: ControlIcons,
     controls: Controls<'_>,
+    status: Option<&Status>,
 ) -> TreeNode {
     let tier = tier_for(&panel);
-    let notice = Notice::for_controls(&controls);
+    let notice = Notice::new(status);
     let content = Content {
         hostname,
         ip,
@@ -860,12 +847,13 @@ mod tests {
         let long_ssid = "An-Extremely-Long-Setup-Network-Name-420";
         assert_eq!(long_ssid.chars().count(), 40);
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
-            for ((view, setup), controls) in [
+            let held = held_status();
+            for ((view, setup), status) in [
                 (WifiView::Idle, false),
                 (WifiView::Setup { ap_ssid: long_ssid }, true),
             ]
             .into_iter()
-            .flat_map(|view| [(view, all_controls()), (view, held_controls())])
+            .flat_map(|view| [(view, None), (view, Some(&held))])
             {
                 let tier = tier_for(&panel);
                 let tree = build_tree(
@@ -877,7 +865,8 @@ mod tests {
                     panel,
                     view,
                     ControlIcons::default(),
-                    controls,
+                    all_controls(),
+                    status,
                 );
                 let kids = children(&tree).expect("BUG: root must be a container");
 
@@ -942,6 +931,7 @@ mod tests {
                     WifiView::Idle,
                     ControlIcons::default(),
                     all_controls(),
+                    None,
                 );
                 let mut qrs = Vec::new();
                 qr_texts(&tree, &mut qrs);
@@ -973,6 +963,7 @@ mod tests {
                     WifiView::Idle,
                     ControlIcons::default(),
                     all_controls(),
+                    None,
                 );
                 let mut texts = Vec::new();
                 collect_texts(&tree, &mut texts);
@@ -1028,9 +1019,9 @@ mod tests {
                 .map(hold_circle_columns)
                 .sum::<usize>()
         }
-        let controls = held_controls();
+        let held = held_status();
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
-            let tree = build_with_controls(panel, controls);
+            let tree = build_with_controls(panel, all_controls(), Some(&held));
             let mut absolute = Vec::new();
             absolute_canvases(&tree, &mut absolute);
             let (keyed, hold_circles) = absolute
@@ -1164,6 +1155,7 @@ mod tests {
                 WifiView::Idle,
                 ControlIcons::default(),
                 Controls::default(),
+                None,
             );
             let large = layout_for(&panel) == Layout::Wide;
 

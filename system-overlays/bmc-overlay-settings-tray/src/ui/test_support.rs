@@ -77,26 +77,22 @@ pub(super) fn all_controls() -> Controls<'static> {
             until: Some("06:30"),
         }),
         restart: true,
-        status: None,
         pressed: None,
     }
 }
 
-/// [`all_controls`] with `action` at `phase`.
-pub(super) fn controls_at(action: Action, phase: Phase) -> Controls<'static> {
-    Controls {
-        status: Some(Status {
-            action,
-            phase,
-            reason: None,
-        }),
-        ..all_controls()
+/// `action` at `phase`, with no reason from bmc.
+pub(super) fn status_at(action: Action, phase: Phase) -> Status {
+    Status {
+        action,
+        phase,
+        reason: None,
     }
 }
 
-/// [`all_controls`] with restart held halfway.
-pub(super) fn held_controls() -> Controls<'static> {
-    controls_at(Action::Restart, Phase::Holding { progress: 0.5 })
+/// Restart held halfway.
+pub(super) fn held_status() -> Status {
+    status_at(Action::Restart, Phase::Holding { progress: 0.5 })
 }
 
 pub(super) fn build(panel: Panel, view: WifiView<'_>) -> TreeNode {
@@ -110,10 +106,15 @@ pub(super) fn build(panel: Panel, view: WifiView<'_>) -> TreeNode {
         view,
         ControlIcons::default(),
         Controls::default(),
+        None,
     )
 }
 
-pub(super) fn build_with_controls(panel: Panel, controls: Controls<'_>) -> TreeNode {
+pub(super) fn build_with_controls(
+    panel: Panel,
+    controls: Controls<'_>,
+    status: Option<&Status>,
+) -> TreeNode {
     build_tree(
         Some("braiins-deck"),
         Some("10.0.0.2"),
@@ -124,6 +125,7 @@ pub(super) fn build_with_controls(panel: Panel, controls: Controls<'_>) -> TreeN
         WifiView::Idle,
         ControlIcons::default(),
         controls,
+        status,
     )
 }
 

@@ -37,9 +37,9 @@ use bmc_overlay_device_info::{
     DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info,
 };
 use bmc_overlay_offline::{Connectivity, OfflineView, Status, decide, render_offline};
-use bmc_overlay_settings_tray::ui::{Action, BRIGHTNESS_UP_KEY, Phase};
+use bmc_overlay_settings_tray::ui::{Action, BRIGHTNESS_UP_KEY, Phase, Status as TrayStatus};
 use bmc_overlay_settings_tray::{
-    NightModeView, SettingsTrayRenderState, SettingsTrayView, StatusView, render_settings_tray,
+    NightModeView, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
 };
 use bmc_overlay_upgrade::{Surface, SurfaceTier, UpgradeRenderState, UpgradeView, render_upgrade};
 use bmc_platform::{HardwareProfile, Product};
@@ -838,7 +838,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
         (
             "Restart holding at 15%",
             variant(|view| {
-                view.status = Some(StatusView {
+                view.status = Some(TrayStatus {
                     action: Action::Restart,
                     phase: Phase::Holding { progress: 0.15 },
                     reason: None,
@@ -849,7 +849,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
         (
             "Restart pending",
             variant(|view| {
-                view.status = Some(StatusView {
+                view.status = Some(TrayStatus {
                     action: Action::Restart,
                     phase: Phase::Pending,
                     reason: None,
@@ -860,7 +860,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
         (
             "Restart declined",
             variant(|view| {
-                view.status = Some(StatusView {
+                view.status = Some(TrayStatus {
                     action: Action::Restart,
                     phase: Phase::Failed,
                     reason: Some("An upgrade is in progress".to_owned()),
@@ -872,7 +872,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
             "Wi-Fi setup failed",
             variant(|view| {
                 view.wifi_button = true;
-                view.status = Some(StatusView {
+                view.status = Some(TrayStatus {
                     action: Action::WifiReconfig,
                     phase: Phase::Failed,
                     reason: None,
