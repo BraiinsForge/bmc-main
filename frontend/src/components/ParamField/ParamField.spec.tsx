@@ -254,6 +254,13 @@ function renderList(value: ListItem[], itemErrors?: Array<RowError | undefined>,
     return { ...view, onChange };
 }
 
+/** The message an invalid input points at through `aria-errormessage`, as assistive tech reads it. */
+function errorOf(input: HTMLElement): string | null {
+    if (input.getAttribute('aria-invalid') !== 'true') return null;
+    const id = input.getAttribute('aria-errormessage');
+    return id ? (document.getElementById(id)?.textContent ?? null) : null;
+}
+
 /** Feeds every change back in, as the params form does, so an added row actually renders. */
 function LiveList(props: { initial: ListItem[]; definition: pb.ManifestParamDefinition }) {
     const [value, setValue] = useState(props.initial);
@@ -424,8 +431,12 @@ describe('ParamField list', () => {
     });
 
     test("shows an item's error on its own row", () => {
-        const { getByText } = renderList([listItem('NVDA'), listItem('')], [undefined, { error: 'Value is required' }]);
-        expect(getByText('Value is required')).toBeTruthy();
+        const { getByLabelText } = renderList(
+            [listItem('NVDA'), listItem('')],
+            [undefined, { error: 'Value is required' }],
+        );
+        expect(errorOf(getByLabelText('Symbols, item 2'))).toBe('Value is required');
+        expect(errorOf(getByLabelText('Symbols, item 1'))).toBeNull();
     });
 });
 
@@ -455,11 +466,12 @@ describe('ParamField object list', () => {
     });
 
     test("shows a field's error on its own input", () => {
-        const { getByText } = renderList(
+        const { getByLabelText } = renderList(
             [listItem({ label: '', url: null })],
             [{ fields: { label: 'Value is required' } }],
             linksField,
         );
-        expect(getByText('Value is required')).toBeTruthy();
+        expect(errorOf(getByLabelText('Links, item 1, Label'))).toBe('Value is required');
+        expect(errorOf(getByLabelText('Links, item 1, URL (optional)'))).toBeNull();
     });
 });

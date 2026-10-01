@@ -36,6 +36,11 @@ import {
     widgetParamsToFormifiedState,
     buildFieldValues,
     fitStoredParams,
+    hasItemErrors,
+    itemErrorsOf,
+    clearFieldError,
+    revalidateField,
+    type ParamsFormErrors,
     credentialBindingsValid,
     credentialBindingsFor,
     withoutDeletedAccounts,
@@ -1168,6 +1173,121 @@ describe('fitStoredParams', () => {
 
         const fitted = fitStoredParams(manifest, pb.create(pb.FieldValuesSchema));
         expect(fitted.fields[key]?.kind).toEqual({ case: 'integerValue', value: 4 });
+    });
+});
+
+describe('params form errors', () => {
+    const formErrors = (over: Partial<ParamsFormErrors> = {}): ParamsFormErrors => ({
+        global: [],
+        fields: {},
+        ...over,
+    });
+    const count = paramDef('paramInteger', 'count', false, { max: 5 });
+
+    describe('hasItemErrors', () => {
+        test('no errors, or rows that carry none, are not item errors', () => {
+            expect(hasItemErrors(null)).toBe(false);
+            expect(hasItemErrors(formErrors())).toBe(false);
+            const blank = formErrors({ items: { links: [undefined, { errors: [], fields: { label: [] } }] } });
+            expect(hasItemErrors(blank)).toBe(false);
+        });
+
+        test('a row error counts', () => {
+            const form = formErrors({ items: { counts: [undefined, { errors: ['Must be at most 5'] }] } });
+            expect(hasItemErrors(form)).toBe(true);
+        });
+
+        test("a row field's error counts", () => {
+            const form = formErrors({ items: { links: [{ fields: { label: ['Value is required'] } }] } });
+            expect(hasItemErrors(form)).toBe(true);
+        });
+    });
+
+    describe('itemErrorsOf', () => {
+        test("keeps each row's and each field's first violation, and the rows without any", () => {
+            const form = formErrors({
+                items: {
+                    links: [
+                        undefined,
+                        { errors: ['First', 'Second'], fields: { label: ['Value is required', 'Too long'] } },
+                    ],
+                },
+            });
+            expect(itemErrorsOf(form, 'links')).toEqual([
+                undefined,
+                { error: 'First', fields: { label: 'Value is required' } },
+            ]);
+        });
+
+        test('a key without item errors has none', () => {
+            expect(itemErrorsOf(null, 'links')).toBeUndefined();
+            expect(itemErrorsOf(formErrors(), 'links')).toBeUndefined();
+        });
+
+        test('a key named like an Object member finds no inherited errors', () => {
+            expect(itemErrorsOf(formErrors({ items: {} }), 'constructor')).toBeUndefined();
+        });
+    });
+
+    describe('clearFieldError', () => {
+        test('nothing to clear stays nothing', () => {
+            expect(clearFieldError(null, 'count')).toBeNull();
+        });
+
+        test("clears the key's field error and the global one, keeping other keys", () => {
+            const form = formErrors({
+                global: ['Invalid params'],
+                fields: { count: ['Must be at most 5'], name: ['Value is required'] },
+                items: { counts: [{ errors: ['Must be at most 5'] }] },
+            });
+            expect(clearFieldError(form, 'count')).toEqual({
+                global: [],
+                fields: { name: ['Value is required'] },
+                items: { counts: [{ errors: ['Must be at most 5'] }] },
+            });
+        });
+
+        test("clears a list key's row errors and the global one", () => {
+            const form = formErrors({
+                global: ['Invalid params'],
+                items: { counts: [{ errors: ['Must be at most 5'] }] },
+            });
+            expect(clearFieldError(form, 'counts')).toEqual({ global: [], fields: {}, items: {} });
+        });
+
+        test('keeps the global error when the key had none', () => {
+            const form = formErrors({ global: ['Invalid params'], fields: { name: ['Value is required'] } });
+            expect(clearFieldError(form, 'count')?.global).toEqual(['Invalid params']);
+        });
+
+        test('a key named like an Object member had no error to clear', () => {
+            const form = formErrors({ global: ['Invalid params'], items: {} });
+            expect(clearFieldError(form, 'constructor')?.global).toEqual(['Invalid params']);
+        });
+    });
+
+    describe('revalidateField', () => {
+        test('a value that now parses clears the key', () => {
+            const form = formErrors({ global: ['Invalid params'], fields: { count: ['Must be at most 5'] } });
+            expect(revalidateField(form, count, '3')).toEqual({ global: [], fields: {}, items: {} });
+        });
+
+        test('an invalid scalar sets its field error, keeping the other keys', () => {
+            const form = formErrors({ global: ['Invalid params'], fields: { name: ['Value is required'] } });
+            expect(revalidateField(form, count, '9')).toEqual({
+                global: ['Invalid params'],
+                fields: { name: ['Value is required'], count: ['Must be at most 5'] },
+                items: {},
+            });
+        });
+
+        test("an invalid list sets its rows' errors", () => {
+            expect(revalidateField(null, countsDef(), rows('1', '9'))).toEqual({
+                global: [],
+                fields: {},
+                items: { counts: [undefined, { errors: ['Must be at most 5'] }] },
+            });
+        });
     });
 });
 
