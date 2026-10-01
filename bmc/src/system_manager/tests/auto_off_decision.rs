@@ -22,10 +22,12 @@
 use std::time::Duration;
 
 use crate::system_manager::{
-    AutoOffInputs, AutoOffMode, MIN_SCREEN_OFF_TIMEOUT_SECS, ScreenRequest, auto_off_decision,
+    AutoOffInputs, AutoOffMode, MIN_SCREEN_OFF_TIMEOUT_SECS, ScreenRequest, TOUCH_HOLD_CAP,
+    auto_off_decision,
 };
+use tokio::time::Instant;
 
-/// Night mode on with a minute's timeout, the panel lit and no alarm:
+/// Night mode on with a minute's timeout, the panel lit, untouched, and no alarm:
 /// the state the timer arms in, and the one every test below departs from.
 fn armed_night() -> AutoOffInputs {
     AutoOffInputs {
@@ -34,6 +36,19 @@ fn armed_night() -> AutoOffInputs {
         timeout_secs: Some(60),
         request: ScreenRequest::Wake,
         timer_blanked: false,
+        touch_held_since: None,
+        now: Instant::now(),
+    }
+}
+
+/// [`armed_night`] with a finger that went down `held_for` ago and is still on the panel.
+fn held_for(held_for: Duration) -> AutoOffInputs {
+    let inputs = armed_night();
+    // Counted forward from `now`: an `Instant` before boot panics.
+    AutoOffInputs {
+        touch_held_since: Some(inputs.now),
+        now: inputs.now + held_for,
+        ..inputs
     }
 }
 
@@ -182,5 +197,75 @@ fn a_ringing_alarm_overrides_the_timers_own_blank() {
             ..armed_night()
         }),
         AutoOffMode::KeepOn
+    );
+}
+
+#[test]
+fn a_touch_down_defers_the_blank_to_the_cap() {
+    assert_eq!(
+        auto_off_decision(held_for(Duration::ZERO)),
+        AutoOffMode::ArmTimer(TOUCH_HOLD_CAP)
+    );
+}
+
+#[test]
+fn the_cap_counts_from_the_touch_down() {
+    assert_eq!(
+        auto_off_decision(held_for(Duration::from_mins(2))),
+        AutoOffMode::ArmTimer(TOUCH_HOLD_CAP.saturating_sub(Duration::from_mins(2))),
+        "a pass mid-hold must not restart the cap"
+    );
+}
+
+#[test]
+fn a_hold_nearing_the_cap_never_shortens_the_timeout() {
+    assert_eq!(
+        auto_off_decision(held_for(
+            TOUCH_HOLD_CAP.saturating_sub(Duration::from_secs(10))
+        )),
+        AutoOffMode::ArmTimer(Duration::from_mins(1))
+    );
+}
+
+#[test]
+fn a_timeout_longer_than_the_cap_outlasts_the_hold() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            timeout_secs: Some(600),
+            ..held_for(Duration::ZERO)
+        }),
+        AutoOffMode::ArmTimer(Duration::from_mins(10))
+    );
+}
+
+#[test]
+fn a_hold_past_the_cap_arms_a_plain_timeout() {
+    assert_eq!(
+        auto_off_decision(held_for(TOUCH_HOLD_CAP + Duration::from_mins(1))),
+        AutoOffMode::ArmTimer(Duration::from_mins(1)),
+        "a spent hold must not blank a panel a later wake lit"
+    );
+}
+
+#[test]
+fn a_hold_does_not_undo_a_user_blank() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            request: ScreenRequest::Blank,
+            ..held_for(Duration::ZERO)
+        }),
+        AutoOffMode::HoldDark
+    );
+}
+
+#[test]
+fn a_hold_does_not_undo_the_timers_own_blank() {
+    assert_eq!(
+        auto_off_decision(AutoOffInputs {
+            timer_blanked: true,
+            ..held_for(TOUCH_HOLD_CAP)
+        }),
+        AutoOffMode::HoldDark,
+        "the finger the cap blanked under is still down"
     );
 }

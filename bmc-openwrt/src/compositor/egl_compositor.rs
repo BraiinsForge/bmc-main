@@ -46,7 +46,10 @@ use bmc_platform::backlight::ScreenVisibility;
 use bmc_platform::linux_input::discover_touch_node;
 use bmc_widget_protocol::SettingUpdate;
 use smithay::backend::{
-    input::{AbsolutePositionEvent, InputEvent, TouchEvent as TouchEventTrait, TouchSlot},
+    input::{
+        AbsolutePositionEvent, Device as _, InputBackend, InputEvent,
+        TouchEvent as TouchEventTrait, TouchSlot,
+    },
     libinput::LibinputInputBackend,
 };
 use smithay::reexports::{
@@ -509,6 +512,7 @@ impl EglCompositor {
             }),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
+            touch_sequence_reported: false,
             screen_visibility,
             scene_drag_active: false,
             edge_reveal_active: false,
@@ -972,10 +976,12 @@ struct AppState {
     gesture_slot: Option<TouchSlot>,
     /// All currently active libinput touch slots.
     active_touch_slots: HashSet<TouchSlot>,
-    /// Panel visibility, read from the backlight driver on demand. While the
-    /// panel is dark the primary touch-down is consumed right after it emits
-    /// `ScreenActivity`: the touch wakes the screen but must not reach gesture
-    /// arbitration or `wl_touch` delivery.
+    /// Whether the last touch sequence edge reported was its start.
+    touch_sequence_reported: bool,
+    /// Panel visibility, read from the backlight driver on demand.
+    /// While the panel is dark the primary touch-down is consumed:
+    /// its `TouchSequenceStarted` wakes the screen,
+    /// but the touch must not reach gesture arbitration or `wl_touch` delivery.
     ///
     /// Deliberately not a `bool` mirrored from a screen-power command to keep
     /// the backlight driver a single source of the truth.
@@ -1485,7 +1491,7 @@ impl AppState {
         }
     }
 
-    fn handle_input_event(&mut self, event: InputEvent<LibinputInputBackend>) {
+    fn handle_input_event<B: InputBackend>(&mut self, event: InputEvent<B>) {
         #[expect(
             clippy::wildcard_enum_match_arm,
             reason = "keyboard/pointer/gesture/tablet events are not used by this product"
@@ -1515,6 +1521,25 @@ impl AppState {
             InputEvent::TouchFrame { .. } => self.on_touch_frame(),
             _ => {}
         }
+        self.report_touch_sequence_change();
+    }
+
+    /// Tell bmc when the panel goes from untouched to touched or back.
+    ///
+    /// Judged once per input event rather than wherever `active_touch_slots` changes,
+    /// so no path that adds or clears a slot can forget to report.
+    fn report_touch_sequence_change(&mut self) {
+        let active = !self.active_touch_slots.is_empty();
+        if active == self.touch_sequence_reported {
+            return;
+        }
+        self.touch_sequence_reported = active;
+        let edge = if active {
+            CompositorEvent::TouchSequenceStarted
+        } else {
+            CompositorEvent::TouchSequenceEnded
+        };
+        let _ = self.event_tx.send(edge);
     }
 
     /// Map a libinput absolute touch event into logical-screen space.
@@ -1523,9 +1548,9 @@ impl AppState {
     /// logical landscape orientation the widget tree paints into, so the
     /// sample is scaled directly against the logical dimensions. The profile's
     /// `touch_transform` then applies any residual per-panel rotation.
-    fn touch_location(
+    fn touch_location<B: InputBackend>(
         &self,
-        event: &impl AbsolutePositionEvent<LibinputInputBackend>,
+        event: &impl AbsolutePositionEvent<B>,
     ) -> Point<f64, Logical> {
         #[expect(
             clippy::cast_possible_wrap,
@@ -1549,11 +1574,9 @@ impl AppState {
         Point::<f64, Logical>::from((lx, ly))
     }
 
-    fn on_touch_down(
+    fn on_touch_down<B: InputBackend>(
         &mut self,
-        event: &(
-             impl AbsolutePositionEvent<LibinputInputBackend> + TouchEventTrait<LibinputInputBackend>
-         ),
+        event: &(impl AbsolutePositionEvent<B> + TouchEventTrait<B>),
     ) {
         use smithay::input::touch::DownEvent;
         use smithay::utils::SERIAL_COUNTER;
@@ -1602,9 +1625,7 @@ impl AppState {
             return;
         }
 
-        // Check whether the panel is currently showing the user anything
-        // before sending a screen activity event to decide whether
-        // to swallow a touch.
+        // Read the panel before `handle_input_event` reports the sequence start and wakes it.
         //
         // If the backlight state cannot be read, assume that the screen
         // is on, as an unreadable backlight must not silently eat every touch.
@@ -1614,8 +1635,6 @@ impl AppState {
                 true
             })
         });
-
-        let _ = self.event_tx.send(CompositorEvent::ScreenActivity);
 
         // A touch on a dark panel only wakes the screen.
         //
@@ -1648,11 +1667,9 @@ impl AppState {
         self.touch_frame_dirty = true;
     }
 
-    fn on_touch_motion(
+    fn on_touch_motion<B: InputBackend>(
         &mut self,
-        event: &(
-             impl AbsolutePositionEvent<LibinputInputBackend> + TouchEventTrait<LibinputInputBackend>
-         ),
+        event: &(impl AbsolutePositionEvent<B> + TouchEventTrait<B>),
     ) {
         use smithay::input::touch::MotionEvent;
 
@@ -1750,7 +1767,7 @@ impl AppState {
         }
     }
 
-    fn on_touch_up(&mut self, event: &impl TouchEventTrait<LibinputInputBackend>) {
+    fn on_touch_up<B: InputBackend>(&mut self, event: &impl TouchEventTrait<B>) {
         use smithay::input::touch::UpEvent;
         use smithay::utils::SERIAL_COUNTER;
 
@@ -2934,11 +2951,11 @@ impl Compositor for EglCompositor {
 mod tests {
     use super::{
         ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
-        GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState,
-        TRANSITION_WARM_UP_TIMEOUT, TouchSlot, TransitionWarmUp, clamp_initial_lifecycle,
-        dispatch_timeout, emit_lifecycle_batches, emit_lifecycle_transitions,
-        emit_transition_incoming_batch, handle_command, process_protocol_events,
-        scene_buffers_committed, transition_incoming_widget_ids, transition_warm_up_ready,
+        GestureState, LifecycleSink, LifecycleState, RedrawState, TRANSITION_WARM_UP_TIMEOUT,
+        TouchSlot, TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout,
+        emit_lifecycle_batches, emit_lifecycle_transitions, emit_transition_incoming_batch,
+        handle_command, process_protocol_events, scene_buffers_committed,
+        transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
@@ -2958,9 +2975,12 @@ mod tests {
         ActionPayload, ViewportShape, WidgetInitialConfig,
         server::deck_widget_surface_v1::DeckWidgetSurfaceV1,
     };
+    use smithay::backend::input::{
+        AbsolutePositionEvent, Device, DeviceCapability, Event, InputBackend, InputEvent,
+        TouchCancelEvent, TouchDownEvent, TouchEvent, TouchMotionEvent, TouchUpEvent, UnusedEvent,
+    };
     use smithay::reexports::{
         calloop::EventLoop,
-        input as libinput,
         wayland_server::{Display, ListeningSocket, Resource},
     };
     use std::{
@@ -3090,6 +3110,7 @@ mod tests {
             }),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
+            touch_sequence_reported: false,
             screen_visibility: None,
             scene_drag_active: false,
             edge_reveal_active: false,
@@ -3419,23 +3440,85 @@ mod tests {
         }
     }
 
-    impl smithay::backend::input::Event<LibinputInputBackend> for FakeTouchEvent {
+    /// An input backend whose touch events are [`FakeTouchEvent`]s,
+    /// so a test can hand `handle_input_event` what libinput would.
+    enum FakeBackend {}
+
+    impl InputBackend for FakeBackend {
+        type Device = FakeTouchscreen;
+        type KeyboardKeyEvent = UnusedEvent;
+        type PointerAxisEvent = UnusedEvent;
+        type PointerButtonEvent = UnusedEvent;
+        type PointerMotionEvent = UnusedEvent;
+        type PointerMotionAbsoluteEvent = UnusedEvent;
+        type GestureSwipeBeginEvent = UnusedEvent;
+        type GestureSwipeUpdateEvent = UnusedEvent;
+        type GestureSwipeEndEvent = UnusedEvent;
+        type GesturePinchBeginEvent = UnusedEvent;
+        type GesturePinchUpdateEvent = UnusedEvent;
+        type GesturePinchEndEvent = UnusedEvent;
+        type GestureHoldBeginEvent = UnusedEvent;
+        type GestureHoldEndEvent = UnusedEvent;
+        type TouchDownEvent = FakeTouchEvent;
+        type TouchUpEvent = FakeTouchEvent;
+        type TouchMotionEvent = FakeTouchEvent;
+        type TouchCancelEvent = FakeTouchEvent;
+        type TouchFrameEvent = UnusedEvent;
+        type TabletToolAxisEvent = UnusedEvent;
+        type TabletToolProximityEvent = UnusedEvent;
+        type TabletToolTipEvent = UnusedEvent;
+        type TabletToolButtonEvent = UnusedEvent;
+        type SwitchToggleEvent = UnusedEvent;
+        type SpecialEvent = UnusedEvent;
+    }
+
+    #[derive(PartialEq, Eq, Hash)]
+    struct FakeTouchscreen;
+
+    impl Device for FakeTouchscreen {
+        fn id(&self) -> String {
+            "fake-touchscreen".to_owned()
+        }
+
+        fn name(&self) -> String {
+            "Fake touchscreen".to_owned()
+        }
+
+        fn has_capability(&self, capability: DeviceCapability) -> bool {
+            capability == DeviceCapability::Touch
+        }
+
+        fn usb_id(&self) -> Option<(u32, u32)> {
+            None
+        }
+
+        fn syspath(&self) -> Option<PathBuf> {
+            None
+        }
+    }
+
+    impl Event<FakeBackend> for FakeTouchEvent {
         fn time(&self) -> u64 {
             self.time
         }
 
-        fn device(&self) -> libinput::Device {
-            panic!("BUG: touch pause tests must not inspect the libinput device")
+        fn device(&self) -> FakeTouchscreen {
+            FakeTouchscreen
         }
     }
 
-    impl smithay::backend::input::TouchEvent<LibinputInputBackend> for FakeTouchEvent {
+    impl TouchEvent<FakeBackend> for FakeTouchEvent {
         fn slot(&self) -> TouchSlot {
             self.slot
         }
     }
 
-    impl smithay::backend::input::AbsolutePositionEvent<LibinputInputBackend> for FakeTouchEvent {
+    impl TouchDownEvent<FakeBackend> for FakeTouchEvent {}
+    impl TouchUpEvent<FakeBackend> for FakeTouchEvent {}
+    impl TouchMotionEvent<FakeBackend> for FakeTouchEvent {}
+    impl TouchCancelEvent<FakeBackend> for FakeTouchEvent {}
+
+    impl AbsolutePositionEvent<FakeBackend> for FakeTouchEvent {
         fn x(&self) -> f64 {
             self.x
         }
@@ -4704,10 +4787,11 @@ mod tests {
         let mut state = make_app_state_with_screen(&screen);
         let mut event_rx = state.event_tx.subscribe();
 
-        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+        state.handle_input_event(touch_down(0, 1));
 
-        assert!(
-            matches!(event_rx.try_recv(), Ok(CompositorEvent::ScreenActivity)),
+        assert_eq!(
+            compositor_events(&mut event_rx),
+            [CompositorEvent::TouchSequenceStarted],
             "the consumed touch must still wake the screen"
         );
         assert!(
@@ -4723,14 +4807,100 @@ mod tests {
             "the consumed slot still counts toward the touch sequence"
         );
 
-        state.on_touch_up(&FakeTouchEvent::new(0, 2));
+        state.handle_input_event(touch_up(0, 2));
         assert!(state.active_touch_slots.is_empty());
 
         screen.set_visible(true);
-        state.on_touch_down(&FakeTouchEvent::new(0, 3));
+        state.handle_input_event(touch_down(0, 3));
         assert!(
             state.gesture_slot.is_some(),
             "a touch after wake must be delivered normally"
+        );
+    }
+
+    fn compositor_events(
+        event_rx: &mut tokio::sync::broadcast::Receiver<CompositorEvent>,
+    ) -> Vec<CompositorEvent> {
+        std::iter::from_fn(|| event_rx.try_recv().ok()).collect()
+    }
+
+    fn touch_down(slot: u32, time_msec: u32) -> InputEvent<FakeBackend> {
+        InputEvent::TouchDown {
+            event: FakeTouchEvent::new(slot, time_msec),
+        }
+    }
+
+    fn touch_up(slot: u32, time_msec: u32) -> InputEvent<FakeBackend> {
+        InputEvent::TouchUp {
+            event: FakeTouchEvent::new(slot, time_msec),
+        }
+    }
+
+    fn touch_cancel(slot: u32, time_msec: u32) -> InputEvent<FakeBackend> {
+        InputEvent::TouchCancel {
+            event: FakeTouchEvent::new(slot, time_msec),
+        }
+    }
+
+    #[test]
+    fn a_touch_sequence_is_reported_once_at_each_end() {
+        let mut state = make_app_state();
+        let mut event_rx = state.event_tx.subscribe();
+
+        state.handle_input_event(touch_down(0, 1));
+        assert_eq!(
+            compositor_events(&mut event_rx),
+            [CompositorEvent::TouchSequenceStarted]
+        );
+
+        state.handle_input_event(touch_down(1, 2));
+        state.handle_input_event(touch_up(0, 3));
+        assert!(
+            compositor_events(&mut event_rx).is_empty(),
+            "the panel stayed touched while a second finger came and the first left"
+        );
+
+        state.handle_input_event(touch_up(1, 4));
+        assert_eq!(
+            compositor_events(&mut event_rx),
+            [CompositorEvent::TouchSequenceEnded]
+        );
+    }
+
+    #[test]
+    fn a_cancelled_touch_sequence_is_reported_over() {
+        let mut state = make_app_state();
+        let mut event_rx = state.event_tx.subscribe();
+        state.handle_input_event(touch_down(0, 1));
+
+        state.handle_input_event(touch_cancel(0, 2));
+
+        assert_eq!(
+            compositor_events(&mut event_rx),
+            [
+                CompositorEvent::TouchSequenceStarted,
+                CompositorEvent::TouchSequenceEnded
+            ]
+        );
+    }
+
+    #[test]
+    fn a_removed_touch_device_ends_the_touch_sequence() {
+        let mut state = make_app_state();
+        let mut event_rx = state.event_tx.subscribe();
+        state.handle_input_event(touch_down(0, 1));
+
+        state.handle_input_event(InputEvent::<FakeBackend>::DeviceRemoved {
+            device: FakeTouchscreen,
+        });
+
+        assert_eq!(
+            compositor_events(&mut event_rx),
+            [
+                CompositorEvent::TouchSequenceStarted,
+                CompositorEvent::TouchSequenceEnded
+            ],
+            "a controller dropping mid-touch must not leave the hold standing until the cap"
         );
     }
 

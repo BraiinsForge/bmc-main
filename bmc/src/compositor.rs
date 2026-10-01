@@ -269,9 +269,14 @@ pub struct UpgradeDisplaySnapshot {
     pub state: UpgradeDisplayState,
 }
 
-#[derive(Debug, Clone)]
+/// The touch sequence comes as two edges rather than a pulse per touch,
+/// since libinput reports nothing for a finger at rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompositorEvent {
-    ScreenActivity,
+    /// A finger landed on an untouched panel.
+    TouchSequenceStarted,
+    /// The last finger left the panel.
+    TouchSequenceEnded,
 }
 
 /// Lossless settings commands routed through the compositor-owned mpsc channel

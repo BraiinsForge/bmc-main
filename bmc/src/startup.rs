@@ -606,6 +606,29 @@ async fn forward_upgrade_display_state<F>(
     }
 }
 
+/// Turn compositor events into the screen request and touch hold the auto-off loop reads.
+async fn relay_compositor_events(
+    mut events: broadcast::Receiver<CompositorEvent>,
+    screen_request: watch::Sender<ScreenRequest>,
+    touch_held: watch::Sender<Option<tokio::time::Instant>>,
+) {
+    loop {
+        match events.recv().await {
+            Ok(CompositorEvent::TouchSequenceStarted) => {
+                screen_request.send_replace(ScreenRequest::Wake);
+                touch_held.send_replace(Some(tokio::time::Instant::now()));
+            }
+            Ok(CompositorEvent::TouchSequenceEnded) => {
+                touch_held.send_replace(None);
+            }
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                warn!(skipped = n, "compositor event receiver lagged");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
 /// Whether the Boser observers run, and why not when they do not.
 #[derive(Debug, PartialEq, Eq)]
 enum BoserObservation {
@@ -921,6 +944,7 @@ where
 
         let (screen_request, _) = tokio::sync::watch::channel(ScreenRequest::Wake);
         let screen_request_for_touch = screen_request.clone();
+        let (touch_held_tx, touch_held) = tokio::sync::watch::channel(None);
         let button_manager = ButtonManager::new(
             buttons,
             manager.clone(),
@@ -928,7 +952,6 @@ where
             compositor.clone(),
             hardware_capabilities,
         );
-        let compositor_for_events = compositor.clone();
 
         let system_manager = SystemManager::init(
             config_handle.clone(),
@@ -939,6 +962,7 @@ where
             led_state_sender,
             manager.clone(),
             screen_request,
+            touch_held,
             alarm_ringing,
         )
         .await;
@@ -955,20 +979,11 @@ where
             compositor.clone(),
         ));
 
-        tokio::spawn(async move {
-            let mut event_rx = compositor_for_events.subscribe_events();
-            loop {
-                match event_rx.recv().await {
-                    Ok(CompositorEvent::ScreenActivity) => {
-                        screen_request_for_touch.send_replace(ScreenRequest::Wake);
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(skipped = n, "compositor event receiver lagged");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        });
+        tokio::spawn(relay_compositor_events(
+            compositor.subscribe_events(),
+            screen_request_for_touch,
+            touch_held_tx,
+        ));
 
         {
             let config_guard = config_handle.read().await;

@@ -36,6 +36,7 @@ use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use tokio::sync::{Mutex, Notify, RwLock, broadcast, watch};
+use tokio::time::Instant;
 use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
@@ -60,6 +61,13 @@ pub(crate) struct LedSettings {
 const BOOTLOADER_SYNC_INTERVAL: Duration = Duration::from_hours(1); // 1 hour
 const BOOTLOADER_SYNC_DEBOUNCE: Duration = Duration::from_secs(5);
 const MIN_SCREEN_OFF_TIMEOUT_SECS: u32 = 5;
+/// How long a held finger keeps auto-off from blanking the panel, counted from the touch-down.
+/// Long enough to read a widget;
+/// a longer touch is taken for a stuck slot or something resting on the glass.
+/// Fixed rather than a setting beside the screen-off timeout:
+/// it guards against a fault, so there is nothing for the user to tune.
+/// See `docs/stories/night-mode.md`.
+const TOUCH_HOLD_CAP: Duration = Duration::from_mins(5);
 
 /// What the user last asked the screen to do.
 ///
@@ -99,6 +107,9 @@ struct AutoOffInputs {
     /// The loop's own blank rather than the user's,
     /// which is why it is not a [`ScreenRequest`]: it must not outlive what armed the timer.
     timer_blanked: bool,
+    /// When the current touch sequence began, if one is in progress.
+    touch_held_since: Option<Instant>,
+    now: Instant,
 }
 
 /// Decide what the auto-off loop does this pass.
@@ -109,6 +120,8 @@ fn auto_off_decision(inputs: AutoOffInputs) -> AutoOffMode {
         timeout_secs,
         request,
         timer_blanked,
+        touch_held_since,
+        now,
     } = inputs;
     if alarm_ringing {
         return AutoOffMode::KeepOn;
@@ -127,7 +140,13 @@ fn auto_off_decision(inputs: AutoOffInputs) -> AutoOffMode {
         return AutoOffMode::HoldDark;
     }
     let clamped = timeout_secs.max(MIN_SCREEN_OFF_TIMEOUT_SECS);
-    AutoOffMode::ArmTimer(Duration::from_secs(u64::from(clamped)))
+    let timeout = Duration::from_secs(u64::from(clamped));
+    // A hold past the cap leaves zero and stops counting,
+    // so a later wake arms a plain timeout instead of blanking again at once.
+    let hold_left = touch_held_since.map_or(Duration::ZERO, |since| {
+        (since + TOUCH_HOLD_CAP).saturating_duration_since(now)
+    });
+    AutoOffMode::ArmTimer(timeout.max(hold_left))
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +172,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         led_state_sender: watch::Sender<LedState>,
         manager: Arc<M>,
         screen_request: watch::Sender<ScreenRequest>,
+        touch_held: watch::Receiver<Option<Instant>>,
         alarm_ringing: watch::Receiver<bool>,
     ) -> Self {
         let backlight_controller =
@@ -207,6 +227,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             night_mode_controller.clone(),
             brightness_modified.clone(),
             screen_request,
+            touch_held,
             timeout_changed,
             screen_blanked_tx.clone(),
             alarm_ringing,
@@ -349,11 +370,13 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn run_screen_auto_off(
         backlight_controller: DisplayBacklightController<T>,
         night_mode_controller: NightModeController,
         brightness_modified: Arc<Notify>,
         screen_request: watch::Sender<ScreenRequest>,
+        mut touch_held: watch::Receiver<Option<Instant>>,
         mut timeout_changed: broadcast::Receiver<Option<u32>>,
         screen_blanked_tx: broadcast::Sender<()>,
         mut alarm_ringing: watch::Receiver<bool>,
@@ -373,6 +396,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             // below marks a request seen, so a write landing anywhere in
             // this pass, the blank included, still gets a pass of its own.
             let request = *screen_request_rx.borrow();
+            let touch_held_since = *touch_held.borrow();
 
             let mode = auto_off_decision(AutoOffInputs {
                 night_mode_active,
@@ -380,6 +404,8 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                 timeout_secs,
                 request,
                 timer_blanked,
+                touch_held_since,
+                now: Instant::now(),
             });
 
             if alarm_ringing_now && request == ScreenRequest::Blank {
@@ -444,14 +470,22 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     // costs one idle pass; a ringing alarm decides `KeepOn` anyway.
                     timer_blanked = false;
                 },
+                // Leaves `timer_blanked` alone:
+                // lifting the finger the cap blanked under must not light the panel again.
+                Ok(()) = touch_held.changed() => {},
                 Ok(_) = timeout_changed.recv() => {},
                 () = auto_off_timer => {
+                    let cause = if touch_held_since.is_some() {
+                        "auto-off timeout, touch held past the cap"
+                    } else {
+                        "auto-off timeout"
+                    };
                     // A panel left visible gets another try at the next timeout;
                     // any touch meanwhile wakes it.
                     timer_blanked = Self::blank_screen(
                         &backlight_controller,
                         &screen_blanked_tx,
-                        "auto-off timeout",
+                        cause,
                     ).await;
                 },
             }

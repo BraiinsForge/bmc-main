@@ -25,10 +25,13 @@ use std::time::Duration;
 use crate::backlight::{DisplayBacklightController, DisplayBacklightDriver};
 use crate::config::ConfigHandle;
 use crate::night_mode::NightModeController;
-use crate::system_manager::{MIN_SCREEN_OFF_TIMEOUT_SECS, ScreenRequest, SystemManager};
+use crate::system_manager::{
+    MIN_SCREEN_OFF_TIMEOUT_SECS, ScreenRequest, SystemManager, TOUCH_HOLD_CAP,
+};
 use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
 use tokio::sync::{Mutex, Notify, RwLock, broadcast, watch};
+use tokio::time::Instant;
 
 use super::ScriptedBacklightDriver;
 
@@ -69,6 +72,7 @@ struct AutoOffHarness {
     /// so a test can hold the loop there.
     config: Arc<RwLock<ConfigHandle>>,
     screen_request: watch::Sender<ScreenRequest>,
+    touch_held: watch::Sender<Option<Instant>>,
     alarm_ringing: watch::Sender<bool>,
     blanked: broadcast::Receiver<()>,
     night_mode: NightModeController,
@@ -83,6 +87,16 @@ impl AutoOffHarness {
 
     fn report_activity(&self) {
         self.screen_request.send_replace(ScreenRequest::Wake);
+    }
+
+    /// What the startup relay writes for a finger landing on an untouched panel.
+    fn touch_down(&self) {
+        self.report_activity();
+        self.touch_held.send_replace(Some(Instant::now()));
+    }
+
+    fn lift(&self) {
+        self.touch_held.send_replace(None);
     }
 
     fn ring_alarm(&self) {
@@ -190,6 +204,7 @@ async fn auto_off_harness(alarm_ringing: bool) -> AutoOffHarness {
         .subscribe_screen_off_timeout_change();
     let (screen_blanked_tx, blanked) = broadcast::channel(4);
     let (screen_request, _) = watch::channel(ScreenRequest::Wake);
+    let (touch_held, _) = watch::channel(None);
     let brightness_modified = Arc::new(Notify::new());
     let (alarm_tx, alarm_rx) = watch::channel(alarm_ringing);
 
@@ -209,6 +224,7 @@ async fn auto_off_harness(alarm_ringing: bool) -> AutoOffHarness {
             night_mode_controller.clone(),
             brightness_modified,
             screen_request.clone(),
+            touch_held.subscribe(),
             timeout_changed,
             screen_blanked_tx,
             alarm_rx,
@@ -221,6 +237,7 @@ async fn auto_off_harness(alarm_ringing: bool) -> AutoOffHarness {
         panel,
         config: config_handle,
         screen_request,
+        touch_held,
         alarm_ringing: alarm_tx,
         blanked,
         night_mode: night_mode_controller,
@@ -228,10 +245,13 @@ async fn auto_off_harness(alarm_ringing: bool) -> AutoOffHarness {
     }
 }
 
-/// Night mode on with the shortest timeout, and the panel already dark from the timer,
-/// so a test can pose what ought to relight it.
-async fn timer_blanked_harness() -> AutoOffHarness {
-    let mut harness = auto_off_harness(NO_ALARM).await;
+fn shortest_timeout() -> Duration {
+    Duration::from_secs(u64::from(MIN_SCREEN_OFF_TIMEOUT_SECS))
+}
+
+/// Night mode on with the shortest timeout, the timer counting down on a lit panel.
+async fn armed_night_harness() -> AutoOffHarness {
+    let harness = auto_off_harness(NO_ALARM).await;
     harness
         .set_screen_off_timeout(Some(MIN_SCREEN_OFF_TIMEOUT_SECS))
         .await;
@@ -240,7 +260,23 @@ async fn timer_blanked_harness() -> AutoOffHarness {
         .toggle()
         .await
         .expect("BUG: toggling night mode on a fresh config must succeed");
+    harness
+}
+
+/// Night mode on with the shortest timeout, and the panel already dark from the timer,
+/// so a test can pose what ought to relight it.
+async fn timer_blanked_harness() -> AutoOffHarness {
+    let mut harness = armed_night_harness().await;
     harness.wait_for_timer_blank().await;
+    harness
+}
+
+/// A finger landed on an armed panel and stayed until the cap blanked the panel under it.
+async fn capped_hold_harness() -> AutoOffHarness {
+    let mut harness = armed_night_harness().await;
+    harness.touch_down();
+    tokio::time::sleep(TOUCH_HOLD_CAP).await;
+    harness.wait_for_blank().await;
     harness
 }
 
@@ -402,5 +438,86 @@ async fn an_alarm_ending_re_arms_the_timer_instead_of_re_blanking() {
         !harness.blanked_after_settling().await,
         "the panel went dark the moment the alarm stopped, without waiting out the timeout"
     );
+    harness.wait_for_timer_blank().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_finger_held_past_the_timeout_keeps_the_panel_lit() {
+    let mut harness = armed_night_harness().await;
+
+    harness.touch_down();
+    tokio::time::sleep(shortest_timeout() * 3).await;
+
+    assert!(
+        !harness.blanked_after_settling().await,
+        "the timer blanked the panel under a finger still on it"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn lifting_the_finger_arms_a_full_timeout() {
+    let mut harness = armed_night_harness().await;
+    harness.touch_down();
+    tokio::time::sleep(shortest_timeout() * 3).await;
+
+    harness.lift();
+    tokio::time::sleep(shortest_timeout().saturating_sub(Duration::from_secs(1))).await;
+
+    assert!(
+        !harness.blanked_after_settling().await,
+        "the panel went dark before a full timeout had passed since the lift"
+    );
+    harness.wait_for_timer_blank().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_finger_held_past_the_cap_is_blanked_under() {
+    let mut harness = armed_night_harness().await;
+
+    harness.touch_down();
+    tokio::time::sleep(TOUCH_HOLD_CAP.saturating_sub(Duration::from_secs(1))).await;
+
+    assert!(
+        !harness.blanked_after_settling().await,
+        "the panel went dark under the finger before the cap"
+    );
+    harness.wait_for_blank().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn lifting_the_finger_after_the_cap_leaves_the_panel_dark() {
+    let harness = capped_hold_harness().await;
+
+    harness.lift();
+    tokio::time::sleep(AUTO_OFF_SETTLE).await;
+
+    assert!(
+        !harness.panel_is_lit(),
+        "the lift woke the panel the cap had blanked"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wake_after_the_cap_arms_a_plain_timeout() {
+    let mut harness = capped_hold_harness().await;
+
+    // A button press: the finger, or whatever is resting on the glass, stays.
+    harness.report_activity();
+    harness.wait_for_wake().await;
+
+    assert!(
+        !harness.blanked_after_settling().await,
+        "the spent hold blanked the panel again the moment it woke"
+    );
+    harness.wait_for_timer_blank().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_closed_touch_hold_channel_leaves_auto_off_running() {
+    let mut harness = armed_night_harness().await;
+
+    // Replacing the sender drops the one the loop listens to.
+    harness.touch_held = watch::channel(None).0;
+
     harness.wait_for_timer_blank().await;
 }

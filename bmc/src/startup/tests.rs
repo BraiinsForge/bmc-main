@@ -22,19 +22,22 @@
 use super::{
     BoserObservation, Destination, Publication, SETUP_AP_REFRESHES, SETUP_URL_CLEAR_AFTER,
     SetupPendingWait, boser_observation, current_access_point, forward_upgrade_display_state,
-    post_upgrade_kind, runs_setup_ap, setup_pending_wait,
+    post_upgrade_kind, relay_compositor_events, runs_setup_ap, setup_pending_wait,
 };
 use crate::compositor::{
-    AccessPointInfo, CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState,
+    AccessPointInfo, CompositorError, CompositorEvent, UpgradeDisplaySnapshot, UpgradeDisplayState,
     UpgradeGeneration, UpgradeKind,
 };
 use crate::manager::{BmcState, UpgradeMarker};
+use crate::system_manager::ScreenRequest;
 use bmc_net::NetworkManager;
 use bmc_net::mock::MockNetworkManager;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{Notify, watch};
+use std::time::Duration;
+use tokio::sync::{Notify, broadcast, watch};
+use tokio::time::Instant;
 
 const AP_HOST: &str = "10.0.0.21";
 
@@ -423,4 +426,85 @@ fn only_a_boser_managed_product_observes_boser() {
         boser_observation(true, None),
         BoserObservation::AddressMissing
     );
+}
+
+struct RelayHarness {
+    events: broadcast::Sender<CompositorEvent>,
+    screen_request: watch::Receiver<ScreenRequest>,
+    touch_held: watch::Receiver<Option<Instant>>,
+}
+
+fn relay_harness() -> RelayHarness {
+    let (events, events_rx) = broadcast::channel(4);
+    let (screen_request_tx, screen_request) = watch::channel(ScreenRequest::Blank);
+    let (touch_held_tx, touch_held) = watch::channel(None);
+    tokio::spawn(relay_compositor_events(
+        events_rx,
+        screen_request_tx,
+        touch_held_tx,
+    ));
+    RelayHarness {
+        events,
+        screen_request,
+        touch_held,
+    }
+}
+
+impl RelayHarness {
+    fn send(&self, event: CompositorEvent) {
+        self.events
+            .send(event)
+            .expect("BUG: the relay holds a receiver");
+    }
+
+    async fn relayed_touch_held(&mut self) -> Option<Instant> {
+        self.touch_held
+            .changed()
+            .await
+            .expect("BUG: the relay holds the touch-hold sender");
+        *self.touch_held.borrow_and_update()
+    }
+}
+
+#[tokio::test]
+async fn a_touch_down_is_relayed_as_a_wake() {
+    let mut harness = relay_harness();
+
+    harness.send(CompositorEvent::TouchSequenceStarted);
+    harness
+        .screen_request
+        .changed()
+        .await
+        .expect("BUG: the relay holds the screen-request sender");
+
+    assert_eq!(*harness.screen_request.borrow(), ScreenRequest::Wake);
+}
+
+#[tokio::test(start_paused = true)]
+async fn each_touch_down_is_relayed_as_a_hold_from_its_own_time() {
+    let mut harness = relay_harness();
+    harness.send(CompositorEvent::TouchSequenceStarted);
+    harness.relayed_touch_held().await;
+    harness.send(CompositorEvent::TouchSequenceEnded);
+    harness.relayed_touch_held().await;
+    tokio::time::advance(Duration::from_secs(3)).await;
+
+    harness.send(CompositorEvent::TouchSequenceStarted);
+
+    assert_eq!(
+        harness.relayed_touch_held().await,
+        Some(Instant::now()),
+        "the cap counts from the touch-down"
+    );
+}
+
+#[tokio::test]
+async fn a_lift_is_relayed_as_no_hold() {
+    let mut harness = relay_harness();
+    harness.send(CompositorEvent::TouchSequenceStarted);
+    harness.relayed_touch_held().await;
+
+    harness.send(CompositorEvent::TouchSequenceEnded);
+
+    assert_eq!(harness.relayed_touch_held().await, None);
 }

@@ -132,14 +132,20 @@ the event stream, so a release landing in the same instant loses to the blank. B
 bound, so the 3 s bound is the BMC application's alone. A release between the two bounds does nothing.
 
 Both outcomes travel on one `watch<ScreenRequest>` that `bmc/src/system_manager.rs` defines. Every handled press and
-every touch writes `ScreenRequest::Wake`; the hold overwrites it with `ScreenRequest::Blank` at the bound. Releases
-write nothing. `run_screen_auto_off` reads the current value at the top of each iteration and reconciles the panel
-toward it, which is why a request needs no acknowledgement and why a touch landing mid-blank is not lost: it can only be
-superseded by a later writer, never miss a reader that was busy. The blank holds until the next write of `Wake` rather
-than until a timeout, so the loop sits in `AutoOffMode::HoldDark` meanwhile. A ringing alarm refuses the request and
-overwrites it back to `Wake`, so it is not replayed when the ring stops; see [Night Mode](../../stories/night-mode.md).
-The blank resets the cycler to the first scene, but only night mode suspends cycling, so outside it the compositor keeps
-rendering scene transitions to a dark panel and the wake shows whatever scene cycling has reached.
+every touch writes `ScreenRequest::Wake`; the hold overwrites it with `ScreenRequest::Blank` at the bound. Button
+releases write nothing. `run_screen_auto_off` reads the current value at the top of each iteration and reconciles the
+panel toward it, which is why a request needs no acknowledgement and why a touch landing mid-blank is not lost: it can
+only be superseded by a later writer, never miss a reader that was busy. The blank holds until the next write of `Wake`
+rather than until a timeout, so the loop sits in `AutoOffMode::HoldDark` meanwhile. A ringing alarm refuses the request
+and overwrites it back to `Wake`, so it is not replayed when the ring stops; see
+[Night Mode](../../stories/night-mode.md). The blank resets the cycler to the first scene, but only night mode suspends
+cycling, so outside it the compositor keeps rendering scene transitions to a dark panel and the wake shows whatever
+scene cycling has reached.
+
+A held finger travels on a second `watch`, beside the request, holding the time the touch sequence began. The compositor
+reports when a touch sequence starts and ends: the start writes `Wake` and stamps the hold, the end clears it.
+`run_screen_auto_off` defers its timer while a finger is down, for at most `TOUCH_HOLD_CAP` from the touch-down. Past
+the cap the timer blanks the panel under the finger, and the lift leaves it dark.
 
 The address comes from the same connectivity prober the boot screens read. Its thread keeps publishing while the overlay
 is unmapped, and a publish that changed the content moves the snapshot version, so the poll on the press picks up
