@@ -23,14 +23,14 @@
 //! and widths back out of a built tree.
 
 use bmc_render::tree::{DrawCommand, TextStyle, TreeNode};
-use bmc_system_overlay::ViewportShape;
+use bmc_system_overlay::DisplayShape;
 use bmc_wasm_protocol::{Color, Fill, SvgId};
 
 use super::*;
 
 pub(super) fn round_panel() -> Panel {
     Panel {
-        shape: ViewportShape::Round,
+        shape: DisplayShape::Round,
         width: 480,
         height: 480,
         wifi_button: true,
@@ -39,7 +39,7 @@ pub(super) fn round_panel() -> Panel {
 
 pub(super) fn wide_panel() -> Panel {
     Panel {
-        shape: ViewportShape::Rectangular,
+        shape: DisplayShape::Rectangular,
         width: 1280,
         height: 480,
         wifi_button: true,
@@ -48,7 +48,7 @@ pub(super) fn wide_panel() -> Panel {
 
 pub(super) fn narrow_panel() -> Panel {
     Panel {
-        shape: ViewportShape::Rectangular,
+        shape: DisplayShape::Rectangular,
         width: 480,
         height: 320,
         wifi_button: true,

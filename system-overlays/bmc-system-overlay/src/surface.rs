@@ -1109,18 +1109,18 @@ impl Dispatch<DeckPlatformV1, ()> for State {
             } => {
                 let shape = match shape {
                     WEnum::Value(WirePlatformDisplayShape::Round) => {
-                        bmc_wasm_protocol::DisplayShape::Round
+                        bmc_platform::DisplayShape::Round
                     }
                     WEnum::Value(WirePlatformDisplayShape::Rectangular) => {
-                        bmc_wasm_protocol::DisplayShape::Rectangular
+                        bmc_platform::DisplayShape::Rectangular
                     }
                     WEnum::Value(other) => {
                         tracing::warn!(?other, "unhandled display shape; laying out rectangular");
-                        bmc_wasm_protocol::DisplayShape::Rectangular
+                        bmc_platform::DisplayShape::Rectangular
                     }
                     WEnum::Unknown(raw) => {
                         tracing::warn!(raw, "unknown display shape; laying out rectangular");
-                        bmc_wasm_protocol::DisplayShape::Rectangular
+                        bmc_platform::DisplayShape::Rectangular
                     }
                 };
                 state.platform_display = Some(crate::overlay::PlatformDisplay {

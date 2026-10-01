@@ -1906,7 +1906,7 @@ mod slide_tests {
     const SURFACE: OverlayViewport = OverlayViewport {
         width: 1_280,
         height: 200,
-        shape: bmc_system_overlay::ViewportShape::Rectangular,
+        shape: bmc_system_overlay::DisplayShape::Rectangular,
     };
 
     #[test]

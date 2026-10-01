@@ -46,8 +46,8 @@ use bmc_platform::{HardwareProfile, Product};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DownloadProgress, OverlayViewport, SettingsCaps, UpgradeKind, UpgradePhase,
-    ViewportShape,
+    AccessPoint, DisplayShape, DownloadProgress, OverlayViewport, SettingsCaps, UpgradeKind,
+    UpgradePhase,
 };
 
 scene_meta! { title: "Overlays" }
@@ -82,7 +82,7 @@ const BMC100_TRAY: TrayStage = TrayStage {
     viewport: OverlayViewport {
         width: 1_280,
         height: 480,
-        shape: ViewportShape::Rectangular,
+        shape: DisplayShape::Rectangular,
     },
     caps: SettingsCaps {
         brightness: true,
@@ -100,7 +100,7 @@ const BMM101_TRAY: TrayStage = TrayStage {
     viewport: OverlayViewport {
         width: 480,
         height: 320,
-        shape: ViewportShape::Rectangular,
+        shape: DisplayShape::Rectangular,
     },
     caps: SettingsCaps {
         brightness: true,
@@ -118,7 +118,7 @@ const BFM100_TRAY: TrayStage = TrayStage {
     viewport: OverlayViewport {
         width: 480,
         height: 480,
-        shape: ViewportShape::Round,
+        shape: DisplayShape::Round,
     },
     caps: SettingsCaps {
         brightness: true,
@@ -383,7 +383,7 @@ render_states!(
 )]
 fn settings_tray_cell(
     view: SettingsTrayView,
-    shape: ViewportShape,
+    shape: DisplayShape,
     state_key: &'static LocalKey<RefCell<SettingsTrayRenderState>>,
     flat: bool,
 ) -> CustomRenderFn {

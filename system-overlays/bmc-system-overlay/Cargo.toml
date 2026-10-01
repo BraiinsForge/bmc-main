@@ -10,8 +10,8 @@ description = "Framework for privileged wlr-layer-shell system overlays"
 anyhow.workspace = true
 bmc-gpu-render-lock.workspace = true
 bmc-net-observe.workspace = true
+bmc-platform.workspace = true
 bmc-render.workspace = true
-bmc-wasm-protocol.workspace = true
 bmc-widget = { workspace = true, features = ["gpu"] }
 deck-alarm-v1 = { workspace = true }
 deck-device-info-v1 = { workspace = true }
@@ -28,6 +28,9 @@ wayland-backend.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
+
+[dev-dependencies]
+bmc-wasm-protocol.workspace = true
 
 [lints]
 workspace = true

@@ -45,7 +45,7 @@ use bmc_overlay_settings_tray::{SettingsTrayRenderState, SettingsTrayView, rende
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::{FrameClear, Renderer};
 use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
-use bmc_system_overlay::{OverlayViewport, SettingsCaps, ViewportShape};
+use bmc_system_overlay::{DisplayShape, OverlayViewport, SettingsCaps};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
@@ -54,12 +54,12 @@ use bmc_wasm_protocol::{
 const DECK: OverlayViewport = OverlayViewport {
     width: 1_280,
     height: 480,
-    shape: ViewportShape::Rectangular,
+    shape: DisplayShape::Rectangular,
 };
 const BMM101: OverlayViewport = OverlayViewport {
     width: 480,
     height: 320,
-    shape: ViewportShape::Rectangular,
+    shape: DisplayShape::Rectangular,
 };
 const DECK_CAPS: SettingsCaps = SettingsCaps {
     brightness: true,

@@ -23,7 +23,7 @@
 //! of host/GL imports so it compiles and unit-tests on the host.
 
 use bmc_render::tree::{PropsData, TreeNode, col};
-use bmc_system_overlay::ViewportShape;
+use bmc_system_overlay::DisplayShape;
 use bmc_wasm_protocol::{Color, SvgId};
 
 mod compact;
@@ -298,7 +298,7 @@ pub enum WifiView<'a> {
 /// The surface the overlay is laid out for.
 #[derive(Debug, Clone, Copy)]
 pub struct Panel {
-    pub shape: ViewportShape,
+    pub shape: DisplayShape,
     pub width: u32,
     pub height: u32,
     /// Whether to render the WiFi reconfigure button, as `caps.wifi_setup` decides.
@@ -485,7 +485,7 @@ fn tier_for(panel: &Panel) -> Tier {
             value_size: 24,
             padding: 24.0,
         }
-    } else if matches!(panel.shape, ViewportShape::Rectangular) {
+    } else if matches!(panel.shape, DisplayShape::Rectangular) {
         // BMM101. The 12pt caption is what keeps the widest label on one
         // line; see `the_widest_label_fits_a_bmm101_group`.
         Tier {
@@ -530,9 +530,9 @@ enum Layout {
 
 fn layout_for(panel: &Panel) -> Layout {
     match panel.shape {
-        ViewportShape::Round => Layout::Round,
-        ViewportShape::Rectangular if panel.width >= WIDE_MIN_WIDTH => Layout::Wide,
-        ViewportShape::Rectangular => Layout::Compact,
+        DisplayShape::Round => Layout::Round,
+        DisplayShape::Rectangular if panel.width >= WIDE_MIN_WIDTH => Layout::Wide,
+        DisplayShape::Rectangular => Layout::Compact,
     }
 }
 

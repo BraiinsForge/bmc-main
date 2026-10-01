@@ -20,8 +20,8 @@
 
 use std::time::{Duration, Instant};
 
+use bmc_platform::DisplayShape;
 use bmc_render::renderer::Renderer;
-use bmc_wasm_protocol::{DisplayShape, ViewportShape};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
 
@@ -360,7 +360,8 @@ impl LayerConfig {
 pub struct OverlayViewport {
     pub width: u32,
     pub height: u32,
-    pub shape: ViewportShape,
+    /// Round only when the surface covers a round display.
+    pub shape: DisplayShape,
 }
 
 impl OverlayViewport {
@@ -369,7 +370,7 @@ impl OverlayViewport {
         Self {
             width,
             height,
-            shape: ViewportShape::Rectangular,
+            shape: DisplayShape::Rectangular,
         }
     }
 
@@ -397,10 +398,7 @@ pub(crate) fn overlay_viewport(
 ) -> OverlayViewport {
     let covers_display = display.filter(|d| (d.width, d.height) == size);
     OverlayViewport {
-        shape: match covers_display.map(|d| d.shape) {
-            Some(DisplayShape::Round) => ViewportShape::Round,
-            Some(DisplayShape::Rectangular) | None => ViewportShape::Rectangular,
-        },
+        shape: covers_display.map_or(DisplayShape::Rectangular, |d| d.shape),
         ..OverlayViewport::rectangular(size)
     }
 }
@@ -887,7 +885,7 @@ mod tests {
     fn a_surface_covering_a_round_panel_is_round() {
         assert_eq!(
             overlay_viewport((480, 480), Some(ROUND_PANEL)).shape,
-            ViewportShape::Round
+            DisplayShape::Round
         );
     }
 
@@ -895,7 +893,7 @@ mod tests {
     fn a_surface_smaller_than_a_round_panel_stays_rectangular() {
         assert_eq!(
             overlay_viewport((480, 120), Some(ROUND_PANEL)).shape,
-            ViewportShape::Rectangular
+            DisplayShape::Rectangular
         );
     }
 
