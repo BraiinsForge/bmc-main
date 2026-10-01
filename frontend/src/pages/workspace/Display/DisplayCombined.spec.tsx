@@ -496,6 +496,55 @@ describe('cancelling an edit', () => {
         expect(revert.position?.col).toBe(3);
         expect(revert.params?.fields.count?.kind).toEqual({ case: 'integerValue', value: 7 });
     });
+
+    // The server stores an empty list item that the form refuses to send,
+    // so re-encoding the form could not reproduce what the widget opened with.
+    test('restores stored params the form could not send back', async () => {
+        const listed = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.SMALL],
+            params: [
+                paramDef('paramArray', 'symbols', false, {
+                    items: { kind: { case: 'paramString', value: {} } },
+                    maxItems: 3,
+                }),
+            ],
+        });
+        const stored = pb.create(pb.FieldValuesSchema, {
+            fields: {
+                symbols: {
+                    kind: { case: 'listValue', value: { items: [{ kind: { case: 'stringValue', value: '' } }] } },
+                },
+            },
+        });
+        const widget = pb.create(pb.WidgetSchema, {
+            id: 'widget-1',
+            position: pb.create(pb.WidgetPositionSchema, { row: 0, col: 0 }),
+            size: pb.WidgetSize.SMALL,
+            config: pb.create(pb.WidgetConfigSchema, { widgetUid: listed.uid, params: stored }),
+        });
+        const updates: pb.UpdateWidgetRequest[] = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getScene: () => ({ scene: combinedScene([widget]), runningWidgetCount: 1, maxRunningWidgetCount: 56 }),
+            getAvailableWidgets: () => ({ widgets: [listed] }),
+            previewScene: () => (async function* () {})(),
+            updateWidget: ({ req }) => {
+                updates.push(req);
+                return {};
+            },
+        });
+
+        renderPage();
+
+        await screen.findByText('Running widgets: 1 / 56');
+        fireEvent.click(await waitFor(() => elementById(WIDGET_1_EDIT_ID)));
+        await waitFor(() => expect(modalIsOpen(MANIFEST_MODAL_ID)).toBe(true));
+        closeManifestEditor();
+
+        await waitFor(() => expect(updates).toHaveLength(1));
+        expect(updates[0].params).toEqual(stored);
+    });
 });
 
 describe('editing a placed widget', () => {

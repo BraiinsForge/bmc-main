@@ -482,6 +482,27 @@ export function buildFieldValues(
     return { ok: true, value: pb.create(pb.FieldValuesSchema, { fields }) };
 }
 
+/**
+ * Stored params fitted to the manifest installed now, for a write that restores them.
+ * A stored value is kept as sent, never re-encoded through the form.
+ * The server refuses an update that names an undeclared key or leaves a declared one out,
+ * so a key the manifest dropped is left out and one it added takes its default.
+ */
+export function fitStoredParams(manifest: pb.WidgetManifest, stored: pb.FieldValues): pb.FieldValues {
+    const fields: Record<string, pb.FieldValue> = {};
+    for (const def of manifest.params) {
+        // A proto map is a plain object,
+        // so a key like `toString` would otherwise read as inherited.
+        if (Object.hasOwn(stored.fields, def.key)) {
+            fields[def.key] = stored.fields[def.key];
+            continue;
+        }
+        const fallback = parseFormifiedValue(def, defaultFormifiedValue(def));
+        if (fallback.ok) fields[def.key] = fallback.value;
+    }
+    return pb.create(pb.FieldValuesSchema, { fields });
+}
+
 // A binding whose account is *gone* never arrives — `effective_bindings` drops it server-side.
 // One whose account is the wrong type does: existence is all that filter checks,
 // and a hand-edited config can mismatch a slot.

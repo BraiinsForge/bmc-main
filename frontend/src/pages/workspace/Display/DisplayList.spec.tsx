@@ -1193,6 +1193,61 @@ describe('dialog session lifecycle', () => {
             expect(updates.at(-1)?.credentialBindings?.bindings).toEqual({ pool: 'pool-a' });
         });
 
+        // The server stores an empty list item that the form refuses to send,
+        // so re-encoding the form could not reproduce what the scene opened with.
+        test('Cancel restores stored params the form could not send back', async () => {
+            const listed = pb.create(pb.WidgetManifestSchema, {
+                uid: 'ticker',
+                name: 'Ticker',
+                supportedSizes: [pb.WidgetSize.FULL],
+                params: [
+                    paramDef('paramArray', 'symbols', false, {
+                        items: { kind: { case: 'paramString', value: {} } },
+                        maxItems: 3,
+                    }),
+                ],
+            });
+            const stored = pb.create(pb.FieldValuesSchema, {
+                fields: {
+                    symbols: {
+                        kind: { case: 'listValue', value: { items: [{ kind: { case: 'stringValue', value: '' } }] } },
+                    },
+                },
+            });
+            server = [
+                pb.create(pb.SceneSchema, {
+                    id: 'S',
+                    enabled: true,
+                    kind: {
+                        case: 'fullscreen',
+                        value: {
+                            widget: {
+                                id: 'widget-s',
+                                size: pb.WidgetSize.FULL,
+                                config: { widgetUid: listed.uid, params: stored },
+                            },
+                        },
+                    },
+                }),
+            ];
+            const updates: pb.UpdateWidgetRequest[] = [];
+            registerMocks(pb.services.SceneManagementService, {
+                getAvailableWidgets: () => ({ widgets: [listed] }),
+                previewScene: () => (async function* () {})(),
+                updateWidget: ({ req }) => {
+                    updates.push(req);
+                    return {};
+                },
+            });
+
+            await openEditor();
+            closeManifestEditor();
+            await flush();
+
+            expect(updates).toHaveLength(1);
+            expect(updates[0].params).toEqual(stored);
+        });
+
         // The server applies the slow preview last unless Cancel waits its turn.
         test('a scene cloned right after Cancel waits for the writes before it', async () => {
             const previewHeld = deferred<void>();

@@ -63,7 +63,8 @@ interface ManifestFormState {
     // What the widget looked like when the dialog opened: what a cancel restores,
     // and — since a size change relocates the widget — what a resize fits around.
     undo: {
-        params: FormifiedParams;
+        // As the server sent them: the form's reading can refuse or reshape a stored value.
+        params: pb.FieldValues;
         size: pb.WidgetSize;
         position: pb.WidgetPosition;
         credentialBindings: Record<string, string>;
@@ -73,7 +74,7 @@ interface ManifestFormState {
 }
 
 const noUndo = (): ManifestFormState['undo'] => ({
-    params: {},
+    params: pb.create(pb.FieldValuesSchema),
     size: pb.WidgetSize.UNSPECIFIED,
     position: pb.create(pb.WidgetPositionSchema),
     credentialBindings: {},
@@ -433,7 +434,7 @@ class View extends Component<Props, State> {
                 sizeOptions,
                 position,
                 undo: {
-                    params: { ...params },
+                    params: widget.config?.params ?? pb.create(pb.FieldValuesSchema),
                     size: widget.size,
                     position,
                     credentialBindings: { ...bindings },
@@ -758,8 +759,6 @@ class View extends Component<Props, State> {
         }
 
         if (!manifest) return;
-        const built = fn.buildFieldValues(manifest, undo.params);
-        if (!built.ok) return;
         const credentialBindings = this.#credentialBindingsFor('cancel');
         try {
             await this.#sceneWrite(async options =>
@@ -769,7 +768,7 @@ class View extends Component<Props, State> {
                         sceneId: this.props.sceneId,
                         position: undo.position,
                         size: undo.size,
-                        params: built.value,
+                        params: fn.fitStoredParams(manifest, undo.params),
                         credentialBindings: await this.#withoutDeletedAccounts(credentialBindings, options),
                     },
                     options,

@@ -35,6 +35,7 @@ import {
     defaultFormifiedValue,
     widgetParamsToFormifiedState,
     buildFieldValues,
+    fitStoredParams,
     credentialBindingsValid,
     credentialBindingsFor,
     withoutDeletedAccounts,
@@ -1124,6 +1125,49 @@ describe('buildFieldValues', () => {
         if (r.ok) throw new Error('expected error');
         expect(r.errors.fields.counts).toBeUndefined();
         expect(r.errors.items?.counts).toEqual([undefined, { errors: ['Must be at most 5'] }]);
+    });
+});
+
+describe('fitStoredParams', () => {
+    const counter = (key: string, defaultValue: number) => paramDef('paramInteger', key, false, { defaultValue });
+
+    test('keeps a stored value as sent, even one the form would refuse', () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, { params: [countsDef()] });
+        const stored = pb.create(pb.FieldValuesSchema, {
+            fields: {
+                counts: pb.create(pb.FieldValueSchema, {
+                    kind: { case: 'listValue', value: { items: [wireInteger(9)] } },
+                }),
+            },
+        });
+
+        expect(fitStoredParams(manifest, stored)).toEqual(stored);
+    });
+
+    test('leaves out a key the manifest no longer declares', () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, { params: [counter('count', 1)] });
+        const stored = pb.create(pb.FieldValuesSchema, {
+            fields: { count: wireInteger(7), retired: wireInteger(3) },
+        });
+
+        expect(Object.keys(fitStoredParams(manifest, stored).fields)).toEqual(['count']);
+    });
+
+    test('gives a key the manifest added its default', () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, { params: [counter('count', 1), counter('added', 4)] });
+        const stored = pb.create(pb.FieldValuesSchema, { fields: { count: wireInteger(7) } });
+
+        const fitted = fitStoredParams(manifest, stored);
+        expect(fitted.fields.count.kind).toEqual({ case: 'integerValue', value: 7 });
+        expect(fitted.fields.added.kind).toEqual({ case: 'integerValue', value: 4 });
+    });
+
+    test('defaults an unstored key that names an Object member', () => {
+        const key: string = 'toString';
+        const manifest = pb.create(pb.WidgetManifestSchema, { params: [counter(key, 4)] });
+
+        const fitted = fitStoredParams(manifest, pb.create(pb.FieldValuesSchema));
+        expect(fitted.fields[key]?.kind).toEqual({ case: 'integerValue', value: 4 });
     });
 });
 

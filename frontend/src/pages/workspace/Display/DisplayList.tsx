@@ -74,7 +74,8 @@ interface ManifestFormState {
     params: FormifiedParams;
     errors: null | ParamsFormErrors;
     isNewScene: boolean;
-    originalParams: FormifiedParams;
+    // As the server sent them: the form's reading can refuse or reshape a stored value.
+    originalParams: pb.FieldValues;
     originalCredentialBindings: Record<string, string>;
     editedBindings?: Record<string, string>;
 }
@@ -135,7 +136,7 @@ const getInitialState = (): State => ({
         params: {},
         errors: null,
         isNewScene: false,
-        originalParams: {},
+        originalParams: pb.create(pb.FieldValuesSchema),
         originalCredentialBindings: {},
     },
 });
@@ -147,7 +148,7 @@ const endedManifestSession = (form: ManifestFormState): ManifestFormState => ({
     sceneID: '',
     widgetID: '',
     isNewScene: false,
-    originalParams: {},
+    originalParams: pb.create(pb.FieldValuesSchema),
 });
 
 class View extends Component<Props, State> {
@@ -401,7 +402,7 @@ class View extends Component<Props, State> {
                         params,
                         errors: null,
                         isNewScene: true,
-                        originalParams: {},
+                        originalParams: pb.create(pb.FieldValuesSchema),
                         originalCredentialBindings: {},
                     },
                 },
@@ -464,8 +465,6 @@ class View extends Component<Props, State> {
         }
 
         if (!manifest || !widgetID || !sceneID) return DialogCloseResult.Closed;
-        const built = fn.buildFieldValues(manifest, originalParams);
-        if (!built.ok) return DialogCloseResult.Closed;
         const credentialBindings = this.#credentialBindingsFor('cancel');
         try {
             await this.#sceneWrite(async options =>
@@ -475,7 +474,7 @@ class View extends Component<Props, State> {
                         sceneId: sceneID,
                         position: { row: 0, col: 0 },
                         size: pb.WidgetSize.FULL,
-                        params: built.value,
+                        params: fn.fitStoredParams(manifest, originalParams),
                         credentialBindings: await this.#withoutDeletedAccounts(credentialBindings, options),
                     },
                     options,
@@ -921,7 +920,7 @@ class View extends Component<Props, State> {
                             params,
                             errors: null,
                             isNewScene: false,
-                            originalParams: { ...params },
+                            originalParams: widget.config?.params ?? pb.create(pb.FieldValuesSchema),
                             originalCredentialBindings: { ...bindings },
                         },
                     },
