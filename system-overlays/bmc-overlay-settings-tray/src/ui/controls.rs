@@ -31,8 +31,8 @@ use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, t
 use bmc_wasm_protocol::colors::{GRAY_50, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{Color, CrossAlign, FontWeight, SvgId, TextAlign};
 
-/// A ±step pair (volume / brightness) with its value text below. On the Large
-/// tier the block is a fixed-width column with bold value + gray name.
+/// A ±step pair (volume / brightness) with its value text below.
+/// With captions the block is a fixed-width column with bold value + gray name.
 #[expect(
     clippy::too_many_arguments,
     reason = "flat display fields, same as build_tree"
@@ -66,8 +66,11 @@ fn pair_group(
         },
         vec![btn(down_key, low_icon), btn(up_key, high_icon)],
     );
-    let mut kids = vec![buttons, fixed_height(if tier.labeled { 8.0 } else { 2.0 })];
-    if tier.labeled {
+    let mut kids = vec![
+        buttons,
+        fixed_height(if tier.captions.is_some() { 8.0 } else { 2.0 }),
+    ];
+    if let Some(captions) = tier.captions {
         kids.push(text(
             format!("{value}"),
             TextStyle {
@@ -81,7 +84,7 @@ fn pair_group(
         kids.push(text(
             name,
             TextStyle {
-                size: tier.caption_size,
+                size: captions.size,
                 color: GRAY_50,
                 align: TextAlign::Center,
                 ..TextStyle::default()
@@ -101,15 +104,15 @@ fn pair_group(
     col(
         PropsData {
             cross_align: CrossAlign::Center,
-            width: if tier.labeled { tier.pair_w } else { 0.0 },
+            width: tier.captions.map_or(0.0, |c| c.pair_w),
             ..PropsData::default()
         },
         kids,
     )
 }
 
-/// A single-button group. Large tier adds the fixed-width label/sublabel
-/// block; other tiers render the bare button.
+/// A single-button group. With captions it adds the fixed-width
+/// label/sublabel block; without, it is the bare button.
 #[expect(
     clippy::too_many_arguments,
     reason = "flat display fields, same as build_tree"
@@ -125,16 +128,16 @@ fn single_group(
     sublabel: &str,
 ) -> TreeNode {
     let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, hold_progress);
-    if !tier.labeled {
+    let Some(captions) = tier.captions else {
         return btn;
-    }
+    };
     // The label/sublabel copy is fixed at compile time ("Night Mode: Off",
     // "hold 5 seconds", …) and sized to its column, so it is never cut.
     let mut kids = vec![btn, fixed_height(8.0)];
     kids.push(text(
         label,
         TextStyle {
-            size: tier.caption_size,
+            size: captions.size,
             weight: FontWeight::BOLD,
             color: WHITE,
             align: TextAlign::Center,
@@ -145,7 +148,7 @@ fn single_group(
         kids.push(text(
             sublabel,
             TextStyle {
-                size: tier.caption_size,
+                size: captions.size,
                 color: if hold_progress.is_some_and(|p| p > 0.0) {
                     WHITE
                 } else {
@@ -159,7 +162,7 @@ fn single_group(
     col(
         PropsData {
             cross_align: CrossAlign::Center,
-            width: tier.single_w,
+            width: captions.single_w,
             ..PropsData::default()
         },
         kids,
@@ -304,7 +307,7 @@ pub(super) fn control_rows(
             )],
         )
     };
-    if tier.labeled {
+    if tier.captions.is_some() {
         let mut groups = pairs;
         groups.extend(singles);
         if groups.is_empty() {
@@ -366,12 +369,14 @@ mod tests {
     /// narrower than the estimate or the label wraps and nobody minds.
     #[test]
     fn the_widest_label_fits_a_bmm101_group() {
-        let tier = tier_for(&narrow_panel());
-        let width = line_width("Reconfigure Wi-Fi", tier.caption_size);
+        let captions = tier_for(&narrow_panel())
+            .captions
+            .expect("BUG: BMM101 captions its groups");
+        let width = line_width("Reconfigure Wi-Fi", captions.size);
         assert!(
-            width <= tier.single_w,
+            width <= captions.single_w,
             "the label needs {width} of {}",
-            tier.single_w
+            captions.single_w
         );
     }
 
@@ -477,7 +482,7 @@ mod tests {
                 [CLOSE_KEY, RESTART_KEY],
                 "{panel:?}: only the held button and close take touches"
             );
-            if tier_for(&panel).labeled {
+            if tier_for(&panel).captions.is_some() {
                 let label = |s| text_brightness(&tree, s).expect("BUG: the label renders");
                 assert_close(label("Restart"), 1.0, "the held button's label stays lit");
                 assert_close(label("Reconfigure Wi-Fi"), DIMMED, "another's label dims");

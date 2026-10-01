@@ -441,27 +441,30 @@ pub struct Controls<'a> {
 }
 
 /// Per-panel control sizing, picked by [`tier_for`] from the panel's width
-/// and shape. A labeled tier captions every group; an unlabeled tier renders
-/// bare buttons.
+/// and shape. A tier with captions labels every group;
+/// one without renders bare buttons.
 #[derive(Debug, Clone, Copy)]
 struct Tier {
     circle: f32,
     icon: f32,
-    /// Gap inside a ± pair. Equal to `group_gap` on an unlabeled tier:
+    /// Gap inside a ± pair. Equal to `group_gap` on a tier without captions:
     /// its bare circles read a tighter gap as uneven spacing,
     /// not as grouping.
     pair_gap: f32,
     group_gap: f32,
-    /// Whether each group carries its own label and sublabel.
-    labeled: bool,
-    /// Fixed widths of a labeled group, so swapping a caption never shifts
-    /// the centered row. Unread while `labeled` is false.
-    pair_w: f32,
-    single_w: f32,
+    captions: Option<Captions>,
     value_size: u32,
-    caption_size: u32,
     /// Inset of the close target from the panel's corner.
     padding: f32,
+}
+
+/// The label and sublabel under each group.
+#[derive(Debug, Clone, Copy)]
+struct Captions {
+    /// Fixed group widths, so swapping a caption never shifts the centered row.
+    pair_w: f32,
+    single_w: f32,
+    size: u32,
 }
 
 /// Narrowest panel that takes the Deck's labeled layout; everything below is compact.
@@ -475,11 +478,12 @@ fn tier_for(panel: &Panel) -> Tier {
             icon: 48.0,
             pair_gap: STEP_GAP_LARGE,
             group_gap: 20.0,
-            labeled: true,
-            pair_w: LARGE_PAIR_W,
-            single_w: LARGE_SINGLE_W,
+            captions: Some(Captions {
+                pair_w: LARGE_PAIR_W,
+                single_w: LARGE_SINGLE_W,
+                size: 20,
+            }),
             value_size: 24,
-            caption_size: 20,
             padding: 24.0,
         }
     } else if matches!(panel.shape, ViewportShape::Rectangular) {
@@ -490,11 +494,12 @@ fn tier_for(panel: &Panel) -> Tier {
             icon: 28.0,
             pair_gap: 20.0,
             group_gap: 20.0,
-            labeled: true,
-            pair_w: LARGE_PAIR_W,
-            single_w: BMM101_SINGLE_W,
+            captions: Some(Captions {
+                pair_w: LARGE_PAIR_W,
+                single_w: BMM101_SINGLE_W,
+                size: 12,
+            }),
             value_size: 14,
-            caption_size: 12,
             padding: 16.0,
         }
     } else {
@@ -505,11 +510,8 @@ fn tier_for(panel: &Panel) -> Tier {
             icon: 28.0,
             pair_gap: 20.0,
             group_gap: 20.0,
-            labeled: false,
-            pair_w: 0.0,
-            single_w: 0.0,
+            captions: None,
             value_size: 14,
-            caption_size: 14,
             padding: 16.0,
         }
     }
@@ -804,21 +806,15 @@ mod tests {
                 .sum();
         }
         if has_pair || has_single {
-            let value_gap = if tier.labeled { 8.0 } else { 2.0 };
+            let value_gap = if tier.captions.is_some() { 8.0 } else { 2.0 };
             let pair_h = tier.circle
                 + value_gap
                 + tier.value_size as f32 * LINE_H
-                + if tier.labeled {
-                    tier.caption_size as f32 * LINE_H
-                } else {
-                    0.0
-                };
+                + tier.captions.map_or(0.0, |c| c.size as f32 * LINE_H);
             let single_h = tier.circle
-                + if tier.labeled {
-                    8.0 + 2.0 * tier.caption_size as f32 * LINE_H
-                } else {
-                    0.0
-                };
+                + tier
+                    .captions
+                    .map_or(0.0, |c| 8.0 + 2.0 * c.size as f32 * LINE_H);
             return match (has_pair, has_single) {
                 (true, true) => pair_h.max(single_h),
                 (true, false) => pair_h,
