@@ -334,6 +334,13 @@ Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
 - Handle errors at appropriate level
 - Never silently swallow exceptions
 
+### Defaults and Validators
+
+- Wherever a value has both a validator and a default, the default goes through that same validator: params, list items,
+  object-row fields and credential fields alike. A default the validator would refuse gets seeded into forms and
+  widgets, and the next save fails on a value nobody typed.
+- Route the default through the shared check rather than a per-kind special case, so the two cannot drift apart.
+
 ## Decision Framework
 
 When multiple valid approaches exist, choose based on:
