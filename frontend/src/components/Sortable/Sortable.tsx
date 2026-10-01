@@ -20,6 +20,7 @@
 // the grant above.
 
 import { useState, useCallback, useRef, type RefCallback, type Ref } from 'react';
+import { createPortal } from 'react-dom';
 import { useIntl } from 'react-intl';
 
 // Drag and drop
@@ -53,6 +54,8 @@ const dropAnimation: DropAnimation = {
     duration: 150,
     easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
 };
+// Carbon's `dropdown` level, the one it keeps for what renders outside a modal yet above it.
+const ABOVE_CARBON_MODAL = 9100;
 
 // Styles
 import css from './Sortable.scss';
@@ -189,18 +192,23 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
                     ))}
                 />
 
-                <DragOverlay dropAnimation={dropAnimation}>
-                    {activeItem ? (
-                        <div
-                            className={css.overlay}
-                            children={renderItem({
-                                index: activeIndex,
-                                item: activeItem,
-                                state: { isOver: false, isDragging: true },
-                            })}
-                        />
-                    ) : null}
-                </DragOverlay>
+                {/* Under a transformed ancestor, such as Carbon's modal container, the overlay's `position: fixed`
+                    and the collisions measured from it are offset: https://github.com/clauderic/dnd-kit/issues/464 */}
+                {createPortal(
+                    <DragOverlay dropAnimation={dropAnimation} zIndex={ABOVE_CARBON_MODAL}>
+                        {activeItem ? (
+                            <div
+                                className={css.overlay}
+                                children={renderItem({
+                                    index: activeIndex,
+                                    item: activeItem,
+                                    state: { isOver: false, isDragging: true },
+                                })}
+                            />
+                        ) : null}
+                    </DragOverlay>,
+                    document.body,
+                )}
             </DndContext>
         </div>
     );

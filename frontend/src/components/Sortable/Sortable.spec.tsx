@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/core';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react/pure';
+import { cleanup, fireEvent, render, type RenderOptions, waitFor } from '@testing-library/react/pure';
 import { IntlProvider } from 'react-intl';
 import { Sortable } from './Sortable';
 
@@ -32,15 +32,27 @@ type Fruit = (typeof fruits)[number];
 
 const ROW_HEIGHT = 40;
 
+// Stands in for a transformed ancestor such as Carbon's modal container:
+// it, not the viewport, is what a `position: fixed` descendant is placed against.
+const TRANSFORMED = 'transformed';
+const TRANSFORMED_TOP = 150;
+
+function isPlacedByTransform(el: HTMLElement): boolean {
+    for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+        if (node.style.position === 'fixed') return !!node.parentElement?.closest(`.${TRANSFORMED}`);
+    }
+    return false;
+}
+
 beforeEach(() => {
     cleanup();
     // jsdom lays nothing out, so every row would collide with the first; stack them as a browser would.
     rstest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-        const top =
-            Math.max(
-                0,
-                fruits.findIndex(f => f.name === this.textContent),
-            ) * ROW_HEIGHT;
+        const row = Math.max(
+            0,
+            fruits.findIndex(f => f.name === this.textContent),
+        );
+        const top = row * ROW_HEIGHT + (isPlacedByTransform(this) ? TRANSFORMED_TOP : 0);
         return {
             x: 0,
             y: top,
@@ -58,7 +70,7 @@ afterEach(() => {
     rstest.restoreAllMocks();
 });
 
-function renderFruits(onChange: (items: Fruit[]) => void = () => {}) {
+function renderFruits(onChange: (items: Fruit[]) => void = () => {}, options?: RenderOptions) {
     return render(
         <IntlProvider locale="en">
             <Sortable
@@ -72,6 +84,7 @@ function renderFruits(onChange: (items: Fruit[]) => void = () => {}) {
                 )}
             />
         </IntlProvider>,
+        options,
     );
 }
 
@@ -113,5 +126,20 @@ describe('Sortable announcements', () => {
 
         fireEvent.keyDown(handle, { code: 'Escape' });
         await waitFor(() => expect(announcement()).toBe('Move cancelled, Banana is back at position 2 of 3.'));
+    });
+});
+
+describe('Sortable in a transformed container', () => {
+    test('drops an item picked up and put straight down where it was', async () => {
+        const container = document.body.appendChild(document.createElement('div'));
+        container.classList.add(TRANSFORMED);
+        const onChange = rstest.fn<(items: Fruit[]) => void>();
+        const { getByText } = renderFruits(onChange, { container });
+        const handle = getByText('Banana');
+        await pickUp(handle, 'Picked up Banana, position 2 of 3.');
+
+        fireEvent.keyDown(handle, { code: 'Space' });
+        await waitFor(() => expect(announcement()).toBe('Banana dropped at position 2 of 3.'));
+        expect(onChange).not.toHaveBeenCalled();
     });
 });
