@@ -1070,9 +1070,12 @@ pub fn render_settings_tray(
     };
     // Positions are reported against the slider the touch began on, so they
     // keep arriving once the finger strays off it, and run past both ends.
+    // A release drained with the last move leaves no drag,
+    // only the release click at the point the finger came up.
     let brightness_drag = result
         .drags
         .get(ui::BRIGHTNESS_SLIDER_KEY)
+        .or_else(|| result.clicks.get(ui::BRIGHTNESS_SLIDER_KEY))
         .filter(|hit| hit.width > 0.0)
         .map(|hit| (hit.x / hit.width).clamp(0.0, 1.0));
     SettingsTrayRenderOutput {
@@ -1895,6 +1898,100 @@ mod step_tests {
             now,
         );
         assert!(overlay.tick(now + Duration::from_millis(20)).wants_render);
+    }
+}
+
+/// The slider driven through real frames: the touch events queue on the tree,
+/// and the frame that drains them reports what the finger did.
+#[cfg(test)]
+mod slider_release_tests {
+    use bmc_render::renderer::test_support::{DrawnRect, ShapingRecorder};
+
+    use super::*;
+
+    fn bmm101() -> OverlayViewport {
+        OverlayViewport::rectangular(480, 320)
+    }
+
+    fn frame(
+        state: &mut SettingsTrayRenderState,
+        view: &SettingsTrayView,
+        now: Instant,
+    ) -> (SettingsTrayRenderOutput, ShapingRecorder) {
+        let mut recorder = ShapingRecorder::new(480.0, 320.0);
+        let output = render_settings_tray(&mut recorder, bmm101(), state, view, now);
+        (output, recorder)
+    }
+
+    /// The slider's track: the widest bar no taller than a track the frame drew.
+    /// The fill drawn over it is narrower, and the panel's own fills are taller.
+    fn track(recorder: &ShapingRecorder) -> DrawnRect {
+        const TRACK_H: f32 = 8.0;
+        recorder
+            .rects
+            .iter()
+            .copied()
+            .filter(|rect| rect.h <= TRACK_H)
+            .max_by(|a, b| a.w.total_cmp(&b.w))
+            .expect("BUG: the BMM101 tray draws its slider track")
+    }
+
+    fn point(x: f32, y: f32) -> (f64, f64) {
+        (f64::from(x), f64::from(y))
+    }
+
+    /// A warmed-up tray at `t0`, and where its slider's track lies.
+    fn warmed_up(t0: Instant) -> (SettingsTrayRenderState, SettingsTrayView, DrawnRect) {
+        let mut state = SettingsTrayRenderState::new(t0);
+        let view = SettingsTrayView::resting();
+        // Hit regions are the previous frame's, so a touch needs one frame drawn before it.
+        let (_, recorder) = frame(&mut state, &view, t0);
+        (state, view, track(&recorder))
+    }
+
+    #[test]
+    fn a_release_drained_with_its_last_move_keeps_the_stop_it_left_on() {
+        let t0 = Instant::now();
+        let (mut state, view, track) = warmed_up(t0);
+        let y = track.y + track.h / 2.0;
+        let (down_x, down_y) = point(track.x + track.w * 0.2, y);
+        let (up_x, up_y) = point(track.x + track.w * 0.8, y);
+        state.tree.push_touch(TouchEvent::Down {
+            id: 0,
+            x: down_x,
+            y: down_y,
+        });
+        state.tree.push_touch(TouchEvent::Motion {
+            id: 0,
+            x: up_x,
+            y: up_y,
+        });
+        state.tree.push_touch(TouchEvent::Up { id: 0 });
+        let (output, _) = frame(&mut state, &view, t0 + FAST_WAKE);
+        let fraction = output
+            .brightness_drag
+            .expect("the release reports where the finger came up");
+        assert!(
+            (0.75..=0.85).contains(&fraction),
+            "the finger came up at 0.8 of the track, the slider reads {fraction}"
+        );
+    }
+
+    #[test]
+    fn a_tap_drained_in_one_frame_still_sets_the_slider() {
+        let t0 = Instant::now();
+        let (mut state, view, track) = warmed_up(t0);
+        let (x, y) = point(track.x + track.w * 0.3, track.y + track.h / 2.0);
+        state.tree.push_touch(TouchEvent::Down { id: 0, x, y });
+        state.tree.push_touch(TouchEvent::Up { id: 0 });
+        let (output, _) = frame(&mut state, &view, t0 + FAST_WAKE);
+        let fraction = output
+            .brightness_drag
+            .expect("a tap on the track sets the slider");
+        assert!(
+            (0.25..=0.35).contains(&fraction),
+            "the tap landed at 0.3 of the track, the slider reads {fraction}"
+        );
     }
 }
 
