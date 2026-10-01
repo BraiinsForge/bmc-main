@@ -459,6 +459,7 @@ describe('running widget limit', () => {
             uid: 'clock',
             name: 'Clock',
             supportedSizes: [pb.WidgetSize.FULL],
+            params: [paramDef('paramInteger', 'count')],
         });
         server[0] = pb.create(pb.SceneSchema, {
             id: 'A',
@@ -468,19 +469,31 @@ describe('running widget limit', () => {
                 value: pb.create(pb.Scene_FullscreenSchema, {
                     widget: pb.create(pb.WidgetSchema, {
                         id: 'widget-a',
-                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                        config: pb.create(pb.WidgetConfigSchema, {
+                            widgetUid: manifest.uid,
+                            params: { fields: { count: { kind: { case: 'integerValue', value: 7 } } } },
+                        }),
                     }),
                 }),
             },
         });
+        const streamDropped = deferred<void>();
+        let writes = 0;
         registerMocks(pb.services.SceneManagementService, {
             getAvailableWidgets: () => ({ widgets: [manifest] }),
             updateWidget: () => {
-                throw new ConnectError('revert cancelled', Code.Canceled);
+                writes += 1;
+                if (writes > 1) throw new ConnectError('revert cancelled', Code.Canceled);
+                return {};
             },
-            previewScene: () => {
-                throw new ConnectError('connection lost', Code.Unavailable);
-            },
+            previewScene: () => ({
+                [Symbol.asyncIterator]: () => ({
+                    next: async () => {
+                        await streamDropped;
+                        throw new ConnectError('connection lost', Code.Unavailable);
+                    },
+                }),
+            }),
         });
         const { container } = renderPage();
         await flush();
@@ -489,7 +502,13 @@ describe('running widget limit', () => {
         if (!edit) throw new Error('scene edit button not rendered');
         fireEvent.click(edit);
         await flush();
+        // Only a preview sent to the device leaves Cancel something to revert.
+        fireEvent.change(elementById('bmc-display-comp-manifest-form-param-count'), { target: { value: '8' } });
+        await flush(300);
+        streamDropped.resolve();
+        await flush();
 
+        expect(writes).toBe(2);
         expect(document.body.textContent).toContain('revert cancelled');
         expect(document.body.textContent).not.toContain('Display preview connection lost!');
     });
@@ -1062,6 +1081,39 @@ describe('dialog session lifecycle', () => {
             expect(updates.map(u => u.credentialBindings)).toEqual([undefined, undefined]);
         });
 
+        test('closing an untouched edit writes nothing to restore', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                return {};
+            });
+
+            await openEditor();
+            closeManifestEditor();
+            await flush();
+
+            expect(updates).toEqual([]);
+        });
+
+        test('a Done that timed out still leaves Cancel its restore', async () => {
+            const updates: pb.UpdateWidgetRequest[] = [];
+            mockServer(({ req }) => {
+                updates.push(req);
+                if (updates.length === 1) throw new ConnectError('deadline exceeded', Code.DeadlineExceeded);
+                return {};
+            });
+
+            await openEditor();
+            fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+            // Before the preview's debounce runs, so Done's is the only write.
+            fireEvent.click(elementById(MANIFEST_DONE_ID));
+            await flush();
+            closeManifestEditor();
+            await flush();
+
+            expect(updates.map(u => u.params?.fields.count?.kind.value)).toEqual([8, 7]);
+        });
+
         test('Done lands after a preview still in flight', async () => {
             const previewHeld = deferred<void>();
             const applied: Array<string | undefined> = [];
@@ -1280,11 +1332,14 @@ describe('dialog session lifecycle', () => {
             });
 
             await openEditor();
+            // Only a preview sent to the device leaves Cancel something to restore.
+            fireEvent.change(screen.getByLabelText('K, item 1'), { target: { value: 'BTC' } });
+            await flush(300);
             closeManifestEditor();
             await flush();
 
-            expect(updates).toHaveLength(1);
-            expect(updates[0].params).toEqual(stored);
+            expect(updates).toHaveLength(2);
+            expect(updates[1].params).toEqual(stored);
         });
 
         // The server applies the slow preview last unless Cancel waits its turn.

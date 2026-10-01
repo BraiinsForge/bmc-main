@@ -487,11 +487,12 @@ describe('cancelling an edit', () => {
         await screen.findByText('Running widgets: 1 / 56');
         fireEvent.click(await waitFor(() => elementById(WIDGET_1_EDIT_ID)));
         fireEvent.click(await screen.findByRole('button', { name: 'Medium' }));
-        closeManifestEditor();
-        // Cancelling cancels the live-preview debounce, so the revert is the only write.
+        // Only a resize sent to the device leaves Cancel something to revert.
         await waitFor(() => expect(updates).toHaveLength(1));
+        closeManifestEditor();
+        await waitFor(() => expect(updates).toHaveLength(2));
 
-        const [revert] = updates;
+        const revert = updates[1];
         expect(revert.size).toBe(pb.WidgetSize.SMALL);
         expect(revert.position?.col).toBe(3);
         expect(revert.params?.fields.count?.kind).toEqual({ case: 'integerValue', value: 7 });
@@ -540,10 +541,13 @@ describe('cancelling an edit', () => {
         await screen.findByText('Running widgets: 1 / 56');
         fireEvent.click(await waitFor(() => elementById(WIDGET_1_EDIT_ID)));
         await waitFor(() => expect(modalIsOpen(MANIFEST_MODAL_ID)).toBe(true));
+        // Only a preview sent to the device leaves Cancel something to restore.
+        fireEvent.change(screen.getByLabelText('K, item 1'), { target: { value: 'BTC' } });
+        await waitFor(() => expect(updates).toHaveLength(1));
         closeManifestEditor();
 
-        await waitFor(() => expect(updates).toHaveLength(1));
-        expect(updates[0].params).toEqual(stored);
+        await waitFor(() => expect(updates).toHaveLength(2));
+        expect(updates[1].params).toEqual(stored);
     });
 });
 
@@ -856,6 +860,24 @@ describe('editing a placed widget', () => {
             fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
 
             await waitFor(() => expect(document.body.textContent).toContain("The device didn't answer in time."));
+        });
+
+        test('a Done that timed out still leaves Cancel its restore', async () => {
+            const sent: Array<number | undefined> = [];
+            mockServer(({ req }) => {
+                sent.push(countOf(req));
+                if (sent.length === 1) throw new ConnectError('deadline exceeded', Code.DeadlineExceeded);
+                return {};
+            });
+
+            await openEditor();
+            fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
+            // Before the preview's debounce runs, so Done's is the only write.
+            fireEvent.click(elementById(MANIFEST_DONE_ID));
+            await waitFor(() => expect(document.body.textContent).toContain("The device didn't answer in time."));
+            closeManifestEditor();
+
+            await waitFor(() => expect(sent).toEqual([8, 7]));
         });
 
         test('a widget added right after Cancel waits for the writes before it', async () => {

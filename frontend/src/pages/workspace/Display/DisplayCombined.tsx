@@ -71,6 +71,8 @@ interface ManifestFormState {
     };
     isNewWidget: boolean;
     editedBindings?: Record<string, string>;
+    /** A preview left for the device since the dialog opened, so Cancel has something to restore. */
+    previewWritten: boolean;
 }
 
 const noUndo = (): ManifestFormState['undo'] => ({
@@ -128,6 +130,7 @@ const getInitialState = (): State => ({
         position: pb.create(pb.WidgetPositionSchema),
         undo: noUndo(),
         isNewWidget: false,
+        previewWritten: false,
     },
 });
 
@@ -440,6 +443,7 @@ class View extends Component<Props, State> {
                     credentialBindings: { ...bindings },
                 },
                 isNewWidget: false,
+                previewWritten: false,
             },
         });
     };
@@ -544,6 +548,7 @@ class View extends Component<Props, State> {
                 // only the slot it went into, for a resize to fit around.
                 undo: { ...noUndo(), position: resolvedPosition },
                 isNewWidget: true,
+                previewWritten: false,
             },
         });
     };
@@ -571,6 +576,11 @@ class View extends Component<Props, State> {
         return { bindings: fn.withoutDeletedAccounts(update.bindings, accounts) };
     }
 
+    /** Call before the send, not on success: an aborted or timed-out write may still land. */
+    #noteWriteSent(): void {
+        this.setState(s => ({ manifestForm: { ...s.manifestForm, previewWritten: true } }));
+    }
+
     #livePreviewWidget = debounce(async (): Promise<void> => {
         const { sceneId } = this.props;
         const { widgetID, position, size, params, manifest } = this.state.manifestForm;
@@ -582,6 +592,7 @@ class View extends Component<Props, State> {
         }
         const paramsStruct = built.value;
         const credentialBindings = this.#credentialBindingsFor('preview');
+        this.#noteWriteSent();
         try {
             await this.#sceneWrite(options =>
                 pb.rpc.scenes.updateWidget(
@@ -692,6 +703,7 @@ class View extends Component<Props, State> {
         }
 
         const credentialBindings = this.#credentialBindingsFor('done');
+        this.#noteWriteSent();
         try {
             const { formatMessage } = this.props.intl;
             this.#livePreviewWidget.cancel();
@@ -741,7 +753,7 @@ class View extends Component<Props, State> {
 
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { widgetID, undo, isNewWidget, manifest } = this.state.manifestForm;
+        const { widgetID, undo, isNewWidget, manifest, previewWritten } = this.state.manifestForm;
         this.setState({ openDialogKind: null, addPosition: null });
         if (!widgetID) return;
         this.#livePreviewWidget.cancel();
@@ -761,7 +773,7 @@ class View extends Component<Props, State> {
             return;
         }
 
-        if (!manifest) return;
+        if (!manifest || !previewWritten) return;
         const credentialBindings = this.#credentialBindingsFor('cancel');
         try {
             await this.#sceneWrite(async options =>
