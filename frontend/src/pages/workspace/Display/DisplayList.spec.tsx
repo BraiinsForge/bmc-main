@@ -1114,6 +1114,67 @@ describe('dialog session lifecycle', () => {
             expect(updates.map(u => u.params?.fields.count?.kind.value)).toEqual([8, 7]);
         });
 
+        test('a reopened editor carries nothing over from the last session', async () => {
+            const listed = pb.create(pb.WidgetManifestSchema, {
+                uid: 'ticker',
+                name: 'Ticker',
+                supportedSizes: [pb.WidgetSize.FULL],
+                params: [
+                    paramDef('paramArray', 'symbols', false, {
+                        items: { kind: { case: 'paramString', value: {} } },
+                        maxItems: 3,
+                    }),
+                ],
+            });
+            const symbols = ['A', 'B'].map(value =>
+                pb.create(pb.FieldValueSchema, { kind: { case: 'stringValue', value } }),
+            );
+            server = [
+                pb.create(pb.SceneSchema, {
+                    id: 'S',
+                    enabled: true,
+                    kind: {
+                        case: 'fullscreen',
+                        value: {
+                            widget: {
+                                id: 'widget-s',
+                                size: pb.WidgetSize.FULL,
+                                config: {
+                                    widgetUid: listed.uid,
+                                    params: {
+                                        fields: { symbols: { kind: { case: 'listValue', value: { items: symbols } } } },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                }),
+            ];
+            registerMocks(pb.services.SceneManagementService, {
+                getAvailableWidgets: () => ({ widgets: [listed] }),
+                previewScene: () => (async function* () {})(),
+                updateWidget: () => ({}),
+            });
+            const announcements = () =>
+                [...document.querySelectorAll('[id^="DndLiveRegion"]')].map(r => r.textContent).filter(Boolean);
+
+            await openEditor();
+            const handle = screen.getByRole('button', { name: 'Move K, item 1' });
+            handle.focus();
+            fireEvent.keyDown(handle, { code: 'Space' });
+            await flush();
+            fireEvent.keyDown(handle, { code: 'Space' });
+            await flush();
+            expect(announcements()).not.toEqual([]);
+
+            closeManifestEditor();
+            await flush();
+            fireEvent.click(elementById('bmc-display-comp-scene-overview-row-S-edit'));
+            await flush();
+
+            expect(announcements()).toEqual([]);
+        });
+
         test('Done lands after a preview still in flight', async () => {
             const previewHeld = deferred<void>();
             const applied: Array<string | undefined> = [];

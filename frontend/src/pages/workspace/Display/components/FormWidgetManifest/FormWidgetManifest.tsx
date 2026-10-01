@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import { FormattedMessage, useIntl } from 'react-intl';
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
@@ -276,6 +276,15 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
     const { manifest, errors, accounts, credentialBindings = {}, onCredentialBindingChange } = formProps;
     const { formatMessage } = useIntl();
 
+    // The modal stays mounted to animate, so without a fresh key per open
+    // one session's field state (a list's last drag announcement) leaks into the next.
+    const [opens, setOpens] = useState(0);
+    const [wasOpen, setWasOpen] = useState(isOpen);
+    if (isOpen !== wasOpen) {
+        setWasOpen(isOpen);
+        if (isOpen) setOpens(n => n + 1);
+    }
+
     if (!manifest) return null;
 
     // An unbound slot still saves, deliberately — the operator may configure the rest
@@ -297,7 +306,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
             title={<WidgetName name={manifest.name} subname={manifest.subname} />}
             label={formatMessage({ defaultMessage: 'Configure Widget' })}
             onClose={onCancel}
-            children={<WidgetManifestForm {...formProps} />}
+            children={<WidgetManifestForm key={opens} {...formProps} />}
             footer={
                 <Button
                     id={$('done')}
