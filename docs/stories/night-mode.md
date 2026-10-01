@@ -52,6 +52,10 @@ sound volume, optionally turns the screen off after inactivity, and controls whe
 - The user can choose **Never** or a fixed inactivity timeout.
 - A configured timeout of **Never** keeps the screen on during night mode.
 - Any non-zero timeout turns the screen off after the configured inactivity period.
+- A finger resting on the screen counts as activity: the screen stays on while it is held, and the timeout starts over
+  when it lifts.
+- A touch held for more than 5 minutes stops keeping the screen on, so a stuck touch or something resting on the glass
+  cannot keep it lit all night. Lifting that finger afterwards does not turn the screen back on.
 - When night mode ends, the screen is turned back on if auto-off had turned it off.
 - A screen the user turned off from the IP-report button stays off when night mode ends, since the user asked for that
   blank more recently than the schedule did. See [Physical Buttons](physical-buttons.md).
