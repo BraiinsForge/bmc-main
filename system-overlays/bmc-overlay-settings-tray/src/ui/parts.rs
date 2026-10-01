@@ -23,7 +23,7 @@
 
 use super::{
     CIRCLE_FILL, CIRCLE_PRESSED, CLOSE_GLYPH, CLOSE_KEY, CLOSE_TARGET, HOLD_ALPHA_FULL_AT,
-    HOLD_FILL, ICON_PRESSED_TINT, Panel, Tier, WIDE_QR_QUIET_ZONE, WifiIcons,
+    HOLD_FILL, ICON_PRESSED_TINT, Panel, Tier, WIDE_QR_QUIET_ZONE, WifiIcons, WifiView,
 };
 use bmc_render::tree::{DrawCommand, PropsData, TextStyle, TreeNode, col, row, text};
 use bmc_system_overlay::ViewportShape;
@@ -121,6 +121,25 @@ pub(super) fn setup_badge(size: u32) -> TreeNode {
 
 pub(super) fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>, size: f32) -> TreeNode {
     svg_icon(icons.for_signal(wifi_signal), size, TRANSPARENT)
+}
+
+/// The name the cable goes by beside its glyph.
+pub(super) const ETHERNET: &str = "Ethernet";
+
+/// What the device is online through, as every layout draws it:
+/// the cable glyph, tinted like the text beside it, else the signal icon,
+/// which reads as the problem icon while setup runs.
+pub(super) fn connection_icon(
+    view: WifiView<'_>,
+    icons: WifiIcons,
+    wifi_signal: Option<i32>,
+    size: f32,
+) -> TreeNode {
+    match view {
+        WifiView::Cable => svg_icon(icons.cable, size, WHITE),
+        WifiView::Idle => wifi_icon(icons, wifi_signal, size),
+        WifiView::Setup { .. } => wifi_icon(icons, None, size),
+    }
 }
 
 /// A square icon. A `TRANSPARENT` tint keeps the artwork's own colours.

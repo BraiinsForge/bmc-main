@@ -22,7 +22,8 @@
 
 use super::notice::Notice;
 use super::parts::{
-    capped_text, fixed_width, ip_qr, pad_horizontal, setup_badge, text_style, wifi_icon,
+    ETHERNET, capped_text, connection_icon, fixed_width, ip_qr, pad_horizontal, setup_badge,
+    text_style,
 };
 use super::{
     Content, INFO_HEADER_GAP, INFO_HEADER_SIZE, NO_DATA_PLACEHOLDER, Tier, WIDE_HOSTNAME_WIDTH,
@@ -51,7 +52,7 @@ fn info_block(header: &'static str, value: TreeNode) -> TreeNode {
 /// the WiFi connection block in the right corner, nothing in between —
 /// each text pair a gray header over a 24px value.
 /// In setup mode the WiFi block carries the SETUP badge, the AP SSID,
-/// and the join hint instead of the station info.
+/// and the join hint instead of the station info; on the cable it names Ethernet.
 pub(super) fn wide_header(
     hostname: &str,
     ip: Option<&str>,
@@ -61,20 +62,25 @@ pub(super) fn wide_header(
     wifi_view: WifiView<'_>,
 ) -> TreeNode {
     let value_size = WIDE_INFO_VALUE_SIZE;
+    let icon = connection_icon(wifi_view, icons, wifi_signal, WIDE_WIFI_ICON_SIZE);
+    let line = |name| {
+        row(
+            PropsData {
+                cross_align: CrossAlign::Center,
+                gap: WIDE_WIFI_GAP,
+                ..PropsData::default()
+            },
+            vec![icon.clone(), name],
+        )
+    };
     let wifi_block = match wifi_view {
-        WifiView::Idle | WifiView::Cable => info_block(
+        WifiView::Cable => info_block(
+            "Connection",
+            line(text(ETHERNET, text_style(value_size, WHITE))),
+        ),
+        WifiView::Idle => info_block(
             "Wi-Fi Connection",
-            row(
-                PropsData {
-                    cross_align: CrossAlign::Center,
-                    gap: WIDE_WIFI_GAP,
-                    ..PropsData::default()
-                },
-                vec![
-                    wifi_icon(icons, wifi_signal, WIDE_WIFI_ICON_SIZE),
-                    capped_text(ssid, value_size, WIDE_SSID_WIDTH),
-                ],
-            ),
+            line(capped_text(ssid, value_size, WIDE_SSID_WIDTH)),
         ),
         WifiView::Setup { ap_ssid } => info_block(
             "Wi-Fi Connection",
@@ -91,7 +97,7 @@ pub(super) fn wide_header(
                             ..PropsData::default()
                         },
                         vec![
-                            wifi_icon(icons, None, WIDE_WIFI_ICON_SIZE),
+                            icon.clone(),
                             setup_badge(WIDE_SETUP_BADGE_SIZE),
                             capped_text(ap_ssid, value_size, WIDE_SSID_WIDTH),
                         ],

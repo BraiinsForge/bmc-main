@@ -74,8 +74,8 @@ struct TrayStage {
     ip: &'static str,
     ssid: &'static str,
     brightness: u8,
-    /// Whether this layout's table has a connection row to show the cable in.
-    names_the_cable: bool,
+    /// Whether the board has an Ethernet port for the cable variants to plug in.
+    has_ethernet: bool,
 }
 
 const BMC100_TRAY: TrayStage = TrayStage {
@@ -93,7 +93,7 @@ const BMC100_TRAY: TrayStage = TrayStage {
     ip: "192.168.1.42",
     ssid: "Braiins-WiFi",
     brightness: 70,
-    names_the_cable: false,
+    has_ethernet: false,
 };
 
 const BMM101_TRAY: TrayStage = TrayStage {
@@ -111,7 +111,7 @@ const BMM101_TRAY: TrayStage = TrayStage {
     ip: "10.0.0.42",
     ssid: "Workshop-WiFi",
     brightness: 55,
-    names_the_cable: true,
+    has_ethernet: true,
 };
 
 const BFM100_TRAY: TrayStage = TrayStage {
@@ -129,7 +129,7 @@ const BFM100_TRAY: TrayStage = TrayStage {
     ip: "10.0.0.7",
     ssid: "Studio-WiFi",
     brightness: 60,
-    names_the_cable: false,
+    has_ethernet: true,
 };
 
 /// The tray at rest on one stage: connected, night mode scheduled, nothing held.
@@ -901,8 +901,7 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
             &TRAY_NO_SIGNAL,
         ),
     ]);
-    // Elsewhere these repeat the resting tray.
-    if stage.names_the_cable {
+    if stage.has_ethernet {
         cards.extend([
             (
                 "Ethernet cable",

@@ -18,11 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The disc's bottom line: who the device is connected to,
+//! The disc's bottom line: what the device is online through,
 //! or the setup AP while provisioning runs.
 
-use super::parts::{setup_badge, text_style, wifi_icon};
-use super::{Content, ROUND_WIFI_ICON_SIZE, ROUND_WIFI_TEXT_SIZE, WifiIcons, WifiView};
+use super::parts::{ETHERNET, connection_icon, setup_badge, text_style};
+use super::{Content, ROUND_WIFI_ICON_SIZE, ROUND_WIFI_TEXT_SIZE, WifiView};
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, row, text};
 use bmc_wasm_protocol::colors::WHITE;
 use bmc_wasm_protocol::{CrossAlign, Justify, TextOverflow};
@@ -51,32 +51,21 @@ fn ssid_text(ssid: &str) -> TreeNode {
     )
 }
 
-/// Icon and SSID. The address heads the panel instead,
-/// so this line carries only who the device is connected to.
-fn station_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str) -> TreeNode {
-    centered_line(vec![
-        wifi_icon(icons, wifi_signal, ROUND_WIFI_ICON_SIZE),
-        ssid_text(ssid),
-    ])
-}
-
-/// One centered line of icon, badge and SSID, as tall as the idle
-/// line it replaces so the vertical budget holds either way.
-fn setup_row(icons: WifiIcons, ap_ssid: &str) -> TreeNode {
-    centered_line(vec![
-        wifi_icon(icons, None, ROUND_WIFI_ICON_SIZE),
-        setup_badge(ROUND_WIFI_TEXT_SIZE),
-        ssid_text(ap_ssid),
-    ])
-}
-
-/// The disc's bottom line: the station info, or the setup badge and AP SSID
-/// while setup runs.
+/// The disc's bottom line. The address heads the panel instead,
+/// so this line carries only what the device is online through.
+/// Every variant is one line tall, so the vertical budget holds either way.
 pub(super) fn station_line(content: Content<'_>) -> TreeNode {
-    match content.wifi_view {
-        WifiView::Setup { ap_ssid } => setup_row(content.icons, ap_ssid),
-        WifiView::Idle | WifiView::Cable => {
-            station_info(content.icons, content.wifi_signal, content.ssid)
+    let icon = connection_icon(
+        content.wifi_view,
+        content.icons,
+        content.wifi_signal,
+        ROUND_WIFI_ICON_SIZE,
+    );
+    centered_line(match content.wifi_view {
+        WifiView::Cable => vec![icon, ssid_text(ETHERNET)],
+        WifiView::Idle => vec![icon, ssid_text(content.ssid)],
+        WifiView::Setup { ap_ssid } => {
+            vec![icon, setup_badge(ROUND_WIFI_TEXT_SIZE), ssid_text(ap_ssid)]
         }
-    }
+    })
 }

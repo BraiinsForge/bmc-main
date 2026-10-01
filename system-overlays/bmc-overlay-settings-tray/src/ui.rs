@@ -292,7 +292,6 @@ pub enum WifiView<'a> {
     /// Setup mode: compact row with a SETUP badge and the AP SSID.
     Setup { ap_ssid: &'a str },
     /// The cable carries the uplink, which outranks setup mode too.
-    /// Only the compact table names it; the Deck and the disc keep their station line.
     Cable,
 }
 
@@ -939,6 +938,42 @@ mod tests {
                 };
                 assert_eq!(qrs, expected, "{panel:?} ip={ip:?}");
             }
+        }
+    }
+
+    /// The cable reads the same on every layout: its glyph and Ethernet,
+    /// in place of the station SSID.
+    #[test]
+    fn every_layout_names_the_cable() {
+        let cable = distinct_icons()
+            .cable
+            .expect("BUG: distinct icons are all set");
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
+            let tree = build_tree(
+                Some("braiins-deck"),
+                Some("10.0.0.2"),
+                Some(-55),
+                Some("MyWifi"),
+                distinct_icons(),
+                panel,
+                WifiView::Cable,
+                ControlIcons::default(),
+                Controls::default(),
+                None,
+            );
+            let mut ids = Vec::new();
+            svg_ids(&tree, &mut ids);
+            assert!(ids.contains(&cable), "{panel:?}: the cable glyph draws");
+            let mut texts = Vec::new();
+            collect_texts(&tree, &mut texts);
+            assert!(
+                texts.iter().any(|t| t == "Ethernet"),
+                "{panel:?}: {texts:?}"
+            );
+            assert!(
+                !texts.iter().any(|t| t == "MyWifi"),
+                "{panel:?}: the station SSID gives way: {texts:?}"
+            );
         }
     }
 

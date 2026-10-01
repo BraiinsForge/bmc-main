@@ -129,6 +129,22 @@ pub(super) fn build_with_controls(
     )
 }
 
+/// Every SVG icon id the subtree draws, in tree order.
+pub(super) fn svg_ids(node: &TreeNode, out: &mut Vec<SvgId>) {
+    if let TreeNode::Canvas { draws, .. } = node {
+        out.extend(draws.iter().filter_map(|draw| {
+            if let DrawCommand::Svg { icon_id, .. } = draw {
+                *icon_id
+            } else {
+                None
+            }
+        }));
+    }
+    for kid in children(node).into_iter().flatten() {
+        svg_ids(kid, out);
+    }
+}
+
 /// Direct children of a container node, if any.
 pub(super) fn children(node: &TreeNode) -> Option<&[TreeNode]> {
     match node {

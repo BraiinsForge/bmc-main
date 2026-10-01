@@ -24,7 +24,8 @@
 use super::controls::{control_groups, control_rows};
 use super::notice::NOTICE_SIZE;
 use super::parts::{
-    close_origin, fixed_width, ip_qr, pad_horizontal, setup_badge, svg_icon, text_style, wifi_icon,
+    ETHERNET, close_origin, connection_icon, fixed_width, ip_qr, pad_horizontal, setup_badge,
+    svg_icon, text_style,
 };
 use super::{
     BRIGHTNESS_ICON_SIZE, BRIGHTNESS_SLIDER_KEY, COMPACT_CLOSE_MARGIN, COMPACT_CONNECTION_GAP,
@@ -52,28 +53,20 @@ pub(super) fn slider(key: &'static str, fraction: f32) -> TreeNode {
 }
 
 /// What the device is online through: the cable while it carries the uplink,
-/// else the signal icon and the station SSID,
-/// or the problem icon and the SETUP badge while setup runs.
-/// The AP SSID is left to the device-info screen, which has the room for it;
-/// this cell has sixteen characters.
+/// else the station SSID, or the SETUP badge while setup runs.
 fn compact_connection_value(content: Content<'_>, style: TextStyle) -> TreeNode {
-    let (icon, name) = match content.wifi_view {
-        WifiView::Cable => (
-            svg_icon(content.icons.cable, COMPACT_CONNECTION_ICON_SIZE, WHITE),
-            text("Ethernet", style),
-        ),
-        WifiView::Idle => (
-            wifi_icon(
-                content.icons,
-                content.wifi_signal,
-                COMPACT_CONNECTION_ICON_SIZE,
-            ),
-            text(content.ssid, style),
-        ),
-        WifiView::Setup { .. } => (
-            wifi_icon(content.icons, None, COMPACT_CONNECTION_ICON_SIZE),
-            setup_badge(style.size),
-        ),
+    let icon = connection_icon(
+        content.wifi_view,
+        content.icons,
+        content.wifi_signal,
+        COMPACT_CONNECTION_ICON_SIZE,
+    );
+    let name = match content.wifi_view {
+        WifiView::Cable => text(ETHERNET, style),
+        WifiView::Idle => text(content.ssid, style),
+        // The AP SSID stays off, unlike on the other layouts: this cell has
+        // sixteen characters, and the device-info screen names it in full.
+        WifiView::Setup { .. } => setup_badge(style.size),
     };
     row(
         PropsData {
@@ -205,7 +198,7 @@ pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -
 
 #[cfg(test)]
 mod tests {
-    use bmc_render::tree::{DrawCommand, TreeNode};
+    use bmc_render::tree::TreeNode;
     use bmc_wasm_protocol::colors::GREEN_50;
     use bmc_wasm_protocol::{FontWeight, SvgId};
 
@@ -219,21 +212,6 @@ mod tests {
         Panel {
             wifi_button: false,
             ..narrow_panel()
-        }
-    }
-
-    fn svg_ids(node: &TreeNode, out: &mut Vec<SvgId>) {
-        if let TreeNode::Canvas { draws, .. } = node {
-            out.extend(draws.iter().filter_map(|draw| {
-                if let DrawCommand::Svg { icon_id, .. } = draw {
-                    *icon_id
-                } else {
-                    None
-                }
-            }));
-        }
-        for kid in children(node).into_iter().flatten() {
-            svg_ids(kid, out);
         }
     }
 
