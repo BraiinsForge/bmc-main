@@ -27,10 +27,12 @@
 // Re-export from protocol — single source of truth for wire-format enums
 #[cfg(target_arch = "wasm32")]
 use crate::net::FetchBodyRef;
-use bmc_wasm_protocol::time::LocalDateTime;
 #[cfg(target_arch = "wasm32")]
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
+
+mod clock;
+pub use clock::SystemTime;
 
 #[cfg(target_arch = "wasm32")]
 mod random;
@@ -77,9 +79,6 @@ mod ffi {
             h: u32,
             style: u32,
         ) -> i32;
-
-        // System time
-        pub(super) fn host_get_system_time(out_ptr: *mut u8);
 
         // New tree-based API
         fn host_submit_tree(ptr: *const u8, len: u32, width: u32, height: u32);
@@ -600,62 +599,6 @@ impl Volume {
 impl From<Volume> for u32 {
     fn from(v: Volume) -> Self {
         Self::from(v.0)
-    }
-}
-
-/// UTC instant. Wire format is the 8-byte LE `i64` of `unix_secs`.
-#[derive(Debug, Clone, Copy)]
-pub struct SystemTime {
-    pub unix_secs: i64,
-}
-
-impl SystemTime {
-    #[cfg(target_arch = "wasm32")]
-    #[must_use]
-    pub fn now() -> Self {
-        let mut buf = [0u8; 8];
-        unsafe { ffi::host_get_system_time(buf.as_mut_ptr()) }
-        Self {
-            unix_secs: i64::from_le_bytes(buf),
-        }
-    }
-
-    /// Project into local wall-clock fields for `tz`.
-    /// Returns `None` when the host doesn't recognise the tz name.
-    #[must_use]
-    pub fn local(&self, tz: &crate::Tz) -> Option<LocalDateTime> {
-        crate::calendar::tz_convert(self.unix_secs, tz.iana())
-    }
-
-    #[must_use]
-    pub fn utc(&self) -> LocalDateTime {
-        decompose(self.unix_secs)
-    }
-}
-
-fn decompose(unix_secs: i64) -> LocalDateTime {
-    fn parse<T: core::str::FromStr + Default>(p: Option<&str>) -> T {
-        p.and_then(|s| s.parse().ok()).unwrap_or_default()
-    }
-    let s = crate::format::strftime(unix_secs, "%Y %m %d %H %M %S %u");
-    let mut parts = s.split_ascii_whitespace();
-    let year: u16 = parse(parts.next());
-    let month: u8 = parse(parts.next());
-    let day: u8 = parse(parts.next());
-    let hour: u8 = parse(parts.next());
-    let minute: u8 = parse(parts.next());
-    let second: u8 = parse(parts.next());
-    // `%u` is ISO weekday: 1=Mon, 7=Sun. Re-map to 0=Mon, 6=Sun.
-    let iso_weekday: u8 = parse(parts.next());
-    let weekday = iso_weekday.saturating_sub(1);
-    LocalDateTime {
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        second,
-        weekday,
     }
 }
 
