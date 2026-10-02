@@ -31,11 +31,10 @@
 //!
 //! ## Required vs optional
 //!
-//! [`ParamRead::read_required`] panics with a `BUG:` message when the manifest
-//! declares a non-optional key but the host snapshot is missing or null for it.
-//! That mirrors the contract the compositor's instance-validation pass enforces
-//! (it injects manifest defaults for any required key the operator didn't set),
-//! so a `None` here would indicate a host-side bug the widget should not paper over.
+//! [`ParamRead::read_required`] panics when the snapshot is missing or null for the key.
+//! Saving a scene stores every declared key, defaults included,
+//! but nothing fills in a key a later widget version added:
+//! params stored before that upgrade lack it until the widget migrates them (BDK-723).
 //!
 //! [`ParamRead::read_optional`] returns `None` for missing or null entries.
 //!
@@ -59,13 +58,16 @@ use super::{Object, Params, Value};
 ///
 /// Implemented for every [`ValueRead`] type and for a `Vec` of one.
 pub trait ParamRead: Sized {
-    /// Read a required key. Panics (BUG:) when the host snapshot is missing or null
-    /// for `key`, since the compositor's validator should always inject the manifest
-    /// default for required keys.
+    /// Read a required key. Panics when the snapshot is missing or null for `key`:
+    /// params stored before the widget declared it lack it until migrated (BDK-723).
     #[must_use]
     fn read_required(snap: &Params, key: &str) -> Self {
-        Self::read_optional(snap, key)
-            .unwrap_or_else(|| panic!("BUG: required param `{key}` missing from snapshot"))
+        Self::read_optional(snap, key).unwrap_or_else(|| {
+            panic!(
+                "required param `{key}` missing from the snapshot: \
+                params stored before the widget declared it lack it until migrated (BDK-723)"
+            )
+        })
     }
 
     /// Read an optional key. Returns `None` for missing or null entries.
@@ -301,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: required param `missing` missing from snapshot")]
+    #[should_panic(expected = "required param `missing` missing from the snapshot")]
     fn required_panics_on_missing() {
         let p = build(&[]);
         let _: String = ParamRead::read_required(&p, "missing");

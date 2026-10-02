@@ -96,10 +96,9 @@ attributes and enforced by any JSON Schema validator. Examples:
   operator cannot use.
 - `+0.0` / `-0.0` collide in `Double` `enum_values` dedup — JSON Schema treats them as distinct numbers; the runtime
   treats them as the same selection.
-- Required params (i.e. `optional: false`) **must** declare a `default_value`. The compositor always delivers a complete
-  params object to the widget on every `init` and `on_params_update`; this rule guarantees there is always a value to
-  deliver. The widget never has to handle a missing required key. An `array` param is the exception: an omitted
-  `default_value` is the empty list.
+- Required params (i.e. `optional: false`) **must** declare a `default_value`, so a scene saved against the current
+  manifest stores a value for every key. Params stored before an upgrade that added a key lack it until the widget
+  migrates them (BDK-723). An `array` param is the exception: an omitted `default_value` is the empty list.
 - `array` params cannot be `optional` — `min_items: 0` is how a list says it may be empty, so the widget always receives
   a list, never `null`.
 - `min_items` ≤ `max_items`, and an array's `default_value` holds between `min_items` and `max_items` items, each valid
@@ -129,12 +128,12 @@ When the compositor loads a widget instance:
 2. The scene-management path checks the selected placement against the manifest's `supported_viewports`. The derived
    descriptor contains viewport shape, width, height, and DPI; each field must fall inside one of the manifest's
    inclusive constraints.
-3. The compositor merges manifest-declared defaults with operator-supplied overrides into a full
-   `BTreeMap<ParamKey, ParamValue>` — every declared key has a value (the operator's, the manifest's default, or `Null`
-   for optional keys without a default).
+3. The compositor sends the params as stored for the scene. Saving a scene stores every declared key, defaults included,
+   but the compositor merges nothing at load: a param a later widget version added is missing until the widget migrates
+   it (BDK-723).
 4. The widget binary is spawned as a Wayland client.
-5. The compositor sends viewport/display geometry and the full params object as JSON via the `deck_widget` initial
-   configure batch.
+5. The compositor sends viewport/display geometry and the stored params as JSON via the `deck_widget` initial configure
+   batch.
 6. Geometry-stable params changes re-emit the complete params object on the existing widget surface. The wasm host
    runtime exposes params via `bmc_wasm_sdk::params::current()` / `previous()` and the `on_params_update` lifecycle
    hook.

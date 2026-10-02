@@ -200,11 +200,11 @@ let accent_tz = <String as ParamRead>::read_optional(&params, "accent_tz");
 let symbols = <Vec<String> as ParamRead>::read_required(&params, "symbols");
 ```
 
-Use `read_required` for manifest-required params. It traps with a `BUG:` message if the host snapshot is missing the
-value, because required params should always be filled from manifest defaults before the widget runs. Use
-`read_optional` for manifest-optional params; it returns `None` for missing or `null` values. Either read traps on a
-value or list item of another type, or an enum value outside its options, since the host validates every value against
-the manifest.
+Use `read_required` for manifest-required params. It traps if the host snapshot is missing the value: saving a scene
+stores every declared key, defaults included, but params stored before an upgrade that added a key lack it until the
+widget migrates them (BDK-723). Use `read_optional` for manifest-optional params; it returns `None` for missing or
+`null` values. Either read traps on a value or list item of another type, or an enum value outside its options, since
+the host validates every value against the manifest.
 
 `ParamRead` reads any type that implements `ValueRead`, and a `Vec` of one. The scalar types and the generated enums and
 row structs all implement it; a hand-written row type can implement it with the `required_field` and `optional_field`
