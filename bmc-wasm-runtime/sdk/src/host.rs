@@ -31,6 +31,11 @@ use crate::net::FetchBodyRef;
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
+mod audio;
+pub use audio::Volume;
+#[cfg(target_arch = "wasm32")]
+pub use audio::{audio_play, audio_stop};
+
 mod clock;
 pub use clock::SystemTime;
 
@@ -154,7 +159,7 @@ mod ffi {
             data_len: u32,
         ) -> u32;
         fn host_register_mesh_package(tag_ptr: *const u8, tag_len: u32, id_ptr: *const u8) -> u32;
-        // Audio registration and playback
+        // Audio registration
         fn host_register_audio(
             data_ptr: *const u8,
             data_len: u32,
@@ -166,8 +171,6 @@ mod ffi {
             name_len: u32,
             id_ptr: *const u8,
         ) -> u32;
-        fn host_audio_play(sound_id: u32, volume: u32);
-        fn host_audio_stop(sound_id: u32);
 
         // Image decoding (returns RGBA pixels)
         fn host_decode_image(
@@ -315,22 +318,6 @@ mod ffi {
                 package_ref.as_bytes().as_ptr(),
             )
         })
-    }
-
-    /// Play a registered audio sample at the given [`Volume`].
-    ///
-    /// Fire-and-forget: the host mixes and plays asynchronously. `None`
-    /// no-ops, so callers can thread an `Option<AudioId>` straight from
-    /// `ensure_audio_registered` without unwrapping.
-    pub fn audio_play(sound_id: Option<AudioId>, volume: super::Volume) {
-        let Some(id) = sound_id else { return };
-        unsafe { host_audio_play(id.to_ffi(), u32::from(volume)) }
-    }
-
-    /// Stop playback of a registered audio sample. `None` no-ops.
-    pub fn audio_stop(sound_id: Option<AudioId>) {
-        let Some(id) = sound_id else { return };
-        unsafe { host_audio_stop(id.to_ffi()) }
     }
 
     /// Register bitmap data (PNG bytes) with the host under `tag`. Idempotent
@@ -545,32 +532,3 @@ mod ffi {
 
 #[cfg(target_arch = "wasm32")]
 pub use ffi::*;
-
-// ============================================================================
-// Pure types (always available)
-// ============================================================================
-
-/// Audio playback volume, in 0–100.
-///
-/// Values are clamped at construction, so the host never sees an
-/// out-of-range byte. Use [`Volume::SILENT`] / [`Volume::FULL`] for the
-/// canonical endpoints, [`Volume::new`] for arbitrary values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Volume(u8);
-
-impl Volume {
-    pub const SILENT: Volume = Volume(0);
-    pub const FULL: Volume = Volume(100);
-
-    /// Build a volume in 0–100. Values above 100 are clamped down to 100.
-    #[must_use]
-    pub const fn new(v: u8) -> Self {
-        Self(if v > 100 { 100 } else { v })
-    }
-}
-
-impl From<Volume> for u32 {
-    fn from(v: Volume) -> Self {
-        Self::from(v.0)
-    }
-}
