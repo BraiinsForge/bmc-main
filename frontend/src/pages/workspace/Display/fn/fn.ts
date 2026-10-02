@@ -355,6 +355,7 @@ export interface ParamsFormErrors {
 export interface RowErrors {
     errors?: string[];
     fields?: Record<string, string[] | undefined>;
+    markedFields?: string[];
 }
 
 function hasRowErrors(row: RowErrors | undefined): boolean {
@@ -370,7 +371,7 @@ export function itemErrorsOf(errors: null | ParamsFormErrors, key: string): Arra
     return ownValue(errors?.items, key)?.map(row => {
         if (!row) return undefined;
         const fields = row.fields && Object.entries(row.fields).map(([field, list]) => [field, list?.[0]]);
-        return { error: row.errors?.[0], fields: fields && Object.fromEntries(fields) };
+        return { error: row.errors?.[0], fields: fields && Object.fromEntries(fields), markedFields: row.markedFields };
     });
 }
 
@@ -387,7 +388,11 @@ export function clearFieldError(errors: null | ParamsFormErrors, key: string): n
 function toRowErrors(row: RowError | undefined): RowErrors | undefined {
     if (!row) return undefined;
     const fields = row.fields && Object.entries(row.fields).map(([key, error]) => [key, error ? [error] : undefined]);
-    return { errors: row.error ? [row.error] : undefined, fields: fields && Object.fromEntries(fields) };
+    return {
+        errors: row.error ? [row.error] : undefined,
+        fields: fields && Object.fromEntries(fields),
+        markedFields: row.markedFields,
+    };
 }
 
 function withFailure(errors: ParamsFormErrors, key: string, failure: ParseFailure): ParamsFormErrors {

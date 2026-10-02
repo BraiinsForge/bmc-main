@@ -39,6 +39,8 @@ export type FieldValue = ScalarValue | ListItem[];
 export interface RowError {
     error?: string;
     fields?: Record<string, string | undefined>;
+    /** The fields `error` is about, marked without a message of their own; every field when unset. */
+    markedFields?: string[];
 }
 
 let lastListItemId = 0;

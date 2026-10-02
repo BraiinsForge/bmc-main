@@ -474,4 +474,36 @@ describe('ParamField object list', () => {
         expect(errorOf(getByLabelText('Links, item 1, Label'))).toBe('Value is required');
         expect(errorOf(getByLabelText('Links, item 1, URL (optional)'))).toBeNull();
     });
+
+    test("shows a row's own error under that row's fields", () => {
+        const { getByText, getByLabelText } = renderList(
+            [listItem({ label: 'Home', url: null }), listItem({ label: 'Home', url: null })],
+            [undefined, { error: 'Repeats item 1' }],
+            linksField,
+        );
+        const alert = getByText('Repeats item 1', { selector: '[role="alert"]' });
+        expect(alert.parentElement?.contains(getByLabelText('Links, item 2, Label'))).toBe(true);
+        expect(alert.parentElement?.contains(getByLabelText('Links, item 1, Label'))).toBe(false);
+    });
+
+    test('marks every field of a row its own error is about, each reading that error', () => {
+        const { getByLabelText } = renderList(
+            [listItem({ label: 'Home', url: null }), listItem({ label: 'Home', url: null })],
+            [undefined, { error: 'Repeats item 1' }],
+            linksField,
+        );
+        expect(errorOf(getByLabelText('Links, item 2, Label'))).toBe('Repeats item 1');
+        expect(errorOf(getByLabelText('Links, item 2, URL (optional)'))).toBe('Repeats item 1');
+        expect(errorOf(getByLabelText('Links, item 1, Label'))).toBeNull();
+    });
+
+    test('marks only the fields a row error names', () => {
+        const { getByLabelText } = renderList(
+            [listItem({ label: 'Home', url: null }), listItem({ label: 'Home', url: 'https://pool' })],
+            [undefined, { error: 'Same as item 1', markedFields: ['label'] }],
+            linksField,
+        );
+        expect(errorOf(getByLabelText('Links, item 2, Label'))).toBe('Same as item 1');
+        expect(errorOf(getByLabelText('Links, item 2, URL (optional)'))).toBeNull();
+    });
 });

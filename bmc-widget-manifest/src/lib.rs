@@ -50,7 +50,8 @@ pub use bmc_field_schema::{
     IntegerOption, IntegerParam, ItemKind, ItemShape, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH,
     MAX_PARAM_STRING_LENGTH, MissingValues, ObjectParam, ParamDefinition, ParamKey, ParamKind,
     ParamValue, ParamValueConversionError, Scalar, ScalarField, ScalarKind, Shape, StringFormat,
-    StringOption, StringParam, TimezoneParam, Violation, f64_canonical_bits, validate_values,
+    StringOption, StringParam, TimezoneParam, UniqueItems, Violation, f64_canonical_bits,
+    validate_values,
 };
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -1268,7 +1269,181 @@ mod tests {
             "max_items": 1,
             "default_value": ["a", "b"],
         }));
-        assert!(reason.contains("default_value has 2 items"), "{reason}");
+        assert_eq!(reason, "default_value: Must have at most 1 item");
+    }
+
+    #[test]
+    fn validate_unique_array_default_with_a_repeat_fails() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "items": { "type": "string" },
+            "max_items": 3,
+            "unique_items": true,
+            "default_value": ["BTC", "ETH", "BTC"],
+        }));
+        assert_eq!(reason, "default_value[2]: Repeats item 1");
+    }
+
+    #[test]
+    fn validate_unique_object_default_differing_in_one_field_passes() {
+        let mut def = links(serde_json::json!([
+            { "label": "Home", "value": "https://braiins.com" },
+            { "label": "Home", "value": "https://braiins.com/pool" },
+        ]));
+        def["unique_items"] = serde_json::json!(true);
+        array_param(def)
+            .validate("x")
+            .expect("BUG: rows that differ in any field are distinct");
+    }
+
+    #[test]
+    fn validate_unique_keys_that_name_no_usable_field_fail() {
+        for (keys, expected) in [
+            (
+                serde_json::json!([]),
+                "unique_items needs a field key; true compares whole rows",
+            ),
+            (
+                serde_json::json!(["icon"]),
+                r#"unique_items names "icon", which is not a field"#,
+            ),
+            (
+                serde_json::json!(["label", "label"]),
+                r#"unique_items names "label" twice"#,
+            ),
+        ] {
+            let mut def = links(serde_json::json!([]));
+            def["unique_items"] = keys;
+            assert_eq!(array_rejection(def), expected);
+        }
+    }
+
+    #[test]
+    fn validate_unique_key_default_with_a_repeat_fails() {
+        let mut def = links(serde_json::json!([
+            { "label": "Home", "value": "https://braiins.com" },
+            { "label": "Home", "value": "https://braiins.com/pool" },
+        ]));
+        def["unique_items"] = serde_json::json!(["label"]);
+        assert_eq!(
+            array_rejection(def),
+            r#"default_value[1]["label"]: Same as item 1"#
+        );
+    }
+
+    #[test]
+    fn validate_unique_items_with_an_item_default_fail() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "items": { "type": "string", "default_value": "BTC" },
+            "max_items": 3,
+            "unique_items": true,
+        }));
+        assert_eq!(
+            reason,
+            "an item default_value cannot go with unique_items: \
+            every added item would start as a repeat"
+        );
+    }
+
+    #[test]
+    fn validate_unique_keys_with_a_defaulted_key_fail() {
+        let mut def = links(serde_json::json!([]));
+        def["items"]["fields"]["label"]["default_value"] = serde_json::json!("Home");
+        def["unique_items"] = serde_json::json!(["label"]);
+        assert_eq!(
+            array_rejection(def),
+            "key \"label\" cannot have a default_value under unique_items: \
+            every added row would start as a repeat"
+        );
+    }
+
+    #[test]
+    fn validate_unique_keys_with_a_defaulted_other_field_pass() {
+        let mut def = links(serde_json::json!([]));
+        def["items"]["fields"]["value"]["default_value"] = serde_json::json!("https://braiins.com");
+        def["unique_items"] = serde_json::json!(["label"]);
+        array_param(def)
+            .validate("x")
+            .expect("BUG: a default on a field unique_items does not name is allowed");
+    }
+
+    #[test]
+    fn validate_unique_keys_on_a_scalar_list_fail() {
+        for keys in [
+            serde_json::json!([]),
+            serde_json::json!(["label"]),
+            serde_json::json!(["label", "label"]),
+        ] {
+            let reason = array_rejection(serde_json::json!({
+                "name": "S",
+                "type": "array",
+                "items": { "type": "string" },
+                "max_items": 3,
+                "unique_items": keys,
+            }));
+            assert_eq!(
+                reason,
+                "unique_items names fields, which scalar items lack; true compares whole items"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_leaves_unusable_unique_keys_for_validate_to_refuse() {
+        let mut param = array_param(serde_json::json!({
+            "name": "S",
+            "type": "array",
+            "items": { "type": "string" },
+            "max_items": 3,
+            "unique_items": ["label"],
+            "default_value": ["BTC"],
+        }));
+        param.normalize();
+        let Err(FieldSchemaError::InvalidParam { reason, .. }) = param.validate("x") else {
+            panic!("BUG: keys on a scalar list must be refused");
+        };
+        assert_eq!(
+            reason,
+            "unique_items names fields, which scalar items lack; true compares whole items"
+        );
+    }
+
+    #[test]
+    fn unique_items_round_trips_and_leaves_false_unwritten() {
+        let written = |unique_items: serde_json::Value| {
+            let mut def = links(serde_json::json!([]));
+            def["unique_items"] = unique_items;
+            serde_json::to_value(array_param(def)).expect("BUG: serialize")
+        };
+        for unique_items in [serde_json::json!(true), serde_json::json!(["label"])] {
+            assert_eq!(written(unique_items.clone())["unique_items"], unique_items);
+        }
+        let json = written(serde_json::json!(false));
+        assert!(json.get("unique_items").is_none(), "{json}");
+    }
+
+    #[test]
+    fn a_malformed_unique_items_says_what_is_wrong() {
+        for (unique_items, expected) in [
+            (
+                serde_json::json!("label"),
+                "unique_items as true, false or a list of field keys",
+            ),
+            (
+                serde_json::json!(["Bad Key"]),
+                r#"unique_items names an invalid param key "Bad Key""#,
+            ),
+        ] {
+            let mut def = links(serde_json::json!([]));
+            def["unique_items"] = unique_items;
+            let error = serde_json::from_value::<ParamDefinition>(def)
+                .expect_err("BUG: a malformed unique_items must not parse")
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     #[test]

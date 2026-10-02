@@ -23,7 +23,7 @@ import { action } from 'storybook/actions';
 
 import * as pb from '@/proto';
 import { create } from '@/proto';
-import { ParamField, type RowError } from '@/components/ParamField';
+import { ParamField, parseFormifiedValue, type RowError } from '@/components/ParamField';
 import {
     defaultFormifiedValue,
     widgetParamsToFormifiedState,
@@ -188,7 +188,12 @@ function list(
     key: string,
     name: string,
     items: pb.ArrayItemKind['kind'],
-    options: { minItems?: number; maxItems: number; description?: string },
+    options: {
+        minItems?: number;
+        maxItems: number;
+        uniqueItems?: pb.ParamArray['uniqueItems'];
+        description?: string;
+    },
     defaultValue: Array<pb.FieldValue['kind']>,
 ): pb.ManifestParamDefinition {
     const { description, ...bounds } = options;
@@ -218,41 +223,55 @@ const SYMBOLS = list(
     ],
 );
 
-const LINKS = list(
-    'links',
-    'Objects',
-    {
-        case: 'paramObject',
-        value: create(pb.ParamObjectSchema, {
-            fields: [
-                {
-                    key: 'label',
-                    name: 'Label',
-                    description: 'The text the widget shows for the link.',
-                    kind: { case: 'paramString', value: { placeholder: 'e.g. Braiins' } },
-                },
-                {
-                    key: 'url',
-                    name: 'URL',
-                    description: 'Leave empty to show the label as plain text.',
-                    isOptional: true,
-                    kind: { case: 'paramString', value: { format: pb.StringFormat.URI, placeholder: 'https://…' } },
-                },
-            ],
+const LINK_ROW: pb.ArrayItemKind['kind'] = {
+    case: 'paramObject',
+    value: create(pb.ParamObjectSchema, {
+        fields: [
+            {
+                key: 'label',
+                name: 'Label',
+                description: 'The text the widget shows for the link.',
+                kind: { case: 'paramString', value: { placeholder: 'e.g. Braiins' } },
+            },
+            {
+                key: 'url',
+                name: 'URL',
+                description: 'Leave empty to show the label as plain text.',
+                isOptional: true,
+                kind: { case: 'paramString', value: { format: pb.StringFormat.URI, placeholder: 'https://…' } },
+            },
+        ],
+    }),
+};
+
+function link(label: string, url: string): pb.FieldValue['kind'] {
+    return {
+        case: 'structValue',
+        value: create(pb.FieldValuesSchema, {
+            fields: {
+                label: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: label } }),
+                url: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: url } }),
+            },
         }),
+    };
+}
+
+const BRAIINS_LINK = link('Braiins', 'https://braiins.com');
+
+const LINKS = list('links', 'Objects', LINK_ROW, { maxItems: 4, description: 'Shown as a list of links.' }, [
+    BRAIINS_LINK,
+]);
+
+const UNIQUE_LINKS = list(
+    'linksUnique',
+    'Objects, unique',
+    LINK_ROW,
+    {
+        maxItems: 4,
+        uniqueItems: { case: 'whole', value: create(pb.EmptySchema) },
+        description: 'No two rows alike.',
     },
-    { maxItems: 4, description: 'Shown as a list of links.' },
-    [
-        {
-            case: 'structValue',
-            value: create(pb.FieldValuesSchema, {
-                fields: {
-                    label: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: 'Braiins' } }),
-                    url: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: 'https://braiins.com' } }),
-                },
-            }),
-        },
-    ],
+    [BRAIINS_LINK, link('Pool', 'https://pool.braiins.com')],
 );
 
 const ITEM_KIND_LISTS: pb.ManifestParamDefinition[] = [
@@ -403,14 +422,16 @@ function ListCell({ definition, invalid }: { definition: pb.ManifestParamDefinit
     const [value, setValue] = useState<FormifiedValue>(() => defaultFormifiedValue(definition));
     const isObjectList =
         definition.kind.case === 'paramArray' && definition.kind.value.items?.kind.case === 'paramObject';
+    const parsed = parseFormifiedValue(definition, value);
+    const live = parsed.ok ? undefined : parsed;
     return (
         <div className={cn(css.cell, isObjectList && css.wide)}>
             <ParamField
                 id={`story-${definition.key}`}
                 definition={definition}
                 value={value}
-                error={invalid ? `${definition.name} is not acceptable.` : undefined}
-                itemErrors={invalid ? [invalidRow(definition), invalidRow(definition)] : undefined}
+                error={invalid ? `${definition.name} is not acceptable.` : live?.error}
+                itemErrors={invalid ? [invalidRow(definition), invalidRow(definition)] : live?.items}
                 onChange={(_key, next) => setValue(next)}
                 timezones={TIMEZONES}
             />
@@ -431,7 +452,7 @@ const ERROR_DEMOS = [SYMBOLS, LINKS].map(withErrors);
 export function ListField({ invalid }: Args) {
     return (
         <div className={css.grid}>
-            {[SYMBOLS, ...ITEM_KIND_LISTS].map(definition => (
+            {[SYMBOLS, ...ITEM_KIND_LISTS, UNIQUE_LINKS].map(definition => (
                 <ListCell key={definition.key} definition={definition} invalid={invalid} />
             ))}
             {ERROR_DEMOS.map(definition => (

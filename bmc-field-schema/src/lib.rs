@@ -550,6 +550,11 @@ pub struct ArrayParam {
     /// Most items the list may hold, capped at [`MAX_ARRAY_ITEMS`].
     #[schemars(range(min = 1, max = MAX_ARRAY_ITEMS))]
     pub max_items: usize,
+    /// Refuse repeated items: `true` compares whole items,
+    /// a list of field keys compares object rows on those fields only.
+    #[serde(default, skip_serializing_if = "UniqueItems::is_off")]
+    #[schemars(with = "UniqueItemsRepr")]
+    pub unique_items: UniqueItems,
     /// Items seeded at widget creation; must fit `min_items..=max_items`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default_value: Vec<ParamValue>,
@@ -561,6 +566,73 @@ pub struct ArrayParam {
 )]
 fn is_zero(n: &usize) -> bool {
     *n == 0
+}
+
+/// Which items of an [`ArrayParam`] count as repeats of each other.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "UniqueItemsRepr", into = "UniqueItemsRepr")]
+pub enum UniqueItems {
+    /// Repeats are allowed.
+    #[default]
+    Off,
+    /// No item may equal an earlier one;
+    /// an object row compares on every field.
+    Whole,
+    /// No object row may match an earlier one on all of these fields.
+    By(Vec<ParamKey>),
+}
+
+impl UniqueItems {
+    fn is_off(&self) -> bool {
+        matches!(self, Self::Off)
+    }
+}
+
+/// Whether a list refuses repeated items,
+/// and which fields of an object row make one.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(
+    untagged,
+    expecting = "unique_items as true, false or a list of field keys"
+)]
+#[schemars(rename = "UniqueItems")]
+enum UniqueItemsRepr {
+    /// `true` compares whole items;
+    /// `false` allows repeats.
+    Flag(bool),
+    /// The fields an object row is compared on.
+    // Read as plain text so a malformed key is named, which the untagged parse would swallow.
+    Keys(#[schemars(with = "Vec<ParamKey>")] Vec<String>),
+}
+
+impl TryFrom<UniqueItemsRepr> for UniqueItems {
+    type Error = String;
+
+    fn try_from(repr: UniqueItemsRepr) -> Result<Self, String> {
+        Ok(match repr {
+            UniqueItemsRepr::Flag(false) => Self::Off,
+            UniqueItemsRepr::Flag(true) => Self::Whole,
+            UniqueItemsRepr::Keys(keys) => Self::By(
+                keys.into_iter()
+                    .map(|key| {
+                        ParamKey::try_new(key).map_err(|key| {
+                            format!("unique_items names an invalid param key {key:?}")
+                        })
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+        })
+    }
+}
+
+impl From<UniqueItems> for UniqueItemsRepr {
+    fn from(unique: UniqueItems) -> Self {
+        match unique {
+            UniqueItems::Off => Self::Flag(false),
+            UniqueItems::Whole => Self::Flag(true),
+            UniqueItems::By(keys) => Self::Keys(keys.into_iter().map(|key| key.0).collect()),
+        }
+    }
 }
 
 /// The kind of an [`ArrayParam`]'s items, tagged like [`ParamKind`].
@@ -918,22 +990,19 @@ impl<'a> Scalar<'a> {
 impl ArrayParam {
     /// The default as the validator types it:
     /// a whole number for a double as a double, an omitted optional row field as null.
+    /// Refuses an unusable `unique_items` first, since the repeat check relies on its keys.
     fn projected_default(&self) -> Result<Vec<ParamValue>, String> {
-        let mut projected = Vec::with_capacity(self.default_value.len());
-        for (i, item) in self.default_value.iter().enumerate() {
-            let mut violations = Vec::new();
-            let value = validate::validate_item(
-                &format!("default_value[{i}]"),
-                &self.items,
-                item,
-                &mut violations,
-            );
-            if let Some(violation) = violations.into_iter().next() {
-                return Err(format!("{}: {}", violation.path, violation.message));
-            }
-            projected.push(value.expect("BUG: an item without violations has a projection"));
+        self.check_unique_items()?;
+        let default = ParamValue::List(self.default_value.clone());
+        let mut violations = Vec::new();
+        let projected = validate::validate_list("default_value", self, &default, &mut violations);
+        if let Some(violation) = violations.into_iter().next() {
+            return Err(format!("{}: {}", violation.path, violation.message));
         }
-        Ok(projected)
+        let Some(ParamValue::List(items)) = projected else {
+            panic!("BUG: a list without violations projects to a list");
+        };
+        Ok(items)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -950,18 +1019,67 @@ impl ArrayParam {
                 self.min_items, self.max_items
             ));
         }
-        let len = self.default_value.len();
-        if !(self.min_items..=self.max_items).contains(&len) {
-            return Err(format!(
-                "default_value has {len} items, outside min_items..=max_items ({}..={})",
-                self.min_items, self.max_items
-            ));
-        }
+        self.check_unique_items()?;
         if self.projected_default()? != self.default_value {
             return Err("default_value is not normalized; normalize the param first".into());
         }
         Ok(())
     }
+
+    fn check_unique_items(&self) -> Result<(), String> {
+        let has_default = |scalar| ParamValue::from_scalar_default(scalar) != ParamValue::Null;
+        match (&self.unique_items, self.items.shape()) {
+            (UniqueItems::Off, _) | (UniqueItems::Whole, ItemShape::Object(_)) => {}
+            (UniqueItems::By(_), ItemShape::Scalar(_)) => {
+                return Err(
+                    "unique_items names fields, which scalar items lack; true compares whole items"
+                        .into(),
+                );
+            }
+            (UniqueItems::Whole, ItemShape::Scalar(scalar)) => {
+                if has_default(scalar) {
+                    return Err("an item default_value cannot go with unique_items: \
+                        every added item would start as a repeat"
+                        .into());
+                }
+            }
+            (UniqueItems::By(keys), ItemShape::Object(object)) => {
+                check_unique_keys(keys, object)?;
+                let defaulted = keys.iter().find(|key| {
+                    object
+                        .fields
+                        .get(*key)
+                        .is_some_and(|field| has_default(field.kind.as_scalar()))
+                });
+                if let Some(key) = defaulted {
+                    return Err(format!(
+                        "key {:?} cannot have a default_value under unique_items: \
+                        every added row would start as a repeat",
+                        key.as_str()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn check_unique_keys(keys: &[ParamKey], object: &ObjectParam) -> Result<(), String> {
+    if keys.is_empty() {
+        return Err("unique_items needs a field key; true compares whole rows".into());
+    }
+    for (i, key) in keys.iter().enumerate() {
+        if !object.fields.contains_key(key) {
+            return Err(format!(
+                "unique_items names {:?}, which is not a field",
+                key.as_str()
+            ));
+        }
+        if keys.iter().take(i).any(|earlier| earlier == key) {
+            return Err(format!("unique_items names {:?} twice", key.as_str()));
+        }
+    }
+    Ok(())
 }
 
 impl StringParam {

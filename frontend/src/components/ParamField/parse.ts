@@ -147,13 +147,56 @@ function countError(count: number, array: pb.ParamArray): string | undefined {
     return undefined;
 }
 
+function keyFields(row: pb.FieldValue, keys: string[]): pb.FieldValue[] {
+    const { kind } = row;
+    invariant(kind.case === 'structValue', 'an object list row parses to a struct');
+    return keys.map(key => kind.value.fields[key] ?? nullValue());
+}
+
+function sameIdentity(a: pb.FieldValue[], b: pb.FieldValue[]): boolean {
+    return a.every((value, i) => {
+        const other = b[i];
+        return other !== undefined && pb.equals(pb.FieldValueSchema, value, other);
+    });
+}
+
+// A single repeated key is reported at its field;
+// a whole or composite repeat once at the row, with the fields it covers marked.
+function repeatErrors(array: pb.ParamArray, values: pb.FieldValue[]): Array<RowError | undefined> {
+    const { uniqueItems } = array;
+
+    const keys = uniqueItems.case === 'by' ? uniqueItems.value.keys : undefined;
+    const identities = values.map(value => (keys ? keyFields(value, keys) : [value]));
+
+    return identities.map((identity, i) => {
+        const first = identities.findIndex(earlier => sameIdentity(earlier, identity));
+        if (first === i) return undefined;
+        if (!keys) return { error: `Repeats item ${first + 1}` };
+        const error = `Same as item ${first + 1}`;
+        const [only, ...more] = keys;
+        if (only !== undefined && more.length === 0) return { fields: { [only]: error } };
+        return { error, markedFields: keys };
+    });
+}
+
 function parseList(array: pb.ParamArray, raw: Array<ListItem['value']>): ParseResult {
+    const error = countError(raw.length, array);
+    // As on the server: past the bound, only the count is reported.
+    if (raw.length > array.maxItems) return { ok: false, error };
+
     const kind = itemKind(array);
     const parsed = raw.map(value => parseItem(kind, value));
-    const items = parsed.map(r => (r.ok ? undefined : r.error));
-    const error = countError(raw.length, array);
+    const values = parsed.flatMap(r => (r.ok ? [r.value] : []));
+
+    let items = parsed.map(r => (r.ok ? undefined : r.error));
+    if (array.uniqueItems.case !== undefined && values.length === parsed.length) items = repeatErrors(array, values);
+
     if (error || items.some(Boolean)) return { ok: false, error, items };
-    return { ok: true, value: listValue(parsed.flatMap(r => (r.ok ? [r.value] : []))) };
+
+    return {
+        ok: true,
+        value: listValue(values),
+    };
 }
 
 function parseItem(kind: pb.ArrayItemKind['kind'], raw: ListItem['value']): ItemParseResult {

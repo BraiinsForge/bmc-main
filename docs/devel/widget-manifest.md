@@ -103,7 +103,10 @@ attributes and enforced by any JSON Schema validator. Examples:
 - `array` params cannot be `optional` — `min_items: 0` is how a list says it may be empty, so the widget always receives
   a list, never `null`.
 - `min_items` ≤ `max_items`, and an array's `default_value` holds between `min_items` and `max_items` items, each valid
-  against `items` — the same rules an operator's list must pass.
+  against `items` and, under `unique_items`, none repeated — the same check an operator's list must pass.
+- `unique_items` keys go only on object items, and name at least one field, each a declared field and none twice.
+- Under `unique_items`, neither a scalar item nor a named key field declares a `default_value`: every item the operator
+  adds starts at those defaults, so the second would start as a repeat.
 - An `object` item declares at least one field, and no field key twice.
 
 Viewport constraints are also validated after parsing:

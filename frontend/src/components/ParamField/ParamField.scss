@@ -99,6 +99,12 @@ $remove-button-size: mini-units(5);
     min-inline-size: 0;
 }
 
+// A marked field's message is visually hidden; the row
+// shows it once, so the field's error line takes no room.
+.markedField :global(.cds--form-requirement) {
+    margin: 0;
+}
+
 .columnLabel {
     composes: helper-text-01 from 'styles/carbon/typography.scss';
     composes: inline center from 'styles/layout.scss';

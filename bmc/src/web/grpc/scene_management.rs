@@ -30,6 +30,7 @@ use bmc_grpc::web::scene_management_service_server::SceneManagementService as Gr
 use bmc_widget_manifest::{
     ArrayParam, BooleanParam, CredentialKey, DoubleParam, EnumControl, IntegerParam, ItemKind,
     ObjectParam, ParamDefinition, ParamKind, ScalarField, ScalarKind, StringParam, TimezoneParam,
+    UniqueItems,
 };
 use futures::stream::{BoxStream, StreamExt};
 use indexmap::IndexMap;
@@ -760,6 +761,7 @@ fn array_param_to_proto(
         items,
         min_items,
         max_items,
+        unique_items,
         default_value,
     }: &ArrayParam,
 ) -> web::ParamArray {
@@ -780,6 +782,18 @@ fn array_param_to_proto(
         min_items: item_count(*min_items),
         max_items: item_count(*max_items),
         default_value: default_value.iter().map(param_value_to_wire).collect(),
+        unique_items: unique_items_to_proto(unique_items),
+    }
+}
+
+fn unique_items_to_proto(unique_items: &UniqueItems) -> Option<web::param_array::UniqueItems> {
+    use web::param_array::UniqueItems as U;
+    match unique_items {
+        UniqueItems::Off => None,
+        UniqueItems::Whole => Some(U::Whole(())),
+        UniqueItems::By(keys) => Some(U::By(web::UniqueKeys {
+            keys: keys.iter().map(|key| key.as_str().to_owned()).collect(),
+        })),
     }
 }
 
@@ -2241,6 +2255,7 @@ mod tests {
                 }),
                 min_items,
                 max_items,
+                unique_items: UniqueItems::Off,
                 default_value,
             }),
             false,
@@ -2536,6 +2551,7 @@ mod tests {
                 items: ItemKind::String(string_kind()),
                 min_items: 0,
                 max_items: 2,
+                unique_items: UniqueItems::Off,
                 default_value: vec![],
             }),
             false,
@@ -3514,6 +3530,18 @@ mod tests {
     }
 
     #[test]
+    fn unique_keys_reach_the_wire_as_keys() {
+        let key: bmc_widget_manifest::ParamKey =
+            serde_json::from_value(serde_json::json!("label")).expect("BUG: a valid param key");
+        assert_eq!(
+            unique_items_to_proto(&UniqueItems::By(vec![key])),
+            Some(web::param_array::UniqueItems::By(web::UniqueKeys {
+                keys: vec!["label".to_owned()],
+            })),
+        );
+    }
+
+    #[test]
     fn param_definition_to_proto_array() {
         use bmc_widget_manifest::{ParamDefinition, ParamValue};
         use web::array_item_kind::Kind as ItemKindProto;
@@ -3532,6 +3560,7 @@ mod tests {
                 }),
                 min_items: 1,
                 max_items: 8,
+                unique_items: UniqueItems::Whole,
                 default_value: vec![ParamValue::String("NVDA".into())],
             }),
         };
@@ -3540,6 +3569,10 @@ mod tests {
             panic!("BUG: expected param_array arm");
         };
         assert_eq!((pa.min_items, pa.max_items), (1, 8));
+        assert_eq!(
+            pa.unique_items,
+            Some(web::param_array::UniqueItems::Whole(()))
+        );
         assert_eq!(pa.default_value, [wdv_string("NVDA")]);
         let Some(ItemKindProto::ParamString(item)) = pa.items.and_then(|i| i.kind) else {
             panic!("BUG: expected a param_string item kind");

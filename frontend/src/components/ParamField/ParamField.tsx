@@ -63,6 +63,7 @@ import {
 
 // Styles
 import css from './ParamField.scss';
+import cn from 'clsx';
 
 export interface OptionItem<T extends string | number> {
     value: T;
@@ -176,7 +177,7 @@ interface EnumFieldProps {
     control: pb.EnumControl | undefined;
     items: Array<OptionItem<string>>;
     placeholder?: string;
-    error?: string;
+    error?: string | ReactElement;
     value: string | null;
     onChange(value: string): void;
 }
@@ -258,12 +259,18 @@ interface ScalarFieldProps {
     isOptional: boolean;
     value: ScalarValue;
     error?: string;
+    /** An error of the row this field belongs to, shown once under the row: here it only marks the field. */
+    rowError?: string;
     onChange(value: ScalarValue): void;
     timezones: pb.Timezone[];
 }
 
 function ScalarField(props: ScalarFieldProps) {
-    const { id, kind, labelText, hideLabel, helperText, isOptional, value, error, onChange, timezones } = props;
+    const { id, kind, labelText, hideLabel, helperText, isOptional, value, onChange, timezones } = props;
+    // A row error stays this field's message, hidden, so assistive tech still reads it on focus.
+    const error =
+        props.error ??
+        (props.rowError ? <span className="cds--visually-hidden" children={props.rowError} /> : undefined);
     const { formatMessage } = useIntl();
 
     switch (kind.case) {
@@ -503,27 +510,36 @@ function ObjectRow({ id, object, labelText, value, error, onChange, timezones }:
     return (
         <CarbonFormField error={error?.error}>
             <div className={css.objectFields}>
-                {object.fields.map(field => (
-                    <div key={field.key} className={css.objectField}>
-                        <ScalarField
-                            id={`${id}-${field.key}`}
-                            kind={field.kind}
-                            labelText={formatMessage(
-                                { defaultMessage: '{row}, {field}' },
-                                { row: labelText, field: fieldName(field, formatMessage) },
-                            )}
-                            hideLabel
-                            isOptional={field.isOptional}
-                            value={ownValue(value, field.key) ?? null}
-                            error={ownValue(error?.fields, field.key)}
-                            onChange={next => onChange({ ...value, [field.key]: next })}
-                            timezones={timezones}
-                        />
-                    </div>
-                ))}
+                {object.fields.map(field => {
+                    const fieldError = ownValue(error?.fields, field.key);
+                    const rowError = !fieldError && marksField(error, field.key) ? error?.error : undefined;
+                    return (
+                        <div key={field.key} className={cn(css.objectField, rowError && css.markedField)}>
+                            <ScalarField
+                                id={`${id}-${field.key}`}
+                                kind={field.kind}
+                                labelText={formatMessage(
+                                    { defaultMessage: '{row}, {field}' },
+                                    { row: labelText, field: fieldName(field, formatMessage) },
+                                )}
+                                hideLabel
+                                isOptional={field.isOptional}
+                                value={ownValue(value, field.key) ?? null}
+                                error={fieldError}
+                                rowError={rowError}
+                                onChange={next => onChange({ ...value, [field.key]: next })}
+                                timezones={timezones}
+                            />
+                        </div>
+                    );
+                })}
             </div>
         </CarbonFormField>
     );
+}
+
+function marksField(error: RowError | undefined, key: string): boolean {
+    return !!error?.error && (error.markedFields?.includes(key) ?? true);
 }
 
 interface ArrayFieldProps {

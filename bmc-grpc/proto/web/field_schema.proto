@@ -59,6 +59,18 @@ message ParamArray {
   uint32 min_items = 2;
   uint32 max_items = 3;
   repeated FieldValue default_value = 4;
+  // Unset: repeats are allowed.
+  oneof unique_items {
+    // No item may equal an earlier one;
+    // object items compare every field.
+    google.protobuf.Empty whole = 5;
+    // No object row may match an earlier one on all of these fields.
+    UniqueKeys by = 6;
+  }
+}
+
+message UniqueKeys {
+  repeated string keys = 1;
 }
 
 // A newly added item starts at the item kind's default_value.

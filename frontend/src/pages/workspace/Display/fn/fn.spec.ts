@@ -969,10 +969,11 @@ describe('parseFormifiedValue', () => {
         if (!r.ok) expect(r.error).toBe('Must have at least 1 item');
         else throw new Error('expected error');
     });
-    test('paramArray above max_items → error on the list', () => {
-        const r = parseFormifiedValue(countsDef({ maxItems: 2 }), rows('1', '2', '3'));
-        if (!r.ok) expect(r.error).toBe('Must have at most 2 items');
-        else throw new Error('expected error');
+    test('paramArray above max_items → only the count on the list, as on the server', () => {
+        const r = parseFormifiedValue(countsDef({ maxItems: 2 }), rows('1', '9', '9'));
+        if (r.ok) throw new Error('expected error');
+        expect(r.error).toBe('Must have at most 2 items');
+        expect(r.items).toBeUndefined();
     });
     test('paramArray bad items → errors at their indices, none on the list', () => {
         const r = parseFormifiedValue(countsDef(), rows('1', '9', ''));
@@ -993,6 +994,59 @@ describe('parseFormifiedValue', () => {
         const r = parseFormifiedValue(linksDef(), [listItem({ label: '', url: 'https://braiins.com' })]);
         if (r.ok) throw new Error('expected error');
         expect(r.items).toEqual([{ fields: { label: 'Value is required' } }]);
+    });
+
+    const uniqueWhole = { uniqueItems: { case: 'whole', value: {} } };
+    const uniqueBy = (...keys: string[]) => ({ uniqueItems: { case: 'by', value: { keys } } });
+
+    test('paramArray with unique_items → each repeat names the item it repeats', () => {
+        const r = parseFormifiedValue(countsDef(uniqueWhole), rows('1', '2', '1'));
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([undefined, undefined, { error: 'Repeats item 1' }]);
+    });
+    test('paramArray with unique_items → repeats wait until every row parses', () => {
+        const r = parseFormifiedValue(countsDef(uniqueWhole), rows('1', '1', '9'));
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([undefined, undefined, { error: 'Must be at most 5' }]);
+    });
+    test('paramArray with unique_items → 0 and -0 are one number, as on the server', () => {
+        const r = parseFormifiedValue(countsDef(uniqueWhole), rows('0', '-0'));
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([undefined, { error: 'Repeats item 1' }]);
+    });
+    test('paramArray of objects with unique_items → only a whole-row match repeats', () => {
+        const r = parseFormifiedValue(linksDef(uniqueWhole), [
+            listItem({ label: 'Home', url: '' }),
+            listItem({ label: 'Home', url: 'https://braiins.com' }),
+            listItem({ label: 'Home', url: '' }),
+        ]);
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([undefined, undefined, { error: 'Repeats item 1' }]);
+    });
+    test('paramArray of objects unique by a key → the repeat sits on the key field', () => {
+        const r = parseFormifiedValue(linksDef(uniqueBy('label')), [
+            listItem({ label: 'Home', url: 'https://braiins.com' }),
+            listItem({ label: 'Home', url: 'https://braiins.com/pool' }),
+        ]);
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([undefined, { fields: { label: 'Same as item 1' } }]);
+    });
+    test('paramArray of objects unique by a composite key → one row message, the key fields marked', () => {
+        const r = parseFormifiedValue(linksDef(uniqueBy('label', 'url')), [
+            listItem({ label: 'Home', url: 'https://braiins.com' }),
+            listItem({ label: 'Home', url: 'https://braiins.com/pool' }),
+            listItem({ label: 'Home', url: 'https://braiins.com' }),
+        ]);
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([undefined, undefined, { error: 'Same as item 1', markedFields: ['label', 'url'] }]);
+    });
+    test('paramArray of objects unique by an optional key → unset keys match, as on the server', () => {
+        const r = parseFormifiedValue(linksDef(uniqueBy('url')), [
+            listItem({ label: 'Home', url: '' }),
+            listItem({ label: 'Pool', url: '' }),
+        ]);
+        if (r.ok) throw new Error('expected error');
+        expect(r.items).toEqual([undefined, { fields: { url: 'Same as item 1' } }]);
     });
 });
 
@@ -1287,6 +1341,18 @@ describe('params form errors', () => {
                 fields: {},
                 items: { counts: [undefined, { errors: ['Must be at most 5'] }] },
             });
+        });
+
+        test('a composite key repeat keeps the fields it marks through to the list field', () => {
+            const links = linksDef({ uniqueItems: { case: 'by', value: { keys: ['label', 'url'] } } });
+            const form = revalidateField(null, links, [
+                listItem({ label: 'Home', url: 'https://braiins.com' }),
+                listItem({ label: 'Home', url: 'https://braiins.com' }),
+            ]);
+            expect(itemErrorsOf(form, 'links')).toEqual([
+                undefined,
+                { error: 'Same as item 1', markedFields: ['label', 'url'] },
+            ]);
         });
     });
 });

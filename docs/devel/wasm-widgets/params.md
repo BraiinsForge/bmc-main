@@ -76,12 +76,14 @@ is: any scalar kind, with the same options a scalar param takes, or an `object` 
       "items": { "type": "string", "placeholder": "e.g. BTC or AAPL" },
       "min_items": 1,
       "max_items": 8,
+      "unique_items": true,
       "default_value": ["NVDA", "AAPL"]
     },
     "links": {
       "name": "Links",
       "type": "array",
       "max_items": 4,
+      "unique_items": ["label"],
       "items": {
         "type": "object",
         "fields": {
@@ -98,6 +100,13 @@ is: any scalar kind, with the same options a scalar param takes, or an `object` 
 omitting it starts the list empty, so a list with `min_items` above 0 needs a `default_value` that fills it. An item's
 own `default_value`, or each field's for an object, seeds the items the operator adds. In a list's `default_value`, an
 omitted optional field is stored unset (`null`); a field's own `default_value` only seeds the rows the operator adds.
+
+`unique_items: true` refuses an item equal to an earlier one, the list's `default_value` included; an object row repeats
+only when every field matches. A list of field keys such as `["label"]` compares object rows on those fields alone.
+Either way, an unset optional field matches an unset one. Every item the operator adds starts at the same defaults, so
+under `unique_items` an item declares no `default_value`, and neither does a field `unique_items` names.
+
+The web UI reports a single repeated key on its field, and any other repeat once for the whole row.
 
 A list is never `null` and neither is any item in it, so array params cannot be `optional`; declare `min_items: 0` for a
 list that may be empty. An `optional` object field is what can be unset, and it is `null` within its row.

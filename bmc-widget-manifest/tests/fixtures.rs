@@ -87,6 +87,27 @@ fn manifest_with(key: &str, value: Value) -> Value {
 fn fixtures() -> Vec<Negative> {
     let over_cap_string = "x".repeat(MAX_PARAM_STRING_LENGTH + 1);
     let over_cap_key = "a".repeat(MAX_PARAM_KEY_LENGTH + 1);
+    let unique_links = |unique_items: Value, default_value: Value| {
+        manifest_with(
+            "params",
+            json!({
+                "links": {
+                    "name": "L",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "fields": {
+                            "label": { "name": "Label", "type": "string" },
+                            "url": { "name": "URL", "type": "string", "optional": true },
+                        },
+                    },
+                    "max_items": 3,
+                    "unique_items": unique_items,
+                    "default_value": default_value,
+                },
+            }),
+        )
+    };
     vec![
         // ── String variant ────────────────────────────────────────────────
         Negative {
@@ -451,6 +472,75 @@ fn fixtures() -> Vec<Negative> {
                         "max_items": 4,
                     },
                 }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: unique_items a bare string (structural)",
+            manifest: unique_links(json!("label"), json!([])),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: unique_items key not a param key (structural via regex)",
+            manifest: unique_links(json!(["Bad Key"]), json!([])),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: unique_items keys on a scalar list (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "symbols": {
+                        "name": "S",
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "max_items": 4,
+                        "unique_items": ["label"],
+                        "default_value": ["BTC"],
+                    },
+                }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: unique_items with no keys (semantic)",
+            manifest: unique_links(json!([]), json!([])),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: unique_items key that names no field (semantic)",
+            manifest: unique_links(json!(["icon"]), json!([])),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: unique_items key listed twice (semantic)",
+            manifest: unique_links(json!(["label", "label"]), json!([])),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: default repeats a whole row under unique_items (semantic)",
+            manifest: unique_links(
+                json!(true),
+                json!([{ "label": "Home" }, { "label": "Home" }]),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "array: default repeats a key under unique_items (semantic)",
+            manifest: unique_links(
+                json!(["label"]),
+                json!([
+                    { "label": "Home", "url": "https://braiins.com" },
+                    { "label": "Home", "url": "https://braiins.com/pool" },
+                ]),
             ),
             schema_accepts: true,
             manifest_accepts: false,

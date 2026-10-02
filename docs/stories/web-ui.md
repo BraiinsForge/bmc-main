@@ -68,6 +68,8 @@ firmware rebuild.
   fields, and lists of those or of small records built from them.
 - A list shows a row per item that can be dragged into a new order or removed, and an Add button; the manifest's minimum
   and maximum item counts disable removing and adding at the bounds.
+- A list the manifest marks `unique_items` refuses a repeated item, or a repeated value in the fields it names; the
+  error names the item it repeats, on the repeated field or else once for the row.
 - An empty field shows the placeholder its manifest declares, such as "e.g. BTC or AAPL", in list rows as well.
 - An enum is a dropdown, or a radio group where the manifest asks for one (`enum_control: radio`).
 - No per-widget form components exist in the frontend; a new parameter kind added once benefits every widget.

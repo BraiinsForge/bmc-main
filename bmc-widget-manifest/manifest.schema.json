@@ -758,6 +758,10 @@
             "type": {
               "type": "string",
               "const": "array"
+            },
+            "unique_items": {
+              "description": "Refuse repeated items: `true` compares whole items,\na list of field keys compares object rows on those fields only.",
+              "$ref": "#/$defs/UniqueItems"
             }
           },
           "required": [
@@ -770,6 +774,12 @@
       "required": [
         "name"
       ]
+    },
+    "ParamKey": {
+      "description": "A field key inside a schema's field map (a manifest's `params`, a credential type's `fields`).\nIdentifier-shaped `^[A-Za-z][A-Za-z0-9_-]*$`, capped at [`MAX_PARAM_KEY_LENGTH`] bytes, so it is\nsafe to reuse as a generated Rust field name.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_\\-]*$"
     },
     "ParamValue": {
       "description": "Typed value for a stored field: null, bool, i32, finite f64, string, and lists and objects of those.\nBoth the compositor's in-memory form and the wire shape sent to widgets.\nWhich shapes a field accepts is its [`ParamKind`]'s call, enforced by [`validate_values`].",
@@ -1134,6 +1144,22 @@
       "required": [
         "value",
         "label"
+      ]
+    },
+    "UniqueItems": {
+      "description": "Whether a list refuses repeated items,\nand which fields of an object row make one.",
+      "anyOf": [
+        {
+          "description": "`true` compares whole items;\n`false` allows repeats.",
+          "type": "boolean"
+        },
+        {
+          "description": "The fields an object row is compared on.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ParamKey"
+          }
+        }
       ]
     },
     "ViewportShape": {

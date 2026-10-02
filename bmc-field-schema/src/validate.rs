@@ -24,8 +24,8 @@ use bmc_shared_time::time::Timezone;
 use indexmap::IndexMap;
 
 use crate::{
-    ArrayParam, DoubleParam, IntegerParam, ItemKind, ItemShape, MAX_PARAM_STRING_LENGTH,
-    ObjectParam, ParamDefinition, ParamKey, ParamKind, ParamValue, Scalar, Shape, StringParam,
+    ArrayParam, DoubleParam, IntegerParam, ItemShape, MAX_PARAM_STRING_LENGTH, ObjectParam,
+    ParamDefinition, ParamKey, ParamKind, ParamValue, Scalar, Shape, StringParam, UniqueItems,
     f64_canonical_bits,
 };
 
@@ -142,7 +142,7 @@ fn validate_value(
     }
 }
 
-fn validate_list(
+pub(crate) fn validate_list(
     path: &str,
     array: &ArrayParam,
     value: &ParamValue,
@@ -167,31 +167,60 @@ fn validate_list(
         ));
         return None;
     }
-    let typed: Vec<ParamValue> = items
-        .iter()
-        .enumerate()
-        .filter_map(|(i, item)| {
-            validate_item(&format!("{path}[{i}]"), &array.items, item, violations)
-        })
-        .collect();
+    let typed = match array.items.shape() {
+        ItemShape::Scalar(scalar) => {
+            let items = validate_items(path, items, violations, |path, item, violations| {
+                validate_scalar(path, scalar, item, violations)
+            })?;
+            match &array.unique_items {
+                UniqueItems::Off => {}
+                UniqueItems::Whole => push_repeats(path, &items, None, violations),
+                UniqueItems::By(_) => {
+                    panic!("BUG: manifest load refuses unique_items keys on scalar items")
+                }
+            }
+            items
+        }
+        ItemShape::Object(object) => {
+            let rows = validate_items(path, items, violations, |path, item, violations| {
+                validate_object(path, object, item, violations)
+            })?;
+            match &array.unique_items {
+                UniqueItems::Off => {}
+                UniqueItems::Whole => push_repeats(path, &rows, None, violations),
+                UniqueItems::By(keys) => {
+                    let identities: Vec<_> = rows.iter().map(|row| key_fields(row, keys)).collect();
+                    push_repeats(path, &identities, Some(keys), violations);
+                }
+            }
+            rows.into_iter().map(ParamValue::Object).collect()
+        }
+    };
     (violations.len() == before).then_some(ParamValue::List(typed))
 }
 
+/// Every item typed, or `None` if any item has a violation.
 /// Unlike an optional field, an item is never null.
-pub(crate) fn validate_item(
+fn validate_items<T>(
     path: &str,
-    kind: &ItemKind,
-    value: &ParamValue,
+    items: &[ParamValue],
     violations: &mut Vec<Violation>,
-) -> Option<ParamValue> {
-    if matches!(value, ParamValue::Null) {
-        violations.push(Violation::new(path, "Value is required"));
-        return None;
-    }
-    match kind.shape() {
-        ItemShape::Scalar(scalar) => validate_scalar(path, scalar, value, violations),
-        ItemShape::Object(object) => validate_object(path, object, value, violations),
-    }
+    validate: impl Fn(&str, &ParamValue, &mut Vec<Violation>) -> Option<T>,
+) -> Option<Vec<T>> {
+    let before = violations.len();
+    let typed: Vec<T> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            let path = format!("{path}[{i}]");
+            if matches!(item, ParamValue::Null) {
+                violations.push(Violation::new(path, "Value is required"));
+                return None;
+            }
+            validate(&path, item, violations)
+        })
+        .collect();
+    (violations.len() == before).then_some(typed)
 }
 
 /// A field the row omits reads as null, which only an optional field accepts.
@@ -200,7 +229,7 @@ fn validate_object(
     object: &ObjectParam,
     value: &ParamValue,
     violations: &mut Vec<Violation>,
-) -> Option<ParamValue> {
+) -> Option<BTreeMap<ParamKey, ParamValue>> {
     let ParamValue::Object(fields) = value else {
         violations.push(Violation::new(path, "Must be an object"));
         return None;
@@ -230,7 +259,53 @@ fn validate_object(
             ));
         }
     }
-    (violations.len() == before).then_some(ParamValue::Object(typed))
+    (violations.len() == before).then_some(typed)
+}
+
+/// A whole repeat is reported at the item,
+/// a key repeat at each of its key fields.
+fn push_repeats<T: PartialEq>(
+    path: &str,
+    identities: &[T],
+    keys: Option<&[ParamKey]>,
+    violations: &mut Vec<Violation>,
+) {
+    for (i, identity) in identities.iter().enumerate() {
+        let Some(first) = identities
+            .iter()
+            .take(i)
+            .position(|earlier| earlier == identity)
+        else {
+            continue;
+        };
+        let item = first + 1;
+        match keys {
+            None => violations.push(Violation::new(
+                format!("{path}[{i}]"),
+                format!("Repeats item {item}"),
+            )),
+            Some(keys) => violations.extend(keys.iter().map(|key| {
+                Violation::new(
+                    format!("{path}[{i}]{}", key_path(key.as_str())),
+                    format!("Same as item {item}"),
+                )
+            })),
+        }
+    }
+}
+
+fn key_fields<'a>(
+    row: &'a BTreeMap<ParamKey, ParamValue>,
+    keys: &[ParamKey],
+) -> Vec<&'a ParamValue> {
+    keys.iter()
+        .map(|key| {
+            row.get(key).expect(
+                "BUG: manifest load lets unique_items name only declared fields, \
+                and a typed row holds every one",
+            )
+        })
+        .collect()
 }
 
 fn item_count(n: usize) -> String {
@@ -363,6 +438,135 @@ mod tests {
         result: Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>>,
     ) -> Vec<Violation> {
         result.err().unwrap_or_default()
+    }
+
+    fn list_violations(
+        items: &serde_json::Value,
+        unique_items: &serde_json::Value,
+        list: &serde_json::Value,
+    ) -> Vec<Violation> {
+        let fields: IndexMap<ParamKey, ParamDefinition> = serde_json::from_value(json!({
+            "list": {
+                "name": "L",
+                "type": "array",
+                "items": items,
+                "max_items": 5,
+                "unique_items": unique_items,
+            },
+        }))
+        .expect("BUG: the list schema parses");
+        let value = ParamValue::try_from(list).expect("BUG: the list value converts");
+        let values = Values::from([("list".to_owned(), Ok(value))]);
+        violations(validate_values(&fields, &values, MissingValues::Default))
+    }
+
+    #[test]
+    fn a_unique_list_reports_each_repeat_at_its_own_index() {
+        assert_eq!(
+            list_violations(
+                &json!({ "type": "string" }),
+                &json!(true),
+                &json!(["BTC", "ETH", "BTC", "ETH"])
+            ),
+            [
+                Violation::new(r#"["list"][2]"#, "Repeats item 1"),
+                Violation::new(r#"["list"][3]"#, "Repeats item 2"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_list_without_unique_items_keeps_its_repeats() {
+        let found = list_violations(
+            &json!({ "type": "string" }),
+            &json!(false),
+            &json!(["BTC", "BTC"]),
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_unique_list_counts_zero_and_negative_zero_as_one_number() {
+        assert_eq!(
+            list_violations(
+                &json!({ "type": "double" }),
+                &json!(true),
+                &json!([0.0, -0.0])
+            ),
+            [Violation::new(r#"["list"][1]"#, "Repeats item 1")],
+        );
+    }
+
+    fn links() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "fields": {
+                "label": { "name": "Label", "type": "string" },
+                "url": { "name": "URL", "type": "string", "optional": true },
+            },
+        })
+    }
+
+    #[test]
+    fn unique_object_rows_must_differ_in_some_field() {
+        assert_eq!(
+            list_violations(
+                &links(),
+                &json!(true),
+                &json!([
+                    { "label": "Home" },
+                    { "label": "Home", "url": null },
+                    { "label": "Home", "url": "https://braiins.com" },
+                ])
+            ),
+            [Violation::new(r#"["list"][1]"#, "Repeats item 1")],
+        );
+    }
+
+    #[test]
+    fn a_key_repeat_is_reported_at_the_key_field() {
+        assert_eq!(
+            list_violations(
+                &links(),
+                &json!(["label"]),
+                &json!([
+                    { "label": "Home", "url": "https://braiins.com" },
+                    { "label": "Home", "url": "https://braiins.com/pool" },
+                ])
+            ),
+            [Violation::new(r#"["list"][1]["label"]"#, "Same as item 1")],
+        );
+    }
+
+    #[test]
+    fn a_composite_key_repeat_marks_each_of_its_fields() {
+        assert_eq!(
+            list_violations(
+                &links(),
+                &json!(["label", "url"]),
+                &json!([
+                    { "label": "Home", "url": "https://braiins.com" },
+                    { "label": "Home", "url": "https://braiins.com/pool" },
+                    { "label": "Home", "url": "https://braiins.com" },
+                ])
+            ),
+            [
+                Violation::new(r#"["list"][2]["label"]"#, "Same as item 1"),
+                Violation::new(r#"["list"][2]["url"]"#, "Same as item 1"),
+            ],
+        );
+    }
+
+    #[test]
+    fn unset_key_fields_match_each_other() {
+        assert_eq!(
+            list_violations(
+                &links(),
+                &json!(["url"]),
+                &json!([{ "label": "Home" }, { "label": "Pool" }])
+            ),
+            [Violation::new(r#"["list"][1]["url"]"#, "Same as item 1")],
+        );
     }
 
     fn ratio(value: i32) -> Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>> {

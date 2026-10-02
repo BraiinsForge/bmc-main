@@ -165,13 +165,14 @@
     },
     "string_list": {
       "name": "String list",
-      "description": "List of free-form strings",
+      "description": "List of free-form strings, none repeated",
       "type": "array",
       "items": {
         "type": "string",
         "placeholder": "e.g. BTC or AAPL"
       },
       "max_items": 5,
+      "unique_items": true,
       "default_value": [
         "BTC",
         "ETH"
@@ -270,7 +271,7 @@
     },
     "links": {
       "name": "Links",
-      "description": "List of object rows: a label, an optional URL and an enum tone offered as a radio group",
+      "description": "List of object rows, unique by label: a label, an optional URL and an enum tone offered as a radio group",
       "type": "array",
       "items": {
         "type": "object",
@@ -306,6 +307,9 @@
         }
       },
       "max_items": 4,
+      "unique_items": [
+        "label"
+      ],
       "default_value": [
         {
           "label": "Braiins",

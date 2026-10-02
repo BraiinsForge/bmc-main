@@ -29,6 +29,7 @@ export {
     type BoundToggleProps,
     type OptionItem,
 } from './ParamField';
+export { parseFormifiedValue } from './parse';
 export {
     listItem,
     type FieldValue,

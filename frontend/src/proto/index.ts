@@ -25,4 +25,4 @@ export * from './forms';
 export * from './render';
 
 export { abort } from '@/lib/dom';
-export { create, type Message } from '@bufbuild/protobuf';
+export { create, equals, type Message } from '@bufbuild/protobuf';
