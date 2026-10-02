@@ -66,11 +66,12 @@
     },
     "integer_range": {
       "name": "Integer with bounds",
-      "description": "Integer with min / max / step constraints",
+      "description": "Integer with min / max / step constraints and a unit",
       "type": "integer",
       "min": 1,
       "max": 100,
       "step": 5,
+      "unit": "%",
       "default_value": 25
     },
     "integer_enum": {
@@ -153,8 +154,9 @@
     },
     "optional_double": {
       "name": "Optional double",
-      "description": "Optional with no default — exercises null-on-wire for the Double variant",
+      "description": "Optional with no default and a unit — exercises null-on-wire for the Double variant",
       "type": "double",
+      "unit": "s",
       "optional": true
     },
     "optional_boolean": {

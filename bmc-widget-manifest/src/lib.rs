@@ -1639,6 +1639,22 @@ mod tests {
     }
 
     #[test]
+    fn a_number_param_rejects_a_blank_unit() {
+        for (kind, unit) in [("integer", ""), ("double", "  ")] {
+            let reason = array_rejection(serde_json::json!({
+                "name": "N",
+                "type": kind,
+                "optional": true,
+                "unit": unit,
+            }));
+            assert_eq!(
+                reason, "unit must not be blank",
+                "{kind} with unit {unit:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_string_param_rejects_a_default_outside_its_length_bounds() {
         let reason = array_rejection(serde_json::json!({
             "name": "S",
@@ -2083,6 +2099,7 @@ mod tests {
             min: None,
             max: None,
             step: None,
+            unit: None,
             enum_values: vec![],
             enum_control: EnumControl::Dropdown,
             default_value: Some(7),

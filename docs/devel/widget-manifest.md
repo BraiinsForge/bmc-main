@@ -94,6 +94,7 @@ attributes and enforced by any JSON Schema validator. Examples:
 - `enum_control: radio` only alongside `enum_values` — a radio group with no options has nothing to offer.
 - `min` ≤ `max`, `step > 0`, finite f64 bounds — guard against manifests that compile structurally but produce a UI the
   operator cannot use.
+- A number's `unit`, when set, is not blank.
 - `min_length` ≤ `max_length` ≤ 1024 (`MAX_PARAM_STRING_LENGTH`), and every `enum_values` option fits those bounds — an
   option outside them could never be saved.
 - `+0.0` / `-0.0` collide in `Double` `enum_values` dedup — JSON Schema treats them as distinct numbers; the runtime

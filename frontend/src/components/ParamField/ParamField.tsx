@@ -467,8 +467,25 @@ function asRowObject(v: ListItem['value']): ObjectValue {
     return typeof v === 'object' && v !== null ? v : {};
 }
 
+function unitOf(kind: ScalarKind | pb.ArrayItemKind['kind'] | undefined): string | undefined {
+    return kind?.case === 'paramInteger' || kind?.case === 'paramDouble' ? kind.value.unit : undefined;
+}
+
+/** A field's name as every label shows it: with its unit, and flagged when optional. */
+function displayName(
+    name: string,
+    isOptional: boolean,
+    unit: string | undefined,
+    formatMessage: IntlShape['formatMessage'],
+): string {
+    if (unit && isOptional) return formatMessage({ defaultMessage: '{name} ({unit}, optional)' }, { name, unit });
+    if (unit) return formatMessage({ defaultMessage: '{name} ({unit})' }, { name, unit });
+    if (isOptional) return formatMessage({ defaultMessage: '{name} (optional)' }, { name });
+    return name;
+}
+
 function fieldName(field: pb.ObjectFieldDefinition, formatMessage: IntlShape['formatMessage']): string {
-    return field.isOptional ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: field.name }) : field.name;
+    return displayName(field.name, field.isOptional, unitOf(field.kind), formatMessage);
 }
 
 function ColumnLabel({ field }: { field: pb.ObjectFieldDefinition }) {
@@ -720,11 +737,11 @@ export function ParamField(props: {
 }) {
     const { id, definition, value, error, itemErrors, onChange, timezones } = props;
     const { formatMessage } = useIntl();
-    // Carbon convention: required is the norm (unmarked); flag only the optional fields.
-    const labelText = definition.isOptional
-        ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: definition.name })
-        : definition.name;
     const { kind } = definition;
+    // Carbon convention: required is the norm (unmarked); flag only the optional fields.
+    // A list's unit is its items'.
+    const unit = unitOf(kind.case === 'paramArray' ? kind.value.items?.kind : kind);
+    const labelText = displayName(definition.name, definition.isOptional, unit, formatMessage);
 
     if (kind.case === 'paramArray') {
         return (

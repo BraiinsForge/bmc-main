@@ -143,6 +143,8 @@ message ParamDouble {
   optional double default_value = 5;
   optional string placeholder = 6;
   optional EnumControl enum_control = 7;
+  // What the number counts, such as "%".
+  optional string unit = 8;
 }
 
 message DoubleOption {
@@ -158,6 +160,8 @@ message ParamInteger {
   optional int32 default_value = 5;
   optional string placeholder = 6;
   optional EnumControl enum_control = 7;
+  // What the number counts, such as "s".
+  optional string unit = 8;
 }
 
 message IntegerOption {

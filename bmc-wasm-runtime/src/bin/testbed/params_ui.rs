@@ -579,12 +579,13 @@ fn slider_cell<N: egui::emath::Numeric>(
     range: std::ops::RangeInclusive<N>,
     step: f64,
     decimals: usize,
+    unit: Option<&str>,
 ) -> egui::Response {
     let row_h = row_height(ui);
     let (lo, hi) = (range.start().to_f64(), range.end().to_f64());
     let number_w = [lo, hi]
         .into_iter()
-        .map(|end| number_width(ui, end, decimals))
+        .map(|end| number_width(ui, end, decimals, unit))
         .fold(ui.spacing().interact_size.x, f32::max);
     // A continuous range has no step to drag the box by.
     let speed = if step > 0.0 { step } else { (hi - lo) / 100.0 };
@@ -592,13 +593,14 @@ fn slider_cell<N: egui::emath::Numeric>(
         egui::vec2(cell_w, row_h),
         egui::Layout::right_to_left(egui::Align::Center),
         |slot| {
-            let number = slot.add_sized(
-                [number_w, row_h],
+            let number = with_unit(
                 egui::DragValue::new(value)
                     .range(range.clone())
                     .speed(speed)
                     .fixed_decimals(decimals),
+                unit,
             );
+            let number = slot.add_sized([number_w, row_h], number);
             slot.spacing_mut().slider_width = slot.available_width();
             let track = slot.add(
                 egui::Slider::new(value, range)
@@ -612,16 +614,31 @@ fn slider_cell<N: egui::emath::Numeric>(
     .inner
 }
 
-/// A `DragValue`'s width showing `value`, measured the way it lays itself out.
-fn number_width(ui: &egui::Ui, value: f64, decimals: usize) -> f32 {
+/// A `DragValue`'s width showing `value` and its unit, measured the way it lays itself out.
+fn number_width(ui: &egui::Ui, value: f64, decimals: usize, unit: Option<&str>) -> f32 {
     let style = ui.style();
-    let text = style.number_formatter.format(value, decimals..=decimals);
-    let galley = ui.painter().layout_no_wrap(
-        text,
-        style.drag_value_text_style.resolve(style),
-        egui::Color32::PLACEHOLDER,
-    );
-    galley.size().x + 2.0 * ui.spacing().button_padding.x
+    let font = style.drag_value_text_style.resolve(style);
+    let text_width = |text: String| {
+        ui.painter()
+            .layout_no_wrap(text, font.clone(), egui::Color32::PLACEHOLDER)
+            .size()
+            .x
+    };
+    let number = text_width(style.number_formatter.format(value, decimals..=decimals));
+    let unit = unit.map_or(0.0, |unit| text_width(unit_suffix(unit)));
+    number + unit + 2.0 * ui.spacing().button_padding.x
+}
+
+fn with_unit<'a>(number: egui::DragValue<'a>, unit: Option<&str>) -> egui::DragValue<'a> {
+    match unit {
+        Some(unit) => number.suffix(unit_suffix(unit)),
+        None => number,
+    }
+}
+
+/// `DragValue` lays its suffix flush against the number, so the space is the suffix's own.
+fn unit_suffix(unit: &str) -> String {
+    format!(" {unit}")
 }
 
 /// What a double shows when it has no step to take its decimals from.
@@ -745,17 +762,30 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (Scalar::Integer(IntegerParam { min, max, step, .. }), ParamValue::Integer(n)) => {
+        (
+            Scalar::Integer(IntegerParam {
+                min,
+                max,
+                step,
+                unit,
+                ..
+            }),
+            ParamValue::Integer(n),
+        ) => {
             // Bounded ranges use a `Slider` with `trailing_fill` so the cell shows
             // the value as a progress fill against `min..=max` (the GIMP-style look).
             // Unbounded integers fall back to a `DragValue` since `Slider` requires a finite range.
+            let unit = unit.as_deref();
             if let (Some(lo), Some(hi)) = (min, max) {
                 let step = step.map_or(1.0, f64::from);
-                let resp = slider_cell(ui, cell_w, n, *lo..=*hi, step, 0);
+                let resp = slider_cell(ui, cell_w, n, *lo..=*hi, step, 0, unit);
                 focus_on_label_click(&resp);
                 resp.changed()
             } else {
-                let mut dv = egui::DragValue::new(n).speed(step.map_or(1.0, f64::from));
+                let mut dv = with_unit(
+                    egui::DragValue::new(n).speed(step.map_or(1.0, f64::from)),
+                    unit,
+                );
                 if let Some(lo) = min {
                     dv = dv.range(*lo..=i32::MAX);
                 } else if let Some(hi) = max {
@@ -802,16 +832,27 @@ fn paint_typed_input(
                 combo_cell(ui, key, cell_w, combo_label, populate)
             }
         }
-        (Scalar::Double(DoubleParam { min, max, step, .. }), ParamValue::Double(f)) => {
+        (
+            Scalar::Double(DoubleParam {
+                min,
+                max,
+                step,
+                unit,
+                ..
+            }),
+            ParamValue::Double(f),
+        ) => {
             // Same dispatch as Integer: bounded ranges get
             // the filled-slider treatment, unbounded fall back to DragValue.
+            let unit = unit.as_deref();
             if let (Some(lo), Some(hi)) = (min, max) {
                 let decimals = step.map_or(CONTINUOUS_DECIMALS, step_decimals);
-                let resp = slider_cell(ui, cell_w, f, *lo..=*hi, step.unwrap_or(0.0), decimals);
+                let step = step.unwrap_or(0.0);
+                let resp = slider_cell(ui, cell_w, f, *lo..=*hi, step, decimals, unit);
                 focus_on_label_click(&resp);
                 resp.changed()
             } else {
-                let mut dv = egui::DragValue::new(f).speed(step.unwrap_or(0.1));
+                let mut dv = with_unit(egui::DragValue::new(f).speed(step.unwrap_or(0.1)), unit);
                 if let Some(lo) = min {
                     dv = dv.range(*lo..=f64::INFINITY);
                 } else if let Some(hi) = max {
@@ -844,7 +885,10 @@ mod layout_tests {
 
     use super::super::icon::Icons;
     use super::super::theme;
-    use super::{Manifest, PARAM_PANEL_W, SECTION_PAD, TestbedApp, paint_params_section};
+    use super::{
+        Manifest, PARAM_PANEL_W, SECTION_PAD, TestbedApp, number_width, paint_params_section,
+        with_unit,
+    };
 
     const SECTION_W: f32 = PARAM_PANEL_W - 2.0 * SECTION_PAD as f32;
 
@@ -943,6 +987,25 @@ mod layout_tests {
             });
         }
         overflow.max(0.0)
+    }
+
+    #[test]
+    fn number_width_matches_the_laid_out_box() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, &theme::DARK);
+        for unit in [None, Some("%"), Some("km/h")] {
+            let (mut measured, mut laid_out) = (0.0, 0.0);
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut value = -12_345.678_f64;
+                measured = number_width(ui, value, 3, unit);
+                let number = with_unit(egui::DragValue::new(&mut value).fixed_decimals(3), unit);
+                laid_out = ui.horizontal(|row| row.add(number).rect.width()).inner;
+            });
+            assert!(
+                (measured - laid_out).abs() < 0.5,
+                "unit {unit:?}: measured {measured} px, laid out {laid_out} px"
+            );
+        }
     }
 
     #[test]

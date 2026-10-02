@@ -272,6 +272,28 @@ fn fixtures() -> Vec<Negative> {
         },
         // ── Integer variant ───────────────────────────────────────────────
         Negative {
+            label: "integer: empty unit (structural via minLength)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "count": { "name": "N", "type": "integer", "optional": true, "unit": "" },
+                }),
+            ),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "integer: blank unit (semantic)",
+            manifest: manifest_with(
+                "params",
+                json!({
+                    "count": { "name": "N", "type": "integer", "optional": true, "unit": "  " },
+                }),
+            ),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
             label: "integer: default_value is fractional (structural)",
             manifest: manifest_with(
                 "params",

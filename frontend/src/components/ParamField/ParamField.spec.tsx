@@ -478,6 +478,66 @@ describe('ParamField list', () => {
     });
 });
 
+describe('ParamField units', () => {
+    const seconds: pb.ArrayItemKind['kind'] = {
+        case: 'paramInteger',
+        value: pb.create(pb.ParamIntegerSchema, { unit: 's' }),
+    };
+
+    test.each([
+        [false, 'Interval (s)'],
+        [true, 'Interval (s, optional)'],
+    ])('a number names its unit with the field (optional: %s)', (isOptional, label) => {
+        const interval = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'interval',
+            name: 'Interval',
+            isOptional,
+            kind: seconds,
+        });
+        const { getByLabelText } = render(
+            <IntlProvider locale="en">
+                <ParamField id="f" definition={interval} value="" onChange={() => {}} timezones={[]} />
+            </IntlProvider>,
+        );
+        expect(getByLabelText(label)).toBeTruthy();
+    });
+
+    test("a list's rows carry its items' unit", () => {
+        const durations = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'durations',
+            name: 'Durations',
+            kind: {
+                case: 'paramArray',
+                value: pb.create(pb.ParamArraySchema, { items: { kind: seconds }, maxItems: 2 }),
+            },
+        });
+        const { getByLabelText } = renderList([listItem('5')], undefined, durations);
+        expect(getByLabelText('Durations (s), item 1')).toBeTruthy();
+    });
+
+    test("an object column carries its field's unit", () => {
+        const rows = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'rows',
+            name: 'Rows',
+            kind: {
+                case: 'paramArray',
+                value: pb.create(pb.ParamArraySchema, {
+                    items: {
+                        kind: {
+                            case: 'paramObject',
+                            value: { fields: [{ key: 'delay', name: 'Delay', kind: seconds }] },
+                        },
+                    },
+                    maxItems: 2,
+                }),
+            },
+        });
+        const { getByLabelText, getByText } = renderList([listItem({ delay: '5' })], undefined, rows);
+        expect(getByText('Delay (s)')).toBeTruthy();
+        expect(getByLabelText('Rows, item 1, Delay (s)')).toBeTruthy();
+    });
+});
+
 describe('ParamField object list', () => {
     test('renders an input per field of each row, under one header', () => {
         const { getByLabelText, getByText } = renderList(

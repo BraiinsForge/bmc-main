@@ -346,6 +346,14 @@
             "type": {
               "type": "string",
               "const": "double"
+            },
+            "unit": {
+              "description": "What the number counts, such as \"s\" or \"%\"; the operator UI shows it with the field's name.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
             }
           },
           "required": [
@@ -410,6 +418,14 @@
             "type": {
               "type": "string",
               "const": "integer"
+            },
+            "unit": {
+              "description": "What the number counts, such as \"s\" or \"%\"; the operator UI shows it with the field's name.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
             }
           },
           "required": [
@@ -648,6 +664,14 @@
             "type": {
               "type": "string",
               "const": "double"
+            },
+            "unit": {
+              "description": "What the number counts, such as \"s\" or \"%\"; the operator UI shows it with the field's name.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
             }
           },
           "required": [
@@ -712,6 +736,14 @@
             "type": {
               "type": "string",
               "const": "integer"
+            },
+            "unit": {
+              "description": "What the number counts, such as \"s\" or \"%\"; the operator UI shows it with the field's name.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
             }
           },
           "required": [
@@ -1014,6 +1046,14 @@
             "type": {
               "type": "string",
               "const": "double"
+            },
+            "unit": {
+              "description": "What the number counts, such as \"s\" or \"%\"; the operator UI shows it with the field's name.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
             }
           },
           "required": [
@@ -1078,6 +1118,14 @@
             "type": {
               "type": "string",
               "const": "integer"
+            },
+            "unit": {
+              "description": "What the number counts, such as \"s\" or \"%\"; the operator UI shows it with the field's name.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
             }
           },
           "required": [

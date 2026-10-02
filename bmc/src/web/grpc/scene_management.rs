@@ -855,6 +855,7 @@ fn double_param_to_proto(
         min,
         max,
         step,
+        unit,
         enum_values,
         enum_control,
         default_value,
@@ -865,6 +866,7 @@ fn double_param_to_proto(
         min: *min,
         max: *max,
         step: *step,
+        unit: unit.clone(),
         enum_values: enum_values
             .iter()
             .map(|o| web::DoubleOption {
@@ -883,6 +885,7 @@ fn integer_param_to_proto(
         min,
         max,
         step,
+        unit,
         enum_values,
         enum_control,
         default_value,
@@ -893,6 +896,7 @@ fn integer_param_to_proto(
         min: *min,
         max: *max,
         step: *step,
+        unit: unit.clone(),
         enum_values: enum_values
             .iter()
             .map(|o| web::IntegerOption {
@@ -2109,6 +2113,7 @@ mod tests {
                     min: None,
                     max: None,
                     step: None,
+                    unit: None,
                     enum_values: vec![],
                     enum_control: EnumControl::Dropdown,
                     default_value: Some(7),
@@ -2122,6 +2127,7 @@ mod tests {
                     min: None,
                     max: None,
                     step: None,
+                    unit: None,
                     enum_values: vec![],
                     enum_control: EnumControl::Dropdown,
                     default_value: Some(2.5),
@@ -2267,6 +2273,7 @@ mod tests {
                     min: None,
                     max: Some(5),
                     step: None,
+                    unit: None,
                     enum_values: vec![],
                     enum_control: EnumControl::Dropdown,
                     default_value: None,
@@ -3024,6 +3031,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0),
@@ -3043,6 +3051,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
@@ -3115,6 +3124,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(1.0),
@@ -3134,6 +3144,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(1.0),
@@ -3153,6 +3164,7 @@ mod tests {
                 min: Some(5),
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
@@ -3172,6 +3184,7 @@ mod tests {
                 min: None,
                 max: Some(10),
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
@@ -3191,6 +3204,7 @@ mod tests {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
@@ -3310,6 +3324,7 @@ mod tests {
                     min: Some(0),
                     max: Some(10),
                     step: None,
+                    unit: None,
                     enum_values: vec![],
                     enum_control: EnumControl::Dropdown,
                     default_value: Some(5),
@@ -3476,6 +3491,7 @@ mod tests {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: Some(0.1),
+                unit: Some("%".into()),
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
@@ -3492,6 +3508,7 @@ mod tests {
         assert_eq!(pd.max, Some(1.0));
         assert_eq!(pd.step, Some(0.1));
         assert_eq!(pd.placeholder.as_deref(), Some("e.g. 0.5"));
+        assert_eq!(pd.unit.as_deref(), Some("%"));
     }
 
     #[test]
@@ -3506,6 +3523,7 @@ mod tests {
                 min: Some(0),
                 max: Some(10),
                 step: Some(1),
+                unit: Some("s".into()),
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
@@ -3522,6 +3540,7 @@ mod tests {
         assert_eq!(pi.max, Some(10));
         assert_eq!(pi.step, Some(1));
         assert_eq!(pi.placeholder.as_deref(), Some("e.g. 5"));
+        assert_eq!(pi.unit.as_deref(), Some("s"));
     }
 
     #[test]
@@ -4183,6 +4202,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0),
@@ -4205,6 +4225,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
@@ -4257,6 +4278,7 @@ mod tests {
                 min: Some(5),
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
@@ -4279,6 +4301,7 @@ mod tests {
                 min: None,
                 max: Some(10),
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(5),
@@ -4301,6 +4324,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(1.0),
@@ -4323,6 +4347,7 @@ mod tests {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
@@ -4345,6 +4370,7 @@ mod tests {
                 min: Some(0.0),
                 max: Some(1.0),
                 step: None,
+                unit: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some(0.5),
@@ -4392,6 +4418,7 @@ mod tests {
                 min: None,
                 max: None,
                 step: None,
+                unit: None,
                 enum_values: vec![bmc_widget_manifest::IntegerOption {
                     value: 1,
                     label: "One".into(),

@@ -775,6 +775,10 @@ pub struct DoubleParam {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("exclusiveMinimum" = 0.0))]
     pub step: Option<f64>,
+    /// What the number counts, such as "s" or "%"; the operator UI shows it with the field's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub unit: Option<String>,
     /// Optional closed set of allowed values.
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -804,6 +808,10 @@ pub struct IntegerParam {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("exclusiveMinimum" = 0))]
     pub step: Option<i32>,
+    /// What the number counts, such as "s" or "%"; the operator UI shows it with the field's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub unit: Option<String>,
     /// Optional closed set of allowed values.
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1139,6 +1147,7 @@ impl DoubleParam {
         }
         check_double_range(self.min, self.max, self.step)?;
         check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
+        check_unit(self.unit.as_deref())?;
         check_double_options(&self.enum_values)
     }
 }
@@ -1147,7 +1156,15 @@ impl IntegerParam {
     fn validate(&self) -> Result<(), String> {
         check_int_range(self.min, self.max, self.step)?;
         check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
+        check_unit(self.unit.as_deref())?;
         check_int_options(&self.enum_values)
+    }
+}
+
+fn check_unit(unit: Option<&str>) -> Result<(), String> {
+    match unit {
+        Some(unit) if unit.trim().is_empty() => Err(String::from("unit must not be blank")),
+        Some(_) | None => Ok(()),
     }
 }
 
