@@ -32,8 +32,8 @@ authenticated, and polled, so one family failing never blanks another's numbers.
   the miner's own API where it exposes one, otherwise from a built-in model catalog; with neither known, a small
   hashrate floor stands in.
 - A device's detail screen splits *off* by cause: unreachable (no HTTP response at all), API error (the device answered,
-  but with an error such as `503`), or not authenticating (the device answered but rejected the login — a prompt to
-  check the credentials).
+  but with an error such as `503`), login rejected (the device answered but refused the credentials — a prompt to check
+  the password), or check account (no usable account is bound for the miner's family, so the widget never asked).
 
 ### Move between the overview and a per-model list
 
@@ -83,15 +83,19 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 ### Point the widget at my miners' credentials
 
-> As an operator, I want to give the widget one set of credentials per family so it can read stats from every miner of
-> that family on the network.
+> As an operator, I want to give the widget one saved account per family so it can read stats from every miner of that
+> family on the network.
 
-- *BOS password* is the `root` password used to log into every BOS miner; the username is always `root`.
-- *Braiins OS Libre username* and *Braiins OS Libre password* are the HTTP Basic credentials used against every Braiins
-  OS Libre device.
-- AxeOS miners need no credentials.
-- Credentials are shared fleet-wide per family — one BOS password and one Braiins OS Libre login for the whole network,
-  not a per-device setting.
+- The widget offers two account pickers, *BOS miners* and *Braiins OS Libre devices*, each taking a *Username &
+  password* account from the device's saved accounts.
+- The *BOS miners* account logs into every BOS miner; its username is `root`.
+- The *Braiins OS Libre devices* account is sent as HTTP Basic auth to every Braiins OS Libre device.
+- AxeOS miners need no account.
+- An account is shared fleet-wide per family — every miner of the family must accept the same username and password.
+- A family left unbound is still listed, each miner marked *Check account*, but none of them is contacted.
+- Binding or swapping an account takes effect at once: that family's miners are logged into again on the next pass.
+- Editing a bound account logs every BOS and Braiins OS Libre miner in again, since the Deck does not say which account
+  changed. The miners keep their model groups meanwhile.
 
 ### Show or hide AxeOS miners
 
@@ -124,12 +128,14 @@ authenticated, and polled, so one family failing never blanks another's numbers.
   poll on a flaky network does not blank it. Once unreachable it counts as *off* and drops out of the fleet totals
   entirely — an unreachable miner is unknown, not a measured zero, so an all-down group reads as unavailable rather than
   a fabricated `0`.
-- A confirmed miner is kept across an mDNS *removed* event — which fires unreliably on lossy Wi-Fi as a cache expiry,
-  not only a real departure — so a dropped announcement cannot churn it out of the fleet. Its liveness is governed by
-  polling from then on, not by discovery.
+- A confirmed miner, or one marked *Check account*, is kept across an mDNS *removed* event — which fires unreliably on
+  lossy Wi-Fi as a cache expiry, not only a real departure — so a dropped announcement cannot churn it out of the fleet.
+  Its liveness is governed by polling from then on, not by discovery.
 - A miner that has had no HTTP response for several minutes is retired from the fleet, so a genuinely dead fleet's count
   decays toward zero rather than freezing on the last-known members. A miner that is present but API-erroring (answering
-  with an error) is kept, not retired.
+  with an error), or waiting for its family's account, is kept, not retired. Without an account the widget cannot tell a
+  present miner from a departed one, so a miner removed meanwhile stays listed until the account is bound. A miner
+  outside the account's allowed destinations is never contacted either, and stays listed until they include it.
 - Failed and timed-out fetches retry on the next pass on their own; the widget keeps the last good data between passes.
 - AxeOS reports `-1` for a sensor it has not read yet (notably right after boot); the widget drops these negative
   sentinels so they never pollute the fleet totals.
@@ -138,11 +144,11 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 ## Supported families
 
-| Family           | Display label    | mDNS browse  | Default port | API base      | Auth                                                                   |
-| ---------------- | ---------------- | ------------ | ------------ | ------------- | ---------------------------------------------------------------------- |
-| BOS              | BOS              | `_http._tcp` | 80           | `/api/v1`     | token login at `/auth/login` (`root` + *BOS password*)                 |
-| Braiins OS Libre | Braiins OS Libre | `_ubos._tcp` | 8080         | `/api`        | HTTP Basic (*Braiins OS Libre username* / *Braiins OS Libre password*) |
-| AxeOS            | Bitaxe           | `_http._tcp` | 80           | `/api/system` | none                                                                   |
+| Family           | Display label    | mDNS browse  | Default port | API base      | Auth                                                       |
+| ---------------- | ---------------- | ------------ | ------------ | ------------- | ---------------------------------------------------------- |
+| BOS              | BOS              | `_http._tcp` | 80           | `/api/v1`     | token login at `/auth/login` with the *BOS miners* account |
+| Braiins OS Libre | Braiins OS Libre | `_ubos._tcp` | 8080         | `/api`        | HTTP Basic with the *Braiins OS Libre devices* account     |
+| AxeOS            | Bitaxe           | `_http._tcp` | 80           | `/api/system` | none                                                       |
 
 - **Discovery.** The widget runs two mDNS browses: the base `_http._tcp` service (BOS and AxeOS share it) and Braiins OS
   Libre's own `_ubos._tcp`. On `_http._tcp`, both families are identified up front by their discovery TXT records: AxeOS
@@ -165,14 +171,21 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 All parameters are manifest-driven widget settings, configurable from the web UI.
 
-| Key                  | Name                      | Type    | Default    | Purpose                                                              |
-| -------------------- | ------------------------- | ------- | ---------- | -------------------------------------------------------------------- |
-| `fleet_name`         | Fleet name                | string  | `My Fleet` | Heading shown above the fleet overview.                              |
-| `bos_password`       | BOS password              | string  | `root`     | Root password used to log into every BOS miner on the network.       |
-| `ubos_username`      | Braiins OS Libre username | string  | `root`     | User name for HTTP Basic auth against every Braiins OS Libre device. |
-| `ubos_password`      | Braiins OS Libre password | string  | `root`     | Password for HTTP Basic auth against every Braiins OS Libre device.  |
-| `axeos_enabled`      | Show AxeOS miners         | boolean | `true`     | Include AxeOS miners in the view and keep polling them.              |
-| `chart_span_minutes` | Chart time range          | integer | `60`       | Minutes the hashrate charts cover: `15`, `60`, `360`, or `1440`.     |
+| Key                  | Name              | Type    | Default    | Purpose                                                          |
+| -------------------- | ----------------- | ------- | ---------- | ---------------------------------------------------------------- |
+| `fleet_name`         | Fleet name        | string  | `My Fleet` | Heading shown above the fleet overview.                          |
+| `axeos_enabled`      | Show AxeOS miners | boolean | `true`     | Include AxeOS miners in the view and keep polling them.          |
+| `chart_span_minutes` | Chart time range  | integer | `60`       | Minutes the hashrate charts cover: `15`, `60`, `360`, or `1440`. |
+
+## Credentials
+
+Both slots take a `generic-userpass` account and are optional; see [Credential Accounts](../credential-accounts.md) for
+how accounts are saved and bound.
+
+| Slot   | Label                    | Used for                                              |
+| ------ | ------------------------ | ----------------------------------------------------- |
+| `bos`  | BOS miners               | The `/auth/login` body sent to every BOS miner.       |
+| `ubos` | Braiins OS Libre devices | The HTTP Basic header sent to every Braiins OS Libre. |
 
 ## Constraints
 
@@ -181,9 +194,11 @@ All parameters are manifest-driven widget settings, configurable from the web UI
 - Every device across all families is polled on a single global round-robin, one device at a time, aiming to refresh the
   whole fleet roughly every 5 seconds — bounded by a floor on the per-device poll rate, so a large fleet's freshness
   degrades gracefully rather than the box drowning in parallel requests.
-- The *BOS password*, *Braiins OS Libre username*, and *Braiins OS Libre password* are stored and shown as ordinary
-  widget text (the manifest system has no secret-parameter type yet) and are sent unencrypted over the local network,
-  since the miner APIs are HTTP-only. This is a known limitation.
+- The widget never holds a miner password: the device puts the bound account into each request as it leaves. The
+  password still crosses the local network unencrypted, since the miner APIs are HTTP-only. Listing the network's range
+  (for example `192.168.1.0/24`) under the account's allowed destinations keeps it from being sent anywhere else.
+- A BOS password containing `"` or `\` cannot be used: it is placed into the JSON login body unescaped. The miner
+  answers the broken login with an error, which its detail screen shows; it stays in the fleet.
 - Credentials are shared fleet-wide per family; the widget cannot use different credentials for individual miners of the
   same family.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
