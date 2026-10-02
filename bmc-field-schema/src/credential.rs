@@ -54,21 +54,24 @@ pub struct CredentialType {
 impl CredentialType {
     /// The fields a widget may spend through `{{ credential.<slot>.<field> }}`.
     ///
-    /// For every type but the file-backed one these are the configured fields.
-    /// A local file token configures a `path` and spends the `token` read
-    /// from it, so the path never becomes a placeholder.
+    /// Usually these are the configured fields,
+    /// plus any the type derives from them, such as a username and password pair's `basic`.
+    /// A local file token configures a `path` and spends the `token` read from it,
+    /// so the path never becomes a placeholder.
     #[must_use]
     pub fn spendable_fields(&self) -> Vec<ParamKey> {
-        if matches!(
-            BuiltinType::from_id(&self.id),
-            Some(BuiltinType::LocalFileToken)
-        ) {
-            vec![
-                ParamKey::try_new(FILE_TOKEN_FIELD.to_owned())
-                    .expect("BUG: the token field name is identifier-shaped"),
-            ]
-        } else {
-            self.fields.keys().cloned().collect()
+        let field_key = |name: &str| {
+            ParamKey::try_new(name.to_owned()).expect("BUG: a field name is identifier-shaped")
+        };
+        match BuiltinType::from_id(&self.id) {
+            Some(BuiltinType::LocalFileToken) => vec![field_key(FILE_TOKEN_FIELD)],
+            Some(builtin) => self
+                .fields
+                .keys()
+                .cloned()
+                .chain(builtin.derived_field_names().iter().copied().map(field_key))
+                .collect(),
+            None => self.fields.keys().cloned().collect(),
         }
     }
 }
@@ -309,6 +312,41 @@ impl BuiltinType {
     pub fn egress(self) -> Option<EgressPolicy> {
         self.schema().egress
     }
+
+    /// The fields [`Self::derived_fields`] computes, known without any values.
+    #[must_use]
+    pub const fn derived_field_names(self) -> &'static [&'static str] {
+        match self {
+            Self::GenericUserpass => &[USERPASS_BASIC_FIELD],
+            Self::GenericToken | Self::BraiinsPool | Self::LocalFileToken => &[],
+        }
+    }
+
+    /// The spendable fields this type computes from its configured ones,
+    /// which `configured` reads by name.
+    /// A field is left out when an input is missing,
+    /// so a placeholder spending it is refused rather than sent half-built.
+    ///
+    /// The local file token's `token` is read from a file, not computed,
+    /// and so is not among them.
+    #[must_use]
+    pub fn derived_fields<'a>(
+        self,
+        configured: impl Fn(&str) -> Option<&'a str>,
+    ) -> Vec<(&'static str, String)> {
+        match self {
+            Self::GenericUserpass => match (
+                configured(USERPASS_USERNAME_FIELD),
+                configured(USERPASS_PASSWORD_FIELD),
+            ) {
+                (Some(username), Some(password)) => {
+                    vec![(USERPASS_BASIC_FIELD, basic_credential(username, password))]
+                }
+                (None, _) | (_, None) => Vec::new(),
+            },
+            Self::GenericToken | Self::BraiinsPool | Self::LocalFileToken => Vec::new(),
+        }
+    }
 }
 
 /// The fixed set of firmware-provided credential types.
@@ -388,6 +426,21 @@ fn generic_token() -> CredentialType {
     }
 }
 
+pub const USERPASS_USERNAME_FIELD: &str = "username";
+pub const USERPASS_PASSWORD_FIELD: &str = "password";
+
+/// The spendable field of a username and password pair
+/// that carries both as one HTTP Basic credential.
+pub const USERPASS_BASIC_FIELD: &str = "basic";
+
+/// The credential an `Authorization: Basic` header carries:
+/// `username:password` in base64, encoded as UTF-8 per RFC 7617.
+#[must_use]
+pub fn basic_credential(username: &str, password: &str) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"))
+}
+
 fn generic_userpass() -> CredentialType {
     CredentialType {
         id: BuiltinType::GenericUserpass.id().to_owned(),
@@ -395,11 +448,11 @@ fn generic_userpass() -> CredentialType {
         description: "A username and password pair.".to_owned(),
         fields: field_map([
             (
-                "username",
+                USERPASS_USERNAME_FIELD,
                 string_field("Username", "The account username.", None),
             ),
             (
-                "password",
+                USERPASS_PASSWORD_FIELD,
                 secret_field("Password", "The account password."),
             ),
         ]),
@@ -684,9 +737,91 @@ mod tests {
     }
 
     #[test]
+    fn a_username_and_password_pair_also_spends_its_basic_credential() {
+        let spendable: Vec<String> = find("generic-userpass")
+            .spendable_fields()
+            .iter()
+            .map(|k| k.as_str().to_owned())
+            .collect();
+
+        assert_eq!(
+            spendable,
+            [
+                USERPASS_USERNAME_FIELD,
+                USERPASS_PASSWORD_FIELD,
+                USERPASS_BASIC_FIELD
+            ]
+        );
+    }
+
+    #[test]
+    fn basic_credential_matches_the_rfc_7617_examples() {
+        assert_eq!(
+            basic_credential("Aladdin", "open sesame"),
+            "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
+        assert_eq!(
+            basic_credential("test", "123£"),
+            "dGVzdDoxMjPCow==",
+            "non-ASCII must encode as UTF-8"
+        );
+    }
+
+    #[test]
+    fn a_username_and_password_pair_derives_its_basic_credential() {
+        let configured = |field: &str| match field {
+            USERPASS_USERNAME_FIELD | USERPASS_PASSWORD_FIELD => Some("root"),
+            _ => None,
+        };
+
+        assert_eq!(
+            BuiltinType::GenericUserpass.derived_fields(configured),
+            [(USERPASS_BASIC_FIELD, "cm9vdDpyb290".to_owned())]
+        );
+    }
+
+    #[test]
+    fn half_a_pair_derives_nothing() {
+        let username_only = |field: &str| (field == USERPASS_USERNAME_FIELD).then_some("root");
+
+        assert!(
+            BuiltinType::GenericUserpass
+                .derived_fields(username_only)
+                .is_empty(),
+            "a missing password must not encode as if it were empty"
+        );
+    }
+
+    #[test]
+    fn every_type_derives_exactly_the_fields_it_names() {
+        let everything = |_: &str| Some("x");
+        for builtin in BuiltinType::ALL {
+            let derived: Vec<&str> = builtin
+                .derived_fields(everything)
+                .into_iter()
+                .map(|(field, _)| field)
+                .collect();
+            assert_eq!(
+                derived,
+                builtin.derived_field_names(),
+                "codegen offers a placeholder for every name, so {:?} must resolve each",
+                builtin.id()
+            );
+        }
+    }
+
+    #[test]
+    fn basic_credential_keeps_a_colon_in_the_password() {
+        assert_eq!(basic_credential("root", "a:b"), "cm9vdDphOmI=");
+    }
+
+    #[test]
     fn every_other_type_spends_exactly_what_it_configures() {
         for builtin in BuiltinType::ALL {
-            if builtin == BuiltinType::LocalFileToken {
+            if matches!(
+                builtin,
+                BuiltinType::LocalFileToken | BuiltinType::GenericUserpass
+            ) {
                 continue;
             }
             let t = builtin.schema();

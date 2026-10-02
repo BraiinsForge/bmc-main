@@ -185,9 +185,10 @@ Workflow:
 For a widget with a credential slot, bind an account in the sidebar's Credentials section and pass the real secret via
 `just wasm::record <widget> --secrets ../secrets.local.json` (JSON shaped `{"<slot>": {"<field>": "…"}}`, kept
 gitignored at the repo root; the path is relative to `bmc-wasm-runtime/`, where `just` module recipes run) — the
-recording session needs one real authenticated egress pass. The fixture stays secret-free by construction: recording
-sees only the placeholder form, and substitution happens at the wire hop. Replay never needs the secret — recorded
-fetches are served by method + URL before substitution would run.
+recording session needs one real authenticated egress pass. Write the fields the account form asks for; the testbed
+derives the rest as bmc does, such as a `generic-userpass` slot's `basic`. The fixture stays secret-free by
+construction: recording sees only the placeholder form, and substitution happens at the wire hop. Replay never needs the
+secret — recorded fetches are served by method + URL before substitution would run.
 
 Repeat per target you want covered. Each recording is an independent dataset; datasets do not share state.
 

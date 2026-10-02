@@ -82,6 +82,8 @@ pub mod credentials {
     ///
     ///For a miner elsewhere on your network. Bind an account with the miner's password; the username is always root. Set the Miner URL to its API. Leave Local BOS token unbound.
     pub mod bos_remote {
+        ///Placeholder for this slot's `basic` field.
+        pub const BASIC: &str = "{{ credential.bos_remote.basic }}";
         ///Placeholder for this slot's `password` field.
         pub const PASSWORD: &str = "{{ credential.bos_remote.password }}";
         ///Placeholder for this slot's `username` field.

@@ -186,14 +186,10 @@ pub fn resolve(
             slot.as_str().to_owned(),
             serde_json::json!({ "type": account.type_id, "account": account.name }),
         );
-        let fields = if account.type_id == BuiltinType::LocalFileToken.id() {
-            file_token_fields(account, file_tokens)
-        } else {
-            account
-                .field_values
-                .iter()
-                .map(|(field, value)| (field.as_str().to_owned(), Value::String(value.clone())))
-                .collect()
+        let fields = match BuiltinType::from_id(&account.type_id) {
+            Some(BuiltinType::LocalFileToken) => file_token_fields(account, file_tokens),
+            Some(builtin) => with_derived_fields(account, builtin),
+            None => configured_fields(account),
         };
         let mut slot_value = serde_json::json!({ "fields": fields });
         if !account.allow_hosts.is_empty() {
@@ -206,6 +202,24 @@ pub fn resolve(
         view,
         secrets: CredentialSecrets::new(secrets),
     }
+}
+
+fn configured_fields(account: &Account) -> Map<String, Value> {
+    account
+        .field_values
+        .iter()
+        .map(|(field, value)| (field.as_str().to_owned(), Value::String(value.clone())))
+        .collect()
+}
+
+fn with_derived_fields(account: &Account, builtin: BuiltinType) -> Map<String, Value> {
+    let mut fields = configured_fields(account);
+    let derived =
+        builtin.derived_fields(|field| account.field_values.get(field).map(String::as_str));
+    for (field, value) in derived {
+        fields.insert(field.to_owned(), Value::String(value));
+    }
+    fields
 }
 
 /// The token read from the account's file, or nothing while the file is
@@ -501,6 +515,62 @@ mod tests {
         let wire: serde_json::Value =
             serde_json::from_str(&resolution.secrets.to_json_string()).expect("BUG: valid JSON");
         assert_eq!(wire[POOL]["fields"], serde_json::json!({}));
+    }
+
+    fn userpass_account(username: &str, password: Option<&str>) -> Account {
+        let mut account = account(
+            "a-4",
+            BuiltinType::GenericUserpass.id(),
+            "Fleet",
+            USERPASS_USERNAME_FIELD,
+            username,
+        );
+        if let Some(password) = password {
+            account
+                .field_values
+                .insert(slot(USERPASS_PASSWORD_FIELD), password.to_owned());
+        }
+        account
+    }
+
+    #[test]
+    fn a_userpass_account_also_yields_its_basic_credential() {
+        let resolution = resolve(
+            &bound(&[(POOL, "a-4")]),
+            &store(vec![userpass_account("root", Some("root"))]),
+            &FileTokens::default(),
+        );
+
+        assert_eq!(
+            resolution.secrets.field(POOL, USERPASS_BASIC_FIELD),
+            Some("cm9vdDpyb290")
+        );
+        assert_eq!(
+            resolution.secrets.field(POOL, USERPASS_PASSWORD_FIELD),
+            Some("root"),
+            "the configured fields stay spendable beside it"
+        );
+        assert!(
+            !Value::Object(resolution.view)
+                .to_string()
+                .contains("cm9vdDpyb290"),
+            "the widget-visible view must not carry the encoded pair"
+        );
+    }
+
+    #[test]
+    fn a_userpass_account_missing_its_password_yields_no_basic_credential() {
+        let resolution = resolve(
+            &bound(&[(POOL, "a-4")]),
+            &store(vec![userpass_account("root", None)]),
+            &FileTokens::default(),
+        );
+
+        assert_eq!(
+            resolution.secrets.field(POOL, USERPASS_BASIC_FIELD),
+            None,
+            "half a pair must not encode as if the password were empty"
+        );
     }
 
     #[test]

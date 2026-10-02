@@ -265,6 +265,8 @@ pub mod credentials {
     ///
     ///Two-field type — exercises more than one placeholder per slot
     pub mod media {
+        ///Placeholder for this slot's `basic` field.
+        pub const BASIC: &str = "{{ credential.media.basic }}";
         ///Placeholder for this slot's `password` field.
         pub const PASSWORD: &str = "{{ credential.media.password }}";
         ///Placeholder for this slot's `username` field.

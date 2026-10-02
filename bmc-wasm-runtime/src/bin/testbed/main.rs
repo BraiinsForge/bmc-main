@@ -335,6 +335,113 @@ fn declared_slots(
         .collect()
 }
 
+/// The secrets file with the fields bmc derives on the device filled in,
+/// so the file names only what an operator types into the account form.
+/// A field the file already spells out is left as written.
+///
+/// Both shapes `from_editable` accepts are handled,
+/// the bare `{"<slot>": {…}}` and the delivery `{"<slot>": {"fields": {…}}}`.
+fn with_derived_fields(
+    mut parsed: serde_json::Map<String, serde_json::Value>,
+    manifest: &bmc_widget_manifest::Manifest,
+) -> serde_json::Map<String, serde_json::Value> {
+    for (key, slot) in &manifest.credentials {
+        let Some(builtin) = bmc_widget_manifest::credential::BuiltinType::from_id(&slot.type_id)
+        else {
+            continue;
+        };
+        let Some(entry) = parsed.get_mut(key.as_str()) else {
+            continue;
+        };
+        let fields = if entry.get("fields").is_some() {
+            &mut entry["fields"]
+        } else {
+            entry
+        };
+        let Some(fields) = fields.as_object_mut() else {
+            continue;
+        };
+        let derived =
+            builtin.derived_fields(|field| fields.get(field).and_then(serde_json::Value::as_str));
+        for (field, value) in derived {
+            fields
+                .entry(field)
+                .or_insert(serde_json::Value::String(value));
+        }
+    }
+    parsed
+}
+
+#[cfg(test)]
+mod derived_secrets_tests {
+    use super::*;
+
+    fn userpass_manifest() -> bmc_widget_manifest::Manifest {
+        r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440203",
+            "version": "0.1.0",
+            "name": "Fleet",
+            "description": "Test fixture",
+            "binary": "bin/fleet",
+            "supported_viewports": [{
+                "type": "rectangular",
+                "min_width": 1280,
+                "max_width": 1280,
+                "min_height": 480,
+                "max_height": 480
+            }],
+            "params": {},
+            "credentials": {
+                "ubos": { "type": "generic-userpass", "label": "Devices" }
+            }
+        }"#
+        .parse()
+        .expect("BUG: fixture manifest must parse")
+    }
+
+    fn secrets(json: serde_json::Value) -> bmc_widget_protocol::CredentialSecrets {
+        let manifest = userpass_manifest();
+        let serde_json::Value::Object(parsed) = json else {
+            panic!("BUG: a secrets fixture is an object");
+        };
+        bmc_widget_protocol::CredentialSecrets::from_editable(
+            with_derived_fields(parsed, &manifest),
+            &declared_slots(&manifest),
+        )
+        .expect("BUG: fixture secrets must validate")
+    }
+
+    #[test]
+    fn a_bare_userpass_entry_gains_its_basic_credential() {
+        let secrets =
+            secrets(serde_json::json!({ "ubos": { "username": "root", "password": "root" } }));
+
+        assert_eq!(secrets.field("ubos", "basic"), Some("cm9vdDpyb290"));
+    }
+
+    #[test]
+    fn a_delivery_shaped_entry_gains_its_basic_credential() {
+        let secrets = secrets(serde_json::json!({
+            "ubos": {
+                "fields": { "username": "root", "password": "root" },
+                "allow_hosts": ["10.0.0.0/8"]
+            }
+        }));
+
+        assert_eq!(secrets.field("ubos", "basic"), Some("cm9vdDpyb290"));
+        assert_eq!(secrets.allow_hosts("ubos"), ["10.0.0.0/8"]);
+    }
+
+    #[test]
+    fn a_basic_credential_written_by_hand_is_kept() {
+        let secrets = secrets(serde_json::json!({
+            "ubos": { "username": "root", "password": "root", "basic": "hand-written" }
+        }));
+
+        assert_eq!(secrets.field("ubos", "basic"), Some("hand-written"));
+    }
+}
+
 /// One side of a `--rewrite-url` pair as its origin.
 ///
 /// The rewrite matches whole origins, so anything it could not honour
@@ -388,7 +495,7 @@ impl CliArgs {
     /// against the manifest's slots.
     fn credential_secrets(
         &self,
-        declared: &[bmc_widget_protocol::DeclaredSlot],
+        manifest: &bmc_widget_manifest::Manifest,
     ) -> Result<bmc_widget_protocol::CredentialSecrets> {
         let Some(path) = &self.secrets else {
             return Ok(bmc_widget_protocol::CredentialSecrets::default());
@@ -403,8 +510,11 @@ impl CliArgs {
         })?;
         let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&raw)
             .with_context(|| format!("parse secrets file {}", path.display()))?;
-        bmc_widget_protocol::CredentialSecrets::from_editable(parsed, declared)
-            .with_context(|| format!("secrets file {}", path.display()))
+        bmc_widget_protocol::CredentialSecrets::from_editable(
+            with_derived_fields(parsed, manifest),
+            &declared_slots(manifest),
+        )
+        .with_context(|| format!("secrets file {}", path.display()))
     }
 
     /// The `--rewrite-url` pairs, split at the first `=`.
@@ -1372,8 +1482,7 @@ impl TestbedApp {
         let open_platforms = startup_platforms(active_platform, pinned, &manifest);
 
         let now = std::time::Instant::now();
-        let declared = declared_slots(&manifest);
-        let secrets = cli.credential_secrets(&declared)?;
+        let secrets = cli.credential_secrets(&manifest)?;
         let url_rewrites = cli.url_rewrites()?;
         let views = view_placement(&cli);
         let mut app = Self {
