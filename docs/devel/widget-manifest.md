@@ -90,10 +90,12 @@ attributes and enforced by any JSON Schema validator. Examples:
 `bmc_widget_manifest`. Examples:
 
 - Every `default_value`, whether on a param, a list item kind or an object field, passes the same checks an operator's
-  value must: enum options, `[min, max]`, finiteness, the timezone list and the string length cap.
+  value must: enum options, `[min, max]`, finiteness, the timezone list, the string length cap and length bounds.
 - `enum_control: radio` only alongside `enum_values` — a radio group with no options has nothing to offer.
 - `min` ≤ `max`, `step > 0`, finite f64 bounds — guard against manifests that compile structurally but produce a UI the
   operator cannot use.
+- `min_length` ≤ `max_length` ≤ 1024 (`MAX_PARAM_STRING_LENGTH`), and every `enum_values` option fits those bounds — an
+  option outside them could never be saved.
 - `+0.0` / `-0.0` collide in `Double` `enum_values` dedup — JSON Schema treats them as distinct numbers; the runtime
   treats them as the same selection.
 - Required params (i.e. `optional: false`) **must** declare a `default_value`, so a scene saved against the current

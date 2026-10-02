@@ -841,6 +841,19 @@ describe('parseFormifiedValue', () => {
         const r = parseFormifiedValue(paramDef('paramString'), 'x'.repeat(1024));
         expect(r.ok).toBe(true);
     });
+    test('paramString outside its length bounds → error', () => {
+        const def = paramDef('paramString', 'k', false, { minLength: 2, maxLength: 3 });
+        const short = parseFormifiedValue(def, 'B');
+        if (!short.ok) expect(short.error).toBe('Must be at least 2 characters');
+        else throw new Error('expected error');
+        const long = parseFormifiedValue(def, 'BTCU');
+        if (!long.ok) expect(long.error).toBe('Must be at most 3 characters');
+        else throw new Error('expected error');
+    });
+    test('paramString length counts an emoji as one character, as on the server', () => {
+        const r = parseFormifiedValue(paramDef('paramString', 'k', false, { maxLength: 2 }), '🚀🚀');
+        expect(r.ok).toBe(true);
+    });
 
     test('paramInteger required, empty → error', () => {
         const r = parseFormifiedValue(paramDef('paramInteger'), '');

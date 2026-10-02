@@ -110,6 +110,9 @@ message ParamString {
   optional string default_value = 3;
   optional string placeholder = 4;
   optional EnumControl enum_control = 5;
+  // Counted in characters (Unicode code points).
+  optional uint32 min_length = 6;
+  optional uint32 max_length = 7;
 }
 
 enum EnumControl {

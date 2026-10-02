@@ -87,6 +87,19 @@ fn manifest_with(key: &str, value: Value) -> Value {
 fn fixtures() -> Vec<Negative> {
     let over_cap_string = "x".repeat(MAX_PARAM_STRING_LENGTH + 1);
     let over_cap_key = "a".repeat(MAX_PARAM_KEY_LENGTH + 1);
+    let bounded_string = |bounds: Value| {
+        let mut param = json!({ "name": "S", "type": "string", "optional": true });
+        param
+            .as_object_mut()
+            .expect("BUG: the param is an object")
+            .extend(
+                bounds
+                    .as_object()
+                    .expect("BUG: the bounds are an object")
+                    .clone(),
+            );
+        manifest_with("params", json!({ "symbol": param }))
+    };
     let unique_links = |unique_items: Value, default_value: Value| {
         manifest_with(
             "params",
@@ -195,6 +208,37 @@ fn fixtures() -> Vec<Negative> {
                 }),
             ),
             schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "string: max_length zero (structural via minimum)",
+            manifest: bounded_string(json!({ "max_length": 0 })),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "string: max_length above the cap (structural via maximum)",
+            manifest: bounded_string(json!({ "max_length": MAX_PARAM_STRING_LENGTH + 1 })),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "string: min_length above max_length (semantic)",
+            manifest: bounded_string(json!({ "min_length": 4, "max_length": 2 })),
+            schema_accepts: true,
+            manifest_accepts: false,
+        },
+        Negative {
+            label: "string: enum_values entry outside the length bounds (semantic)",
+            manifest: bounded_string(json!({
+                "max_length": 3,
+                "default_value": "BTC",
+                "enum_values": [
+                    { "value": "BTC", "label": "Bitcoin" },
+                    { "value": "BTCUSD", "label": "Bitcoin in dollars" },
+                ],
+            })),
+            schema_accepts: true,
             manifest_accepts: false,
         },
         // ── Double variant ────────────────────────────────────────────────

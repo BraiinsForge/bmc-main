@@ -51,10 +51,11 @@ name.
 Supported param kinds are `string`, `integer`, `double`, `boolean`, `timezone`, and `array`. Strings, integers, and
 doubles may also declare `enum_values`; generated code turns those enum values into Rust enum wrappers. Their
 `enum_control` picks how the operator UI offers them: `dropdown`, the default, or `radio`, a radio group that suits a
-few short options. Numeric params may declare `min`, `max`, and `step`. String params may declare UI `format` hints.
-Strings, integers, doubles, and timezones may declare a `placeholder`, as params, list items, or object fields alike:
-example text the operator UI shows in the empty input, such as "e.g. BTC or AAPL". It is never a value, so the widget
-never receives it.
+few short options. Numeric params may declare `min`, `max`, and `step`. String params may declare UI `format` hints, and
+`min_length` / `max_length` counted in characters (Unicode code points, as JSON Schema counts them) up to 1024. Strings,
+integers, doubles, and timezones may declare a `placeholder`, as params, list items, or object fields alike: example
+text the operator UI shows in the empty input, such as "e.g. BTC or AAPL". It is never a value, so the widget never
+receives it.
 
 Required params must declare `default_value`, except an `array`, whose omitted default is the empty list. Optional
 params may omit a default; when unset, the generated Rust field is `Option<T>` and evaluates to `None`.

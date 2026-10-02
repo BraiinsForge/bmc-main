@@ -822,14 +822,21 @@ fn object_param_to_proto(ObjectParam { fields }: &ObjectParam) -> web::ParamObje
 fn string_param_to_proto(
     StringParam {
         format,
+        min_length,
+        max_length,
         enum_values,
         enum_control,
         default_value,
         placeholder,
     }: &StringParam,
 ) -> web::ParamString {
+    let char_count = |n: usize| {
+        u32::try_from(n).expect("BUG: manifest validation caps lengths at MAX_PARAM_STRING_LENGTH")
+    };
     web::ParamString {
         format: format.map(string_format_to_proto).map(i32::from),
+        min_length: min_length.map(char_count),
+        max_length: max_length.map(char_count),
         enum_values: enum_values
             .iter()
             .map(|o| web::StringOption {
@@ -2016,6 +2023,8 @@ mod tests {
             "name",
             ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("hello".into()),
@@ -2037,6 +2046,8 @@ mod tests {
             "name",
             ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: None,
@@ -2057,6 +2068,8 @@ mod tests {
             "name",
             ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("hello".into()),
@@ -2081,6 +2094,8 @@ mod tests {
                 "s",
                 ParamKind::String(StringParam {
                     format: None,
+                    min_length: None,
+                    max_length: None,
                     enum_values: vec![],
                     enum_control: EnumControl::Dropdown,
                     default_value: Some("x".into()),
@@ -2194,6 +2209,8 @@ mod tests {
             "color",
             ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
@@ -2216,6 +2233,8 @@ mod tests {
             "color",
             ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
@@ -2371,6 +2390,8 @@ mod tests {
     fn string_kind() -> StringParam {
         StringParam {
             format: None,
+            min_length: None,
+            max_length: None,
             enum_values: vec![],
             enum_control: EnumControl::Dropdown,
             default_value: Some("x".into()),
@@ -2963,6 +2984,8 @@ mod tests {
             "color",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
@@ -2980,6 +3003,8 @@ mod tests {
             "color",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
@@ -3050,6 +3075,8 @@ mod tests {
             "name",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("x".into()),
@@ -3067,6 +3094,8 @@ mod tests {
             "label",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: None,
@@ -3179,6 +3208,8 @@ mod tests {
             "style",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![
                     bmc_widget_manifest::StringOption {
                         value: "dark".into(),
@@ -3205,6 +3236,8 @@ mod tests {
             "style",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![
                     bmc_widget_manifest::StringOption {
                         value: "dark".into(),
@@ -3288,6 +3321,8 @@ mod tests {
                 "color",
                 bmc_widget_manifest::ParamKind::String(StringParam {
                     format: None,
+                    min_length: None,
+                    max_length: None,
                     enum_values: vec![bmc_widget_manifest::StringOption {
                         value: "red".into(),
                         label: "Red".into(),
@@ -3344,6 +3379,8 @@ mod tests {
             is_optional: false,
             kind: ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![
                     StringOption {
                         value: "a".into(),
@@ -3553,6 +3590,8 @@ mod tests {
             kind: ParamKind::Array(ArrayParam {
                 items: ItemKind::String(StringParam {
                     format: None,
+                    min_length: Some(1),
+                    max_length: Some(10),
                     enum_values: vec![],
                     enum_control: EnumControl::Dropdown,
                     default_value: Some("BTC".into()),
@@ -3579,6 +3618,7 @@ mod tests {
         };
         assert_eq!(item.default_value.as_deref(), Some("BTC"));
         assert_eq!(item.placeholder.as_deref(), Some("e.g. BTC or AAPL"));
+        assert_eq!((item.min_length, item.max_length), (Some(1), Some(10)));
     }
 
     fn scene_with_widget(
@@ -4122,6 +4162,8 @@ mod tests {
             "color",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![],
                 enum_control: EnumControl::Dropdown,
                 default_value: Some("red".into()),
@@ -4323,6 +4365,8 @@ mod tests {
             "style",
             bmc_widget_manifest::ParamKind::String(StringParam {
                 format: None,
+                min_length: None,
+                max_length: None,
                 enum_values: vec![bmc_widget_manifest::StringOption {
                     value: "dark".into(),
                     label: "Dark".into(),

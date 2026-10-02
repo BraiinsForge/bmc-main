@@ -165,11 +165,13 @@
     },
     "string_list": {
       "name": "String list",
-      "description": "List of free-form strings, none repeated",
+      "description": "List of free-form strings of 1 to 10 characters, none repeated",
       "type": "array",
       "items": {
         "type": "string",
-        "placeholder": "e.g. BTC or AAPL"
+        "placeholder": "e.g. BTC or AAPL",
+        "min_length": 1,
+        "max_length": 10
       },
       "max_items": 5,
       "unique_items": true,

@@ -736,6 +736,14 @@ pub struct StringParam {
     /// Optional structural hint to the operator UI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<StringFormat>,
+    /// Fewest characters (Unicode code points) a value may hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(max = MAX_PARAM_STRING_LENGTH))]
+    pub min_length: Option<usize>,
+    /// Most characters (Unicode code points) a value may hold, up to [`MAX_PARAM_STRING_LENGTH`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = MAX_PARAM_STRING_LENGTH))]
+    pub max_length: Option<usize>,
     /// Optional closed set of allowed values.
     /// When non-empty, the `default_value` must be one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1085,8 +1093,40 @@ fn check_unique_keys(keys: &[ParamKey], object: &ObjectParam) -> Result<(), Stri
 impl StringParam {
     fn validate(&self) -> Result<(), String> {
         check_string_options(&self.enum_values)?;
-        check_enum_control(self.enum_control, !self.enum_values.is_empty())
+        check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
+        check_length_bounds(self.min_length, self.max_length)?;
+        for o in &self.enum_values {
+            if let Some(message) =
+                validate::length_violation(&o.value, self.min_length, self.max_length)
+            {
+                return Err(format!("enum_values {:?}: {message}", o.value));
+            }
+        }
+        Ok(())
     }
+}
+
+fn check_length_bounds(min: Option<usize>, max: Option<usize>) -> Result<(), String> {
+    if let Some(lo) = min
+        && lo > MAX_PARAM_STRING_LENGTH
+    {
+        return Err(format!(
+            "min_length must be at most {MAX_PARAM_STRING_LENGTH} (got {lo})"
+        ));
+    }
+    if let Some(hi) = max
+        && !(1..=MAX_PARAM_STRING_LENGTH).contains(&hi)
+    {
+        return Err(format!(
+            "max_length must be within 1..={MAX_PARAM_STRING_LENGTH} (got {hi})"
+        ));
+    }
+    if let (Some(lo), Some(hi)) = (min, max)
+        && lo > hi
+    {
+        return Err(format!("min_length ({lo}) > max_length ({hi})"));
+    }
+    Ok(())
 }
 
 impl DoubleParam {

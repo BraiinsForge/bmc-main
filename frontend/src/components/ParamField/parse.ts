@@ -100,6 +100,8 @@ function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): S
             if (utf8.encode(raw).length > MAX_STRING_BYTES)
                 return { ok: false, error: `Must be at most ${MAX_STRING_BYTES} bytes` };
 
+            const error = lengthError(raw, kind.value);
+            if (error) return { ok: false, error };
             return { ok: true, value: stringValue(raw) };
         }
         case 'paramTimezone': {
@@ -135,6 +137,18 @@ function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): S
         default:
             return assertUnreachable(kind, 'scalar param kind');
     }
+}
+
+function characterCount(n: number): string {
+    return n === 1 ? '1 character' : `${n} characters`;
+}
+
+// Counts code points as the server does; `.length` counts UTF-16 units, an emoji as two.
+function lengthError(s: string, { minLength, maxLength }: pb.ParamString): string | undefined {
+    const length = [...s].length;
+    if (minLength !== undefined && length < minLength) return `Must be at least ${characterCount(minLength)}`;
+    if (maxLength !== undefined && length > maxLength) return `Must be at most ${characterCount(maxLength)}`;
+    return undefined;
 }
 
 function itemCount(n: number): string {

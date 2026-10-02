@@ -1604,6 +1604,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_string_param_rejects_length_bounds_no_value_can_meet() {
+        let over_cap = MAX_PARAM_STRING_LENGTH + 1;
+        for (def, expected) in [
+            (
+                serde_json::json!({ "min_length": 4, "max_length": 2 }),
+                "min_length (4) > max_length (2)".to_owned(),
+            ),
+            (
+                serde_json::json!({ "max_length": 0 }),
+                format!("max_length must be within 1..={MAX_PARAM_STRING_LENGTH} (got 0)"),
+            ),
+            (
+                serde_json::json!({ "max_length": over_cap }),
+                format!("max_length must be within 1..={MAX_PARAM_STRING_LENGTH} (got {over_cap})"),
+            ),
+            (
+                serde_json::json!({ "min_length": over_cap }),
+                format!("min_length must be at most {MAX_PARAM_STRING_LENGTH} (got {over_cap})"),
+            ),
+        ] {
+            let mut param = serde_json::json!({ "name": "S", "type": "string", "optional": true });
+            param
+                .as_object_mut()
+                .expect("BUG: the param is an object")
+                .extend(
+                    def.as_object()
+                        .expect("BUG: the bounds are an object")
+                        .clone(),
+                );
+            assert_eq!(array_rejection(param), expected);
+        }
+    }
+
+    #[test]
+    fn a_string_param_rejects_a_default_outside_its_length_bounds() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "string",
+            "max_length": 3,
+            "default_value": "BTCUSD",
+        }));
+        assert_eq!(reason, "default_value: Must be at most 3 characters");
+    }
+
+    #[test]
+    fn a_string_param_rejects_an_option_outside_its_length_bounds() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "S",
+            "type": "string",
+            "max_length": 3,
+            "default_value": "BTC",
+            "enum_values": [
+                { "value": "BTC", "label": "Bitcoin" },
+                { "value": "BTCUSD", "label": "Bitcoin in dollars" },
+            ],
+        }));
+        assert_eq!(
+            reason,
+            r#"enum_values "BTCUSD": Must be at most 3 characters"#
+        );
+    }
+
     const UNKNOWN_TIMEZONE: &str = "default_value: Must be a valid timezone";
 
     #[test]
@@ -2032,6 +2095,8 @@ mod tests {
 
         let without_default = ParamKind::String(StringParam {
             format: None,
+            min_length: None,
+            max_length: None,
             enum_values: vec![],
             enum_control: EnumControl::Dropdown,
             default_value: None,

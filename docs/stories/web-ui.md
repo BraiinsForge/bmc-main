@@ -72,6 +72,8 @@ firmware rebuild.
   error names the item it repeats, on the repeated field or else once for the row.
 - An empty field shows the placeholder its manifest declares, such as "e.g. BTC or AAPL", in list rows as well.
 - An enum is a dropdown, or a radio group where the manifest asks for one (`enum_control: radio`).
+- Text the manifest bounds with `min_length` / `max_length` is refused outside those lengths, counted in characters,
+  with an error naming the bound it misses.
 - No per-widget form components exist in the frontend; a new parameter kind added once benefits every widget.
 - `UpdateWidget` is a full-map update (not a patch): clients send the complete params object, and the backend validates
   required/missing keys, unknown keys, and per-type constraints (type/range/enum/timezone).

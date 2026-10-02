@@ -316,6 +316,54 @@ fn item_count(n: usize) -> String {
     }
 }
 
+fn character_count(n: usize) -> String {
+    if n == 1 {
+        "1 character".to_owned()
+    } else {
+        format!("{n} characters")
+    }
+}
+
+/// The bound `s` breaks, counted in characters (Unicode code points) as JSON Schema counts them.
+pub(crate) fn length_violation(s: &str, min: Option<usize>, max: Option<usize>) -> Option<String> {
+    let len = s.chars().count();
+    if let Some(lo) = min
+        && len < lo
+    {
+        return Some(format!("Must be at least {}", character_count(lo)));
+    }
+    if let Some(hi) = max
+        && len > hi
+    {
+        return Some(format!("Must be at most {}", character_count(hi)));
+    }
+    None
+}
+
+fn validate_string(
+    path: &str,
+    param: &StringParam,
+    s: &str,
+    violations: &mut Vec<Violation>,
+) -> Option<ParamValue> {
+    if s.len() > MAX_PARAM_STRING_LENGTH {
+        violations.push(Violation::new(
+            path,
+            format!("Must be at most {MAX_PARAM_STRING_LENGTH} bytes"),
+        ));
+        return None;
+    }
+    if let Some(message) = length_violation(s, param.min_length, param.max_length) {
+        violations.push(Violation::new(path, message));
+        return None;
+    }
+    if !param.enum_values.is_empty() && !param.enum_values.iter().any(|o| o.value == s) {
+        violations.push(Violation::new(path, "Must be one of the listed options"));
+        return None;
+    }
+    Some(ParamValue::String(s.to_owned()))
+}
+
 pub(crate) fn validate_scalar(
     path: &str,
     scalar: Scalar<'_>,
@@ -323,19 +371,8 @@ pub(crate) fn validate_scalar(
     violations: &mut Vec<Violation>,
 ) -> Option<ParamValue> {
     match (scalar, value) {
-        (Scalar::String(StringParam { enum_values, .. }), ParamValue::String(s)) => {
-            if s.len() > MAX_PARAM_STRING_LENGTH {
-                violations.push(Violation::new(
-                    path,
-                    format!("Must be at most {MAX_PARAM_STRING_LENGTH} bytes"),
-                ));
-                return None;
-            }
-            if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
-                violations.push(Violation::new(path, "Must be one of the listed options"));
-                return None;
-            }
-            Some(ParamValue::String(s.clone()))
+        (Scalar::String(param), ParamValue::String(s)) => {
+            validate_string(path, param, s, violations)
         }
         (Scalar::Timezone(_), ParamValue::String(s)) => {
             if Timezone::lookup(s).is_none() {
@@ -566,6 +603,60 @@ mod tests {
                 &json!([{ "label": "Home" }, { "label": "Pool" }])
             ),
             [Violation::new(r#"["list"][1]["url"]"#, "Same as item 1")],
+        );
+    }
+
+    fn symbol_violations(symbol: &str) -> Vec<Violation> {
+        let fields: IndexMap<ParamKey, ParamDefinition> = serde_json::from_value(json!({
+            "symbol": { "name": "Symbol", "type": "string", "min_length": 2, "max_length": 4 },
+        }))
+        .expect("BUG: the symbol schema parses");
+        let values = Values::from([(
+            "symbol".to_owned(),
+            Ok(ParamValue::String(symbol.to_owned())),
+        )]);
+        violations(validate_values(&fields, &values, MissingValues::Default))
+    }
+
+    #[test]
+    fn a_string_outside_its_length_bounds_is_refused() {
+        assert_eq!(
+            symbol_violations("B"),
+            [Violation::new(
+                r#"["symbol"]"#,
+                "Must be at least 2 characters"
+            )],
+        );
+        assert_eq!(
+            symbol_violations("BTCUSD"),
+            [Violation::new(
+                r#"["symbol"]"#,
+                "Must be at most 4 characters"
+            )],
+        );
+    }
+
+    #[test]
+    fn a_string_length_counts_characters_not_bytes() {
+        for symbol in ["čřžš", "🚀🚀"] {
+            let found = symbol_violations(symbol);
+            assert!(
+                found.is_empty(),
+                "{symbol:?} is {} characters in {} bytes: {found:?}",
+                symbol.chars().count(),
+                symbol.len()
+            );
+        }
+    }
+
+    #[test]
+    fn the_byte_cap_is_reported_before_the_length_bounds() {
+        assert_eq!(
+            symbol_violations(&"x".repeat(MAX_PARAM_STRING_LENGTH + 1)),
+            [Violation::new(
+                r#"["symbol"]"#,
+                format!("Must be at most {MAX_PARAM_STRING_LENGTH} bytes")
+            )],
         );
     }
 

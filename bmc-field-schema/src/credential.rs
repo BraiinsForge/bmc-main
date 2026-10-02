@@ -393,6 +393,8 @@ fn string_field(name: &str, description: &str, format: Option<StringFormat>) -> 
         is_optional: false,
         kind: ScalarKind::String(StringParam {
             format,
+            min_length: None,
+            max_length: None,
             enum_values: Vec::new(),
             enum_control: EnumControl::Dropdown,
             default_value: None,
