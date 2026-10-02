@@ -26,16 +26,16 @@ use std::time::Duration;
 use bmc_wasm_sdk::profile;
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
-    FetchRequest, FetchRequestId, SystemTime, fmt, format_number, log_debug, log_info, log_warn,
-    request_frame,
+    FetchRequest, FetchRequestId, SystemTime, credentials, fmt, format_number, log_debug, log_info,
+    log_warn, request_frame,
 };
 
 use super::{
-    EndpointOutcome, PassCursor, ReauthDecision, adapter_for, fail_pending, pass_reachable,
-    reauth_decision,
+    EndpointOutcome, PassCursor, ReauthDecision, adapter_for, fail_pending, fetch_failure,
+    login_failure, pass_reachable, reauth_decision,
 };
 use crate::adapter::FamilyAdapter;
-use crate::device::{DeviceFamily, DeviceId, PollFailure, family_label};
+use crate::device::{DeviceFamily, DeviceId, PollFailure, credential_slot, family_label};
 use crate::manifest_params::Params;
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
@@ -155,6 +155,17 @@ pub fn family_enabled(family: DeviceFamily) -> bool {
     }
 }
 
+/// Whether the family has the account it authenticates with,
+/// trivially so for a family that needs none.
+pub fn account_bound(family: DeviceFamily) -> bool {
+    credential_slot(family).is_none_or(|slot| credentials::current().is_bound(slot))
+}
+
+/// Polled families: an unbound one would only have every request refused.
+fn family_polled(family: DeviceFamily) -> bool {
+    family_enabled(family) && account_bound(family)
+}
+
 fn base_url(adapter: &dyn FamilyAdapter, host: &str, port: u16) -> String {
     fmt!("http://{}:{}{}", host, port, adapter.api_base_path())
 }
@@ -172,7 +183,7 @@ fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
     })
 }
 
-/// Every device across the enabled families, in family order
+/// Every device of an enabled, bound family, in family order
 /// — the snapshot the ring rebuilds from at the start of each rotation.
 fn gather_ring() -> Vec<DeviceId> {
     let _s = profile::span("gather_ring");
@@ -184,7 +195,7 @@ fn gather_ring() -> Vec<DeviceId> {
     }
     let mut ids = Vec::new();
     for family in DeviceFamily::ALL {
-        if family_enabled(family) {
+        if family_polled(family) {
             ids.extend(crate::DEVICES.with(|d| d.borrow().ids_for_family(family)));
         }
     }
@@ -216,7 +227,7 @@ fn send(req: FetchRequest<'_>, delay_ms: u32) -> Option<FetchRequestId> {
 /// so a freshly discovered device gets data promptly.
 ///
 /// `family` and `is_new` are ignored — the global ring picks up
-/// every device of an enabled family.
+/// every device of an enabled, bound family.
 pub fn on_discovered(_family: DeviceFamily, _is_new: bool) {
     kick();
 }
@@ -283,7 +294,7 @@ pub fn remove_token(id: &DeviceId) {
 }
 
 /// Begin the device at the ring cursor after `delay_ms`,
-/// skipping any that have left the fleet or a disabled family.
+/// skipping any that left the fleet or whose family is no longer enabled and bound.
 /// Rebuilds the ring when the rotation wraps;
 /// a rebuild that finds nothing to poll parks the poller idle.
 fn begin_device(delay_ms: u32) {
@@ -315,8 +326,8 @@ fn begin_device(delay_ms: u32) {
             with_poller(|p| p.ring.advance()); // device left the fleet
             continue;
         };
-        if !family_enabled(dev_family) {
-            with_poller(|p| p.ring.advance()); // family disabled mid-rotation
+        if !family_polled(dev_family) {
+            with_poller(|p| p.ring.advance()); // family disabled or unbound mid-rotation
             continue;
         }
         let Some(adapter) = adapter_for(dev_family) else {
@@ -375,10 +386,9 @@ fn fire_pending(
     delay_ms: u32,
 ) {
     let endpoints = adapter.telemetry_endpoints();
-    let params = params();
     let token = TOKENS.with(|t| t.borrow().get(id).cloned());
     let header = adapter
-        .credential_header(&params.ubos_username, &params.ubos_password)
+        .credential_header()
         .or_else(|| token.map(|t| adapter.auth_header(&t)));
     let generation = with_poller(|p| p.generation);
     let pending_idxs: Vec<usize> = with_poller(|p| {
@@ -439,7 +449,6 @@ fn issue_login(
         finalize_failed(id);
         return;
     };
-    let params = params();
     let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
     log_debug!(
         "fleet: {} {} logging in at {}",
@@ -447,7 +456,7 @@ fn issue_login(
         id.as_str(),
         url,
     );
-    let body = adapter.login_body(&params.bos_password);
+    let body = adapter.login_body();
     let generation = with_poller(|p| p.generation);
     let req = FetchRequest::post(&url)
         .headers("Content-Type: application/json")
@@ -505,25 +514,23 @@ fn on_login(id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
         TOKENS.with(|t| t.borrow_mut().insert(id.clone(), token));
         fire_pending(id, dev_family, &host, port, adapter, 0);
     } else {
-        // 401/403, or a 200 with no token, is a rejected login — an auth failure,
-        // so `finalize_device` records `AuthError` rather than retiring the device.
-        // Any other answer (5xx, timeout) is transient, not a credentials problem.
-        let is_auth_failure = adapter.is_auth_error(response.status) || response.ok();
+        let failure = login_failure(response.outcome(), adapter.is_auth_error(response.status));
         with_poller(|p| {
             fail_pending(&mut p.outcomes);
             p.pending = 0;
-            if is_auth_failure {
-                p.pass_failure = Some(PollFailure::AuthError);
-            }
+            p.pass_failure = Some(escalate_failure(p.pass_failure, failure));
         });
         finalize_device(id);
     }
 }
 
 /// The most actionable failure across a pass wins:
-/// `AuthError` over `ApiError` over `Unreachable`.
+/// `AccountUnusable` over `AuthError` over `ApiError` over `Unreachable`.
 fn escalate_failure(current: Option<PollFailure>, kind: PollFailure) -> PollFailure {
     match (current, kind) {
+        (Some(PollFailure::AccountUnusable), _) | (_, PollFailure::AccountUnusable) => {
+            PollFailure::AccountUnusable
+        }
         (Some(PollFailure::AuthError), _) | (_, PollFailure::AuthError) => PollFailure::AuthError,
         (Some(PollFailure::ApiError), _) | (_, PollFailure::ApiError) => PollFailure::ApiError,
         _ => PollFailure::Unreachable,
@@ -573,13 +580,7 @@ fn on_telemetry(endpoint_idx: usize, response: &bmc_wasm_sdk::FetchResponse) {
         outcome,
         EndpointOutcome::Failed | EndpointOutcome::AuthFailed
     ) {
-        let kind = if response.status == 0 {
-            PollFailure::Unreachable
-        } else if adapter.is_auth_error(response.status) {
-            PollFailure::AuthError
-        } else {
-            PollFailure::ApiError
-        };
+        let kind = fetch_failure(response.outcome(), adapter.is_auth_error(response.status));
         with_poller(|p| p.pass_failure = Some(escalate_failure(p.pass_failure, kind)));
     }
 
@@ -760,12 +761,20 @@ mod tests {
 
     #[test]
     fn escalate_failure_prefers_the_most_actionable_reason() {
-        use PollFailure::{ApiError, AuthError, Unreachable};
+        use PollFailure::{AccountUnusable, ApiError, AuthError, Unreachable};
         assert_eq!(escalate_failure(None, Unreachable), Unreachable);
         assert_eq!(escalate_failure(None, ApiError), ApiError);
         assert_eq!(escalate_failure(None, AuthError), AuthError);
         assert_eq!(escalate_failure(Some(Unreachable), ApiError), ApiError);
         assert_eq!(escalate_failure(Some(ApiError), AuthError), AuthError);
         assert_eq!(escalate_failure(Some(AuthError), ApiError), AuthError);
+        assert_eq!(
+            escalate_failure(Some(AuthError), AccountUnusable),
+            AccountUnusable
+        );
+        assert_eq!(
+            escalate_failure(Some(AccountUnusable), AuthError),
+            AccountUnusable
+        );
     }
 }

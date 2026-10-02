@@ -34,7 +34,6 @@ pub mod device_detail;
 pub mod fixtures;
 pub mod icons;
 pub mod model_detail;
-pub mod no_credentials;
 pub mod parts;
 pub mod table;
 

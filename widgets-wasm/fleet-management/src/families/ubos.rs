@@ -18,13 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use base64::prelude::{BASE64_STANDARD, Engine as _};
 use bmc_wasm_sdk::types::{ElectricPower, Hashrate, SiPrefix, Temperature};
 use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
+use crate::manifest_params::credentials as slots;
 use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading, hashrate, measurement};
 
@@ -67,11 +67,11 @@ impl FamilyAdapter for UbosAdapter {
         UBOS_TELEMETRY_ENDPOINTS
     }
 
-    // HTTP Basic auth from the operator-configured uBOS credentials;
-    // the default `root:root` base64-encodes to `cm9vdDpyb290`.
-    fn credential_header(&self, username: &str, password: &str) -> Option<String> {
-        let encoded = BASE64_STANDARD.encode(bmc_wasm_sdk::fmt!("{}:{}", username, password));
-        Some(bmc_wasm_sdk::fmt!("Authorization: Basic {}", encoded))
+    fn credential_header(&self) -> Option<String> {
+        Some(bmc_wasm_sdk::fmt!(
+            "Authorization: Basic {}",
+            slots::ubos::BASIC
+        ))
     }
 
     // No login endpoint, so a rejected Basic credential is a 401/403 on telemetry.
@@ -218,18 +218,10 @@ mod tests {
     }
 
     #[test]
-    fn credential_header_is_basic_root_root() {
+    fn credential_header_carries_the_basic_placeholder_for_the_host_to_fill() {
         assert_eq!(
-            UbosAdapter.credential_header("root", "root"),
-            Some("Authorization: Basic cm9vdDpyb290".to_owned())
-        );
-    }
-
-    #[test]
-    fn credential_header_encodes_configured_credentials() {
-        assert_eq!(
-            UbosAdapter.credential_header("admin", "s3cret"),
-            Some("Authorization: Basic YWRtaW46czNjcmV0".to_owned())
+            UbosAdapter.credential_header(),
+            Some("Authorization: Basic {{ credential.ubos.basic }}".to_owned())
         );
     }
 

@@ -161,7 +161,10 @@ fn device_row(r: &DeviceRow, window: ChartWindow) -> Node {
     // its status where the metrics would be, instead of cramming it beside them.
     let body = match r.status {
         DeviceStatus::Ok | DeviceStatus::Degraded => metric_cells(r, window),
-        DeviceStatus::Unreachable | DeviceStatus::ApiError | DeviceStatus::AuthError => {
+        DeviceStatus::Unreachable
+        | DeviceStatus::ApiError
+        | DeviceStatus::AuthError
+        | DeviceStatus::AccountUnusable => {
             vec![status_banner(r.status)]
         }
     };

@@ -116,10 +116,16 @@ fn device_detail_single(ctx: &mut SceneCtx, ui: &mut Ui) {
 
 #[scene(order = 6)]
 fn device_detail_error(ctx: &mut SceneCtx, ui: &mut Ui) {
-    // Present over mDNS but not answering (a 503 API): the State tile shows the
-    // "API error" glyph and the metrics fall back to zero.
+    // Present over mDNS but not delivering telemetry: the State tile shows
+    // why, and the metrics fall back to the unavailable marker.
+    let errors = screens::fixtures::sample_device_detail_errors();
+    let labels = errors.each_ref().map(|(label, _)| *label);
+    let pick = ctx.radio("State", &labels, 1);
+    let (_, detail) = errors
+        .get(pick)
+        .expect("BUG: the radio offers only these states");
     let fired = ctx.node_stage_input(ui, Full, || {
-        screens::device_detail::device_detail_view(&screens::fixtures::sample_device_detail_error())
+        screens::device_detail::device_detail_view(detail)
     });
     log_back(&fired);
 }
@@ -131,16 +137,6 @@ fn searching(ctx: &mut SceneCtx, ui: &mut Ui) {
 }
 
 #[scene(order = 8)]
-fn no_credentials(ctx: &mut SceneCtx, ui: &mut Ui) {
-    // Found BOS miners but can't authenticate: scan the QR
-    // (or join the network and open the link)
-    // to add credentials in the Deck web app.
-    ctx.node_stage(ui, Full, || {
-        screens::no_credentials::no_credentials_view(&screens::fixtures::sample_no_credentials())
-    });
-}
-
-#[scene(order = 9)]
 fn status_tags(ctx: &mut SceneCtx, ui: &mut Ui) {
     // Catalog of the inline device-status tags, one per variant.
     ctx.node_stage(ui, Auto, screens::parts::status_tag_catalog);

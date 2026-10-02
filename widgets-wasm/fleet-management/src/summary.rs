@@ -57,12 +57,13 @@ pub enum DeviceStatus {
     ApiError,
     /// Present and answering, but the login was rejected — check credentials.
     AuthError,
+    /// Not polled: its family's account is unbound or the host refused to spend it.
+    AccountUnusable,
 }
 
-/// Derive a device's [`DeviceStatus`] from its liveness and last failure. A
-/// reachable device is `Ok`/`Degraded` by the 20% rule against its nominal
-/// (reading's, else the model catalog's); an unreachable one is `ApiError` when
-/// its last pass got an HTTP error, otherwise `Unreachable`.
+/// Derive a device's [`DeviceStatus`] from its liveness and last failure.
+/// A reachable device is `Ok`/`Degraded` by the 20% rule against its nominal
+/// (reading's, else the model catalog's); an unreachable one reports its last failure.
 #[must_use]
 pub fn device_status(device: &KnownDevice) -> DeviceStatus {
     if device.reachable {
@@ -79,6 +80,7 @@ pub fn device_status(device: &KnownDevice) -> DeviceStatus {
         match device.last_failure {
             Some(PollFailure::ApiError) => DeviceStatus::ApiError,
             Some(PollFailure::AuthError) => DeviceStatus::AuthError,
+            Some(PollFailure::AccountUnusable) => DeviceStatus::AccountUnusable,
             Some(PollFailure::Unreachable) | None => DeviceStatus::Unreachable,
         }
     }
@@ -99,7 +101,8 @@ pub struct GroupSummary {
     /// Not-reachable devices, excluding auth failures (counted separately).
     /// The reachable-but-not-`ok` remainder is degraded.
     pub off_count: usize,
-    /// Devices present but rejecting the login — "not authenticating".
+    /// Devices present but not authenticating:
+    /// rejecting the login, or left without a usable account.
     pub auth_error_count: usize,
 }
 
@@ -143,7 +146,10 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         if !dev.reachable {
             // Count auth failures apart from the offline devices, so they surface
             // as "not authenticating" — a prompt to check creds, not gone.
-            if dev.last_failure == Some(PollFailure::AuthError) {
+            if matches!(
+                dev.last_failure,
+                Some(PollFailure::AuthError | PollFailure::AccountUnusable)
+            ) {
                 auth_error_count += 1;
             } else {
                 off_count += 1;
@@ -697,6 +703,10 @@ mod tests {
         api_error.last_failure = Some(PollFailure::ApiError);
         assert_eq!(device_status(&api_error), DeviceStatus::ApiError);
 
+        let mut no_account = base();
+        no_account.last_failure = Some(PollFailure::AccountUnusable);
+        assert_eq!(device_status(&no_account), DeviceStatus::AccountUnusable);
+
         let mut no_response = base();
         no_response.last_failure = Some(PollFailure::Unreachable);
         assert_eq!(device_status(&no_response), DeviceStatus::Unreachable);
@@ -812,6 +822,22 @@ mod tests {
             Some(60.0),
             "unreachable temp omitted"
         );
+    }
+
+    #[test]
+    fn a_device_without_a_usable_account_counts_as_not_authenticating() {
+        let mut l = list(&[
+            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            ("b", Some("BMM 101"), None, false),
+        ]);
+        l.mark_account_unusable(DeviceFamily::Bos);
+
+        let g = &summarize(&l, &Filters::default()).groups[0];
+        assert_eq!(
+            g.auth_error_count, 2,
+            "an unbound family prompts for its account"
+        );
+        assert_eq!(g.off_count, 0, "an unpolled miner is not counted offline");
     }
 
     #[test]

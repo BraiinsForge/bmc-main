@@ -18,6 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::credentials;
+
 use crate::model::MinerModel;
 use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
 
@@ -65,17 +67,34 @@ pub fn family_id(family: DeviceFamily) -> &'static str {
     }
 }
 
-/// The manifest credential param keys for a family, empty for credential-less
-/// families (Bitaxe/AxeOS). The one place the family↔credential-key mapping
-/// lives, used to scope a token/telemetry reset to the family whose credentials
-/// actually changed.
+/// The manifest credential slot a family authenticates with,
+/// `None` for a family that needs no account.
 #[must_use]
-pub fn credential_keys(family: DeviceFamily) -> &'static [&'static str] {
+pub fn credential_slot(family: DeviceFamily) -> Option<&'static str> {
     match family {
-        DeviceFamily::Bos => &["bos_password"],
-        DeviceFamily::Ubos => &["ubos_username", "ubos_password"],
-        DeviceFamily::Bitaxe => &[],
+        DeviceFamily::Bos => Some("bos"),
+        DeviceFamily::Ubos => Some("ubos"),
+        DeviceFamily::Bitaxe => None,
     }
+}
+
+/// The families to start over after a credential delivery.
+/// A delivery that changes no binding is a rotated password,
+/// and the view cannot name the account that moved,
+/// so every authenticating family starts over.
+#[must_use]
+pub fn families_on_new_credentials(
+    current: &credentials::Snapshot,
+    previous: &credentials::Snapshot,
+) -> Vec<DeviceFamily> {
+    let rotated = current == previous;
+    DeviceFamily::ALL
+        .into_iter()
+        .filter(|&family| {
+            credential_slot(family)
+                .is_some_and(|slot| rotated || current.get(slot) != previous.get(slot))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -133,6 +152,9 @@ pub enum PollFailure {
     /// The device answered its login but rejected the credentials
     /// (401/403, or 200 without a token) — present, but not authenticating.
     AuthError,
+    /// Nothing was sent: the family's slot is unbound,
+    /// or the host refused to spend its account on this device.
+    AccountUnusable,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +188,12 @@ pub struct Census {
     pub total: usize,
     pub reachable: usize,
     pub confirmed: usize,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum MdnsRemoval {
+    Kept,
+    Removed { model: Option<MinerModel> },
 }
 
 #[derive(Debug, Default)]
@@ -254,6 +282,20 @@ impl DeviceList {
         if self.devices.len() != before {
             self.seq += 1;
         }
+    }
+
+    /// Settle an mDNS removal, which also fires when a Wi-Fi multicast refresh is lost.
+    /// A miner that has answered, or one waiting for its family's account,
+    /// stays and is left to polling; only a device that never proved itself leaves.
+    /// `None` when the id is not in the fleet.
+    pub fn on_mdns_removed(&mut self, id: &DeviceId) -> Option<MdnsRemoval> {
+        let dev = self.devices.iter().find(|d| &d.identity.id == id)?;
+        if dev.confirmed || dev.last_failure == Some(PollFailure::AccountUnusable) {
+            return Some(MdnsRemoval::Kept);
+        }
+        let model = dev.model.clone();
+        self.remove(id);
+        Some(MdnsRemoval::Removed { model })
     }
 
     /// Retire devices unreachable with no response (not an API error) for over
@@ -381,11 +423,38 @@ impl DeviceList {
         }
     }
 
-    /// Drop one family's telemetry and mark its devices unreachable (e.g. after
-    /// that family's credentials changed). Other families are left untouched, so
-    /// a credential edit does not blank a family whose credentials did not move.
-    /// Devices stay listed; readings/model go back to absent and reachability is
-    /// recomputed on the next telemetry pass.
+    /// Mark one family's devices as unpolled for want of a usable account.
+    /// Their model is kept, so a miner read before the account went away stays in its group.
+    pub fn mark_account_unusable(&mut self, family: DeviceFamily) {
+        let mut marked = false;
+        for dev in self
+            .devices
+            .iter_mut()
+            .filter(|d| d.identity.family == family)
+        {
+            dev.telemetry = None;
+            dev.reachable = false;
+            dev.consecutive_failures = 0;
+            dev.last_failure = Some(PollFailure::AccountUnusable);
+            marked = true;
+        }
+        if marked {
+            self.seq += 1;
+        }
+    }
+
+    pub fn reset_for_rebind(&mut self, family: DeviceFamily, bound: bool) {
+        if bound {
+            self.clear_telemetry_for(family);
+        } else {
+            self.mark_account_unusable(family);
+        }
+    }
+
+    /// Drop one family's telemetry and mark its devices unreachable,
+    /// e.g. after that family's account changed; other families are left untouched.
+    /// Devices stay listed and keep their model: an account change leaves the hardware as it was.
+    /// Readings stay absent until the next telemetry pass.
     pub fn clear_telemetry_for(&mut self, family: DeviceFamily) {
         let mut cleared = false;
         for dev in self
@@ -394,7 +463,6 @@ impl DeviceList {
             .filter(|d| d.identity.family == family)
         {
             dev.telemetry = None;
-            dev.model = None;
             dev.reachable = false;
             dev.consecutive_failures = 0;
             dev.last_failure = None;
@@ -474,6 +542,61 @@ mod tests {
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
         list.remove(&DeviceId::new("a._http._tcp.local."));
         assert!(list.is_empty());
+    }
+
+    #[test]
+    fn an_mdns_removal_drops_a_miner_that_never_answered() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+        list.upsert(identity(id.as_str(), "10.0.0.1"));
+        list.apply_model(&id, model("S19"));
+
+        assert_eq!(
+            list.on_mdns_removed(&id),
+            Some(MdnsRemoval::Removed {
+                model: Some(model("S19"))
+            })
+        );
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn an_mdns_removal_keeps_a_confirmed_miner() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+        list.upsert(identity(id.as_str(), "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+
+        assert_eq!(list.on_mdns_removed(&id), Some(MdnsRemoval::Kept));
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn an_mdns_removal_keeps_a_miner_waiting_for_its_account() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+        list.upsert(identity(id.as_str(), "10.0.0.1"));
+        list.mark_account_unusable(DeviceFamily::Bos);
+
+        assert_eq!(
+            list.on_mdns_removed(&id),
+            Some(MdnsRemoval::Kept),
+            "unpolled, it never confirms, so dropping it would churn it on a lossy network"
+        );
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn an_mdns_removal_of_an_unknown_id_changes_nothing() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        let before = list.seq();
+
+        assert_eq!(
+            list.on_mdns_removed(&DeviceId::new("gone._http._tcp.local.")),
+            None
+        );
+        assert_eq!(list.seq(), before);
     }
 
     #[test]
@@ -585,15 +708,158 @@ mod tests {
     }
 
     #[test]
-    fn credential_keys_cover_each_family() {
-        assert_eq!(credential_keys(DeviceFamily::Bos), ["bos_password"]);
+    fn credential_slot_covers_each_family() {
+        assert_eq!(credential_slot(DeviceFamily::Bos), Some("bos"));
+        assert_eq!(credential_slot(DeviceFamily::Ubos), Some("ubos"));
         assert_eq!(
-            credential_keys(DeviceFamily::Ubos),
-            ["ubos_username", "ubos_password"]
-        );
-        assert!(
-            credential_keys(DeviceFamily::Bitaxe).is_empty(),
+            credential_slot(DeviceFamily::Bitaxe),
+            None,
             "AxeOS has no credentials and must never be reset by a credential edit"
+        );
+    }
+
+    /// The host's view encoding: a `u32` slot count,
+    /// then per slot its length-prefixed name, type id and account name.
+    fn snapshot(slots: &[(&str, &str)]) -> credentials::Snapshot {
+        let mut bytes = u32::try_from(slots.len())
+            .expect("BUG: test size")
+            .to_le_bytes()
+            .to_vec();
+        for (slot, account) in slots {
+            for text in [*slot, "generic-userpass", *account] {
+                let len = u16::try_from(text.len()).expect("BUG: test size");
+                bytes.extend_from_slice(&len.to_le_bytes());
+                bytes.extend_from_slice(text.as_bytes());
+            }
+        }
+        credentials::Snapshot::from_bytes(&bytes)
+    }
+
+    #[test]
+    fn binding_one_slot_restarts_only_its_family() {
+        assert_eq!(
+            families_on_new_credentials(&snapshot(&[("bos", "Fleet")]), &snapshot(&[])),
+            [DeviceFamily::Bos]
+        );
+    }
+
+    #[test]
+    fn unbinding_a_slot_restarts_only_its_family() {
+        assert_eq!(
+            families_on_new_credentials(
+                &snapshot(&[("bos", "Fleet")]),
+                &snapshot(&[("bos", "Fleet"), ("ubos", "Old")])
+            ),
+            [DeviceFamily::Ubos]
+        );
+    }
+
+    #[test]
+    fn swapping_an_account_restarts_its_family() {
+        let before = snapshot(&[("bos", "Fleet"), ("ubos", "Old")]);
+        let after = snapshot(&[("bos", "Fleet"), ("ubos", "New")]);
+
+        assert_eq!(
+            families_on_new_credentials(&after, &before),
+            [DeviceFamily::Ubos]
+        );
+    }
+
+    #[test]
+    fn an_unchanged_view_is_a_rotation_that_restarts_every_authenticating_family() {
+        let view = snapshot(&[("bos", "Fleet")]);
+
+        assert_eq!(
+            families_on_new_credentials(&view, &view),
+            [DeviceFamily::Bos, DeviceFamily::Ubos],
+            "a rotated password cannot be attributed, and AxeOS has no account to rotate"
+        );
+    }
+
+    #[test]
+    fn mark_account_unusable_blanks_the_family_but_keeps_its_model() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+        list.upsert(identity(id.as_str(), "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        list.apply_model(&id, model("S19"));
+
+        list.mark_account_unusable(DeviceFamily::Bos);
+
+        let dev = list.iter().next().expect("BUG: present");
+        assert!(dev.telemetry.is_none() && !dev.reachable);
+        assert_eq!(dev.last_failure, Some(PollFailure::AccountUnusable));
+        assert!(
+            dev.model.is_some(),
+            "the miner must stay in its model group"
+        );
+    }
+
+    #[test]
+    fn mark_account_unusable_leaves_other_families_intact() {
+        let mut list = DeviceList::new();
+        let axe = DeviceIdentity {
+            family: DeviceFamily::Bitaxe,
+            ..identity("axe._http._tcp.local.", "10.0.0.2")
+        };
+        let axe_id = axe.id.clone();
+        list.upsert(axe);
+        list.apply_telemetry(&axe_id, TelemetryReading::default(), true);
+
+        list.mark_account_unusable(DeviceFamily::Bos);
+
+        let axe = list.iter().next().expect("BUG: present");
+        assert!(axe.reachable && axe.last_failure.is_none());
+    }
+
+    #[test]
+    fn unbinding_an_account_keeps_the_family_in_its_model_groups() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+        list.upsert(identity(id.as_str(), "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        list.apply_model(&id, model("S19"));
+
+        list.reset_for_rebind(DeviceFamily::Bos, false);
+
+        let dev = list.iter().next().expect("BUG: present");
+        assert!(
+            dev.model.is_some() && dev.last_failure == Some(PollFailure::AccountUnusable),
+            "an unbound family must read \"Check account\" without moving to Unknown"
+        );
+    }
+
+    #[test]
+    fn rebinding_an_account_starts_the_family_over() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+        list.upsert(identity(id.as_str(), "10.0.0.1"));
+        list.set_last_failure(&id, PollFailure::AccountUnusable);
+
+        list.reset_for_rebind(DeviceFamily::Bos, true);
+
+        let dev = list.iter().next().expect("BUG: present");
+        assert!(
+            dev.last_failure.is_none(),
+            "a bound family must leave \"Check account\" until its next pass"
+        );
+    }
+
+    #[test]
+    fn rebinding_an_account_keeps_the_family_in_its_model_groups() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+        list.upsert(identity(id.as_str(), "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        list.apply_model(&id, model("S19"));
+
+        list.reset_for_rebind(DeviceFamily::Bos, true);
+
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(
+            dev.model.as_ref().map(|m| m.name.as_str()),
+            Some("S19"),
+            "a new account must not move the miner to Unknown"
         );
     }
 
@@ -981,17 +1247,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn clear_telemetry_for_also_clears_model() {
-        let mut list = DeviceList::new();
-        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
-        list.apply_model(&DeviceId::new("a._http._tcp.local."), model("BMM 101"));
-        list.clear_telemetry_for(DeviceFamily::Bos);
-        let dev = list.iter().next().expect("BUG: present");
-        assert!(dev.model.is_none());
-        assert!(!dev.reachable);
-    }
-
     // A device that answered, then went unreachable with no response.
     fn make_gone(list: &mut DeviceList, id_str: &str, failure: PollFailure) -> DeviceId {
         let id = DeviceId::new(id_str);
@@ -1032,6 +1287,22 @@ mod tests {
         assert_eq!(list.prune_gone(1_000, 300), 0);
         assert_eq!(list.prune_gone(9_999, 300), 0);
         assert_eq!(list.len(), 1, "a 503 device stays in the fleet");
+    }
+
+    #[test]
+    fn prune_gone_spares_a_device_without_a_usable_account() {
+        let mut list = DeviceList::new();
+        make_gone(
+            &mut list,
+            "bos/unbound._http._tcp.local.",
+            PollFailure::AccountUnusable,
+        );
+        assert_eq!(list.prune_gone(1_000, 300), 0);
+        assert_eq!(
+            list.prune_gone(9_999, 300),
+            0,
+            "an unpolled miner is not gone, it waits for its account"
+        );
     }
 
     #[test]

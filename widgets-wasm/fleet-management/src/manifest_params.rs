@@ -59,11 +59,8 @@ bmc_wasm_sdk::impl_manifest_i32_enum!(ChartSpanMinutes);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub axeos_enabled: bool,
-    pub bos_password: String,
     pub chart_span_minutes: ChartSpanMinutes,
     pub fleet_name: String,
-    pub ubos_password: String,
-    pub ubos_username: String,
 }
 impl Params {
     /// Materialise a typed snapshot from a dynamic [`snapshot::Params`].
@@ -71,14 +68,11 @@ impl Params {
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
             axeos_enabled: <bool as ParamRead>::read_required(snap, "axeos_enabled"),
-            bos_password: <String as ParamRead>::read_required(snap, "bos_password"),
             chart_span_minutes: <ChartSpanMinutes as ParamRead>::read_required(
                 snap,
                 "chart_span_minutes",
             ),
             fleet_name: <String as ParamRead>::read_required(snap, "fleet_name"),
-            ubos_password: <String as ParamRead>::read_required(snap, "ubos_password"),
-            ubos_username: <String as ParamRead>::read_required(snap, "ubos_username"),
         }
     }
     /// Latest typed snapshot delivered for this widget instance.
@@ -127,21 +121,37 @@ impl Params {
         if self.axeos_enabled != other.axeos_enabled {
             out.push("axeos_enabled");
         }
-        if self.bos_password != other.bos_password {
-            out.push("bos_password");
-        }
         if self.chart_span_minutes != other.chart_span_minutes {
             out.push("chart_span_minutes");
         }
         if self.fleet_name != other.fleet_name {
             out.push("fleet_name");
         }
-        if self.ubos_password != other.ubos_password {
-            out.push("ubos_password");
-        }
-        if self.ubos_username != other.ubos_username {
-            out.push("ubos_username");
-        }
         out
+    }
+}
+/// Credential slots this widget declares, one module per slot.
+pub mod credentials {
+    ///BOS miners — a `generic-userpass` account. Optional.
+    ///
+    ///The login of every BOS miner on the network. The username is root.
+    pub mod bos {
+        ///Placeholder for this slot's `basic` field.
+        pub const BASIC: &str = "{{ credential.bos.basic }}";
+        ///Placeholder for this slot's `password` field.
+        pub const PASSWORD: &str = "{{ credential.bos.password }}";
+        ///Placeholder for this slot's `username` field.
+        pub const USERNAME: &str = "{{ credential.bos.username }}";
+    }
+    ///Braiins OS Libre devices — a `generic-userpass` account. Optional.
+    ///
+    ///The HTTP Basic login of every Braiins OS Libre device on the network.
+    pub mod ubos {
+        ///Placeholder for this slot's `basic` field.
+        pub const BASIC: &str = "{{ credential.ubos.basic }}";
+        ///Placeholder for this slot's `password` field.
+        pub const PASSWORD: &str = "{{ credential.ubos.password }}";
+        ///Placeholder for this slot's `username` field.
+        pub const USERNAME: &str = "{{ credential.ubos.username }}";
     }
 }

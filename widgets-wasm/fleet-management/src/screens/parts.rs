@@ -200,7 +200,8 @@ pub fn status_glyph(status: DeviceStatus) -> (&'static Svg, Color, &'static str)
         DeviceStatus::Degraded => (&icons::PERF_LOW, DEGRADED, "Degraded"),
         DeviceStatus::Unreachable => (&icons::UNLINK, OFF, "Unreachable"),
         DeviceStatus::ApiError => (&icons::UNLINK, ERROR, "API error"),
-        DeviceStatus::AuthError => (&icons::UNLINK, ERROR, "Not authenticating"),
+        DeviceStatus::AuthError => (&icons::UNLINK, ERROR, "Login rejected"),
+        DeviceStatus::AccountUnusable => (&icons::UNLINK, ERROR, "Check account"),
     }
 }
 
@@ -278,6 +279,7 @@ pub fn status_tag_catalog() -> Node {
             status_tag(DeviceStatus::Unreachable),
             status_tag(DeviceStatus::ApiError),
             status_tag(DeviceStatus::AuthError),
+            status_tag(DeviceStatus::AccountUnusable),
         ],
     )
 }

@@ -24,6 +24,7 @@ use bmc_wasm_sdk::ufmt;
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
+use crate::manifest_params::credentials as slots;
 use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading, hashrate, measurement};
 
@@ -105,8 +106,8 @@ impl FamilyAdapter for BosAdapter {
         Some(mining::bos::LOGIN_PATH)
     }
 
-    fn login_body(&self, password: &str) -> String {
-        mining::bos::login_body("root", password)
+    fn login_body(&self) -> String {
+        mining::bos::login_body(slots::bos::USERNAME, slots::bos::PASSWORD)
     }
 
     fn parse_login(&self, json: &dyn JsonLookup) -> Option<String> {
@@ -447,7 +448,15 @@ mod tests {
 
     #[test]
     fn bos_has_no_proactive_credential_header() {
-        assert_eq!(BosAdapter.credential_header("root", "root"), None);
+        assert_eq!(BosAdapter.credential_header(), None);
+    }
+
+    #[test]
+    fn login_body_carries_the_bos_placeholders_for_the_host_to_fill() {
+        assert_eq!(
+            BosAdapter.login_body(),
+            r#"{"username":"{{ credential.bos.username }}","password":"{{ credential.bos.password }}"}"#
+        );
     }
 
     #[test]

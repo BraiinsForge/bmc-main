@@ -1,5 +1,9 @@
 settle_delay = 60
 
-[fixtures.bmc100-full]
+[fixtures.bmc100-full-bound]
 path = "fixtures/bmc100-full.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmc100-full-unbound]
+path = "fixtures/bmc100-full-unbound.jsonl.gz"
 target = "bmc100:full"

@@ -35,8 +35,8 @@ use crate::history::{ChartWindow, HistoryDatum};
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
-    UNAVAILABLE, VALUE_FONT, back_button, breadcrumb, icon, scaled_area_chart, si_parts_or_dash,
-    status_glyph,
+    TITLE_FONT, UNAVAILABLE, VALUE_FONT, back_button, breadcrumb, icon, scaled_area_chart,
+    si_parts_or_dash, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::telemetry::DeviceTemp;
@@ -50,7 +50,9 @@ const CHART_W: f32 = TILE_W - 2.0;
 const CHART_H: f32 = TILE_H - 2.0;
 
 const TILE_GAP: f32 = 24.0;
-const STATE_ICON: f32 = 32.0;
+// Sized so the longest state, "Login rejected", fits within one tile.
+const STATE_FONT: u32 = TITLE_FONT;
+const STATE_ICON: f32 = 24.0;
 
 #[derive(Debug)]
 pub struct DeviceDetailData {
@@ -224,7 +226,7 @@ fn state_tile(state: DeviceStatus) -> Node {
                 icon(svg, STATE_ICON, color),
                 text(
                     label,
-                    style!(size: VALUE_FONT, weight: FontWeight::SEMIBOLD, color: WHITE),
+                    style!(size: STATE_FONT, weight: FontWeight::SEMIBOLD, color: WHITE),
                 ),
             ],
         ),

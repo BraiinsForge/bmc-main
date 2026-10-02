@@ -14,6 +14,7 @@
   "settings": [
     "localization"
   ],
+  "config_help": "Bind one *Username & password* account to each miner family you run. The widget logs into every miner of a family with that one account, so they must all share the same username and password. A family left unbound is listed but not read. AxeOS miners need no account.\n\nThe miner APIs are plain HTTP, so the password crosses your local network unencrypted. To keep the account from being sent anywhere else, list your network's range, for example `192.168.1.0/24`, under the account's allowed destinations.\n\nA BOS password containing `\"` or `\\` cannot be used.",
   "supported_viewports": [
     {
       "type": "rectangular",
@@ -29,24 +30,6 @@
       "description": "Heading shown above the fleet overview",
       "type": "string",
       "default_value": "My Fleet"
-    },
-    "bos_password": {
-      "name": "BOS password",
-      "description": "Root password used to log into every BOS miner on the network. Stored as plain text and sent unencrypted over the local network (the miner APIs are HTTP-only).",
-      "type": "string",
-      "default_value": "root"
-    },
-    "ubos_username": {
-      "name": "Braiins OS Libre username",
-      "description": "User name used for HTTP Basic auth against every Braiins OS Libre device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
-      "type": "string",
-      "default_value": "root"
-    },
-    "ubos_password": {
-      "name": "Braiins OS Libre password",
-      "description": "Password used for HTTP Basic auth against every Braiins OS Libre device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
-      "type": "string",
-      "default_value": "root"
     },
     "axeos_enabled": {
       "name": "Show AxeOS miners",
@@ -77,6 +60,20 @@
           "label": "24 hours"
         }
       ]
+    }
+  },
+  "credentials": {
+    "bos": {
+      "type": "generic-userpass",
+      "label": "BOS miners",
+      "description": "The login of every BOS miner on the network. The username is root.",
+      "required": false
+    },
+    "ubos": {
+      "type": "generic-userpass",
+      "label": "Braiins OS Libre devices",
+      "description": "The HTTP Basic login of every Braiins OS Libre device on the network.",
+      "required": false
     }
   }
 }

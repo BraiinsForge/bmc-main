@@ -44,7 +44,6 @@ mod view_data;
 #[cfg(test)]
 mod contract;
 
-#[cfg(target_arch = "wasm32")]
 mod manifest_params;
 
 #[cfg(target_arch = "wasm32")]
@@ -60,7 +59,7 @@ use std::cell::{Cell, RefCell};
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
 #[cfg(target_arch = "wasm32")]
-use device::{DeviceFamily, DeviceId, DeviceList, credential_keys, family_label};
+use device::{DeviceFamily, DeviceId, DeviceList, families_on_new_credentials, family_label};
 #[cfg(target_arch = "wasm32")]
 use families::bitaxe::BitaxeAdapter;
 #[cfg(target_arch = "wasm32")]
@@ -72,19 +71,6 @@ use screens::dashboard::DashboardViewData;
 #[cfg(target_arch = "wasm32")]
 use screens::table::TableViewData;
 
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RenderedScreen {
-    Unknown,
-    NoCredentials,
-    Other,
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn network_update_needs_frame(screen: RenderedScreen) -> bool {
-    !matches!(screen, RenderedScreen::Other)
-}
-
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     pub(crate) static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
@@ -94,7 +80,6 @@ thread_local! {
         RefCell::new(history::HashrateHistory::default());
     static DISPLAY_FRAME_PENDING: Cell<bool> = const { Cell::new(false) };
     static DERIVE_ELAPSED_MS: Cell<u32> = const { Cell::new(0) };
-    static RENDERED_SCREEN: Cell<RenderedScreen> = const { Cell::new(RenderedScreen::Unknown) };
 }
 
 /// Coalescing window for display refreshes.
@@ -191,54 +176,32 @@ fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     }
 }
 
-/// React to an mDNS `ServiceRemoved`: drop an unconfirmed discovery,
-/// but keep a confirmed miner (its liveness is polling-governed, not mDNS-governed).
+/// React to an mDNS `ServiceRemoved`;
+/// [`DeviceList::on_mdns_removed`] decides whether the device leaves.
 /// The family namespaces the id, matching how the device was inserted.
 #[cfg(target_arch = "wasm32")]
 fn on_removed(family: DeviceFamily, name: &str) {
     let id = DeviceId::for_family(family, name);
-    // mDNS `ServiceRemoved` fires on cache expiry — a missed multicast
-    // refresh over lossy WiFi, not only a real departure.
-    //
-    // A confirmed miner (answered a poll) is kept regardless,
-    // its liveness governed by polling from here, so a dropped
-    // announcement can't churn it out; only a device that never
-    // proved itself leaves on an mDNS removal.
-    let found = DEVICES.with(|d| {
-        d.borrow()
-            .iter()
-            .find(|dev| dev.identity.id == id)
-            .map(|dev| {
-                (
-                    dev.identity.family,
-                    dev.model.as_ref().map(|m| m.name.clone()),
-                    dev.confirmed,
-                )
-            })
-    });
-    let Some((family, model, confirmed)) = found else {
-        return;
-    };
-    if confirmed {
-        log_info!(
-            "fleet: kept confirmed {} {} despite mDNS removal",
+    // Removed before reacting so a ring rebuild excludes the gone device
+    // instead of re-polling it.
+    match DEVICES.with(|d| d.borrow_mut().on_mdns_removed(&id)) {
+        None => {}
+        Some(device::MdnsRemoval::Kept) => log_info!(
+            "fleet: kept {} {} despite mDNS removal",
             family_label(family),
             name
-        );
-        return;
+        ),
+        Some(device::MdnsRemoval::Removed { model }) => {
+            log_info!(
+                "fleet: removed {} {} ({})",
+                family_label(family),
+                name,
+                model.map_or_else(|| "unknown model".to_owned(), |m| m.name)
+            );
+            session::remove_token(&id);
+            request_frame();
+        }
     }
-    let model = model.unwrap_or_else(|| "unknown model".to_owned());
-    log_info!(
-        "fleet: removed {} {} ({})",
-        family_label(family),
-        name,
-        model
-    );
-    // Remove before reacting so a ring rebuild excludes the gone device
-    // instead of re-polling it.
-    DEVICES.with(|d| d.borrow_mut().remove(&id));
-    session::remove_token(&id);
-    request_frame();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -251,7 +214,14 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
         let model = model_hint
             .as_ref()
             .map_or_else(|| "model pending".to_owned(), |m| m.name.clone());
-        let is_new = DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
+        let is_new = DEVICES.with(|d| {
+            let mut devices = d.borrow_mut();
+            let is_new = devices.upsert_with_model_hint(identity, model_hint);
+            if !session::account_bound(family) {
+                devices.mark_account_unusable(family);
+            }
+            is_new
+        });
         if is_new {
             log_info!(
                 "fleet: discovered {} {} ({})",
@@ -310,39 +280,6 @@ fn rebuild_model_detail_rows(
         summary::model_detail_rows(&d.borrow(), filters, sel.family, &sel.label, |dev| {
             naming::display_name(&dev.identity.name).to_owned()
         })
-    })
-}
-
-/// The no-credentials fallback for an otherwise-empty fleet.
-/// Unreachable as written: a BOS identified by its TXT reports at once,
-/// which keeps the fleet non-empty and the gate shut.
-///
-/// Kept for the missing-credentials state BDK-434 adds,
-/// to key on instead. `None` keeps the generic "Searching…" state.
-#[cfg(target_arch = "wasm32")]
-fn no_credentials(fleet_name: &str) -> Option<screens::no_credentials::NoCredentialsData> {
-    let params = manifest_params::Params::current();
-    if !params.bos_password.is_empty() {
-        return None;
-    }
-    let seen_bos = DEVICES.with(|d| {
-        d.borrow()
-            .iter()
-            .any(|dev| dev.identity.family == DeviceFamily::Bos)
-    });
-    if !seen_bos {
-        return None;
-    }
-    let net = bmc_wasm_sdk::network::info();
-    let url = if net.ip.is_empty() {
-        String::new()
-    } else {
-        bmc_wasm_sdk::fmt!("http://{}", net.ip)
-    };
-    Some(screens::no_credentials::NoCredentialsData {
-        fleet_name: fleet_name.to_owned(),
-        ssid: net.ssid,
-        url,
     })
 }
 
@@ -455,7 +392,7 @@ pub extern "C" fn render(delta_ms: u32) {
                     });
                 }
             }
-            let (root, page_count, rendered_screen) = if let Some(sel) = nav.model_detail.as_ref() {
+            let (root, page_count) = if let Some(sel) = nav.model_detail.as_ref() {
                 // A live selection (its group survived the fallback above); the
                 // folded device rows are cached in `derived.model_detail`.
                 let rows = &derived
@@ -489,11 +426,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             })
                         });
                     if let Some(data) = detail {
-                        (
-                            screens::device_detail::device_detail_view(&data),
-                            1,
-                            RenderedScreen::Other,
-                        )
+                        (screens::device_detail::device_detail_view(&data), 1)
                     } else {
                         let data = HISTORY.with(|h| {
                             screens::model_detail::ModelDetailViewData::from_summary(
@@ -506,11 +439,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             )
                         });
                         let page_count = data.page_count;
-                        (
-                            screens::model_detail::model_detail_view(&data),
-                            page_count,
-                            RenderedScreen::Other,
-                        )
+                        (screens::model_detail::model_detail_view(&data), page_count)
                     }
                 } else {
                     let data = HISTORY.with(|h| {
@@ -524,22 +453,10 @@ pub extern "C" fn render(delta_ms: u32) {
                         )
                     });
                     let page_count = data.page_count;
-                    (
-                        screens::model_detail::model_detail_view(&data),
-                        page_count,
-                        RenderedScreen::Other,
-                    )
+                    (screens::model_detail::model_detail_view(&data), page_count)
                 }
             } else if derived.summary.groups.is_empty() {
-                if let Some(data) = no_credentials(&derived.fleet_name) {
-                    (
-                        screens::no_credentials::no_credentials_view(&data),
-                        1,
-                        RenderedScreen::NoCredentials,
-                    )
-                } else {
-                    (screens::searching(), 1, RenderedScreen::Other)
-                }
+                (screens::searching(), 1)
             } else {
                 match nav.mode {
                     view::ViewMode::Grid => {
@@ -551,11 +468,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 chart_window,
                             )
                         });
-                        (
-                            screens::dashboard::dashboard_view(&data),
-                            1,
-                            RenderedScreen::Other,
-                        )
+                        (screens::dashboard::dashboard_view(&data), 1)
                     }
                     view::ViewMode::List => {
                         let table = HISTORY.with(|h| {
@@ -568,11 +481,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             )
                         });
                         let page_count = table.page_count;
-                        (
-                            screens::table::table_view(&table),
-                            page_count,
-                            RenderedScreen::Other,
-                        )
+                        (screens::table::table_view(&table), page_count)
                     }
                 }
             };
@@ -580,7 +489,6 @@ pub extern "C" fn render(delta_ms: u32) {
                 let _s = profile::span("submit");
                 render_ui(width, height, root)
             };
-            RENDERED_SCREEN.with(|screen| screen.set(rendered_screen));
             let mut changed = false;
             for id in result.clicks.keys() {
                 if let Some(action) = view::parse_click(id) {
@@ -603,16 +511,6 @@ pub extern "C" fn on_touch() {
     request_frame();
 }
 
-/// The Deck's SSID/IP changed. Only the no-credentials screen displays them,
-/// so every other screen ignores the notification.
-#[cfg(target_arch = "wasm32")]
-#[unsafe(no_mangle)]
-pub extern "C" fn on_network_update() {
-    if RENDERED_SCREEN.with(|screen| network_update_needs_frame(screen.get())) {
-        request_frame();
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_system_update() {
@@ -625,29 +523,6 @@ pub extern "C" fn on_params_update() {
     let current = manifest_params::Params::current();
     session::refresh_params();
     let changed = manifest_params::Params::previous().map(|prev| current.changed_keys(&prev));
-    // Reset only the family whose credentials actually changed: a BOS-password
-    // edit must not blank uBOS/AxeOS. A credential-less family (empty
-    // `credential_keys`) is never reset, and an unknown change (`changed` is
-    // `None`, i.e. the first update) refreshes every family that has credentials.
-    for family in DeviceFamily::ALL {
-        let creds = credential_keys(family);
-        let creds_changed = !creds.is_empty()
-            && changed
-                .as_ref()
-                .is_none_or(|keys| creds.iter().any(|k| keys.contains(k)));
-        if !creds_changed {
-            continue;
-        }
-        session::clear_tokens_for(family);
-        DEVICES.with(|d| d.borrow_mut().clear_telemetry_for(family));
-        // Drop fetches already issued with the old credentials — `stop` bumps
-        // the generation so their responses are ignored rather than applied
-        // after the UI was cleared — then re-poll the family if it is enabled.
-        session::stop(family);
-        if session::family_enabled(family) {
-            session::ensure_running(family);
-        }
-    }
     if let Some(keys) = changed.as_ref() {
         for family in DeviceFamily::ALL {
             let Some(key) = filter::family_enabled_key(family) else {
@@ -668,31 +543,25 @@ pub extern "C" fn on_params_update() {
     request_frame();
 }
 
-#[cfg(test)]
-mod rendered_screen_tests {
-    use super::{RenderedScreen, network_update_needs_frame};
-
-    #[test]
-    fn network_update_before_first_render_requests_frame() {
-        assert!(
-            network_update_needs_frame(RenderedScreen::Unknown),
-            "the first render must observe network info delivered during startup"
-        );
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_credentials_update() {
+    for family in families_on_new_credentials(&credentials::current(), &credentials::previous()) {
+        restart_family(family);
     }
+    request_frame();
+}
 
-    #[test]
-    fn network_update_refreshes_no_credentials_screen() {
-        assert!(
-            network_update_needs_frame(RenderedScreen::NoCredentials),
-            "the no-credentials screen displays the Deck network"
-        );
-    }
-
-    #[test]
-    fn network_update_ignores_other_rendered_screens() {
-        assert!(
-            !network_update_needs_frame(RenderedScreen::Other),
-            "screens without Deck network data must not repaint"
-        );
+/// Start one family over on its new account, leaving the others' readings alone.
+#[cfg(target_arch = "wasm32")]
+fn restart_family(family: DeviceFamily) {
+    let bound = session::account_bound(family);
+    session::clear_tokens_for(family);
+    DEVICES.with(|d| d.borrow_mut().reset_for_rebind(family, bound));
+    // `stop` bumps the generation, so a response to a fetch built
+    // on the old account is dropped rather than applied after the clear.
+    session::stop(family);
+    if bound && session::family_enabled(family) {
+        session::ensure_running(family);
     }
 }

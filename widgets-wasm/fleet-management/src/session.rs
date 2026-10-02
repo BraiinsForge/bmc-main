@@ -18,8 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_sdk::FetchOutcome;
+
 use crate::adapter::FamilyAdapter;
-use crate::device::{DeviceFamily, DeviceId};
+use crate::device::{DeviceFamily, DeviceId, PollFailure};
 use crate::families::bitaxe::BitaxeAdapter;
 use crate::families::bos::BosAdapter;
 use crate::families::ubos::UbosAdapter;
@@ -117,13 +119,34 @@ pub fn fail_pending(outcomes: &mut [Option<EndpointOutcome>]) {
     }
 }
 
+/// Why a login that yielded no token failed the pass.
+/// A 2xx counts as a rejection here: the miner answered and still handed out no token.
+#[must_use]
+pub fn login_failure(outcome: Option<FetchOutcome>, is_auth_error: bool) -> PollFailure {
+    match outcome {
+        Some(answer) if answer.is_ok() => PollFailure::AuthError,
+        Some(_) | None => fetch_failure(outcome, is_auth_error),
+    }
+}
+
+/// Why a fetch that yielded nothing usable failed the pass.
+#[must_use]
+pub fn fetch_failure(outcome: Option<FetchOutcome>, is_auth_error: bool) -> PollFailure {
+    match outcome {
+        Some(FetchOutcome::Refused) => PollFailure::AccountUnusable,
+        Some(FetchOutcome::Network) => PollFailure::Unreachable,
+        Some(_) | None if is_auth_error => PollFailure::AuthError,
+        Some(_) | None => PollFailure::ApiError,
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod driver;
 
 #[cfg(target_arch = "wasm32")]
 pub use driver::{
-    clear_tokens_for, ensure_running, family_enabled, is_polling, on_discovered, refresh_params,
-    remove_token, stop,
+    account_bound, clear_tokens_for, ensure_running, family_enabled, is_polling, on_discovered,
+    refresh_params, remove_token, stop,
 };
 
 #[cfg(test)]
@@ -131,6 +154,7 @@ mod tests {
     use bmc_wasm_sdk::ufmt;
 
     use super::*;
+    use crate::device::credential_slot;
 
     fn ids(n: usize) -> Vec<DeviceId> {
         (0..n)
@@ -243,6 +267,68 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_request_reads_as_an_unusable_account_never_a_rejection() {
+        let refused = Some(FetchOutcome::Refused);
+
+        assert_eq!(login_failure(refused, false), PollFailure::AccountUnusable);
+        assert_eq!(
+            fetch_failure(refused, false),
+            PollFailure::AccountUnusable,
+            "the miner never saw the request, so it rejected nothing"
+        );
+    }
+
+    #[test]
+    fn a_login_the_miner_turned_away_is_an_auth_failure() {
+        assert_eq!(
+            login_failure(Some(FetchOutcome::Http(401)), true),
+            PollFailure::AuthError
+        );
+        assert_eq!(
+            login_failure(Some(FetchOutcome::Http(200)), false),
+            PollFailure::AuthError,
+            "a 2xx without a token is a rejection"
+        );
+    }
+
+    #[test]
+    fn a_login_answered_with_an_error_is_an_api_error_never_unreachable() {
+        assert_eq!(
+            login_failure(Some(FetchOutcome::Http(400)), false),
+            PollFailure::ApiError,
+            "a malformed login body must not retire the miner as gone"
+        );
+        assert_eq!(
+            login_failure(Some(FetchOutcome::Http(503)), false),
+            PollFailure::ApiError
+        );
+    }
+
+    #[test]
+    fn a_login_without_an_answer_is_unreachable() {
+        assert_eq!(
+            login_failure(Some(FetchOutcome::Network), false),
+            PollFailure::Unreachable
+        );
+    }
+
+    #[test]
+    fn fetch_failure_classifies_each_answer() {
+        assert_eq!(
+            fetch_failure(Some(FetchOutcome::Network), false),
+            PollFailure::Unreachable
+        );
+        assert_eq!(
+            fetch_failure(Some(FetchOutcome::Http(401)), true),
+            PollFailure::AuthError
+        );
+        assert_eq!(
+            fetch_failure(Some(FetchOutcome::Http(503)), false),
+            PollFailure::ApiError
+        );
+    }
+
+    #[test]
     fn adapter_for_maps_every_supported_family() {
         assert_eq!(
             adapter_for(DeviceFamily::Bos).map(FamilyAdapter::browse_service_types),
@@ -256,5 +342,31 @@ mod tests {
             adapter_for(DeviceFamily::Bitaxe).map(FamilyAdapter::browse_service_types),
             Some(crate::families::bitaxe::BITAXE_SERVICE_TYPES)
         );
+    }
+
+    #[test]
+    fn each_adapter_spends_only_the_slot_its_family_is_gated_on() {
+        let slots: Vec<&str> = DeviceFamily::ALL
+            .into_iter()
+            .filter_map(credential_slot)
+            .collect();
+        for family in DeviceFamily::ALL {
+            let adapter = adapter_for(family).expect("BUG: every family has an adapter");
+            let sent = [
+                adapter.credential_header().unwrap_or_default(),
+                adapter.login_body(),
+            ]
+            .concat();
+            let spent: Vec<&str> = slots
+                .iter()
+                .copied()
+                .filter(|slot| sent.contains(&["{{ credential.", slot, "."].concat()))
+                .collect();
+            assert_eq!(
+                spent,
+                Vec::from_iter(credential_slot(family)),
+                "{family:?} must spend the account polling is gated on, and no other"
+            );
+        }
     }
 }

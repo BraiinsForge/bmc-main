@@ -60,10 +60,9 @@ pub trait FamilyAdapter {
     /// that do not report a model are unaffected.
     fn parse_model(&self, _endpoint: &str, _json: &dyn JsonLookup, _model: &mut ModelAccumulator) {}
 
-    /// A proactive credential header attached to every request, preferred over
-    /// any cached token. The driver passes the operator-configured uBOS
-    /// credentials; families that ignore them return none. Default none.
-    fn credential_header(&self, _username: &str, _password: &str) -> Option<String> {
+    /// A proactive credential header attached to every request, preferred over any cached token.
+    /// It carries the family's own slot placeholder for the host to fill. Default none.
+    fn credential_header(&self) -> Option<String> {
         None
     }
 
@@ -72,11 +71,8 @@ pub trait FamilyAdapter {
     fn auth_endpoint(&self) -> Option<&'static str> {
         None
     }
-    #[cfg_attr(
-        all(not(target_arch = "wasm32"), test),
-        expect(dead_code, reason = "used by the driver on wasm")
-    )]
-    fn login_body(&self, _password: &str) -> String {
+    /// The login request body, carrying the family's own slot placeholders.
+    fn login_body(&self) -> String {
         String::new()
     }
     fn parse_login(&self, _json: &dyn JsonLookup) -> Option<String> {
