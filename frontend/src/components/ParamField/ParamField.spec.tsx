@@ -414,6 +414,44 @@ describe('ParamField list', () => {
         expect(getByText('On')).toBeTruthy();
     });
 
+    const toggleItem: pb.ArrayItemKind['kind'] = { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema) };
+    const shownRow: pb.ArrayItemKind['kind'] = {
+        case: 'paramObject',
+        value: pb.create(pb.ParamObjectSchema, {
+            fields: [
+                { key: 'label', name: 'Label', kind: { case: 'paramString', value: {} } },
+                { key: 'shown', name: 'Shown', kind: { case: 'paramBoolean', value: {} } },
+            ],
+        }),
+    };
+
+    test.each<[string, pb.ArrayItemKind['kind'], ListItem[], RowError, string, string]>([
+        [
+            'a toggle row',
+            toggleItem,
+            [listItem(true), listItem(true)],
+            { error: 'Repeats item 1' },
+            'Flags, item 2',
+            'Repeats item 1',
+        ],
+        [
+            'a toggle field of an object row',
+            shownRow,
+            [listItem({ label: 'A', shown: true }), listItem({ label: 'B', shown: true })],
+            { fields: { shown: 'Same as item 1' } },
+            'Flags, item 2, Shown',
+            'Same as item 1',
+        ],
+    ])("shows %s's error under the toggle", (_, kind, value, rowError, switchName, message) => {
+        const flags = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'flags',
+            name: 'Flags',
+            kind: { case: 'paramArray', value: pb.create(pb.ParamArraySchema, { items: { kind }, maxItems: 2 }) },
+        });
+        const { getByRole } = renderList(value, [undefined, rowError], flags);
+        expect(errorOf(getByRole('switch', { name: switchName }))).toBe(message);
+    });
+
     test.each([
         ['text', { case: 'paramString', value: { placeholder: 'e.g. BTC or AAPL' } }, 'e.g. BTC or AAPL'],
         ['number', { case: 'paramInteger', value: { placeholder: 'e.g. 42' } }, 'e.g. 42'],

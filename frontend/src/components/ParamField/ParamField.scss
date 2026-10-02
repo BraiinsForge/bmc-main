@@ -101,8 +101,23 @@ $remove-button-size: mini-units(5);
 
 // A marked field's message is visually hidden; the row
 // shows it once, so the field's error line takes no room.
-.markedField :global(.cds--form-requirement) {
+.markedField :global(.cds--form-requirement),
+.markedField .toggleError {
     margin: 0;
+}
+
+// A row's other fields are inputs of `$row-height`; a toggle centred in that much lines up with them.
+.toggleBox {
+    composes: horizontal center from 'styles/layout.scss';
+    min-block-size: $row-height;
+}
+
+// Carbon's toggle has no invalid state, so its error
+// is a line under it, as the other fields show theirs.
+.toggleError {
+    composes: helper-text-01 from 'styles/carbon/typography.scss';
+    margin-block-start: mini-units(0.5);
+    color: $text-error;
 }
 
 .columnLabel {

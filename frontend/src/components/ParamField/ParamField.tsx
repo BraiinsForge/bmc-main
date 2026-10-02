@@ -195,29 +195,37 @@ export interface BoundToggleProps extends iField<boolean> {
     hideLabel?: boolean;
 }
 export function BoundToggle(props: BoundToggleProps) {
-    const { id, labelText, hideLabel, value, onChange, disabled } = props;
+    const { id, labelText, hideLabel, value, onChange, disabled, error } = props;
     const { formatMessage } = useIntl();
     const hiddenLabelId = `${id}-label`;
+    const errorId = `${id}-error`;
+
+    const toggle = (
+        <Toggle
+            id={id}
+            // This little shit seems to really need thrashing because otherwise
+            // it remembers the last selected value even when it's on a different
+            // parent entity and it should be nullified by the new one.
+            key={`${id}-${value}`}
+            size="md"
+            toggled={!!value}
+            onToggle={onChange}
+            disabled={disabled}
+            labelA={formatMessage({ defaultMessage: 'Off' })}
+            labelB={formatMessage({ defaultMessage: 'On' })}
+            labelText={hideLabel ? undefined : labelText}
+            aria-labelledby={hideLabel ? hiddenLabelId : undefined}
+            aria-invalid={error ? true : undefined}
+            aria-errormessage={error ? errorId : undefined}
+        />
+    );
 
     return (
         <Fragment>
             {/* Not Carbon's `hideLabel`: it shows `labelText` in place of the On/Off side label. */}
             {hideLabel ? <span id={hiddenLabelId} className="cds--visually-hidden" children={labelText} /> : null}
-            <Toggle
-                id={id}
-                // This little shit seems to really need thrashing because otherwise
-                // it remembers the last selected value even when it's on a different
-                // parent entity and it should be nullified by the new one.
-                key={`${id}-${value}`}
-                size="md"
-                toggled={!!value}
-                onToggle={onChange}
-                disabled={disabled}
-                labelA={formatMessage({ defaultMessage: 'Off' })}
-                labelB={formatMessage({ defaultMessage: 'On' })}
-                labelText={hideLabel ? undefined : labelText}
-                aria-labelledby={hideLabel ? hiddenLabelId : undefined}
-            />
+            {hideLabel ? <div className={css.toggleBox} children={toggle} /> : toggle}
+            {error ? <div id={errorId} className={css.toggleError} children={error} /> : null}
         </Fragment>
     );
 }

@@ -274,6 +274,50 @@ const UNIQUE_LINKS = list(
     [BRAIINS_LINK, link('Pool', 'https://pool.braiins.com')],
 );
 
+function toggled(value: boolean): pb.FieldValue['kind'] {
+    return { case: 'booleanValue', value };
+}
+
+const UNIQUE_TOGGLES = list(
+    'togglesUnique',
+    'Toggles, unique',
+    { case: 'paramBoolean', value: create(pb.ParamBooleanSchema) },
+    { maxItems: 2, uniqueItems: { case: 'whole', value: create(pb.EmptySchema) }, description: 'No two alike.' },
+    [toggled(true), toggled(false)],
+);
+
+function shownRow(label: string, shown: boolean): pb.FieldValue['kind'] {
+    return {
+        case: 'structValue',
+        value: create(pb.FieldValuesSchema, {
+            fields: {
+                label: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: label } }),
+                shown: create(pb.FieldValueSchema, { kind: toggled(shown) }),
+            },
+        }),
+    };
+}
+
+const UNIQUE_BY_TOGGLE = list(
+    'shownUnique',
+    'Objects, unique by toggle',
+    {
+        case: 'paramObject',
+        value: create(pb.ParamObjectSchema, {
+            fields: [
+                { key: 'label', name: 'Label', kind: { case: 'paramString', value: {} } },
+                { key: 'shown', name: 'Shown', kind: { case: 'paramBoolean', value: {} } },
+            ],
+        }),
+    },
+    {
+        maxItems: 2,
+        uniqueItems: { case: 'by', value: create(pb.UniqueKeysSchema, { keys: ['shown'] }) },
+        description: 'No two rows alike in Shown.',
+    },
+    [shownRow('Braiins', true), shownRow('Deck', false)],
+);
+
 const ITEM_KIND_LISTS: pb.ManifestParamDefinition[] = [
     list(
         'thresholds',
@@ -452,7 +496,7 @@ const ERROR_DEMOS = [SYMBOLS, LINKS].map(withErrors);
 export function ListField({ invalid }: Args) {
     return (
         <div className={css.grid}>
-            {[SYMBOLS, ...ITEM_KIND_LISTS, UNIQUE_LINKS].map(definition => (
+            {[SYMBOLS, ...ITEM_KIND_LISTS, UNIQUE_LINKS, UNIQUE_TOGGLES, UNIQUE_BY_TOGGLE].map(definition => (
                 <ListCell key={definition.key} definition={definition} invalid={invalid} />
             ))}
             {ERROR_DEMOS.map(definition => (
