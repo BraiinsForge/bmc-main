@@ -39,6 +39,11 @@ mod random;
 #[cfg(target_arch = "wasm32")]
 pub use random::random_u32;
 
+mod touch;
+pub use touch::TouchHit;
+#[cfg(target_arch = "wasm32")]
+pub use touch::{get_touch_click, get_touch_drag};
+
 mod viewport;
 pub use viewport::{
     DisplayInfo, DisplayShape, SizeVariant, ViewportShape, WidgetSize, WidgetViewport,
@@ -82,8 +87,6 @@ mod ffi {
 
         // New tree-based API
         fn host_submit_tree(ptr: *const u8, len: u32, width: u32, height: u32);
-        fn host_get_touch_click(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
-        fn host_get_touch_drag(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
 
         // Svg registration. The host dedups by tag.
         pub(super) fn host_register_svg(
@@ -235,36 +238,6 @@ mod ffi {
     /// Submit a serialized tree for host-side layout and rendering.
     pub fn submit_tree(data: &[u8], width: u32, height: u32) {
         unsafe { host_submit_tree(data.as_ptr(), data.len() as u32, width, height) }
-    }
-
-    /// Get the click position for an interactive canvas (one-shot, on finger-up).
-    ///
-    /// Returns `None` if the canvas was not clicked this frame.
-    #[must_use]
-    pub fn get_touch_click(key: &str) -> Option<TouchHit> {
-        let mut buf = [0u8; 16];
-        let clicked =
-            unsafe { host_get_touch_click(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
-        if clicked != 0 {
-            Some(TouchHit::from_buf(&buf))
-        } else {
-            None
-        }
-    }
-
-    /// Get the drag position for an interactive canvas (continuous, while finger is down).
-    ///
-    /// Returns `None` if the canvas is not being dragged this frame.
-    #[must_use]
-    pub fn get_touch_drag(key: &str) -> Option<TouchHit> {
-        let mut buf = [0u8; 16];
-        let dragging =
-            unsafe { host_get_touch_drag(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
-        if dragging != 0 {
-            Some(TouchHit::from_buf(&buf))
-        } else {
-            None
-        }
     }
 
     /// Register icon data with the host under `tag`. Idempotent host-side.
@@ -599,40 +572,5 @@ impl Volume {
 impl From<Volume> for u32 {
     fn from(v: Volume) -> Self {
         Self::from(v.0)
-    }
-}
-
-/// Touch interaction result (click or drag position + element dimensions).
-#[derive(Debug, Clone, Copy)]
-pub struct TouchHit {
-    /// Local x position (relative to element left edge)
-    pub x: f32,
-    /// Local y position (relative to element top edge)
-    pub y: f32,
-    /// Element layout width
-    pub width: f32,
-    /// Element layout height
-    pub height: f32,
-}
-
-impl TouchHit {
-    #[cfg(target_arch = "wasm32")]
-    fn from_buf(buf: &[u8; 16]) -> Self {
-        Self {
-            x: f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
-            y: f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
-            width: f32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
-            height: f32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
-        }
-    }
-
-    /// Horizontal fraction (0.0 = left edge, 1.0 = right edge), clamped.
-    #[must_use]
-    pub fn frac_x(&self) -> f32 {
-        if self.width > 0.0 {
-            (self.x / self.width).clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
     }
 }
