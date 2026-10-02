@@ -32,6 +32,11 @@ use bmc_wasm_protocol::time::LocalDateTime;
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
+#[cfg(target_arch = "wasm32")]
+mod random;
+#[cfg(target_arch = "wasm32")]
+pub use random::random_u32;
+
 mod viewport;
 pub use viewport::{
     DisplayInfo, DisplayShape, SizeVariant, ViewportShape, WidgetSize, WidgetViewport,
@@ -176,9 +181,6 @@ mod ffi {
 
         // Evict this widget's entire namespace (all icons, bitmaps, meshes, audio).
         fn host_evict_all() -> u32;
-
-        // Random number generation (host-seeded for deterministic replay)
-        fn host_random_u32() -> u32;
 
         // Max image size (pixels) the host will decode.
         fn host_max_image_pixels() -> u32;
@@ -560,12 +562,6 @@ mod ffi {
             return None;
         }
         Some((buf, w, h))
-    }
-
-    /// Get a random `u32` from the host.
-    #[must_use]
-    pub fn random_u32() -> u32 {
-        unsafe { host_random_u32() }
     }
 
     /// Maximum image size, in pixels, the host will decode.
