@@ -22,30 +22,40 @@
 //!
 //! On WASM targets, registration goes through host FFI calls.
 //! On native targets (the gallery), callers must initialize pluggable registrars
-//! via [`init_icon_registrar`], [`init_bitmap_registrar`], [`init_mesh_registrar`],
-//! and [`init_image_registrar`] before any registration occurs.
+//! via `init_icon_registrar`, `init_bitmap_registrar`, `init_mesh_registrar`,
+//! and `init_image_registrar` before any registration occurs.
 //!
 //! The host's registry is idempotent by `name` — the SDK keeps no consumer-side
 //! cache; every call routes through the host, which returns the same ID for the
 //! same `name`.
 
-#![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
-
 use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
-#[cfg(target_arch = "wasm32")]
-use crate::host;
+use crate::cache::CacheSource;
 use crate::mesh::Mesh;
 
+trait AssetIdProvider {
+    fn svg(icon: &Svg) -> Option<SvgId>;
+    fn bitmap(bmp: &Bitmap) -> Option<BitmapId>;
+    fn image(source: CacheSource<'_>) -> Option<BitmapId>;
+    fn mesh(mesh: &Mesh) -> Option<MeshId>;
+    fn audio(audio: &Audio) -> Option<AudioId>;
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-type IconRegistrar = fn(&str, &[u8]) -> Option<SvgId>;
+mod native;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
+
 #[cfg(not(target_arch = "wasm32"))]
-type BitmapRegistrar = fn(&str, &[u8]) -> Option<BitmapId>;
+use native::Host as Platform;
 #[cfg(not(target_arch = "wasm32"))]
-type MeshRegistrar = fn(&str, &[u8]) -> Option<MeshId>;
-/// `(tag, rgba, width, height)` — pre-decoded pixels, upload only.
-#[cfg(not(target_arch = "wasm32"))]
-type ImageRegistrar = fn(&str, &[u8], u32, u32) -> Option<BitmapId>;
+pub use native::{
+    init_bitmap_registrar, init_icon_registrar, init_image_registrar, init_mesh_registrar,
+    init_test_registrars,
+};
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
 
 // ── Svg ─────────────────────────────────────────────────────────────
 
@@ -71,33 +81,10 @@ impl Svg {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod icon_native {
-    use super::IconRegistrar;
-    use std::cell::RefCell;
-
-    thread_local! {
-        pub(super) static ICON_REGISTRAR: RefCell<IconRegistrar> = RefCell::new(|_, _| panic!("BUG: icon registrar not initialized — call init_icon_registrar()"));
-    }
-}
-
-/// Initialize the icon registrar for native targets.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn init_icon_registrar(f: IconRegistrar) {
-    icon_native::ICON_REGISTRAR.with(|r| *r.borrow_mut() = f);
-}
-
 /// Register an icon (host-side dedup by `icon.name`) and return its ID.
 #[must_use]
 pub fn ensure_registered(icon: &Svg) -> Option<SvgId> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        host::register_svg_package(icon.name, icon.source.package_ref())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        icon_native::ICON_REGISTRAR.with(|r| r.borrow()(icon.name, icon.source.data()))
-    }
+    Platform::svg(icon)
 }
 
 // ── Bitmap ───────────────────────────────────────────────────────────
@@ -112,49 +99,10 @@ pub struct Bitmap {
     pub name: &'static str,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod bitmap_native {
-    use super::BitmapRegistrar;
-    use std::cell::RefCell;
-
-    thread_local! {
-        pub(super) static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = RefCell::new(|_, _| panic!("BUG: bitmap registrar not initialized — call init_bitmap_registrar()"));
-    }
-}
-
-/// Initialize the bitmap registrar for native targets.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn init_bitmap_registrar(f: BitmapRegistrar) {
-    bitmap_native::BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = f);
-}
-
 /// Register a bitmap (host-side dedup by `bmp.name`) and return its ID.
 #[must_use]
 pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        host::register_bitmap_package(bmp.name, bmp.source.package_ref())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        bitmap_native::BITMAP_REGISTRAR.with(|r| r.borrow()(bmp.name, bmp.source.data()))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-mod image_native {
-    use super::ImageRegistrar;
-    use std::cell::RefCell;
-
-    thread_local! {
-        pub(super) static IMAGE_REGISTRAR: RefCell<ImageRegistrar> = RefCell::new(|_, _, _, _| panic!("BUG: image registrar not initialized — call init_image_registrar()"));
-    }
-}
-
-/// Initialize the image registrar for native targets.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn init_image_registrar(f: ImageRegistrar) {
-    image_native::IMAGE_REGISTRAR.with(|r| *r.borrow_mut() = f);
+    Platform::bitmap(bmp)
 }
 
 /// Restore a bitmap from a cache source (e.g. `cache::lazy_get(tag)`).
@@ -163,18 +111,8 @@ pub fn init_image_registrar(f: ImageRegistrar) {
 /// natively the calling side's own store is read and the registrar
 /// uploads. `None` on a cache miss or unreadable metadata.
 #[must_use]
-pub fn register_image(source: crate::cache::CacheSource<'_>) -> Option<BitmapId> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        host::register_bitmap_from_cache(source.tag())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let entry = crate::cache::read_bytes(source.tag())?;
-        let (width, height, _identity) = bmc_wasm_protocol::decode_image_meta(&entry.metadata)?;
-        image_native::IMAGE_REGISTRAR
-            .with(|r| r.borrow()(source.tag(), &entry.bytes, width, height))
-    }
+pub fn register_image(source: CacheSource<'_>) -> Option<BitmapId> {
+    Platform::image(source)
 }
 
 // ── Audio ────────────────────────────────────────────────────────────
@@ -190,61 +128,21 @@ pub struct Audio {
 }
 
 /// Register an audio asset (host-side dedup by `audio.name`) and return its ID.
-#[cfg(target_arch = "wasm32")]
+///
+/// # Panics
+///
+/// Off-target, where audio is not used (the gallery plays none).
 #[must_use]
 pub fn ensure_audio_registered(audio: &Audio) -> Option<AudioId> {
-    host::register_audio_package(audio.name, audio.source.package_ref())
-}
-
-/// Placeholder for native compilation (audio not used in the gallery).
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn ensure_audio_registered(_audio: &Audio) -> Option<AudioId> {
-    panic!("ensure_audio_registered() is not available on native targets")
+    Platform::audio(audio)
 }
 
 // ── Mesh ─────────────────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "wasm32"))]
-mod mesh_native {
-    use super::MeshRegistrar;
-    use std::cell::RefCell;
-
-    thread_local! {
-        pub(super) static MESH_REGISTRAR: RefCell<MeshRegistrar> = RefCell::new(|_, _| panic!("BUG: mesh registrar not initialized — call init_mesh_registrar()"));
-    }
-}
-
-/// Initialize the mesh registrar for native targets.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn init_mesh_registrar(f: MeshRegistrar) {
-    mesh_native::MESH_REGISTRAR.with(|r| *r.borrow_mut() = f);
-}
-
-/// Install dummy-id registrars for widget unit tests,
-/// which assemble asset-bearing nodes without rendering them.
-///
-/// Per-thread, so call it at the top of each test.
-/// Anything actually rendering (the gallery) must install real registrars instead.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn init_test_registrars() {
-    init_icon_registrar(|_, _| SvgId::from_wire(1));
-    init_bitmap_registrar(|_, _| BitmapId::from_wire(1));
-    init_mesh_registrar(|_, _| MeshId::from_wire(1));
-    init_image_registrar(|_, _, _, _| BitmapId::from_wire(1));
-}
-
 /// Register a mesh (host-side dedup by `mesh.name`) and return its ID.
 #[must_use]
 pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        host::register_mesh_package(mesh.name, mesh.source.package_ref())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        mesh_native::MESH_REGISTRAR.with(|r| r.borrow()(mesh.name, mesh.source.data()))
-    }
+    Platform::mesh(mesh)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
