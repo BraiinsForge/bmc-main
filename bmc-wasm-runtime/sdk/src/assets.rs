@@ -247,7 +247,7 @@ pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::{init_test_registrars, register_image};
     use crate::cache;

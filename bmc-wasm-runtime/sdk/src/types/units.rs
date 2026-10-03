@@ -699,6 +699,7 @@ mod tests {
     /// Off-device the operator's units are whatever the thread was given,
     /// so a story can render both systems without a host.
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn imperial_units_render_off_device_once_a_snapshot_says_so() {
         crate::system::set_current(
             crate::system::SnapshotBuilder::new()
