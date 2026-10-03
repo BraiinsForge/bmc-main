@@ -232,3 +232,6 @@ async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ClientErro
         ClientError::Unexpected(status)
     })
 }
+
+#[cfg(test)]
+pub(crate) mod tests;
