@@ -46,160 +46,219 @@
 //! }
 //! ```
 
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_expand_rrule(
-        input_ptr: *const u8,
-        input_len: u32,
-        out_ptr: *mut u8,
-        out_cap: u32,
-    ) -> i32;
-
-    // Not `host_tz_convert`: that name is frozen on the 20-byte layout
-    // SDK 0.5 binaries decode.
-    fn host_tz_wall_clock(unix_secs: i64, tz_ptr: *const u8, tz_len: u32, out_ptr: *mut u8) -> i32;
-
-    fn host_parse_datetime(str_ptr: *const u8, str_len: u32) -> i64;
-
-    fn host_parse_calendar_date(str_ptr: *const u8, str_len: u32, out_ptr: *mut u8) -> i32;
-}
-
 pub use bmc_wasm_protocol::time::{CalendarDate, LocalDateTime, month_short, weekday_short};
-
-/// Parse a date-time into a unix timestamp, in the relaxed RFC 3339 the
-/// host's parser accepts: `2026-02-13T10:15:56Z`, the same with a space
-/// separator, or with a `+02:00`-style offset.
-///
-/// Returns `None` unless the text names an instant. A UTC offset is
-/// required, so a bare `2026-02-13 10:15:56` is refused rather than
-/// guessed at; for a day without a time use [`parse_calendar_date`].
-#[cfg(target_arch = "wasm32")]
-#[must_use]
-pub fn parse_datetime(s: &str) -> Option<i64> {
-    #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
-    let val = unsafe { host_parse_datetime(s.as_ptr(), s.len() as u32) };
-    if val == i64::MIN { None } else { Some(val) }
-}
-
-/// Parse a `YYYY-MM-DD` date, which names a day rather than an instant.
-///
-/// Returns `None` if the text is not such a date.
-#[cfg(target_arch = "wasm32")]
-#[must_use]
-pub fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
-    let mut buf = [0_u8; CalendarDate::WIRE_LEN];
-    #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
-    let rc = unsafe { host_parse_calendar_date(s.as_ptr(), s.len() as u32, buf.as_mut_ptr()) };
-    if rc < 0 {
-        return None;
-    }
-    CalendarDate::from_wire(buf)
-}
-
-/// Expand an RRULE into concrete occurrence timestamps (UTC).
-///
-/// Returns a vector of unix timestamps for each occurrence within the
-/// `[window_start, window_end]` range, capped at `max_count`.
-///
-/// Returns an empty vec if the RRULE is invalid or no occurrences fall
-/// within the window.
-///
-/// ## Wire format (input)
-///
-/// ```text
-/// window_start: i64 LE    [0..8]
-/// window_end:   i64 LE    [8..16]
-/// max_count:    u16 LE    [16..18]
-/// tzid_len:     u16 LE    [18..20]   (0 = no TZID)
-/// tzid:         [u8]      [20..20+tzid_len]
-/// dtstart_len:  u16 LE    [..]
-/// dtstart:      [u8]
-/// rrule_len:    u16 LE    [..]
-/// rrule:        [u8]
-/// ```
-///
-/// Output: packed `i64[]` LE (UTC timestamps), unchanged from before.
-#[cfg(target_arch = "wasm32")]
-#[must_use]
-pub fn expand_rrule(
-    rrule: &str,
-    dtstart: &str,
-    tzid: Option<&str>,
-    window_start: i64,
-    window_end: i64,
-    max_count: u16,
-) -> Vec<i64> {
-    let tzid = tzid.unwrap_or("");
-    let cap = 18 + 2 + tzid.len() + 2 + dtstart.len() + 2 + rrule.len();
-    let mut buf = Vec::with_capacity(cap);
-
-    buf.extend_from_slice(&window_start.to_le_bytes());
-    buf.extend_from_slice(&window_end.to_le_bytes());
-    buf.extend_from_slice(&max_count.to_le_bytes());
-    push_str(&mut buf, tzid);
-    push_str(&mut buf, dtstart);
-    push_str(&mut buf, rrule);
-
-    // Two-call pattern: first get required output size
-    let needed =
-        unsafe { host_expand_rrule(buf.as_ptr(), buf.len() as u32, core::ptr::null_mut(), 0) };
-    if needed <= 0 {
-        return Vec::new();
-    }
-
-    // Allocate and fill
-    let mut out = vec![0u8; needed as usize];
-    let written = unsafe {
-        host_expand_rrule(
-            buf.as_ptr(),
-            buf.len() as u32,
-            out.as_mut_ptr(),
-            needed as u32,
-        )
-    };
-    if written <= 0 {
-        return Vec::new();
-    }
-
-    // Decode packed i64[] little-endian
-    out.truncate(written as usize);
-    out.chunks_exact(8)
-        .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
-        .collect()
-}
-
-/// Push a length-prefixed string into a binary buffer (u16 LE length + bytes).
-#[cfg(target_arch = "wasm32")]
-fn push_str(buf: &mut Vec<u8>, s: &str) {
-    let len = s.len().min(u16::MAX as usize) as u16;
-    buf.extend_from_slice(&len.to_le_bytes());
-    buf.extend_from_slice(&s.as_bytes()[..len as usize]);
-}
 
 /// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.
 ///
 /// Returns `None` if the timezone name is unknown.
 #[must_use]
 pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buf = [0_u8; LocalDateTime::WIRE_LEN];
-        let rc = unsafe {
-            host_tz_wall_clock(
-                unix_secs,
-                timezone.as_ptr(),
-                timezone.len() as u32,
-                buf.as_mut_ptr(),
-            )
-        };
+    Platform::wall_clock(unix_secs, timezone)
+}
+
+trait CalendarWallClockProvider {
+    fn wall_clock(unix_secs: i64, timezone: &str) -> Option<LocalDateTime>;
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use super::{CalendarDate, LocalDateTime};
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_expand_rrule(
+            input_ptr: *const u8,
+            input_len: u32,
+            out_ptr: *mut u8,
+            out_cap: u32,
+        ) -> i32;
+
+        // Not `host_tz_convert`: that name is frozen on the 20-byte layout
+        // SDK 0.5 binaries decode.
+        fn host_tz_wall_clock(
+            unix_secs: i64,
+            tz_ptr: *const u8,
+            tz_len: u32,
+            out_ptr: *mut u8,
+        ) -> i32;
+
+        fn host_parse_datetime(str_ptr: *const u8, str_len: u32) -> i64;
+
+        fn host_parse_calendar_date(str_ptr: *const u8, str_len: u32, out_ptr: *mut u8) -> i32;
+    }
+
+    pub(super) struct Host;
+
+    impl super::CalendarWallClockProvider for Host {
+        fn wall_clock(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
+            let mut buf = [0_u8; LocalDateTime::WIRE_LEN];
+            let rc = unsafe {
+                host_tz_wall_clock(
+                    unix_secs,
+                    timezone.as_ptr(),
+                    timezone.len() as u32,
+                    buf.as_mut_ptr(),
+                )
+            };
+            if rc < 0 {
+                return None;
+            }
+            LocalDateTime::from_wire(buf)
+        }
+    }
+
+    /// Parse a date-time into a unix timestamp, in the relaxed RFC 3339 the
+    /// host's parser accepts: `2026-02-13T10:15:56Z`, the same with a space
+    /// separator, or with a `+02:00`-style offset.
+    ///
+    /// Returns `None` unless the text names an instant. A UTC offset is
+    /// required, so a bare `2026-02-13 10:15:56` is refused rather than
+    /// guessed at; for a day without a time use [`parse_calendar_date`].
+    #[must_use]
+    pub fn parse_datetime(s: &str) -> Option<i64> {
+        #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
+        let val = unsafe { host_parse_datetime(s.as_ptr(), s.len() as u32) };
+        if val == i64::MIN { None } else { Some(val) }
+    }
+
+    /// Parse a `YYYY-MM-DD` date, which names a day rather than an instant.
+    ///
+    /// Returns `None` if the text is not such a date.
+    #[must_use]
+    pub fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
+        let mut buf = [0_u8; CalendarDate::WIRE_LEN];
+        #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
+        let rc = unsafe { host_parse_calendar_date(s.as_ptr(), s.len() as u32, buf.as_mut_ptr()) };
         if rc < 0 {
             return None;
         }
-        LocalDateTime::from_wire(buf)
+        CalendarDate::from_wire(buf)
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        bmc_wasm_protocol::time::wall_clock(unix_secs, timezone)
+
+    /// Expand an RRULE into concrete occurrence timestamps (UTC).
+    ///
+    /// Returns a vector of unix timestamps for each occurrence within the
+    /// `[window_start, window_end]` range, capped at `max_count`.
+    ///
+    /// Returns an empty vec if the RRULE is invalid or no occurrences fall
+    /// within the window.
+    ///
+    /// ## Wire format (input)
+    ///
+    /// ```text
+    /// window_start: i64 LE    [0..8]
+    /// window_end:   i64 LE    [8..16]
+    /// max_count:    u16 LE    [16..18]
+    /// tzid_len:     u16 LE    [18..20]   (0 = no TZID)
+    /// tzid:         [u8]      [20..20+tzid_len]
+    /// dtstart_len:  u16 LE    [..]
+    /// dtstart:      [u8]
+    /// rrule_len:    u16 LE    [..]
+    /// rrule:        [u8]
+    /// ```
+    ///
+    /// Output: packed `i64[]` LE (UTC timestamps).
+    #[must_use]
+    pub fn expand_rrule(
+        rrule: &str,
+        dtstart: &str,
+        tzid: Option<&str>,
+        window_start: i64,
+        window_end: i64,
+        max_count: u16,
+    ) -> Vec<i64> {
+        let tzid = tzid.unwrap_or("");
+        let cap = 18 + 2 + tzid.len() + 2 + dtstart.len() + 2 + rrule.len();
+        let mut buf = Vec::with_capacity(cap);
+
+        buf.extend_from_slice(&window_start.to_le_bytes());
+        buf.extend_from_slice(&window_end.to_le_bytes());
+        buf.extend_from_slice(&max_count.to_le_bytes());
+        push_str(&mut buf, tzid);
+        push_str(&mut buf, dtstart);
+        push_str(&mut buf, rrule);
+
+        // Two-call pattern: first get required output size
+        let needed =
+            unsafe { host_expand_rrule(buf.as_ptr(), buf.len() as u32, core::ptr::null_mut(), 0) };
+        if needed <= 0 {
+            return Vec::new();
+        }
+
+        let mut out = vec![0u8; needed as usize];
+        let written = unsafe {
+            host_expand_rrule(
+                buf.as_ptr(),
+                buf.len() as u32,
+                out.as_mut_ptr(),
+                needed as u32,
+            )
+        };
+        if written <= 0 {
+            return Vec::new();
+        }
+
+        // Decode packed i64[] little-endian
+        out.truncate(written as usize);
+        out.chunks_exact(8)
+            .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+            .collect()
+    }
+
+    /// Push a length-prefixed string into a binary buffer (u16 LE length + bytes).
+    fn push_str(buf: &mut Vec<u8>, s: &str) {
+        let len = s.len().min(u16::MAX as usize) as u16;
+        buf.extend_from_slice(&len.to_le_bytes());
+        buf.extend_from_slice(&s.as_bytes()[..len as usize]);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use super::LocalDateTime;
+
+    pub(super) struct Host;
+
+    impl super::CalendarWallClockProvider for Host {
+        fn wall_clock(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
+            bmc_wasm_protocol::time::wall_clock(unix_secs, timezone)
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+#[cfg(target_arch = "wasm32")]
+pub use wasm::{expand_rrule, parse_calendar_date, parse_datetime};
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
+
+#[cfg(test)]
+mod tests {
+    use super::{LocalDateTime, tz_convert};
+
+    /// Monday the 14th of September 2026, 10:30 UTC.
+    const SEPTEMBER_MORNING: i64 = 1_789_381_800;
+
+    #[test]
+    fn tz_convert_reads_the_wall_clock_in_the_zone() {
+        assert_eq!(
+            tz_convert(SEPTEMBER_MORNING, "Europe/Prague"),
+            Some(LocalDateTime {
+                year: 2026,
+                month: 9,
+                day: 14,
+                hour: 12,
+                minute: 30,
+                second: 0,
+                weekday: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn tz_convert_refuses_an_unknown_zone() {
+        assert_eq!(tz_convert(SEPTEMBER_MORNING, "Not/AZone"), None);
     }
 }
