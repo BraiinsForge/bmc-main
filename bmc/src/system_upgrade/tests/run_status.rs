@@ -23,6 +23,7 @@ use super::*;
 fn running(generation: usize) -> UpgradeRunSnapshot {
     UpgradeRunSnapshot {
         generation: UpgradeGeneration::new(generation),
+        id: None,
         state: UpgradeRunStatus::Running {
             kind: UpgradeKind::Firmware,
             phase: Some(UpgradePhase::FirmwareDownloading),
@@ -43,8 +44,10 @@ fn every_display_change_reaches_the_event_stream_once_and_in_order() {
         .expect("BUG: a new run status service still holds its events");
     let failed = UpgradeRunSnapshot {
         generation: UpgradeGeneration::new(0),
+        id: None,
         state: UpgradeRunStatus::Failed {
             kind: UpgradeKind::Firmware,
+            reason: String::new(),
         },
     };
 

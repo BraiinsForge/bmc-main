@@ -54,6 +54,15 @@ enum ExecutionKey {
     Download,
 }
 
+impl ExecutionKey {
+    fn id(&self) -> Option<ExecutionId> {
+        match self {
+            Self::Boser(id) => Some(*id),
+            Self::Download => None,
+        }
+    }
+}
+
 struct Projection {
     display: RunStatusService,
     state: StateService,
@@ -76,7 +85,7 @@ impl StateSink for Projection {
             if let Some((key, state)) = &projected
                 && *key == current_key
             {
-                self.present(generation, state.clone());
+                self.present(generation, current_key.id(), state.clone());
                 return;
             }
             // `None` or another flow while something is on display: that execution
@@ -90,12 +99,13 @@ impl StateSink for Projection {
             Some((key, state @ UpgradeRunStatus::Running { .. })) => {
                 self.ended = None;
                 let generation = self.display.next_generation();
+                let id = key.id();
                 self.current = Some((key, generation));
-                self.present(generation, state);
+                self.present(generation, id, state);
             }
             Some((key, state)) => {
                 if let Some((_, generation)) = self.ended.take_if(|(ended, _)| *ended == key) {
-                    self.present(generation, state);
+                    self.present(generation, key.id(), state);
                 }
             }
             None => {}
@@ -132,14 +142,22 @@ impl Projection {
         }
     }
 
-    fn present(&mut self, generation: UpgradeGeneration, state: UpgradeRunStatus) {
+    fn present(
+        &mut self,
+        generation: UpgradeGeneration,
+        id: Option<ExecutionId>,
+        state: UpgradeRunStatus,
+    ) {
         let outcome = match &state {
             UpgradeRunStatus::Running { .. } => None,
             UpgradeRunStatus::Succeeded { .. } => Some(SystemUpgradeState::Finished),
             UpgradeRunStatus::Failed { .. } => Some(SystemUpgradeState::Failed),
         };
-        self.display
-            .publish(UpgradeRunSnapshot { generation, state });
+        self.display.publish(UpgradeRunSnapshot {
+            generation,
+            id,
+            state,
+        });
         match outcome {
             None => self.state.notify(SystemUpgradeState::UpgradeStarted),
             Some(outcome) => {
@@ -173,10 +191,11 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeRunStatus)> 
                 progress: Some(*download),
             },
         ),
-        UpgradeState::DownloadFailed { .. } => (
+        UpgradeState::DownloadFailed { reason } => (
             ExecutionKey::Download,
             UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Firmware,
+                reason: reason.clone(),
             },
         ),
         UpgradeState::Running {
@@ -204,9 +223,14 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeRunStatus)> 
             ExecutionKey::Boser(*id),
             UpgradeRunStatus::Succeeded { kind: *kind },
         ),
-        UpgradeState::Failed { id, kind, .. } => (
+        UpgradeState::Failed {
+            id, kind, reason, ..
+        } => (
             ExecutionKey::Boser(*id),
-            UpgradeRunStatus::Failed { kind: *kind },
+            UpgradeRunStatus::Failed {
+                kind: *kind,
+                reason: reason.clone(),
+            },
         ),
     };
     Some(projected)

@@ -581,8 +581,10 @@ mod tests {
         let compositor = MockCompositor::new(Product::Bmc100);
         let snapshot = UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(4),
+            id: None,
             state: UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Packages,
+                reason: String::new(),
             },
         };
         compositor

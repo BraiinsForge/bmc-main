@@ -28,6 +28,7 @@ fn generation(value: usize) -> UpgradeGeneration {
 fn running(value: usize, kind: UpgradeKind, phase: Option<UpgradePhase>) -> UpgradeRunSnapshot {
     UpgradeRunSnapshot {
         generation: generation(value),
+        id: None,
         state: UpgradeRunStatus::Running {
             kind,
             phase,
@@ -55,13 +56,18 @@ fn flashing(value: usize) -> UpgradeRunSnapshot {
 fn failed(value: usize, kind: UpgradeKind) -> UpgradeRunSnapshot {
     UpgradeRunSnapshot {
         generation: generation(value),
-        state: UpgradeRunStatus::Failed { kind },
+        id: None,
+        state: UpgradeRunStatus::Failed {
+            kind,
+            reason: String::new(),
+        },
     }
 }
 
 fn succeeded(value: usize, kind: UpgradeKind) -> UpgradeRunSnapshot {
     UpgradeRunSnapshot {
         generation: generation(value),
+        id: None,
         state: UpgradeRunStatus::Succeeded { kind },
     }
 }

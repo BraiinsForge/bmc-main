@@ -143,7 +143,7 @@ fn kind(state: &UpgradeRunStatus) -> Kind {
     match state {
         UpgradeRunStatus::Running { kind, .. }
         | UpgradeRunStatus::Succeeded { kind }
-        | UpgradeRunStatus::Failed { kind } => match kind {
+        | UpgradeRunStatus::Failed { kind, .. } => match kind {
             UpgradeKind::Firmware | UpgradeKind::FirmwareAndPackages => Kind::Firmware,
             UpgradeKind::Packages => Kind::Packages,
         },
@@ -268,6 +268,7 @@ mod tests {
     fn running(generation: usize) -> UpgradeRunSnapshot {
         UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(generation),
+            id: None,
             state: UpgradeRunStatus::Running {
                 kind: UpgradeKind::Packages,
                 phase: Some(UpgradePhase::PackageRealizing),
@@ -305,6 +306,7 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Firmware,
                     phase: None,
@@ -329,6 +331,7 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::FirmwareAndPackages,
                     phase: None,
@@ -353,6 +356,7 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: None,
@@ -383,6 +387,7 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Firmware,
                 },
@@ -407,8 +412,10 @@ mod tests {
         let mut cache = UpgradeCache::default();
         let terminal = UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(1),
+            id: None,
             state: UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Packages,
+                reason: String::new(),
             },
         };
         cache.set(terminal.clone(), now);
@@ -443,8 +450,10 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
+                    reason: String::new(),
                 },
             },
             now,
@@ -469,8 +478,10 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
+                    reason: String::new(),
                 },
             },
             now,
@@ -478,8 +489,10 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(2),
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
+                    reason: String::new(),
                 },
             },
             now + TERMINAL_LIFETIME,
@@ -503,8 +516,10 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Firmware,
+                    reason: String::new(),
                 },
             },
             now,
@@ -512,6 +527,7 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(2),
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: None,
@@ -536,8 +552,10 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
+                    reason: String::new(),
                 },
             },
             now,
@@ -545,8 +563,10 @@ mod tests {
         cache.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(2),
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
+                    reason: String::new(),
                 },
             },
             now + Duration::from_secs(1),

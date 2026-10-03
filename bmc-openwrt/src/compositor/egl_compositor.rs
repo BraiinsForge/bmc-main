@@ -4081,6 +4081,7 @@ mod tests {
         let mut state = make_app_state();
         let snapshot = UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(9),
+            id: None,
             state: UpgradeRunStatus::Succeeded {
                 kind: UpgradeKind::Firmware,
             },
@@ -4102,6 +4103,7 @@ mod tests {
         state.compositor.upgrade.set(
             UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(9),
+                id: None,
                 state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Firmware,
                 },

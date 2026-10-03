@@ -45,6 +45,7 @@ fn forward(display: RunStatusService, kind: UpgradeKind) -> Forwarding {
         display.clone(),
         gate,
         generation,
+        None,
         kind,
         UpgradeRunStream { rx: input_rx },
     );
@@ -102,7 +103,8 @@ async fn a_failed_run_keeps_the_gate_until_its_run_ends() {
     assert_eq!(
         forwarding.shown(),
         Some(UpgradeRunStatus::Failed {
-            kind: UpgradeKind::Firmware
+            kind: UpgradeKind::Firmware,
+            reason: SystemUpgradeError::UpgradeFailed.to_string(),
         })
     );
     assert!(

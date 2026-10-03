@@ -220,6 +220,7 @@ async fn a_pulled_cable_hands_the_screen_back_to_the_setup_ap() {
 fn snapshot(generation: usize) -> UpgradeRunSnapshot {
     UpgradeRunSnapshot {
         generation: UpgradeGeneration::new(generation),
+        id: None,
         state: UpgradeRunStatus::Succeeded {
             kind: UpgradeKind::Firmware,
         },

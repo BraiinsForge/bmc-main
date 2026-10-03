@@ -335,15 +335,17 @@ fn led_event(state: &UpgradeRunState) -> Option<SystemUpgradeState> {
 #[derive(Debug)]
 struct UpgradeRunProjector {
     generation: UpgradeGeneration,
+    id: Option<ExecutionId>,
     kind: UpgradeKind,
     phase: Option<UpgradePhase>,
     progress: Option<DownloadProgress>,
 }
 
 impl UpgradeRunProjector {
-    fn new(generation: UpgradeGeneration, kind: UpgradeKind) -> Self {
+    fn new(generation: UpgradeGeneration, id: Option<ExecutionId>, kind: UpgradeKind) -> Self {
         Self {
             generation,
+            id,
             kind,
             phase: None,
             progress: None,
@@ -373,11 +375,16 @@ impl UpgradeRunProjector {
             }
             UpgradeRunState::Finished => UpgradeRunSnapshot {
                 generation: self.generation,
+                id: self.id,
                 state: UpgradeRunStatus::Succeeded { kind: self.kind },
             },
-            UpgradeRunState::Failed(_) => UpgradeRunSnapshot {
+            UpgradeRunState::Failed(err) => UpgradeRunSnapshot {
                 generation: self.generation,
-                state: UpgradeRunStatus::Failed { kind: self.kind },
+                id: self.id,
+                state: UpgradeRunStatus::Failed {
+                    kind: self.kind,
+                    reason: err.to_string(),
+                },
             },
         }
     }
@@ -385,6 +392,7 @@ impl UpgradeRunProjector {
     fn running_snapshot(&self) -> UpgradeRunSnapshot {
         UpgradeRunSnapshot {
             generation: self.generation,
+            id: self.id,
             state: UpgradeRunStatus::Running {
                 kind: self.kind,
                 phase: self.phase,
@@ -399,11 +407,12 @@ fn forward_upgrade_events(
     run_status_service: RunStatusService,
     gate: tokio::sync::OwnedMutexGuard<()>,
     generation: UpgradeGeneration,
+    id: Option<ExecutionId>,
     kind: UpgradeKind,
     mut run: UpgradeRunStream,
 ) -> UpgradeRunStream {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut projector = UpgradeRunProjector::new(generation, kind);
+    let mut projector = UpgradeRunProjector::new(generation, id, kind);
     let mut last = projector.initial_snapshot();
     run_status_service.publish(last.clone());
     task::spawn(async move {
@@ -523,11 +532,17 @@ impl bmc_nix::upgrade::UpgradeProgress for ChannelUpgradeProgress {
     fn on_gc_finished(&self, _deleted_paths: usize, _freed_bytes: Option<u64>) {}
 }
 
+struct ClaimedUpgrade {
+    gate: tokio::sync::OwnedMutexGuard<()>,
+    id: ExecutionId,
+    upgrade: AvailableSystemUpgrade,
+}
+
 async fn claim_upgrade(
     run_gate: &Arc<Mutex<()>>,
     system_upgrades: &Mutex<SystemOfferCache>,
     upgrade_id: &str,
-) -> Result<(tokio::sync::OwnedMutexGuard<()>, AvailableSystemUpgrade), UpgradeRunStream> {
+) -> Result<ClaimedUpgrade, UpgradeRunStream> {
     let Ok(gate) = Arc::clone(run_gate).try_lock_owned() else {
         warn!("Upgrade already in progress");
         return Err(one_shot(UpgradeRunState::Failed(
@@ -536,17 +551,21 @@ async fn claim_upgrade(
     };
 
     let claimed = match upgrade_id.parse::<ExecutionId>() {
-        Ok(id) => system_upgrades.lock().await.claim(id),
+        Ok(id) => system_upgrades
+            .lock()
+            .await
+            .claim(id)
+            .map(|upgrade| (id, upgrade)),
         Err(_) => None,
     };
-    let Some(upgrade) = claimed else {
+    let Some((id, upgrade)) = claimed else {
         warn!(upgrade_id, "Upgrade id is unknown or already consumed");
         return Err(one_shot(UpgradeRunState::Failed(
             SystemUpgradeError::UpgradeExpired,
         )));
     };
 
-    Ok((gate, upgrade))
+    Ok(ClaimedUpgrade { gate, id, upgrade })
 }
 
 async fn automatic_gc_preflight(
@@ -776,6 +795,7 @@ impl RunStatusService {
         info!(?kind, ?generation, "publishing upgrade success overlay");
         self.publish(UpgradeRunSnapshot {
             generation,
+            id: None,
             state: UpgradeRunStatus::Succeeded { kind },
         });
     }
@@ -937,7 +957,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     pub(crate) async fn start_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
-        let (gate, upgrade) =
+        let ClaimedUpgrade { gate, id, upgrade } =
             match claim_upgrade(&self.run_gate, &self.system_upgrades, &upgrade_id).await {
                 Ok(claimed) => claimed,
                 Err(stream) => return stream,
@@ -950,12 +970,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             Ok(gate) => gate,
             Err(stream) => return stream,
         };
-        self.dispatch_claimed_upgrade(gate, upgrade)
+        self.dispatch_claimed_upgrade(gate, Some(id), upgrade)
     }
 
     fn dispatch_claimed_upgrade(
         &self,
         gate: tokio::sync::OwnedMutexGuard<()>,
+        id: Option<ExecutionId>,
         upgrade: AvailableSystemUpgrade,
     ) -> UpgradeRunStream {
         assert!(
@@ -992,6 +1013,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             self.run_status_service.clone(),
             gate,
             generation,
+            id,
             kind,
             run,
         )
@@ -1029,7 +1051,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             Ok(gate) => gate,
             Err(stream) => return Ok(Some(stream)),
         };
-        Ok(Some(self.dispatch_claimed_upgrade(gate, upgrade)))
+        Ok(Some(self.dispatch_claimed_upgrade(gate, None, upgrade)))
     }
 
     fn spawn_firmware_run(
@@ -1552,7 +1574,9 @@ mod tests {
         let run_gate = Arc::new(Mutex::new(()));
         let offers = Mutex::new(SystemOfferCache::default());
         let id = firmware_offer(&offers).await;
-        let Ok((guard, _)) = claim_upgrade(&run_gate, &offers, &id.to_string()).await else {
+        let Ok(ClaimedUpgrade { gate: guard, .. }) =
+            claim_upgrade(&run_gate, &offers, &id.to_string()).await
+        else {
             panic!("BUG: fresh offer must start");
         };
         drop(guard);
@@ -2265,7 +2289,7 @@ mod tests {
     #[test]
     fn run_projector_preserves_every_phase_with_the_run_kind_and_generation() {
         let generation = UpgradeGeneration::new(42);
-        let mut projector = UpgradeRunProjector::new(generation, UpgradeKind::Firmware);
+        let mut projector = UpgradeRunProjector::new(generation, None, UpgradeKind::Firmware);
 
         for phase in [
             UpgradePhase::FirmwareDownloading,
@@ -2280,6 +2304,7 @@ mod tests {
                 projector.project(&UpgradeRunState::Phase(phase)),
                 UpgradeRunSnapshot {
                     generation,
+                    id: None,
                     state: UpgradeRunStatus::Running {
                         kind: UpgradeKind::Firmware,
                         phase: Some(phase),
@@ -2293,7 +2318,7 @@ mod tests {
     #[test]
     fn run_projector_preserves_optional_totals_and_clears_progress_for_a_new_phase() {
         let generation = UpgradeGeneration::new(7);
-        let mut projector = UpgradeRunProjector::new(generation, UpgradeKind::Packages);
+        let mut projector = UpgradeRunProjector::new(generation, None, UpgradeKind::Packages);
         let _ = projector.project(&UpgradeRunState::Phase(UpgradePhase::PackageRealizing));
 
         assert_eq!(
@@ -2303,6 +2328,7 @@ mod tests {
             }),
             UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageRealizing),
@@ -2320,6 +2346,7 @@ mod tests {
             }),
             UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageRealizing),
@@ -2334,6 +2361,7 @@ mod tests {
             projector.project(&UpgradeRunState::Phase(UpgradePhase::PackageBuilding)),
             UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageBuilding),
@@ -2349,6 +2377,7 @@ mod tests {
             projector.project(&UpgradeRunState::Phase(UpgradePhase::PackageBuilding)),
             UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageBuilding),
@@ -2361,24 +2390,27 @@ mod tests {
     #[test]
     fn run_projector_projects_terminal_states_with_the_run_kind() {
         let generation = UpgradeGeneration::new(3);
-        let mut packages = UpgradeRunProjector::new(generation, UpgradeKind::Packages);
+        let mut packages = UpgradeRunProjector::new(generation, None, UpgradeKind::Packages);
         assert_eq!(
             packages.project(&UpgradeRunState::Finished),
             UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Packages,
                 },
             }
         );
 
-        let mut firmware = UpgradeRunProjector::new(generation, UpgradeKind::Firmware);
+        let mut firmware = UpgradeRunProjector::new(generation, None, UpgradeKind::Firmware);
         assert_eq!(
             firmware.project(&UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed)),
             UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Firmware,
+                    reason: SystemUpgradeError::UpgradeFailed.to_string(),
                 },
             }
         );
@@ -2398,6 +2430,7 @@ mod tests {
 
         let snapshot = UpgradeRunSnapshot {
             generation: second,
+            id: None,
             state: UpgradeRunStatus::Succeeded {
                 kind: UpgradeKind::Firmware,
             },
@@ -2413,8 +2446,10 @@ mod tests {
         let prior_generation = run_status_service.next_generation();
         run_status_service.publish(UpgradeRunSnapshot {
             generation: prior_generation,
+            id: None,
             state: UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Firmware,
+                reason: String::new(),
             },
         });
 
@@ -2425,6 +2460,7 @@ mod tests {
             *receiver.borrow(),
             Some(UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
+                id: None,
                 state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Firmware,
                 },
@@ -2447,6 +2483,7 @@ mod tests {
                 .try_lock_owned()
                 .expect("BUG: fresh gate is lockable"),
             generation,
+            None,
             UpgradeKind::Packages,
             UpgradeRunStream { rx: input_rx },
         );
@@ -2455,6 +2492,7 @@ mod tests {
             *display_receiver.borrow_and_update(),
             Some(UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: None,
@@ -2484,8 +2522,10 @@ mod tests {
             *display_receiver.borrow_and_update(),
             Some(UpgradeRunSnapshot {
                 generation,
+                id: None,
                 state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
+                    reason: "Package upgrade failed: boom".to_owned(),
                 },
             })
         );

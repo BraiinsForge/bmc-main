@@ -217,6 +217,7 @@ async fn a_run_whose_pause_another_generation_took_over_fails_before_downloading
 
     lab.service.run_status_service.publish(UpgradeRunSnapshot {
         generation: UpgradeGeneration::new(own.get() + 1),
+        id: None,
         state: UpgradeRunStatus::Running {
             kind: UpgradeKind::Firmware,
             phase: Some(UpgradePhase::FirmwareDownloading),

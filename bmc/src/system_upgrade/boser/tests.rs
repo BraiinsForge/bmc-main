@@ -203,7 +203,8 @@ fn a_failed_terminal_continuing_the_current_execution_presents_the_failure() {
     assert_eq!(
         bench.display_state(),
         Some(UpgradeRunStatus::Failed {
-            kind: UpgradeKind::Packages
+            kind: UpgradeKind::Packages,
+            reason: "build failed".to_owned(),
         })
     );
     let state = bench.state().expect("BUG: a terminal notifies the state");
@@ -237,7 +238,8 @@ fn download_failed_counts_only_after_downloading() {
     assert_eq!(
         bench.display_state(),
         Some(UpgradeRunStatus::Failed {
-            kind: UpgradeKind::Firmware
+            kind: UpgradeKind::Firmware,
+            reason: "checksum mismatch".to_owned(),
         })
     );
     assert_eq!(bench.state(), Some(SystemUpgradeState::Failed));
@@ -540,6 +542,7 @@ async fn an_expired_execution_presents_its_late_terminal_and_can_restart_running
         bench.display(),
         Some(UpgradeRunSnapshot {
             generation,
+            id: Some(id),
             state: UpgradeRunStatus::Succeeded {
                 kind: UpgradeKind::Packages
             },

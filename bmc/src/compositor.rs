@@ -33,7 +33,7 @@ use crate::manager::BmcState;
 
 pub use crate::data::{SceneCycling, SceneCyclingTransition};
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
-pub use bmc_upgrade_types::{DownloadProgress, UpgradeKind};
+pub use bmc_upgrade_types::{DownloadProgress, ExecutionId, UpgradeKind};
 pub use bmc_widget_protocol::{
     ActionPayload, CredentialSecrets, LedRequestId, LedRequestStatus, SettingUpdate,
     WidgetInitialConfig, WidgetInstanceKey,
@@ -259,6 +259,7 @@ pub enum UpgradeRunStatus {
     },
     Failed {
         kind: UpgradeKind,
+        reason: String,
     },
 }
 
@@ -266,6 +267,8 @@ pub enum UpgradeRunStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeRunSnapshot {
     pub generation: UpgradeGeneration,
+    /// The offer this run was started from; `None` for a run that has none.
+    pub id: Option<ExecutionId>,
     pub state: UpgradeRunStatus,
 }
 
