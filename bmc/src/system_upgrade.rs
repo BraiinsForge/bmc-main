@@ -2584,6 +2584,7 @@ mod tests {
         use tokio::sync::watch;
 
         mod boser_managed;
+        mod display_id;
         mod firmware_pause;
 
         const UNREACHABLE: &str = "BUG: a gated auto-upgrade must not reach the service's stubs";

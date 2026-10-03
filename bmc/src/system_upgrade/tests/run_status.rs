@@ -106,3 +106,37 @@ async fn concurrent_publishers_leave_the_stream_ending_on_the_settled_watch() {
         "the last event must be the value the watch settled on, or the listener acts on a stale state"
     );
 }
+
+#[test]
+fn the_projector_carries_the_offer_id_and_the_failure_text() {
+    let id = ExecutionId::new();
+    let generation = UpgradeGeneration::new(0);
+    let mut projector = UpgradeRunProjector::new(generation, Some(id), UpgradeKind::Packages);
+
+    assert_eq!(
+        projector.initial_snapshot().id,
+        Some(id),
+        "the run is identifiable from its first snapshot on"
+    );
+    assert_eq!(
+        projector
+            .project(&UpgradeRunState::Phase(UpgradePhase::PackageRealizing))
+            .id,
+        Some(id),
+        "a later snapshot of the run keeps its id"
+    );
+    assert_eq!(
+        projector.project(&UpgradeRunState::Failed(
+            SystemUpgradeError::PackageUpgradeFailed("boom".to_owned())
+        )),
+        UpgradeRunSnapshot {
+            generation,
+            id: Some(id),
+            state: UpgradeRunStatus::Failed {
+                kind: UpgradeKind::Packages,
+                reason: "Package upgrade failed: boom".to_owned(),
+            },
+        },
+        "the display carries why the run failed, not only that it did"
+    );
+}

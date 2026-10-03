@@ -812,3 +812,64 @@ async fn a_failure_reported_after_the_outage_grace_restarts_widgets() {
         "Boser reporting the failure means the board is not flashing"
     );
 }
+
+#[test]
+fn a_boser_run_is_published_with_its_execution_id() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+
+    bench.observe(&running(id, WirePhase::Packages(PackagePhase::Realizing)));
+
+    assert_eq!(
+        bench.display().and_then(|snapshot| snapshot.id),
+        Some(id),
+        "a reader of the display tells its own run from another by this id"
+    );
+}
+
+#[test]
+fn a_boser_failure_carries_its_reason_and_id() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+    bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
+
+    bench.observe(&failed(id));
+
+    let snapshot = bench
+        .display()
+        .expect("BUG: a failure of the current execution is presented");
+    assert_eq!(
+        snapshot.id,
+        Some(id),
+        "the failure is told to the reader that follows this run"
+    );
+    assert_eq!(
+        snapshot.state,
+        UpgradeRunStatus::Failed {
+            kind: UpgradeKind::Packages,
+            reason: "build failed".to_owned(),
+        },
+        "Boser's reason is what the caller who started the run is told"
+    );
+}
+
+#[test]
+fn the_legacy_download_has_no_execution_id() {
+    let mut bench = bench();
+
+    bench.observe(&downloading(10));
+
+    assert_eq!(
+        bench.display().map(|snapshot| snapshot.id),
+        Some(None),
+        "Boser gives the legacy download no id, so no reader may take it for its own run"
+    );
+
+    bench.observe(&download_failed());
+
+    assert_eq!(
+        bench.display().map(|snapshot| snapshot.id),
+        Some(None),
+        "its failure stays as anonymous as the download was"
+    );
+}
