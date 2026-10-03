@@ -158,31 +158,6 @@ fn an_override_zone_the_deck_does_not_ship_reads_unknown() {
 }
 
 #[test]
-#[cfg(target_arch = "wasm32")]
-fn read_host_buf_empty() {
-    let buf = [0_u8; 64];
-    assert_eq!(read_host_buf(&buf, 0), "");
-    assert_eq!(read_host_buf(&buf, -1), "");
-}
-
-#[test]
-#[cfg(target_arch = "wasm32")]
-fn read_host_buf_valid() {
-    let mut buf = [0_u8; 64];
-    buf[..5].copy_from_slice(b"hello");
-    assert_eq!(read_host_buf(&buf, 5), "hello");
-}
-
-#[test]
-#[cfg(target_arch = "wasm32")]
-fn read_host_buf_clamped() {
-    let mut buf = [0_u8; 64];
-    buf.fill(b'x');
-    // len > 64 should be clamped
-    assert_eq!(read_host_buf(&buf, 100), "x".repeat(64));
-}
-
-#[test]
 fn f64_fixed_positive_with_decimals() {
     assert_eq!(format_f64_fixed(2.5, 2), "2.50");
     assert_eq!(format_f64_fixed(2.55, 2), "2.55");

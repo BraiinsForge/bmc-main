@@ -33,102 +33,38 @@
     reason = "the module's own host-boundary `_host_format_*` helpers call each other"
 )]
 
-// The host runs the same core, so native output matches the device.
+trait FormatTextProvider {
+    fn number(value: f64, decimals: u32) -> String;
+    fn speed(value: f64, decimals: u32, metric_unit: u32) -> String;
+    fn distance(value: f64, decimals: u32) -> String;
+    fn temperature(value: f64, decimals: u32, show_unit: u32) -> String;
+    fn strftime(timestamp: i64, format: &str) -> String;
+}
+
+trait FormatZoneOffsetProvider {
+    fn zone_offset(tz: &Tz, unix_secs: i64) -> Option<i32>;
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use bmc_shared_utils::number_format::NumberFormat;
-    use bmc_shared_utils::temperature::TemperatureUnit;
-    use bmc_shared_utils::unit_system::UnitSystem;
-
-    pub(super) fn number_format() -> NumberFormat {
-        crate::system::current()
-            .number_format()
-            .map(NumberFormat::from)
-            .unwrap_or_default()
-    }
-
-    pub(super) fn temperature_unit() -> TemperatureUnit {
-        crate::system::current()
-            .temperature_unit()
-            .map(TemperatureUnit::from)
-            .unwrap_or_default()
-    }
-
-    pub(super) fn unit_system() -> UnitSystem {
-        crate::system::current()
-            .unit_system()
-            .map(UnitSystem::from)
-            .unwrap_or_default()
-    }
-}
-
+mod native;
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_format_number(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
-    fn host_format_speed(
-        value: f64,
-        decimals: u32,
-        metric_unit: u32,
-        out_ptr: *mut u8,
-        out_len: u32,
-    ) -> i32;
-    fn host_format_temperature(
-        value: f64,
-        decimals: u32,
-        show_unit: u32,
-        out_ptr: *mut u8,
-        out_len: u32,
-    ) -> i32;
-    fn host_format_distance(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
-    fn host_format_date(
-        timestamp: i64,
-        fmt_ptr: *const u8,
-        fmt_len: u32,
-        out_ptr: *mut u8,
-        out_len: u32,
-    ) -> i32;
-    /// Resolve `(tz_name, unix_secs)` to the UTC offset in seconds.
-    /// Returns `i32::MIN` when the name is not in the deck's supported timezone list.
-    fn host_resolve_tz(name_ptr: *const u8, name_len: u32, unix_secs: i64) -> i32;
-}
+mod wasm;
 
-/// Sentinel returned by `host_resolve_tz` for unknown IANA names.
-/// Real UTC offsets are bounded to ±14 hours, so this value never collides.
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 #[cfg(target_arch = "wasm32")]
-const TZ_UNKNOWN: i32 = i32::MIN;
+use wasm::Host as Platform;
 
-/// Read a host formatting result from a 64-byte stack buffer.
-#[cfg(target_arch = "wasm32")]
-fn read_host_buf(buf: &[u8; 64], len: i32) -> String {
-    if len <= 0 {
-        return String::new();
-    }
-    let len = (len as usize).min(buf.len());
-    // SAFETY: host writes valid UTF-8 (formatted numbers + unit suffixes)
-    String::from_utf8_lossy(&buf[..len]).into_owned()
-}
-
-/// Format a number using host-side preferences. Called by [`format_number!`].
+/// Format a number per the deck's preferences. Called by [`format_number!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_number(value: f64, decimals: u32) -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buf = [0_u8; 64];
-        let len =
-            unsafe { host_format_number(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
-        read_host_buf(&buf, len)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        native::number_format().format_number(value, decimals as usize)
-    }
+    Platform::number(value, decimals)
 }
 
 /// SI value and unit split, D3 `.3s`-style: `("13.2", "kW")`. `unit_prefix`
-/// picks the scale; the mantissa renders through the host at `sig_figs`
-/// significant digits. Split so value and unit can be sized apart.
+/// picks the scale; the mantissa renders per the deck's number format at
+/// `sig_figs` significant digits. Split so value and unit can be sized apart.
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_si_parts(value: f64, sig_figs: u32, base_unit: &str) -> (String, String) {
@@ -190,86 +126,26 @@ fn si_decimals(mantissa: f64, sig_figs: u32) -> u32 {
     sig_figs.saturating_sub(int_digits)
 }
 
-/// Format a speed using host-side preferences. Called by [`format_speed!`].
+/// Format a speed per the deck's preferences. Called by [`format_speed!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_speed(value: f64, decimals: u32, metric_unit: u32) -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buf = [0_u8; 64];
-        let len = unsafe {
-            host_format_speed(
-                value,
-                decimals,
-                metric_unit,
-                buf.as_mut_ptr(),
-                buf.len() as u32,
-            )
-        };
-        read_host_buf(&buf, len)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use bmc_shared_utils::unit_system::MetricSpeedUnit;
-        let metric_unit = if metric_unit == 1 {
-            MetricSpeedUnit::Ms
-        } else {
-            MetricSpeedUnit::KmH
-        };
-        native::unit_system().format_speed(
-            native::number_format(),
-            value,
-            decimals as usize,
-            metric_unit,
-        )
-    }
+    Platform::speed(value, decimals, metric_unit)
 }
 
-/// Format a distance using host-side preferences.
+/// Format a distance per the deck's preferences.
 /// Called by [`format_distance!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_distance(value: f64, decimals: u32) -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buf = [0_u8; 64];
-        let len =
-            unsafe { host_format_distance(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
-        read_host_buf(&buf, len)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        native::unit_system().format_distance(native::number_format(), value, decimals as usize)
-    }
+    Platform::distance(value, decimals)
 }
 
-/// Format a temperature using host-side preferences. Called by [`format_temperature!`].
+/// Format a temperature per the deck's preferences. Called by [`format_temperature!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buf = [0_u8; 64];
-        let len = unsafe {
-            host_format_temperature(
-                value,
-                decimals,
-                show_unit,
-                buf.as_mut_ptr(),
-                buf.len() as u32,
-            )
-        };
-        read_host_buf(&buf, len)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        native::temperature_unit().format(
-            native::number_format(),
-            value,
-            decimals as usize,
-            show_unit != 0,
-        )
-    }
+    Platform::temperature(value, decimals, show_unit)
 }
 
 /// Format a unix timestamp using a chrono strftime pattern.
@@ -278,7 +154,7 @@ pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> St
 /// helpers [`format_time`] / [`format_date`] that default to the
 /// user's system preferences.
 ///
-/// Uses the host's `chrono` library for proper date/time formatting.
+/// Formats with `chrono`; on device the host runs it.
 /// See <https://docs.rs/chrono/latest/chrono/format/strftime/> for pattern syntax.
 ///
 /// On device the result crosses a 64-byte buffer and is cut there,
@@ -294,24 +170,7 @@ pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> St
 /// ```
 #[must_use]
 pub fn strftime(timestamp: i64, format: &str) -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buf = [0_u8; 64];
-        let len = unsafe {
-            host_format_date(
-                timestamp,
-                format.as_ptr(),
-                format.len() as u32,
-                buf.as_mut_ptr(),
-                buf.len() as u32,
-            )
-        };
-        read_host_buf(&buf, len)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        bmc_wasm_protocol::time::strftime_utc(timestamp, format).unwrap_or_default()
-    }
+    Platform::strftime(timestamp, format)
 }
 
 // ── System-bound time / date formatters ───────────────────────────────
@@ -464,7 +323,7 @@ pub fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>)
 }
 
 /// Shift `now.unix_secs` by `tz`'s UTC offset for a downstream `strftime`.
-/// Returns `None` when the host doesn't recognise the tz name.
+/// Returns `None` for a zone the deck does not ship.
 #[must_use]
 pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
     let offset_secs = resolve_tz_offset(tz, now.unix_secs)?;
@@ -472,27 +331,10 @@ pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
 }
 
 /// Resolve the UTC offset (in seconds) for an IANA-name timezone at a
-/// moment. Returns `None` when the host doesn't recognise the name.
+/// moment. Returns `None` for a zone the deck does not ship.
 #[must_use]
 pub fn resolve_tz_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let name = tz.iana().as_bytes();
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "IANA names ship well under u32 bytes; truncation would be a programmer bug"
-        )]
-        let offset = unsafe { host_resolve_tz(name.as_ptr(), name.len() as u32, unix_secs) };
-        if offset == TZ_UNKNOWN {
-            None
-        } else {
-            Some(offset)
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        bmc_wasm_protocol::time::zone_offset_secs(unix_secs, tz.iana())
-    }
+    Platform::zone_offset(tz, unix_secs)
 }
 
 /// Append a UTC offset as `+H` for whole hours or `+H:MM` when it has minutes.
@@ -593,7 +435,7 @@ macro_rules! format_number {
 
 /// Format a speed value with user-preferred units and number formatting.
 ///
-/// Input is always km/h; the host converts to mph if imperial (both arms).
+/// Input is always km/h, converted to mph when the deck is set to imperial (both arms).
 /// Use the `ms` arm to request m/s when the system is metric.
 ///
 /// # Example
@@ -613,7 +455,7 @@ macro_rules! format_speed {
 
 /// Format a distance value with user-preferred units and number formatting.
 ///
-/// Input is always km; the host converts to miles if imperial.
+/// Input is always km, converted to miles when the deck is set to imperial.
 ///
 /// # Example
 /// ```ignore
@@ -628,7 +470,7 @@ macro_rules! format_distance {
 
 /// Format a temperature with user-preferred units and number formatting.
 ///
-/// Input is always °C; the host converts to °F if preferred. Use the `bare`
+/// Input is always °C, converted to °F when the deck prefers it. Use the `bare`
 /// arm for the degree-only form ("26°", no scale letter) used in dense
 /// hourly/daily strips.
 ///
