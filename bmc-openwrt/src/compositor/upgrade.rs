@@ -306,6 +306,30 @@ mod tests {
     }
 
     #[test]
+    fn a_reboot_is_drawn_as_the_applying_phase() {
+        let now = Instant::now();
+        let mut cache = UpgradeCache::default();
+        cache.set(
+            UpgradeRunSnapshot {
+                generation: UpgradeGeneration::new(1),
+                id: None,
+                state: UpgradeRunStatus::Rebooting {
+                    kind: UpgradeKind::FirmwareAndPackages,
+                },
+            },
+            now,
+        );
+        assert_eq!(
+            cache.events(now),
+            Some(vec![
+                WireEvent::Started(Kind::Firmware),
+                WireEvent::Phase(Phase::FirmwareApplying),
+                WireEvent::SnapshotDone,
+            ])
+        );
+    }
+
+    #[test]
     fn initial_running_snapshot_emits_only_started_and_done() {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();

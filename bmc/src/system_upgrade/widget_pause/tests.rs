@@ -122,6 +122,24 @@ fn a_run_first_seen_while_flashing_starts_in_the_applying_stage() {
 }
 
 #[test]
+fn a_reboot_keeps_widgets_stopped_in_the_applying_stage() {
+    let now = Instant::now();
+    let rebooting = UpgradeRunSnapshot {
+        generation: generation(0),
+        id: None,
+        state: UpgradeRunStatus::Rebooting {
+            kind: UpgradeKind::Firmware,
+        },
+    };
+    for pause in [Pause::Idle, paused(0, Stage::Applying)] {
+        assert_eq!(
+            step(pause, Some(&rebooting), now),
+            paused(0, Stage::Applying)
+        );
+    }
+}
+
+#[test]
 fn package_runs_terminals_and_silence_leave_running_widgets_alone() {
     let now = Instant::now();
     for snapshot in [
