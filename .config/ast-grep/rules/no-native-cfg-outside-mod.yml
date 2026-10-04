@@ -1,0 +1,42 @@
+# A native-only item is a second implementation of something wasm does
+# through the host, and the two drift apart unless one contract holds them.
+#
+# So the native arm lives in a `native` module behind the concern's trait,
+# and `not(target_arch = "wasm32")` may gate only a `mod` or a `use` line.
+# `bmc-wasm-runtime/sdk/src/host/viewport.rs` shows the shape.
+# A `cfg!(target_arch …)` branch is a native arm too, wherever it sits.
+#
+# Wasm-only items stay allowed: they have one implementation, so nothing can drift.
+
+id: no-native-cfg-outside-mod
+language: rust
+severity: error
+
+message: Native arm outside a `native` module — gate it on a `mod` or `use` line behind the concern's trait.
+
+files:
+  - "bmc-wasm-runtime/sdk/src/**/*.rs"
+
+rule:
+  any:
+    - all:
+        - any:
+            - kind: attribute_item
+            - kind: inner_attribute_item
+        # `target_arch` anywhere inside a `not(…)`, nested `any`/`all` included;
+        # a lone `)` would close the `not` first, so `all(not(test), target_arch …)` stays out.
+        - regex: not\s*\((?:[^()]|\([^()]*\)|\()*target_arch
+        - not:
+            precedes:
+              any:
+                - kind: mod_item
+                - kind: use_declaration
+              stopBy:
+                not:
+                  any:
+                    - kind: attribute_item
+                    - kind: line_comment
+                    - kind: block_comment
+    - all:
+        - pattern: cfg!($$$)
+        - regex: target_arch
