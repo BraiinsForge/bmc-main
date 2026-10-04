@@ -145,80 +145,104 @@ impl crate::snapshot_cache::FromHostBytes for Snapshot {
 /// The first call inside `init` fetches via `host_credentials_snapshot`.
 /// Later calls reuse the cached bytes
 /// until `host_credentials_version` changes.
-#[cfg(target_arch = "wasm32")]
+///
+/// Always empty off-device, where no host resolves credentials.
 #[must_use]
 pub fn current() -> Snapshot {
-    CREDENTIALS_CACHE.with(|c| crate::snapshot_cache::current_using(&WasmHost, &mut c.borrow_mut()))
+    Platform::current()
 }
 
 /// Resolution delivered immediately before [`current`].
 ///
 /// Inside `on_credentials_update` this holds the just-replaced snapshot,
 /// so a widget can tell a fresh binding from a rotated account.
-#[cfg(target_arch = "wasm32")]
+///
+/// Always empty off-device, where no host resolves credentials.
 #[must_use]
 pub fn previous() -> Snapshot {
-    CREDENTIALS_CACHE
-        .with(|c| crate::snapshot_cache::previous_using(&WasmHost, &mut c.borrow_mut()))
+    Platform::previous()
 }
 
-// ── Native-target stubs ─────────────────────────────────────────────
-
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn current() -> Snapshot {
-    Snapshot::default()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn previous() -> Snapshot {
-    Snapshot::default()
-}
-
-// ── Wasm host bindings ──────────────────────────────────────────────
-
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_credentials_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32;
-    fn host_credentials_version() -> u64;
+trait CredentialsSnapshotProvider {
+    fn current() -> Snapshot;
+    fn previous() -> Snapshot;
 }
 
 #[cfg(target_arch = "wasm32")]
-struct WasmHost;
+mod wasm {
+    use super::{CredentialsSnapshotProvider, Snapshot};
 
-#[cfg(target_arch = "wasm32")]
-impl crate::snapshot_cache::HostSnapshotProvider for WasmHost {
-    fn version(&self) -> u64 {
-        // SAFETY: `host_credentials_version` has no out-params and is safe to call.
-        unsafe { host_credentials_version() }
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_credentials_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32;
+        fn host_credentials_version() -> u64;
     }
 
-    fn fill_snapshot(&self, out: &mut [u8]) -> usize {
-        let cap = u32::try_from(out.len())
-            .expect("BUG: snapshot buffer length must fit in u32 (wire-format guarantee)");
-        let written = if out.is_empty() {
-            // SAFETY: a null pointer is sound when `out_cap == 0` — the host
-            // checks the cap before writing and returns the required length
-            // without touching the pointer.
-            unsafe { host_credentials_snapshot(core::ptr::null_mut(), 0) }
-        } else {
-            // SAFETY: `out` is uniquely borrowed with length `cap`;
-            // the host writes at most `out_cap` bytes starting at `out_ptr`.
-            unsafe { host_credentials_snapshot(out.as_mut_ptr(), cap) }
-        };
-        usize::try_from(written).expect("BUG: host_credentials_snapshot return must fit in usize")
+    pub(super) struct Host;
+
+    impl crate::snapshot_cache::HostSnapshotProvider for Host {
+        fn version(&self) -> u64 {
+            // SAFETY: `host_credentials_version` has no out-params and is safe to call.
+            unsafe { host_credentials_version() }
+        }
+
+        fn fill_snapshot(&self, out: &mut [u8]) -> usize {
+            let cap = u32::try_from(out.len())
+                .expect("BUG: snapshot buffer length must fit in u32 (wire-format guarantee)");
+            let written = if out.is_empty() {
+                // SAFETY: a null pointer is sound when `out_cap == 0` — the host
+                // checks the cap before writing and returns the required length
+                // without touching the pointer.
+                unsafe { host_credentials_snapshot(core::ptr::null_mut(), 0) }
+            } else {
+                // SAFETY: `out` is uniquely borrowed with length `cap`;
+                // the host writes at most `out_cap` bytes starting at `out_ptr`.
+                unsafe { host_credentials_snapshot(out.as_mut_ptr(), cap) }
+            };
+            usize::try_from(written)
+                .expect("BUG: host_credentials_snapshot return must fit in usize")
+        }
+    }
+
+    std::thread_local! {
+        static CREDENTIALS_CACHE: core::cell::RefCell<crate::snapshot_cache::Cache<Snapshot>> =
+            core::cell::RefCell::new(crate::snapshot_cache::Cache::new());
+    }
+
+    impl CredentialsSnapshotProvider for Host {
+        fn current() -> Snapshot {
+            CREDENTIALS_CACHE
+                .with(|c| crate::snapshot_cache::current_using(&Host, &mut c.borrow_mut()))
+        }
+
+        fn previous() -> Snapshot {
+            CREDENTIALS_CACHE
+                .with(|c| crate::snapshot_cache::previous_using(&Host, &mut c.borrow_mut()))
+        }
     }
 }
 
-// ── Cache state ─────────────────────────────────────────────────────
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use super::{CredentialsSnapshotProvider, Snapshot};
 
-#[cfg(target_arch = "wasm32")]
-std::thread_local! {
-    static CREDENTIALS_CACHE: core::cell::RefCell<crate::snapshot_cache::Cache<Snapshot>> =
-        core::cell::RefCell::new(crate::snapshot_cache::Cache::new());
+    pub(super) struct Host;
+
+    impl CredentialsSnapshotProvider for Host {
+        fn current() -> Snapshot {
+            Snapshot::default()
+        }
+
+        fn previous() -> Snapshot {
+            Snapshot::default()
+        }
+    }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
 
 #[cfg(test)]
 mod tests {

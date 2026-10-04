@@ -478,10 +478,11 @@ impl crate::snapshot_cache::FromHostBytes for Params {
 /// First call inside `init` fetches via `host_params_snapshot`.
 /// Subsequent calls reuse the cached bytes until `host_params_version` changes;
 /// at that point the old snapshot is moved into [`previous`] and the new one is fetched.
-#[cfg(target_arch = "wasm32")]
+///
+/// Always empty off-device, where no host delivers a snapshot.
 #[must_use]
 pub fn current() -> Params {
-    PARAMS_CACHE.with(|c| crate::snapshot_cache::current_using(&WasmHost, &mut c.borrow_mut()))
+    Platform::current()
 }
 
 /// Snapshot delivered immediately before [`current`].
@@ -491,101 +492,37 @@ pub fn current() -> Params {
 ///
 /// Inside `on_params_update`, holds the just-replaced snapshot — diff against [`current`]
 /// to react only to keys whose value actually changed.
-#[cfg(target_arch = "wasm32")]
+///
+/// Always empty off-device, where no host delivers a snapshot.
 #[must_use]
 pub fn previous() -> Params {
-    PARAMS_CACHE.with(|c| crate::snapshot_cache::previous_using(&WasmHost, &mut c.borrow_mut()))
-}
-
-// ── Native-target stubs ─────────────────────────────────────────────
-// On native targets the host imports don't exist; SDK tests use `Params::from_bytes` directly,
-// and the cache logic is exercised via `current_using` / `previous_using` with a mock host.
-// The `current` / `previous` entry points return empty snapshots so non-wasm consumers of the
-// SDK API (the gallery etc.) still compile and behave consistently.
-
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn current() -> Params {
-    Params::default()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn previous() -> Params {
-    Params::default()
+    Platform::previous()
 }
 
 /// Monotonic version of the latest params snapshot the host has delivered.
 /// Cheap host call (no buffer copy); use it to gate per-frame re-parses.
-#[cfg(target_arch = "wasm32")]
+///
+/// Always `0` off-device, where no host delivers a snapshot.
 #[must_use]
 pub fn version() -> u64 {
-    <WasmHost as crate::snapshot_cache::HostSnapshotProvider>::version(&WasmHost)
+    Platform::snapshot_version()
 }
 
-/// Non-wasm stub; widgets only run on wasm but the crate compiles for
-/// native targets in tests / docs.
+trait ParamsSnapshotProvider {
+    fn current() -> Params;
+    fn previous() -> Params;
+    fn snapshot_version() -> u64;
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn version() -> u64 {
-    0
-}
-
-// ── Wasm host bindings ──────────────────────────────────────────────
-
+mod native;
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    /// Probe-then-allocate snapshot reader.
-    /// `out_cap == 0` returns required byte length without writing;
-    /// `out_cap >= required` writes and returns bytes written;
-    /// `out_cap < required` returns required length so the caller can retry with a larger buffer.
-    fn host_params_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32;
+mod wasm;
 
-    /// Opaque change marker for the current host-side snapshot.
-    /// Different value from last read = re-fetch; equal = use cached bytes.
-    fn host_params_version() -> u64;
-}
-
-/// Wasm-target [`crate::snapshot_cache::HostSnapshotProvider`] for the params channel —
-/// wraps the `host_params_*` externs.
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 #[cfg(target_arch = "wasm32")]
-struct WasmHost;
-
-#[cfg(target_arch = "wasm32")]
-impl crate::snapshot_cache::HostSnapshotProvider for WasmHost {
-    fn version(&self) -> u64 {
-        // SAFETY: `host_params_version` has no out-params and is safe to call.
-        unsafe { host_params_version() }
-    }
-
-    fn fill_snapshot(&self, out: &mut [u8]) -> usize {
-        let cap = u32::try_from(out.len())
-            .expect("BUG: snapshot buffer length must fit in u32 (wire-format guarantee)");
-        let written = if out.is_empty() {
-            // SAFETY: passing a null pointer is sound when `out_cap == 0` — the host implementation
-            // explicitly checks the cap before writing and returns the required length without
-            // touching the pointer.
-            unsafe { host_params_snapshot(core::ptr::null_mut(), 0) }
-        } else {
-            // SAFETY: `out` is uniquely borrowed with length `cap`; the host writes at most
-            // `out_cap` bytes starting at `out_ptr`.
-            unsafe { host_params_snapshot(out.as_mut_ptr(), cap) }
-        };
-        usize::try_from(written).expect("BUG: host_params_snapshot return must fit in usize")
-    }
-}
-
-// ── Cache state ─────────────────────────────────────────────────────
-// Single-threaded wasm32 guest, so a plain `RefCell` inside `thread_local!` is sound and the
-// borrow checker enforces re-entrancy is impossible.
-// The host serialises guest calls, so there's no concurrent access.
-
-#[cfg(target_arch = "wasm32")]
-std::thread_local! {
-    static PARAMS_CACHE: core::cell::RefCell<crate::snapshot_cache::Cache<Params>> =
-        core::cell::RefCell::new(crate::snapshot_cache::Cache::new());
-}
+use wasm::Host as Platform;
 
 #[cfg(test)]
 mod tests {

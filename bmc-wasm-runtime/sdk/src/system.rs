@@ -281,10 +281,17 @@ impl crate::snapshot_cache::FromHostBytes for Snapshot {
 /// calls reuse the cached bytes until `host_system_version` changes; at that
 /// point the old snapshot is moved into [`previous`] and the new one is
 /// fetched.
-#[cfg(target_arch = "wasm32")]
+///
+/// Off-device there is no host to deliver a snapshot, so one is held per
+/// thread. It starts empty: every accessor `None`, every caller left on
+/// its own default.
+///
+/// `set_current` installs one, which is how the storybook and the tests
+/// render a view the way an operator on imperial units, or a twelve-hour
+/// clock, would see it.
 #[must_use]
 pub fn current() -> Snapshot {
-    SYSTEM_CACHE.with(|c| crate::snapshot_cache::current_using(&WasmHost, &mut c.borrow_mut()))
+    Platform::current()
 }
 
 /// Snapshot delivered immediately before [`current`].
@@ -292,91 +299,31 @@ pub fn current() -> Snapshot {
 /// [`Snapshot::default`] until at least one update has been observed.
 /// Inside `on_system_update`, holds the just-replaced snapshot
 /// — diff against [`current`] to react only to fields whose value actually changed.
-#[cfg(target_arch = "wasm32")]
-#[must_use]
-pub fn previous() -> Snapshot {
-    SYSTEM_CACHE.with(|c| crate::snapshot_cache::previous_using(&WasmHost, &mut c.borrow_mut()))
-}
-
-// ── Native-target stubs ─────────────────────────────────────────────
-
-#[cfg(not(target_arch = "wasm32"))]
-std::thread_local! {
-    static NATIVE_SNAPSHOT: core::cell::RefCell<Snapshot> =
-        const { core::cell::RefCell::new(Snapshot::empty()) };
-}
-
-/// Off-device there is no host to deliver a snapshot, so one is held per
-/// thread. It starts empty: every accessor `None`, every caller left on
-/// its own default.
 ///
-/// [`set_current`] installs one, which is how the storybook and the tests
-/// render a view the way an operator on imperial units, or a twelve-hour
-/// clock, would see it.
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn current() -> Snapshot {
-    NATIVE_SNAPSHOT.with(|it| it.borrow().clone())
-}
-
-/// Install the snapshot [`current`] returns on this thread.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn set_current(snapshot: Snapshot) {
-    NATIVE_SNAPSHOT.with(|it| *it.borrow_mut() = snapshot);
-}
-
 /// Always empty off-device: nothing delivers a second snapshot, so there
 /// is no rotation to remember. Diffing it against [`current`] reports
 /// every field as changed rather than nothing.
-#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn previous() -> Snapshot {
-    Snapshot::default()
+    Platform::previous()
 }
 
-// ── Wasm host bindings ──────────────────────────────────────────────
-
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_system_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32;
-    fn host_system_version() -> u64;
+trait SystemSnapshotProvider {
+    fn current() -> Snapshot;
+    fn previous() -> Snapshot;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
 #[cfg(target_arch = "wasm32")]
-struct WasmHost;
+mod wasm;
 
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::set_current;
 #[cfg(target_arch = "wasm32")]
-impl crate::snapshot_cache::HostSnapshotProvider for WasmHost {
-    fn version(&self) -> u64 {
-        // SAFETY: `host_system_version` has no out-params and is safe to call.
-        unsafe { host_system_version() }
-    }
-
-    fn fill_snapshot(&self, out: &mut [u8]) -> usize {
-        let cap = u32::try_from(out.len())
-            .expect("BUG: snapshot buffer length must fit in u32 (wire-format guarantee)");
-        let written = if out.is_empty() {
-            // SAFETY: passing a null pointer is sound when `out_cap == 0` —
-            // the host implementation explicitly checks the cap before writing
-            // and returns the required length without touching the pointer.
-            unsafe { host_system_snapshot(core::ptr::null_mut(), 0) }
-        } else {
-            // SAFETY: `out` is uniquely borrowed with length `cap`;
-            // the host writes at most `out_cap` bytes starting at `out_ptr`.
-            unsafe { host_system_snapshot(out.as_mut_ptr(), cap) }
-        };
-        usize::try_from(written).expect("BUG: host_system_snapshot return must fit in usize")
-    }
-}
-
-// ── Cache state ─────────────────────────────────────────────────────
-
-#[cfg(target_arch = "wasm32")]
-std::thread_local! {
-    static SYSTEM_CACHE: core::cell::RefCell<crate::snapshot_cache::Cache<Snapshot>> =
-        core::cell::RefCell::new(crate::snapshot_cache::Cache::new());
-}
+use wasm::Host as Platform;
 
 /// Build a snapshot in the wire format the host emits, for the callers
 /// that have no host: the storybook and the tests.
