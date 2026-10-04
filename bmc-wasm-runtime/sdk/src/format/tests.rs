@@ -97,64 +97,65 @@ fn tz_caption_unknown_reads_unknown() {
     assert_eq!(caption(&label), "Prague (unknown)");
 }
 
-/// Monday the 14th of September 2026, 10:30 UTC — 12:30 in Prague.
 #[cfg(not(target_arch = "wasm32"))]
-const SEPTEMBER_MORNING: crate::host::SystemTime = crate::host::SystemTime {
-    unix_secs: 1_789_381_800,
-};
+mod off_device {
+    use super::*;
 
-#[cfg(not(target_arch = "wasm32"))]
-fn with_system_tz(tz: Option<&str>, check: impl FnOnce()) {
-    let mut snapshot = crate::system::SnapshotBuilder::new();
-    if let Some(tz) = tz {
-        snapshot = snapshot.timezone(tz);
+    /// Monday the 14th of September 2026, 10:30 UTC — 12:30 in Prague.
+    const SEPTEMBER_MORNING: crate::host::SystemTime = crate::host::SystemTime {
+        unix_secs: 1_789_381_800,
+    };
+
+    fn with_system_tz(tz: Option<&str>, check: impl FnOnce()) {
+        let mut snapshot = crate::system::SnapshotBuilder::new();
+        if let Some(tz) = tz {
+            snapshot = snapshot.timezone(tz);
+        }
+        crate::system::set_current(snapshot.build());
+        check();
+        crate::system::set_current(crate::system::Snapshot::empty());
     }
-    crate::system::set_current(snapshot.build());
-    check();
-    crate::system::set_current(crate::system::Snapshot::empty());
-}
 
-#[test]
-#[cfg(not(target_arch = "wasm32"))]
-fn the_native_clock_reads_the_system_zone_the_host_would() {
-    with_system_tz(Some("Europe/Prague"), || {
-        let opts = FormatTimeOpts {
-            with_seconds: true,
-            ..FormatTimeOpts::default()
-        };
-        assert_eq!(format_time(SEPTEMBER_MORNING, opts), "12:30:00");
-        assert_eq!(
-            format_date(SEPTEMBER_MORNING, FormatDateOpts::default()),
-            "14.09.2026"
-        );
-        assert_eq!(
-            caption(&resolve_tz_for_label(None, SEPTEMBER_MORNING.unix_secs)),
-            "Prague (+2)"
-        );
-    });
-}
+    #[test]
+    fn the_native_clock_reads_the_system_zone_the_host_would() {
+        with_system_tz(Some("Europe/Prague"), || {
+            let opts = FormatTimeOpts {
+                with_seconds: true,
+                ..FormatTimeOpts::default()
+            };
+            assert_eq!(format_time(SEPTEMBER_MORNING, opts), "12:30:00");
+            assert_eq!(
+                format_date(SEPTEMBER_MORNING, FormatDateOpts::default()),
+                "14.09.2026"
+            );
+            assert_eq!(
+                caption(&resolve_tz_for_label(None, SEPTEMBER_MORNING.unix_secs)),
+                "Prague (+2)"
+            );
+        });
+    }
 
-#[test]
-#[cfg(not(target_arch = "wasm32"))]
-fn an_override_zone_the_deck_does_not_ship_reads_unknown() {
-    with_system_tz(None, || {
-        let helsinki = Tz::from_runtime("Europe/Helsinki");
-        assert_eq!(
-            caption(&resolve_tz_for_label(
-                Some(&helsinki),
-                SEPTEMBER_MORNING.unix_secs
-            )),
-            "Helsinki (+3)"
-        );
-        let half_typed = Tz::from_runtime("Europe/Helsi");
-        assert_eq!(
-            caption(&resolve_tz_for_label(
-                Some(&half_typed),
-                SEPTEMBER_MORNING.unix_secs
-            )),
-            "Helsi (unknown)"
-        );
-    });
+    #[test]
+    fn an_override_zone_the_deck_does_not_ship_reads_unknown() {
+        with_system_tz(None, || {
+            let helsinki = Tz::from_runtime("Europe/Helsinki");
+            assert_eq!(
+                caption(&resolve_tz_for_label(
+                    Some(&helsinki),
+                    SEPTEMBER_MORNING.unix_secs
+                )),
+                "Helsinki (+3)"
+            );
+            let half_typed = Tz::from_runtime("Europe/Helsi");
+            assert_eq!(
+                caption(&resolve_tz_for_label(
+                    Some(&half_typed),
+                    SEPTEMBER_MORNING.unix_secs
+                )),
+                "Helsi (unknown)"
+            );
+        });
+    }
 }
 
 #[test]

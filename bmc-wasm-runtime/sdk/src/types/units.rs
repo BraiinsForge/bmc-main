@@ -696,24 +696,28 @@ mod tests {
         assert_eq!(Mass::from_kilograms(70.0).format(0), "70 kg");
     }
 
-    /// Off-device the operator's units are whatever the thread was given,
-    /// so a story can render both systems without a host.
-    #[test]
     #[cfg(not(target_arch = "wasm32"))]
-    fn imperial_units_render_off_device_once_a_snapshot_says_so() {
-        crate::system::set_current(
-            crate::system::SnapshotBuilder::new()
-                .unit_system(UnitSystem::Imperial)
-                .build(),
-        );
-        assert_eq!(
-            Length::from_centimeters(182.0).format_short(0),
-            format!("6{PRIME}0{DOUBLE_PRIME}")
-        );
-        assert_eq!(Mass::from_kilograms(70.0).format(0), "154 lbs");
+    mod off_device {
+        use super::*;
 
-        crate::system::set_current(crate::system::Snapshot::empty());
-        assert_eq!(Length::from_centimeters(182.0).format_short(0), "182 cm");
+        /// Off-device the operator's units are whatever the thread was given,
+        /// so a story can render both systems without a host.
+        #[test]
+        fn imperial_units_render_off_device_once_a_snapshot_says_so() {
+            crate::system::set_current(
+                crate::system::SnapshotBuilder::new()
+                    .unit_system(UnitSystem::Imperial)
+                    .build(),
+            );
+            assert_eq!(
+                Length::from_centimeters(182.0).format_short(0),
+                format!("6{PRIME}0{DOUBLE_PRIME}")
+            );
+            assert_eq!(Mass::from_kilograms(70.0).format(0), "154 lbs");
+
+            crate::system::set_current(crate::system::Snapshot::empty());
+            assert_eq!(Length::from_centimeters(182.0).format_short(0), "182 cm");
+        }
     }
 
     /// Heights off the 2026 grid, 182 cm being the one that rounds up
