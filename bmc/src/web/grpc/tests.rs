@@ -19,4 +19,5 @@
 // the grant above.
 
 mod boser_managed;
+mod boser_upgrade;
 mod network;

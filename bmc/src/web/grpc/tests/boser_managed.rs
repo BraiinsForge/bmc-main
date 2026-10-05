@@ -24,6 +24,7 @@ use crate::bootloader_config::BootloaderConfig;
 use crate::compositor::SettingUpdate;
 use crate::compositor::testing::RecordingCompositor;
 use crate::session;
+use crate::system_upgrade::boser::UpgradeRoute;
 use crate::{App, BmcManager, Configuration, UpgradeError, UpgradeMarker};
 use axum_extra::extract::cookie::Cookie;
 use bmc_button::{ButtonEventStream, Buttons};
@@ -476,7 +477,7 @@ fn service_method_paths(service_name: &str) -> Vec<String> {
     panic!("BUG: generated gRPC service {service_name} is missing");
 }
 
-fn authenticated<T>(message: T) -> tonic::Request<T> {
+pub(super) fn authenticated<T>(message: T) -> tonic::Request<T> {
     let mut request = tonic::Request::new(message);
     request.extensions_mut().insert(StubSession);
     request
@@ -493,6 +494,28 @@ async fn production_routes(product: Product) -> (tempfile::TempDir, Routes) {
     (tempdir, app.build_grpc_routes())
 }
 
+/// Production routes for `product` with Boser at `boser`;
+/// `route` replaces the upgrade route startup chose, so a test can publish the display by hand.
+pub(super) async fn upgrade_routes(
+    product: Product,
+    boser: Option<SocketAddr>,
+    route: Option<UpgradeRoute>,
+) -> (tempfile::TempDir, Routes) {
+    let (tempdir, app) = production_app_with_boser(
+        Arc::new(StubBmcManager::default()),
+        Arc::new(RecordingCompositor::with_hardware_capabilities(
+            capabilities(product),
+        )),
+        boser,
+    )
+    .await;
+    let app = match route {
+        Some(route) => app.with_upgrade_route(route),
+        None => app,
+    };
+    (tempdir, app.build_grpc_routes())
+}
+
 async fn production_app(
     manager: Arc<StubBmcManager>,
     compositor: Arc<RecordingCompositor>,
@@ -500,8 +523,19 @@ async fn production_app(
     tempfile::TempDir,
     App<StubBmcManager, StubBacklightDriver, StubFirmwareIndex>,
 ) {
+    production_app_with_boser(manager, compositor, None).await
+}
+
+async fn production_app_with_boser(
+    manager: Arc<StubBmcManager>,
+    compositor: Arc<RecordingCompositor>,
+    boser: Option<SocketAddr>,
+) -> (
+    tempfile::TempDir,
+    App<StubBmcManager, StubBacklightDriver, StubFirmwareIndex>,
+) {
     let tempdir = tempfile::tempdir().expect("BUG: test tempdir creation must succeed");
-    let config = Configuration {
+    let mut config = Configuration {
         address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         upgrade_image_path: tempdir.path().join("firmware.tar"),
         config_path: tempdir.path().join("config.json"),
@@ -513,6 +547,9 @@ async fn production_app(
         pending_install_path: tempdir.path().join("pending-install.json"),
         ..Configuration::default()
     };
+    config.server_config.boser = boser;
+    // Keeps the test off the host's token file.
+    config.boser_token_path = tempdir.path().join("no-boser-token");
     let (command_sender, _command_receiver) = tokio::sync::mpsc::channel(4);
     let app = App::init(
         config,

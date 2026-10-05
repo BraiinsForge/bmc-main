@@ -1214,6 +1214,13 @@ where
         server
     }
 
+    /// Replaces the route startup chose, so a test can publish the display by hand.
+    #[cfg(test)]
+    pub(crate) fn with_upgrade_route(mut self, route: boser::UpgradeRoute) -> Self {
+        self.upgrade_route = route;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
         self.into_quiet_server().web_service.build_grpc_routes()

@@ -119,7 +119,7 @@ async fn dead_address() -> SocketAddr {
 }
 
 /// A server that takes each request and hangs up without answering it.
-async fn hanging_up() -> (SocketAddr, tokio::sync::mpsc::UnboundedReceiver<()>) {
+pub(crate) async fn hanging_up() -> (SocketAddr, tokio::sync::mpsc::UnboundedReceiver<()>) {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("BUG: a loopback listener binds");
