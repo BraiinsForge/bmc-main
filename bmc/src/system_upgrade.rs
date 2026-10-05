@@ -430,7 +430,8 @@ fn forward_upgrade_events(
             UpgradeRunStatus::Running {
                 phase: Some(UpgradePhase::FirmwareApplying),
                 ..
-            } => {
+            }
+            | UpgradeRunStatus::Rebooting { .. } => {
                 // The reboot ends the run; nothing may start before it.
                 std::future::pending::<()>().await;
             }

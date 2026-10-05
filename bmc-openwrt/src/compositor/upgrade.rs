@@ -112,6 +112,11 @@ impl UpgradeCache {
                     });
                 }
             }
+            UpgradeRunStatus::Rebooting { .. } => {
+                events.push(WireEvent::Phase(phase_to_wire(
+                    UpgradePhase::FirmwareApplying,
+                )));
+            }
             UpgradeRunStatus::Succeeded { .. } => {
                 events.push(WireEvent::Succeeded {
                     remaining_ms: remaining_ms(cached.deadline?, now)?,
@@ -142,6 +147,7 @@ fn remaining_ms(deadline: Instant, now: Instant) -> Option<u32> {
 fn kind(state: &UpgradeRunStatus) -> Kind {
     match state {
         UpgradeRunStatus::Running { kind, .. }
+        | UpgradeRunStatus::Rebooting { kind }
         | UpgradeRunStatus::Succeeded { kind }
         | UpgradeRunStatus::Failed { kind, .. } => match kind {
             UpgradeKind::Firmware | UpgradeKind::FirmwareAndPackages => Kind::Firmware,

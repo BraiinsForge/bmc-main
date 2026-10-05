@@ -436,7 +436,7 @@ fn every_wire_phase_maps_to_its_display_phase() {
 }
 
 #[test]
-fn a_reboot_presents_the_execution_kind_as_applying() {
+fn a_reboot_is_presented_with_the_execution_kind() {
     let mut bench = bench();
 
     bench.observe(&UpgradeState::Rebooting {
@@ -448,11 +448,13 @@ fn a_reboot_presents_the_execution_kind_as_applying() {
     // how a combined upgrade is drawn is the compositor's call.
     assert_eq!(
         bench.display_state(),
-        Some(UpgradeRunStatus::Running {
+        Some(UpgradeRunStatus::Rebooting {
             kind: UpgradeKind::FirmwareAndPackages,
-            phase: Some(UpgradePhase::FirmwareApplying),
-            progress: None,
         })
+    );
+    assert!(
+        bench.state().is_some_and(|state| state.blocks_restart()),
+        "a reboot in progress keeps restart blocked"
     );
 }
 

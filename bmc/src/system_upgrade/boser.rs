@@ -96,7 +96,10 @@ impl StateSink for Projection {
         // before its outcome arrived. That drops the outcome Boser retains from
         // before boot and a replay of one already presented.
         match projected {
-            Some((key, state @ UpgradeRunStatus::Running { .. })) => {
+            Some((
+                key,
+                state @ (UpgradeRunStatus::Running { .. } | UpgradeRunStatus::Rebooting { .. }),
+            )) => {
                 self.ended = None;
                 let generation = self.display.next_generation();
                 let id = key.id();
@@ -149,7 +152,7 @@ impl Projection {
         state: UpgradeRunStatus,
     ) {
         let outcome = match &state {
-            UpgradeRunStatus::Running { .. } => None,
+            UpgradeRunStatus::Running { .. } | UpgradeRunStatus::Rebooting { .. } => None,
             UpgradeRunStatus::Succeeded { .. } => Some(SystemUpgradeState::Finished),
             UpgradeRunStatus::Failed { .. } => Some(SystemUpgradeState::Failed),
         };
@@ -213,11 +216,7 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeRunStatus)> 
         ),
         UpgradeState::Rebooting { id, kind } => (
             ExecutionKey::Boser(*id),
-            UpgradeRunStatus::Running {
-                kind: *kind,
-                phase: Some(UpgradePhase::FirmwareApplying),
-                progress: None,
-            },
+            UpgradeRunStatus::Rebooting { kind: *kind },
         ),
         UpgradeState::Completed { id, kind } => (
             ExecutionKey::Boser(*id),

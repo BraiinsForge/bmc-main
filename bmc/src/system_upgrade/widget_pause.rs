@@ -150,8 +150,14 @@ fn step(pause: Pause, snapshot: Option<&UpgradeRunSnapshot>, now: Instant) -> Pa
                 lapses_at: None,
             }
         }
+        UpgradeRunStatus::Rebooting { kind } if carries_firmware(kind) => Pause::Paused {
+            generation: snapshot.generation,
+            stage: Stage::Applying,
+            lapses_at: None,
+        },
         UpgradeRunStatus::Succeeded { kind } if carries_firmware(kind) => pause,
         UpgradeRunStatus::Running { .. }
+        | UpgradeRunStatus::Rebooting { .. }
         | UpgradeRunStatus::Succeeded { .. }
         | UpgradeRunStatus::Failed { .. } => Pause::Idle,
     }
