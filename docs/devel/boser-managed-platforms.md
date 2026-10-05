@@ -15,9 +15,10 @@ Initial setup is owned by the BMC application on every product. The BMC applicat
 during setup, including the system timezone, network configuration, and credentials. On mining products it starts
 `boser` and `bosminer` only after those settings and provisioning have been applied. From that point, `boser_managed`
 transfers the listed runtime operations to Boser. Native Wi-Fi reconfiguration remains owned by the BMC application
-because only the BMC application drives the setup access point and captive portal. `UpgradeService` is Boser-owned on
-managed products: every method answers `Unimplemented`, and the BMC application observes Boser's upgrade state instead
-of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade Observation").
+because only the BMC application drives the setup access point and captive portal. `UpgradeService` on managed products
+translates `CheckForUpgrade`, `GetInstallableWidgets` and `StartUpgrade` to Boser's REST API and rejects the
+automatic-upgrade pair; the BMC application observes Boser's upgrade state instead of running upgrades itself (see
+[`upgrades.md`](upgrades.md), "Managed Upgrades").
 
 ## gRPC boundary
 
@@ -25,21 +26,18 @@ of running upgrades itself (see [`upgrades.md`](upgrades.md), "Managed Upgrade O
 authentication runs before the ownership policy. On a managed product, the ownership interceptor rejects the following
 exact gRPC methods with `Unimplemented` and the message `This operation is managed by Boser on this platform`:
 
-| Boser-owned method                     | System effect                                      |
-| -------------------------------------- | -------------------------------------------------- |
-| `NetworkService.SetNetworkConfig`      | changes the network protocol configuration         |
-| `NetworkService.SetWifi`               | changes saved Wi-Fi networks and the active uplink |
-| `SystemService.CreatePassword`         | changes system authentication state                |
-| `SystemService.ChangePassword`         | changes system authentication state                |
-| `SystemService.RemovePassword`         | changes system authentication state                |
-| `SystemService.SetTimezone`            | changes the system timezone                        |
-| `SystemService.FactoryReset`           | resets system state                                |
-| `SystemService.Reboot`                 | controls the system lifecycle                      |
-| `UpgradeService.CheckForUpgrade`       | resolves an upgrade against the remote indexes     |
-| `UpgradeService.GetInstallableWidgets` | resolves installable packages                      |
-| `UpgradeService.StartUpgrade`          | starts a package or firmware upgrade               |
-| `UpgradeService.SetAutoUpgrade`        | changes the automatic-upgrade preference           |
-| `UpgradeService.GetAutoUpgrade`        | reads the automatic-upgrade preference             |
+| Boser-owned method                | System effect                                      |
+| --------------------------------- | -------------------------------------------------- |
+| `NetworkService.SetNetworkConfig` | changes the network protocol configuration         |
+| `NetworkService.SetWifi`          | changes saved Wi-Fi networks and the active uplink |
+| `SystemService.CreatePassword`    | changes system authentication state                |
+| `SystemService.ChangePassword`    | changes system authentication state                |
+| `SystemService.RemovePassword`    | changes system authentication state                |
+| `SystemService.SetTimezone`       | changes the system timezone                        |
+| `SystemService.FactoryReset`      | resets system state                                |
+| `SystemService.Reboot`            | controls the system lifecycle                      |
+| `UpgradeService.SetAutoUpgrade`   | changes the automatic-upgrade preference           |
+| `UpgradeService.GetAutoUpgrade`   | reads the automatic-upgrade preference             |
 
 Rejection happens before protobuf decoding and before the handler, so the request cannot persist data or invoke a
 backend. Matching is deliberately limited to the canonical service and method pair; a method with the same name on
@@ -67,18 +65,19 @@ authoritative for direct or older clients.
 
 Every mutating web gRPC service has an explicit managed-product owner:
 
-| Service                    | Owned methods                                                                                                                                                                     | Owner on managed products          | Handling                                                                     |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
-| `AuthenticationService`    | `Login`, `Logout`                                                                                                                                                                 | BMC application                    | operate the BMC application's web sessions                                   |
-| `AccountManagementService` | `UpsertAccount`, `RemoveAccount`                                                                                                                                                  | BMC application                    | manage widget account bindings and secrets                                   |
-| `AlarmService`             | `AddAlarm`, `SetAlarm`, `DeleteAlarm`, `SetAlarmEnabled`                                                                                                                          | BMC application                    | manage alarm state                                                           |
-| `ConfigurationService`     | all `Set*`, `ShowSecondsInStatusBar`, `PlaySound`                                                                                                                                 | BMC application                    | manage display, sound, localization, telemetry, and presentation preferences |
-| `InitialSetupService`      | `SetWifi`, `SkipWifi`, `SetupDevice`                                                                                                                                              | BMC application setup and recovery | retain provisioning checks                                                   |
-| `LedTestService`           | `SetEffect`, `SetBrightness`, `Disable`, `Enable`                                                                                                                                 | BMC application                    | control presentation hardware                                                |
-| `NetworkService`           | `SetNetworkConfig`, `SetWifi`                                                                                                                                                     | Boser                              | reject in `BoserOwnershipInterceptor` after authentication                   |
-| `SceneManagementService`   | `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`, `MoveScene`, `CloneScene`, `RemoveScene`, `PreviewScene`, `AddWidget`, `UpdateWidget`, `RemoveWidget`, `SetSceneCycling` | BMC application                    | manage scenes, widgets, and presentation state                               |
-| `SystemService`            | `CreatePassword`, `ChangePassword`, `RemovePassword`, `SetTimezone`, `FactoryReset`, `Reboot`                                                                                     | Boser                              | reject in `BoserOwnershipInterceptor` after authentication                   |
-| `UpgradeService`           | `CheckForUpgrade`, `GetInstallableWidgets`, `StartUpgrade`, `SetAutoUpgrade`, `GetAutoUpgrade`                                                                                    | Boser                              | reject in `BoserOwnershipInterceptor` after authentication                   |
+| Service                    | Owned methods                                                                                                                                                                     | Owner on managed products            | Handling                                                                     |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `AuthenticationService`    | `Login`, `Logout`                                                                                                                                                                 | BMC application                      | operate the BMC application's web sessions                                   |
+| `AccountManagementService` | `UpsertAccount`, `RemoveAccount`                                                                                                                                                  | BMC application                      | manage widget account bindings and secrets                                   |
+| `AlarmService`             | `AddAlarm`, `SetAlarm`, `DeleteAlarm`, `SetAlarmEnabled`                                                                                                                          | BMC application                      | manage alarm state                                                           |
+| `ConfigurationService`     | all `Set*`, `ShowSecondsInStatusBar`, `PlaySound`                                                                                                                                 | BMC application                      | manage display, sound, localization, telemetry, and presentation preferences |
+| `InitialSetupService`      | `SetWifi`, `SkipWifi`, `SetupDevice`                                                                                                                                              | BMC application setup and recovery   | retain provisioning checks                                                   |
+| `LedTestService`           | `SetEffect`, `SetBrightness`, `Disable`, `Enable`                                                                                                                                 | BMC application                      | control presentation hardware                                                |
+| `NetworkService`           | `SetNetworkConfig`, `SetWifi`                                                                                                                                                     | Boser                                | reject in `BoserOwnershipInterceptor` after authentication                   |
+| `SceneManagementService`   | `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`, `MoveScene`, `CloneScene`, `RemoveScene`, `PreviewScene`, `AddWidget`, `UpdateWidget`, `RemoveWidget`, `SetSceneCycling` | BMC application                      | manage scenes, widgets, and presentation state                               |
+| `SystemService`            | `CreatePassword`, `ChangePassword`, `RemovePassword`, `SetTimezone`, `FactoryReset`, `Reboot`                                                                                     | Boser                                | reject in `BoserOwnershipInterceptor` after authentication                   |
+| `UpgradeService`           | `CheckForUpgrade`, `GetInstallableWidgets`, `StartUpgrade`                                                                                                                        | BMC application, forwarding to Boser | translate to Boser's REST API under the caller's session                     |
+| `UpgradeService`           | `SetAutoUpgrade`, `GetAutoUpgrade`                                                                                                                                                | Boser                                | reject in `BoserOwnershipInterceptor` after authentication                   |
 
 `CredentialManagementService`, `MetadataService`, and the remaining methods on the listed services are read-only.
 
@@ -102,9 +101,9 @@ setup.
 
 ## Upgrades and local maintenance
 
-Every `UpgradeService` method nests `BoserOwnershipInterceptor` inside `AuthInterceptor` and answers `Unimplemented` on
-managed products, the read-only `GetAutoUpgrade` included: Boser owns package and firmware upgrades and their
-automatic-upgrade configuration there. The frontend hides the Upgrades tab and skips its upgrade-feed request on managed
+The automatic-upgrade methods of `UpgradeService` answer `Unimplemented` on managed products, the read-only
+`GetAutoUpgrade` included: Boser owns that configuration. The other three methods are translated to Boser's REST API;
+they never run the local upgrade path. The frontend hides the Upgrades tab and skips its upgrade-feed request on managed
 products. The BMC application still presents Boser's upgrades on the display and blocks tray restarts while one runs;
 the observer behind that is described in [`upgrades.md`](upgrades.md).
 

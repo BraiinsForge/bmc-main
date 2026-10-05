@@ -209,13 +209,14 @@ There is no code path in the firmware-upgrade flow that activates the profile im
 optional here would risk activating a generation whose services expect kernel/userland facilities the current (about to
 be replaced) BOS does not provide.
 
-## Managed Upgrade Observation
+## Managed Upgrades
 
-On Boser-managed products (`HardwareCapabilities::boser_managed`) bmc runs no upgrade itself: every `UpgradeService`
-gRPC method answers `Unimplemented`, and one task follows Boser's `GET /api/v1/upgrade/state/events` stream so the
-display and the restart block behave as they do for a local upgrade on Deck. The stream transport lives in
-`bmc/src/boser.rs` and is shared by every Boser state stream bmc observes; `bmc/src/system_upgrade/boser.rs` holds the
-upgrade stream's sink, which projects each state onto the display.
+On Boser-managed products (`HardwareCapabilities::boser_managed`) the BMC application runs no upgrade itself: the
+automatic-upgrade methods of `UpgradeService` answer `Unimplemented`, the other three are translated to Boser (below),
+and one task follows Boser's `GET /api/v1/upgrade/state/events` stream so the display and the restart block behave as
+they do for a local upgrade on Deck. The stream transport lives in `bmc/src/boser.rs` and is shared by every Boser state
+stream the BMC application observes; `bmc/src/system_upgrade/boser.rs` holds the upgrade stream's sink, which projects
+each state onto the display.
 
 The stream is authenticated with Boser's local API token from `/var/run/boser-api.token`
 (`Configuration::boser_token_path`). The observer reads the file on every connection, strips its trailing newline, and
@@ -226,9 +227,44 @@ Two Boser flows feed the stream and never overlap. An execution reports `RUNNING
 `DOWNLOAD_FAILED`, or in `NONE` when the image is fine, after which the web UI starts an execution of its own for the
 apply.
 
-Starting an upgrade from the BMC frontend is not available on a managed product: all five `UpgradeService` methods
-answer `Unimplemented`. The executions the projection presents originate in Boser, from either its API entry points or
-automatic-upgrade scheduler.
+The executions the projection presents originate in Boser: from its API entry points, which the translated
+`StartUpgrade` is one caller of, or from its automatic-upgrade scheduler.
+
+### Upgrade RPCs on a managed product
+
+`CheckForUpgrade`, `GetInstallableWidgets` and `StartUpgrade` are translated to Boser's REST API
+(`POST /api/v1/upgrade/check`, `GET /api/v1/upgrade/packages/installable`, `POST /api/v1/upgrade/start`) by
+`BoserUpgrade` in `bmc/src/system_upgrade/boser/client.rs`. Firmware offers are returned and started like package ones.
+The managed frontend still hides the Upgrades tab; these calls exist for widget installation.
+
+- **Credential.** The calls carry the caller's own session id as a Bearer token, never the local file token: that token
+  authenticates only `GET`, and a start must belong to a logged-in user. The BMC application and Boser share the rpcd
+  session store, so the id is valid for both. The upgrade client neither logs nor stores the session id.
+- **Route.** Startup picks one `UpgradeRoute`: `Local` on a self-managed product, `Boser` on a managed one, and
+  `BoserUnavailable` on a managed product with no Boser address, where the three calls answer `UNAVAILABLE`. A managed
+  product never runs the local upgrade path.
+- **Errors.** No answer is `UNAVAILABLE`; 401 is `UNAUTHENTICATED`; Boser's `BUSY` is `UNAVAILABLE`, `EXPIRED`,
+  `NOT_ENOUGH_SPACE` and an unusable package store are `FAILED_PRECONDITION`, `INVALID_ARGUMENT` stays itself, and
+  everything else is `INTERNAL`. The message never carries the cause, which names Boser's address; the cause goes to the
+  log. A start request that connected and got no answer may still have been admitted, so the stream follows the run as
+  if Boser had accepted it; one that never connected did not start.
+- **Progress.** `StartUpgrade` does not open a second connection to Boser. The display snapshot carries the execution id
+  and the failure reason, and the stream turns the snapshots of its own execution into progress events
+  (`bmc/src/system_upgrade/boser/progress.rs`). A package run ends with `finished`, a failed one with `INTERNAL` and
+  Boser's reason. A firmware run reports `FIRMWARE_UPGRADE_PHASE_APPLYING` and ends cleanly when Boser reaches
+  `REBOOTING`, as a local run does at its handoff. Boser's `FLASHING` is not reported: it precedes the staging of the
+  target firmware's packages, whose phases and failure still reach the stream. A failure Boser reports after the handoff
+  is shown on the display only.
+- **End on loss.** The stream is a convenience and ends with `UNAVAILABLE` whenever it can no longer follow its run: the
+  display was cleared or shows another execution after this one, or the run did not appear within 30 s of the start
+  being accepted or left unanswered. A run the observer only ever sees finished is not presented, but its outcome still
+  reaches its stream, on a channel the display does not read. A package run that replaces the BMC application restarts
+  it, and the stream breaks with the process, possibly before `finished`; this holds on a self-managed product too. A
+  client that loses the stream during a package run has to reconcile by the server instance id
+  (`MetadataService.GetServerInstance`), as after a firmware reboot, rather than report a failure. The upgrade itself
+  may still be running. Dropping the gRPC stream does not cancel the upgrade.
+- **Widget re-scan.** Profile activation signals the compositor service, which re-scans the widget registry, so
+  `finished` can arrive a moment before a new widget is placeable.
 
 The projection keeps one execution on display at a time, keyed by Boser's id or by the fixed download key, under one
 display generation:
@@ -246,7 +282,8 @@ display generation:
   the stream over one would never recover. A frame whose data is not JSON at all is corruption rather than a contract
   this build is behind: it counts as a broken connection and takes the reconnect path below;
 - with nothing on display, only a non-terminal snapshot starts a presentation. A retained `COMPLETED` at boot, a
-  terminal replayed after a reconnect, and a `DOWNLOAD_FAILED` without a preceding download are ignored.
+  terminal replayed after a reconnect, and a `DOWNLOAD_FAILED` without a preceding download are kept off the display.
+  The outcome of an execution never seen running is published apart, for the `StartUpgrade` stream that started it.
 
 Completing an upgrade after the reboot stays with bmc on a managed product, as it is on Deck: bmc consumes
 `/etc/upgrade_result` on startup and runs the Device Info firmware-success sequence from it. Boser dropped its own
