@@ -1006,9 +1006,8 @@ pub(crate) struct HostState {
     /// intervening frames still has to be repainted or a stale pixel survives.
     pub recent_dynamic_rects: [Vec<Rect>; 2],
 
-    /// Whether the last submitted tree had a static half worth caching. A
-    /// fully dynamic widget has none, and blitting the empty layer costs a
-    /// full-screen pass per frame for nothing.
+    /// Whether the last submitted tree had a static half worth caching,
+    /// per [`has_static_content`](bmc_render::partition::has_static_content).
     pub static_layer_useful: bool,
 
     /// What the cached static layer was captured from: the tree's

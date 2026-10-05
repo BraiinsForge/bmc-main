@@ -1415,9 +1415,6 @@ impl WasmWidgetRuntime {
             delta_ms,
             now_unix_secs,
             emit: bmc_render::tree::EmitMode::All,
-            // Matches the guest frame's decision: a tree with no static half
-            // has no layer to reuse, and blitting the empty one is a wasted
-            // full-screen pass.
             static_layer: if !state.static_layer_useful {
                 bmc_render::tree::LayerUse::Ignore
             } else if stale_assets || stale_layout {

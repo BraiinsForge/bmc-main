@@ -32,6 +32,7 @@ use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Linker};
 
 use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_render::renderer::Renderer;
 use bmc_render::tree;
 use bmc_render::{FrameTimings, layout_and_render_with_asset_resolver};
 
@@ -210,10 +211,6 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 /// What this frame does with the cached static layer.
-///
-/// A widget with no static half has no layer to reuse, and blitting an empty
-/// one is a wasted full-screen pass; otherwise the layer is painted when the
-/// static half hashed unchanged and rebuilt when it did not.
 fn layer_use(layered: bool, static_unchanged: bool) -> bmc_render::tree::LayerUse {
     use bmc_render::tree::LayerUse;
     match (layered, static_unchanged) {
@@ -266,10 +263,7 @@ fn submit_tree(
         let now_unix_secs = state.system_time.timestamp();
         let (static_key, static_unchanged) =
             static_layer_key(state, &tree_node, static_bytes, now_unix_secs);
-        // A fully dynamic tree has nothing worth caching, and blitting the
-        // resulting black layer costs a full-screen pass per frame.
-        let layered = bmc_render::partition::has_static_content(&tree_node);
-        state.static_layer_useful = layered;
+        let layered = decide_static_layer(renderer, state, &tree_node);
         state.last_asset_restoration = None;
         let delta_ms = state.delta_ms;
         let frame_counter = state.frame_counter;
@@ -338,6 +332,25 @@ fn submit_tree(
     })
 }
 
+/// Whether `tree_node` gets a static layer,
+/// per [`has_static_content`](bmc_render::partition::has_static_content).
+///
+/// A tree without one frees any earlier capture along with its key,
+/// or a later static tree hashing like it would reuse a layer that is gone.
+fn decide_static_layer(
+    renderer: &mut dyn Renderer,
+    state: &mut HostState,
+    tree_node: &bmc_render::tree::TreeNode,
+) -> bool {
+    let layered = bmc_render::partition::has_static_content(tree_node);
+    if !layered {
+        renderer.invalidate_static_layer(&state.instance_id);
+        state.last_static_key = None;
+    }
+    state.static_layer_useful = layered;
+    layered
+}
+
 /// The key this frame's static half hashes to, and whether the cached layer
 /// still matches it.
 ///
@@ -396,15 +409,14 @@ fn commit_submitted_frame(
     state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
     state.cached_tree = Some((frame.tree_node, frame.w, frame.h));
     state.guest_tree = crate::host_api::GuestTree::Committed;
-    // A key recorded for a layer that was never captured would have the next
-    // frame blit an image that does not exist, and the host preserve a target
-    // on the strength of it. A capture or blit that failed is one way to get
-    // there; a tree with no static half, which never asked for a layer at all,
-    // is the other.
-    if result.static_layer_missed || !state.static_layer_useful {
+    // A key without a captured layer would have the next frame blit an image
+    // that does not exist, and the host preserve a target on its strength.
+    // An ignored frame captured none either, though its wire-byte key never
+    // matches a layered tree's, so declining to record it is only defensive.
+    if result.static_layer_missed {
         state.last_static_key = None;
         state.static_layer_useful = false;
-    } else {
+    } else if state.static_layer_useful {
         state.last_static_key = Some(frame.static_key);
     }
     // This frame painted the buffer it holds in full. A changed static half

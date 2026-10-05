@@ -586,9 +586,9 @@ pub trait Renderer {
         self.blit_static_layer(key)
     }
 
-    /// Drop `key`'s cached layer. Must be called whenever the static half of
-    /// that widget's tree could have changed, i.e. after any frame that ran the
-    /// guest.
+    /// Drop `key`'s cached layer and free its storage.
+    /// Must be called whenever the caller stops using the layer
+    /// without capturing over it, so a stale layer never outlives its tree.
     fn invalidate_static_layer(&mut self, _key: &str) {}
 
     /// Submit everything recorded so far and block until the GPU has finished
