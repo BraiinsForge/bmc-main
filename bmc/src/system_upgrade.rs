@@ -809,6 +809,16 @@ impl RunStatusService {
         self.sender.subscribe()
     }
 
+    pub(crate) fn publish_unseen_outcome(&self, outcome: UnseenOutcome) {
+        self.unseen_outcomes.send_if_modified(|current| {
+            if current.as_ref() == Some(&outcome) {
+                return false;
+            }
+            *current = Some(outcome);
+            true
+        });
+    }
+
     pub(crate) fn subscribe_run_updates(&self) -> RunUpdates {
         RunUpdates {
             display: self.sender.subscribe(),

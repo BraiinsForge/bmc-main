@@ -35,7 +35,7 @@ use bmc_upgrade_types::{
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use super::{RunStatusService, StateService, SystemUpgradeState};
+use super::{RunStatusService, StateService, SystemUpgradeState, UnseenOutcome};
 use crate::boser::{StateSink, StreamConfig};
 use crate::compositor::{
     UpgradeGeneration, UpgradeKind, UpgradePhase, UpgradeRunSnapshot, UpgradeRunStatus,
@@ -75,6 +75,8 @@ struct Projection {
     /// The execution that ended without an outcome, until another one starts:
     /// an outcome Boser reports for it after the outage grace still counts.
     ended: Option<(ExecutionKey, UpgradeGeneration)>,
+    /// The execution whose outcome went to the display, which Boser will replay.
+    presented: Option<ExecutionId>,
     outage_since: Option<Instant>,
 }
 
@@ -98,8 +100,8 @@ impl StateSink for Projection {
             self.end_current();
         }
         // Present an outcome only for the running execution or the one that ended
-        // before its outcome arrived. That drops the outcome Boser retains from
-        // before boot and a replay of one already presented.
+        // before its outcome arrived. That keeps off the display the outcome Boser
+        // retains from before boot and a replay of one already presented.
         match projected {
             Some((
                 key,
@@ -114,6 +116,10 @@ impl StateSink for Projection {
             Some((key, state)) => {
                 if let Some((_, generation)) = self.ended.take_if(|(ended, _)| *ended == key) {
                     self.present(generation, key.id(), state);
+                } else if key.id() != self.presented
+                    && let Some(outcome) = unseen_outcome(&key, state)
+                {
+                    self.display.publish_unseen_outcome(outcome);
                 }
             }
             None => {}
@@ -146,6 +152,7 @@ impl Projection {
             state,
             current: None,
             ended: None,
+            presented: None,
             outage_since: None,
         }
     }
@@ -170,6 +177,9 @@ impl Projection {
             None => self.state.notify(SystemUpgradeState::UpgradeStarted),
             Some(outcome) => {
                 self.state.notify(outcome);
+                if id.is_some() {
+                    self.presented = id;
+                }
                 self.current = None;
                 self.outage_since = None;
             }
@@ -186,6 +196,18 @@ impl Projection {
             self.state.clear();
         }
     }
+}
+
+fn unseen_outcome(key: &ExecutionKey, state: UpgradeRunStatus) -> Option<UnseenOutcome> {
+    let result = match state {
+        UpgradeRunStatus::Succeeded { .. } => Ok(()),
+        UpgradeRunStatus::Failed { reason, .. } => Err(reason),
+        UpgradeRunStatus::Running { .. } | UpgradeRunStatus::Rebooting { .. } => return None,
+    };
+    Some(UnseenOutcome {
+        id: key.id()?,
+        result,
+    })
 }
 
 fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeRunStatus)> {
