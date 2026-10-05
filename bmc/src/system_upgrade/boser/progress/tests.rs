@@ -19,12 +19,14 @@
 // the grant above.
 
 use super::{FollowError, Followed, follow};
+use crate::boser::StateSink as _;
 use crate::compositor::{
     DownloadProgress, UpgradeGeneration, UpgradeKind, UpgradePhase, UpgradeRunSnapshot,
     UpgradeRunStatus,
 };
-use crate::system_upgrade::{RunUpdates, UnseenOutcome};
-use bmc_upgrade_types::ExecutionId;
+use crate::system_upgrade::boser::Projection;
+use crate::system_upgrade::{RunStatusService, RunUpdates, StateService, UnseenOutcome};
+use bmc_upgrade_types::{ExecutionId, UpgradeState};
 use futures::future::FutureExt;
 use futures::stream::{BoxStream, Fuse, StreamExt};
 use std::time::Duration;
@@ -353,6 +355,31 @@ async fn another_runs_undisplayed_outcome_is_skipped() {
         bench.phase(UpgradePhase::PackageRealizing),
         [Ok(Followed::Phase(UpgradePhase::PackageRealizing))],
         "our run is still followed"
+    );
+}
+
+/// The projection keeps an outcome it never saw running off the display;
+/// the follower of that very run must get it all the same.
+#[tokio::test]
+async fn an_outcome_the_projection_never_saw_running_reaches_the_follower() {
+    let display = RunStatusService::new();
+    let mut projection = Projection::new(display.clone(), StateService::new());
+    let offer = ExecutionId::new();
+    let mut stream = follow(
+        offer,
+        display.subscribe_run_updates(),
+        Instant::now() + SEEN_WITHIN,
+    )
+    .boxed();
+
+    projection.observe(&UpgradeState::Completed {
+        id: offer,
+        kind: UpgradeKind::Packages,
+    });
+
+    assert_eq!(
+        stream.next().now_or_never(),
+        Some(Some(Ok(Followed::Finished)))
     );
 }
 

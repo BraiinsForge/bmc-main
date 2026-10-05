@@ -28,7 +28,9 @@ use crate::system_upgrade::widget_pause::{
     self,
     test_support::{Call, ScriptedLifecycle, StopBehaviour, settle},
 };
-use crate::system_upgrade::{RunStatusService, StateService, SystemUpgradeState, WidgetLifecycle};
+use crate::system_upgrade::{
+    RunStatusService, StateService, SystemUpgradeState, UnseenOutcome, WidgetLifecycle,
+};
 use axum::Router;
 use axum::body::Body;
 use axum::http::header;
@@ -48,6 +50,7 @@ use tokio::sync::watch;
 struct Bench {
     projection: Projection,
     display_watch: watch::Receiver<Option<UpgradeRunSnapshot>>,
+    unseen_outcomes: watch::Receiver<Option<UnseenOutcome>>,
     state_watch: watch::Receiver<Option<SystemUpgradeState>>,
 }
 
@@ -55,10 +58,12 @@ fn bench() -> Bench {
     let display = RunStatusService::new();
     let state = StateService::new();
     let display_watch = display.subscribe();
+    let unseen_outcomes = display.subscribe_run_updates().unseen_outcomes;
     let state_watch = state.subscribe();
     Bench {
         projection: Projection::new(display, state),
         display_watch,
+        unseen_outcomes,
         state_watch,
     }
 }
@@ -70,6 +75,10 @@ impl Bench {
 
     fn display(&self) -> Option<UpgradeRunSnapshot> {
         self.display_watch.borrow().clone()
+    }
+
+    fn unseen_outcome(&self) -> Option<UnseenOutcome> {
+        self.unseen_outcomes.borrow().clone()
     }
 
     fn display_state(&self) -> Option<UpgradeRunStatus> {
@@ -222,6 +231,79 @@ fn a_stale_terminal_at_boot_is_ignored() {
     // Boser keeps the last terminal on its stream for hours.
     assert_eq!(bench.display(), None);
     assert_eq!(bench.state(), None);
+}
+
+/// The display and the LED stay out of it, but whoever started that run still has to learn its end.
+#[test]
+fn an_outcome_never_seen_running_is_told_off_the_display() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+
+    bench.observe(&failed(id));
+
+    assert_eq!(
+        bench.unseen_outcome(),
+        Some(UnseenOutcome {
+            id,
+            result: Err("build failed".to_owned()),
+        })
+    );
+    assert_eq!(bench.display(), None);
+    assert_eq!(bench.state(), None);
+}
+
+/// Boser replays the outcome on every reconnect; it must not read as a second end.
+#[test]
+fn a_replayed_outcome_is_not_told_again() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+    bench.observe(&completed(id));
+    bench.unseen_outcomes.mark_unchanged();
+
+    bench.observe(&completed(id));
+
+    assert!(
+        !bench
+            .unseen_outcomes
+            .has_changed()
+            .expect("BUG: the projection keeps the channel open")
+    );
+}
+
+/// An outcome that continues a displayed run belongs on the display alone.
+#[test]
+fn an_outcome_seen_running_is_not_told_off_the_display() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+    bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
+
+    bench.observe(&completed(id));
+    assert_eq!(bench.unseen_outcome(), None);
+
+    bench.observe(&completed(id));
+    assert_eq!(
+        bench.unseen_outcome(),
+        None,
+        "Boser's replay of a displayed outcome is still not an unseen one"
+    );
+}
+
+#[test]
+fn a_displayed_download_failure_keeps_the_presented_execution() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+    bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
+    bench.observe(&completed(id));
+    bench.observe(&downloading(10));
+    bench.observe(&download_failed());
+
+    bench.observe(&completed(id));
+
+    assert_eq!(
+        bench.unseen_outcome(),
+        None,
+        "the download has no execution id, so it does not stand for the presented one"
+    );
 }
 
 #[test]
@@ -556,6 +638,25 @@ async fn an_expired_execution_presents_its_late_terminal_and_can_restart_running
     bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
     assert_ne!(bench.generation(), generation);
     assert_eq!(bench.state(), Some(SystemUpgradeState::UpgradeStarted));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_replayed_outcome_of_an_expired_execution_is_not_told_off_the_display() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+    bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
+    bench.projection.stream_lost();
+    tokio::time::advance(UPGRADE_OUTAGE_GRACE).await;
+    bench.projection.stream_lost();
+    bench.observe(&failed(id));
+
+    bench.observe(&failed(id));
+
+    assert_eq!(
+        bench.unseen_outcome(),
+        None,
+        "the late outcome was presented, so its replay is not an unseen one"
+    );
 }
 
 #[tokio::test(start_paused = true)]
