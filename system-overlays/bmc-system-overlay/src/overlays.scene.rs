@@ -231,6 +231,7 @@ render_states!(
     DI_SETUP_CONNECT_INFO_PENDING,
     DI_SETUP_COMPLETED,
     DI_SETUP_ERROR,
+    DI_SETUP_ERROR_DISMISSIBLE,
     DI_SETUP_FATAL_RESTARTING,
     DI_SETUP_FATAL,
     DI_SETUP_FATAL_DISMISSIBLE,
@@ -494,6 +495,7 @@ const DEVICE_INFO_SCREENS: &[&str] = &[
     "SetupConnectInfo (IP pending)",
     "SetupCompleted",
     "SetupError",
+    "SetupError (dismissible)",
     "SetupFatal (restarting)",
     "SetupFatal",
     "SetupFatal (dismissible)",
@@ -641,8 +643,14 @@ fn device_info_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
         stage(
             "SetupError",
             "join failed; the AP screen returns",
-            DeviceInfoView::SetupError,
+            DeviceInfoView::SetupError { dismissible: false },
             &DI_SETUP_ERROR,
+        );
+        stage(
+            "SetupError (dismissible)",
+            "operational join failed: closes on touch or after 5 s",
+            DeviceInfoView::SetupError { dismissible: true },
+            &DI_SETUP_ERROR_DISMISSIBLE,
         );
     }
     stage(

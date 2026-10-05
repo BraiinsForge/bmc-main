@@ -86,7 +86,11 @@ pub enum DeviceInfoView {
         link: Link,
     },
     SetupCompleted,
-    SetupError,
+    /// A failed join. `dismissible` says whether the screen may close,
+    /// which only an operational device's does; it decides the close glyph.
+    SetupError {
+        dismissible: bool,
+    },
     /// Setup failure the overlay cannot clear on its own.
     /// `restarting` says whether bmc is restarting the device,
     /// i.e. whether the screen waits it out or asks the user to act.
@@ -542,14 +546,14 @@ fn dismisses_on_touch(view: &DeviceInfoView) -> bool {
         | DeviceInfoView::Failed { .. } => true,
         // Only once the setup is done; the FSM decides, since the answer
         // turns on a lifecycle state no view carries.
-        DeviceInfoView::SetupFatal { dismissible, .. } => *dismissible,
+        DeviceInfoView::SetupFatal { dismissible, .. }
+        | DeviceInfoView::SetupError { dismissible } => *dismissible,
         DeviceInfoView::SetupStart { .. }
         | DeviceInfoView::TurningApOff
         | DeviceInfoView::SetupConnecting { .. }
         | DeviceInfoView::SetupConnected { .. }
         | DeviceInfoView::SetupConnectInfo { .. }
         | DeviceInfoView::SetupCompleted
-        | DeviceInfoView::SetupError
         | DeviceInfoView::UpgradeSuccess
         | DeviceInfoView::Done => false,
     }
@@ -1002,7 +1006,7 @@ pub fn build_device_info_tree(
             &format!("{device_name} is ready!"),
             vec![content(tier, "Login to continue", TextAlign::Center)],
         ),
-        DeviceInfoView::SetupError => template_tree(
+        DeviceInfoView::SetupError { .. } => template_tree(
             tier,
             Justify::Start,
             true,
@@ -1163,7 +1167,8 @@ mod tests {
                 link: wifi(None),
             },
             DeviceInfoView::SetupCompleted,
-            DeviceInfoView::SetupError,
+            DeviceInfoView::SetupError { dismissible: false },
+            DeviceInfoView::SetupError { dismissible: true },
             DeviceInfoView::SetupFatal {
                 restarting: true,
                 dismissible: false,
@@ -1206,7 +1211,7 @@ mod tests {
             DeviceInfoView::TurningApOff
             | DeviceInfoView::SetupConnected { .. }
             | DeviceInfoView::SetupCompleted
-            | DeviceInfoView::SetupError
+            | DeviceInfoView::SetupError { .. }
             | DeviceInfoView::SetupFatal { .. }
             | DeviceInfoView::UpgradeSuccess
             | DeviceInfoView::Success { .. }
@@ -1408,7 +1413,7 @@ mod tests {
                 &["Braiins Deck is ready!", "Login to continue"],
             ),
             (
-                DeviceInfoView::SetupError,
+                DeviceInfoView::SetupError { dismissible: false },
                 &["Could not connect. Please try again."],
             ),
             (
@@ -1638,7 +1643,10 @@ mod tests {
                 icons.desktop_clock,
             ),
             (DeviceInfoView::SetupCompleted, icons.success),
-            (DeviceInfoView::SetupError, icons.wifi_error),
+            (
+                DeviceInfoView::SetupError { dismissible: false },
+                icons.wifi_error,
+            ),
             (
                 DeviceInfoView::SetupFatal {
                     restarting: true,
@@ -1752,7 +1760,7 @@ mod tests {
                 link: wifi(None),
             },
             DeviceInfoView::SetupCompleted,
-            DeviceInfoView::SetupError,
+            DeviceInfoView::SetupError { dismissible: false },
             DeviceInfoView::SetupFatal {
                 restarting: false,
                 dismissible: false,

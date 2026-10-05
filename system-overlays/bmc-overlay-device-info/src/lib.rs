@@ -139,7 +139,12 @@ enum Screen {
     SetupCompleted {
         since: Instant,
     },
-    SetupError,
+    /// A join failed. In the AP flows the returning AP ends it;
+    /// an operational device has no AP to wait for, so there it times out
+    /// (see [`DeviceInfoOverlay::failure_dismissible`]).
+    SetupError {
+        since: Instant,
+    },
     /// Setup failure the overlay cannot resolve.
     /// `restarting` says whether bmc resolves it by restarting the device.
     /// A restart is worth waiting out, so that variant holds.
@@ -180,7 +185,7 @@ impl Screen {
                 | Screen::SetupConnected { .. }
                 | Screen::SetupConnectInfo { .. }
                 | Screen::SetupCompleted { .. }
-                | Screen::SetupError
+                | Screen::SetupError { .. }
                 | Screen::SetupFatal {
                     restarting: true,
                     ..
@@ -279,9 +284,14 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
             since,
             restarting: false,
         } if mode.setup_done() && now.duration_since(since) >= FATAL_SCREEN_TIMEOUT => Screen::Done,
+        Screen::SetupError { since }
+            if mode == Mode::Operational && now.duration_since(since) >= FAILURE_VISIBLE_FOR =>
+        {
+            Screen::Done
+        }
         Screen::Hidden
         | Screen::SetupStart
-        | Screen::SetupError
+        | Screen::SetupError { .. }
         | Screen::SetupFatal { .. }
         | Screen::Done => screen,
     };
@@ -326,11 +336,10 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
         } => mode
             .setup_done()
             .then_some(NextWake::At(since + FATAL_SCREEN_TIMEOUT)),
-        Screen::Hidden
-        | Screen::SetupStart
-        | Screen::SetupError
-        | Screen::SetupFatal { .. }
-        | Screen::Done => None,
+        Screen::SetupError { since } => {
+            (mode == Mode::Operational).then_some(NextWake::At(since + FAILURE_VISIBLE_FOR))
+        }
+        Screen::Hidden | Screen::SetupStart | Screen::SetupFatal { .. } | Screen::Done => None,
     }
 }
 
@@ -427,17 +436,29 @@ impl DeviceInfoOverlay {
         }
     }
 
-    /// Whether the current fatal screen can be sent away,
+    /// Whether the current failure screen can be sent away,
     /// by touch or by its own timeout. Both paths ask this one question,
     /// so the close glyph never advertises a dismissal the touch handler refuses.
-    fn fatal_dismissible(&self) -> bool {
-        matches!(
-            self.screen,
+    fn failure_dismissible(&self) -> bool {
+        match self.screen {
             Screen::SetupFatal {
-                restarting: false,
-                ..
-            }
-        ) && self.mode.setup_done()
+                restarting: false, ..
+            } => self.mode.setup_done(),
+            Screen::SetupError { .. } => self.mode == Mode::Operational,
+            Screen::Hidden
+            | Screen::SetupStart
+            | Screen::SetupSwitching
+            | Screen::SetupConnecting
+            | Screen::SetupConnected { .. }
+            | Screen::SetupConnectInfo { .. }
+            | Screen::SetupCompleted { .. }
+            | Screen::SetupFatal { .. }
+            | Screen::OpConnecting { .. }
+            | Screen::OpUpgraded { .. }
+            | Screen::OpSuccess { .. }
+            | Screen::OpFailed { .. }
+            | Screen::Done => false,
+        }
     }
 
     #[must_use]
@@ -460,10 +481,12 @@ impl DeviceInfoOverlay {
                 link: self.link_for(self.setup_ssid()),
             },
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
-            Screen::SetupError => DeviceInfoView::SetupError,
+            Screen::SetupError { .. } => DeviceInfoView::SetupError {
+                dismissible: self.failure_dismissible(),
+            },
             Screen::SetupFatal { restarting, .. } => DeviceInfoView::SetupFatal {
                 restarting,
-                dismissible: self.fatal_dismissible(),
+                dismissible: self.failure_dismissible(),
             },
             Screen::OpUpgraded { .. } => DeviceInfoView::UpgradeSuccess,
             Screen::OpConnecting { .. } => DeviceInfoView::Connecting {
@@ -634,7 +657,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             }
             SetupStep::WifiConnectionFailed => {
                 self.target_ssid = None;
-                Screen::SetupError
+                Screen::SetupError { since: now }
             }
             SetupStep::DeviceSetupSuccess => Screen::SetupCompleted { since: now },
             SetupStep::UnexpectedError { restarting } => Screen::SetupFatal {
@@ -647,7 +670,7 @@ impl SystemOverlay for DeviceInfoOverlay {
 
     fn on_access_point(&mut self, ap: Option<&AccessPoint>) {
         self.ap = ap.cloned();
-        if self.ap.is_some() && self.screen == Screen::SetupError {
+        if self.ap.is_some() && matches!(self.screen, Screen::SetupError { .. }) {
             self.screen = Screen::SetupStart;
         }
         self.dirty = true;
@@ -736,10 +759,10 @@ impl SystemOverlay for DeviceInfoOverlay {
             return;
         }
         // Touch acts on the operational flow,
-        // and on a fatal screen the user can do nothing about.
+        // and on a failure screen the user can do nothing about.
         // The rest of the setup screens stay: dismissing SetupStart
         // would hide the wizard with the AP still up.
-        if self.fatal_dismissible() {
+        if self.failure_dismissible() {
             self.screen = Screen::Done;
         } else if matches!(self.screen, Screen::OpUpgraded { .. }) {
             // An interstitial rather than the end of the flow,
@@ -1334,10 +1357,13 @@ mod tests {
         overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
 
         let _ = overlay.tick(t0() + HOLD + HOLD);
-        assert_eq!(
-            overlay.screen,
-            Screen::SetupError,
+        assert!(
+            matches!(overlay.screen, Screen::SetupError { .. }),
             "no timer moves the failure screen; the AP may still be down"
+        );
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupError { dismissible: false }
         );
 
         overlay.on_access_point(Some(&AccessPoint {
@@ -1364,6 +1390,48 @@ mod tests {
         let tick = overlay.tick(t0() + HOLD);
         assert_eq!(overlay.screen, Screen::Done);
         assert!(!tick.visible);
+    }
+
+    /// An operational device whose boot screens have already run.
+    fn settled_overlay(ip: Option<Ipv4Addr>) -> (DeviceInfoOverlay, Prober) {
+        let (mut overlay, prober) = overlay_with_prober(ip);
+        overlay.on_device_state(DeviceState::Operational, true);
+        assert!(!overlay.tick(t0()).visible);
+        (overlay, prober)
+    }
+
+    #[test]
+    fn an_operational_join_failure_closes_on_its_own() {
+        let (mut overlay, _prober) = settled_overlay(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
+        let start = t0();
+        let tick = overlay.tick(start);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupError { dismissible: true }
+        );
+        assert!(
+            tick.next_wake.is_some(),
+            "the failure screen schedules its own close"
+        );
+
+        let tick = overlay.tick(start + FAILURE_VISIBLE_FOR);
+        assert_eq!(overlay.screen, Screen::Done);
+        assert!(!tick.visible);
+    }
+
+    #[test]
+    fn an_operational_join_failure_closes_on_touch() {
+        let (mut overlay, _prober) = settled_overlay(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
+
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 0.0,
+            y: 0.0,
+        });
+        assert_eq!(overlay.screen, Screen::Done);
     }
 
     #[test]
@@ -1983,7 +2051,7 @@ mod tests {
     fn the_button_sends_a_dismissible_fatal_away_like_a_touch_would() {
         let mut overlay = fatal_over_scenes(false);
         assert!(
-            overlay.fatal_dismissible(),
+            overlay.failure_dismissible(),
             "the screen draws the close glyph"
         );
 
@@ -2001,7 +2069,7 @@ mod tests {
     fn the_button_leaves_a_pending_restart_on_screen() {
         let mut overlay = fatal_over_scenes(true);
         assert!(
-            !overlay.fatal_dismissible(),
+            !overlay.failure_dismissible(),
             "the screen draws no close glyph"
         );
 
