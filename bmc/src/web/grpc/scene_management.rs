@@ -684,7 +684,7 @@ impl SceneManagementService {
     }
 }
 
-fn params_to_widget_data_struct(
+fn params_to_field_values(
     params: &BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
 ) -> web::FieldValues {
     web::FieldValues {
@@ -707,7 +707,7 @@ fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::FieldValue {
         PV::List(items) => VK::ListValue(web::FieldValueList {
             items: items.iter().map(param_value_to_wire).collect(),
         }),
-        PV::Object(fields) => VK::ObjectValue(params_to_widget_data_struct(fields)),
+        PV::Object(fields) => VK::ObjectValue(params_to_field_values(fields)),
     };
     web::FieldValue { kind: Some(arm) }
 }
@@ -1233,7 +1233,7 @@ fn scene_widget_to_proto(
             .into(),
         config: Some(web::WidgetConfig {
             widget_uid: widget.widget_type_id.to_string(),
-            params: Some(params_to_widget_data_struct(&widget.params)),
+            params: Some(params_to_field_values(&widget.params)),
             credential_bindings: Some(web::CredentialBindings {
                 bindings: credential::effective_bindings(&widget.credential_bindings, accounts)
                     .map(|(key, account)| (key.as_str().to_owned(), account.id.to_string()))
@@ -2084,7 +2084,7 @@ mod tests {
         let mut overrides = web::FieldValues::default();
         overrides
             .fields
-            .insert("name".to_owned(), wdv_string("world"));
+            .insert("name".to_owned(), string_value("world"));
         let resolved = validate_widget_params(&manifest, &overrides, ValidateMode::Add)
             .expect("BUG: override must validate");
         assert_eq!(resolved.get("name"), Some(&PV::String("world".into())));
@@ -2163,7 +2163,7 @@ mod tests {
     }
 
     #[test]
-    fn params_to_widget_data_struct_round_trips_each_arm() {
+    fn params_to_field_values_round_trips_each_arm() {
         use bmc_widget_manifest::{ParamKey, ParamValue as PV};
         use web::field_value::Kind as VK;
         let key = |k: &str| ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
@@ -2186,7 +2186,7 @@ mod tests {
         .into_iter()
         .collect();
 
-        let wire = params_to_widget_data_struct(&map);
+        let wire = params_to_field_values(&map);
         assert!(matches!(wire.fields["s"].kind, Some(VK::StringValue(_))));
         assert!(matches!(wire.fields["i"].kind, Some(VK::IntegerValue(42))));
         assert!(matches!(wire.fields["d"].kind, Some(VK::DoubleValue(_))));
@@ -2226,7 +2226,7 @@ mod tests {
         );
         let list = web::FieldValue {
             kind: Some(web::field_value::Kind::ListValue(web::FieldValueList {
-                items: vec![wdv_string("red")],
+                items: vec![string_value("red")],
             })),
         };
         let params = fields_one("color", list);
@@ -2251,7 +2251,7 @@ mod tests {
         let object = web::FieldValue {
             kind: Some(web::field_value::Kind::ObjectValue(fields_one(
                 "not a key",
-                wdv_string("x"),
+                string_value("x"),
             ))),
         };
         let params = fields_one("color", object);
@@ -2288,7 +2288,7 @@ mod tests {
         )
     }
 
-    fn wdv_list(items: Vec<web::FieldValue>) -> web::FieldValue {
+    fn list_value(items: Vec<web::FieldValue>) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::ListValue(web::FieldValueList {
                 items,
@@ -2321,7 +2321,10 @@ mod tests {
     fn validate_widget_params_array_accepts_a_list_within_its_bounds() {
         use bmc_widget_manifest::ParamValue as PV;
         let manifest = counts_manifest(1, 3, vec![PV::Integer(1)]);
-        let params = fields_one("counts", wdv_list(vec![wdv_integer(5), wdv_integer(0)]));
+        let params = fields_one(
+            "counts",
+            list_value(vec![integer_value(5), integer_value(0)]),
+        );
         let params = validate_widget_params(&manifest, &params, ValidateMode::Update)
             .expect("BUG: the list fits its bounds");
         assert_eq!(
@@ -2334,7 +2337,7 @@ mod tests {
     fn validate_widget_params_array_reports_its_count_at_the_param() {
         use bmc_widget_manifest::ParamValue as PV;
         let manifest = counts_manifest(1, 2, vec![PV::Integer(1)]);
-        let too_few = fields_one("counts", wdv_list(vec![]));
+        let too_few = fields_one("counts", list_value(vec![]));
         assert_eq!(
             violations_of(&manifest, &too_few),
             [(
@@ -2342,7 +2345,7 @@ mod tests {
                 "Must have at least 1 item".to_owned()
             )]
         );
-        let too_many = fields_one("counts", wdv_list(vec![wdv_integer(1); 3]));
+        let too_many = fields_one("counts", list_value(vec![integer_value(1); 3]));
         assert_eq!(
             violations_of(&manifest, &too_many),
             [(
@@ -2357,11 +2360,11 @@ mod tests {
         let manifest = counts_manifest(0, 4, vec![]);
         let params = fields_one(
             "counts",
-            wdv_list(vec![
-                wdv_integer(1),
-                wdv_integer(9),
-                wdv_string("x"),
-                wdv_null(),
+            list_value(vec![
+                integer_value(1),
+                integer_value(9),
+                string_value("x"),
+                null_value(),
             ]),
         );
         assert_eq!(
@@ -2386,12 +2389,12 @@ mod tests {
     #[test]
     fn validate_widget_params_array_rejects_a_scalar() {
         let manifest = counts_manifest(0, 4, vec![]);
-        let params = fields_one("counts", wdv_integer(1));
+        let params = fields_one("counts", integer_value(1));
         assert_eq!(first_violation_desc(&manifest, &params), "Must be a list");
     }
 
     fn over_cap_string() -> web::FieldValue {
-        wdv_string(&"x".repeat(bmc_widget_manifest::MAX_PARAM_STRING_LENGTH + 1))
+        string_value(&"x".repeat(bmc_widget_manifest::MAX_PARAM_STRING_LENGTH + 1))
     }
 
     fn string_kind() -> StringParam {
@@ -2436,7 +2439,7 @@ mod tests {
         single_param_manifest("links", def.kind, false)
     }
 
-    fn wdv_struct(fields: &[(&str, web::FieldValue)]) -> web::FieldValue {
+    fn object_value(fields: &[(&str, web::FieldValue)]) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::ObjectValue(web::FieldValues {
                 fields: fields
@@ -2450,16 +2453,16 @@ mod tests {
     #[test]
     fn an_unreadable_top_level_value_keeps_the_bare_message() {
         assert_eq!(
-            param_value_from_wire(&wdv_unset_kind()),
+            param_value_from_wire(&unset_value()),
             Err("FieldValue.kind unset".to_owned())
         );
     }
 
     #[test]
     fn an_unreadable_nested_value_names_where_it_sits() {
-        let links = wdv_list(vec![
-            wdv_struct(&[("label", wdv_string("Home"))]),
-            wdv_struct(&[("label", wdv_unset_kind())]),
+        let links = list_value(vec![
+            object_value(&[("label", string_value("Home"))]),
+            object_value(&[("label", unset_value())]),
         ]);
         assert_eq!(
             param_value_from_wire(&links),
@@ -2469,7 +2472,7 @@ mod tests {
 
     #[test]
     fn a_row_with_an_invalid_field_key_names_its_row() {
-        let links = wdv_list(vec![wdv_struct(&[("1bad", wdv_string("x"))])]);
+        let links = list_value(vec![object_value(&[("1bad", string_value("x"))])]);
         assert_eq!(
             param_value_from_wire(&links),
             Err(r#"[0]: Invalid field key "1bad""#.to_owned())
@@ -2481,7 +2484,7 @@ mod tests {
         use bmc_widget_manifest::ParamValue as PV;
         let params = fields_one(
             "links",
-            wdv_list(vec![wdv_struct(&[("label", wdv_string("Home"))])]),
+            list_value(vec![object_value(&[("label", string_value("Home"))])]),
         );
         let params = validate_widget_params(&links_manifest(), &params, ValidateMode::Update)
             .expect("BUG: a row with its required field set validates");
@@ -2501,10 +2504,10 @@ mod tests {
     fn validate_widget_params_object_row_reports_each_field_at_its_path() {
         let params = fields_one(
             "links",
-            wdv_list(vec![
-                wdv_struct(&[("url", wdv_string("https://braiins.com"))]),
-                wdv_struct(&[("label", wdv_string("Pool")), ("icon", wdv_string("x"))]),
-                wdv_string("not a row"),
+            list_value(vec![
+                object_value(&[("url", string_value("https://braiins.com"))]),
+                object_value(&[("label", string_value("Pool")), ("icon", string_value("x"))]),
+                string_value("not a row"),
             ]),
         );
         assert_eq!(
@@ -2530,7 +2533,7 @@ mod tests {
     fn validate_widget_params_object_row_checks_each_field_against_its_kind() {
         let params = fields_one(
             "links",
-            wdv_list(vec![wdv_struct(&[("label", wdv_integer(7))])]),
+            list_value(vec![object_value(&[("label", integer_value(7))])]),
         );
         assert_eq!(
             violations_of(&links_manifest(), &params),
@@ -2586,7 +2589,7 @@ mod tests {
         );
         let params = fields_one(
             "symbols",
-            wdv_list(vec![wdv_string("NVDA"), over_cap_string()]),
+            list_value(vec![string_value("NVDA"), over_cap_string()]),
         );
         let [(field, _)] = violations_of(&manifest, &params)
             .try_into()
@@ -2594,32 +2597,32 @@ mod tests {
         assert_eq!(field, r#"params["symbols"][1]"#);
     }
 
-    fn wdv_string(s: &str) -> web::FieldValue {
+    fn string_value(s: &str) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::StringValue(s.to_owned())),
         }
     }
-    fn wdv_integer(i: i32) -> web::FieldValue {
+    fn integer_value(i: i32) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::IntegerValue(i)),
         }
     }
-    fn wdv_double(d: f64) -> web::FieldValue {
+    fn double_value(d: f64) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::DoubleValue(d)),
         }
     }
-    fn wdv_boolean(b: bool) -> web::FieldValue {
+    fn boolean_value(b: bool) -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::BooleanValue(b)),
         }
     }
-    fn wdv_null() -> web::FieldValue {
+    fn null_value() -> web::FieldValue {
         web::FieldValue {
             kind: Some(web::field_value::Kind::NullValue(())),
         }
     }
-    fn wdv_unset_kind() -> web::FieldValue {
+    fn unset_value() -> web::FieldValue {
         web::FieldValue { kind: None }
     }
 
@@ -3000,7 +3003,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("color", wdv_string("blue"));
+        let params = fields_one("color", string_value("blue"));
         assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
     }
 
@@ -3019,7 +3022,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("color", wdv_double(1.0));
+        let params = fields_one("color", double_value(1.0));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3039,7 +3042,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("count", wdv_double(5.0));
+        let params = fields_one("count", double_value(5.0));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3059,7 +3062,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("ratio", wdv_integer(1));
+        let params = fields_one("ratio", integer_value(1));
         let typed = validate_widget_params(&manifest, &params, ValidateMode::Add)
             .expect("BUG: a whole number is a valid double");
         assert_eq!(typed["ratio"], bmc_widget_manifest::ParamValue::Double(1.0));
@@ -3074,7 +3077,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("flag", wdv_unset_kind());
+        let params = fields_one("flag", unset_value());
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3093,7 +3096,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("name", wdv_null());
+        let params = fields_one("name", null_value());
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3112,7 +3115,7 @@ mod tests {
             }),
             true,
         );
-        let params = fields_one("label", wdv_null());
+        let params = fields_one("label", null_value());
         assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
     }
 
@@ -3132,7 +3135,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("val", wdv_double(f64::NAN));
+        let params = fields_one("val", double_value(f64::NAN));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3152,7 +3155,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("val", wdv_double(f64::INFINITY));
+        let params = fields_one("val", double_value(f64::INFINITY));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3172,7 +3175,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("n", wdv_integer(4));
+        let params = fields_one("n", integer_value(4));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3192,7 +3195,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("n", wdv_integer(11));
+        let params = fields_one("n", integer_value(11));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3212,7 +3215,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("ratio", wdv_double(-0.1));
+        let params = fields_one("ratio", double_value(-0.1));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3240,7 +3243,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("style", wdv_string("solarized"));
+        let params = fields_one("style", string_value("solarized"));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3268,7 +3271,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("style", wdv_string("light"));
+        let params = fields_one("style", string_value("light"));
         assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
     }
 
@@ -3281,7 +3284,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("unknown", wdv_boolean(true));
+        let params = fields_one("unknown", boolean_value(true));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
@@ -3351,8 +3354,8 @@ mod tests {
         ]);
         let params = web::FieldValues {
             fields: [
-                ("n".to_owned(), wdv_integer(99)),
-                ("color".to_owned(), wdv_string("blue")),
+                ("n".to_owned(), integer_value(99)),
+                ("color".to_owned(), string_value("blue")),
             ]
             .into_iter()
             .collect(),
@@ -3631,7 +3634,7 @@ mod tests {
             pa.unique_items,
             Some(web::param_array::UniqueItems::Whole(()))
         );
-        assert_eq!(pa.default_value, [wdv_string("NVDA")]);
+        assert_eq!(pa.default_value, [string_value("NVDA")]);
         let Some(ItemKindProto::ParamString(item)) = pa.items.and_then(|i| i.kind) else {
             panic!("BUG: expected a param_string item kind");
         };
@@ -4190,7 +4193,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("color", wdv_double(1.0));
+        let params = fields_one("color", double_value(1.0));
         assert_eq!(first_violation_desc(&manifest, &params), "Must be text");
     }
 
@@ -4210,7 +4213,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("count", wdv_string("abc"));
+        let params = fields_one("count", string_value("abc"));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be a whole number",
@@ -4233,7 +4236,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("ratio", wdv_string("abc"));
+        let params = fields_one("ratio", string_value("abc"));
         assert_eq!(first_violation_desc(&manifest, &params), "Must be a number",);
     }
 
@@ -4246,7 +4249,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("flag", wdv_string("yes"));
+        let params = fields_one("flag", string_value("yes"));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be true or false",
@@ -4263,7 +4266,7 @@ mod tests {
             }),
             true,
         );
-        let params = fields_one("tz", wdv_integer(0));
+        let params = fields_one("tz", integer_value(0));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be a timezone",
@@ -4286,7 +4289,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("n", wdv_integer(4));
+        let params = fields_one("n", integer_value(4));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be at least 5",
@@ -4309,7 +4312,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("n", wdv_integer(11));
+        let params = fields_one("n", integer_value(11));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be at most 10",
@@ -4332,7 +4335,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("v", wdv_double(f64::NAN));
+        let params = fields_one("v", double_value(f64::NAN));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be a finite number",
@@ -4355,7 +4358,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("ratio", wdv_double(-0.1));
+        let params = fields_one("ratio", double_value(-0.1));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be at least 0",
@@ -4378,7 +4381,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("ratio", wdv_double(1.5));
+        let params = fields_one("ratio", double_value(1.5));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be at most 1",
@@ -4403,7 +4406,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("style", wdv_string("solarized"));
+        let params = fields_one("style", string_value("solarized"));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be one of the listed options",
@@ -4429,7 +4432,7 @@ mod tests {
             }),
             false,
         );
-        let params = fields_one("level", wdv_integer(99));
+        let params = fields_one("level", integer_value(99));
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be one of the listed options",
@@ -4981,7 +4984,7 @@ mod tests {
             id: widget_id.to_string(),
             position: Some(web::WidgetPosition { row: 0, col: 0 }),
             size: web::WidgetSize::Medium.into(),
-            params: Some(fields_one("label", wdv_string("old"))),
+            params: Some(fields_one("label", string_value("old"))),
             credential_bindings: Some(web::CredentialBindings::default()),
         }
     }
@@ -4997,7 +5000,7 @@ mod tests {
             id: widget_id.to_string(),
             position: Some(web::WidgetPosition { row: 0, col: 0 }),
             size: web::WidgetSize::Small.into(),
-            params: Some(fields_one("label", wdv_string(label))),
+            params: Some(fields_one("label", string_value(label))),
             credential_bindings: Some(web::CredentialBindings {
                 bindings: binding
                     .map(|account| {
