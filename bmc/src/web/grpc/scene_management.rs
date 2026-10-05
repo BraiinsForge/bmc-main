@@ -1075,13 +1075,47 @@ pub(crate) fn validate_widget_params(
     })
 }
 
+/// A nested value that cannot be read fails the whole value,
+/// and the error names where it sits: `[3]["label"]: FieldValue.kind unset`.
 fn param_value_from_wire(
     value: &web::FieldValue,
 ) -> Result<bmc_widget_manifest::ParamValue, String> {
+    decode_wire_value(value).map_err(|unreadable| {
+        if unreadable.at.is_empty() {
+            unreadable.message
+        } else {
+            format!("{}: {}", unreadable.at, unreadable.message)
+        }
+    })
+}
+
+/// Why a value could not be read, and its position below the value being decoded.
+struct Unreadable {
+    at: String,
+    message: String,
+}
+
+impl Unreadable {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            at: String::new(),
+            message: message.into(),
+        }
+    }
+
+    fn under(mut self, step: &str) -> Self {
+        self.at.insert_str(0, step);
+        self
+    }
+}
+
+fn decode_wire_value(
+    value: &web::FieldValue,
+) -> Result<bmc_widget_manifest::ParamValue, Unreadable> {
     use bmc_widget_manifest::ParamValue as PV;
     use web::field_value::Kind as VK;
     match &value.kind {
-        None => Err("FieldValue.kind unset".to_owned()),
+        None => Err(Unreadable::new("FieldValue.kind unset")),
         Some(VK::NullValue(())) => Ok(PV::Null),
         Some(VK::BooleanValue(b)) => Ok(PV::Boolean(*b)),
         Some(VK::IntegerValue(i)) => Ok(PV::Integer(*i)),
@@ -1090,16 +1124,18 @@ fn param_value_from_wire(
         Some(VK::ListValue(list)) => list
             .items
             .iter()
-            .map(param_value_from_wire)
+            .enumerate()
+            .map(|(i, item)| decode_wire_value(item).map_err(|e| e.under(&format!("[{i}]"))))
             .collect::<Result<_, _>>()
             .map(PV::List),
         Some(VK::StructValue(values)) => values
             .fields
             .iter()
             .map(|(key, value)| {
-                let key = bmc_widget_manifest::ParamKey::try_new(key.clone())
-                    .map_err(|key| format!("Invalid field key {key:?}"))?;
-                Ok((key, param_value_from_wire(value)?))
+                let field = bmc_widget_manifest::ParamKey::try_new(key.clone())
+                    .map_err(|key| Unreadable::new(format!("Invalid field key {key:?}")))?;
+                let value = decode_wire_value(value).map_err(|e| e.under(&format!("[{key:?}]")))?;
+                Ok((field, value))
             })
             .collect::<Result<_, _>>()
             .map(PV::Object),
@@ -2366,6 +2402,35 @@ mod tests {
                     .collect(),
             })),
         }
+    }
+
+    #[test]
+    fn an_unreadable_top_level_value_keeps_the_bare_message() {
+        assert_eq!(
+            param_value_from_wire(&wdv_unset_kind()),
+            Err("FieldValue.kind unset".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_unreadable_nested_value_names_where_it_sits() {
+        let links = wdv_list(vec![
+            wdv_struct(&[("label", wdv_string("Home"))]),
+            wdv_struct(&[("label", wdv_unset_kind())]),
+        ]);
+        assert_eq!(
+            param_value_from_wire(&links),
+            Err(r#"[1]["label"]: FieldValue.kind unset"#.to_owned())
+        );
+    }
+
+    #[test]
+    fn a_row_with_an_invalid_field_key_names_its_row() {
+        let links = wdv_list(vec![wdv_struct(&[("1bad", wdv_string("x"))])]);
+        assert_eq!(
+            param_value_from_wire(&links),
+            Err(r#"[0]: Invalid field key "1bad""#.to_owned())
+        );
     }
 
     #[test]
