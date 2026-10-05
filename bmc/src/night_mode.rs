@@ -21,16 +21,16 @@
 
 use std::sync::Arc;
 
-use bmc_scheduler::JobScheduler;
-use bmc_scheduler::scheduler::JobConfig;
-use bmc_scheduler::scheduler::Schedule;
-use bmc_scheduler::scheduler::Task;
 use bmc_shared_time::time::Timezone;
 use chrono::NaiveTime;
 use tokio::sync::{RwLock, watch};
-use tracing::{debug, error, info};
+use tracing::info;
 
 use crate::config::{ConfigHandle, NightModeConfig};
+use crate::daily_window::{DailyWindow, DailyWindowWatch};
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum NightModeOverride {
@@ -42,100 +42,58 @@ pub(crate) enum NightModeOverride {
 #[derive(Clone)]
 pub(crate) struct NightModeController {
     config_handle: Arc<RwLock<ConfigHandle>>,
-    scheduler: JobScheduler,
-    timezone_receiver: watch::Receiver<Timezone>,
+    window: DailyWindowWatch,
+    scheduled: watch::Receiver<bool>,
     is_active_sender: watch::Sender<bool>,
     override_state: Arc<RwLock<NightModeOverride>>,
 }
 
 impl NightModeController {
-    const NIGHT_MODE_SCHEDULER_SOURCE: &'static str = "NightMode";
-
     pub(crate) async fn init(
         config_handle: Arc<RwLock<ConfigHandle>>,
-        scheduler: JobScheduler,
         timezone_receiver: watch::Receiver<Timezone>,
         clock_steps: watch::Receiver<u64>,
     ) -> Self {
-        let night_mode = config_handle.read().await.night_mode();
-        let timezone = timezone_receiver.borrow().clone();
-        let is_active = night_mode.is_active(&timezone);
-        let (is_active_sender, _) = watch::channel(is_active);
+        let window = DailyWindowWatch::start(timezone_receiver, clock_steps);
+        Self::with_window(config_handle, window).await
+    }
 
-        tokio::spawn(Self::update_is_active_on_wall_clock_change(
-            config_handle.clone(),
-            timezone_receiver.clone(),
-            clock_steps,
-            is_active_sender.clone(),
-        ));
+    async fn with_window(
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        window: DailyWindowWatch,
+    ) -> Self {
+        let night_mode = config_handle.read().await.night_mode();
+        window.set(window_of(&night_mode));
+        let scheduled = window.subscribe();
+        let is_active = *scheduled.borrow();
+        let (is_active_sender, _) = watch::channel(is_active);
 
         let this = Self {
             config_handle,
-            scheduler,
-            timezone_receiver,
+            window,
+            scheduled,
             is_active_sender,
             override_state: Arc::new(RwLock::new(NightModeOverride::None)),
         };
+        tokio::spawn(this.clone().follow_schedule());
 
-        if let Err(err) = this.schedule_jobs(&night_mode).await {
-            error!(
-                error = %err,
-                enabled = night_mode.enabled,
-                from = %night_mode.from,
-                to = %night_mode.to,
-                "Failed to schedule night mode jobs"
-            );
-        } else {
-            info!(
-                enabled = night_mode.enabled,
-                is_active = is_active,
-                "Night mode controller initialized"
-            );
-        }
+        info!(
+            enabled = night_mode.enabled,
+            is_active = is_active,
+            "Night mode controller initialized"
+        );
 
         this
     }
 
-    /// Re-checks the schedule on timezone changes and on clock steps,
-    /// since a step can carry the clock past an edge job that the scheduler then skips as overdue.
-    async fn update_is_active_on_wall_clock_change(
-        config_handle: Arc<RwLock<ConfigHandle>>,
-        mut timezone_receiver: watch::Receiver<Timezone>,
-        mut clock_steps: watch::Receiver<u64>,
-        is_active_sender: watch::Sender<bool>,
-    ) {
-        let mut clock_steps_open = true;
-        loop {
-            let trigger = tokio::select! {
-                changed = timezone_receiver.changed() => match changed {
-                    Ok(()) => "timezone change",
-                    Err(err) => {
-                        info!(error = %err, "Timezone receiver closed, stopping night mode update loop");
-                        break;
-                    }
-                },
-                changed = clock_steps.changed(), if clock_steps_open => {
-                    clock_steps_open = changed.is_ok();
-                    if !clock_steps_open {
-                        continue;
-                    }
-                    "clock step"
-                }
-            };
-
-            let night_mode = config_handle.read().await.night_mode();
-            let timezone = timezone_receiver.borrow_and_update().clone();
-            let is_active = night_mode.is_active(&timezone);
-            let previous_state = is_active_sender.send_replace(is_active);
-
-            if previous_state != is_active {
-                info!(
-                    timezone = %timezone,
-                    is_active = is_active,
-                    trigger,
-                    "Night mode state updated after a wall-clock change"
-                );
-            }
+    /// Ends any manual override whenever the schedule turns night mode on or off.
+    async fn follow_schedule(self) {
+        let mut scheduled = self.scheduled.clone();
+        while scheduled.changed().await.is_ok() {
+            let is_active = *scheduled.borrow_and_update();
+            *self.override_state.write().await = NightModeOverride::None;
+            self.is_active_sender.send_replace(is_active);
+            info!(is_active, "Night mode state changed by schedule");
         }
     }
 
@@ -152,14 +110,10 @@ impl NightModeController {
     }
 
     async fn calculate_is_active(&self) -> bool {
-        let config = self.config().await;
-        let override_state = self.override_state().await;
-        let timezone = self.timezone_receiver.borrow().clone();
-
-        match override_state {
+        match self.override_state().await {
             NightModeOverride::ForceActive => true,
             NightModeOverride::ForceInactive => false,
-            NightModeOverride::None => config.is_active(&timezone),
+            NightModeOverride::None => *self.scheduled.borrow(),
         }
     }
 
@@ -171,10 +125,8 @@ impl NightModeController {
         let night_mode = config_handle.night_mode();
         drop(config_handle);
 
-        self.schedule_jobs(&night_mode).await?;
-
-        let timezone = self.timezone_receiver.borrow().clone();
-        let is_active = night_mode.is_active(&timezone);
+        self.window.set(window_of(&night_mode));
+        let is_active = *self.scheduled.borrow();
         self.is_active_sender.send_replace(is_active);
 
         info!(
@@ -194,10 +146,8 @@ impl NightModeController {
         let night_mode = config_handle.night_mode();
         drop(config_handle);
 
-        self.schedule_jobs(&night_mode).await?;
-
-        let timezone = self.timezone_receiver.borrow().clone();
-        let is_active = night_mode.is_active(&timezone);
+        self.window.set(window_of(&night_mode));
+        let is_active = *self.scheduled.borrow();
         self.is_active_sender.send_replace(is_active);
 
         info!(
@@ -259,9 +209,7 @@ impl NightModeController {
     pub(crate) async fn toggle(&self) -> anyhow::Result<()> {
         let config = self.config().await;
         let is_currently_active = self.calculate_is_active().await;
-        let timezone = self.timezone_receiver.borrow().clone();
-        let now = chrono::Local::now().with_timezone(timezone.chrono()).time();
-        let now_in_scheduled_range = NightModeConfig::is_time_in_range(config.from, config.to, now);
+        let now_in_scheduled_range = *self.scheduled.borrow();
 
         match (config.enabled, is_currently_active, now_in_scheduled_range) {
             // Case 1: Config disabled, turning ON
@@ -304,72 +252,13 @@ impl NightModeController {
 
         Ok(())
     }
+}
 
-    async fn schedule_jobs(&self, night_mode: &NightModeConfig) -> anyhow::Result<()> {
-        debug!("Cancelling scheduled night mode jobs");
-
-        self.scheduler
-            .cancel_jobs(Self::NIGHT_MODE_SCHEDULER_SOURCE.to_owned())
-            .await;
-
-        if !night_mode.enabled {
-            debug!("Night mode disabled, no jobs scheduled");
-            return Ok(());
-        }
-
-        debug!(from = %night_mode.from, to = %night_mode.to, "Scheduling night mode jobs");
-
-        let from_cron = bmc_scheduler::cron::from_naive_time(night_mode.from)?;
-        let to_cron = bmc_scheduler::cron::from_naive_time(night_mode.to)?;
-
-        self.scheduler
-            .schedule(
-                Schedule::Cron(from_cron),
-                Task::Async({
-                    let is_active_sender = self.is_active_sender.clone();
-                    let from_time = night_mode.from;
-                    let override_state = self.override_state.clone();
-                    Box::new(move || {
-                        let is_active_sender = is_active_sender.clone();
-                        let from_time = from_time;
-                        let override_state = override_state.clone();
-                        Box::pin(async move {
-                            // Clear override when scheduled start time hits
-                            *override_state.write().await = NightModeOverride::None;
-                            is_active_sender.send_replace(true);
-                            info!(time = %from_time, "Night mode activated by schedule");
-                        })
-                    })
-                }),
-                JobConfig::new(Self::NIGHT_MODE_SCHEDULER_SOURCE.to_owned()),
-            )
-            .await?;
-
-        self.scheduler
-            .schedule(
-                Schedule::Cron(to_cron),
-                Task::Async({
-                    let is_active_sender = self.is_active_sender.clone();
-                    let to_time = night_mode.to;
-                    let override_state = self.override_state.clone();
-                    Box::new(move || {
-                        let is_active_sender = is_active_sender.clone();
-                        let to_time = to_time;
-                        let override_state = override_state.clone();
-                        Box::pin(async move {
-                            // Clear override when scheduled end time hits
-                            *override_state.write().await = NightModeOverride::None;
-                            is_active_sender.send_replace(false);
-                            info!(time = %to_time, "Night mode deactivated by schedule");
-                        })
-                    })
-                }),
-                JobConfig::new(Self::NIGHT_MODE_SCHEDULER_SOURCE.to_owned()),
-            )
-            .await?;
-
-        Ok(())
-    }
+fn window_of(night_mode: &NightModeConfig) -> Option<DailyWindow> {
+    night_mode.enabled.then_some(DailyWindow {
+        from: night_mode.from,
+        to: night_mode.to,
+    })
 }
 
 impl std::fmt::Debug for NightModeController {

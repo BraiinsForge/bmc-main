@@ -26,13 +26,13 @@ use crate::{
     utils::replace_file,
 };
 use anyhow::{Context, Result, bail};
-use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
+use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
 use bmc_shared_utils::unit_system::UnitSystem;
 use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use bmc_widget_manifest::{ParamKey, ParamValue};
-use chrono::{Local, NaiveTime};
+use chrono::NaiveTime;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -874,24 +874,6 @@ pub struct NightModeConfig {
     pub sound_volume_pct: u8,
     pub led_enabled: bool,
     pub screen_off_timeout_secs: Option<u32>,
-}
-
-impl NightModeConfig {
-    pub fn is_active(&self, timezone: &Timezone) -> bool {
-        let now = Local::now().with_timezone(timezone.chrono()).time();
-
-        self.enabled && Self::is_time_in_range(self.from, self.to, now)
-    }
-
-    /// Checks whether `now` (in local time) is in the [from, to) range.
-    /// Handles ranges that cross midnight.
-    pub fn is_time_in_range(from: NaiveTime, to: NaiveTime, now: NaiveTime) -> bool {
-        if from <= to {
-            now >= from && now < to
-        } else {
-            now >= from || now < to
-        }
-    }
 }
 
 impl NightModeConfigData {

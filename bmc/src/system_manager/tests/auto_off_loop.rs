@@ -28,7 +28,6 @@ use crate::night_mode::NightModeController;
 use crate::system_manager::{
     MIN_SCREEN_OFF_TIMEOUT_SECS, ScreenRequest, SystemManager, TOUCH_HOLD_CAP,
 };
-use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
 use tokio::sync::{Mutex, Notify, RwLock, broadcast, watch};
 use tokio::time::Instant;
@@ -194,14 +193,8 @@ async fn auto_off_harness(alarm_ringing: bool) -> AutoOffHarness {
     let backlight = DisplayBacklightController::new(config_handle.clone(), panel.clone());
 
     let (timezone_tx, timezone_rx) = watch::channel(Timezone::default());
-    let scheduler = JobScheduler::init(timezone_rx.clone(), Some(tmp.path().join("crontab"))).await;
-    let night_mode_controller = NightModeController::init(
-        config_handle.clone(),
-        scheduler,
-        timezone_rx,
-        watch::channel(0).1,
-    )
-    .await;
+    let night_mode_controller =
+        NightModeController::init(config_handle.clone(), timezone_rx, watch::channel(0).1).await;
 
     let timeout_changed = config_handle
         .read()

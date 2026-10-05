@@ -957,7 +957,6 @@ where
             config_handle.clone(),
             manager.watch_timezone_updates(),
             backlight_driver,
-            scheduler.clone(),
             sound_controller.clone(),
             led_state_sender,
             manager.clone(),

@@ -33,7 +33,6 @@ use crate::{
     night_mode::NightModeController,
     sound::SoundController,
 };
-use bmc_scheduler::JobScheduler;
 use bmc_shared_time::time::Timezone;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use tokio::sync::{Mutex, Notify, RwLock, broadcast, watch};
@@ -168,7 +167,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         config_handle: Arc<RwLock<ConfigHandle>>,
         timezone_receiver: watch::Receiver<Timezone>,
         backlight_driver: Arc<Mutex<T>>,
-        scheduler: JobScheduler,
         sound_controller: SoundController,
         led_state_sender: watch::Sender<LedState>,
         manager: Arc<M>,
@@ -181,7 +179,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
 
         let night_mode_controller = NightModeController::init(
             config_handle.clone(),
-            scheduler,
             timezone_receiver.clone(),
             watch_clock_steps(),
         )

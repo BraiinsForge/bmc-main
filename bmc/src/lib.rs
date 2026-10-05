@@ -29,6 +29,7 @@ pub mod compositor;
 mod config;
 pub mod config_migration;
 mod credential;
+mod daily_window;
 mod data;
 pub mod entry;
 mod file_token;
