@@ -246,7 +246,7 @@ const LINK_ROW: pb.ArrayItemKind['kind'] = {
 
 function link(label: string, url: string): pb.FieldValue['kind'] {
     return {
-        case: 'structValue',
+        case: 'objectValue',
         value: create(pb.FieldValuesSchema, {
             fields: {
                 label: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: label } }),
@@ -288,7 +288,7 @@ const UNIQUE_TOGGLES = list(
 
 function shownRow(label: string, shown: boolean): pb.FieldValue['kind'] {
     return {
-        case: 'structValue',
+        case: 'objectValue',
         value: create(pb.FieldValuesSchema, {
             fields: {
                 label: create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: label } }),

@@ -707,7 +707,7 @@ fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::FieldValue {
         PV::List(items) => VK::ListValue(web::FieldValueList {
             items: items.iter().map(param_value_to_wire).collect(),
         }),
-        PV::Object(fields) => VK::StructValue(params_to_widget_data_struct(fields)),
+        PV::Object(fields) => VK::ObjectValue(params_to_widget_data_struct(fields)),
     };
     web::FieldValue { kind: Some(arm) }
 }
@@ -1153,7 +1153,7 @@ fn decode_wire_value(
             .map(|(i, item)| decode_wire_value(item).map_err(|e| e.under(&format!("[{i}]"))))
             .collect::<Result<_, _>>()
             .map(PV::List),
-        Some(VK::StructValue(values)) => values
+        Some(VK::ObjectValue(values)) => values
             .fields
             .iter()
             .map(|(key, value)| {
@@ -2196,7 +2196,7 @@ mod tests {
         ));
         assert!(matches!(wire.fields["n"].kind, Some(VK::NullValue(()))));
         assert!(matches!(wire.fields["l"].kind, Some(VK::ListValue(_))));
-        assert!(matches!(wire.fields["o"].kind, Some(VK::StructValue(_))));
+        assert!(matches!(wire.fields["o"].kind, Some(VK::ObjectValue(_))));
 
         let back: BTreeMap<ParamKey, PV> = wire
             .fields
@@ -2249,7 +2249,7 @@ mod tests {
             false,
         );
         let object = web::FieldValue {
-            kind: Some(web::field_value::Kind::StructValue(fields_one(
+            kind: Some(web::field_value::Kind::ObjectValue(fields_one(
                 "not a key",
                 wdv_string("x"),
             ))),
@@ -2438,7 +2438,7 @@ mod tests {
 
     fn wdv_struct(fields: &[(&str, web::FieldValue)]) -> web::FieldValue {
         web::FieldValue {
-            kind: Some(web::field_value::Kind::StructValue(web::FieldValues {
+            kind: Some(web::field_value::Kind::ObjectValue(web::FieldValues {
                 fields: fields
                     .iter()
                     .map(|(key, value)| ((*key).to_owned(), value.clone()))

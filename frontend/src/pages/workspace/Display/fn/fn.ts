@@ -424,7 +424,7 @@ export function defaultFormifiedValue(def: pb.ManifestParamDefinition): Formifie
 
 function readWireItem(kind: pb.ArrayItemKind['kind'], v: pb.FieldValue): ListItem['value'] {
     if (kind.case !== 'paramObject') return readWireScalar(kind, v);
-    const wire = v.kind.case === 'structValue' ? v.kind.value.fields : {};
+    const wire = v.kind.case === 'objectValue' ? v.kind.value.fields : {};
     return Object.fromEntries(
         kind.value.fields.map(field => {
             const value = ownValue(wire, field.key);

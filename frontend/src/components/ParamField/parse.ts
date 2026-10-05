@@ -51,9 +51,9 @@ function listValue(items: pb.FieldValue[]): pb.FieldValue {
         kind: { case: 'listValue', value: pb.create(pb.FieldValueListSchema, { items }) },
     });
 }
-function structValue(fields: Record<string, pb.FieldValue>): pb.FieldValue {
+function objectValue(fields: Record<string, pb.FieldValue>): pb.FieldValue {
     return pb.create(pb.FieldValueSchema, {
-        kind: { case: 'structValue', value: pb.create(pb.FieldValuesSchema, { fields }) },
+        kind: { case: 'objectValue', value: pb.create(pb.FieldValuesSchema, { fields }) },
     });
 }
 
@@ -163,7 +163,7 @@ function countError(count: number, array: pb.ParamArray): string | undefined {
 
 function keyFields(row: pb.FieldValue, keys: string[]): pb.FieldValue[] {
     const { kind } = row;
-    invariant(kind.case === 'structValue', 'an object list row parses to a struct');
+    invariant(kind.case === 'objectValue', 'an object list row parses to an object');
     return keys.map(key => kind.value.fields[key] ?? nullValue());
 }
 
@@ -232,5 +232,5 @@ function parseObject(object: pb.ParamObject, raw: ObjectValue): ItemParseResult 
         else errors[field.key] = r.error;
     }
     if (Object.keys(errors).length > 0) return { ok: false, error: { fields: errors } };
-    return { ok: true, value: structValue(fields) };
+    return { ok: true, value: objectValue(fields) };
 }

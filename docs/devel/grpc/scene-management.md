@@ -39,7 +39,7 @@ Primary sources:
 
 ### List values and violation paths
 
-- Param values travel as `FieldValue` (`field_schema.proto`): a list as `list_value`, an object item as `struct_value`.
+- Param values travel as `FieldValue` (`field_schema.proto`): a list as `list_value`, an object item as `object_value`.
   `GetWidgetManifest` describes a list param as `ParamArray`, with an object item's fields in `ParamObject`.
 - A rejected value fails the call with `InvalidArgument` and a `BadRequest` detail listing every violation at once. Each
   violation's field names the value it rejects: `params["k"]` for the param, `params["k"][i]` for a list item, and

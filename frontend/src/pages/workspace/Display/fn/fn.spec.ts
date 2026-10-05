@@ -788,7 +788,7 @@ function wireRow(fields: Record<string, string>): pb.FieldValue {
         pb.create(pb.FieldValueSchema, { kind: { case: 'stringValue', value } }),
     ]);
     return pb.create(pb.FieldValueSchema, {
-        kind: { case: 'structValue', value: { fields: Object.fromEntries(wire) } },
+        kind: { case: 'objectValue', value: { fields: Object.fromEntries(wire) } },
     });
 }
 
@@ -999,7 +999,7 @@ describe('parseFormifiedValue', () => {
         if (!r.ok) throw new Error('expected ok');
         if (r.value.kind.case !== 'listValue') throw new Error('expected listValue');
         const [row] = r.value.kind.value.items;
-        if (row?.kind.case !== 'structValue') throw new Error('expected structValue');
+        if (row?.kind.case !== 'objectValue') throw new Error('expected objectValue');
         expect(row.kind.value.fields.label.kind).toEqual({ case: 'stringValue', value: 'Home' });
         expect(row.kind.value.fields.url.kind.case).toBe('nullValue');
     });
