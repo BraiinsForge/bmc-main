@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bmc_shared_time::time::Timezone;
 use chrono::NaiveTime;
@@ -32,11 +32,30 @@ use crate::daily_window::{DailyWindow, DailyWindowWatch};
 #[cfg(test)]
 mod tests;
 
+/// A manual toggle against the schedule.
+/// It lasts while the schedule disagrees with it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum NightModeOverride {
-    None,          // Follow schedule
-    ForceActive,   // User turned on outside hours - turn off at scheduled 'to'
-    ForceInactive, // User turned off during hours - turn on at next scheduled 'from'
+enum NightModeOverride {
+    None,
+    ForceActive,
+    ForceInactive,
+}
+
+impl NightModeOverride {
+    /// Returns the effective night-mode state and the override still in force.
+    fn settle(self, enabled: bool, scheduled: bool) -> (bool, Self) {
+        match self {
+            Self::ForceActive if enabled && !scheduled => (true, self),
+            Self::ForceInactive if enabled && scheduled => (false, self),
+            Self::None | Self::ForceActive | Self::ForceInactive => (scheduled, Self::None),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Reevaluation {
+    KeepOverride,
+    SetOverride(NightModeOverride),
 }
 
 #[derive(Clone)]
@@ -45,7 +64,7 @@ pub(crate) struct NightModeController {
     window: DailyWindowWatch,
     scheduled: watch::Receiver<bool>,
     is_active_sender: watch::Sender<bool>,
-    override_state: Arc<RwLock<NightModeOverride>>,
+    override_state: Arc<Mutex<NightModeOverride>>,
 }
 
 impl NightModeController {
@@ -64,36 +83,64 @@ impl NightModeController {
     ) -> Self {
         let night_mode = config_handle.read().await.night_mode();
         window.set(window_of(&night_mode));
-        let scheduled = window.subscribe();
-        let is_active = *scheduled.borrow();
-        let (is_active_sender, _) = watch::channel(is_active);
+        let (is_active_sender, _) = watch::channel(false);
 
         let this = Self {
             config_handle,
+            scheduled: window.subscribe(),
             window,
-            scheduled,
             is_active_sender,
-            override_state: Arc::new(RwLock::new(NightModeOverride::None)),
+            override_state: Arc::new(Mutex::new(NightModeOverride::None)),
         };
+        this.refresh("boot").await;
         tokio::spawn(this.clone().follow_schedule());
 
         info!(
             enabled = night_mode.enabled,
-            is_active = is_active,
+            is_active = *this.is_active_sender.borrow(),
             "Night mode controller initialized"
         );
 
         this
     }
 
-    /// Ends any manual override whenever the schedule turns night mode on or off.
     async fn follow_schedule(self) {
         let mut scheduled = self.scheduled.clone();
         while scheduled.changed().await.is_ok() {
-            let is_active = *scheduled.borrow_and_update();
-            *self.override_state.write().await = NightModeOverride::None;
-            self.is_active_sender.send_replace(is_active);
-            info!(is_active, "Night mode state changed by schedule");
+            self.refresh("schedule").await;
+        }
+    }
+
+    async fn refresh(&self, trigger: &'static str) {
+        self.publish(trigger, Reevaluation::KeepOverride).await;
+    }
+
+    /// Settles the override against the schedule and publishes the result.
+    async fn publish(&self, trigger: &'static str, reevaluation: Reevaluation) {
+        let enabled = self.config().await.enabled;
+
+        let mut override_state = self
+            .override_state
+            .lock()
+            .expect("BUG: night mode override lock poisoned");
+        // Read under the lock, so a publish racing a schedule edge cannot settle against the old level.
+        let scheduled = *self.scheduled.borrow();
+        let candidate = match reevaluation {
+            Reevaluation::KeepOverride => *override_state,
+            Reevaluation::SetOverride(new_override) => new_override,
+        };
+        let (is_active, remaining) = candidate.settle(enabled, scheduled);
+        *override_state = remaining;
+        let was_active = self.is_active_sender.send_replace(is_active);
+        drop(override_state);
+
+        if was_active != is_active {
+            info!(
+                trigger,
+                is_active,
+                override_state = ?remaining,
+                "Night mode state changed"
+            );
         }
     }
 
@@ -105,12 +152,12 @@ impl NightModeController {
         self.config_handle.read().await.night_mode()
     }
 
-    pub(crate) async fn override_state(&self) -> NightModeOverride {
-        *self.override_state.read().await
-    }
-
-    async fn calculate_is_active(&self) -> bool {
-        match self.override_state().await {
+    fn calculate_is_active(&self) -> bool {
+        let override_state = *self
+            .override_state
+            .lock()
+            .expect("BUG: night mode override lock poisoned");
+        match override_state {
             NightModeOverride::ForceActive => true,
             NightModeOverride::ForceInactive => false,
             NightModeOverride::None => *self.scheduled.borrow(),
@@ -126,14 +173,9 @@ impl NightModeController {
         drop(config_handle);
 
         self.window.set(window_of(&night_mode));
-        let is_active = *self.scheduled.borrow();
-        self.is_active_sender.send_replace(is_active);
+        self.refresh("enabled change").await;
 
-        info!(
-            enabled = enabled,
-            is_active = is_active,
-            "Night mode enabled state updated"
-        );
+        info!(enabled = enabled, "Night mode enabled state updated");
 
         Ok(())
     }
@@ -147,13 +189,11 @@ impl NightModeController {
         drop(config_handle);
 
         self.window.set(window_of(&night_mode));
-        let is_active = *self.scheduled.borrow();
-        self.is_active_sender.send_replace(is_active);
+        self.refresh("interval change").await;
 
         info!(
             from = %from,
             to = %to,
-            is_active = is_active,
             "Night mode interval updated"
         );
 
@@ -208,47 +248,30 @@ impl NightModeController {
 
     pub(crate) async fn toggle(&self) -> anyhow::Result<()> {
         let config = self.config().await;
-        let is_currently_active = self.calculate_is_active().await;
+        let is_currently_active = self.calculate_is_active();
         let now_in_scheduled_range = *self.scheduled.borrow();
 
-        match (config.enabled, is_currently_active, now_in_scheduled_range) {
+        let new_override = match (config.enabled, is_currently_active, now_in_scheduled_range) {
             // Case 1: Config disabled, turning ON
             (false, _, _) => {
                 // Enable config + force active
                 self.set_enabled(true).await?;
-                *self.override_state.write().await = NightModeOverride::ForceActive;
+                NightModeOverride::ForceActive
             }
 
             // Case 2: Currently active during scheduled hours, turning OFF
-            (true, true, true) => {
-                // Force inactive during scheduled hours
-                // The scheduled 'from' job will clear this override
-                *self.override_state.write().await = NightModeOverride::ForceInactive;
-            }
+            (true, true, true) => NightModeOverride::ForceInactive,
 
             // Case 3: Was force active outside hours, turning OFF
-            (true, true, false) => {
-                // Clear force active override
-                *self.override_state.write().await = NightModeOverride::None;
-            }
-
             // Case 4: Currently inactive during scheduled hours (was forced off), turning ON
-            (true, false, true) => {
-                // Clear force inactive override
-                *self.override_state.write().await = NightModeOverride::None;
-            }
+            (true, true, false) | (true, false, true) => NightModeOverride::None,
 
             // Case 5: Outside hours and inactive, turning ON
-            (true, false, false) => {
-                // Force active outside hours
-                // The scheduled 'to' job will clear this override
-                *self.override_state.write().await = NightModeOverride::ForceActive;
-            }
-        }
+            (true, false, false) => NightModeOverride::ForceActive,
+        };
 
-        // Recalculate and update is_active
-        let new_is_active = self.calculate_is_active().await;
-        self.is_active_sender.send_replace(new_is_active);
+        self.publish("toggle", Reevaluation::SetOverride(new_override))
+            .await;
 
         Ok(())
     }

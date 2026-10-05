@@ -150,6 +150,70 @@ async fn changing_the_window_applies_it_at_once() {
     );
 }
 
+#[test]
+fn settle_keeps_an_override_only_while_the_schedule_disagrees() {
+    use NightModeOverride::{ForceActive, ForceInactive};
+    let follow = NightModeOverride::None;
+
+    // (override, enabled, scheduled) => (is_active, remaining override)
+    let cases = [
+        ((follow, true, true), (true, follow)),
+        ((follow, true, false), (false, follow)),
+        ((follow, false, false), (false, follow)),
+        ((ForceActive, true, false), (true, ForceActive)),
+        ((ForceActive, true, true), (true, follow)),
+        ((ForceActive, false, false), (false, follow)),
+        ((ForceInactive, true, true), (false, ForceInactive)),
+        ((ForceInactive, true, false), (false, follow)),
+        ((ForceInactive, false, false), (false, follow)),
+    ];
+
+    for ((override_state, enabled, scheduled), expected) in cases {
+        assert_eq!(
+            override_state.settle(enabled, scheduled),
+            expected,
+            "{override_state:?} with enabled={enabled}, scheduled={scheduled}"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn toggle_after_reenabling_turns_night_mode_on() {
+    let fixture = Fixture::booted_at(at(2026, 9, 28, 14, 0), hm(22, 30), hm(6, 30)).await;
+    fixture.toggle().await;
+    for enabled in [false, true] {
+        fixture
+            .controller
+            .set_enabled(enabled)
+            .await
+            .expect("BUG: setting night mode enabled must succeed in tests");
+    }
+
+    fixture.toggle().await;
+
+    assert!(
+        fixture.is_active(),
+        "the override from before disabling is gone, so the press turns night mode on"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn toggle_while_disabled_enables_and_turns_night_mode_on() {
+    let fixture = Fixture::booted_at(at(2026, 9, 28, 14, 0), hm(22, 30), hm(6, 30)).await;
+    fixture
+        .controller
+        .set_enabled(false)
+        .await
+        .expect("BUG: setting night mode enabled must succeed in tests");
+
+    fixture.toggle().await;
+
+    assert!(
+        fixture.is_active(),
+        "a press while disabled turns night mode on outside the window"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn manual_override_survives_a_timezone_change_inside_its_window() {
     let fixture = Fixture::booted_at(at(2026, 9, 28, 23, 0), hm(22, 30), hm(6, 30)).await;
