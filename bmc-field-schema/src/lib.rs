@@ -330,28 +330,9 @@ impl ParamValue {
     #[must_use]
     pub fn from_param_kind_default(kind: &ParamKind) -> Self {
         match kind.shape() {
-            Shape::Scalar(scalar) => Self::from_scalar_default(scalar),
+            Shape::Scalar(scalar) => scalar.default_value(),
             Shape::Array(ArrayParam { default_value, .. }) => {
                 ParamValue::List(default_value.clone())
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn from_scalar_default(scalar: Scalar<'_>) -> Self {
-        match scalar {
-            Scalar::String(StringParam { default_value, .. })
-            | Scalar::Timezone(TimezoneParam { default_value, .. }) => default_value
-                .clone()
-                .map_or(ParamValue::Null, ParamValue::String),
-            Scalar::Double(DoubleParam { default_value, .. }) => {
-                default_value.map_or(ParamValue::Null, ParamValue::Double)
-            }
-            Scalar::Integer(IntegerParam { default_value, .. }) => {
-                default_value.map_or(ParamValue::Null, ParamValue::Integer)
-            }
-            Scalar::Boolean(BooleanParam { default_value }) => {
-                default_value.map_or(ParamValue::Null, ParamValue::Boolean)
             }
         }
     }
@@ -968,6 +949,26 @@ impl ObjectParam {
 }
 
 impl<'a> Scalar<'a> {
+    /// `Null` when no default is declared.
+    #[must_use]
+    pub fn default_value(self) -> ParamValue {
+        match self {
+            Scalar::String(StringParam { default_value, .. })
+            | Scalar::Timezone(TimezoneParam { default_value, .. }) => default_value
+                .clone()
+                .map_or(ParamValue::Null, ParamValue::String),
+            Scalar::Double(DoubleParam { default_value, .. }) => {
+                default_value.map_or(ParamValue::Null, ParamValue::Double)
+            }
+            Scalar::Integer(IntegerParam { default_value, .. }) => {
+                default_value.map_or(ParamValue::Null, ParamValue::Integer)
+            }
+            Scalar::Boolean(BooleanParam { default_value }) => {
+                default_value.map_or(ParamValue::Null, ParamValue::Boolean)
+            }
+        }
+    }
+
     #[must_use]
     pub fn placeholder(self) -> Option<&'a str> {
         match self {
@@ -986,7 +987,7 @@ impl<'a> Scalar<'a> {
             Scalar::Integer(p) => p.validate(),
             Scalar::Boolean(_) | Scalar::Timezone(_) => Ok(()),
         }?;
-        let default = ParamValue::from_scalar_default(self);
+        let default = self.default_value();
         if required && matches!(&default, ParamValue::String(s) if s.is_empty()) {
             return Err("default_value: Value is required".into());
         }
@@ -1044,7 +1045,7 @@ impl ArrayParam {
     }
 
     fn check_unique_items(&self) -> Result<(), String> {
-        let has_default = |scalar| ParamValue::from_scalar_default(scalar) != ParamValue::Null;
+        let has_default = |scalar: Scalar<'_>| scalar.default_value() != ParamValue::Null;
         match (&self.unique_items, self.items.shape()) {
             (UniqueItems::Off, _) | (UniqueItems::Whole, ItemShape::Object(_)) => {}
             (UniqueItems::By(_), ItemShape::Scalar(_)) => {

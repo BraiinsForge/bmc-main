@@ -528,7 +528,7 @@ fn paint_object_fields(
 }
 
 fn seed_value(scalar: Scalar<'_>) -> ParamValue {
-    let seed = ParamValue::from_scalar_default(scalar);
+    let seed = scalar.default_value();
     if matches!(seed, ParamValue::Null) {
         seed_without_default(scalar)
     } else {
@@ -547,7 +547,7 @@ fn seed_item(kind: &ItemKind) -> ParamValue {
                 .map(|(key, field)| {
                     let scalar = field.kind.as_scalar();
                     let value = if field.is_optional {
-                        ParamValue::from_scalar_default(scalar)
+                        scalar.default_value()
                     } else {
                         seed_value(scalar)
                     };
