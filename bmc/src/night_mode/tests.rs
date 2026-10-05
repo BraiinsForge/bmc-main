@@ -215,6 +215,23 @@ async fn toggle_while_disabled_enables_and_turns_night_mode_on() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn changing_the_window_drops_a_manual_override() {
+    let fixture = Fixture::booted_at(at(2026, 9, 28, 14, 0), hm(22, 30), hm(6, 30)).await;
+    fixture.toggle().await;
+
+    fixture
+        .controller
+        .set_interval(hm(23, 0), hm(7, 0))
+        .await
+        .expect("BUG: setting the night mode interval must succeed in tests");
+
+    assert!(
+        !fixture.is_active(),
+        "14:00 lies outside 23:00..07:00 and the manual on is gone"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn manual_override_survives_a_timezone_change_inside_its_window() {
     let fixture = Fixture::booted_at(at(2026, 9, 28, 23, 0), hm(22, 30), hm(6, 30)).await;
     fixture.toggle().await;

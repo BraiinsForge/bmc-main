@@ -173,7 +173,11 @@ impl NightModeController {
         drop(config_handle);
 
         self.window.set(window_of(&night_mode));
-        self.refresh("enabled change").await;
+        self.publish(
+            "enabled change",
+            Reevaluation::SetOverride(NightModeOverride::None),
+        )
+        .await;
 
         info!(enabled = enabled, "Night mode enabled state updated");
 
@@ -189,7 +193,11 @@ impl NightModeController {
         drop(config_handle);
 
         self.window.set(window_of(&night_mode));
-        self.refresh("interval change").await;
+        self.publish(
+            "interval change",
+            Reevaluation::SetOverride(NightModeOverride::None),
+        )
+        .await;
 
         info!(
             from = %from,
