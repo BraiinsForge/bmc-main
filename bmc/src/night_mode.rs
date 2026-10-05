@@ -55,15 +55,17 @@ impl NightModeController {
         config_handle: Arc<RwLock<ConfigHandle>>,
         scheduler: JobScheduler,
         timezone_receiver: watch::Receiver<Timezone>,
+        clock_steps: watch::Receiver<u64>,
     ) -> Self {
         let night_mode = config_handle.read().await.night_mode();
         let timezone = timezone_receiver.borrow().clone();
         let is_active = night_mode.is_active(&timezone);
         let (is_active_sender, _) = watch::channel(is_active);
 
-        tokio::spawn(Self::update_is_active_on_timezone_change(
+        tokio::spawn(Self::update_is_active_on_wall_clock_change(
             config_handle.clone(),
             timezone_receiver.clone(),
+            clock_steps,
             is_active_sender.clone(),
         ));
 
@@ -94,31 +96,45 @@ impl NightModeController {
         this
     }
 
-    async fn update_is_active_on_timezone_change(
+    /// Re-checks the schedule on timezone changes and on clock steps,
+    /// since a step can carry the clock past an edge job that the scheduler then skips as overdue.
+    async fn update_is_active_on_wall_clock_change(
         config_handle: Arc<RwLock<ConfigHandle>>,
         mut timezone_receiver: watch::Receiver<Timezone>,
+        mut clock_steps: watch::Receiver<u64>,
         is_active_sender: watch::Sender<bool>,
     ) {
+        let mut clock_steps_open = true;
         loop {
-            match timezone_receiver.changed().await {
-                Ok(()) => {
-                    let night_mode = config_handle.read().await.night_mode();
-                    let timezone = timezone_receiver.borrow_and_update().clone();
-                    let is_active = night_mode.is_active(&timezone);
-                    let previous_state = is_active_sender.send_replace(is_active);
-
-                    if previous_state != is_active {
-                        info!(
-                            timezone = %timezone,
-                            is_active = is_active,
-                            "Night mode state updated due to timezone change"
-                        );
+            let trigger = tokio::select! {
+                changed = timezone_receiver.changed() => match changed {
+                    Ok(()) => "timezone change",
+                    Err(err) => {
+                        info!(error = %err, "Timezone receiver closed, stopping night mode update loop");
+                        break;
                     }
+                },
+                changed = clock_steps.changed(), if clock_steps_open => {
+                    clock_steps_open = changed.is_ok();
+                    if !clock_steps_open {
+                        continue;
+                    }
+                    "clock step"
                 }
-                Err(err) => {
-                    info!(error = %err, "Timezone receiver closed, stopping night mode update loop");
-                    break;
-                }
+            };
+
+            let night_mode = config_handle.read().await.night_mode();
+            let timezone = timezone_receiver.borrow_and_update().clone();
+            let is_active = night_mode.is_active(&timezone);
+            let previous_state = is_active_sender.send_replace(is_active);
+
+            if previous_state != is_active {
+                info!(
+                    timezone = %timezone,
+                    is_active = is_active,
+                    trigger,
+                    "Night mode state updated after a wall-clock change"
+                );
             }
         }
     }

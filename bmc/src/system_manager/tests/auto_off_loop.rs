@@ -195,8 +195,13 @@ async fn auto_off_harness(alarm_ringing: bool) -> AutoOffHarness {
 
     let (timezone_tx, timezone_rx) = watch::channel(Timezone::default());
     let scheduler = JobScheduler::init(timezone_rx.clone(), Some(tmp.path().join("crontab"))).await;
-    let night_mode_controller =
-        NightModeController::init(config_handle.clone(), scheduler, timezone_rx).await;
+    let night_mode_controller = NightModeController::init(
+        config_handle.clone(),
+        scheduler,
+        timezone_rx,
+        watch::channel(0).1,
+    )
+    .await;
 
     let timeout_changed = config_handle
         .read()

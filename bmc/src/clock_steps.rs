@@ -1,4 +1,3 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
 // Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -19,45 +18,30 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-mod alarm;
-pub mod backlight;
-pub mod bootloader_config;
-pub mod boser;
-mod button_manager;
-mod clock_steps;
-pub mod compositor;
-mod config;
-pub mod config_migration;
-mod credential;
-mod data;
-pub mod entry;
-mod file_token;
-pub mod firmware;
-mod initial_setup;
-pub mod installable_widgets;
-mod led;
-pub mod led_coordinator;
-pub mod log;
-pub mod manager;
-#[cfg(feature = "manifest-tests")]
-pub mod manifest_test_support;
-mod night_mode;
-pub mod scene;
-pub mod secret_store;
-pub mod session;
-pub mod shutdown;
-mod sound;
-mod startup;
-mod system_manager;
-mod system_upgrade;
-#[cfg(test)]
-pub(crate) mod test_support;
-mod timezone_boser;
-pub mod utils;
-mod web;
-pub mod widget;
+use tokio::sync::watch;
 
-pub use led_coordinator::{Layer, LedCoordinatorHandle, spawn_led_coordinator};
-pub use manager::{BmcManager, UpgradeError, UpgradeMarker};
-pub use startup::{App, Configuration};
-pub use web::ServerConfig;
+#[cfg(target_os = "linux")]
+mod step_timer;
+
+/// Counts `CLOCK_REALTIME` steps (NTP, `date -s`) in either direction, starting at zero.
+///
+/// The timer is armed before this returns,
+/// so a step during the caller's own startup is recorded by the kernel instead of lost.
+/// The receiver closes if the timer fails. Must be called from within a Tokio runtime.
+#[cfg(target_os = "linux")]
+pub(crate) fn watch_clock_steps() -> watch::Receiver<u64> {
+    step_timer::watch().unwrap_or_else(|err| {
+        tracing::error!(error = %err, "Cannot watch for wall-clock steps");
+        closed()
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn watch_clock_steps() -> watch::Receiver<u64> {
+    tracing::info!("No timerfd on this platform, wall-clock steps go unnoticed");
+    closed()
+}
+
+fn closed() -> watch::Receiver<u64> {
+    watch::channel(0).1
+}

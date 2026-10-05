@@ -26,6 +26,7 @@ use crate::backlight::DisplayBacklightDriver;
 use crate::{
     backlight::DisplayBacklightController,
     bootloader_config::BootloaderConfig,
+    clock_steps::watch_clock_steps,
     config::{ConfigHandle, NightModeConfig},
     led::LedState,
     manager::BmcManager,
@@ -178,9 +179,13 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         let backlight_controller =
             DisplayBacklightController::new(config_handle.clone(), backlight_driver.clone());
 
-        let night_mode_controller =
-            NightModeController::init(config_handle.clone(), scheduler, timezone_receiver.clone())
-                .await;
+        let night_mode_controller = NightModeController::init(
+            config_handle.clone(),
+            scheduler,
+            timezone_receiver.clone(),
+            watch_clock_steps(),
+        )
+        .await;
 
         let brightness_modified = Arc::new(Notify::new());
 
