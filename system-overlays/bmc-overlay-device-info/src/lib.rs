@@ -222,11 +222,16 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
         }
         Screen::SetupConnected { since } => {
             if now.duration_since(since) >= HOLD {
-                // An operational device goes back to its scenes. A first boot
-                // still has the wizard to finish, and so has a reconfiguration
-                // begun mid-setup: its join leaves the lifecycle on SetupPending,
-                // so both go on to the connect-info.
-                if mode.setup_done() {
+                // An operational device shows its new address,
+                // since the browser that asked for the join lost the device on the way.
+                // A reconfiguration whose lifecycle has not caught up steps aside,
+                // since it may still turn out to be mid-setup.
+                // A first boot still has the wizard to finish,
+                // and so has a reconfiguration begun mid-setup,
+                // whose join leaves the lifecycle on SetupPending.
+                if mode == Mode::Operational {
+                    station_ip.map_or(Screen::Done, |ip| Screen::OpSuccess { since: now, ip })
+                } else if mode.setup_done() {
                     Screen::Done
                 } else {
                     Screen::SetupConnectInfo { ip: station_ip }
@@ -1374,8 +1379,9 @@ mod tests {
     }
 
     #[test]
-    fn reconfig_success_returns_to_scenes_without_connect_info() {
-        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+    fn reconfig_success_shows_where_the_device_is_reached_now() {
+        let new_ip = Ipv4Addr::new(192, 168, 1, 20);
+        let (mut overlay, prober) = overlay_with_prober(None);
         overlay.on_device_state(DeviceState::WifiReconfiguration, false);
         overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
         // Reconfiguration exits AP mode before the success event arrives.
@@ -1386,8 +1392,16 @@ mod tests {
             "flow survives the lifecycle flip"
         );
 
+        prober.publish(Some(new_ip));
         overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
-        let tick = overlay.tick(t0() + HOLD);
+        let start = t0();
+        let _ = overlay.tick(start + HOLD);
+        assert!(matches!(
+            overlay.screen,
+            Screen::OpSuccess { ip, .. } if ip == new_ip
+        ));
+
+        let tick = overlay.tick(start + HOLD + SUCCESS_VISIBLE_FOR);
         assert_eq!(overlay.screen, Screen::Done);
         assert!(!tick.visible);
     }
@@ -1398,6 +1412,46 @@ mod tests {
         overlay.on_device_state(DeviceState::Operational, true);
         assert!(!overlay.tick(t0()).visible);
         (overlay, prober)
+    }
+
+    #[test]
+    fn an_operational_join_waits_for_its_outcome_and_then_shows_the_new_address() {
+        let old_ip = Ipv4Addr::new(10, 0, 0, 5);
+        let new_ip = Ipv4Addr::new(192, 168, 1, 20);
+        let (mut overlay, prober) = settled_overlay(Some(old_ip));
+
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        let _ = overlay.tick(t0() + WAIT_FOR_IP);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnecting {
+                link: Link::Wifi {
+                    ssid: Some("HomeNet".to_owned())
+                }
+            },
+            "the address the device is leaving does not end the join"
+        );
+
+        prober.publish(Some(new_ip));
+        overlay.on_setup_progress(SetupStep::WifiConnectionSuccess, "");
+        let start = t0();
+        assert!(matches!(overlay.screen, Screen::SetupConnected { .. }));
+        let _ = overlay.tick(start + HOLD);
+        assert!(matches!(
+            overlay.screen,
+            Screen::OpSuccess { ip, .. } if ip == new_ip
+        ));
+    }
+
+    #[test]
+    fn an_operational_join_with_no_address_yet_returns_to_the_scenes() {
+        let (mut overlay, _prober) = settled_overlay(None);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::WifiConnectionSuccess, "");
+
+        let tick = overlay.tick(t0() + HOLD);
+        assert_eq!(overlay.screen, Screen::Done);
+        assert!(!tick.visible);
     }
 
     #[test]

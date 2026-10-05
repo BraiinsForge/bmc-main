@@ -53,7 +53,8 @@ Ethernet port.
 
 - Starting Wi-Fi setup again from the settings tray shows the same setup screens as a first boot, and they stay up the
   same way: the device keeps showing its setup network until the new credentials arrive.
-- On success the device returns to its scenes directly, since it was already configured before.
+- On success the device confirms the join, then shows its new address with a QR code, since the phone that configured it
+  has to find it there. It hands over to the scenes on its own.
 
 ### Understand a setup that cannot continue
 
