@@ -29,7 +29,7 @@ fn rtc_reset() -> DateTime<Utc> {
 }
 
 struct Fixture {
-    _temp: tempfile::TempDir,
+    config_dir: tempfile::TempDir,
     timezone_sender: watch::Sender<Timezone>,
     clock_steps: watch::Sender<u64>,
     clock: FakeWallClock,
@@ -66,7 +66,7 @@ impl Fixture {
         let is_active = controller.subscribe();
 
         Self {
-            _temp: temp,
+            config_dir: temp,
             timezone_sender,
             clock_steps,
             clock,
@@ -229,6 +229,26 @@ async fn changing_the_window_drops_a_manual_override() {
         !fixture.is_active(),
         "14:00 lies outside 23:00..07:00 and the manual on is gone"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_save_still_applies_the_edited_window() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut fixture = Fixture::booted_at(at(2026, 9, 28, 14, 0), hm(22, 30), hm(6, 30)).await;
+    let config_dir = fixture.config_dir.path().to_path_buf();
+    std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o500))
+        .expect("BUG: chmod");
+    if std::fs::write(config_dir.join("probe"), b"").is_ok() {
+        // Running as root: nothing here can fail, nothing to prove.
+        return;
+    }
+
+    let saved = fixture.controller.set_interval(hm(13, 0), hm(15, 0)).await;
+    std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o700))
+        .expect("BUG: chmod back");
+
+    assert!(saved.is_err(), "the config directory is read-only");
+    fixture.expect_soon(true).await;
 }
 
 #[tokio::test(start_paused = true)]

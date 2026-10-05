@@ -117,7 +117,10 @@ impl NightModeController {
 
     /// Settles the override against the schedule and publishes the result.
     async fn publish(&self, trigger: &'static str, reevaluation: Reevaluation) {
-        let enabled = self.config().await.enabled;
+        // Held until the state is published,
+        // so a schedule edit cannot be overwritten by a result computed from the old schedule.
+        let config_handle = self.config_handle.read().await;
+        let enabled = config_handle.night_mode().enabled;
 
         let mut override_state = self
             .override_state
@@ -133,6 +136,7 @@ impl NightModeController {
         *override_state = remaining;
         let was_active = self.is_active_sender.send_replace(is_active);
         drop(override_state);
+        drop(config_handle);
 
         if was_active != is_active {
             info!(
@@ -167,12 +171,10 @@ impl NightModeController {
     pub(crate) async fn set_enabled(&self, enabled: bool) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_enabled(enabled);
+        self.window.set(window_of(&config_handle.night_mode()));
         config_handle.save().await?;
-
-        let night_mode = config_handle.night_mode();
         drop(config_handle);
 
-        self.window.set(window_of(&night_mode));
         self.publish(
             "enabled change",
             Reevaluation::SetOverride(NightModeOverride::None),
@@ -187,12 +189,10 @@ impl NightModeController {
     pub(crate) async fn set_interval(&self, from: NaiveTime, to: NaiveTime) -> anyhow::Result<()> {
         let mut config_handle = self.config_handle.write().await;
         config_handle.set_night_mode_interval(from, to);
+        self.window.set(window_of(&config_handle.night_mode()));
         config_handle.save().await?;
-
-        let night_mode = config_handle.night_mode();
         drop(config_handle);
 
-        self.window.set(window_of(&night_mode));
         self.publish(
             "interval change",
             Reevaluation::SetOverride(NightModeOverride::None),
