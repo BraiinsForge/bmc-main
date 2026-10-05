@@ -30,11 +30,9 @@ use reqwest::{Client, RequestBuilder, Response, StatusCode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
-use tokio::sync::watch;
 use tracing::warn;
 
-use crate::compositor::UpgradeRunSnapshot;
-use crate::system_upgrade::RunStatusService;
+use crate::system_upgrade::{RunStatusService, RunUpdates};
 
 /// Boser listens on this device, so a connect that is not immediate will not come.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -112,9 +110,9 @@ impl BoserUpgrade {
         }
     }
 
-    /// A receiver that reports only the snapshots published from now on.
-    pub(crate) fn subscribe(&self) -> watch::Receiver<Option<UpgradeRunSnapshot>> {
-        self.display.subscribe()
+    /// Reports only what is published from now on.
+    pub(crate) fn subscribe(&self) -> RunUpdates {
+        self.display.subscribe_run_updates()
     }
 
     pub(crate) async fn check(

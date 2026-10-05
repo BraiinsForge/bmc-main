@@ -726,6 +726,20 @@ impl StateService {
 
 pub(crate) type RunStatusEvents = UnboundedReceiver<Option<UpgradeRunSnapshot>>;
 
+/// How a Boser execution ended that was never on display while it ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnseenOutcome {
+    pub(crate) id: ExecutionId,
+    pub(crate) result: Result<(), String>,
+}
+
+/// Everything published about upgrade runs from the moment of subscribing on.
+#[derive(Debug)]
+pub(crate) struct RunUpdates {
+    pub(crate) display: Receiver<Option<UpgradeRunSnapshot>>,
+    pub(crate) unseen_outcomes: Receiver<Option<UnseenOutcome>>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RunStatusService {
     sender: Arc<watch::Sender<Option<UpgradeRunSnapshot>>>,
@@ -734,6 +748,9 @@ pub(crate) struct RunStatusService {
     /// that the next value overwrites.
     events: tokio::sync::mpsc::UnboundedSender<Option<UpgradeRunSnapshot>>,
     unclaimed_events: Arc<std::sync::Mutex<Option<RunStatusEvents>>>,
+    /// Kept off the display channel: nothing showed these runs,
+    /// so their outcome must not raise an overlay either.
+    unseen_outcomes: Arc<watch::Sender<Option<UnseenOutcome>>>,
     generation: Arc<AtomicUsize>,
 }
 
@@ -741,11 +758,13 @@ impl RunStatusService {
     pub(crate) fn new() -> Self {
         let (sender, _) = watch::channel(None);
         let (events, unclaimed_events) = tokio::sync::mpsc::unbounded_channel();
+        let (unseen_outcomes, _) = watch::channel(None);
 
         Self {
             sender: Arc::new(sender),
             events,
             unclaimed_events: Arc::new(std::sync::Mutex::new(Some(unclaimed_events))),
+            unseen_outcomes: Arc::new(unseen_outcomes),
             generation: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -788,6 +807,13 @@ impl RunStatusService {
 
     fn subscribe(&self) -> Receiver<Option<UpgradeRunSnapshot>> {
         self.sender.subscribe()
+    }
+
+    pub(crate) fn subscribe_run_updates(&self) -> RunUpdates {
+        RunUpdates {
+            display: self.sender.subscribe(),
+            unseen_outcomes: self.unseen_outcomes.subscribe(),
+        }
     }
 
     fn publish_post_reboot_success(&self, kind: UpgradeKind) {

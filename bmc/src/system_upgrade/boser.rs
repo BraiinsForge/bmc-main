@@ -24,6 +24,8 @@
 
 #[expect(dead_code, reason = "no upgrade RPC routes to Boser yet")]
 pub(crate) mod client;
+#[expect(dead_code, reason = "no upgrade RPC routes to Boser yet")]
+pub(crate) mod progress;
 
 use std::time::Duration;
 

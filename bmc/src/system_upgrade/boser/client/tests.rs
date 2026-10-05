@@ -426,7 +426,7 @@ async fn a_subscription_reports_only_later_snapshots() {
     let boser = BoserUpgrade::new(dead_address().await, display.clone());
     display.publish(snapshot(UpgradePhase::PackageRealizing));
 
-    let subscription = boser.subscribe();
+    let subscription = boser.subscribe().display;
 
     assert!(
         !subscription
