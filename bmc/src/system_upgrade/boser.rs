@@ -22,6 +22,9 @@
 //! follows the state stream and presents each execution on the display
 //! and the restart block, the way the local flow does on Deck.
 
+#[expect(dead_code, reason = "no upgrade RPC routes to Boser yet")]
+pub(crate) mod client;
+
 use std::time::Duration;
 
 use bmc_upgrade_types::{
