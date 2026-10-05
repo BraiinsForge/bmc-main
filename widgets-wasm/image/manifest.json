@@ -22,7 +22,7 @@
       "name": "Image URL",
       "description": "URL of the image to display",
       "type": "string",
-      "default_value": ""
+      "optional": true
     },
     "refresh_seconds": {
       "name": "Refresh interval (seconds)",

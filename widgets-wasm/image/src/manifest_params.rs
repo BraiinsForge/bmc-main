@@ -47,7 +47,7 @@ bmc_wasm_sdk::impl_manifest_str_enum!(Sizing);
 pub struct Params {
     pub refresh_seconds: i32,
     pub sizing: Sizing,
-    pub url: String,
+    pub url: Option<String>,
 }
 impl Params {
     /// Materialise a typed snapshot from a dynamic [`snapshot::Params`].
@@ -56,7 +56,7 @@ impl Params {
         Self {
             refresh_seconds: <i32 as ParamRead>::read_required(snap, "refresh_seconds"),
             sizing: <Sizing as ParamRead>::read_required(snap, "sizing"),
-            url: <String as ParamRead>::read_required(snap, "url"),
+            url: <String as ParamRead>::read_optional(snap, "url"),
         }
     }
     /// Latest typed snapshot delivered for this widget instance.

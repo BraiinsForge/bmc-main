@@ -648,20 +648,19 @@ fn translate_font_style(font_style: &str) -> Option<&'static str> {
 /// - `image_scale_mode` (`fit` / `fill`) became `sizing`
 ///   (`contain` / `cover`).
 ///
-/// `url` keeps its name and passes through. Every required param is
+/// `url` keeps its name, and an empty one becomes unset. Every required param is
 /// always set — the boot-load path injects no manifest defaults — so
 /// absent, wrong-typed, or unparseable params fall back to the
 /// manifest defaults here.
 fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
     let mut params = Map::new();
 
-    // `url` is a free-form string; the manifest default is empty. Fill
-    // it when absent so the required param is always present.
+    // `url` is optional: v0 left it empty until set, which reads as unset.
     let url = widget
         .params
         .get("url")
         .and_then(Value::as_str)
-        .unwrap_or("");
+        .filter(|url| !url.is_empty());
     params.insert("url".to_owned(), json!(url));
 
     // v0 stored the refresh interval as a humantime string; the
@@ -1334,11 +1333,11 @@ mod tests {
     }
 
     #[test]
-    fn remote_image_defaults_url_when_absent() {
-        // `url` is required; an empty v0 widget must still carry it as
-        // the manifest default (empty string) rather than omitting it.
-        let upgraded = upgrade("remote_image", json!({}));
-        assert_eq!(upgraded.params["url"], str_param(""));
+    fn remote_image_leaves_an_absent_or_empty_url_unset() {
+        for params in [json!({}), json!({ "url": "" })] {
+            let upgraded = upgrade("remote_image", params.clone());
+            assert_eq!(upgraded.params["url"], ParamValue::Null, "for {params}");
+        }
     }
 
     #[test]

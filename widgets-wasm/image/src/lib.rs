@@ -126,11 +126,8 @@ mod wasm_glue {
     // released Slint widget so existing server URLs carry over unchanged.
     fn expanded_url() -> Option<String> {
         let size = widget_size();
-        machine::expand_url(
-            &manifest_params::Params::current().url,
-            size.width,
-            size.height,
-        )
+        let url = manifest_params::Params::current().url?;
+        machine::expand_url(&url, size.width, size.height)
     }
 
     // Cache identity: expanded URL + fit, so a URL/viewport/sizing change is a distinct blob.
@@ -240,7 +237,11 @@ mod wasm_glue {
 
         let size = widget_size();
         let params = manifest_params::Params::current();
-        let base = if params.url.trim().is_empty() {
+        let base = if params
+            .url
+            .as_deref()
+            .is_none_or(|url| url.trim().is_empty())
+        {
             render::message_view(CONFIGURE_URL, size)
         } else {
             VIEW.with(|v| match &*v.borrow() {
