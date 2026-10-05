@@ -138,7 +138,7 @@ class GetID {
         return [...this.#preffix, ...suffix].join('-');
     };
 }
-export const getID = new GetID('bmc').at;
+export const getID = new GetID().at;
 export function useID(...prefix: IdPath) {
     // biome-ignore lint/correctness/useExhaustiveDependencies: It is OK, but the check is kind of dumb
     return useMemo(() => getID(...prefix).get, prefix as DependencyList);

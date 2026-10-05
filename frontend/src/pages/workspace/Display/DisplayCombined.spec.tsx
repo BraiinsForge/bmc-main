@@ -74,12 +74,12 @@ function installMocks(): void {
 
 // Spelled out rather than composed with `getID`, so a change to the id scheme
 // fails here instead of being silently followed.
-const WIDGET_ID_PREFIX = 'bmc-display-comp-combined-scene-widget-';
-const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
-const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
-const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
+const WIDGET_ID_PREFIX = 'display-comp-combined-scene-widget-';
+const PICKER_MODAL_ID = 'display-comp-scene-select-kind-modal';
+const MANIFEST_DONE_ID = 'display-comp-manifest-form-done';
+const MANIFEST_MODAL_ID = 'display-comp-manifest-form-dialog';
 const WIDGET_1_EDIT_ID = `${WIDGET_ID_PREFIX}widget-1-edit`;
-const COUNT_INPUT_ID = 'bmc-display-comp-manifest-form-param-count';
+const COUNT_INPUT_ID = 'display-comp-manifest-form-param-count';
 
 function elementById(id: string): HTMLElement {
     const el = document.getElementById(id);

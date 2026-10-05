@@ -42,9 +42,9 @@ function registerMocks<S extends AnyService>(service: S, methods: Partial<Servic
     mocks.service(service, methods as ServiceMocks<S>);
 }
 
-// One Clone button per row, id `bmc-display-comp-scene-overview-row-<sceneId>-clone`.
+// One Clone button per row, id `display-comp-scene-overview-row-<sceneId>-clone`.
 // Used to count rows and read back each row's scene id.
-const ROW_ID_PREFIX = 'bmc-display-comp-scene-overview-row-';
+const ROW_ID_PREFIX = 'display-comp-scene-overview-row-';
 const ROW_ID_SUFFIX = '-clone';
 const LIMIT_ERROR = 'running widget limit exceeded: 56 running, operation would activate 1, maximum 56';
 const LIMIT_MESSAGE = 'Running widget limit reached.';
@@ -143,8 +143,8 @@ afterEach(() => {
 });
 
 describe('screen cycling transition effect', () => {
-    const CYCLE_MENU_ID = 'bmc-display-list-cycle-form-menu';
-    const EFFECT_DROPDOWN_ID = 'bmc-display-list-cycle-transition-effect';
+    const CYCLE_MENU_ID = 'display-list-cycle-form-menu';
+    const EFFECT_DROPDOWN_ID = 'display-list-cycle-transition-effect';
 
     let saved: pb.SceneCycling[];
 
@@ -503,7 +503,7 @@ describe('running widget limit', () => {
         fireEvent.click(edit);
         await flush();
         // Only a preview sent to the device leaves Cancel something to revert.
-        fireEvent.change(elementById('bmc-display-comp-manifest-form-param-count'), { target: { value: '8' } });
+        fireEvent.change(elementById('display-comp-manifest-form-param-count'), { target: { value: '8' } });
         await flush(300);
         streamDropped.resolve();
         await flush();
@@ -656,10 +656,10 @@ describe('list actions in quick succession', () => {
 describe('dialog session lifecycle', () => {
     // Spelled out rather than composed with `getID`, so a change
     // to the id scheme fails here instead of being silently followed.
-    const PICKER_MODAL_ID = 'bmc-display-comp-scene-select-kind-modal';
-    const MANIFEST_DONE_ID = 'bmc-display-comp-manifest-form-done';
-    const MANIFEST_MODAL_ID = 'bmc-display-comp-manifest-form-dialog';
-    const COUNT_INPUT_ID = 'bmc-display-comp-manifest-form-param-count';
+    const PICKER_MODAL_ID = 'display-comp-scene-select-kind-modal';
+    const MANIFEST_DONE_ID = 'display-comp-manifest-form-done';
+    const MANIFEST_MODAL_ID = 'display-comp-manifest-form-dialog';
+    const COUNT_INPUT_ID = 'display-comp-manifest-form-param-count';
 
     // Carbon keeps both dialogs mounted and toggles `is-visible`,
     // so presence in the DOM says nothing about which one is open.
@@ -1046,7 +1046,7 @@ describe('dialog session lifecycle', () => {
         async function openEditor(): Promise<void> {
             renderPage();
             await flush();
-            fireEvent.click(elementById('bmc-display-comp-scene-overview-row-S-edit'));
+            fireEvent.click(elementById('display-comp-scene-overview-row-S-edit'));
             await flush();
         }
 
@@ -1169,7 +1169,7 @@ describe('dialog session lifecycle', () => {
 
             closeManifestEditor();
             await flush();
-            fireEvent.click(elementById('bmc-display-comp-scene-overview-row-S-edit'));
+            fireEvent.click(elementById('display-comp-scene-overview-row-S-edit'));
             await flush();
 
             expect(announcements()).toEqual([]);
@@ -1426,7 +1426,7 @@ describe('dialog session lifecycle', () => {
             await flush(300);
             closeManifestEditor();
             await flush();
-            fireEvent.click(elementById('bmc-display-comp-scene-overview-row-S-clone'));
+            fireEvent.click(elementById('display-comp-scene-overview-row-S-clone'));
             await flush();
             previewHeld.resolve();
             await flush();
