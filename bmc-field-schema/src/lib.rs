@@ -1021,7 +1021,9 @@ impl ArrayParam {
     }
 
     fn validate(&self) -> Result<(), String> {
-        self.items.validate()?;
+        self.items
+            .validate()
+            .map_err(|reason| format!("items: {reason}"))?;
         if !(1..=MAX_ARRAY_ITEMS).contains(&self.max_items) {
             return Err(format!(
                 "max_items must be within 1..={MAX_ARRAY_ITEMS} (got {})",

@@ -1508,7 +1508,7 @@ mod tests {
             },
             "max_items": 3,
         }));
-        assert!(reason.starts_with(r#"field "count": "#), "{reason}");
+        assert!(reason.starts_with(r#"items: field "count": "#), "{reason}");
     }
 
     #[test]
@@ -1610,7 +1610,7 @@ mod tests {
             ),
             (
                 serde_json::json!({ "name": "L", "type": "array", "items": item, "max_items": 3 }),
-                "default_value: Value is required",
+                "items: default_value: Value is required",
             ),
             (
                 serde_json::json!({
@@ -1619,7 +1619,7 @@ mod tests {
                     "items": { "type": "object", "fields": { "label": field } },
                     "max_items": 3,
                 }),
-                r#"field "label": default_value: Value is required"#,
+                r#"items: field "label": default_value: Value is required"#,
             ),
         ] {
             assert_eq!(array_rejection(def), expected);
@@ -1780,7 +1780,7 @@ mod tests {
             "items": { "type": "timezone", "default_value": "Mars/Base" },
             "max_items": 3,
         }));
-        assert_eq!(reason, UNKNOWN_TIMEZONE);
+        assert_eq!(reason, format!("items: {UNKNOWN_TIMEZONE}"));
     }
 
     #[test]
@@ -1796,7 +1796,10 @@ mod tests {
             },
             "max_items": 3,
         }));
-        assert_eq!(reason, format!(r#"field "zone": {UNKNOWN_TIMEZONE}"#));
+        assert_eq!(
+            reason,
+            format!(r#"items: field "zone": {UNKNOWN_TIMEZONE}"#)
+        );
     }
 
     #[test]
