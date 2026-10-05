@@ -34,7 +34,6 @@ import {
     getValidDropSlots,
     defaultFormifiedValue,
     widgetParamsToFormifiedState,
-    parseFormifiedValue,
     buildFieldValues,
     credentialBindingsValid,
     credentialBindingsFor,
@@ -44,6 +43,7 @@ import {
 import { Code, ConnectError } from '@connectrpc/connect';
 import { fakeIntlProp } from '@/mocks/intl';
 import { listItem, type ListItem } from '@/components/ParamField/value';
+import { parseFormifiedValue } from '@/components/ParamField/parse';
 import { paramDef } from './test-helpers';
 
 const emptyParams = pb.create(pb.FieldValuesSchema, { fields: {} });
@@ -883,6 +883,33 @@ describe('parseFormifiedValue', () => {
         const r = parseFormifiedValue(paramDef('paramInteger', 'k', false, { max: 10 }), '11');
         if (!r.ok) expect(r.error).toBe('Must be at most 10');
         else throw new Error('expected error');
+    });
+    test('paramInteger without a max is capped at int32', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger', 'k', false, { min: 0 }), '2147483648');
+        if (!r.ok) expect(r.error).toBe('Must be at most 2147483647');
+        else throw new Error('expected error');
+    });
+    test('paramInteger without a min is floored at int32', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger'), '-2147483649');
+        if (!r.ok) expect(r.error).toBe('Must be at least -2147483648');
+        else throw new Error('expected error');
+    });
+    test('paramInteger "1e10" → error (past int32)', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger'), '1e10');
+        if (!r.ok) expect(r.error).toBe('Must be at most 2147483647');
+        else throw new Error('expected error');
+    });
+    test('paramInteger at the int32 edges → integerValue', () => {
+        for (const n of [-2_147_483_648, 2_147_483_647]) {
+            const r = parseFormifiedValue(paramDef('paramInteger'), String(n));
+            if (r.ok) expect(r.value.kind).toEqual({ case: 'integerValue', value: n });
+            else throw new Error(`expected ${n} to parse`);
+        }
+    });
+    test('paramDouble past int32 → doubleValue', () => {
+        const r = parseFormifiedValue(paramDef('paramDouble'), '3000000000');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'doubleValue', value: 3_000_000_000 });
+        else throw new Error('expected ok');
     });
     test('paramDouble below min → error', () => {
         const r = parseFormifiedValue(paramDef('paramDouble', 'k', false, { min: 0.5 }), '0.1');

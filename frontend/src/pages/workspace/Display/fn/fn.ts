@@ -33,11 +33,11 @@ import {
     listItem,
     type FieldValue,
     type ListItem,
-    type ObjectValue,
     type RowError,
     type ScalarKind,
     type ScalarValue,
 } from '@/components/ParamField/value';
+import { itemKind, parseFormifiedValue, type ParseFailure } from '@/components/ParamField/parse';
 
 import * as C from './const';
 import type { WidgetOrPlaceholder, WidgetsOccupandyMap, WidgetsWithPlaceholders } from './const';
@@ -409,47 +409,6 @@ export function revalidateField(
     return withFailure(cleared ?? { global: [], fields: {} }, def.key, r);
 }
 
-export type ParseFailure = { ok: false; error?: string; items?: Array<RowError | undefined> };
-export type ParseResult = { ok: true; value: pb.FieldValue } | ParseFailure;
-type ScalarParseResult = { ok: true; value: pb.FieldValue } | { ok: false; error: string };
-type ItemParseResult = { ok: true; value: pb.FieldValue } | { ok: false; error: RowError };
-
-function nullValue(): pb.FieldValue {
-    return pb.create(pb.FieldValueSchema, {
-        kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
-    });
-}
-function stringValue(v: string): pb.FieldValue {
-    return pb.create(pb.FieldValueSchema, { kind: { case: 'stringValue', value: v } });
-}
-function integerValue(n: number): pb.FieldValue {
-    return pb.create(pb.FieldValueSchema, { kind: { case: 'integerValue', value: n } });
-}
-function doubleValue(n: number): pb.FieldValue {
-    return pb.create(pb.FieldValueSchema, { kind: { case: 'doubleValue', value: n } });
-}
-function booleanValue(b: boolean): pb.FieldValue {
-    return pb.create(pb.FieldValueSchema, { kind: { case: 'booleanValue', value: b } });
-}
-function listValue(items: pb.FieldValue[]): pb.FieldValue {
-    return pb.create(pb.FieldValueSchema, {
-        kind: { case: 'listValue', value: pb.create(pb.FieldValueListSchema, { items }) },
-    });
-}
-function structValue(fields: Record<string, pb.FieldValue>): pb.FieldValue {
-    return pb.create(pb.FieldValueSchema, {
-        kind: { case: 'structValue', value: pb.create(pb.FieldValuesSchema, { fields }) },
-    });
-}
-
-function itemKind(array: pb.ParamArray): pb.ArrayItemKind['kind'] {
-    return array.items?.kind ?? { case: undefined };
-}
-
-function isObjectValue(v: ListItem['value']): v is ObjectValue {
-    return typeof v === 'object' && v !== null;
-}
-
 export function defaultFormifiedValue(def: pb.ManifestParamDefinition): FormifiedValue {
     if (def.kind.case === 'paramArray') {
         const kind = itemKind(def.kind.value);
@@ -505,113 +464,6 @@ export function widgetParamsToFormifiedState(
         out[def.key] = wire ? readWireAsFormified(def, wire) : defaultFormifiedValue(def);
     }
     return out;
-}
-
-const ERR_REQUIRED = 'Value is required';
-const ERR_NOT_NUMBER = 'Not a number';
-const ERR_NOT_INTEGER = 'Not an integer';
-
-// The server's `MAX_PARAM_STRING_LENGTH`, which counts UTF-8 bytes rather than characters.
-const MAX_STRING_BYTES = 1024;
-const utf8 = new TextEncoder();
-
-export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: FormifiedValue): ParseResult {
-    if (def.kind.case === 'paramArray') {
-        invariant(Array.isArray(raw), `list param "${def.key}" holds a non-list value`);
-        return parseList(
-            def.kind.value,
-            raw.map(row => row.value),
-        );
-    }
-    invariant(!Array.isArray(raw), `scalar param "${def.key}" holds a list value`);
-    return parseScalar(def.kind, raw, def.isOptional);
-}
-
-function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): ScalarParseResult {
-    switch (kind.case) {
-        case 'paramString': {
-            if (raw === null || raw === '') {
-                if (isOptional) return { ok: true, value: nullValue() };
-                return { ok: false, error: ERR_REQUIRED };
-            }
-            if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
-            if (utf8.encode(raw).length > MAX_STRING_BYTES)
-                return { ok: false, error: `Must be at most ${MAX_STRING_BYTES} bytes` };
-
-            return { ok: true, value: stringValue(raw) };
-        }
-        case 'paramTimezone': {
-            if (raw === null || raw === '') {
-                if (isOptional) return { ok: true, value: nullValue() };
-                return { ok: false, error: ERR_REQUIRED };
-            }
-            if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
-            return { ok: true, value: stringValue(raw) };
-        }
-        case 'paramInteger':
-        case 'paramDouble': {
-            const wantInt = kind.case === 'paramInteger';
-            const inner = kind.value;
-            if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
-                if (isOptional) return { ok: true, value: nullValue() };
-                return { ok: false, error: ERR_REQUIRED };
-            }
-            if (typeof raw !== 'string') return { ok: false, error: ERR_NOT_NUMBER };
-            const n = Number(raw.trim());
-            if (!Number.isFinite(n)) return { ok: false, error: ERR_NOT_NUMBER };
-            if (wantInt && !Number.isInteger(n)) return { ok: false, error: ERR_NOT_INTEGER };
-            if (inner.min !== undefined && n < inner.min) return { ok: false, error: `Must be at least ${inner.min}` };
-            if (inner.max !== undefined && n > inner.max) return { ok: false, error: `Must be at most ${inner.max}` };
-            return { ok: true, value: wantInt ? integerValue(n) : doubleValue(n) };
-        }
-        case 'paramBoolean':
-            return { ok: true, value: booleanValue(raw === true) };
-        case undefined:
-            return { ok: true, value: nullValue() };
-        default:
-            return assertUnreachable(kind, 'scalar param kind');
-    }
-}
-
-function itemCount(n: number): string {
-    return n === 1 ? '1 item' : `${n} items`;
-}
-
-function countError(count: number, array: pb.ParamArray): string | undefined {
-    if (count < array.minItems) return `Must have at least ${itemCount(array.minItems)}`;
-    if (count > array.maxItems) return `Must have at most ${itemCount(array.maxItems)}`;
-    return undefined;
-}
-
-function parseList(array: pb.ParamArray, raw: Array<ListItem['value']>): ParseResult {
-    const kind = itemKind(array);
-    const parsed = raw.map(value => parseItem(kind, value));
-    const items = parsed.map(r => (r.ok ? undefined : r.error));
-    const error = countError(raw.length, array);
-    if (error || items.some(Boolean)) return { ok: false, error, items };
-    return { ok: true, value: listValue(parsed.flatMap(r => (r.ok ? [r.value] : []))) };
-}
-
-function parseItem(kind: pb.ArrayItemKind['kind'], raw: ListItem['value']): ItemParseResult {
-    if (kind.case === 'paramObject') {
-        invariant(isObjectValue(raw), 'an object list row holds a scalar');
-        return parseObject(kind.value, raw);
-    }
-    invariant(!isObjectValue(raw), 'a scalar list row holds an object');
-    const r = parseScalar(kind, raw, false);
-    return r.ok ? r : { ok: false, error: { error: r.error } };
-}
-
-function parseObject(object: pb.ParamObject, raw: ObjectValue): ItemParseResult {
-    const fields: Record<string, pb.FieldValue> = {};
-    const errors: Record<string, string> = {};
-    for (const field of object.fields) {
-        const r = parseScalar(field.kind, ownValue(raw, field.key) ?? null, field.isOptional);
-        if (r.ok) fields[field.key] = r.value;
-        else errors[field.key] = r.error;
-    }
-    if (Object.keys(errors).length > 0) return { ok: false, error: { fields: errors } };
-    return { ok: true, value: structValue(fields) };
 }
 
 export function buildFieldValues(
