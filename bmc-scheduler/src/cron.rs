@@ -21,7 +21,6 @@
 
 use crate::JobDetails;
 use anyhow::{anyhow, bail};
-use chrono::{NaiveTime, Timelike};
 pub use croner::Cron;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -576,14 +575,6 @@ impl CrontabManager {
     pub async fn ensure_scheduler_disclaimer(&mut self) -> anyhow::Result<()> {
         self.scheduler_crontab.ensure_disclaimer().await
     }
-}
-
-pub fn from_naive_time(time: NaiveTime) -> anyhow::Result<Cron> {
-    let hour = time.hour();
-    let minute = time.minute();
-    let second = time.second();
-
-    Ok(Cron::from_str(&format!("{second} {minute} {hour} * * *"))?)
 }
 
 mod tests {
