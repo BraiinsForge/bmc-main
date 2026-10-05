@@ -165,3 +165,6 @@ impl From<FollowError> for Status {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
