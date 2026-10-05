@@ -198,6 +198,48 @@ async fn toggle_after_reenabling_turns_night_mode_on() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn toggling_twice_gives_the_schedule_back() {
+    for (now, scheduled) in [
+        (at(2026, 9, 28, 23, 0), true),
+        (at(2026, 9, 28, 14, 0), false),
+    ] {
+        let fixture = Fixture::booted_at(now, hm(22, 30), hm(6, 30)).await;
+
+        fixture.toggle().await;
+        assert_eq!(
+            fixture.is_active(),
+            !scheduled,
+            "the first press at {now} flips night mode"
+        );
+        fixture.toggle().await;
+        assert_eq!(
+            fixture.is_active(),
+            scheduled,
+            "the second press at {now} gives the schedule back"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn two_quick_presses_cancel_out_while_the_schedule_flips() {
+    let fixture = Fixture::booted_at(at(2026, 9, 28, 23, 0), hm(22, 30), hm(6, 30)).await;
+    // Moves the level out of the window without yielding,
+    // so both presses land before the controller publishes the flip.
+    fixture.controller.window.set(Some(DailyWindow {
+        from: hm(13, 0),
+        to: hm(15, 0),
+    }));
+
+    fixture.toggle().await;
+    fixture.toggle().await;
+
+    assert!(
+        fixture.is_active(),
+        "night mode was on when the presses landed, so two of them leave it on"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn toggle_while_disabled_enables_and_turns_night_mode_on() {
     let fixture = Fixture::booted_at(at(2026, 9, 28, 14, 0), hm(22, 30), hm(6, 30)).await;
     fixture

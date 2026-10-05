@@ -56,6 +56,9 @@ impl NightModeOverride {
 enum Reevaluation {
     KeepOverride,
     SetOverride(NightModeOverride),
+    /// Forces the opposite of the published state, read under the override lock
+    /// so concurrent toggles each flip it.
+    Toggle,
 }
 
 #[derive(Clone)]
@@ -132,6 +135,10 @@ impl NightModeController {
         let candidate = match reevaluation {
             Reevaluation::KeepOverride => *override_state,
             Reevaluation::SetOverride(new_override) => new_override,
+            Reevaluation::Toggle if *self.is_active_sender.borrow() => {
+                NightModeOverride::ForceInactive
+            }
+            Reevaluation::Toggle => NightModeOverride::ForceActive,
         };
         let (is_active, remaining) = candidate.settle(enabled, scheduled);
         *override_state = remaining;
@@ -157,18 +164,6 @@ impl NightModeController {
 
     pub(crate) async fn config(&self) -> NightModeConfig {
         self.config_handle.read().await.night_mode()
-    }
-
-    fn calculate_is_active(&self) -> bool {
-        let override_state = *self
-            .override_state
-            .lock()
-            .expect("BUG: night mode override lock poisoned");
-        match override_state {
-            NightModeOverride::ForceActive => true,
-            NightModeOverride::ForceInactive => false,
-            NightModeOverride::None => *self.scheduled.borrow(),
-        }
     }
 
     pub(crate) async fn set_enabled(&self, enabled: bool) -> anyhow::Result<()> {
@@ -257,32 +252,18 @@ impl NightModeController {
         Ok(())
     }
 
+    /// Flips the state the user currently sees.
+    /// Toggling on while night mode is disabled enables it first.
     pub(crate) async fn toggle(&self) -> anyhow::Result<()> {
-        let config = self.config().await;
-        let is_currently_active = self.calculate_is_active();
-        let now_in_scheduled_range = *self.scheduled.borrow();
-
-        let new_override = match (config.enabled, is_currently_active, now_in_scheduled_range) {
-            // Case 1: Config disabled, turning ON
-            (false, _, _) => {
-                // Enable config + force active
-                self.set_enabled(true).await?;
-                NightModeOverride::ForceActive
-            }
-
-            // Case 2: Currently active during scheduled hours, turning OFF
-            (true, true, true) => NightModeOverride::ForceInactive,
-
-            // Case 3: Was force active outside hours, turning OFF
-            // Case 4: Currently inactive during scheduled hours (was forced off), turning ON
-            (true, true, false) | (true, false, true) => NightModeOverride::None,
-
-            // Case 5: Outside hours and inactive, turning ON
-            (true, false, false) => NightModeOverride::ForceActive,
+        let reevaluation = if self.config().await.enabled {
+            Reevaluation::Toggle
+        } else {
+            // Enabling may already turn it on inside the window, so a flip would undo the press.
+            self.set_enabled(true).await?;
+            Reevaluation::SetOverride(NightModeOverride::ForceActive)
         };
 
-        self.publish("toggle", Reevaluation::SetOverride(new_override))
-            .await;
+        self.publish("toggle", reevaluation).await;
 
         Ok(())
     }
