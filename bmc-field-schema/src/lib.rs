@@ -877,7 +877,7 @@ impl ParamDefinition {
         if !self.is_optional && !self.kind.has_default_value() {
             return Err(invalid("required param needs default_value".into()));
         }
-        self.kind.validate(name)
+        self.kind.validate(name, !self.is_optional)
     }
 }
 
@@ -905,14 +905,10 @@ impl ParamKind {
         }
     }
 
-    fn validate(&self, name: &str) -> Result<(), FieldSchemaError> {
-        match self {
-            ParamKind::String(p) => Scalar::String(p).validate(),
-            ParamKind::Double(p) => Scalar::Double(p).validate(),
-            ParamKind::Integer(p) => Scalar::Integer(p).validate(),
-            ParamKind::Boolean(p) => Scalar::Boolean(p).validate(),
-            ParamKind::Timezone(p) => Scalar::Timezone(p).validate(),
-            ParamKind::Array(array) => array.validate(),
+    fn validate(&self, name: &str, required: bool) -> Result<(), FieldSchemaError> {
+        match self.shape() {
+            Shape::Scalar(scalar) => scalar.validate(required),
+            Shape::Array(array) => array.validate(),
         }
         .map_err(|reason| FieldSchemaError::InvalidParam {
             name: name.to_owned(),
@@ -936,7 +932,7 @@ impl ItemKind {
 
     fn validate(&self) -> Result<(), String> {
         match self.shape() {
-            ItemShape::Scalar(scalar) => scalar.validate(),
+            ItemShape::Scalar(scalar) => scalar.validate(true),
             ItemShape::Object(object) => object.validate(),
         }
     }
@@ -964,7 +960,7 @@ impl ObjectParam {
             field
                 .kind
                 .as_scalar()
-                .validate()
+                .validate(!field.is_optional)
                 .map_err(|reason| format!("field {:?}: {reason}", key.as_str()))?;
         }
         Ok(())
@@ -983,7 +979,7 @@ impl<'a> Scalar<'a> {
         }
     }
 
-    fn validate(self) -> Result<(), String> {
+    fn validate(self, required: bool) -> Result<(), String> {
         match self {
             Scalar::String(p) => p.validate(),
             Scalar::Double(p) => p.validate(),
@@ -991,6 +987,9 @@ impl<'a> Scalar<'a> {
             Scalar::Boolean(_) | Scalar::Timezone(_) => Ok(()),
         }?;
         let default = ParamValue::from_scalar_default(self);
+        if required && matches!(&default, ParamValue::String(s) if s.is_empty()) {
+            return Err("default_value: Value is required".into());
+        }
         if matches!(default, ParamValue::Null) {
             return Ok(());
         }

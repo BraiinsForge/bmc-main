@@ -1592,6 +1592,53 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_default_is_refused_where_a_value_is_required() {
+        let text = serde_json::json!({ "name": "S", "type": "string" });
+        let mut param = text.clone();
+        param["default_value"] = serde_json::json!("");
+        let mut item = text.clone();
+        item["default_value"] = serde_json::json!("");
+        let mut field = text.clone();
+        field["default_value"] = serde_json::json!("");
+        for (def, expected) in [
+            (param, "default_value: Value is required"),
+            (
+                serde_json::json!({
+                    "name": "L", "type": "array", "items": text, "max_items": 3, "default_value": [""],
+                }),
+                "default_value[0]: Value is required",
+            ),
+            (
+                serde_json::json!({ "name": "L", "type": "array", "items": item, "max_items": 3 }),
+                "default_value: Value is required",
+            ),
+            (
+                serde_json::json!({
+                    "name": "L",
+                    "type": "array",
+                    "items": { "type": "object", "fields": { "label": field } },
+                    "max_items": 3,
+                }),
+                r#"field "label": default_value: Value is required"#,
+            ),
+        ] {
+            assert_eq!(array_rejection(def), expected);
+        }
+    }
+
+    #[test]
+    fn an_optional_string_may_default_to_empty() {
+        array_param(serde_json::json!({
+            "name": "S",
+            "type": "string",
+            "optional": true,
+            "default_value": "",
+        }))
+        .validate("x")
+        .expect("BUG: an optional string may default to empty");
+    }
+
+    #[test]
     fn a_string_param_rejects_a_default_over_the_length_cap() {
         let reason = array_rejection(serde_json::json!({
             "name": "S",

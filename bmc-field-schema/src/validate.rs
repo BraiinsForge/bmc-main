@@ -87,12 +87,12 @@ pub fn validate_values(
             }
         };
 
-        if matches!(value, ParamValue::Null) {
-            if def.is_optional {
-                typed.insert(key.clone(), ParamValue::Null);
-            } else {
-                violations.push(Violation::new(path, "Value is required"));
-            }
+        if def.is_optional && matches!(value, ParamValue::Null) {
+            typed.insert(key.clone(), ParamValue::Null);
+            continue;
+        }
+        if !def.is_optional && lacks_value(value) {
+            violations.push(Violation::new(path, "Value is required"));
             continue;
         }
 
@@ -111,6 +111,20 @@ pub fn validate_values(
         Ok(typed)
     } else {
         Err(violations)
+    }
+}
+
+/// Null, or the empty text the operator UI reads as no value:
+/// either way, what a required value refuses.
+fn lacks_value(value: &ParamValue) -> bool {
+    match value {
+        ParamValue::Null => true,
+        ParamValue::String(s) => s.is_empty(),
+        ParamValue::Boolean(_)
+        | ParamValue::Integer(_)
+        | ParamValue::Double(_)
+        | ParamValue::List(_)
+        | ParamValue::Object(_) => false,
     }
 }
 
@@ -200,7 +214,7 @@ pub(crate) fn validate_list(
 }
 
 /// Every item typed, or `None` if any item has a violation.
-/// Unlike an optional field, an item is never null.
+/// Unlike an optional field, an item always has a value.
 fn validate_items<T>(
     path: &str,
     items: &[ParamValue],
@@ -213,7 +227,7 @@ fn validate_items<T>(
         .enumerate()
         .filter_map(|(i, item)| {
             let path = format!("{path}[{i}]");
-            if matches!(item, ParamValue::Null) {
+            if lacks_value(item) {
                 violations.push(Violation::new(path, "Value is required"));
                 return None;
             }
@@ -239,12 +253,10 @@ fn validate_object(
     for (key, field) in &object.fields {
         let field_path = format!("{path}{}", key_path(key.as_str()));
         let value = fields.get(key).unwrap_or(&ParamValue::Null);
-        if matches!(value, ParamValue::Null) {
-            if field.is_optional {
-                typed.insert(key.clone(), ParamValue::Null);
-            } else {
-                violations.push(Violation::new(field_path, "Value is required"));
-            }
+        if field.is_optional && matches!(value, ParamValue::Null) {
+            typed.insert(key.clone(), ParamValue::Null);
+        } else if !field.is_optional && lacks_value(value) {
+            violations.push(Violation::new(field_path, "Value is required"));
         } else if let Some(value) =
             validate_scalar(&field_path, field.kind.as_scalar(), value, violations)
         {
@@ -658,6 +670,58 @@ mod tests {
                 format!("Must be at most {MAX_PARAM_STRING_LENGTH} bytes")
             )],
         );
+    }
+
+    #[test]
+    fn empty_text_is_no_value_where_one_is_required() {
+        let fields: IndexMap<ParamKey, ParamDefinition> = serde_json::from_value(json!({
+            "name": { "name": "N", "type": "string", "default_value": "x" },
+            "tags": { "name": "T", "type": "array", "items": { "type": "string" }, "max_items": 3 },
+            "links": {
+                "name": "L",
+                "type": "array",
+                "max_items": 3,
+                "items": {
+                    "type": "object",
+                    "fields": {
+                        "label": { "name": "Label", "type": "string" },
+                        "url": { "name": "URL", "type": "string", "optional": true },
+                    },
+                },
+            },
+        }))
+        .expect("BUG: the schema parses");
+        let value = |json: serde_json::Value| {
+            Ok(ParamValue::try_from(&json).expect("BUG: the value converts"))
+        };
+        let values = Values::from([
+            ("name".to_owned(), value(json!(""))),
+            ("tags".to_owned(), value(json!([""]))),
+            (
+                "links".to_owned(),
+                value(json!([{ "label": "", "url": "" }])),
+            ),
+        ]);
+        assert_eq!(
+            violations(validate_values(&fields, &values, MissingValues::Default)),
+            [
+                Violation::new(r#"["links"][0]["label"]"#, "Value is required"),
+                Violation::new(r#"["name"]"#, "Value is required"),
+                Violation::new(r#"["tags"][0]"#, "Value is required"),
+            ],
+        );
+    }
+
+    #[test]
+    fn empty_text_stays_a_value_where_none_is_required() {
+        let fields: IndexMap<ParamKey, ParamDefinition> = serde_json::from_value(json!({
+            "note": { "name": "N", "type": "string", "optional": true },
+        }))
+        .expect("BUG: the schema parses");
+        let values = Values::from([("note".to_owned(), Ok(ParamValue::String(String::new())))]);
+        let typed = validate_values(&fields, &values, MissingValues::Default)
+            .expect("BUG: an optional param may be empty");
+        assert_eq!(typed["note"], ParamValue::String(String::new()));
     }
 
     fn ratio(value: i32) -> Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>> {

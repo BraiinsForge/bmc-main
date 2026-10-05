@@ -330,9 +330,10 @@ fn null_toggle(ui: &mut egui::Ui, label: &str) -> bool {
     ui.add(egui::Button::new(label).min_size(size)).clicked()
 }
 
-/// A value the validator passes, to edit in an input without a default:
+/// A value to edit in an input without a default, which the validator passes:
 /// an enum's first option, a number's zero clamped into its bounds,
-/// [`SEED_TIMEZONE`] for a timezone, or else an empty string or `false`.
+/// [`SEED_TIMEZONE`] for a timezone, or `false`.
+/// Free text starts empty, which it refuses until the operator types.
 fn seed_without_default(scalar: Scalar<'_>) -> ParamValue {
     match scalar {
         Scalar::String(p) => ParamValue::String(
@@ -1141,7 +1142,6 @@ mod draft_tests {
     #[test]
     fn every_seed_passes_the_validator() {
         let kinds = [
-            json!({"type": "string"}),
             json!({"type": "timezone"}),
             json!({"type": "integer", "min": 5, "max": 10}),
             json!({"type": "integer", "max": -3}),
@@ -1205,7 +1205,7 @@ mod draft_tests {
             [
                 r#"["count"]: Must be at least 1"#,
                 r#"["ratio"]: Must be a finite number"#,
-                r#"["zones"][0]: Must be a valid timezone"#,
+                r#"["zones"][0]: Value is required"#,
             ]
         );
     }

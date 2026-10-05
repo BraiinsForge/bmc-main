@@ -95,6 +95,8 @@ attributes and enforced by any JSON Schema validator. Examples:
 - `min` ≤ `max`, `step > 0`, finite f64 bounds — guard against manifests that compile structurally but produce a UI the
   operator cannot use.
 - A number's `unit`, when set, is not blank.
+- A required string, whether a param, a list item or a required object field, is never empty, as a default or a value:
+  the operator UI reads empty text as no value.
 - `min_length` ≤ `max_length` ≤ 1024 (`MAX_PARAM_STRING_LENGTH`), and every `enum_values` option fits those bounds — an
   option outside them could never be saved.
 - `+0.0` / `-0.0` collide in `Double` `enum_values` dedup — JSON Schema treats them as distinct numbers; the runtime

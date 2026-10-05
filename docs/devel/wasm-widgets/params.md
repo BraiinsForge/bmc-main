@@ -58,7 +58,9 @@ declare a `placeholder`, as params, list items, or object fields alike: example 
 input, such as "e.g. BTC or AAPL". It is never a value, so the widget never receives it.
 
 Required params must declare `default_value`, except an `array`, whose omitted default is the empty list. Optional
-params may omit a default; when unset, the generated Rust field is `Option<T>` and evaluates to `None`.
+params may omit a default; when unset, the generated Rust field is `Option<T>` and evaluates to `None`. A required
+string is never empty, as the operator UI reads empty text as no value, so a string the operator may leave blank is an
+optional param.
 
 Use `widgets-wasm-examples/params-demo/manifest.json` as the reference example. It exercises every `ParamKind`, enum
 values, ranges, string formats, optional-without-default params, and a list of every item kind.
