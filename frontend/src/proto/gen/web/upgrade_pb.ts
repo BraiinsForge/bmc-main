@@ -536,7 +536,8 @@ export const FirmwareUpgradePhaseSchema: GenEnum<FirmwareUpgradePhase> = /*@__PU
  */
 export const UpgradeService: GenService<{
     /**
-     * Returns UNIMPLEMENTED on boser_managed platforms.
+     * On boser_managed platforms translated to Boser's REST API under the caller's
+     * session; UNAVAILABLE when Boser cannot be reached.
      *
      * @generated from rpc braiins.bmc.web.UpgradeService.CheckForUpgrade
      */
@@ -546,7 +547,7 @@ export const UpgradeService: GenService<{
         output: typeof CheckForUpgradeResponseSchema;
     };
     /**
-     * Returns UNIMPLEMENTED on boser_managed platforms.
+     * Translated to Boser's REST API on boser_managed platforms, like CheckForUpgrade.
      *
      * @generated from rpc braiins.bmc.web.UpgradeService.GetInstallableWidgets
      */
@@ -556,7 +557,13 @@ export const UpgradeService: GenService<{
         output: typeof GetInstallableWidgetsResponseSchema;
     };
     /**
-     * Returns UNIMPLEMENTED on boser_managed platforms.
+     * A failure to start is the stream's only item.
+     * A package run that replaces the BMC application restarts it, which may break
+     * the stream before `finished`: the client then has to reconcile by
+     * MetadataService.GetServerInstance, as it does after a firmware reboot.
+     * On boser_managed platforms the start is translated to Boser's REST API,
+     * and the stream also ends with UNAVAILABLE once the run can no longer be followed;
+     * the upgrade itself may still be running.
      *
      * @generated from rpc braiins.bmc.web.UpgradeService.StartUpgrade
      */

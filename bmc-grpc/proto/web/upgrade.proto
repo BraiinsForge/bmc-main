@@ -151,11 +151,18 @@ message GetAutoUpgradeResponse {
 }
 
 service UpgradeService {
-  // Returns UNIMPLEMENTED on boser_managed platforms.
+  // On boser_managed platforms translated to Boser's REST API under the caller's
+  // session; UNAVAILABLE when Boser cannot be reached.
   rpc CheckForUpgrade(CheckForUpgradeRequest) returns (CheckForUpgradeResponse);
-  // Returns UNIMPLEMENTED on boser_managed platforms.
+  // Translated to Boser's REST API on boser_managed platforms, like CheckForUpgrade.
   rpc GetInstallableWidgets(google.protobuf.Empty) returns (GetInstallableWidgetsResponse);
-  // Returns UNIMPLEMENTED on boser_managed platforms.
+  // A failure to start is the stream's only item.
+  // A package run that replaces the BMC application restarts it, which may break
+  // the stream before `finished`: the client then has to reconcile by
+  // MetadataService.GetServerInstance, as it does after a firmware reboot.
+  // On boser_managed platforms the start is translated to Boser's REST API,
+  // and the stream also ends with UNAVAILABLE once the run can no longer be followed;
+  // the upgrade itself may still be running.
   rpc StartUpgrade(StartUpgradeRequest) returns (stream UpgradeProgress);
   // Enables or disables automatic upgrades. Returns UNIMPLEMENTED on boser_managed platforms.
   rpc SetAutoUpgrade(SetAutoUpgradeRequest) returns (google.protobuf.Empty);
