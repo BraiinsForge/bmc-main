@@ -116,6 +116,7 @@ impl NightModeController {
     }
 
     /// Settles the override against the schedule and publishes the result.
+    /// Subscribers wake only when the state flips.
     async fn publish(&self, trigger: &'static str, reevaluation: Reevaluation) {
         // Held until the state is published,
         // so a schedule edit cannot be overwritten by a result computed from the old schedule.
@@ -134,18 +135,20 @@ impl NightModeController {
         };
         let (is_active, remaining) = candidate.settle(enabled, scheduled);
         *override_state = remaining;
-        let was_active = self.is_active_sender.send_replace(is_active);
+        let unchanged = *self.is_active_sender.borrow() == is_active;
+        if unchanged {
+            return;
+        }
+        self.is_active_sender.send_replace(is_active);
         drop(override_state);
         drop(config_handle);
 
-        if was_active != is_active {
-            info!(
-                trigger,
-                is_active,
-                override_state = ?remaining,
-                "Night mode state changed"
-            );
-        }
+        info!(
+            trigger,
+            is_active,
+            override_state = ?remaining,
+            "Night mode state changed"
+        );
     }
 
     pub(crate) fn subscribe(&self) -> watch::Receiver<bool> {

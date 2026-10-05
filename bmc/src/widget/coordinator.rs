@@ -520,9 +520,8 @@ pub fn start_volume_listener(
 }
 
 /// Broadcast the night-mode state and its "HH:MM" boundary to the settings-tray
-/// overlay. Recomputes on EVERY watch notification, not only on active-state
-/// flips: the controller's set_enabled/set_interval send_replace the watch
-/// unconditionally, so schedule edits refresh the boundary too.
+/// overlay. Recomputes on every flip and on every schedule edit,
+/// since an edit can move the boundary without flipping the state.
 ///
 /// Overlay state only. Night mode's effect on scene cycling is owned by the
 /// listener in `startup`, which needs edge detection this loop deliberately
@@ -530,6 +529,7 @@ pub fn start_volume_listener(
 pub fn start_night_mode_listener<U>(
     compositor: Arc<dyn Compositor>,
     system_manager: crate::system_manager::SystemManager<U>,
+    mut schedule_change_rx: broadcast::Receiver<()>,
 ) where
     U: crate::backlight::DisplayBacklightDriver,
 {
@@ -548,8 +548,12 @@ pub fn start_night_mode_listener<U>(
             if let Err(e) = compositor.broadcast_night_mode(active, until.as_deref()) {
                 warn!("broadcast_night_mode failed: {e}");
             }
-            if night_mode_rx.changed().await.is_err() {
-                break;
+            tokio::select! {
+                r = schedule_change_rx.recv() => match r {
+                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                r = night_mode_rx.changed() => if r.is_err() { break },
             }
         }
     });

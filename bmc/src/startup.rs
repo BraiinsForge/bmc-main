@@ -1079,6 +1079,10 @@ where
         crate::widget::coordinator::start_night_mode_listener(
             compositor.clone(),
             system_manager.clone(),
+            config_handle
+                .read()
+                .await
+                .subscribe_night_mode_schedule_change(),
         );
         crate::widget::coordinator::start_wifi_reconfig_listener(
             compositor.clone(),

@@ -232,6 +232,26 @@ async fn changing_the_window_drops_a_manual_override() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_edit_that_keeps_the_state_wakes_no_subscriber() {
+    let mut fixture = Fixture::booted_at(at(2026, 9, 28, 14, 0), hm(22, 30), hm(6, 30)).await;
+    fixture.is_active.mark_unchanged();
+
+    fixture
+        .controller
+        .set_interval(hm(23, 0), hm(7, 0))
+        .await
+        .expect("BUG: setting the night mode interval must succeed in tests");
+
+    assert!(
+        !fixture
+            .is_active
+            .has_changed()
+            .expect("BUG: the controller holds the sender"),
+        "14:00 lies outside both windows, so night mode stays off without a wake-up"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_failed_save_still_applies_the_edited_window() {
     use std::os::unix::fs::PermissionsExt as _;
     let mut fixture = Fixture::booted_at(at(2026, 9, 28, 14, 0), hm(22, 30), hm(6, 30)).await;
