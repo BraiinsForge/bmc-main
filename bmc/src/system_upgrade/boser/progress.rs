@@ -197,3 +197,6 @@ impl Follower {
         self.ended = true;
     }
 }
+
+#[cfg(test)]
+mod tests;
