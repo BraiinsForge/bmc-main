@@ -352,6 +352,25 @@ pub(crate) fn length_violation(s: &str, min: Option<usize>, max: Option<usize>) 
     None
 }
 
+/// The bound `n` breaks.
+pub(crate) fn bound_violation<T: Copy + PartialOrd + std::fmt::Display>(
+    n: T,
+    min: Option<T>,
+    max: Option<T>,
+) -> Option<String> {
+    if let Some(lo) = min
+        && n < lo
+    {
+        return Some(format!("Must be at least {lo}"));
+    }
+    if let Some(hi) = max
+        && n > hi
+    {
+        return Some(format!("Must be at most {hi}"));
+    }
+    None
+}
+
 fn validate_string(
     path: &str,
     param: &StringParam,
@@ -404,16 +423,8 @@ pub(crate) fn validate_scalar(
             ParamValue::Integer(i),
         ) => {
             let mut ok = true;
-            if let Some(lo) = min
-                && i < lo
-            {
-                violations.push(Violation::new(path, format!("Must be at least {lo}")));
-                ok = false;
-            }
-            if let Some(hi) = max
-                && i > hi
-            {
-                violations.push(Violation::new(path, format!("Must be at most {hi}")));
+            if let Some(message) = bound_violation(*i, *min, *max) {
+                violations.push(Violation::new(path, message));
                 ok = false;
             }
             if !enum_values.is_empty() && !enum_values.iter().any(|o| o.value == *i) {
@@ -451,16 +462,8 @@ fn validate_double(
         return None;
     }
     let mut ok = true;
-    if let Some(lo) = param.min
-        && d < lo
-    {
-        violations.push(Violation::new(path, format!("Must be at least {lo}")));
-        ok = false;
-    }
-    if let Some(hi) = param.max
-        && d > hi
-    {
-        violations.push(Violation::new(path, format!("Must be at most {hi}")));
+    if let Some(message) = bound_violation(d, param.min, param.max) {
+        violations.push(Violation::new(path, message));
         ok = false;
     }
     if !param.enum_values.is_empty()

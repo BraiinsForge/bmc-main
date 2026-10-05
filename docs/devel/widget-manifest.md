@@ -94,6 +94,7 @@ attributes and enforced by any JSON Schema validator. Examples:
 - `enum_control: radio` only alongside `enum_values` — a radio group with no options has nothing to offer.
 - `min` ≤ `max`, `step > 0`, finite f64 bounds — guard against manifests that compile structurally but produce a UI the
   operator cannot use.
+- Every number `enum_values` option lies within `min` and `max` — an option outside them could never be saved.
 - A number's `unit`, when set, is not blank.
 - A required string, whether a param, a list item or a required object field, is never empty, as a default or a value:
   the operator UI reads empty text as no value.

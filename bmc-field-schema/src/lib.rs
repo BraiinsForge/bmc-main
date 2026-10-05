@@ -1147,7 +1147,13 @@ impl DoubleParam {
         check_double_range(self.min, self.max, self.step)?;
         check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
         check_unit(self.unit.as_deref())?;
-        check_double_options(&self.enum_values)
+        check_double_options(&self.enum_values)?;
+        for o in &self.enum_values {
+            if let Some(message) = validate::bound_violation(o.value, self.min, self.max) {
+                return Err(format!("enum_values {}: {message}", o.value));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1156,7 +1162,13 @@ impl IntegerParam {
         check_int_range(self.min, self.max, self.step)?;
         check_enum_control(self.enum_control, !self.enum_values.is_empty())?;
         check_unit(self.unit.as_deref())?;
-        check_int_options(&self.enum_values)
+        check_int_options(&self.enum_values)?;
+        for o in &self.enum_values {
+            if let Some(message) = validate::bound_violation(o.value, self.min, self.max) {
+                return Err(format!("enum_values {}: {message}", o.value));
+            }
+        }
+        Ok(())
     }
 }
 

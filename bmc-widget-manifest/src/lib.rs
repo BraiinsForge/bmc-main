@@ -1730,6 +1730,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_integer_param_rejects_an_option_outside_its_bounds() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "N",
+            "type": "integer",
+            "min": 1,
+            "default_value": 1,
+            "enum_values": [
+                { "value": 0, "label": "Off" },
+                { "value": 1, "label": "On" },
+            ],
+        }));
+        assert_eq!(reason, "enum_values 0: Must be at least 1");
+    }
+
+    #[test]
+    fn a_double_param_rejects_an_option_outside_its_bounds() {
+        let reason = array_rejection(serde_json::json!({
+            "name": "R",
+            "type": "double",
+            "max": 1.0,
+            "default_value": 0.5,
+            "enum_values": [
+                { "value": 0.5, "label": "Half" },
+                { "value": 2.5, "label": "Over" },
+            ],
+        }));
+        assert_eq!(reason, "enum_values 2.5: Must be at most 1");
+    }
+
     const UNKNOWN_TIMEZONE: &str = "default_value: Must be a valid timezone";
 
     #[test]
