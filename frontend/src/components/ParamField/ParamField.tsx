@@ -43,7 +43,7 @@ import {
     SubtractAlt as IconSubtract,
 } from '@carbon/react/icons';
 import * as pb from '@/proto';
-import type { iField } from '@/lib/form';
+import { useID, type iField } from '@/lib/form';
 import { useIsTouchDevice } from '@/lib/react';
 import { assertUnreachable, ownValue } from '@/lib/ts';
 import { Button } from '@/components/Button';
@@ -532,6 +532,7 @@ interface ObjectRowProps {
 
 function ObjectRow({ id, object, labelText, value, error, onChange, timezones }: ObjectRowProps) {
     const { formatMessage } = useIntl();
+    const $ = useID(id);
     return (
         <CarbonFormField error={error?.error}>
             <div className={css.objectFields}>
@@ -541,7 +542,7 @@ function ObjectRow({ id, object, labelText, value, error, onChange, timezones }:
                     return (
                         <div key={field.key} className={cn(css.objectField, rowError && css.markedField)}>
                             <ScalarField
-                                id={`${id}-${field.key}`}
+                                id={$('field', field.key)}
                                 kind={field.kind}
                                 labelText={formatMessage(
                                     { defaultMessage: '{row}, {field}' },
@@ -582,6 +583,7 @@ interface ArrayFieldProps {
 function ArrayField(props: ArrayFieldProps) {
     const { id, array, labelText, helperText, value, error, itemErrors, onChange, timezones } = props;
     const { formatMessage } = useIntl();
+    const $ = useID(id);
     const itemKind: pb.ArrayItemKind['kind'] = array.items?.kind ?? { case: undefined };
     const canRemove = value.length > array.minItems;
     const canAdd = value.length < array.maxItems;
@@ -626,14 +628,14 @@ function ArrayField(props: ArrayFieldProps) {
             // turn disabled, which would drop focus again.
             const target =
                 rest.length > array.minItems
-                    ? document.getElementById(`${id}-${neighbour.id}-remove`)
+                    ? document.getElementById($('row', neighbour.id, 'remove'))
                     : firstFieldOf(neighbour.id);
 
             target?.focus();
         } else {
             // At `max_items: 1`, Add stays disabled until the emptied list renders.
             focusAfterRender.current = () => {
-                const button = document.getElementById(`${id}-add`);
+                const button = document.getElementById($('add'));
                 return button instanceof HTMLButtonElement && !button.disabled ? button : null;
             };
         }
@@ -656,7 +658,8 @@ function ArrayField(props: ArrayFieldProps) {
                 getItemLabel={item => rowLabelOf(value.indexOf(item))}
                 renderItem={({ index, item, rootProps, dragHandleProps }) => {
                     // The drag overlay renders a second copy of the row, without `rootProps`.
-                    const rowId = rootProps ? `${id}-${item.id}` : `${id}-${item.id}-dragged`;
+                    const rowPath = rootProps ? ['row', item.id] : ['row', item.id, 'dragged'];
+                    const rowId = $(...rowPath);
                     const rowLabel = rowLabelOf(index);
                     return (
                         <div {...rootProps} className={css.row}>
@@ -696,7 +699,7 @@ function ArrayField(props: ArrayFieldProps) {
                             </div>
                             <div className={css.rowAction}>
                                 <Button
-                                    id={`${rowId}-remove`}
+                                    id={$(...rowPath, 'remove')}
                                     kind="danger--ghost"
                                     size="sm"
                                     icon={IconSubtract}
@@ -712,7 +715,7 @@ function ArrayField(props: ArrayFieldProps) {
             />
             <div className={css.footer}>
                 <Button
-                    id={`${id}-add`}
+                    id={$('add')}
                     kind="tertiary"
                     size="sm"
                     icon={IconAdd}

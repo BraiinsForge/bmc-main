@@ -363,6 +363,34 @@ describe('ParamField list', () => {
             expect(document.activeElement).toBe(getByLabelText('Symbols, item 1'));
         });
 
+        test('moves to the next Remove button, not a field keyed remove', () => {
+            const rows = pb.create(pb.ManifestParamDefinitionSchema, {
+                key: 'rows',
+                name: 'Rows',
+                kind: {
+                    case: 'paramArray',
+                    value: pb.create(pb.ParamArraySchema, {
+                        items: {
+                            kind: {
+                                case: 'paramObject',
+                                value: {
+                                    fields: [
+                                        { key: 'remove', name: 'Remove', kind: { case: 'paramString', value: {} } },
+                                    ],
+                                },
+                            },
+                        },
+                        maxItems: 3,
+                    }),
+                },
+            });
+            const initial = [listItem({ remove: 'a' }), listItem({ remove: 'b' })];
+            const { getByRole } = render(<LiveList initial={initial} definition={rows} />);
+            const next = getByRole('button', { name: 'Remove Rows, item 2' });
+            press(getByRole('button', { name: 'Remove Rows, item 1' }));
+            expect(document.activeElement).toBe(next);
+        });
+
         test('moves to Add when the list empties', () => {
             const { getByRole } = live(['A']);
             press(getByRole('button', { name: 'Remove Symbols, item 1' }));
