@@ -48,7 +48,8 @@
           "value": "bold",
           "label": "Bold"
         }
-      ]
+      ],
+      "enum_control": "radio"
     },
     "show_date": {
       "name": "Show date",

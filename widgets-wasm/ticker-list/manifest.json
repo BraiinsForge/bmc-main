@@ -103,7 +103,8 @@
           "value": "1mo",
           "label": "1 Month"
         }
-      ]
+      ],
+      "enum_control": "radio"
     }
   }
 }

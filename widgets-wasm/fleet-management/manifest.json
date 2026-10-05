@@ -59,7 +59,8 @@
           "value": 1440,
           "label": "24 hours"
         }
-      ]
+      ],
+      "enum_control": "radio"
     }
   },
   "credentials": {

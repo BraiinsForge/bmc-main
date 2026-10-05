@@ -39,7 +39,8 @@
           "value": "big_chart",
           "label": "Big Chart"
         }
-      ]
+      ],
+      "enum_control": "radio"
     },
     "chart_frame": {
       "name": "Chart frame",
@@ -63,7 +64,8 @@
           "value": "days_7",
           "label": "7 days"
         }
-      ]
+      ],
+      "enum_control": "radio"
     },
     "worker_states": {
       "name": "Worker states",

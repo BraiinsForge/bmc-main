@@ -55,7 +55,8 @@
           "value": "1mo",
           "label": "1 Month"
         }
-      ]
+      ],
+      "enum_control": "radio"
     },
     "view": {
       "name": "View",
@@ -71,7 +72,8 @@
           "value": "candlestick",
           "label": "Candlestick"
         }
-      ]
+      ],
+      "enum_control": "radio"
     }
   }
 }

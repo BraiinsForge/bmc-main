@@ -45,7 +45,8 @@
           "value": "system",
           "label": "System"
         }
-      ]
+      ],
+      "enum_control": "radio"
     }
   }
 }

@@ -50,7 +50,8 @@
           "value": "bold",
           "label": "Bold"
         }
-      ]
+      ],
+      "enum_control": "radio"
     }
   }
 }

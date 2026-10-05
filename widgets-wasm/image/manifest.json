@@ -45,7 +45,8 @@
           "value": "cover",
           "label": "Fill — crop to edges"
         }
-      ]
+      ],
+      "enum_control": "radio"
     }
   }
 }
