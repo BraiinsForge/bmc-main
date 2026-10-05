@@ -675,6 +675,7 @@ where
     sound_controller: SoundController,
     alarm_backend: AlarmBackend,
     hardware_capabilities: HardwareCapabilities,
+    upgrade_route: boser::UpgradeRoute,
 }
 
 struct AppServer<T, U, V>
@@ -1093,34 +1094,42 @@ where
                 .watch_setup_ap_active(),
         );
 
-        let (boser_upgrade_observer, boser_timezone_observer) = match boser_observation(
-            hardware_capabilities.boser_managed,
-            config.server_config.boser,
-        ) {
-            BoserObservation::Observe(address) => {
-                let stream_config = StreamConfig {
-                    address,
-                    token_path: config.boser_token_path.clone(),
-                    timing: Timing::default(),
-                };
-                (
-                    Some(boser::spawn_observer(
-                        stream_config.clone(),
-                        system_upgrade_service.run_status_service(),
-                        state_service.clone(),
-                    )),
-                    Some(crate::timezone_boser::spawn_observer(
-                        stream_config,
-                        manager.clone(),
-                    )),
-                )
-            }
-            BoserObservation::SelfManaged => (None, None),
-            BoserObservation::AddressMissing => {
-                warn!("no Boser address configured, Boser state stays unobserved");
-                (None, None)
-            }
-        };
+        let (boser_upgrade_observer, boser_timezone_observer, upgrade_route) =
+            match boser_observation(
+                hardware_capabilities.boser_managed,
+                config.server_config.boser,
+            ) {
+                BoserObservation::Observe(address) => {
+                    let stream_config = StreamConfig {
+                        address,
+                        token_path: config.boser_token_path.clone(),
+                        timing: Timing::default(),
+                    };
+                    (
+                        Some(boser::spawn_observer(
+                            stream_config.clone(),
+                            system_upgrade_service.run_status_service(),
+                            state_service.clone(),
+                        )),
+                        Some(crate::timezone_boser::spawn_observer(
+                            stream_config,
+                            manager.clone(),
+                        )),
+                        boser::UpgradeRoute::Boser(boser::client::BoserUpgrade::new(
+                            address,
+                            system_upgrade_service.run_status_service(),
+                        )),
+                    )
+                }
+                BoserObservation::SelfManaged => (None, None, boser::UpgradeRoute::Local),
+                BoserObservation::AddressMissing => {
+                    warn!(
+                        "no Boser address configured, Boser state stays unobserved \
+                         and the upgrade RPCs answer unavailable"
+                    );
+                    (None, None, boser::UpgradeRoute::BoserUnavailable)
+                }
+            };
 
         Ok(Self {
             listener,
@@ -1144,6 +1153,7 @@ where
             sound_controller,
             alarm_backend,
             hardware_capabilities,
+            upgrade_route,
         })
     }
 
@@ -1173,6 +1183,7 @@ where
             self.sound_controller,
             self.alarm_backend.controller(),
             self.hardware_capabilities,
+            self.upgrade_route,
         );
 
         AppServer {

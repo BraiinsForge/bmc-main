@@ -22,9 +22,7 @@
 //! follows the state stream and presents each execution on the display
 //! and the restart block, the way the local flow does on Deck.
 
-#[expect(dead_code, reason = "no upgrade RPC routes to Boser yet")]
 pub(crate) mod client;
-#[expect(dead_code, reason = "no upgrade RPC routes to Boser yet")]
 pub(crate) mod progress;
 
 use std::time::Duration;
@@ -49,6 +47,15 @@ pub(crate) fn spawn_observer(
     state: StateService,
 ) -> JoinHandle<()> {
     crate::boser::spawn(config, Projection::new(display, state))
+}
+
+/// Where the upgrade RPCs of this product go.
+#[derive(Debug)]
+pub(crate) enum UpgradeRoute {
+    Local,
+    Boser(client::BoserUpgrade),
+    /// Managed product without a Boser address: the RPCs fail, they never run locally.
+    BoserUnavailable,
 }
 
 /// Which Boser flow a snapshot belongs to: an execution with Boser's id,

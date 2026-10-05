@@ -32,6 +32,7 @@ use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail};
 use chrono::NaiveTime;
 use futures::stream::{BoxStream, StreamExt};
 use prost_types::Timestamp;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Status};
@@ -42,48 +43,63 @@ use super::scene_management::{PlatformDescriptor, supported_sizes_for_constraint
 use crate::BmcManager;
 use crate::compositor::UpgradePhase;
 use crate::config::ConfigHandle;
+use crate::installable_widgets;
+use crate::session::{Handle as _, Manager as SessionManager};
+use crate::system_upgrade::boser::UpgradeRoute;
 use crate::system_upgrade::{
     CheckOutcome, Disruption, PackagesPreview, SystemPackageChange, SystemUpgradeError,
     UpgradeRunState,
 };
-pub(crate) struct UpgradeService<T, U>
+use crate::web::session::extract_session;
+
+mod managed;
+
+pub(crate) struct UpgradeService<T, U, S>
 where
     T: BmcManager,
     U: FirmwareIndex,
+    S: SessionManager,
 {
     system_upgrade: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     platform: PlatformDescriptor,
+    route: UpgradeRoute,
     /// Serializes the save-apply-rollback transition in `set_auto_upgrade`;
     /// the config lock alone cannot, since it is released before the
     /// scheduler call.
     autoupgrade_transition: Mutex<()>,
+    session_manager: PhantomData<fn() -> S>,
 }
 
-impl<T, U> UpgradeService<T, U>
+impl<T, U, S> UpgradeService<T, U, S>
 where
     T: BmcManager,
     U: FirmwareIndex,
+    S: SessionManager,
 {
     pub(crate) fn new(
         system_upgrade: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         hardware_capabilities: &HardwareCapabilities,
+        route: UpgradeRoute,
     ) -> Self {
         Self {
             system_upgrade,
             config_handle,
             platform: PlatformDescriptor::from(hardware_capabilities),
+            route,
             autoupgrade_transition: Mutex::new(()),
+            session_manager: PhantomData,
         }
     }
 }
 
 #[tonic::async_trait]
-impl<T, U> GrpcUpgradeService for UpgradeService<T, U>
+impl<T, U, S> GrpcUpgradeService for UpgradeService<T, U, S>
 where
     T: BmcManager,
     U: FirmwareIndex,
+    S: SessionManager,
 {
     type StartUpgradeStream = BoxStream<'static, Result<UpgradeProgress, tonic::Status>>;
 
@@ -91,25 +107,43 @@ where
         &self,
         request: Request<CheckForUpgradeRequest>,
     ) -> Result<tonic::Response<CheckForUpgradeResponse>, tonic::Status> {
-        let install = request.into_inner().install_packages;
-        let outcome = self
-            .system_upgrade
-            .check_for_upgrade(install)
-            .await
-            .map_err(Into::<tonic::Status>::into)?;
+        match &self.route {
+            UpgradeRoute::Local => {
+                let install = request.into_inner().install_packages;
+                let outcome = self
+                    .system_upgrade
+                    .check_for_upgrade(install)
+                    .await
+                    .map_err(Into::<tonic::Status>::into)?;
 
-        Ok(tonic::Response::new(outcome_to_response(outcome)))
+                Ok(tonic::Response::new(outcome_to_response(outcome)))
+            }
+            UpgradeRoute::Boser(boser) => {
+                let session_id = extract_session::<S>(request.extensions())?.id();
+                let packages = request.into_inner().install_packages;
+                let response = boser.check(&session_id, packages).await?;
+                Ok(tonic::Response::new(managed::check_response(response)))
+            }
+            UpgradeRoute::BoserUnavailable => Err(managed::boser_unavailable()),
+        }
     }
 
     async fn get_installable_widgets(
         &self,
-        _request: Request<()>,
+        request: Request<()>,
     ) -> Result<tonic::Response<GetInstallableWidgetsResponse>, tonic::Status> {
-        let widgets = self
-            .system_upgrade
-            .list_installable_widgets()
-            .await
-            .map_err(Into::<tonic::Status>::into)?;
+        let widgets = match &self.route {
+            UpgradeRoute::Local => self
+                .system_upgrade
+                .list_installable_widgets()
+                .await
+                .map_err(Into::<tonic::Status>::into)?,
+            UpgradeRoute::Boser(boser) => {
+                let session_id = extract_session::<S>(request.extensions())?.id();
+                installable_widgets::from_packages(boser.installable(&session_id).await?)
+            }
+            UpgradeRoute::BoserUnavailable => return Err(managed::boser_unavailable()),
+        };
         Ok(tonic::Response::new(GetInstallableWidgetsResponse {
             widgets: widgets
                 .into_iter()
@@ -122,13 +156,21 @@ where
         &self,
         request: Request<StartUpgradeRequest>,
     ) -> Result<tonic::Response<Self::StartUpgradeStream>, tonic::Status> {
-        let request = request.into_inner();
+        let stream = match &self.route {
+            UpgradeRoute::Local => {
+                let request = request.into_inner();
+                let run = self.system_upgrade.start_upgrade(request.upgrade_id).await;
+                run.map(run_state_to_progress).boxed()
+            }
+            UpgradeRoute::Boser(boser) => {
+                let session_id = extract_session::<S>(request.extensions())?.id();
+                let upgrade_id = request.into_inner().upgrade_id;
+                managed::start(boser, &session_id, &upgrade_id).await
+            }
+            UpgradeRoute::BoserUnavailable => managed::only(managed::boser_unavailable()),
+        };
 
-        let run = self.system_upgrade.start_upgrade(request.upgrade_id).await;
-
-        let stream = run.map(run_state_to_progress);
-
-        Ok(tonic::Response::new(stream.boxed()))
+        Ok(tonic::Response::new(stream))
     }
 
     async fn set_auto_upgrade(

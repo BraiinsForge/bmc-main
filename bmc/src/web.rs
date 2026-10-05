@@ -36,6 +36,7 @@ use crate::session::Manager as SessionManager;
 use crate::shutdown::{DRAIN_DEADLINE, DRAIN_QUIET};
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
+use crate::system_upgrade::boser::UpgradeRoute;
 use crate::widget::{Coordinator, WidgetRegistry};
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
@@ -70,6 +71,7 @@ pub(crate) struct WebService<
     sound_controller: SoundController,
     alarm_controller: Option<AlarmController>,
     hardware_capabilities: HardwareCapabilities,
+    upgrade_route: UpgradeRoute,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -97,6 +99,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         sound_controller: SoundController,
         alarm_controller: Option<AlarmController>,
         hardware_capabilities: HardwareCapabilities,
+        upgrade_route: UpgradeRoute,
     ) -> Self {
         Self {
             manager,
@@ -114,6 +117,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             sound_controller,
             alarm_controller,
             hardware_capabilities,
+            upgrade_route,
         }
     }
 
@@ -138,6 +142,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.sound_controller,
             self.alarm_controller,
             self.hardware_capabilities,
+            self.upgrade_route,
         );
         (self.config, grpc_web)
     }

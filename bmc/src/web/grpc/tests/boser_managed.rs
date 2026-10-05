@@ -28,10 +28,10 @@ use crate::{App, BmcManager, Configuration, UpgradeError, UpgradeMarker};
 use axum_extra::extract::cookie::Cookie;
 use bmc_button::{ButtonEventStream, Buttons};
 use bmc_grpc::web::{
-    ChangePasswordRequest, CheckForUpgradeRequest, CreatePasswordRequest, GetTimezoneListResponse,
-    GetTimezoneResponse, NetworkConfig, NetworkInfoResponse, RemovePasswordRequest,
-    ScanWifiResponse, SetAutoUpgradeRequest, SetTimezoneRequest, SetWifiRequest, SettingsRequest,
-    StartUpgradeRequest, WifiSavedNetworksResponse, WifiStatusResponse,
+    ChangePasswordRequest, CreatePasswordRequest, GetTimezoneListResponse, GetTimezoneResponse,
+    NetworkConfig, NetworkInfoResponse, RemovePasswordRequest, ScanWifiResponse,
+    SetAutoUpgradeRequest, SetTimezoneRequest, SetWifiRequest, SettingsRequest,
+    WifiSavedNetworksResponse, WifiStatusResponse,
     initial_setup_service_client::InitialSetupServiceClient,
     network_service_client::NetworkServiceClient,
     network_service_server::{NetworkService, NetworkServiceServer},
@@ -668,24 +668,13 @@ async fn managed_production_routes_keep_initial_setup_available() {
     assert_eq!(status.code(), Code::InvalidArgument);
 }
 
+/// Boser owns the automatic-upgrade preference.
 #[tokio::test]
-async fn managed_production_routes_reject_every_upgrade_rpc() {
+async fn managed_production_routes_reject_the_auto_upgrade_rpcs() {
     let (_tempdir, routes) = production_routes(Product::Bfm100).await;
     let mut upgrade = UpgradeServiceClient::new(routes);
 
     let results = [
-        upgrade
-            .check_for_upgrade(authenticated(CheckForUpgradeRequest::default()))
-            .await
-            .map(|_| ()),
-        upgrade
-            .get_installable_widgets(authenticated(()))
-            .await
-            .map(|_| ()),
-        upgrade
-            .start_upgrade(authenticated(StartUpgradeRequest::default()))
-            .await
-            .map(|_| ()),
         upgrade
             .set_auto_upgrade(authenticated(SetAutoUpgradeRequest::default()))
             .await
@@ -697,7 +686,7 @@ async fn managed_production_routes_reject_every_upgrade_rpc() {
     ];
 
     for result in results {
-        let status = result.expect_err("managed upgrade RPC must be rejected");
+        let status = result.expect_err("managed auto-upgrade RPC must be rejected");
         assert_eq!(status.code(), Code::Unimplemented);
         assert_eq!(status.message(), BOSER_MANAGED_STATUS_MESSAGE);
     }
@@ -885,17 +874,17 @@ const EXPECTED_MANAGED_RPC_OWNERS: [(&str, &str, ManagedRpcOwner); 21] = [
     (
         web::upgrade_service_server::SERVICE_NAME,
         "CheckForUpgrade",
-        ManagedRpcOwner::Boser,
+        ManagedRpcOwner::Bmc,
     ),
     (
         web::upgrade_service_server::SERVICE_NAME,
         "GetInstallableWidgets",
-        ManagedRpcOwner::Boser,
+        ManagedRpcOwner::Bmc,
     ),
     (
         web::upgrade_service_server::SERVICE_NAME,
         "StartUpgrade",
-        ManagedRpcOwner::Boser,
+        ManagedRpcOwner::Bmc,
     ),
     (
         web::upgrade_service_server::SERVICE_NAME,

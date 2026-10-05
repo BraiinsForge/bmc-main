@@ -36,6 +36,7 @@ use crate::led_coordinator::LedCoordinatorHandle;
 use crate::secret_store::SecretStoreHandle;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
+use crate::system_upgrade::boser::UpgradeRoute;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use crate::widget::{Coordinator, WidgetRegistry};
@@ -97,6 +98,10 @@ fn managed_rpc_owner(path: &str) -> Option<ManagedRpcOwner> {
         | (
             web::system_service_server::SERVICE_NAME,
             "HasPassword" | "GetTimezone" | "GetTimezoneList",
+        )
+        | (
+            web::upgrade_service_server::SERVICE_NAME,
+            "CheckForUpgrade" | "GetInstallableWidgets" | "StartUpgrade",
         ) => Some(ManagedRpcOwner::Bmc),
         (web::network_service_server::SERVICE_NAME, "SetNetworkConfig" | "SetWifi")
         | (
@@ -104,14 +109,9 @@ fn managed_rpc_owner(path: &str) -> Option<ManagedRpcOwner> {
             "CreatePassword" | "ChangePassword" | "RemovePassword" | "SetTimezone" | "FactoryReset"
             | "Reboot",
         )
-        | (
-            web::upgrade_service_server::SERVICE_NAME,
-            "CheckForUpgrade"
-            | "GetInstallableWidgets"
-            | "StartUpgrade"
-            | "SetAutoUpgrade"
-            | "GetAutoUpgrade",
-        ) => Some(ManagedRpcOwner::Boser),
+        | (web::upgrade_service_server::SERVICE_NAME, "SetAutoUpgrade" | "GetAutoUpgrade") => {
+            Some(ManagedRpcOwner::Boser)
+        }
         _ => None,
     }
 }
@@ -210,6 +210,7 @@ pub(crate) struct GrpcWeb<
     sound_controller: SoundController,
     alarm_controller: Option<AlarmController>,
     hardware_capabilities: HardwareCapabilities,
+    upgrade_route: UpgradeRoute,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -231,6 +232,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         sound_controller: SoundController,
         alarm_controller: Option<AlarmController>,
         hardware_capabilities: HardwareCapabilities,
+        upgrade_route: UpgradeRoute,
     ) -> Self {
         Self {
             manager,
@@ -247,6 +249,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             sound_controller,
             alarm_controller,
             hardware_capabilities,
+            upgrade_route,
         }
     }
 
@@ -260,10 +263,11 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         };
 
         let upgrade_service = web::upgrade_service_server::UpgradeServiceServer::new(
-            upgrade_service::UpgradeService::new(
+            upgrade_service::UpgradeService::<_, _, S>::new(
                 self.system_upgrade_service,
                 self.config_handle.clone(),
                 &self.hardware_capabilities,
+                self.upgrade_route,
             ),
         );
 
