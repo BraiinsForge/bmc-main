@@ -192,7 +192,10 @@ so it carries no request beyond the destructor.
 Unlike the alarm, this is a *broadcast* protocol rather than a relay for one owning overlay: the two upgrade surfaces
 and the startup screen all bind it, and each decides for itself what a snapshot means.
 
-### `deck_upgrade_v1` (version 2)
+### `deck_upgrade_v1` (version 3)
+
+Version 3 adds the `rebooting` phase: the run has handed the device over to its reboot, which is no longer the flashing
+that can still fail. A client bound below version 3 is sent `firmware_applying` in its place.
 
 | Member                            | Kind    | Args                                                | Notes                                                                                        |
 | --------------------------------- | ------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------- |

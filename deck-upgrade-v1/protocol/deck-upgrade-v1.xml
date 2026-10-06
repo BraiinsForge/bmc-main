@@ -8,7 +8,7 @@
     a complete display snapshot to the firmware and package overlay clients.
   </copyright>
 
-  <interface name="deck_upgrade_v1" version="2">
+  <interface name="deck_upgrade_v1" version="3">
     <description summary="Deck upgrade-progress interface">
       Lightweight compositor-relayed IPC for upgrade overlays. Each complete
       snapshot starts with started and ends with snapshot_done, so a client
@@ -34,6 +34,7 @@
       <entry name="package_verifying" value="4" summary="verifying package closure"/>
       <entry name="package_building" value="5" summary="building package closure"/>
       <entry name="package_activating" value="6" summary="activating package closure"/>
+      <entry name="rebooting" value="7" since="3" summary="handing the device over to its reboot"/>
     </enum>
 
     <event name="started">
@@ -49,7 +50,9 @@
         Report the current upgrade stage. A phase starts a new progress interval
         and therefore clears any prior download progress in the client snapshot.
         A packages snapshot carries only the package_* phases; clients treat a
-        firmware phase in a packages snapshot as a malformed sequence.
+        firmware phase or rebooting in a packages snapshot as a malformed
+        sequence. A client bound below version 3 is sent firmware_applying in
+        place of rebooting.
       </description>
       <arg name="phase" type="uint" enum="phase" summary="current upgrade stage"/>
     </event>

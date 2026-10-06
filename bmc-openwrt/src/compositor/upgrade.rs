@@ -31,11 +31,13 @@ use smithay::reexports::wayland_server::{
 use super::state::CompositorState;
 
 const TERMINAL_LIFETIME: Duration = Duration::from_secs(10);
+const REBOOTING_SINCE: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WireEvent {
     Started(Kind),
     Phase(Phase),
+    Rebooting,
     DownloadProgress {
         downloaded_bytes: u64,
     },
@@ -112,11 +114,7 @@ impl UpgradeCache {
                     });
                 }
             }
-            UpgradeRunStatus::Rebooting { .. } => {
-                events.push(WireEvent::Phase(phase_to_wire(
-                    UpgradePhase::FirmwareApplying,
-                )));
-            }
+            UpgradeRunStatus::Rebooting { .. } => events.push(WireEvent::Rebooting),
             UpgradeRunStatus::Succeeded { .. } => {
                 events.push(WireEvent::Succeeded {
                     remaining_ms: remaining_ms(cached.deadline?, now)?,
@@ -211,11 +209,21 @@ impl UpgradeState {
     }
 }
 
+/// A client bound before the reboot had a phase of its own still sees it as applying.
+fn rebooting_phase(version: u32) -> Phase {
+    if version >= REBOOTING_SINCE {
+        Phase::Rebooting
+    } else {
+        Phase::FirmwareApplying
+    }
+}
+
 fn emit(resource: &DeckUpgradeV1, events: &[WireEvent]) {
     for event in events {
         match event {
             WireEvent::Started(kind) => resource.started(*kind),
             WireEvent::Phase(phase) => resource.phase(*phase),
+            WireEvent::Rebooting => resource.phase(rebooting_phase(resource.version())),
             WireEvent::DownloadProgress { downloaded_bytes } => {
                 resource.send_download_progress(*downloaded_bytes);
             }
@@ -263,7 +271,7 @@ impl Dispatch<DeckUpgradeV1, ()> for CompositorState {
 }
 
 pub fn create_global(display: &DisplayHandle) {
-    display.create_global::<CompositorState, DeckUpgradeV1, ()>(2, ());
+    display.create_global::<CompositorState, DeckUpgradeV1, ()>(REBOOTING_SINCE, ());
 }
 
 #[cfg(test)]
@@ -306,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reboot_is_drawn_as_the_applying_phase() {
+    fn a_reboot_is_its_own_wire_event() {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
@@ -323,7 +331,7 @@ mod tests {
             cache.events(now),
             Some(vec![
                 WireEvent::Started(Kind::Firmware),
-                WireEvent::Phase(Phase::FirmwareApplying),
+                WireEvent::Rebooting,
                 WireEvent::SnapshotDone,
             ])
         );

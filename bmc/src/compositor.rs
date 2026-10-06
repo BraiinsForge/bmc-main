@@ -254,7 +254,7 @@ pub enum UpgradeRunStatus {
         phase: Option<UpgradePhase>,
         progress: Option<DownloadProgress>,
     },
-    /// The upgrade handed the device over to its reboot; shown like the applying phase.
+    /// The upgrade handed the device over to its reboot.
     Rebooting {
         kind: UpgradeKind,
     },

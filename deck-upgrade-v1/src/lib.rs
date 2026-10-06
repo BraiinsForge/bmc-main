@@ -67,6 +67,7 @@ impl client::deck_upgrade_v1::Phase {
             Self::FirmwareApplying => "Applying",
             Self::PackageBuilding => "Building",
             Self::PackageActivating => "Activating",
+            Self::Rebooting => "Rebooting",
         }
     }
 }
@@ -82,6 +83,7 @@ impl std::fmt::Display for client::deck_upgrade_v1::Phase {
             Self::PackageVerifying => "Verifying packages",
             Self::PackageBuilding => "Building packages",
             Self::PackageActivating => "Activating packages",
+            Self::Rebooting => "Rebooting",
         })
     }
 }
@@ -225,7 +227,7 @@ mod tests {
             assert_eq!(ServerPhase::try_from(value), Ok(server));
         }
 
-        assert_eq!(ClientPhase::try_from(7), Err(()));
-        assert_eq!(ServerPhase::try_from(7), Err(()));
+        assert_eq!(ClientPhase::try_from(8), Err(()));
+        assert_eq!(ServerPhase::try_from(8), Err(()));
     }
 }
