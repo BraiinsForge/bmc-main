@@ -1,0 +1,83 @@
+# No native arm in widget code: a widget gates nothing on its target beyond
+# a wasm-only item (`target_arch = "wasm32"`, alone or `any(…, test)`),
+# which stays allowed until BDK-952 makes widgets behave the same on a device,
+# in the gallery and in tests.
+#
+# Whatever differs between the targets lives in the SDK, behind its host traits.
+#
+# A lone lint expectation, `cfg_attr(<condition>, expect(…))`, passes: it implements nothing.
+# Other `target_*` keys are listed by name; a new key needs adding.
+
+id: no-platform-branch-in-widgets
+language: rust
+severity: error
+
+message: Platform branch in widget code — the SDK owns every platform difference.
+
+files:
+  - "widgets-wasm/**/*.rs"
+  - "widgets-wasm-examples/**/*.rs"
+
+utils:
+  names-target-arch:
+    has:
+      stopBy: end
+      pattern: target_arch
+  lint-expectation:
+    any:
+      - pattern: "#[cfg_attr($PRED($$$INNER), expect($$$LINT))]"
+      - pattern: "#![cfg_attr($PRED($$$INNER), expect($$$LINT))]"
+      - pattern: "#[cfg_attr($KEY = $VALUE, expect($$$LINT))]"
+      - pattern: "#![cfg_attr($KEY = $VALUE, expect($$$LINT))]"
+
+rule:
+  any:
+    # `target_arch` inside a `not(…)` at any depth.
+    - all:
+        - any:
+            - kind: attribute_item
+            - kind: inner_attribute_item
+        - has:
+            stopBy: end
+            kind: token_tree
+            follows:
+              pattern: not
+            matches: names-target-arch
+        - not:
+            matches: lint-expectation
+    # Any other target predicate: another `target_*` key, or `target_arch` on another value.
+    - all:
+        - any:
+            - kind: attribute_item
+            - kind: inner_attribute_item
+            - pattern: cfg!($$$)
+        - has:
+            stopBy: end
+            any:
+              - pattern: target_abi
+              - pattern: target_endian
+              - pattern: target_env
+              - pattern: target_family
+              - pattern: target_feature
+              - pattern: target_has_atomic
+              - pattern: target_os
+              - pattern: target_pointer_width
+              - pattern: target_vendor
+              # The value two tokens after `target_arch`, past its `=`.
+              - kind: string_literal
+                not:
+                  pattern: '"wasm32"'
+                follows:
+                  follows:
+                    pattern: target_arch
+        - not:
+            matches: lint-expectation
+    - all:
+        - pattern: cfg!($$$)
+        - matches: names-target-arch
+    # A target gate on a statement inside a function body.
+    - all:
+        - kind: attribute_item
+        - matches: names-target-arch
+        - inside:
+            kind: block
