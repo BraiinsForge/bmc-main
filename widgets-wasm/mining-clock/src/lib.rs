@@ -28,6 +28,7 @@
 #[cfg(target_arch = "wasm32")]
 mod analog;
 mod manifest_params;
+#[cfg(any(target_arch = "wasm32", test))]
 mod miner;
 #[cfg(target_arch = "wasm32")]
 mod shared;
@@ -37,6 +38,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use std::time::Duration;
 
+#[cfg(any(target_arch = "wasm32", test))]
 #[cfg_attr(
     not(test),
     expect(
@@ -74,14 +76,17 @@ const CONSTRAINTS_POLL: usize = 2;
 /// instead of sweeping from where the page left them.
 /// Keyed on the render delta rather than wall-clock time,
 /// so a DST or NTP step still sweeps the hands.
+#[cfg(any(target_arch = "wasm32", test))]
 const MAX_ANIMATED_RENDER_GAP_MS: u32 = 5_000;
 
+#[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClockHandTransition {
     Animate,
     Snap,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 impl ClockHandTransition {
     fn for_render_gap(delta_ms: u32) -> Self {
         if delta_ms > MAX_ANIMATED_RENDER_GAP_MS {
