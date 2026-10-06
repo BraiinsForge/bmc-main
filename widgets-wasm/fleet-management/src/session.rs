@@ -19,6 +19,8 @@
 // the grant above.
 
 use bmc_wasm_sdk::FetchOutcome;
+// `fmt!` expands to a `uwrite!` that resolves `ufmt` in the caller's scope.
+use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId, PollFailure};
@@ -38,6 +40,53 @@ pub fn adapter_for(family: DeviceFamily) -> Option<&'static dyn FamilyAdapter> {
         DeviceFamily::Ubos => Some(&UbosAdapter),
         DeviceFamily::Bitaxe => Some(&BitaxeAdapter),
     }
+}
+
+/// Where a device's API lives.
+#[must_use]
+pub fn base_url(adapter: &dyn FamilyAdapter, host: &str, port: u16) -> String {
+    bmc_wasm_sdk::fmt!("http://{}:{}{}", host, port, adapter.api_base_path())
+}
+
+/// The URL of a device's `idx`-th telemetry endpoint; `None` past the family's last one.
+#[must_use]
+pub fn telemetry_url(
+    adapter: &dyn FamilyAdapter,
+    host: &str,
+    port: u16,
+    idx: usize,
+) -> Option<String> {
+    let endpoint = adapter.telemetry_endpoints().get(idx)?;
+    Some(bmc_wasm_sdk::fmt!(
+        "{}{}",
+        base_url(adapter, host, port),
+        endpoint
+    ))
+}
+
+/// The header a telemetry request carries:
+/// the family's own credential header where it has one, else the cached session token.
+#[must_use]
+pub fn telemetry_auth_header(adapter: &dyn FamilyAdapter, token: Option<&str>) -> Option<String> {
+    adapter
+        .credential_header()
+        .or_else(|| token.map(|t| adapter.auth_header(t)))
+}
+
+/// Where a login goes and what it sends.
+pub struct LoginRequest {
+    pub url: String,
+    pub body: String,
+}
+
+/// A login's request; `None` for a family that never logs in.
+#[must_use]
+pub fn login_request(adapter: &dyn FamilyAdapter, host: &str, port: u16) -> Option<LoginRequest> {
+    let path = adapter.auth_endpoint()?;
+    Some(LoginRequest {
+        url: bmc_wasm_sdk::fmt!("{}{}", base_url(adapter, host, port), path),
+        body: adapter.login_body(),
+    })
 }
 
 /// A cursor over a snapshot of device ids — the poller's rotation ring. The
@@ -325,6 +374,56 @@ mod tests {
         assert_eq!(
             fetch_failure(Some(FetchOutcome::Http(503)), false),
             PollFailure::ApiError
+        );
+    }
+
+    #[test]
+    fn a_telemetry_url_joins_the_device_base_and_the_endpoint() {
+        assert_eq!(
+            telemetry_url(&BosAdapter, "10.0.0.5", 80, 0).as_deref(),
+            Some("http://10.0.0.5:80/api/v1/miner/stats")
+        );
+    }
+
+    #[test]
+    fn telemetry_urls_stop_past_the_last_endpoint() {
+        for adapter in [
+            &BosAdapter as &dyn FamilyAdapter,
+            &UbosAdapter,
+            &BitaxeAdapter,
+        ] {
+            let count = adapter.telemetry_endpoints().len();
+            assert_eq!(telemetry_url(adapter, "10.0.0.5", 80, count), None);
+        }
+    }
+
+    #[test]
+    fn a_family_credential_header_wins_over_a_session_token() {
+        assert_eq!(
+            telemetry_auth_header(&UbosAdapter, Some("token")),
+            UbosAdapter.credential_header()
+        );
+    }
+
+    #[test]
+    fn bos_telemetry_carries_the_session_token_once_there_is_one() {
+        assert_eq!(telemetry_auth_header(&BosAdapter, None), None);
+        assert_eq!(
+            telemetry_auth_header(&BosAdapter, Some("token")).as_deref(),
+            Some("Authorization: token")
+        );
+    }
+
+    #[test]
+    fn only_bos_logs_in() {
+        assert!(login_request(&UbosAdapter, "10.0.0.5", 80).is_none());
+        assert!(login_request(&BitaxeAdapter, "10.0.0.5", 80).is_none());
+        let LoginRequest { url, body } =
+            login_request(&BosAdapter, "10.0.0.5", 80).expect("BUG: BOS has an auth endpoint");
+        assert_eq!(url, "http://10.0.0.5:80/api/v1/auth/login");
+        assert!(
+            body.contains("{{ credential.bos.password }}"),
+            "the password placeholder travels in the body: {body}"
         );
     }
 

@@ -31,8 +31,9 @@ use bmc_wasm_sdk::{
 };
 
 use super::{
-    EndpointOutcome, PassCursor, ReauthDecision, adapter_for, fail_pending, fetch_failure,
-    login_failure, pass_reachable, reauth_decision,
+    EndpointOutcome, LoginRequest, PassCursor, ReauthDecision, adapter_for, base_url, fail_pending,
+    fetch_failure, login_failure, login_request, pass_reachable, reauth_decision,
+    telemetry_auth_header, telemetry_url,
 };
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId, PollFailure, credential_slot, family_label};
@@ -164,10 +165,6 @@ pub fn account_bound(family: DeviceFamily) -> bool {
 /// Polled families: an unbound one would only have every request refused.
 fn family_polled(family: DeviceFamily) -> bool {
     family_enabled(family) && account_bound(family)
-}
-
-fn base_url(adapter: &dyn FamilyAdapter, host: &str, port: u16) -> String {
-    fmt!("http://{}:{}{}", host, port, adapter.api_base_path())
 }
 
 fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
@@ -383,11 +380,8 @@ fn fire_pending(
     adapter: &dyn FamilyAdapter,
     delay_ms: u32,
 ) {
-    let endpoints = adapter.telemetry_endpoints();
     let token = TOKENS.with(|t| t.borrow().get(id).cloned());
-    let header = adapter
-        .credential_header()
-        .or_else(|| token.map(|t| adapter.auth_header(&t)));
+    let header = telemetry_auth_header(adapter, token.as_deref());
     let generation = with_poller(|p| p.generation);
     let pending_idxs: Vec<usize> = with_poller(|p| {
         p.outcomes
@@ -405,7 +399,8 @@ fn fire_pending(
     );
     let mut sent = 0_usize;
     for idx in pending_idxs {
-        let url = fmt!("{}{}", base_url(adapter, host, port), endpoints[idx]);
+        let url = telemetry_url(adapter, host, port, idx)
+            .expect("BUG: pending endpoints index the family's own endpoint list");
         let req_id = send(
             FetchRequest::get(&url)
                 .headers_opt(header.as_deref())
@@ -443,18 +438,16 @@ fn issue_login(
     adapter: &dyn FamilyAdapter,
     delay_ms: u32,
 ) {
-    let Some(auth_path) = adapter.auth_endpoint() else {
+    let Some(LoginRequest { url, body }) = login_request(adapter, host, port) else {
         finalize_failed(id);
         return;
     };
-    let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
     log_debug!(
         "fleet: {} {} logging in at {}",
         family_label(family),
         id.as_str(),
         url,
     );
-    let body = adapter.login_body();
     let generation = with_poller(|p| p.generation);
     let req = FetchRequest::post(&url)
         .headers("Content-Type: application/json")

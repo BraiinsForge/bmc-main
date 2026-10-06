@@ -38,15 +38,7 @@ pub trait FamilyAdapter {
     fn browse_service_types(&self) -> &'static [&'static str];
     fn parse_found(&self, json: &dyn JsonLookup) -> Option<DiscoveredDevice>;
 
-    #[cfg_attr(
-        all(not(target_arch = "wasm32"), test),
-        expect(dead_code, reason = "used by the driver on wasm")
-    )]
     fn api_base_path(&self) -> &'static str;
-    #[cfg_attr(
-        all(not(target_arch = "wasm32"), test),
-        expect(dead_code, reason = "used by the driver on wasm")
-    )]
     fn telemetry_endpoints(&self) -> &'static [&'static str];
     fn parse_telemetry(
         &self,
@@ -78,10 +70,6 @@ pub trait FamilyAdapter {
     fn parse_login(&self, _json: &dyn JsonLookup) -> Option<String> {
         None
     }
-    #[cfg_attr(
-        all(not(target_arch = "wasm32"), test),
-        expect(dead_code, reason = "used by the driver on wasm")
-    )]
     fn auth_header(&self, token: &str) -> String {
         bmc_wasm_sdk::fmt!("Authorization: {token}")
     }
