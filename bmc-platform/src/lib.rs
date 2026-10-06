@@ -404,6 +404,10 @@ pub struct HardwareProfile {
     pub paths: PlatformPaths,
 }
 
+/// Preserves 15% ticker fills (#42BE65 and #FA4D56) and maps Gray 60 to Gray 30.
+const BMM101_COLOR_ADJUSTMENT: ColorAdjustment =
+    ColorAdjustment::new(38.0 / 255.0, 111.0 / 255.0, 198.0 / 255.0);
+
 impl HardwareProfile {
     #[must_use]
     #[expect(clippy::too_many_lines)]
@@ -490,7 +494,7 @@ impl HardwareProfile {
                     },
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Bgr565,
-                    color_adjustment: None,
+                    color_adjustment: Some(BMM101_COLOR_ADJUSTMENT),
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -1005,6 +1009,63 @@ mod test {
         let profile = HardwareProfile::for_product(Product::Bmm100);
         assert_eq!(profile.locate_wifi_chip(None), None);
         assert_eq!(profile.locate_wifi_chip(Some(&deck_serial(0x01))), None);
+    }
+
+    #[test]
+    fn readability_adjustment_is_enabled_only_for_the_tested_bmm101_panel() {
+        for product in [
+            Product::Bmc100,
+            Product::Bmm100,
+            Product::Bmm101,
+            Product::Bfm100,
+        ] {
+            let adjustment = HardwareProfile::for_product(product)
+                .display
+                .color_adjustment;
+            assert_eq!(
+                adjustment.is_some(),
+                product == Product::Bmm101,
+                "untested panels must retain their original colors: {product:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bmm101_preserves_both_ticker_gradient_fills() {
+        let adjustment = HardwareProfile::for_product(Product::Bmm101)
+            .display
+            .color_adjustment
+            .expect("BUG: BMM101 must carry its tested readability profile");
+        let floor_byte = (adjustment.shadow_floor * 255.0).round();
+        for peak in [190.0_f32, 250.0] {
+            let fill_byte = (0.15 * peak).round();
+            assert!(
+                fill_byte <= floor_byte,
+                "preserve both trend colors throughout the 2–15% ticker fade: \
+                 fill {fill_byte} above floor {floor_byte}"
+            );
+        }
+    }
+
+    #[test]
+    fn color_adjustments_are_well_ordered() {
+        for product in [
+            Product::Bmc100,
+            Product::Bmm100,
+            Product::Bmm101,
+            Product::Bfm100,
+        ] {
+            let Some(adjustment) = HardwareProfile::for_product(product)
+                .display
+                .color_adjustment
+            else {
+                continue;
+            };
+            assert!(
+                adjustment.is_well_ordered(),
+                "the compositor refuses to start on an ill-ordered adjustment: {product:?}"
+            );
+        }
     }
 
     #[test]

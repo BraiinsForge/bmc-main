@@ -156,6 +156,16 @@ impl GainCurve {
             high_offset: 1.0 - high_slope,
         }
     }
+
+    #[cfg(test)]
+    fn adjust(&self, shadow_floor: f32, rgb: [f32; 3]) -> [f32; 3] {
+        let [r, g, b] = rgb;
+        let luma = (0.2126 * r + 0.7152 * g + 0.0722 * b).max(shadow_floor);
+        let peak = r.max(g).max(b).max(shadow_floor);
+        let gain = (self.low_slope + self.low_offset / luma)
+            .min(self.high_slope + self.high_offset / peak);
+        rgb.map(|channel| channel * gain)
+    }
 }
 
 fn adjustment_uniforms(adjustment: Option<bmc_platform::ColorAdjustment>) -> Vec<Uniform<'static>> {
@@ -179,10 +189,130 @@ fn adjustment_uniforms(adjustment: Option<bmc_platform::ColorAdjustment>) -> Vec
 
 #[cfg(test)]
 mod tests {
-    use super::adjustment_uniforms;
+    use bmc_platform::{HardwareProfile, Product};
+
+    use super::{GainCurve, adjustment_uniforms};
 
     #[test]
     fn unadjusted_panels_require_no_color_uniforms() {
         assert!(adjustment_uniforms(None).is_empty());
+    }
+
+    #[test]
+    fn bmm101_preserves_shadows_and_white_and_lifts_clock_gray() {
+        let (curve, floor) = bmm101();
+        let mut previous = 0.0;
+        for input in 0_u16..=255 {
+            let peak = f32::from(input) / 255.0;
+            let [output, ..] = curve.adjust(floor, [peak; 3]);
+            assert!(
+                output >= previous,
+                "grayscale hierarchy must remain monotonic"
+            );
+            assert!(
+                output <= 1.0,
+                "panel mapping must not clip highlight gradients"
+            );
+            if peak <= floor || input == 255 {
+                assert!(
+                    (output - peak).abs() < 1.0 / 255.0,
+                    "preserve shadows and white"
+                );
+            }
+            if input == 111 {
+                assert!(
+                    (output * 255.0 - 198.0).abs() < 1.0,
+                    "map Figma Gray 60 to Gray 30"
+                );
+            }
+            previous = output;
+        }
+    }
+
+    fn bmm101() -> (GainCurve, f32) {
+        let adjustment = HardwareProfile::for_product(Product::Bmm101)
+            .display
+            .color_adjustment
+            .expect("BUG: BMM101 must carry its tested readability profile");
+        (GainCurve::new(adjustment), adjustment.shadow_floor())
+    }
+
+    fn srgb(hex: u32) -> [f32; 3] {
+        [16, 8, 0].map(|shift| {
+            f32::from(u8::try_from((hex >> shift) & 0xFF).expect("BUG: masked to a byte")) / 255.0
+        })
+    }
+
+    /// WCAG 2 contrast ratio.
+    fn contrast(a: [f32; 3], b: [f32; 3]) -> f32 {
+        let luminance = |rgb: [f32; 3]| {
+            let [r, g, b] = rgb.map(|channel| {
+                if channel <= 0.040_45 {
+                    channel / 12.92
+                } else {
+                    ((channel + 0.055) / 1.055).powf(2.4)
+                }
+            });
+            0.2126 * r + 0.7152 * g + 0.0722 * b
+        };
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn tinted_badges_keep_their_text_contrast() {
+        let (curve, floor) = bmm101();
+        // ticker-list and bitcoin-mining-data change badges: dark tinted fill, light text
+        let badges = [
+            (0x10_2B_19, 0x5A_DF_88),
+            (0x4F_09_0D, 0xFF_B3_B2),
+            (0x0E_3F_25, 0x34_C0_6A),
+            (0x51_0B_27, 0xFF_83_A0),
+        ];
+        for (fill, text) in badges {
+            let design = contrast(srgb(fill), srgb(text));
+            let shown = contrast(
+                curve.adjust(floor, srgb(fill)),
+                curve.adjust(floor, srgb(text)),
+            );
+            assert!(
+                shown >= design * (1.0 - 1e-3),
+                "lifting a dark fill more than its text erodes the badge: \
+                 {fill:06X}/{text:06X} contrast {design:.2} -> {shown:.2}"
+            );
+        }
+    }
+
+    #[test]
+    fn light_text_on_gray_80_stays_readable() {
+        let (curve, floor) = bmm101();
+        let gray_80 = srgb(0x39_39_39);
+        for text in [0xFF_FF_FF, 0xF4_F4_F4] {
+            let shown = contrast(
+                curve.adjust(floor, gray_80),
+                curve.adjust(floor, srgb(text)),
+            );
+            assert!(
+                shown >= 7.0,
+                "lifting Gray 80 toward its text drops it below WCAG AAA 7:1: {text:06X} {shown:.2}"
+            );
+        }
+    }
+
+    #[test]
+    fn lifted_accents_keep_their_hue() {
+        let (curve, floor) = bmm101();
+        for hex in [0xF4_C0_1A, 0xF9_53_55, 0x28_3C_C8, 0x42_BE_65, 0x5A_DF_88] {
+            let rgb = srgb(hex);
+            let shown = curve.adjust(floor, rgb);
+            assert!(
+                shown.iter().all(|channel| *channel <= 1.0),
+                "a clipped channel shifts the hue: {hex:06X} -> {shown:?}"
+            );
+            assert!(
+                shown[1] > rgb[1],
+                "a bright accent still takes the peak curve's lift: {hex:06X}"
+            );
+        }
     }
 }
