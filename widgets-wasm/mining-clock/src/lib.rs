@@ -37,15 +37,14 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use std::time::Duration;
 
-#[cfg(target_arch = "wasm32")]
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "widget render code uses many SDK exports and macros in one file"
+    )
 )]
 use bmc_wasm_sdk::*;
-
-#[cfg(not(target_arch = "wasm32"))]
-use bmc_wasm_sdk::{Draw, Easing};
 
 #[cfg(target_arch = "wasm32")]
 use manifest_params::Params;
