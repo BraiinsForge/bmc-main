@@ -1147,21 +1147,34 @@ impl ArrayParam {
                 }
             }
             ListItems::Object { object, unique } => {
-                let RowUniqueness::By(keys) = unique else {
-                    return Ok(());
+                if let RowUniqueness::By(keys) = unique {
+                    let defaulted = keys.iter().find(|key| {
+                        object
+                            .fields
+                            .get(*key)
+                            .is_some_and(|field| has_default(field.kind.as_scalar()))
+                    });
+                    if let Some(key) = defaulted {
+                        return Err(format!(
+                            "key {:?} cannot have a default_value under unique_items: \
+                            every added row would start as a repeat",
+                            key.as_str()
+                        ));
+                    }
+                }
+                let starts_blank = |field: &ScalarField| {
+                    !field.is_optional
+                        && !matches!(field.kind, ScalarKind::Boolean(_))
+                        && !has_default(field.kind.as_scalar())
                 };
-                let defaulted = keys.iter().find(|key| {
-                    object
-                        .fields
-                        .get(*key)
-                        .is_some_and(|field| has_default(field.kind.as_scalar()))
-                });
-                if let Some(key) = defaulted {
-                    return Err(format!(
-                        "key {:?} cannot have a default_value under unique_items: \
-                        every added row would start as a repeat",
-                        key.as_str()
-                    ));
+                if !matches!(unique, RowUniqueness::Off)
+                    && !object.fields.values().any(starts_blank)
+                {
+                    return Err(
+                        "unique_items needs a required field a new row leaves blank: \
+                        otherwise every added row would start as a repeat"
+                            .into(),
+                    );
                 }
             }
         }

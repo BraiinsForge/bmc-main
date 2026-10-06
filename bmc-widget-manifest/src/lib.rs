@@ -1377,6 +1377,34 @@ mod tests {
     }
 
     #[test]
+    fn validate_unique_rows_that_start_complete_fail() {
+        let mut defaulted = links(serde_json::json!([]));
+        defaulted["items"]["fields"]["label"]["default_value"] = serde_json::json!("Home");
+        defaulted["unique_items"] = serde_json::json!(true);
+        let all_optional = serde_json::json!({
+            "name": "L", "type": "array", "max_items": 3, "unique_items": true,
+            "items": { "type": "object", "fields": {
+                "note": { "name": "Note", "type": "string", "optional": true },
+            }},
+        });
+        let keyed_on_a_toggle = serde_json::json!({
+            "name": "L", "type": "array", "max_items": 3, "unique_items": ["shown"],
+            "items": { "type": "object", "fields": {
+                "label": { "name": "Label", "type": "string", "optional": true },
+                "shown": { "name": "Shown", "type": "boolean" },
+            }},
+        });
+        for def in [defaulted, all_optional, keyed_on_a_toggle] {
+            assert_eq!(
+                array_rejection(def.clone()),
+                "unique_items needs a required field a new row leaves blank: \
+                otherwise every added row would start as a repeat",
+                "{def}"
+            );
+        }
+    }
+
+    #[test]
     fn unique_keys_on_a_scalar_list_fail_to_parse() {
         for keys in [
             serde_json::json!([]),

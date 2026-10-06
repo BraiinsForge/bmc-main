@@ -111,8 +111,9 @@ attributes and enforced by any JSON Schema validator. Examples:
   against `items` and, under `unique_items`, none repeated — the same check an operator's list must pass.
 - `unique_items` keys go only on object items, and name at least one field, each a declared field and none twice; this
   one is checked while the manifest is parsed.
-- Under `unique_items`, neither a scalar item nor a named key field declares a `default_value`: every item the operator
-  adds starts at those defaults, so the second would start as a repeat.
+- Under `unique_items`, neither a scalar item nor a named key field declares a `default_value`, and an object row keeps
+  at least one required, non-boolean field without one: every item the operator adds starts at those defaults, so the
+  second would start as a repeat.
 - An `object` item declares at least one field, and no field key twice.
 
 Viewport constraints are also validated after parsing:

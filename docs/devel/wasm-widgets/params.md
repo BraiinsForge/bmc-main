@@ -107,7 +107,9 @@ omitted optional field is stored unset (`null`); a field's own `default_value` o
 `unique_items: true` refuses an item equal to an earlier one, the list's `default_value` included; an object row repeats
 only when every field matches. A list of field keys such as `["label"]` compares object rows on those fields alone.
 Either way, an unset optional field matches an unset one. Every item the operator adds starts at the same defaults, so
-under `unique_items` an item declares no `default_value`, and neither does a field `unique_items` names.
+under `unique_items` an item declares no `default_value`, and neither does a field `unique_items` names. An object row
+also keeps at least one required, non-boolean field without a default, so a new row starts incomplete rather than as a
+repeat.
 
 The web UI reports a single repeated key on its field, and any other repeat once for the whole row.
 
