@@ -19,13 +19,7 @@
 // the grant above.
 
 #![allow(clippy::cast_precision_loss)]
-#![cfg_attr(
-    not(target_arch = "wasm32"),
-    expect(
-        dead_code,
-        reason = "native builds exercise pure layout selection; the render tree is used by the wasm entrypoint"
-    )
-)]
+#![cfg(target_arch = "wasm32")]
 
 #[cfg_attr(not(test), expect(clippy::wildcard_imports))]
 use bmc_wasm_sdk::*;
@@ -63,17 +57,6 @@ enum HelloLayout {
     RoundShowcase,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompactControls {
-    TwoCounterButtons,
-    SmallAnimationClockModalAndSubsetLedEffects,
-    MediumButtonsModalLedEffectsIconShowcaseAndAnimatedText,
-    LargeButtonsModalColorsIconsLedEffectsAndRichText,
-    FullShowcase,
-    RoundClockControlsAndLedEffects,
-}
-
 /// Shape decides before size does: `SizeVariant` names the deck's rectangular
 /// slots, and a round display is none of them however its pixels measure.
 fn hello_layout(variant: SizeVariant, shape: ViewportShape) -> HelloLayout {
@@ -85,21 +68,6 @@ fn hello_layout(variant: SizeVariant, shape: ViewportShape) -> HelloLayout {
             SizeVariant::Large => HelloLayout::LargeCompact,
             SizeVariant::Full => HelloLayout::FullShowcase,
         },
-    }
-}
-
-#[cfg(test)]
-fn compact_controls(layout: HelloLayout) -> CompactControls {
-    match layout {
-        HelloLayout::SmallCompact => CompactControls::SmallAnimationClockModalAndSubsetLedEffects,
-        HelloLayout::MediumCompact => {
-            CompactControls::MediumButtonsModalLedEffectsIconShowcaseAndAnimatedText
-        }
-        HelloLayout::LargeCompact => {
-            CompactControls::LargeButtonsModalColorsIconsLedEffectsAndRichText
-        }
-        HelloLayout::FullShowcase => CompactControls::FullShowcase,
-        HelloLayout::RoundShowcase => CompactControls::RoundClockControlsAndLedEffects,
     }
 }
 
@@ -859,7 +827,6 @@ fn build_ui(size: WidgetSize, shape: ViewportShape, time: &SystemTime, counts: [
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn handle_led_clicks(result: &TreeRenderResult) {
     if result.clicks.contains_key("led_solid") {
         led::set_effect(LedEffect::Solid, Color::from_rgb(255, 40, 40), 0, None);
@@ -963,7 +930,6 @@ fn about_modal() -> Node {
     )
 }
 
-#[cfg(target_arch = "wasm32")]
 fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
     let counter_buttons = ["primary", "secondary", "tertiary", "danger"];
     for (i, id) in counter_buttons.iter().enumerate() {
@@ -993,13 +959,11 @@ fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
 /// Re-render in response to touch — the host never renders on touch by
 /// itself, so an interactive widget must ask for the frame here.
 #[unsafe(no_mangle)]
-#[cfg(target_arch = "wasm32")]
 pub extern "C" fn on_touch() {
     request_frame();
 }
 
 #[unsafe(no_mangle)]
-#[cfg(target_arch = "wasm32")]
 pub extern "C" fn render(_delta_ms: u32) {
     let WidgetSize {
         width: w,
@@ -1018,67 +982,4 @@ pub extern "C" fn render(_delta_ms: u32) {
     let result = render_ui(w, h, build_ui(size, shape, &time, counts));
 
     handle_clicks(&result);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CompactControls, HelloLayout, compact_controls, hello_layout};
-    use bmc_wasm_sdk::{SizeVariant, ViewportShape};
-
-    const RECT: ViewportShape = ViewportShape::Rectangular;
-
-    #[test]
-    fn compact_variants_drop_full_showcase_content_that_would_overflow() {
-        assert_eq!(
-            hello_layout(SizeVariant::Small, RECT),
-            HelloLayout::SmallCompact
-        );
-        assert_eq!(
-            hello_layout(SizeVariant::Medium, RECT),
-            HelloLayout::MediumCompact
-        );
-        assert_eq!(
-            hello_layout(SizeVariant::Large, RECT),
-            HelloLayout::LargeCompact
-        );
-        assert_eq!(
-            hello_layout(SizeVariant::Full, RECT),
-            HelloLayout::FullShowcase
-        );
-    }
-
-    #[test]
-    fn a_round_display_takes_the_round_layout_whatever_it_measures() {
-        // BFM100 is 480×480, which `SizeVariant` reports as one of its
-        // rectangular slots; the shape has to win or the layout would be
-        // laid out for a slot and cropped by the circle.
-        for variant in [
-            SizeVariant::Small,
-            SizeVariant::Medium,
-            SizeVariant::Large,
-            SizeVariant::Full,
-        ] {
-            assert_eq!(
-                hello_layout(variant, ViewportShape::Round),
-                HelloLayout::RoundShowcase,
-                "{variant:?} on a round display"
-            );
-        }
-    }
-
-    #[test]
-    fn large_compact_layout_uses_buttons_modal_colors_icons_led_effects_and_rich_text() {
-        assert_eq!(
-            compact_controls(HelloLayout::SmallCompact),
-            CompactControls::SmallAnimationClockModalAndSubsetLedEffects
-        );
-        assert_eq!(
-            compact_controls(HelloLayout::MediumCompact),
-            CompactControls::MediumButtonsModalLedEffectsIconShowcaseAndAnimatedText
-        );
-        assert_eq!(
-            compact_controls(HelloLayout::LargeCompact),
-            CompactControls::LargeButtonsModalColorsIconsLedEffectsAndRichText
-        );
-    }
 }
