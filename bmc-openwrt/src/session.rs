@@ -228,10 +228,7 @@ impl session::Manager for OpenwrtSessionManager {
     async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
         let ubus_session = Self::ubus_login(ROOT_USERNAME, password, Self::SESSION_TIMEOUT).await?;
 
-        debug!(
-            "New ubus session {:?} created for user {}@{}",
-            ubus_session, ROOT_USERNAME, password
-        );
+        debug!("New ubus session created for user {ROOT_USERNAME}");
 
         Self::ubus_set_luci_compatible_values(&ubus_session.ubus_rpc_session, ROOT_USERNAME)
             .await?;
@@ -248,10 +245,7 @@ impl session::Manager for OpenwrtSessionManager {
     async fn extend(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
         let ubus_session = Self::ubus_find(&handle.session_id).await?;
 
-        debug!(
-            "Extend ubus session {:?} for session_id: {}",
-            ubus_session, handle.session_id
-        );
+        debug!("Extend ubus session");
 
         let mut cookie = Cookie::new(Self::COOKIE_SESSION, handle.session_id);
         cookie.set_path(Self::COOKIE_SESSION_PATH);
@@ -263,13 +257,10 @@ impl session::Manager for OpenwrtSessionManager {
     }
 
     async fn logout(&self, handle: Handle) -> Result<Cookie<'static>, Error> {
-        debug!("Logout session {:?}", handle);
+        debug!("Logout session");
 
         if let Err(e) = Self::ubus_destroy(&handle.session_id).await {
-            warn!(
-                "Failed to destroy ubus session: {} for session_id: {}",
-                e, handle.session_id
-            );
+            warn!("Failed to destroy ubus session: {e}");
         }
 
         let mut cookie = Cookie::new(Self::COOKIE_SESSION, "");
@@ -310,10 +301,7 @@ impl session::Manager for OpenwrtSessionManager {
         debug!("Logout all related sessions");
         for session in sessions_to_destroy {
             if let Err(e) = Self::ubus_destroy(&session.ubus_rpc_session).await {
-                warn!(
-                    "Failed to destroy ubus session: {} for session_id: {}",
-                    e, session.ubus_rpc_session
-                );
+                warn!("Failed to destroy a related ubus session: {e}");
             }
         }
 
@@ -326,11 +314,7 @@ impl session::Manager for OpenwrtSessionManager {
             .find(|cookie| cookie.name() == Self::COOKIE_SESSION)
             .ok_or(Error::SessionCookieNotFound)?;
 
-        debug!(
-            "Found session cookie name:{} value:{}",
-            cookie.name(),
-            cookie.value()
-        );
+        debug!("Found session cookie {}", cookie.name());
 
         Self::ubus_find(cookie.value())
             .await
