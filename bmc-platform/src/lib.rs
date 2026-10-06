@@ -469,7 +469,7 @@ impl HardwareProfile {
                     },
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Bgr565,
-                    color_adjustment: None,
+                    color_adjustment: Some(BMM101_COLOR_ADJUSTMENT),
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -1012,7 +1012,7 @@ mod test {
     }
 
     #[test]
-    fn readability_adjustment_is_enabled_only_for_the_tested_bmm101_panel() {
+    fn readability_adjustment_is_enabled_only_for_bmm_panels() {
         for product in [
             Product::Bmc100,
             Product::Bmm100,
@@ -1024,8 +1024,8 @@ mod test {
                 .color_adjustment;
             assert_eq!(
                 adjustment.is_some(),
-                product == Product::Bmm101,
-                "untested panels must retain their original colors: {product:?}"
+                matches!(product, Product::Bmm100 | Product::Bmm101),
+                "only BMM panels should use the readability adjustment: {product:?}"
             );
         }
     }
