@@ -30,6 +30,7 @@ pub mod fetch;
 pub mod fill;
 pub mod ids;
 pub mod image_meta;
+pub mod json;
 pub mod mesh;
 pub mod nodes;
 pub mod params;

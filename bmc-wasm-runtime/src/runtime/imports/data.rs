@@ -21,6 +21,7 @@
 //! Data-, persistence-, and formatting-focused guest imports.
 
 use anyhow::{Result, bail};
+use bmc_wasm_protocol::json::{self, JsonKind};
 use bmc_wasm_protocol::system::{NumberFormat, TemperatureUnit, UnitSystem};
 use bmc_wasm_protocol::time::{strftime_utc, wall_clock};
 use bmc_wasm_protocol::{JsonId, XmlId};
@@ -409,7 +410,7 @@ fn register_json_parse_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
 
-            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            let Some(value) = json::parse(&bytes) else {
                 return 0;
             };
 
@@ -457,11 +458,13 @@ fn register_json_string_import(linker: &mut Linker<HostState>) -> Result<()> {
                 let Some(doc) = state.json_docs.get(&doc_id) else {
                     return -1;
                 };
-                let Some(val) = doc.pointer(&path) else {
-                    return -1;
-                };
-                let Some(s) = val.as_str() else {
-                    return -2;
+                let Some(s) = json::str_at(doc, &path) else {
+                    // A value that is there but not a string answers `-2`, apart from absence.
+                    return if json::kind_at(doc, &path).is_some() {
+                        -2
+                    } else {
+                        -1
+                    };
                 };
                 s.to_owned()
             };
@@ -488,10 +491,7 @@ fn register_json_numeric_imports(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(doc) = state.json_docs.get(&doc_id) else {
                 return i64::MIN;
             };
-            let Some(val) = doc.pointer(&path) else {
-                return i64::MIN;
-            };
-            val.as_i64().unwrap_or(i64::MIN)
+            json::i64_at(doc, &path).unwrap_or(i64::MIN)
         },
     )?;
 
@@ -509,10 +509,7 @@ fn register_json_numeric_imports(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(doc) = state.json_docs.get(&doc_id) else {
                 return f64::NAN;
             };
-            let Some(val) = doc.pointer(&path) else {
-                return f64::NAN;
-            };
-            val.as_f64().unwrap_or(f64::NAN)
+            json::f64_at(doc, &path).unwrap_or(f64::NAN)
         },
     )?;
 
@@ -534,14 +531,7 @@ fn register_json_bool_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(doc) = state.json_docs.get(&doc_id) else {
                 return -1;
             };
-            let Some(val) = doc.pointer(&path) else {
-                return -1;
-            };
-            match val.as_bool() {
-                Some(true) => 1,
-                Some(false) => 0,
-                None => -1,
-            }
+            json::bool_at(doc, &path).map_or(-1, i32::from)
         },
     )?;
 
@@ -550,30 +540,17 @@ fn register_json_bool_import(linker: &mut Linker<HostState>) -> Result<()> {
 
 /// `-1` is absent — an unknown document counts,
 /// so a failed parse and a missing pointer read the same.
-fn json_kind_impl(doc: Option<&serde_json::Value>, path: &str) -> i32 {
-    let Some(val) = doc.and_then(|doc| doc.pointer(path)) else {
-        return -1;
-    };
-    match val {
-        serde_json::Value::Null => 0,
-        serde_json::Value::Bool(_) => 1,
-        serde_json::Value::Number(_) => 2,
-        serde_json::Value::String(_) => 3,
-        serde_json::Value::Array(_) => 4,
-        serde_json::Value::Object(_) => 5,
-    }
+fn json_kind_impl(doc: Option<&json::Value>, path: &str) -> i32 {
+    doc.and_then(|doc| json::kind_at(doc, path))
+        .map_or(-1, JsonKind::to_wire)
 }
 
 /// - `-1` for anything without a length
 /// - empty container reads `0`
 /// - absent one reads `-1`.
-fn json_len_impl(doc: Option<&serde_json::Value>, path: &str) -> i32 {
-    let len = match doc.and_then(|doc| doc.pointer(path)) {
-        Some(serde_json::Value::Array(items)) => items.len(),
-        Some(serde_json::Value::Object(entries)) => entries.len(),
-        Some(_) | None => return -1,
-    };
-    i32::try_from(len).unwrap_or(i32::MAX)
+fn json_len_impl(doc: Option<&json::Value>, path: &str) -> i32 {
+    doc.and_then(|doc| json::len_at(doc, path))
+        .map_or(-1, |len| i32::try_from(len).unwrap_or(i32::MAX))
 }
 
 fn register_json_shape_imports(linker: &mut Linker<HostState>) -> Result<()> {

@@ -14,6 +14,7 @@ egui = { workspace = true, optional = true }
 hex.workspace = true
 palette.workspace = true
 serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -26,13 +27,14 @@ egui = ["dep:egui"]
 # Off by default so the wasm SDK build path stays free of Wayland-protocol types.
 widget-protocol = ["dep:bmc-widget-protocol"]
 # What the host computes for a guest, shared with native SDK builds.
-# Off by default so the wasm SDK build path stays free
-# of the formatting core (formato) and the calendar (chrono-tz).
+# Off by default so the wasm SDK build path stays free of the formatting core (formato),
+# the calendar (chrono-tz) and the JSON reader (serde_json).
 host = [
     "dep:bmc-shared-time",
     "dep:bmc-shared-utils",
     "dep:chrono",
     "dep:chrono-tz",
+    "dep:serde_json",
 ]
 
 [lints]

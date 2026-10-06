@@ -356,7 +356,6 @@ pub mod format;
 pub mod host;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod http_listener;
-#[cfg(target_arch = "wasm32")]
 pub mod json;
 pub mod json_str;
 #[cfg(target_arch = "wasm32")]
@@ -422,7 +421,6 @@ pub use format::{
     local_unix_secs, resolve_tz_offset, strftime,
 };
 pub use host::*;
-#[cfg(target_arch = "wasm32")]
 pub use json::{JsonDoc, JsonKind};
 pub use json_str::JsonStr;
 #[cfg(target_arch = "wasm32")]

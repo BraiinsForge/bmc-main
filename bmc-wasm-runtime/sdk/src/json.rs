@@ -23,6 +23,7 @@
 //! The host parses JSON using `serde_json` at native speed. The widget
 //! queries fields via [RFC 6901](https://datatracker.ietf.org/doc/html/rfc6901)
 //! JSON Pointer paths, keeping WASM binaries small.
+//! Off the device the same readers run in-process.
 //!
 //! # Example
 //!
@@ -35,25 +36,25 @@
 //! // doc is freed automatically on Drop
 //! ```
 
-use bmc_wasm_protocol::JsonId;
+pub use bmc_wasm_protocol::json::JsonKind;
 
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_json_parse(body_ptr: *const u8, body_len: u32) -> u32;
-    fn host_json_get_str(
-        doc_id: u32,
-        path_ptr: *const u8,
-        path_len: u32,
-        out_ptr: *mut u8,
-        out_len: u32,
-    ) -> i32;
-    fn host_json_get_i64(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i64;
-    fn host_json_get_f64(doc_id: u32, path_ptr: *const u8, path_len: u32) -> f64;
-    fn host_json_get_bool(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
-    fn host_json_kind(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
-    fn host_json_len(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
-    fn host_json_free(doc_id: u32);
+trait JsonDocProvider {
+    type Doc: core::fmt::Debug;
+
+    fn parse(data: &[u8]) -> Option<Self::Doc>;
+    fn str(doc: &Self::Doc, path: &str) -> Option<String>;
+    fn i64(doc: &Self::Doc, path: &str) -> Option<i64>;
+    fn f64(doc: &Self::Doc, path: &str) -> Option<f64>;
+    fn bool(doc: &Self::Doc, path: &str) -> Option<bool>;
+    fn kind(doc: &Self::Doc, path: &str) -> Option<JsonKind>;
+    fn len(doc: &Self::Doc, path: &str) -> Option<usize>;
+    fn release(doc: &Self::Doc);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
 
 /// Handle to a host-side parsed JSON document.
 ///
@@ -61,15 +62,13 @@ unsafe extern "C" {
 /// The document is freed on the host when this handle is dropped.
 /// `None` represents a parse failure — accessor methods short-circuit.
 #[derive(Debug)]
-pub struct JsonDoc(Option<JsonId>);
+pub struct JsonDoc(Option<<Platform as JsonDocProvider>::Doc>);
 
 impl JsonDoc {
     /// Parse a JSON byte slice on the host side.
     #[must_use]
     pub fn parse(data: &[u8]) -> Self {
-        Self(JsonId::from_wire(unsafe {
-            host_json_parse(data.as_ptr(), data.len() as u32)
-        }))
+        Self(Platform::parse(data))
     }
 
     /// Whether the document was parsed successfully.
@@ -83,56 +82,17 @@ impl JsonDoc {
     /// Returns `None` if the path doesn't exist or the value isn't a string.
     #[must_use]
     pub fn str(&self, path: &str) -> Option<String> {
-        let id = self.0?.to_wire();
-        // First call with a reasonable buffer to get the actual length
-        let mut buf = vec![0_u8; 256];
-        let actual = unsafe {
-            host_json_get_str(
-                id,
-                path.as_ptr(),
-                path.len() as u32,
-                buf.as_mut_ptr(),
-                buf.len() as u32,
-            )
-        };
-        if actual < 0 {
-            return None; // not found or wrong type
-        }
-        let actual = actual as usize;
-        if actual <= buf.len() {
-            buf.truncate(actual);
-            String::from_utf8(buf).ok()
-        } else {
-            // Retry with exact size
-            let mut buf = vec![0u8; actual];
-            let len = unsafe {
-                host_json_get_str(
-                    id,
-                    path.as_ptr(),
-                    path.len() as u32,
-                    buf.as_mut_ptr(),
-                    buf.len() as u32,
-                )
-            };
-            if len < 0 {
-                return None;
-            }
-            buf.truncate(len as usize);
-            String::from_utf8(buf).ok()
-        }
+        Platform::str(self.0.as_ref()?, path)
     }
 
     /// Get an i64 value at the given JSON Pointer path.
     ///
-    /// Returns `None` if the path doesn't exist or holds no integer in `i64::MIN + 1..=i64::MAX`,
-    /// since the host spells absence as `i64::MIN`.
-    /// A decimal such as `325.0` is `None` too; read it with [`Self::f64`].
+    /// Returns `None` if the path doesn't exist or doesn't hold an integer that fits an `i64`;
+    /// on the device a literal `i64::MIN` is `None` too, since the host spells absence with it.
+    /// A decimal such as `325.0` is `None` as well; read it with [`Self::f64`].
     #[must_use]
     pub fn i64(&self, path: &str) -> Option<i64> {
-        let id = self.0?.to_wire();
-        let val = unsafe { host_json_get_i64(id, path.as_ptr(), path.len() as u32) };
-        // We use i64::MIN as sentinel for "not found"
-        if val == i64::MIN { None } else { Some(val) }
+        Platform::i64(self.0.as_ref()?, path)
     }
 
     /// Get an f64 value at the given JSON Pointer path.
@@ -140,9 +100,7 @@ impl JsonDoc {
     /// Returns `None` if the path doesn't exist or holds no number.
     #[must_use]
     pub fn f64(&self, path: &str) -> Option<f64> {
-        let id = self.0?.to_wire();
-        let val = unsafe { host_json_get_f64(id, path.as_ptr(), path.len() as u32) };
-        if val.is_nan() { None } else { Some(val) }
+        Platform::f64(self.0.as_ref()?, path)
     }
 
     /// Get a boolean value at the given JSON Pointer path.
@@ -150,12 +108,7 @@ impl JsonDoc {
     /// Returns `None` if the path doesn't exist or isn't a boolean.
     #[must_use]
     pub fn bool(&self, path: &str) -> Option<bool> {
-        let id = self.0?.to_wire();
-        match unsafe { host_json_get_bool(id, path.as_ptr(), path.len() as u32) } {
-            0 => Some(false),
-            1 => Some(true),
-            _ => None, // -1 = missing
-        }
+        Platform::bool(self.0.as_ref()?, path)
     }
 
     /// What the value at the path is, or `None` where there is none.
@@ -165,48 +118,202 @@ impl JsonDoc {
     ///  - a missing key answers `None` — where the typed getters answer `None` for both.
     #[must_use]
     pub fn kind(&self, path: &str) -> Option<JsonKind> {
-        let id = self.0?.to_wire();
-        JsonKind::from_wire(unsafe { host_json_kind(id, path.as_ptr(), path.len() as u32) })
+        Platform::kind(self.0.as_ref()?, path)
     }
 
     /// Element count of the array or object at the path,
     /// `None` for anything that has none.
     #[must_use]
     pub fn len(&self, path: &str) -> Option<usize> {
-        let id = self.0?.to_wire();
-        usize::try_from(unsafe { host_json_len(id, path.as_ptr(), path.len() as u32) }).ok()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JsonKind {
-    Null,
-    Bool,
-    Number,
-    String,
-    Array,
-    Object,
-}
-
-impl JsonKind {
-    /// The host's tag: `0` null through `5` object, negative for absent.
-    fn from_wire(tag: i32) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Null),
-            1 => Some(Self::Bool),
-            2 => Some(Self::Number),
-            3 => Some(Self::String),
-            4 => Some(Self::Array),
-            5 => Some(Self::Object),
-            _ => None,
-        }
+        Platform::len(self.0.as_ref()?, path)
     }
 }
 
 impl Drop for JsonDoc {
     fn drop(&mut self) {
-        if let Some(id) = self.0 {
-            unsafe { host_json_free(id.to_wire()) }
+        if let Some(doc) = &self.0 {
+            Platform::release(doc);
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::JsonId;
+
+    use super::JsonKind;
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_json_parse(body_ptr: *const u8, body_len: u32) -> u32;
+        fn host_json_get_str(
+            doc_id: u32,
+            path_ptr: *const u8,
+            path_len: u32,
+            out_ptr: *mut u8,
+            out_len: u32,
+        ) -> i32;
+        fn host_json_get_i64(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i64;
+        fn host_json_get_f64(doc_id: u32, path_ptr: *const u8, path_len: u32) -> f64;
+        fn host_json_get_bool(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
+        fn host_json_kind(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
+        fn host_json_len(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
+        fn host_json_free(doc_id: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::JsonDocProvider for Host {
+        type Doc = JsonId;
+
+        fn parse(data: &[u8]) -> Option<JsonId> {
+            JsonId::from_wire(unsafe { host_json_parse(data.as_ptr(), data.len() as u32) })
+        }
+
+        fn str(doc: &JsonId, path: &str) -> Option<String> {
+            let id = doc.to_wire();
+            // First call with a reasonable buffer to get the actual length
+            let mut buf = vec![0_u8; 256];
+            let actual = unsafe {
+                host_json_get_str(
+                    id,
+                    path.as_ptr(),
+                    path.len() as u32,
+                    buf.as_mut_ptr(),
+                    buf.len() as u32,
+                )
+            };
+            if actual < 0 {
+                return None; // not found or wrong type
+            }
+            let actual = actual as usize;
+            if actual <= buf.len() {
+                buf.truncate(actual);
+                String::from_utf8(buf).ok()
+            } else {
+                // Retry with exact size
+                let mut buf = vec![0u8; actual];
+                let len = unsafe {
+                    host_json_get_str(
+                        id,
+                        path.as_ptr(),
+                        path.len() as u32,
+                        buf.as_mut_ptr(),
+                        buf.len() as u32,
+                    )
+                };
+                if len < 0 {
+                    return None;
+                }
+                buf.truncate(len as usize);
+                String::from_utf8(buf).ok()
+            }
+        }
+
+        fn i64(doc: &JsonId, path: &str) -> Option<i64> {
+            let val = unsafe { host_json_get_i64(doc.to_wire(), path.as_ptr(), path.len() as u32) };
+            // The host answers `i64::MIN` for "not found",
+            // so a literal `i64::MIN` reads as `None` here, unlike off the device.
+            if val == i64::MIN { None } else { Some(val) }
+        }
+
+        fn f64(doc: &JsonId, path: &str) -> Option<f64> {
+            let val = unsafe { host_json_get_f64(doc.to_wire(), path.as_ptr(), path.len() as u32) };
+            if val.is_nan() { None } else { Some(val) }
+        }
+
+        fn bool(doc: &JsonId, path: &str) -> Option<bool> {
+            match unsafe { host_json_get_bool(doc.to_wire(), path.as_ptr(), path.len() as u32) } {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None, // -1 = missing
+            }
+        }
+
+        fn kind(doc: &JsonId, path: &str) -> Option<JsonKind> {
+            JsonKind::from_wire(unsafe {
+                host_json_kind(doc.to_wire(), path.as_ptr(), path.len() as u32)
+            })
+        }
+
+        fn len(doc: &JsonId, path: &str) -> Option<usize> {
+            usize::try_from(unsafe {
+                host_json_len(doc.to_wire(), path.as_ptr(), path.len() as u32)
+            })
+            .ok()
+        }
+
+        fn release(doc: &JsonId) {
+            unsafe { host_json_free(doc.to_wire()) }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::json::{self, Value};
+
+    use super::JsonKind;
+
+    pub(super) struct Host;
+
+    impl super::JsonDocProvider for Host {
+        type Doc = Value;
+
+        fn parse(data: &[u8]) -> Option<Value> {
+            json::parse(data)
+        }
+
+        fn str(doc: &Value, path: &str) -> Option<String> {
+            json::str_at(doc, path).map(str::to_owned)
+        }
+
+        fn i64(doc: &Value, path: &str) -> Option<i64> {
+            json::i64_at(doc, path)
+        }
+
+        fn f64(doc: &Value, path: &str) -> Option<f64> {
+            json::f64_at(doc, path)
+        }
+
+        fn bool(doc: &Value, path: &str) -> Option<bool> {
+            json::bool_at(doc, path)
+        }
+
+        fn kind(doc: &Value, path: &str) -> Option<JsonKind> {
+            json::kind_at(doc, path)
+        }
+
+        fn len(doc: &Value, path: &str) -> Option<usize> {
+            json::len_at(doc, path)
+        }
+
+        fn release(_doc: &Value) {}
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::{JsonDoc, JsonKind};
+
+    #[test]
+    fn a_malformed_document_answers_nothing() {
+        let doc = JsonDoc::parse(b"{\"unterminated\": ");
+        assert!(!doc.is_valid());
+        assert_eq!(doc.kind(""), None);
+    }
+
+    #[test]
+    fn a_document_reads_off_the_device_through_the_shared_readers() {
+        let doc =
+            JsonDoc::parse(br#"{"name": "s21", "rows": [1, 2], "min": -9223372036854775808}"#);
+        assert_eq!(doc.str("/name").as_deref(), Some("s21"));
+        assert_eq!(doc.len("/rows"), Some(2));
+        assert_eq!(doc.kind("/rows"), Some(JsonKind::Array));
+        assert_eq!(
+            doc.i64("/min"),
+            Some(i64::MIN),
+            "off the device `i64::MIN` is a value, not the host's sentinel"
+        );
     }
 }

@@ -980,6 +980,7 @@ dependencies = [
  "chrono-tz",
  "hex",
  "palette",
+ "serde_json",
 ]
 
 [[package]]
