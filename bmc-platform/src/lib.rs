@@ -206,7 +206,56 @@ pub struct DisplayInfo {
     pub dpi: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Concave brightening with normalized anchors, rising with luma and falling with the peak channel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColorAdjustment {
+    shadow_floor: f32,
+    input_anchor: f32,
+    output_anchor: f32,
+}
+
+impl ColorAdjustment {
+    /// # Panics
+    ///
+    /// On an ill-ordered curve, so a profile `const` fails the build rather than the panel.
+    #[must_use]
+    pub const fn new(shadow_floor: f32, input_anchor: f32, output_anchor: f32) -> Self {
+        let adjustment = Self {
+            shadow_floor,
+            input_anchor,
+            output_anchor,
+        };
+        assert!(
+            adjustment.is_well_ordered(),
+            "panel color adjustment requires 0 < floor < input <= output < 1"
+        );
+        adjustment
+    }
+
+    #[must_use]
+    pub const fn shadow_floor(&self) -> f32 {
+        self.shadow_floor
+    }
+
+    #[must_use]
+    pub const fn input_anchor(&self) -> f32 {
+        self.input_anchor
+    }
+
+    #[must_use]
+    pub const fn output_anchor(&self) -> f32 {
+        self.output_anchor
+    }
+
+    const fn is_well_ordered(&self) -> bool {
+        0.0 < self.shadow_floor
+            && self.shadow_floor < self.input_anchor
+            && self.input_anchor <= self.output_anchor
+            && self.output_anchor < 1.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DisplayProfile {
     pub logical_width: u32,
     pub logical_height: u32,
@@ -220,6 +269,7 @@ pub struct DisplayProfile {
     /// Scene-transition overlap compensating for GC400 edge-sampling under rotated scanout.
     pub seam_overlap_px: i32,
     pub pixel_format: DisplayPixelFormat,
+    pub color_adjustment: Option<ColorAdjustment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -383,6 +433,7 @@ impl HardwareProfile {
                     },
                     seam_overlap_px: 4,
                     pixel_format: DisplayPixelFormat::Xrgb8888,
+                    color_adjustment: None,
                 },
                 slot_grid: Some(SlotGrid {
                     columns: 4,
@@ -414,6 +465,7 @@ impl HardwareProfile {
                     },
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Bgr565,
+                    color_adjustment: None,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -438,6 +490,7 @@ impl HardwareProfile {
                     },
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Bgr565,
+                    color_adjustment: None,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -462,6 +515,7 @@ impl HardwareProfile {
                     },
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Xrgb8888,
+                    color_adjustment: None,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -951,6 +1005,12 @@ mod test {
         let profile = HardwareProfile::for_product(Product::Bmm100);
         assert_eq!(profile.locate_wifi_chip(None), None);
         assert_eq!(profile.locate_wifi_chip(Some(&deck_serial(0x01))), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "requires 0 < floor < input <= output < 1")]
+    fn darkening_adjustment_cannot_be_constructed() {
+        let _ = ColorAdjustment::new(0.1, 0.5, 0.4);
     }
 
     #[test]

@@ -397,6 +397,7 @@ impl EglCompositor {
                     display_profile.scanout_transform,
                     display_profile.seam_overlap_px,
                     display_profile.pixel_format,
+                    display_profile.color_adjustment,
                     logo_for_product(profile.product),
                 ),
                 "Failed to initialize scene renderer"

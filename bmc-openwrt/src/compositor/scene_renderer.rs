@@ -564,6 +564,7 @@ impl SceneRenderer {
         scanout_transform: DisplayTransform,
         seam_overlap_px: i32,
         pixel_format: DisplayPixelFormat,
+        color_adjustment: Option<bmc_platform::ColorAdjustment>,
         logo_png: Option<&'static [u8]>,
     ) -> Result<Self> {
         let (width, height) = (output.width(), output.height());
@@ -576,9 +577,15 @@ impl SceneRenderer {
             logical_h
         );
         let swizzler = match pixel_format {
-            DisplayPixelFormat::Xrgb8888 => None,
+            DisplayPixelFormat::Xrgb8888 => {
+                anyhow::ensure!(
+                    color_adjustment.is_none(),
+                    "Panel color adjustment needs the BGR565 scanout pass"
+                );
+                None
+            }
             DisplayPixelFormat::Bgr565 => Some(
-                ScanoutSwizzler::new(egl.renderer(), width, height)
+                ScanoutSwizzler::new(egl.renderer(), width, height, color_adjustment)
                     .context("Failed to set up BGR565 swizzle output pass")?,
             ),
         };
