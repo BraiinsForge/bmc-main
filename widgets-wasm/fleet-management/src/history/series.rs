@@ -22,7 +22,6 @@
 
 use std::collections::VecDeque;
 
-#[cfg(target_arch = "wasm32")]
 use bmc_wasm_sdk::{log_error, ufmt};
 
 use super::{ChartSpan, ChartWindow, HistoryDatum, POINTS};
@@ -125,7 +124,6 @@ impl Series {
     pub(super) fn record(&mut self, at: i64, value: Option<f32>) {
         let newest_at = self.newest_at().unwrap_or(at);
         if at < newest_at {
-            #[cfg(target_arch = "wasm32")]
             log_error!(
                 "fleet: chart sample at {} dropped, older than the newest bucket at {}",
                 at,

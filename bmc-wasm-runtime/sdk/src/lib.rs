@@ -363,7 +363,6 @@ pub mod json_str;
 pub mod kv;
 #[cfg(target_arch = "wasm32")]
 pub mod led;
-#[cfg(target_arch = "wasm32")]
 pub mod log;
 #[cfg(feature = "math-3d")]
 pub mod math;

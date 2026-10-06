@@ -60,7 +60,6 @@ pub const LOCAL_API: &str = "http://localhost/api/v1";
 pub fn endpoint(base: &str, path: &str) -> Option<String> {
     if base.contains('?') || base.contains('#') {
         // Refusing sends no request, so the log is where the reason shows.
-        #[cfg(target_arch = "wasm32")]
         bmc_wasm_sdk::log_warn!(
             "miner URL carries a query or fragment, so {} is unreachable",
             path

@@ -22,6 +22,7 @@
 //!
 //! Messages are forwarded to the host via `host_log` and emitted through the
 //! host's tracing subscriber at the requested level.
+//! Off the device they go to `tracing` directly.
 //!
 //! # Example
 //!
@@ -31,11 +32,6 @@
 //! log_error!("API returned status {}", status);
 //! ```
 
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_log(ptr: *const u8, len: u32, level: u32);
-}
-
 /// Log level constants matching tracing levels.
 pub mod level {
     pub const DEBUG: u32 = 0;
@@ -44,10 +40,19 @@ pub mod level {
     pub const ERROR: u32 = 3;
 }
 
+trait LogSink {
+    fn write(level: u32, msg: &str);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
 /// Send a log message to the host. Prefer the `log_*!` macros instead.
 #[doc(hidden)]
-pub fn _log(level: u32, msg: &str) {
-    unsafe { host_log(msg.as_ptr(), msg.len() as u32, level) }
+pub fn __log(level: u32, msg: &str) {
+    Platform::write(level, msg);
 }
 
 /// Log at debug level.
@@ -56,7 +61,7 @@ pub fn _log(level: u32, msg: &str) {
 #[macro_export]
 macro_rules! log_debug {
     ($($arg:tt)*) => {
-        $crate::log::_log($crate::log::level::DEBUG, &$crate::fmt!($($arg)*))
+        $crate::log::__log($crate::log::level::DEBUG, &$crate::fmt!($($arg)*))
     };
 }
 
@@ -64,7 +69,7 @@ macro_rules! log_debug {
 #[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {
-        $crate::log::_log($crate::log::level::INFO, &$crate::fmt!($($arg)*))
+        $crate::log::__log($crate::log::level::INFO, &$crate::fmt!($($arg)*))
     };
 }
 
@@ -72,7 +77,7 @@ macro_rules! log_info {
 #[macro_export]
 macro_rules! log_warn {
     ($($arg:tt)*) => {
-        $crate::log::_log($crate::log::level::WARN, &$crate::fmt!($($arg)*))
+        $crate::log::__log($crate::log::level::WARN, &$crate::fmt!($($arg)*))
     };
 }
 
@@ -80,6 +85,41 @@ macro_rules! log_warn {
 #[macro_export]
 macro_rules! log_error {
     ($($arg:tt)*) => {
-        $crate::log::_log($crate::log::level::ERROR, &$crate::fmt!($($arg)*))
+        $crate::log::__log($crate::log::level::ERROR, &$crate::fmt!($($arg)*))
     };
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_log(ptr: *const u8, len: u32, level: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::LogSink for Host {
+        fn write(level: u32, msg: &str) {
+            unsafe { host_log(msg.as_ptr(), msg.len() as u32, level) }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use super::level;
+
+    pub(super) struct Host;
+
+    impl super::LogSink for Host {
+        // The same mapping the runtime's `host_log` applies on the device.
+        fn write(level: u32, msg: &str) {
+            match level {
+                level::DEBUG => tracing::debug!("{msg}"),
+                level::INFO => tracing::info!("{msg}"),
+                level::WARN => tracing::warn!("{msg}"),
+                _ => tracing::error!("{msg}"),
+            }
+        }
+    }
 }

@@ -1642,6 +1642,8 @@ dependencies = [
  "bmc-wasm-sdk-macros",
  "glam",
  "percent-encoding",
+ "tracing",
+ "tracing-subscriber",
  "ufmt",
  "unit-prefix",
 ]

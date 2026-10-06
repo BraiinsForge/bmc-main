@@ -993,6 +993,7 @@ dependencies = [
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
  "percent-encoding",
+ "tracing",
  "ufmt",
  "unit-prefix",
 ]
