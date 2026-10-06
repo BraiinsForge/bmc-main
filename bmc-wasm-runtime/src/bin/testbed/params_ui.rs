@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 use bmc_widget_manifest::{
-    ArrayParam, ItemKind, ItemShape, Manifest, MissingValues, ObjectParam, ParamDefinition,
+    ArrayParam, ItemShape, ListItems, Manifest, MissingValues, ObjectParam, ParamDefinition,
     ParamKey, ParamValue, Scalar, Shape, Violation, validate_values,
 };
 
@@ -537,8 +537,8 @@ fn seed_value(scalar: Scalar<'_>) -> ParamValue {
 }
 
 /// Required object fields start set, so a fresh row validates.
-fn seed_item(kind: &ItemKind) -> ParamValue {
-    match kind.shape() {
+fn seed_item(items: &ListItems) -> ParamValue {
+    match items.shape() {
         ItemShape::Scalar(scalar) => seed_value(scalar),
         ItemShape::Object(object) => ParamValue::Object(
             object
@@ -1040,11 +1040,13 @@ mod layout_tests {
 mod seed_tests {
     use serde_json::json;
 
-    use super::{ItemKind, seed_item};
+    use super::{ArrayParam, seed_item};
 
     fn seeded(kind: serde_json::Value) -> serde_json::Value {
-        let kind: ItemKind = serde_json::from_value(kind).expect("BUG: the item kind parses");
-        seed_item(&kind).to_json_value()
+        let mut array = json!({ "max_items": 1 });
+        array["items"] = kind;
+        let array: ArrayParam = serde_json::from_value(array).expect("BUG: the item kind parses");
+        seed_item(&array.items).to_json_value()
     }
 
     #[test]

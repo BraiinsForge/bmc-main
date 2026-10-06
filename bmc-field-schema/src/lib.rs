@@ -22,9 +22,10 @@
 //! Schema-driven form field vocabulary — `ParamDefinition`/`ParamKind`, the value space `ParamValue`,
 //! keyed by `ParamKey` — shared by the widget manifest's `params` and the credential-type `fields`.
 //!
-//! JSON-Schema-expressible constraints ride on `schemars` attributes; cross-field invariants
-//! (`default_value` in `[min, max]` / in `enum_values`, `±0.0` enum collision) live in
-//! [`ParamDefinition::validate`].
+//! JSON-Schema-expressible constraints ride on `schemars` attributes.
+//! Cross-field invariants (`default_value` in `[min, max]` / in `enum_values`, `±0.0` enum collision)
+//! live in [`ParamDefinition::validate`],
+//! except those on keys — duplicates and the fields `unique_items` names — which parsing refuses.
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -415,8 +416,8 @@ impl TryFrom<&serde_json::Value> for ParamValue {
     }
 }
 
-/// As [`deserialize_unique_params`], for any value type. `what` names the key kind in the error:
-/// `"param key"` yields `duplicate param key "theme"`.
+/// As [`deserialize_unique_params`], for any value type. `what` names the key kind in errors:
+/// `"param key"` yields `duplicate param key "theme"`, or `param key "theme": …` for a bad value.
 pub fn deserialize_unique_keyed<'de, D, V>(
     deserializer: D,
     what: &'static str,
@@ -442,7 +443,7 @@ where
             M: MapAccess<'de>,
         {
             let mut map = IndexMap::with_capacity(access.size_hint().unwrap_or(0));
-            while let Some((key, value)) = access.next_entry::<ParamKey, V>()? {
+            while let Some(key) = access.next_key::<ParamKey>()? {
                 if map.contains_key(&key) {
                     return Err(M::Error::custom(format!(
                         "duplicate {} {:?}",
@@ -450,6 +451,9 @@ where
                         key.as_str()
                     )));
                 }
+                let value = access.next_value::<V>().map_err(|error| {
+                    M::Error::custom(format!("{} {:?}: {error}", self.what, key.as_str()))
+                })?;
                 map.insert(key, value);
             }
             Ok(map)
@@ -514,31 +518,119 @@ pub enum ParamKind {
     /// the dedicated variant lets the operator UI render a zone picker instead of a free-form text input.
     Timezone(TimezoneParam),
     /// An ordered list the operator can add to, remove from and reorder.
-    Array(ArrayParam),
+    Array(#[schemars(with = "ArrayParamRepr")] ArrayParam),
 }
 
 /// The options of a [`ParamKind::Array`] field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[schemars(inline)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "ArrayParamRepr", into = "ArrayParamRepr")]
 pub struct ArrayParam {
+    /// What every item is, and which items count as repeats of each other.
+    pub items: ListItems,
+    /// Fewest items the list may hold.
+    pub min_items: usize,
+    /// Most items the list may hold, capped at [`MAX_ARRAY_ITEMS`].
+    pub max_items: usize,
+    /// Items seeded at widget creation; must fit `min_items..=max_items`.
+    pub default_value: Vec<ParamValue>,
+}
+
+/// The options of a [`ParamKind::Array`] field.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+struct ArrayParamRepr {
     /// What every item is. A newly added item starts at the item's `default_value`,
     /// or an object item at each field's; neither is required.
-    pub items: ItemKind,
+    items: ItemKind,
     /// Fewest items the list may hold.
     #[serde(default, skip_serializing_if = "is_zero")]
     #[schemars(range(max = MAX_ARRAY_ITEMS))]
-    pub min_items: usize,
+    min_items: usize,
     /// Most items the list may hold, capped at [`MAX_ARRAY_ITEMS`].
     #[schemars(range(min = 1, max = MAX_ARRAY_ITEMS))]
-    pub max_items: usize,
+    max_items: usize,
     /// Refuse repeated items: `true` compares whole items,
     /// a list of field keys compares object rows on those fields only.
-    #[serde(default, skip_serializing_if = "UniqueItems::is_off")]
-    #[schemars(with = "UniqueItemsRepr")]
-    pub unique_items: UniqueItems,
+    #[serde(default, skip_serializing_if = "UniqueItemsRepr::is_off")]
+    unique_items: UniqueItemsRepr,
     /// Items seeded at widget creation; must fit `min_items..=max_items`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub default_value: Vec<ParamValue>,
+    default_value: Vec<ParamValue>,
+}
+
+impl TryFrom<ArrayParamRepr> for ArrayParam {
+    type Error = String;
+
+    fn try_from(repr: ArrayParamRepr) -> Result<Self, String> {
+        let unique = repr.unique_items;
+        let items = match repr.items {
+            ItemKind::String(p) => ListItems::scalar(ScalarKind::String(p), &unique),
+            ItemKind::Double(p) => ListItems::scalar(ScalarKind::Double(p), &unique),
+            ItemKind::Integer(p) => ListItems::scalar(ScalarKind::Integer(p), &unique),
+            ItemKind::Boolean(p) => ListItems::scalar(ScalarKind::Boolean(p), &unique),
+            ItemKind::Timezone(p) => ListItems::scalar(ScalarKind::Timezone(p), &unique),
+            ItemKind::Object(object) => ListItems::object(object, unique),
+        }?;
+        Ok(Self {
+            items,
+            min_items: repr.min_items,
+            max_items: repr.max_items,
+            default_value: repr.default_value,
+        })
+    }
+}
+
+impl From<ArrayParam> for ArrayParamRepr {
+    fn from(array: ArrayParam) -> Self {
+        let (items, unique_items) = match array.items {
+            ListItems::Scalar { kind, unique } => {
+                (ItemKind::from(kind), UniqueItemsRepr::Flag(unique))
+            }
+            ListItems::Object { object, unique } => (
+                ItemKind::Object(object),
+                match unique {
+                    RowUniqueness::Off => UniqueItemsRepr::Flag(false),
+                    RowUniqueness::Whole => UniqueItemsRepr::Flag(true),
+                    RowUniqueness::By(keys) => {
+                        UniqueItemsRepr::Keys(keys.into_iter().map(|key| key.0).collect())
+                    }
+                },
+            ),
+        };
+        Self {
+            items,
+            min_items: array.min_items,
+            max_items: array.max_items,
+            unique_items,
+            default_value: array.default_value,
+        }
+    }
+}
+
+/// What every item of an [`ArrayParam`] is, and which items count as repeats of each other.
+/// A newly added item starts at the item's `default_value`, or an object item at each field's.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListItems {
+    /// `unique` refuses an item equal to an earlier one.
+    Scalar { kind: ScalarKind, unique: bool },
+    /// A row of named scalar fields.
+    Object {
+        object: ObjectParam,
+        unique: RowUniqueness,
+    },
+}
+
+/// Which object rows count as repeats of each other.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RowUniqueness {
+    /// Repeats are allowed.
+    #[default]
+    Off,
+    /// No row may equal an earlier one on every field.
+    Whole,
+    /// No row may match an earlier one on all of these fields:
+    /// at least one, each a declared field, none twice.
+    By(Vec<ParamKey>),
 }
 
 #[expect(
@@ -547,26 +639,6 @@ pub struct ArrayParam {
 )]
 fn is_zero(n: &usize) -> bool {
     *n == 0
-}
-
-/// Which items of an [`ArrayParam`] count as repeats of each other.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "UniqueItemsRepr", into = "UniqueItemsRepr")]
-pub enum UniqueItems {
-    /// Repeats are allowed.
-    #[default]
-    Off,
-    /// No item may equal an earlier one;
-    /// an object row compares on every field.
-    Whole,
-    /// No object row may match an earlier one on all of these fields.
-    By(Vec<ParamKey>),
-}
-
-impl UniqueItems {
-    fn is_off(&self) -> bool {
-        matches!(self, Self::Off)
-    }
 }
 
 /// Whether a list refuses repeated items,
@@ -586,40 +658,22 @@ enum UniqueItemsRepr {
     Keys(#[schemars(with = "Vec<ParamKey>")] Vec<String>),
 }
 
-impl TryFrom<UniqueItemsRepr> for UniqueItems {
-    type Error = String;
-
-    fn try_from(repr: UniqueItemsRepr) -> Result<Self, String> {
-        Ok(match repr {
-            UniqueItemsRepr::Flag(false) => Self::Off,
-            UniqueItemsRepr::Flag(true) => Self::Whole,
-            UniqueItemsRepr::Keys(keys) => Self::By(
-                keys.into_iter()
-                    .map(|key| {
-                        ParamKey::try_new(key).map_err(|key| {
-                            format!("unique_items names an invalid param key {key:?}")
-                        })
-                    })
-                    .collect::<Result<_, _>>()?,
-            ),
-        })
+impl Default for UniqueItemsRepr {
+    fn default() -> Self {
+        Self::Flag(false)
     }
 }
 
-impl From<UniqueItems> for UniqueItemsRepr {
-    fn from(unique: UniqueItems) -> Self {
-        match unique {
-            UniqueItems::Off => Self::Flag(false),
-            UniqueItems::Whole => Self::Flag(true),
-            UniqueItems::By(keys) => Self::Keys(keys.into_iter().map(|key| key.0).collect()),
-        }
+impl UniqueItemsRepr {
+    fn is_off(&self) -> bool {
+        matches!(self, Self::Flag(false))
     }
 }
 
 /// The kind of an [`ArrayParam`]'s items, tagged like [`ParamKind`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum ItemKind {
+enum ItemKind {
     /// A UTF-8 string.
     String(StringParam),
     /// A finite f64.
@@ -634,7 +688,7 @@ pub enum ItemKind {
     Object(ObjectParam),
 }
 
-/// The fields of an [`ItemKind::Object`] item, in display order.
+/// The fields of an object list item, in display order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ObjectParam {
     /// The row's fields, keyed like params.
@@ -898,16 +952,45 @@ impl ParamKind {
     }
 }
 
-impl ItemKind {
+impl ListItems {
+    fn scalar(kind: ScalarKind, unique: &UniqueItemsRepr) -> Result<Self, String> {
+        let unique = match unique {
+            UniqueItemsRepr::Flag(unique) => *unique,
+            UniqueItemsRepr::Keys(_) => {
+                return Err(
+                    "unique_items names fields, which scalar items lack; true compares whole items"
+                        .into(),
+                );
+            }
+        };
+        Ok(Self::Scalar { kind, unique })
+    }
+
+    fn object(object: ObjectParam, unique: UniqueItemsRepr) -> Result<Self, String> {
+        let unique = match unique {
+            UniqueItemsRepr::Flag(false) => RowUniqueness::Off,
+            UniqueItemsRepr::Flag(true) => RowUniqueness::Whole,
+            UniqueItemsRepr::Keys(keys) => {
+                let keys = keys
+                    .into_iter()
+                    .map(|key| {
+                        ParamKey::try_new(key).map_err(|key| {
+                            format!("unique_items names an invalid param key {key:?}")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                check_unique_keys(&keys, &object)?;
+                RowUniqueness::By(keys)
+            }
+        };
+        Ok(Self::Object { object, unique })
+    }
+
     #[must_use]
     pub fn shape(&self) -> ItemShape<'_> {
         match self {
-            ItemKind::String(p) => ItemShape::Scalar(Scalar::String(p)),
-            ItemKind::Double(p) => ItemShape::Scalar(Scalar::Double(p)),
-            ItemKind::Integer(p) => ItemShape::Scalar(Scalar::Integer(p)),
-            ItemKind::Boolean(p) => ItemShape::Scalar(Scalar::Boolean(p)),
-            ItemKind::Timezone(p) => ItemShape::Scalar(Scalar::Timezone(p)),
-            ItemKind::Object(p) => ItemShape::Object(p),
+            ListItems::Scalar { kind, .. } => ItemShape::Scalar(kind.as_scalar()),
+            ListItems::Object { object, .. } => ItemShape::Object(object),
         }
     }
 
@@ -915,6 +998,18 @@ impl ItemKind {
         match self.shape() {
             ItemShape::Scalar(scalar) => scalar.validate(true),
             ItemShape::Object(object) => object.validate(),
+        }
+    }
+}
+
+impl From<ScalarKind> for ItemKind {
+    fn from(kind: ScalarKind) -> Self {
+        match kind {
+            ScalarKind::String(p) => ItemKind::String(p),
+            ScalarKind::Double(p) => ItemKind::Double(p),
+            ScalarKind::Integer(p) => ItemKind::Integer(p),
+            ScalarKind::Boolean(p) => ItemKind::Boolean(p),
+            ScalarKind::Timezone(p) => ItemKind::Timezone(p),
         }
     }
 }
@@ -1006,19 +1101,16 @@ impl<'a> Scalar<'a> {
 impl ArrayParam {
     /// The default as the validator types it:
     /// a whole number for a double as a double, an omitted optional row field as null.
-    /// Refuses an unusable `unique_items` first, since the repeat check relies on its keys.
     fn projected_default(&self) -> Result<Vec<ParamValue>, String> {
-        self.check_unique_items()?;
-        let default = ParamValue::List(self.default_value.clone());
         let mut violations = Vec::new();
-        let projected = validate::validate_list("default_value", self, &default, &mut violations);
-        if let Some(violation) = violations.into_iter().next() {
-            return Err(format!("{}: {}", violation.path, violation.message));
-        }
-        let Some(ParamValue::List(items)) = projected else {
-            panic!("BUG: a list without violations projects to a list");
-        };
-        Ok(items)
+        validate::validate_list_items("default_value", self, &self.default_value, &mut violations)
+            .ok_or_else(|| {
+                violations
+                    .iter()
+                    .map(|violation| format!("{}: {}", violation.path, violation.message))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -1037,32 +1129,27 @@ impl ArrayParam {
                 self.min_items, self.max_items
             ));
         }
-        self.check_unique_items()?;
+        self.check_unique_defaults()?;
         if self.projected_default()? != self.default_value {
             return Err("default_value is not normalized; normalize the param first".into());
         }
         Ok(())
     }
 
-    fn check_unique_items(&self) -> Result<(), String> {
+    fn check_unique_defaults(&self) -> Result<(), String> {
         let has_default = |scalar: Scalar<'_>| scalar.default_value() != ParamValue::Null;
-        match (&self.unique_items, self.items.shape()) {
-            (UniqueItems::Off, _) | (UniqueItems::Whole, ItemShape::Object(_)) => {}
-            (UniqueItems::By(_), ItemShape::Scalar(_)) => {
-                return Err(
-                    "unique_items names fields, which scalar items lack; true compares whole items"
-                        .into(),
-                );
-            }
-            (UniqueItems::Whole, ItemShape::Scalar(scalar)) => {
-                if has_default(scalar) {
+        match &self.items {
+            ListItems::Scalar { kind, unique } => {
+                if *unique && has_default(kind.as_scalar()) {
                     return Err("an item default_value cannot go with unique_items: \
                         every added item would start as a repeat"
                         .into());
                 }
             }
-            (UniqueItems::By(keys), ItemShape::Object(object)) => {
-                check_unique_keys(keys, object)?;
+            ListItems::Object { object, unique } => {
+                let RowUniqueness::By(keys) = unique else {
+                    return Ok(());
+                };
                 let defaulted = keys.iter().find(|key| {
                     object
                         .fields

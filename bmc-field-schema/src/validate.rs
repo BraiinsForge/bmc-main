@@ -24,8 +24,8 @@ use bmc_shared_time::time::Timezone;
 use indexmap::IndexMap;
 
 use crate::{
-    ArrayParam, DoubleParam, IntegerParam, ItemShape, MAX_PARAM_STRING_LENGTH, ObjectParam,
-    ParamDefinition, ParamKey, ParamKind, ParamValue, Scalar, Shape, StringParam, UniqueItems,
+    ArrayParam, DoubleParam, IntegerParam, ListItems, MAX_PARAM_STRING_LENGTH, ObjectParam,
+    ParamDefinition, ParamKey, ParamKind, ParamValue, RowUniqueness, Scalar, Shape, StringParam,
     f64_canonical_bits,
 };
 
@@ -156,7 +156,7 @@ fn validate_value(
     }
 }
 
-pub(crate) fn validate_list(
+fn validate_list(
     path: &str,
     array: &ArrayParam,
     value: &ParamValue,
@@ -166,6 +166,16 @@ pub(crate) fn validate_list(
         violations.push(Violation::new(path, "Must be a list"));
         return None;
     };
+    validate_list_items(path, array, items, violations).map(ParamValue::List)
+}
+
+/// The items typed, or `None` if the list has a violation.
+pub(crate) fn validate_list_items(
+    path: &str,
+    array: &ArrayParam,
+    items: &[ParamValue],
+    violations: &mut Vec<Violation>,
+) -> Option<Vec<ParamValue>> {
     let before = violations.len();
     if items.len() < array.min_items {
         violations.push(Violation::new(
@@ -181,28 +191,24 @@ pub(crate) fn validate_list(
         ));
         return None;
     }
-    let typed = match array.items.shape() {
-        ItemShape::Scalar(scalar) => {
-            let items = validate_items(path, items, violations, |path, item, violations| {
-                validate_scalar(path, scalar, item, violations)
+    let typed = match &array.items {
+        ListItems::Scalar { kind, unique } => {
+            let items = validate_each(path, items, violations, |path, item, violations| {
+                validate_scalar(path, kind.as_scalar(), item, violations)
             })?;
-            match &array.unique_items {
-                UniqueItems::Off => {}
-                UniqueItems::Whole => push_repeats(path, &items, None, violations),
-                UniqueItems::By(_) => {
-                    panic!("BUG: manifest load refuses unique_items keys on scalar items")
-                }
+            if *unique {
+                push_repeats(path, &items, None, violations);
             }
             items
         }
-        ItemShape::Object(object) => {
-            let rows = validate_items(path, items, violations, |path, item, violations| {
+        ListItems::Object { object, unique } => {
+            let rows = validate_each(path, items, violations, |path, item, violations| {
                 validate_object(path, object, item, violations)
             })?;
-            match &array.unique_items {
-                UniqueItems::Off => {}
-                UniqueItems::Whole => push_repeats(path, &rows, None, violations),
-                UniqueItems::By(keys) => {
+            match unique {
+                RowUniqueness::Off => {}
+                RowUniqueness::Whole => push_repeats(path, &rows, None, violations),
+                RowUniqueness::By(keys) => {
                     let identities: Vec<_> = rows.iter().map(|row| key_fields(row, keys)).collect();
                     push_repeats(path, &identities, Some(keys), violations);
                 }
@@ -210,12 +216,12 @@ pub(crate) fn validate_list(
             rows.into_iter().map(ParamValue::Object).collect()
         }
     };
-    (violations.len() == before).then_some(ParamValue::List(typed))
+    (violations.len() == before).then_some(typed)
 }
 
 /// Every item typed, or `None` if any item has a violation.
 /// Unlike an optional field, an item always has a value.
-fn validate_items<T>(
+fn validate_each<T>(
     path: &str,
     items: &[ParamValue],
     violations: &mut Vec<Violation>,
@@ -313,7 +319,7 @@ fn key_fields<'a>(
     keys.iter()
         .map(|key| {
             row.get(key).expect(
-                "BUG: manifest load lets unique_items name only declared fields, \
+                "BUG: parsing checks unique_items keys against the row's fields, \
                 and a typed row holds every one",
             )
         })

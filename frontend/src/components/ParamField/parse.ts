@@ -164,7 +164,11 @@ function countError(count: number, array: pb.ParamArray): string | undefined {
 function keyFields(row: pb.FieldValue, keys: string[]): pb.FieldValue[] {
     const { kind } = row;
     invariant(kind.case === 'objectValue', 'an object list row parses to an object');
-    return keys.map(key => kind.value.fields[key] ?? nullValue());
+    return keys.map(key => {
+        const value = ownValue(kind.value.fields, key);
+        invariant(value, `a parsed row holds its key field "${key}"`);
+        return value;
+    });
 }
 
 function sameIdentity(a: pb.FieldValue[], b: pb.FieldValue[]): boolean {

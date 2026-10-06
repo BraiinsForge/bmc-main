@@ -47,10 +47,10 @@ use std::str::FromStr;
 pub use bmc_field_schema::credential;
 pub use bmc_field_schema::{
     ArrayParam, BooleanParam, DoubleOption, DoubleParam, EnumControl, FieldSchemaError,
-    IntegerOption, IntegerParam, ItemKind, ItemShape, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH,
+    IntegerOption, IntegerParam, ItemShape, ListItems, MAX_ARRAY_ITEMS, MAX_PARAM_KEY_LENGTH,
     MAX_PARAM_STRING_LENGTH, MissingValues, ObjectParam, ParamDefinition, ParamKey, ParamKind,
-    ParamValue, ParamValueConversionError, Scalar, ScalarField, ScalarKind, Shape, StringFormat,
-    StringOption, StringParam, TimezoneParam, UniqueItems, Violation, f64_canonical_bits,
+    ParamValue, ParamValueConversionError, RowUniqueness, Scalar, ScalarField, ScalarKind, Shape,
+    StringFormat, StringOption, StringParam, TimezoneParam, Violation, f64_canonical_bits,
     validate_values,
 };
 use indexmap::IndexMap;
@@ -1205,6 +1205,12 @@ mod tests {
         }
     }
 
+    fn array_parse_error(json: serde_json::Value) -> String {
+        serde_json::from_value::<ParamDefinition>(json)
+            .expect_err("BUG: expected the param to fail parsing")
+            .to_string()
+    }
+
     #[test]
     fn validate_array_within_its_bounds_passes() {
         array_param(serde_json::json!({
@@ -1298,7 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_unique_keys_that_name_no_usable_field_fail() {
+    fn unique_keys_that_name_no_usable_field_fail_to_parse() {
         for (keys, expected) in [
             (
                 serde_json::json!([]),
@@ -1315,7 +1321,7 @@ mod tests {
         ] {
             let mut def = links(serde_json::json!([]));
             def["unique_items"] = keys;
-            assert_eq!(array_rejection(def), expected);
+            assert_eq!(array_parse_error(def), expected);
         }
     }
 
@@ -1371,13 +1377,13 @@ mod tests {
     }
 
     #[test]
-    fn validate_unique_keys_on_a_scalar_list_fail() {
+    fn unique_keys_on_a_scalar_list_fail_to_parse() {
         for keys in [
             serde_json::json!([]),
             serde_json::json!(["label"]),
             serde_json::json!(["label", "label"]),
         ] {
-            let reason = array_rejection(serde_json::json!({
+            let reason = array_parse_error(serde_json::json!({
                 "name": "S",
                 "type": "array",
                 "items": { "type": "string" },
@@ -1389,26 +1395,6 @@ mod tests {
                 "unique_items names fields, which scalar items lack; true compares whole items"
             );
         }
-    }
-
-    #[test]
-    fn normalize_leaves_unusable_unique_keys_for_validate_to_refuse() {
-        let mut param = array_param(serde_json::json!({
-            "name": "S",
-            "type": "array",
-            "items": { "type": "string" },
-            "max_items": 3,
-            "unique_items": ["label"],
-            "default_value": ["BTC"],
-        }));
-        param.normalize();
-        let Err(FieldSchemaError::InvalidParam { reason, .. }) = param.validate("x") else {
-            panic!("BUG: keys on a scalar list must be refused");
-        };
-        assert_eq!(
-            reason,
-            "unique_items names fields, which scalar items lack; true compares whole items"
-        );
     }
 
     #[test]
@@ -2251,6 +2237,31 @@ mod tests {
         assert!(
             err.to_string().contains("duplicate"),
             "error must mention duplicate: {err}"
+        );
+    }
+
+    #[test]
+    fn a_param_that_fails_to_parse_is_named() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
+            "params": {
+                "symbols": {
+                    "name": "Symbols", "type": "array", "max_items": 3,
+                    "items": {"type": "string"}, "unique_items": ["label"]
+                }
+            }
+        }"#;
+        let err = Manifest::from_str(json).expect_err("BUG: keys on a scalar list must not parse");
+        assert!(
+            err.to_string().contains(
+                r#"param key "symbols": unique_items names fields, which scalar items lack"#
+            ),
+            "{err}"
         );
     }
 

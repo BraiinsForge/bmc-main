@@ -497,7 +497,7 @@
       ]
     },
     "ObjectParam": {
-      "description": "The fields of an [`ItemKind::Object`] item, in display order.",
+      "description": "The fields of an object list item, in display order.",
       "type": "object",
       "properties": {
         "fields": {

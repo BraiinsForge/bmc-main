@@ -28,9 +28,9 @@ use bmc_field_schema::MissingValues;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_widget_manifest::{
-    ArrayParam, BooleanParam, CredentialKey, DoubleParam, EnumControl, IntegerParam, ItemKind,
-    ObjectParam, ParamDefinition, ParamKind, ScalarField, ScalarKind, StringParam, TimezoneParam,
-    UniqueItems,
+    ArrayParam, BooleanParam, CredentialKey, DoubleParam, EnumControl, IntegerParam, ListItems,
+    ObjectParam, ParamDefinition, ParamKind, RowUniqueness, ScalarField, ScalarKind, StringParam,
+    TimezoneParam,
 };
 use futures::stream::{BoxStream, StreamExt};
 use indexmap::IndexMap;
@@ -761,37 +761,49 @@ fn array_param_to_proto(
         items,
         min_items,
         max_items,
-        unique_items,
         default_value,
     }: &ArrayParam,
 ) -> web::ParamArray {
     use web::array_item_kind::Kind as IK;
-    let items = match items {
-        ItemKind::String(p) => IK::ParamString(string_param_to_proto(p)),
-        ItemKind::Double(p) => IK::ParamDouble(double_param_to_proto(p)),
-        ItemKind::Integer(p) => IK::ParamInteger(integer_param_to_proto(p)),
-        ItemKind::Boolean(p) => IK::ParamBoolean(boolean_param_to_proto(p)),
-        ItemKind::Timezone(p) => IK::ParamTimezone(timezone_param_to_proto(p)),
-        ItemKind::Object(p) => IK::ParamObject(object_param_to_proto(p)),
+    let kind = match items {
+        ListItems::Scalar { kind, .. } => match kind {
+            ScalarKind::String(p) => IK::ParamString(string_param_to_proto(p)),
+            ScalarKind::Double(p) => IK::ParamDouble(double_param_to_proto(p)),
+            ScalarKind::Integer(p) => IK::ParamInteger(integer_param_to_proto(p)),
+            ScalarKind::Boolean(p) => IK::ParamBoolean(boolean_param_to_proto(p)),
+            ScalarKind::Timezone(p) => IK::ParamTimezone(timezone_param_to_proto(p)),
+        },
+        ListItems::Object { object, .. } => IK::ParamObject(object_param_to_proto(object)),
     };
     let item_count = |n: usize| {
         u32::try_from(n).expect("BUG: manifest validation caps item counts at MAX_ARRAY_ITEMS")
     };
     web::ParamArray {
-        items: Some(web::ArrayItemKind { kind: Some(items) }),
+        items: Some(web::ArrayItemKind { kind: Some(kind) }),
         min_items: item_count(*min_items),
         max_items: item_count(*max_items),
         default_value: default_value.iter().map(param_value_to_wire).collect(),
-        unique_items: unique_items_to_proto(unique_items),
+        unique_items: unique_items_to_proto(items),
     }
 }
 
-fn unique_items_to_proto(unique_items: &UniqueItems) -> Option<web::param_array::UniqueItems> {
+fn unique_items_to_proto(items: &ListItems) -> Option<web::param_array::UniqueItems> {
     use web::param_array::UniqueItems as U;
-    match unique_items {
-        UniqueItems::Off => None,
-        UniqueItems::Whole => Some(U::Whole(())),
-        UniqueItems::By(keys) => Some(U::By(web::UniqueKeys {
+    match items {
+        ListItems::Scalar { unique: false, .. }
+        | ListItems::Object {
+            unique: RowUniqueness::Off,
+            ..
+        } => None,
+        ListItems::Scalar { unique: true, .. }
+        | ListItems::Object {
+            unique: RowUniqueness::Whole,
+            ..
+        } => Some(U::Whole(())),
+        ListItems::Object {
+            unique: RowUniqueness::By(keys),
+            ..
+        } => Some(U::By(web::UniqueKeys {
             keys: keys.iter().map(|key| key.as_str().to_owned()).collect(),
         })),
     }
@@ -2269,19 +2281,21 @@ mod tests {
         single_param_manifest(
             "counts",
             ParamKind::Array(ArrayParam {
-                items: ItemKind::Integer(IntegerParam {
-                    min: None,
-                    max: Some(5),
-                    step: None,
-                    unit: None,
-                    enum_values: vec![],
-                    enum_control: EnumControl::Dropdown,
-                    default_value: None,
-                    placeholder: None,
-                }),
+                items: ListItems::Scalar {
+                    kind: ScalarKind::Integer(IntegerParam {
+                        min: None,
+                        max: Some(5),
+                        step: None,
+                        unit: None,
+                        enum_values: vec![],
+                        enum_control: EnumControl::Dropdown,
+                        default_value: None,
+                        placeholder: None,
+                    }),
+                    unique: false,
+                },
                 min_items,
                 max_items,
-                unique_items: UniqueItems::Off,
                 default_value,
             }),
             false,
@@ -2579,10 +2593,12 @@ mod tests {
         let manifest = single_param_manifest(
             "symbols",
             ParamKind::Array(ArrayParam {
-                items: ItemKind::String(string_kind()),
+                items: ListItems::Scalar {
+                    kind: ScalarKind::String(string_kind()),
+                    unique: false,
+                },
                 min_items: 0,
                 max_items: 2,
-                unique_items: UniqueItems::Off,
                 default_value: vec![],
             }),
             false,
@@ -3592,8 +3608,14 @@ mod tests {
     fn unique_keys_reach_the_wire_as_keys() {
         let key: bmc_widget_manifest::ParamKey =
             serde_json::from_value(serde_json::json!("label")).expect("BUG: a valid param key");
+        let rows = ListItems::Object {
+            object: ObjectParam {
+                fields: IndexMap::new(),
+            },
+            unique: RowUniqueness::By(vec![key]),
+        };
         assert_eq!(
-            unique_items_to_proto(&UniqueItems::By(vec![key])),
+            unique_items_to_proto(&rows),
             Some(web::param_array::UniqueItems::By(web::UniqueKeys {
                 keys: vec!["label".to_owned()],
             })),
@@ -3610,18 +3632,20 @@ mod tests {
             description: None,
             is_optional: false,
             kind: ParamKind::Array(ArrayParam {
-                items: ItemKind::String(StringParam {
-                    format: None,
-                    min_length: Some(1),
-                    max_length: Some(10),
-                    enum_values: vec![],
-                    enum_control: EnumControl::Dropdown,
-                    default_value: Some("BTC".into()),
-                    placeholder: Some("e.g. BTC or AAPL".into()),
-                }),
+                items: ListItems::Scalar {
+                    kind: ScalarKind::String(StringParam {
+                        format: None,
+                        min_length: Some(1),
+                        max_length: Some(10),
+                        enum_values: vec![],
+                        enum_control: EnumControl::Dropdown,
+                        default_value: Some("BTC".into()),
+                        placeholder: Some("e.g. BTC or AAPL".into()),
+                    }),
+                    unique: true,
+                },
                 min_items: 1,
                 max_items: 8,
-                unique_items: UniqueItems::Whole,
                 default_value: vec![ParamValue::String("NVDA".into())],
             }),
         };
