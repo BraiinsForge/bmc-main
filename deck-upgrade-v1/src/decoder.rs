@@ -346,6 +346,7 @@ mod tests {
             Phase::PackageVerifying,
             Phase::PackageBuilding,
             Phase::PackageActivating,
+            Phase::Rebooting,
         ] {
             let mut decoder = UpgradeDecoder::default();
             decode_all(&mut decoder, [started(Kind::Firmware), phase(wire_phase)]);
@@ -386,6 +387,7 @@ mod tests {
             Phase::FirmwareDownloading,
             Phase::FirmwareVerifying,
             Phase::FirmwareApplying,
+            Phase::Rebooting,
         ] {
             assert_invalid_upgrade_sequence([started(Kind::Packages), phase(wire_phase)]);
         }

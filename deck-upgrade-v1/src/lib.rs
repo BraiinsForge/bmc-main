@@ -158,6 +158,7 @@ mod tests {
             ClientPhase::PackageVerifying,
             ClientPhase::PackageBuilding,
             ClientPhase::PackageActivating,
+            ClientPhase::Rebooting,
         ] {
             assert!(
                 !phase.to_string().is_empty(),
@@ -220,6 +221,7 @@ mod tests {
                 ServerPhase::PackageActivating,
                 6,
             ),
+            (ClientPhase::Rebooting, ServerPhase::Rebooting, 7),
         ] {
             assert_eq!(u32::from(client), value);
             assert_eq!(u32::from(server), value);

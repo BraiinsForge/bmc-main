@@ -338,6 +338,12 @@ mod tests {
     }
 
     #[test]
+    fn a_reboot_is_sent_as_applying_to_clients_without_the_phase() {
+        assert_eq!(rebooting_phase(2), Phase::FirmwareApplying);
+        assert_eq!(rebooting_phase(3), Phase::Rebooting);
+    }
+
+    #[test]
     fn initial_running_snapshot_emits_only_started_and_done() {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
