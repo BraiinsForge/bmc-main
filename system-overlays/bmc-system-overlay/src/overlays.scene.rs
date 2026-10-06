@@ -283,6 +283,7 @@ render_states!(
     FIRMWARE_PACKAGES_BUILDING,
     FIRMWARE_PACKAGES_ACTIVATING,
     FIRMWARE_APPLYING,
+    FIRMWARE_REBOOTING,
     FIRMWARE_FAILURE,
     PACKAGE_PREPARING,
     PACKAGE_KNOWN_DOWNLOAD,
@@ -1084,6 +1085,11 @@ fn upgrade_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
             "Applying",
             firmware(Some(UpgradePhase::FirmwareApplying), None),
             &FIRMWARE_APPLYING,
+        ),
+        (
+            "Rebooting",
+            firmware(Some(UpgradePhase::Rebooting), None),
+            &FIRMWARE_REBOOTING,
         ),
         (
             "Failure",

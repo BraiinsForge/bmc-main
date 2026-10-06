@@ -948,7 +948,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "deck_upgrade_v1" if state.wants_upgrade => {
                     let upgrade =
-                        registry.bind::<DeckUpgradeV1, _, _>(name, version.min(2), qh, ());
+                        registry.bind::<DeckUpgradeV1, _, _>(name, version.min(3), qh, ());
                     state.upgrade = Some(upgrade);
                 }
                 "deck_device_info_v1" if state.wants_device_info => {
