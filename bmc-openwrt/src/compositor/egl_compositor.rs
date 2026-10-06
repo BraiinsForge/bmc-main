@@ -2673,7 +2673,7 @@ impl Compositor for EglCompositor {
 
     fn set_upgrade_state(
         &self,
-        state: bmc::compositor::UpgradeDisplaySnapshot,
+        state: bmc::compositor::UpgradeRunSnapshot,
     ) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetUpgradeState { state })
@@ -2966,9 +2966,9 @@ mod tests {
     };
     use bmc::compositor::{
         Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneCycling,
-        SceneCyclingTransition, SceneLayout, Size, UpgradeDisplaySnapshot, UpgradeDisplayState,
-        UpgradeGeneration, UpgradeKind, WidgetConnectionMode, WidgetInstanceKey, WidgetPlacement,
-        WidgetRegistration,
+        SceneCyclingTransition, SceneLayout, Size, UpgradeGeneration, UpgradeKind,
+        UpgradeRunSnapshot, UpgradeRunStatus, WidgetConnectionMode, WidgetInstanceKey,
+        WidgetPlacement, WidgetRegistration,
     };
     use bmc_platform::backlight::ScreenVisibility;
     use bmc_widget_protocol::{
@@ -4079,9 +4079,9 @@ mod tests {
     #[test]
     fn set_upgrade_state_command_installs_the_authoritative_snapshot() {
         let mut state = make_app_state();
-        let snapshot = UpgradeDisplaySnapshot {
+        let snapshot = UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(9),
-            state: UpgradeDisplayState::Succeeded {
+            state: UpgradeRunStatus::Succeeded {
                 kind: UpgradeKind::Firmware,
             },
         };
@@ -4100,9 +4100,9 @@ mod tests {
     fn clear_upgrade_state_command_removes_the_authoritative_snapshot() {
         let mut state = make_app_state();
         state.compositor.upgrade.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(9),
-                state: UpgradeDisplayState::Succeeded {
+                state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Firmware,
                 },
             },

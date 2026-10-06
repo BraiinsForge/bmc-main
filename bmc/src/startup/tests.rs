@@ -21,12 +21,12 @@
 
 use super::{
     BoserObservation, Destination, Publication, SETUP_AP_REFRESHES, SETUP_URL_CLEAR_AFTER,
-    SetupPendingWait, boser_observation, current_access_point, forward_upgrade_display_state,
+    SetupPendingWait, boser_observation, current_access_point, forward_upgrade_run_status,
     post_upgrade_kind, relay_compositor_events, runs_setup_ap, setup_pending_wait,
 };
 use crate::compositor::{
-    AccessPointInfo, CompositorError, CompositorEvent, UpgradeDisplaySnapshot, UpgradeDisplayState,
-    UpgradeGeneration, UpgradeKind,
+    AccessPointInfo, CompositorError, CompositorEvent, UpgradeGeneration, UpgradeKind,
+    UpgradeRunSnapshot, UpgradeRunStatus,
 };
 use crate::manager::{BmcState, UpgradeMarker};
 use crate::system_manager::ScreenRequest;
@@ -217,10 +217,10 @@ async fn a_pulled_cable_hands_the_screen_back_to_the_setup_ap() {
     assert_eq!(current_access_point(&network).await, Some(mock_ap()));
 }
 
-fn snapshot(generation: usize) -> UpgradeDisplaySnapshot {
-    UpgradeDisplaySnapshot {
+fn snapshot(generation: usize) -> UpgradeRunSnapshot {
+    UpgradeRunSnapshot {
         generation: UpgradeGeneration::new(generation),
-        state: UpgradeDisplayState::Succeeded {
+        state: UpgradeRunStatus::Succeeded {
             kind: UpgradeKind::Firmware,
         },
     }
@@ -236,7 +236,7 @@ async fn upgrade_bridge_replays_a_terminal_snapshot_present_before_its_first_pol
     drop(sender);
     let received = Arc::new(Mutex::new(Vec::new()));
 
-    forward_upgrade_display_state(receiver, {
+    forward_upgrade_run_status(receiver, {
         let received = Arc::clone(&received);
         move |state| {
             received
@@ -267,7 +267,7 @@ async fn upgrade_bridge_coalesces_to_the_latest_authoritative_snapshot() {
     drop(sender);
     let received = Arc::new(Mutex::new(Vec::new()));
 
-    forward_upgrade_display_state(receiver, {
+    forward_upgrade_run_status(receiver, {
         let received = Arc::clone(&received);
         move |state| {
             received
@@ -293,7 +293,7 @@ async fn upgrade_bridge_continues_after_a_compositor_error() {
     let entered = Arc::new(Notify::new());
     let calls = Arc::new(AtomicUsize::new(0));
     let received = Arc::new(Mutex::new(Vec::new()));
-    let task = tokio::spawn(forward_upgrade_display_state(receiver, {
+    let task = tokio::spawn(forward_upgrade_run_status(receiver, {
         let entered = Arc::clone(&entered);
         let calls = Arc::clone(&calls);
         let received = Arc::clone(&received);
@@ -331,7 +331,7 @@ async fn upgrade_bridge_relays_a_clear_after_a_snapshot() {
     let first = snapshot(1);
     let entered = Arc::new(Notify::new());
     let received = Arc::new(Mutex::new(Vec::new()));
-    let task = tokio::spawn(forward_upgrade_display_state(receiver, {
+    let task = tokio::spawn(forward_upgrade_run_status(receiver, {
         let entered = Arc::clone(&entered);
         let received = Arc::clone(&received);
         move |state| {

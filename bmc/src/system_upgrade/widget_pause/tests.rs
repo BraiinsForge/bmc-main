@@ -19,16 +19,16 @@
 // the grant above.
 
 use super::*;
-use crate::compositor::{UpgradeDisplayState, UpgradeKind, UpgradePhase};
+use crate::compositor::{UpgradeKind, UpgradePhase, UpgradeRunStatus};
 
 fn generation(value: usize) -> UpgradeGeneration {
     UpgradeGeneration::new(value)
 }
 
-fn running(value: usize, kind: UpgradeKind, phase: Option<UpgradePhase>) -> UpgradeDisplaySnapshot {
-    UpgradeDisplaySnapshot {
+fn running(value: usize, kind: UpgradeKind, phase: Option<UpgradePhase>) -> UpgradeRunSnapshot {
+    UpgradeRunSnapshot {
         generation: generation(value),
-        state: UpgradeDisplayState::Running {
+        state: UpgradeRunStatus::Running {
             kind,
             phase,
             progress: None,
@@ -36,7 +36,7 @@ fn running(value: usize, kind: UpgradeKind, phase: Option<UpgradePhase>) -> Upgr
     }
 }
 
-fn downloading(value: usize) -> UpgradeDisplaySnapshot {
+fn downloading(value: usize) -> UpgradeRunSnapshot {
     running(
         value,
         UpgradeKind::Firmware,
@@ -44,7 +44,7 @@ fn downloading(value: usize) -> UpgradeDisplaySnapshot {
     )
 }
 
-fn flashing(value: usize) -> UpgradeDisplaySnapshot {
+fn flashing(value: usize) -> UpgradeRunSnapshot {
     running(
         value,
         UpgradeKind::Firmware,
@@ -52,17 +52,17 @@ fn flashing(value: usize) -> UpgradeDisplaySnapshot {
     )
 }
 
-fn failed(value: usize, kind: UpgradeKind) -> UpgradeDisplaySnapshot {
-    UpgradeDisplaySnapshot {
+fn failed(value: usize, kind: UpgradeKind) -> UpgradeRunSnapshot {
+    UpgradeRunSnapshot {
         generation: generation(value),
-        state: UpgradeDisplayState::Failed { kind },
+        state: UpgradeRunStatus::Failed { kind },
     }
 }
 
-fn succeeded(value: usize, kind: UpgradeKind) -> UpgradeDisplaySnapshot {
-    UpgradeDisplaySnapshot {
+fn succeeded(value: usize, kind: UpgradeKind) -> UpgradeRunSnapshot {
+    UpgradeRunSnapshot {
         generation: generation(value),
-        state: UpgradeDisplayState::Succeeded { kind },
+        state: UpgradeRunStatus::Succeeded { kind },
     }
 }
 
@@ -272,22 +272,22 @@ fn a_pause_expires_only_at_its_deadline() {
 }
 
 use super::test_support::{Call, ScriptedLifecycle, StopBehaviour, settle};
-use crate::system_upgrade::DisplayStateService;
+use crate::system_upgrade::RunStatusService;
 use std::sync::Arc;
 
 struct Listener {
-    display: DisplayStateService,
+    display: RunStatusService,
     acknowledged: Acknowledgement,
     widgets: Arc<ScriptedLifecycle>,
 }
 
 fn listen(stop: StopBehaviour) -> Listener {
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     let widgets = ScriptedLifecycle::new(stop);
     let acknowledged = spawn(
         display
             .take_events()
-            .expect("BUG: a new display service still holds its events"),
+            .expect("BUG: a new run status service still holds its events"),
         Arc::clone(&widgets) as Arc<dyn WidgetLifecycle>,
     );
     Listener {
@@ -517,12 +517,12 @@ async fn a_crash_during_a_pause_never_restarts_widgets() {
 
 #[tokio::test(start_paused = true)]
 async fn a_new_run_during_a_held_restart_is_acknowledged_only_after_its_stop() {
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     let widgets = ScriptedLifecycle::holding_restarts(StopBehaviour::Immediate);
     let acknowledged = spawn(
         display
             .take_events()
-            .expect("BUG: a new display service still holds its events"),
+            .expect("BUG: a new run status service still holds its events"),
         Arc::clone(&widgets) as Arc<dyn WidgetLifecycle>,
     );
     display.publish(downloading(0));

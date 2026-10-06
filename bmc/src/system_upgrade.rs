@@ -27,8 +27,8 @@ mod widget_pause;
 use self::stagger::{MAINTENANCE_MIN_DELAY, MaintenanceStagger};
 use crate::BmcManager;
 use crate::compositor::{
-    DownloadProgress, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
-    UpgradePhase,
+    DownloadProgress, UpgradeGeneration, UpgradeKind, UpgradePhase, UpgradeRunSnapshot,
+    UpgradeRunStatus,
 };
 use bmc_platform::HardwareCapabilities;
 use bmc_scheduler::jobs::to_boxed;
@@ -333,14 +333,14 @@ fn led_event(state: &UpgradeRunState) -> Option<SystemUpgradeState> {
 }
 
 #[derive(Debug)]
-struct UpgradeDisplayProjector {
+struct UpgradeRunProjector {
     generation: UpgradeGeneration,
     kind: UpgradeKind,
     phase: Option<UpgradePhase>,
     progress: Option<DownloadProgress>,
 }
 
-impl UpgradeDisplayProjector {
+impl UpgradeRunProjector {
     fn new(generation: UpgradeGeneration, kind: UpgradeKind) -> Self {
         Self {
             generation,
@@ -350,11 +350,11 @@ impl UpgradeDisplayProjector {
         }
     }
 
-    fn initial_snapshot(&self) -> UpgradeDisplaySnapshot {
+    fn initial_snapshot(&self) -> UpgradeRunSnapshot {
         self.running_snapshot()
     }
 
-    fn project(&mut self, state: &UpgradeRunState) -> UpgradeDisplaySnapshot {
+    fn project(&mut self, state: &UpgradeRunState) -> UpgradeRunSnapshot {
         match state {
             UpgradeRunState::Phase(phase) => {
                 self.phase = Some(*phase);
@@ -371,21 +371,21 @@ impl UpgradeDisplayProjector {
                 });
                 self.running_snapshot()
             }
-            UpgradeRunState::Finished => UpgradeDisplaySnapshot {
+            UpgradeRunState::Finished => UpgradeRunSnapshot {
                 generation: self.generation,
-                state: UpgradeDisplayState::Succeeded { kind: self.kind },
+                state: UpgradeRunStatus::Succeeded { kind: self.kind },
             },
-            UpgradeRunState::Failed(_) => UpgradeDisplaySnapshot {
+            UpgradeRunState::Failed(_) => UpgradeRunSnapshot {
                 generation: self.generation,
-                state: UpgradeDisplayState::Failed { kind: self.kind },
+                state: UpgradeRunStatus::Failed { kind: self.kind },
             },
         }
     }
 
-    fn running_snapshot(&self) -> UpgradeDisplaySnapshot {
-        UpgradeDisplaySnapshot {
+    fn running_snapshot(&self) -> UpgradeRunSnapshot {
+        UpgradeRunSnapshot {
             generation: self.generation,
-            state: UpgradeDisplayState::Running {
+            state: UpgradeRunStatus::Running {
                 kind: self.kind,
                 phase: self.phase,
                 progress: self.progress,
@@ -396,44 +396,44 @@ impl UpgradeDisplayProjector {
 
 fn forward_upgrade_events(
     state_service: StateService,
-    display_state_service: DisplayStateService,
+    run_status_service: RunStatusService,
     gate: tokio::sync::OwnedMutexGuard<()>,
     generation: UpgradeGeneration,
     kind: UpgradeKind,
     mut run: UpgradeRunStream,
 ) -> UpgradeRunStream {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut projector = UpgradeDisplayProjector::new(generation, kind);
+    let mut projector = UpgradeRunProjector::new(generation, kind);
     let mut last = projector.initial_snapshot();
-    display_state_service.publish(last.clone());
+    run_status_service.publish(last.clone());
     task::spawn(async move {
         while let Some(state) = run.rx.recv().await {
             if let Some(event) = led_event(&state) {
                 state_service.notify(event);
             }
             last = projector.project(&state);
-            display_state_service.publish(last.clone());
+            run_status_service.publish(last.clone());
             _ = tx.send(state);
         }
         // Ends the caller's stream with a clean OK trailer even while parked.
         drop(tx);
         match last.state {
-            UpgradeDisplayState::Running {
+            UpgradeRunStatus::Running {
                 phase: Some(UpgradePhase::FirmwareApplying),
                 ..
             } => {
                 // The reboot ends the run; nothing may start before it.
                 std::future::pending::<()>().await;
             }
-            UpgradeDisplayState::Running { .. } => {
+            UpgradeRunStatus::Running { .. } => {
                 warn!(
                     ?generation,
                     "Upgrade run ended without an outcome; clearing its display"
                 );
-                display_state_service.clear();
+                run_status_service.clear();
                 state_service.clear();
             }
-            UpgradeDisplayState::Succeeded { .. } | UpgradeDisplayState::Failed { .. } => {}
+            UpgradeRunStatus::Succeeded { .. } | UpgradeRunStatus::Failed { .. } => {}
         }
         // Released only after the run's last publish,
         // so it cannot overwrite the next run's snapshot.
@@ -704,20 +704,20 @@ impl StateService {
     }
 }
 
-pub(crate) type DisplayEvents = UnboundedReceiver<Option<UpgradeDisplaySnapshot>>;
+pub(crate) type RunStatusEvents = UnboundedReceiver<Option<UpgradeRunSnapshot>>;
 
 #[derive(Clone, Debug)]
-pub(crate) struct DisplayStateService {
-    sender: Arc<watch::Sender<Option<UpgradeDisplaySnapshot>>>,
+pub(crate) struct RunStatusService {
+    sender: Arc<watch::Sender<Option<UpgradeRunSnapshot>>>,
     /// Every change of the watch, in order:
     /// the widget pause must not miss a `FirmwareApplying` or `Failed`
     /// that the next value overwrites.
-    events: tokio::sync::mpsc::UnboundedSender<Option<UpgradeDisplaySnapshot>>,
-    unclaimed_events: Arc<std::sync::Mutex<Option<DisplayEvents>>>,
+    events: tokio::sync::mpsc::UnboundedSender<Option<UpgradeRunSnapshot>>,
+    unclaimed_events: Arc<std::sync::Mutex<Option<RunStatusEvents>>>,
     generation: Arc<AtomicUsize>,
 }
 
-impl DisplayStateService {
+impl RunStatusService {
     pub(crate) fn new() -> Self {
         let (sender, _) = watch::channel(None);
         let (events, unclaimed_events) = tokio::sync::mpsc::unbounded_channel();
@@ -730,10 +730,10 @@ impl DisplayStateService {
         }
     }
 
-    pub(crate) fn take_events(&self) -> Option<DisplayEvents> {
+    pub(crate) fn take_events(&self) -> Option<RunStatusEvents> {
         self.unclaimed_events
             .lock()
-            .expect("BUG: the display event slot is only ever taken, never poisoned")
+            .expect("BUG: the run status event slot is only ever taken, never poisoned")
             .take()
     }
 
@@ -744,7 +744,7 @@ impl DisplayStateService {
 
     // Sent inside `send_if_modified`, under the watch's write lock,
     // so concurrent producers enqueue in the order they changed it.
-    pub(crate) fn publish(&self, snapshot: UpgradeDisplaySnapshot) {
+    pub(crate) fn publish(&self, snapshot: UpgradeRunSnapshot) {
         let snapshot = Some(snapshot);
         self.sender.send_if_modified(|current| {
             if *current == snapshot {
@@ -766,7 +766,7 @@ impl DisplayStateService {
         });
     }
 
-    fn subscribe(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
+    fn subscribe(&self) -> Receiver<Option<UpgradeRunSnapshot>> {
         self.sender.subscribe()
     }
 
@@ -774,9 +774,9 @@ impl DisplayStateService {
         let generation = self.next_generation();
         // The only durable record of this transient startup decision.
         info!(?kind, ?generation, "publishing upgrade success overlay");
-        self.publish(UpgradeDisplaySnapshot {
+        self.publish(UpgradeRunSnapshot {
             generation,
-            state: UpgradeDisplayState::Succeeded { kind },
+            state: UpgradeRunStatus::Succeeded { kind },
         });
     }
 }
@@ -784,7 +784,7 @@ impl DisplayStateService {
 #[derive(Debug)]
 pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     state_service: StateService,
-    display_state_service: DisplayStateService,
+    run_status_service: RunStatusService,
     firmware_upgrader: Arc<FirmwareUpgrader<T>>,
     bmc_manager: Arc<U>,
     scheduler: JobScheduler,
@@ -809,7 +809,7 @@ where
     fn clone(&self) -> Self {
         Self {
             state_service: self.state_service.clone(),
-            display_state_service: self.display_state_service.clone(),
+            run_status_service: self.run_status_service.clone(),
             firmware_upgrader: self.firmware_upgrader.clone(),
             bmc_manager: self.bmc_manager.clone(),
             scheduler: self.scheduler.clone(),
@@ -852,16 +852,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         // a change between those reads can cost at most one occurrence.
         let now = chrono::Utc::now().with_timezone(&scheduler.timezone());
         let stagger = stagger::MaintenanceStagger::draw(&now, &mut rand::rng());
-        let display_state_service = DisplayStateService::new();
+        let run_status_service = RunStatusService::new();
         let widget_pause = widget_pause::spawn(
-            display_state_service
+            run_status_service
                 .take_events()
-                .expect("BUG: a new display state service still holds its events"),
+                .expect("BUG: a new run status service still holds its events"),
             Arc::clone(&widget_lifecycle),
         );
         Self {
             state_service,
-            display_state_service,
+            run_status_service,
             firmware_upgrader: Arc::new(firmware_upgrader),
             bmc_manager,
             scheduler,
@@ -962,7 +962,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             !self.hardware_capabilities.boser_managed,
             "BUG: a local upgrade run next to Boser's would flap the widget pause between their generations"
         );
-        let generation = self.display_state_service.next_generation();
+        let generation = self.run_status_service.next_generation();
         let (kind, run) = match upgrade {
             AvailableSystemUpgrade::Firmware {
                 firmware: detail,
@@ -989,7 +989,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         };
         forward_upgrade_events(
             self.state_service.clone(),
-            self.display_state_service.clone(),
+            self.run_status_service.clone(),
             gate,
             generation,
             kind,
@@ -997,16 +997,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         )
     }
 
-    pub(crate) fn subscribe_display_state(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
-        self.display_state_service.subscribe()
+    pub(crate) fn subscribe_run_status(&self) -> Receiver<Option<UpgradeRunSnapshot>> {
+        self.run_status_service.subscribe()
     }
 
-    pub(crate) fn display_state_service(&self) -> DisplayStateService {
-        self.display_state_service.clone()
+    pub(crate) fn run_status_service(&self) -> RunStatusService {
+        self.run_status_service.clone()
     }
 
     pub(crate) fn publish_post_reboot_success(&self, kind: UpgradeKind) {
-        self.display_state_service.publish_post_reboot_success(kind);
+        self.run_status_service.publish_post_reboot_success(kind);
     }
 
     async fn start_automatic_upgrade(
@@ -1423,8 +1423,8 @@ impl SystemUpgradeError {
 mod tests {
     use super::*;
 
-    mod display_state;
     mod forwarding;
+    mod run_status;
     use bmc_upgrade::packages::EstimateMode;
     use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome};
     use chrono::TimeZone as _;
@@ -2263,9 +2263,9 @@ mod tests {
     }
 
     #[test]
-    fn display_projector_preserves_every_phase_with_the_run_kind_and_generation() {
+    fn run_projector_preserves_every_phase_with_the_run_kind_and_generation() {
         let generation = UpgradeGeneration::new(42);
-        let mut projector = UpgradeDisplayProjector::new(generation, UpgradeKind::Firmware);
+        let mut projector = UpgradeRunProjector::new(generation, UpgradeKind::Firmware);
 
         for phase in [
             UpgradePhase::FirmwareDownloading,
@@ -2278,9 +2278,9 @@ mod tests {
         ] {
             assert_eq!(
                 projector.project(&UpgradeRunState::Phase(phase)),
-                UpgradeDisplaySnapshot {
+                UpgradeRunSnapshot {
                     generation,
-                    state: UpgradeDisplayState::Running {
+                    state: UpgradeRunStatus::Running {
                         kind: UpgradeKind::Firmware,
                         phase: Some(phase),
                         progress: None,
@@ -2291,9 +2291,9 @@ mod tests {
     }
 
     #[test]
-    fn display_projector_preserves_optional_totals_and_clears_progress_for_a_new_phase() {
+    fn run_projector_preserves_optional_totals_and_clears_progress_for_a_new_phase() {
         let generation = UpgradeGeneration::new(7);
-        let mut projector = UpgradeDisplayProjector::new(generation, UpgradeKind::Packages);
+        let mut projector = UpgradeRunProjector::new(generation, UpgradeKind::Packages);
         let _ = projector.project(&UpgradeRunState::Phase(UpgradePhase::PackageRealizing));
 
         assert_eq!(
@@ -2301,9 +2301,9 @@ mod tests {
                 downloaded_bytes: 10,
                 total_bytes: Some(20),
             }),
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageRealizing),
                     progress: Some(DownloadProgress {
@@ -2318,9 +2318,9 @@ mod tests {
                 downloaded_bytes: 11,
                 total_bytes: None,
             }),
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageRealizing),
                     progress: Some(DownloadProgress {
@@ -2332,9 +2332,9 @@ mod tests {
         );
         assert_eq!(
             projector.project(&UpgradeRunState::Phase(UpgradePhase::PackageBuilding)),
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageBuilding),
                     progress: None,
@@ -2347,9 +2347,9 @@ mod tests {
         });
         assert_eq!(
             projector.project(&UpgradeRunState::Phase(UpgradePhase::PackageBuilding)),
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: Some(UpgradePhase::PackageBuilding),
                     progress: None,
@@ -2359,25 +2359,25 @@ mod tests {
     }
 
     #[test]
-    fn display_projector_projects_terminal_states_with_the_run_kind() {
+    fn run_projector_projects_terminal_states_with_the_run_kind() {
         let generation = UpgradeGeneration::new(3);
-        let mut packages = UpgradeDisplayProjector::new(generation, UpgradeKind::Packages);
+        let mut packages = UpgradeRunProjector::new(generation, UpgradeKind::Packages);
         assert_eq!(
             packages.project(&UpgradeRunState::Finished),
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Succeeded {
+                state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Packages,
                 },
             }
         );
 
-        let mut firmware = UpgradeDisplayProjector::new(generation, UpgradeKind::Firmware);
+        let mut firmware = UpgradeRunProjector::new(generation, UpgradeKind::Firmware);
         assert_eq!(
             firmware.project(&UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed)),
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Firmware,
                 },
             }
@@ -2385,8 +2385,8 @@ mod tests {
     }
 
     #[test]
-    fn display_state_retains_snapshots_for_late_subscribers() {
-        let state_service = DisplayStateService::new();
+    fn run_status_retains_snapshots_for_late_subscribers() {
+        let state_service = RunStatusService::new();
         let initial_receiver = state_service.subscribe();
         assert_eq!(*initial_receiver.borrow(), None);
         drop(initial_receiver);
@@ -2396,9 +2396,9 @@ mod tests {
         assert_eq!(first.get(), 0);
         assert_eq!(second.get(), 1);
 
-        let snapshot = UpgradeDisplaySnapshot {
+        let snapshot = UpgradeRunSnapshot {
             generation: second,
-            state: UpgradeDisplayState::Succeeded {
+            state: UpgradeRunStatus::Succeeded {
                 kind: UpgradeKind::Firmware,
             },
         };
@@ -2409,23 +2409,23 @@ mod tests {
 
     #[test]
     fn post_reboot_success_publishes_a_fresh_firmware_snapshot() {
-        let display_state_service = DisplayStateService::new();
-        let prior_generation = display_state_service.next_generation();
-        display_state_service.publish(UpgradeDisplaySnapshot {
+        let run_status_service = RunStatusService::new();
+        let prior_generation = run_status_service.next_generation();
+        run_status_service.publish(UpgradeRunSnapshot {
             generation: prior_generation,
-            state: UpgradeDisplayState::Failed {
+            state: UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Firmware,
             },
         });
 
-        display_state_service.publish_post_reboot_success(UpgradeKind::Firmware);
+        run_status_service.publish_post_reboot_success(UpgradeKind::Firmware);
 
-        let receiver = display_state_service.subscribe();
+        let receiver = run_status_service.subscribe();
         assert_eq!(
             *receiver.borrow(),
-            Some(UpgradeDisplaySnapshot {
+            Some(UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Succeeded {
+                state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Firmware,
                 },
             })
@@ -2435,14 +2435,14 @@ mod tests {
     #[tokio::test]
     async fn forwarding_adapter_publishes_initial_running_and_preserves_run_stream() {
         let state_service = StateService::new();
-        let display_state_service = DisplayStateService::new();
-        let mut display_receiver = display_state_service.subscribe();
-        let generation = display_state_service.next_generation();
+        let run_status_service = RunStatusService::new();
+        let mut display_receiver = run_status_service.subscribe();
+        let generation = run_status_service.next_generation();
         let run_gate = Arc::new(Mutex::new(()));
         let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut run = forward_upgrade_events(
             state_service,
-            display_state_service,
+            run_status_service,
             Arc::clone(&run_gate)
                 .try_lock_owned()
                 .expect("BUG: fresh gate is lockable"),
@@ -2453,9 +2453,9 @@ mod tests {
 
         assert_eq!(
             *display_receiver.borrow_and_update(),
-            Some(UpgradeDisplaySnapshot {
+            Some(UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: None,
                     progress: None,
@@ -2482,9 +2482,9 @@ mod tests {
 
         assert_eq!(
             *display_receiver.borrow_and_update(),
-            Some(UpgradeDisplaySnapshot {
+            Some(UpgradeRunSnapshot {
                 generation,
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
                 },
             })

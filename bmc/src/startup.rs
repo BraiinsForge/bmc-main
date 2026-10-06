@@ -31,8 +31,8 @@ use crate::backlight::DisplayBacklightDriver;
 use crate::boser::{StreamConfig, Timing};
 use crate::button_manager::ButtonManager;
 use crate::compositor::{
-    AccessPointInfo, AlarmCommand, Compositor, CompositorEvent, SetupProgress,
-    UpgradeDisplaySnapshot, UpgradeKind, run_night_mode_cycling_task, run_screen_blank_reset_task,
+    AccessPointInfo, AlarmCommand, Compositor, CompositorEvent, SetupProgress, UpgradeKind,
+    UpgradeRunSnapshot, run_night_mode_cycling_task, run_screen_blank_reset_task,
 };
 use crate::config::ConfigHandle;
 use crate::credential;
@@ -565,12 +565,12 @@ fn spawn_device_info_listener<T: BmcManager + 'static>(
     });
 }
 
-fn spawn_upgrade_display_listener(
+fn spawn_upgrade_run_listener(
     compositor: Arc<dyn Compositor>,
-    receiver: watch::Receiver<Option<UpgradeDisplaySnapshot>>,
+    receiver: watch::Receiver<Option<UpgradeRunSnapshot>>,
 ) {
     tokio::spawn(async move {
-        forward_upgrade_display_state(receiver, |snapshot| match snapshot {
+        forward_upgrade_run_status(receiver, |snapshot| match snapshot {
             Some(snapshot) => compositor.set_upgrade_state(snapshot),
             None => compositor.clear_upgrade_state(),
         })
@@ -588,11 +588,11 @@ fn post_upgrade_kind(firmware: UpgradeMarker, service: UpgradeMarker) -> Option<
     }
 }
 
-async fn forward_upgrade_display_state<F>(
-    mut receiver: watch::Receiver<Option<UpgradeDisplaySnapshot>>,
+async fn forward_upgrade_run_status<F>(
+    mut receiver: watch::Receiver<Option<UpgradeRunSnapshot>>,
     mut apply: F,
 ) where
-    F: FnMut(Option<UpgradeDisplaySnapshot>) -> Result<(), crate::compositor::CompositorError>,
+    F: FnMut(Option<UpgradeRunSnapshot>) -> Result<(), crate::compositor::CompositorError>,
 {
     receiver.mark_changed();
     loop {
@@ -601,7 +601,7 @@ async fn forward_upgrade_display_state<F>(
         }
         let snapshot = receiver.borrow_and_update().clone();
         if let Err(error) = apply(snapshot) {
-            warn!(%error, "failed to relay upgrade display state to compositor");
+            warn!(%error, "failed to relay upgrade run status to compositor");
         }
     }
 }
@@ -856,9 +856,9 @@ where
             config.pending_install_path.clone(),
         );
 
-        spawn_upgrade_display_listener(
+        spawn_upgrade_run_listener(
             compositor.clone(),
-            system_upgrade_service.subscribe_display_state(),
+            system_upgrade_service.subscribe_run_status(),
         );
         // Consume both even though only one decides the outcome: a firmware
         // upgrade activates its generation after the reboot, so it can leave a
@@ -1106,7 +1106,7 @@ where
                 (
                     Some(boser::spawn_observer(
                         stream_config.clone(),
-                        system_upgrade_service.display_state_service(),
+                        system_upgrade_service.run_status_service(),
                         state_service.clone(),
                     )),
                     Some(crate::timezone_boser::spawn_observer(

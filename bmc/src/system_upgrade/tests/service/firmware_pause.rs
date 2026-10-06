@@ -208,23 +208,21 @@ async fn a_run_whose_pause_another_generation_took_over_fails_before_downloading
     lab.widgets.wait_for_calls(&[Call::Stop]).await;
     let own = lab
         .service
-        .display_state_service
+        .run_status_service
         .subscribe()
         .borrow()
         .as_ref()
         .expect("BUG: the run published its snapshot")
         .generation;
 
-    lab.service
-        .display_state_service
-        .publish(UpgradeDisplaySnapshot {
-            generation: UpgradeGeneration::new(own.get() + 1),
-            state: UpgradeDisplayState::Running {
-                kind: UpgradeKind::Firmware,
-                phase: Some(UpgradePhase::FirmwareDownloading),
-                progress: None,
-            },
-        });
+    lab.service.run_status_service.publish(UpgradeRunSnapshot {
+        generation: UpgradeGeneration::new(own.get() + 1),
+        state: UpgradeRunStatus::Running {
+            kind: UpgradeKind::Firmware,
+            phase: Some(UpgradePhase::FirmwareDownloading),
+            progress: None,
+        },
+    });
     lab.widgets.release_stop();
 
     assert_eq!(

@@ -20,10 +20,10 @@
 
 use super::*;
 
-fn running(generation: usize) -> UpgradeDisplaySnapshot {
-    UpgradeDisplaySnapshot {
+fn running(generation: usize) -> UpgradeRunSnapshot {
+    UpgradeRunSnapshot {
         generation: UpgradeGeneration::new(generation),
-        state: UpgradeDisplayState::Running {
+        state: UpgradeRunStatus::Running {
             kind: UpgradeKind::Firmware,
             phase: Some(UpgradePhase::FirmwareDownloading),
             progress: None,
@@ -31,19 +31,19 @@ fn running(generation: usize) -> UpgradeDisplaySnapshot {
     }
 }
 
-fn received(events: &mut DisplayEvents) -> Vec<Option<UpgradeDisplaySnapshot>> {
+fn received(events: &mut RunStatusEvents) -> Vec<Option<UpgradeRunSnapshot>> {
     std::iter::from_fn(|| events.try_recv().ok()).collect()
 }
 
 #[test]
 fn every_display_change_reaches_the_event_stream_once_and_in_order() {
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     let mut events = display
         .take_events()
-        .expect("BUG: a new display service still holds its events");
-    let failed = UpgradeDisplaySnapshot {
+        .expect("BUG: a new run status service still holds its events");
+    let failed = UpgradeRunSnapshot {
         generation: UpgradeGeneration::new(0),
-        state: UpgradeDisplayState::Failed {
+        state: UpgradeRunStatus::Failed {
             kind: UpgradeKind::Firmware,
         },
     };
@@ -63,7 +63,7 @@ fn every_display_change_reaches_the_event_stream_once_and_in_order() {
 
 #[test]
 fn the_event_stream_is_handed_out_once() {
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
 
     assert!(display.take_events().is_some());
     assert!(
@@ -76,10 +76,10 @@ fn the_event_stream_is_handed_out_once() {
 async fn concurrent_publishers_leave_the_stream_ending_on_the_settled_watch() {
     const PUBLISHERS: usize = 4;
     const PUBLISHES: usize = 250;
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     let mut events = display
         .take_events()
-        .expect("BUG: a new display service still holds its events");
+        .expect("BUG: a new run status service still holds its events");
 
     let publishers: Vec<_> = (0..PUBLISHERS)
         .map(|publisher| {

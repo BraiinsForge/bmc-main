@@ -30,17 +30,17 @@ use bmc_upgrade_types::{
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use super::{DisplayStateService, StateService, SystemUpgradeState};
+use super::{RunStatusService, StateService, SystemUpgradeState};
 use crate::boser::{StateSink, StreamConfig};
 use crate::compositor::{
-    UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind, UpgradePhase,
+    UpgradeGeneration, UpgradeKind, UpgradePhase, UpgradeRunSnapshot, UpgradeRunStatus,
 };
 
 const UPGRADE_OUTAGE_GRACE: Duration = Duration::from_secs(30);
 
 pub(crate) fn spawn_observer(
     config: StreamConfig,
-    display: DisplayStateService,
+    display: RunStatusService,
     state: StateService,
 ) -> JoinHandle<()> {
     crate::boser::spawn(config, Projection::new(display, state))
@@ -55,7 +55,7 @@ enum ExecutionKey {
 }
 
 struct Projection {
-    display: DisplayStateService,
+    display: RunStatusService,
     state: StateService,
     current: Option<(ExecutionKey, UpgradeGeneration)>,
     /// The execution that ended without an outcome, until another one starts:
@@ -87,7 +87,7 @@ impl StateSink for Projection {
         // before its outcome arrived. That drops the outcome Boser retains from
         // before boot and a replay of one already presented.
         match projected {
-            Some((key, state @ UpgradeDisplayState::Running { .. })) => {
+            Some((key, state @ UpgradeRunStatus::Running { .. })) => {
                 self.ended = None;
                 let generation = self.display.next_generation();
                 self.current = Some((key, generation));
@@ -122,7 +122,7 @@ impl StateSink for Projection {
 }
 
 impl Projection {
-    fn new(display: DisplayStateService, state: StateService) -> Self {
+    fn new(display: RunStatusService, state: StateService) -> Self {
         Self {
             display,
             state,
@@ -132,14 +132,14 @@ impl Projection {
         }
     }
 
-    fn present(&mut self, generation: UpgradeGeneration, state: UpgradeDisplayState) {
+    fn present(&mut self, generation: UpgradeGeneration, state: UpgradeRunStatus) {
         let outcome = match &state {
-            UpgradeDisplayState::Running { .. } => None,
-            UpgradeDisplayState::Succeeded { .. } => Some(SystemUpgradeState::Finished),
-            UpgradeDisplayState::Failed { .. } => Some(SystemUpgradeState::Failed),
+            UpgradeRunStatus::Running { .. } => None,
+            UpgradeRunStatus::Succeeded { .. } => Some(SystemUpgradeState::Finished),
+            UpgradeRunStatus::Failed { .. } => Some(SystemUpgradeState::Failed),
         };
         self.display
-            .publish(UpgradeDisplaySnapshot { generation, state });
+            .publish(UpgradeRunSnapshot { generation, state });
         match outcome {
             None => self.state.notify(SystemUpgradeState::UpgradeStarted),
             Some(outcome) => {
@@ -162,12 +162,12 @@ impl Projection {
     }
 }
 
-fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeDisplayState)> {
+fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeRunStatus)> {
     let projected = match response {
         UpgradeState::None => return None,
         UpgradeState::DownloadingImage { download } => (
             ExecutionKey::Download,
-            UpgradeDisplayState::Running {
+            UpgradeRunStatus::Running {
                 kind: UpgradeKind::Firmware,
                 phase: Some(UpgradePhase::FirmwareDownloading),
                 progress: Some(*download),
@@ -175,7 +175,7 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeDisplayState
         ),
         UpgradeState::DownloadFailed { .. } => (
             ExecutionKey::Download,
-            UpgradeDisplayState::Failed {
+            UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Firmware,
             },
         ),
@@ -186,7 +186,7 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeDisplayState
             download,
         } => (
             ExecutionKey::Boser(*id),
-            UpgradeDisplayState::Running {
+            UpgradeRunStatus::Running {
                 kind: *kind,
                 phase: display_phase(*phase),
                 progress: *download,
@@ -194,7 +194,7 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeDisplayState
         ),
         UpgradeState::Rebooting { id, kind } => (
             ExecutionKey::Boser(*id),
-            UpgradeDisplayState::Running {
+            UpgradeRunStatus::Running {
                 kind: *kind,
                 phase: Some(UpgradePhase::FirmwareApplying),
                 progress: None,
@@ -202,11 +202,11 @@ fn project(response: &UpgradeState) -> Option<(ExecutionKey, UpgradeDisplayState
         ),
         UpgradeState::Completed { id, kind } => (
             ExecutionKey::Boser(*id),
-            UpgradeDisplayState::Succeeded { kind: *kind },
+            UpgradeRunStatus::Succeeded { kind: *kind },
         ),
         UpgradeState::Failed { id, kind, .. } => (
             ExecutionKey::Boser(*id),
-            UpgradeDisplayState::Failed { kind: *kind },
+            UpgradeRunStatus::Failed { kind: *kind },
         ),
     };
     Some(projected)

@@ -21,11 +21,11 @@
 //! Stops every widget while a firmware image is downloaded and flashed,
 //! since the image lands on tmpfs.
 //! It follows the upgrade state all producers publish to
-//! [`DisplayStateService`](super::DisplayStateService).
+//! [`RunStatusService`](super::RunStatusService).
 
-use super::{DisplayEvents, WidgetLifecycle};
+use super::{RunStatusEvents, WidgetLifecycle};
 use crate::compositor::{
-    UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind, UpgradePhase,
+    UpgradeGeneration, UpgradeKind, UpgradePhase, UpgradeRunSnapshot, UpgradeRunStatus,
 };
 use bmc_upgrade_types::Disruption;
 use futures::future::BoxFuture;
@@ -110,7 +110,7 @@ fn carries_firmware(kind: UpgradeKind) -> bool {
     }
 }
 
-fn step(pause: Pause, snapshot: Option<&UpgradeDisplaySnapshot>, now: Instant) -> Pause {
+fn step(pause: Pause, snapshot: Option<&UpgradeRunSnapshot>, now: Instant) -> Pause {
     let Some(snapshot) = snapshot else {
         return match pause {
             Pause::Paused {
@@ -133,7 +133,7 @@ fn step(pause: Pause, snapshot: Option<&UpgradeDisplaySnapshot>, now: Instant) -
         };
     };
     match snapshot.state {
-        UpgradeDisplayState::Running { kind, phase, .. } if carries_firmware(kind) => {
+        UpgradeRunStatus::Running { kind, phase, .. } if carries_firmware(kind) => {
             let applying_before = matches!(
                 pause,
                 Pause::Paused { generation, stage: Stage::Applying, .. }
@@ -150,10 +150,10 @@ fn step(pause: Pause, snapshot: Option<&UpgradeDisplaySnapshot>, now: Instant) -
                 lapses_at: None,
             }
         }
-        UpgradeDisplayState::Succeeded { kind } if carries_firmware(kind) => pause,
-        UpgradeDisplayState::Running { .. }
-        | UpgradeDisplayState::Succeeded { .. }
-        | UpgradeDisplayState::Failed { .. } => Pause::Idle,
+        UpgradeRunStatus::Succeeded { kind } if carries_firmware(kind) => pause,
+        UpgradeRunStatus::Running { .. }
+        | UpgradeRunStatus::Succeeded { .. }
+        | UpgradeRunStatus::Failed { .. } => Pause::Idle,
     }
 }
 
@@ -175,7 +175,10 @@ pub(crate) type Acknowledgement = watch::Receiver<Option<UpgradeGeneration>>;
 /// its sender drops if the listener dies.
 /// A dead listener leaves widgets as they are until the BMC application restarts,
 /// since it cannot tell whether a flash is under way.
-pub(crate) fn spawn(events: DisplayEvents, lifecycle: Arc<dyn WidgetLifecycle>) -> Acknowledgement {
+pub(crate) fn spawn(
+    events: RunStatusEvents,
+    lifecycle: Arc<dyn WidgetLifecycle>,
+) -> Acknowledgement {
     let (acknowledgement, acknowledged) = watch::channel(None);
     tokio::spawn(drive(events, lifecycle, acknowledgement));
     acknowledged
@@ -198,13 +201,13 @@ impl Operation {
 }
 
 enum Wake {
-    Snapshot(Option<UpgradeDisplaySnapshot>),
+    Snapshot(Option<UpgradeRunSnapshot>),
     OperationDone,
     Lapsed,
 }
 
 async fn drive(
-    mut events: DisplayEvents,
+    mut events: RunStatusEvents,
     lifecycle: Arc<dyn WidgetLifecycle>,
     acknowledgement: watch::Sender<Option<UpgradeGeneration>>,
 ) {

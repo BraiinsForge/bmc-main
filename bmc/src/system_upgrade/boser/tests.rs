@@ -21,16 +21,14 @@
 use super::{Projection, UPGRADE_OUTAGE_GRACE, spawn_observer};
 use crate::boser::{StateSink, StreamConfig, Timing};
 use crate::compositor::{
-    DownloadProgress, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
-    UpgradePhase,
+    DownloadProgress, UpgradeGeneration, UpgradeKind, UpgradePhase, UpgradeRunSnapshot,
+    UpgradeRunStatus,
 };
 use crate::system_upgrade::widget_pause::{
     self,
     test_support::{Call, ScriptedLifecycle, StopBehaviour, settle},
 };
-use crate::system_upgrade::{
-    DisplayStateService, StateService, SystemUpgradeState, WidgetLifecycle,
-};
+use crate::system_upgrade::{RunStatusService, StateService, SystemUpgradeState, WidgetLifecycle};
 use axum::Router;
 use axum::body::Body;
 use axum::http::header;
@@ -49,12 +47,12 @@ use tokio::sync::watch;
 
 struct Bench {
     projection: Projection,
-    display_watch: watch::Receiver<Option<UpgradeDisplaySnapshot>>,
+    display_watch: watch::Receiver<Option<UpgradeRunSnapshot>>,
     state_watch: watch::Receiver<Option<SystemUpgradeState>>,
 }
 
 fn bench() -> Bench {
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     let state = StateService::new();
     let display_watch = display.subscribe();
     let state_watch = state.subscribe();
@@ -70,11 +68,11 @@ impl Bench {
         self.projection.observe(response);
     }
 
-    fn display(&self) -> Option<UpgradeDisplaySnapshot> {
+    fn display(&self) -> Option<UpgradeRunSnapshot> {
         self.display_watch.borrow().clone()
     }
 
-    fn display_state(&self) -> Option<UpgradeDisplayState> {
+    fn display_state(&self) -> Option<UpgradeRunStatus> {
         self.display().map(|snapshot| snapshot.state)
     }
 
@@ -133,16 +131,16 @@ fn download_failed() -> UpgradeState {
     }
 }
 
-fn package_running(phase: UpgradePhase) -> UpgradeDisplayState {
-    UpgradeDisplayState::Running {
+fn package_running(phase: UpgradePhase) -> UpgradeRunStatus {
+    UpgradeRunStatus::Running {
         kind: UpgradeKind::Packages,
         phase: Some(phase),
         progress: None,
     }
 }
 
-fn firmware_downloading(downloaded_bytes: u64) -> UpgradeDisplayState {
-    UpgradeDisplayState::Running {
+fn firmware_downloading(downloaded_bytes: u64) -> UpgradeRunStatus {
+    UpgradeRunStatus::Running {
         kind: UpgradeKind::Firmware,
         phase: Some(UpgradePhase::FirmwareDownloading),
         progress: Some(DownloadProgress {
@@ -183,7 +181,7 @@ fn a_terminal_continuing_the_current_execution_presents_and_unblocks() {
     assert_eq!(bench.generation(), generation);
     assert_eq!(
         bench.display_state(),
-        Some(UpgradeDisplayState::Succeeded {
+        Some(UpgradeRunStatus::Succeeded {
             kind: UpgradeKind::Packages
         })
     );
@@ -204,7 +202,7 @@ fn a_failed_terminal_continuing_the_current_execution_presents_the_failure() {
     assert_eq!(bench.generation(), generation);
     assert_eq!(
         bench.display_state(),
-        Some(UpgradeDisplayState::Failed {
+        Some(UpgradeRunStatus::Failed {
             kind: UpgradeKind::Packages
         })
     );
@@ -238,7 +236,7 @@ fn download_failed_counts_only_after_downloading() {
     assert_eq!(bench.generation(), generation);
     assert_eq!(
         bench.display_state(),
-        Some(UpgradeDisplayState::Failed {
+        Some(UpgradeRunStatus::Failed {
             kind: UpgradeKind::Firmware
         })
     );
@@ -306,7 +304,7 @@ fn the_legacy_sequence_without_an_observed_none_ends_as_an_apply_presentation() 
     assert_ne!(bench.generation(), download);
     assert_eq!(
         bench.display_state(),
-        Some(UpgradeDisplayState::Running {
+        Some(UpgradeRunStatus::Running {
             kind: UpgradeKind::Firmware,
             phase: Some(UpgradePhase::FirmwareApplying),
             progress: None,
@@ -424,7 +422,7 @@ fn every_wire_phase_maps_to_its_display_phase() {
     for (kind, wire, expected) in expectations {
         let mut bench = bench();
         bench.observe(&running_with_kind(ExecutionId::new(), kind, wire));
-        let Some(UpgradeDisplayState::Running { phase, .. }) = bench.display_state() else {
+        let Some(UpgradeRunStatus::Running { phase, .. }) = bench.display_state() else {
             panic!("{wire:?} must present as running");
         };
         assert_eq!(phase, expected, "{wire:?}");
@@ -448,7 +446,7 @@ fn a_reboot_presents_the_execution_kind_as_applying() {
     // how a combined upgrade is drawn is the compositor's call.
     assert_eq!(
         bench.display_state(),
-        Some(UpgradeDisplayState::Running {
+        Some(UpgradeRunStatus::Running {
             kind: UpgradeKind::FirmwareAndPackages,
             phase: Some(UpgradePhase::FirmwareApplying),
             progress: None,
@@ -540,9 +538,9 @@ async fn an_expired_execution_presents_its_late_terminal_and_can_restart_running
     bench.observe(&completed(id));
     assert_eq!(
         bench.display(),
-        Some(UpgradeDisplaySnapshot {
+        Some(UpgradeRunSnapshot {
             generation,
-            state: UpgradeDisplayState::Succeeded {
+            state: UpgradeRunStatus::Succeeded {
                 kind: UpgradeKind::Packages
             },
         }),
@@ -679,7 +677,7 @@ async fn a_state_on_the_stream_reaches_the_display() {
     );
     let data = serde_json::to_string(&state).expect("BUG: wire states serialize");
     let address = serve(format!("data: {data}\n\n")).await;
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     let mut display_watch = display.subscribe();
 
     let observer = spawn_observer(
@@ -697,7 +695,7 @@ async fn a_state_on_the_stream_reaches_the_display() {
         display_watch.wait_for(Option::is_some),
     )
     .await
-    .expect("the display state must arrive in time")
+    .expect("BUG: the observer publishes the run status well within 10 s")
     .expect("BUG: the display sender outlives the test")
     .clone()
     .expect("BUG: the predicate saw a snapshot");
@@ -709,11 +707,11 @@ async fn a_state_on_the_stream_reaches_the_display() {
 }
 
 fn projection_with_widget_pause(widgets: &Arc<ScriptedLifecycle>) -> Projection {
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     widget_pause::spawn(
         display
             .take_events()
-            .expect("BUG: a new display service still holds its events"),
+            .expect("BUG: a new run status service still holds its events"),
         Arc::clone(widgets) as Arc<dyn WidgetLifecycle>,
     );
     Projection::new(display, StateService::new())

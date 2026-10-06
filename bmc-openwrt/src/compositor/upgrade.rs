@@ -23,7 +23,7 @@
 use std::time::{Duration, Instant};
 
 use ::deck_upgrade_v1::server::deck_upgrade_v1::{self, DeckUpgradeV1, Kind, Phase};
-use bmc::compositor::{UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeKind, UpgradePhase};
+use bmc::compositor::{UpgradeKind, UpgradePhase, UpgradeRunSnapshot, UpgradeRunStatus};
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
@@ -54,7 +54,7 @@ enum WireEvent {
 
 #[derive(Debug, Clone)]
 struct CachedSnapshot {
-    snapshot: UpgradeDisplaySnapshot,
+    snapshot: UpgradeRunSnapshot,
     deadline: Option<Instant>,
 }
 
@@ -65,10 +65,10 @@ struct UpgradeCache {
 }
 
 impl UpgradeCache {
-    fn set(&mut self, snapshot: UpgradeDisplaySnapshot, now: Instant) {
+    fn set(&mut self, snapshot: UpgradeRunSnapshot, now: Instant) {
         let deadline = if matches!(
             snapshot.state,
-            UpgradeDisplayState::Succeeded { .. } | UpgradeDisplayState::Failed { .. }
+            UpgradeRunStatus::Succeeded { .. } | UpgradeRunStatus::Failed { .. }
         ) {
             self.current
                 .as_ref()
@@ -94,7 +94,7 @@ impl UpgradeCache {
         let cached = self.current.as_ref()?;
         let mut events = vec![WireEvent::Started(kind(&cached.snapshot.state))];
         match &cached.snapshot.state {
-            UpgradeDisplayState::Running {
+            UpgradeRunStatus::Running {
                 phase, progress, ..
             } => {
                 if let Some(phase) = phase {
@@ -112,12 +112,12 @@ impl UpgradeCache {
                     });
                 }
             }
-            UpgradeDisplayState::Succeeded { .. } => {
+            UpgradeRunStatus::Succeeded { .. } => {
                 events.push(WireEvent::Succeeded {
                     remaining_ms: remaining_ms(cached.deadline?, now)?,
                 });
             }
-            UpgradeDisplayState::Failed { .. } => {
+            UpgradeRunStatus::Failed { .. } => {
                 events.push(WireEvent::Failed {
                     remaining_ms: remaining_ms(cached.deadline?, now)?,
                 });
@@ -139,11 +139,11 @@ fn remaining_ms(deadline: Instant, now: Instant) -> Option<u32> {
     Some(u32::try_from(milliseconds).expect("BUG: terminal lifetime fits u32"))
 }
 
-fn kind(state: &UpgradeDisplayState) -> Kind {
+fn kind(state: &UpgradeRunStatus) -> Kind {
     match state {
-        UpgradeDisplayState::Running { kind, .. }
-        | UpgradeDisplayState::Succeeded { kind }
-        | UpgradeDisplayState::Failed { kind } => match kind {
+        UpgradeRunStatus::Running { kind, .. }
+        | UpgradeRunStatus::Succeeded { kind }
+        | UpgradeRunStatus::Failed { kind } => match kind {
             UpgradeKind::Firmware | UpgradeKind::FirmwareAndPackages => Kind::Firmware,
             UpgradeKind::Packages => Kind::Packages,
         },
@@ -169,7 +169,7 @@ pub struct UpgradeState {
 }
 
 impl UpgradeState {
-    pub fn set(&mut self, snapshot: UpgradeDisplaySnapshot, now: Instant) {
+    pub fn set(&mut self, snapshot: UpgradeRunSnapshot, now: Instant) {
         self.cache.set(snapshot, now);
         if let Some(events) = self.cache.events(now) {
             self.resources.retain(Resource::is_alive);
@@ -200,7 +200,7 @@ impl UpgradeState {
     }
 
     #[cfg(test)]
-    pub fn current_snapshot(&self) -> Option<&UpgradeDisplaySnapshot> {
+    pub fn current_snapshot(&self) -> Option<&UpgradeRunSnapshot> {
         self.cache.current.as_ref().map(|cached| &cached.snapshot)
     }
 }
@@ -263,12 +263,12 @@ pub fn create_global(display: &DisplayHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc::compositor::{DownloadProgress, UpgradeDisplayState, UpgradeGeneration};
+    use bmc::compositor::{DownloadProgress, UpgradeGeneration, UpgradeRunStatus};
 
-    fn running(generation: usize) -> UpgradeDisplaySnapshot {
-        UpgradeDisplaySnapshot {
+    fn running(generation: usize) -> UpgradeRunSnapshot {
+        UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(generation),
-            state: UpgradeDisplayState::Running {
+            state: UpgradeRunStatus::Running {
                 kind: UpgradeKind::Packages,
                 phase: Some(UpgradePhase::PackageRealizing),
                 progress: Some(DownloadProgress {
@@ -303,9 +303,9 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Firmware,
                     phase: None,
                     progress: None,
@@ -327,9 +327,9 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::FirmwareAndPackages,
                     phase: None,
                     progress: None,
@@ -351,9 +351,9 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: None,
                     progress: Some(DownloadProgress {
@@ -381,9 +381,9 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Succeeded {
+                state: UpgradeRunStatus::Succeeded {
                     kind: UpgradeKind::Firmware,
                 },
             },
@@ -405,9 +405,9 @@ mod tests {
     fn repeated_terminal_snapshots_keep_the_original_deadline() {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
-        let terminal = UpgradeDisplaySnapshot {
+        let terminal = UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(1),
-            state: UpgradeDisplayState::Failed {
+            state: UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Packages,
             },
         };
@@ -441,9 +441,9 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
                 },
             },
@@ -467,18 +467,18 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
                 },
             },
             now,
         );
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(2),
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
                 },
             },
@@ -501,18 +501,18 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Firmware,
                 },
             },
             now,
         );
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(2),
-                state: UpgradeDisplayState::Running {
+                state: UpgradeRunStatus::Running {
                     kind: UpgradeKind::Packages,
                     phase: None,
                     progress: None,
@@ -534,18 +534,18 @@ mod tests {
         let now = Instant::now();
         let mut cache = UpgradeCache::default();
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(1),
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
                 },
             },
             now,
         );
         cache.set(
-            UpgradeDisplaySnapshot {
+            UpgradeRunSnapshot {
                 generation: UpgradeGeneration::new(2),
-                state: UpgradeDisplayState::Failed {
+                state: UpgradeRunStatus::Failed {
                     kind: UpgradeKind::Packages,
                 },
             },

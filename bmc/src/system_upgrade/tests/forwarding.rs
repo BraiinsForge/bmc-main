@@ -26,13 +26,13 @@ use crate::system_upgrade::widget_pause::{
 
 struct Forwarding {
     run_gate: Arc<Mutex<()>>,
-    display: DisplayStateService,
+    display: RunStatusService,
     state: StateService,
     input: Option<tokio::sync::mpsc::UnboundedSender<UpgradeRunState>>,
     output: UpgradeRunStream,
 }
 
-fn forward(display: DisplayStateService, kind: UpgradeKind) -> Forwarding {
+fn forward(display: RunStatusService, kind: UpgradeKind) -> Forwarding {
     let run_gate = Arc::new(Mutex::new(()));
     let gate = Arc::clone(&run_gate)
         .try_lock_owned()
@@ -76,7 +76,7 @@ impl Forwarding {
         while self.output.next().await.is_some() {}
     }
 
-    fn shown(&self) -> Option<UpgradeDisplayState> {
+    fn shown(&self) -> Option<UpgradeRunStatus> {
         self.display
             .subscribe()
             .borrow()
@@ -87,7 +87,7 @@ impl Forwarding {
 
 #[tokio::test]
 async fn a_failed_run_keeps_the_gate_until_its_run_ends() {
-    let mut forwarding = forward(DisplayStateService::new(), UpgradeKind::Firmware);
+    let mut forwarding = forward(RunStatusService::new(), UpgradeKind::Firmware);
     forwarding.send(UpgradeRunState::Phase(UpgradePhase::FirmwareDownloading));
     forwarding.send(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed));
     assert_eq!(
@@ -101,7 +101,7 @@ async fn a_failed_run_keeps_the_gate_until_its_run_ends() {
 
     assert_eq!(
         forwarding.shown(),
-        Some(UpgradeDisplayState::Failed {
+        Some(UpgradeRunStatus::Failed {
             kind: UpgradeKind::Firmware
         })
     );
@@ -119,7 +119,7 @@ async fn a_failed_run_keeps_the_gate_until_its_run_ends() {
 
 #[tokio::test]
 async fn a_finished_packages_run_frees_the_gate() {
-    let mut forwarding = forward(DisplayStateService::new(), UpgradeKind::Packages);
+    let mut forwarding = forward(RunStatusService::new(), UpgradeKind::Packages);
     forwarding.send(UpgradeRunState::Finished);
     forwarding.end_run();
     forwarding.drain().await;
@@ -131,7 +131,7 @@ async fn a_finished_packages_run_frees_the_gate() {
 
 #[tokio::test(start_paused = true)]
 async fn a_run_ending_after_the_handoff_keeps_the_gate_and_its_flashing_display() {
-    let mut forwarding = forward(DisplayStateService::new(), UpgradeKind::Firmware);
+    let mut forwarding = forward(RunStatusService::new(), UpgradeKind::Firmware);
     forwarding.send(UpgradeRunState::Phase(UpgradePhase::FirmwareApplying));
     forwarding.end_run();
     forwarding.drain().await;
@@ -144,7 +144,7 @@ async fn a_run_ending_after_the_handoff_keeps_the_gate_and_its_flashing_display(
     );
     assert_eq!(
         forwarding.shown(),
-        Some(UpgradeDisplayState::Running {
+        Some(UpgradeRunStatus::Running {
             kind: UpgradeKind::Firmware,
             phase: Some(UpgradePhase::FirmwareApplying),
             progress: None,
@@ -154,7 +154,7 @@ async fn a_run_ending_after_the_handoff_keeps_the_gate_and_its_flashing_display(
 
 #[tokio::test]
 async fn a_run_ending_without_an_outcome_clears_its_display_and_frees_the_gate() {
-    let mut forwarding = forward(DisplayStateService::new(), UpgradeKind::Firmware);
+    let mut forwarding = forward(RunStatusService::new(), UpgradeKind::Firmware);
     forwarding.send(UpgradeRunState::Phase(UpgradePhase::FirmwareDownloading));
     forwarding.end_run();
     forwarding.drain().await;
@@ -172,12 +172,12 @@ async fn a_run_ending_without_an_outcome_clears_its_display_and_frees_the_gate()
 
 #[tokio::test(start_paused = true)]
 async fn an_abandoned_firmware_run_restarts_widgets_after_the_replacement_grace() {
-    let display = DisplayStateService::new();
+    let display = RunStatusService::new();
     let widgets = ScriptedLifecycle::new(StopBehaviour::Immediate);
     let _acknowledged = widget_pause::spawn(
         display
             .take_events()
-            .expect("BUG: a new display service still holds its events"),
+            .expect("BUG: a new run status service still holds its events"),
         Arc::clone(&widgets) as Arc<dyn WidgetLifecycle>,
     );
     let mut forwarding = forward(display, UpgradeKind::Firmware);

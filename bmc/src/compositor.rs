@@ -248,7 +248,7 @@ pub enum UpgradePhase {
 
 /// Current upgrade view projected from the internal run stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UpgradeDisplayState {
+pub enum UpgradeRunStatus {
     Running {
         kind: UpgradeKind,
         phase: Option<UpgradePhase>,
@@ -262,11 +262,11 @@ pub enum UpgradeDisplayState {
     },
 }
 
-/// Latest coherent display state for one upgrade generation.
+/// Latest coherent status of one upgrade generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpgradeDisplaySnapshot {
+pub struct UpgradeRunSnapshot {
     pub generation: UpgradeGeneration,
-    pub state: UpgradeDisplayState,
+    pub state: UpgradeRunStatus,
 }
 
 /// The touch sequence comes as two edges rather than a pulse per touch,
@@ -375,7 +375,7 @@ pub trait Compositor: Send + Sync {
     fn hardware_capabilities(&self) -> HardwareCapabilities;
 
     /// Publish the latest complete upgrade presentation snapshot.
-    fn set_upgrade_state(&self, _state: UpgradeDisplaySnapshot) -> Result<(), CompositorError> {
+    fn set_upgrade_state(&self, _state: UpgradeRunSnapshot) -> Result<(), CompositorError> {
         Ok(())
     }
 

@@ -19,8 +19,8 @@
 // the grant above.
 
 use bmc::compositor::{
-    AccessPointInfo, CompositorEvent, SceneCycling, SceneLayout, SetupProgress,
-    UpgradeDisplaySnapshot, WidgetAction, WidgetInstanceKey, WidgetRegistration,
+    AccessPointInfo, CompositorEvent, SceneCycling, SceneLayout, SetupProgress, UpgradeRunSnapshot,
+    WidgetAction, WidgetInstanceKey, WidgetRegistration,
 };
 use bmc::manager::BmcState;
 use bmc_widget_protocol::SettingUpdate;
@@ -75,7 +75,7 @@ pub enum CompositorCommand {
         until: Option<String>,
     },
     SetUpgradeState {
-        state: UpgradeDisplaySnapshot,
+        state: UpgradeRunSnapshot,
     },
     ClearUpgradeState,
     RestartDeclined {

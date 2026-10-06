@@ -28,8 +28,7 @@ use bmc::compositor::{
     ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, CompositorReceipt,
     CredentialSecrets, CredentialUpdateReceipt, HardwareCapabilities, InstanceId,
     LedRequestStatusEvent, SceneCycling, SceneLayout, SettingUpdate, SettingsCommand,
-    UpgradeDisplaySnapshot, WidgetAction, WidgetConnectionMode, WidgetInstanceKey,
-    WidgetRegistration,
+    UpgradeRunSnapshot, WidgetAction, WidgetConnectionMode, WidgetInstanceKey, WidgetRegistration,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -107,7 +106,7 @@ pub struct MockCompositor {
     connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
     product: Product,
     scene_state: std::sync::Mutex<MockSceneState>,
-    upgrade_state: std::sync::Mutex<Option<UpgradeDisplaySnapshot>>,
+    upgrade_state: std::sync::Mutex<Option<UpgradeRunSnapshot>>,
     registrations: std::sync::Mutex<HashMap<WidgetInstanceKey, WidgetRegistration>>,
 }
 
@@ -177,7 +176,7 @@ impl MockCompositor {
     }
 
     #[must_use]
-    pub fn upgrade_state(&self) -> Option<UpgradeDisplaySnapshot> {
+    pub fn upgrade_state(&self) -> Option<UpgradeRunSnapshot> {
         self.upgrade_state
             .lock()
             .expect("BUG: upgrade_state lock poisoned")
@@ -196,7 +195,7 @@ impl Compositor for MockCompositor {
         HardwareProfile::for_product(self.product).capabilities()
     }
 
-    fn set_upgrade_state(&self, state: UpgradeDisplaySnapshot) -> Result<(), CompositorError> {
+    fn set_upgrade_state(&self, state: UpgradeRunSnapshot) -> Result<(), CompositorError> {
         tracing::info!(?state, "MockCompositor: set upgrade state");
         *self
             .upgrade_state
@@ -419,10 +418,9 @@ impl Compositor for MockCompositor {
 #[cfg(test)]
 mod tests {
     use bmc::compositor::{
-        ActiveScene, Compositor, CredentialSecrets, Position, SceneLayout, Size,
-        UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
-        WidgetConnectionMode, WidgetInitialConfig, WidgetInstanceKey, WidgetPlacement,
-        WidgetRegistration,
+        ActiveScene, Compositor, CredentialSecrets, Position, SceneLayout, Size, UpgradeGeneration,
+        UpgradeKind, UpgradeRunSnapshot, UpgradeRunStatus, WidgetConnectionMode,
+        WidgetInitialConfig, WidgetInstanceKey, WidgetPlacement, WidgetRegistration,
     };
     use bmc::scene::SceneId;
     use bmc_platform::{DisplayShape, Product};
@@ -581,9 +579,9 @@ mod tests {
     #[tokio::test]
     async fn mock_retains_the_latest_upgrade_snapshot() {
         let compositor = MockCompositor::new(Product::Bmc100);
-        let snapshot = UpgradeDisplaySnapshot {
+        let snapshot = UpgradeRunSnapshot {
             generation: UpgradeGeneration::new(4),
-            state: UpgradeDisplayState::Failed {
+            state: UpgradeRunStatus::Failed {
                 kind: UpgradeKind::Packages,
             },
         };

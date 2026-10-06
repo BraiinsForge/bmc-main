@@ -214,7 +214,7 @@ setup transitions while they do.
 The compositor creates the `deck_upgrade_v1` global and fans bmc's upgrade display projection out to every bound client.
 It carries no incoming requests: bmc owns upgrade decisions, and the overlays only render.
 
-bmc pushes state through the `Compositor::set_upgrade_state(UpgradeDisplaySnapshot)` trait method, which arrives as a
+bmc pushes state through the `Compositor::set_upgrade_state(UpgradeRunSnapshot)` trait method, which arrives as a
 `CompositorCommand::SetUpgradeState` and lands in `UpgradeState::set`. Each snapshot wholly replaces the previous one —
 there is no incremental update path, which is what lets a client discard a malformed sequence and keep its last coherent
 view.
