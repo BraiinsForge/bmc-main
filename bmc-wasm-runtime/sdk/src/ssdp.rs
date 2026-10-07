@@ -30,6 +30,8 @@
 //! The callback borrows the search its event belongs to;
 //! to stop the search from there, take the stored handle.
 //!
+//! Off-target there is no host to search with, so starting a search panics.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -61,14 +63,6 @@ use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::SsdpSearchId;
 
-// Host function imports
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_ssdp_search(st_ptr: *const u8, st_len: u32, timeout: u32) -> u32;
-    fn host_ssdp_stop(search_id: u32);
-}
-
 /// Callback type: `fn(search, event)`.
 pub type SearchCallback = fn(&SsdpSearch, &SsdpEvent<'_>);
 
@@ -86,10 +80,7 @@ impl SsdpSearch {
 impl Drop for SsdpSearch {
     fn drop(&mut self) {
         SEARCHES.with_borrow_mut(|searches| searches.remove(&self.0));
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            host_ssdp_stop(self.0.to_wire());
-        }
+        Platform::stop(self.0);
     }
 }
 
@@ -132,59 +123,126 @@ fn register_callback(cb: SearchCallback) -> usize {
 /// delay their responses).
 ///
 /// Returns `None` if the host refuses the search before it is queued.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned SsdpSearch stops it"]
 pub fn ssdp_search(
     search_target: &str,
     timeout_secs: u32,
     callback: SearchCallback,
 ) -> Option<SsdpSearch> {
+    let search_id = Platform::start(search_target, timeout_secs)?;
     let cb_idx = register_callback(callback);
-    let search_id = SsdpSearchId::from_wire(unsafe {
-        host_ssdp_search(
-            search_target.as_ptr(),
-            search_target.len() as u32,
-            timeout_secs,
-        )
-    })?;
     SEARCHES.with(|s| s.borrow_mut().insert(search_id, cb_idx));
     Some(SsdpSearch(search_id))
 }
 
-/// Called by the host when an SSDP event is ready.
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly the requested bytes"
+/// Hand an event to the callback of its search, if a handle still holds it.
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(dead_code, reason = "off-target no host delivers events")
 )]
-#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
-pub extern "C" fn __on_ssdp_event(search_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
-    let Some(search_id) = SsdpSearchId::from_wire(search_id) else {
-        return;
-    };
-
-    // Take ownership first, then borrow — avoids dangling reference.
-    let owned = if data_len > 0 && data_ptr != 0 {
-        unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
-    } else {
-        Vec::new()
-    };
-    let data = core::str::from_utf8(&owned).unwrap_or("");
-
-    let event = match event_type {
-        0 => SsdpEvent::Found(data),
-        1 => SsdpEvent::Removed(data),
-        _ => return,
-    };
-
+fn deliver(search_id: SsdpSearchId, event: &SsdpEvent<'_>) {
     let cb = SEARCHES
         .with(|s| s.borrow().get(&search_id).copied())
         .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would stop the search.
-        cb(&ManuallyDrop::new(SsdpSearch(search_id)), &event);
+        cb(&ManuallyDrop::new(SsdpSearch(search_id)), event);
     }
 }
+
+trait Searcher {
+    fn start(search_target: &str, timeout_secs: u32) -> Option<SsdpSearchId>;
+    fn stop(search_id: SsdpSearchId);
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::SsdpSearchId;
+
+    use super::{SsdpEvent, deliver};
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_ssdp_search(st_ptr: *const u8, st_len: u32, timeout: u32) -> u32;
+        fn host_ssdp_stop(search_id: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::Searcher for Host {
+        fn start(search_target: &str, timeout_secs: u32) -> Option<SsdpSearchId> {
+            SsdpSearchId::from_wire(unsafe {
+                host_ssdp_search(
+                    search_target.as_ptr(),
+                    search_target.len() as u32,
+                    timeout_secs,
+                )
+            })
+        }
+
+        fn stop(search_id: SsdpSearchId) {
+            unsafe { host_ssdp_stop(search_id.to_wire()) }
+        }
+    }
+
+    /// Called by the host when an SSDP event is ready.
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_ssdp_event(
+        search_id: u32,
+        event_type: u32,
+        data_ptr: u32,
+        data_len: u32,
+    ) {
+        let Some(search_id) = SsdpSearchId::from_wire(search_id) else {
+            return;
+        };
+
+        // Take ownership first, then borrow — avoids dangling reference.
+        let owned = if data_len > 0 && data_ptr != 0 {
+            unsafe {
+                Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize)
+            }
+        } else {
+            Vec::new()
+        };
+        let data = core::str::from_utf8(&owned).unwrap_or("");
+
+        let event = match event_type {
+            0 => SsdpEvent::Found(data),
+            1 => SsdpEvent::Removed(data),
+            _ => return,
+        };
+
+        deliver(search_id, &event);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::SsdpSearchId;
+
+    pub(super) struct Host;
+
+    impl super::Searcher for Host {
+        fn start(_: &str, _: u32) -> Option<SsdpSearchId> {
+            panic!("BUG: ssdp_search() called off-target — no host searches the network")
+        }
+
+        /// Only a test holds a handle off-target, and there is no host search to stop.
+        fn stop(_: SsdpSearchId) {}
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {
@@ -192,9 +250,7 @@ mod tests {
 
     use bmc_wasm_protocol::SsdpSearchId;
 
-    use super::{
-        __on_ssdp_event, SEARCHES, SearchCallback, SsdpEvent, SsdpSearch, register_callback,
-    };
+    use super::{SEARCHES, SearchCallback, SsdpEvent, SsdpSearch, register_callback};
 
     thread_local! {
         static SEEN: Cell<Option<SsdpSearchId>> = const { Cell::new(None) };
@@ -209,7 +265,7 @@ mod tests {
     }
 
     fn deliver(id: SsdpSearchId) {
-        __on_ssdp_event(id.to_wire(), 0, 0, 0);
+        super::deliver(id, &SsdpEvent::Found(""));
     }
 
     fn is_registered(id: SsdpSearchId) -> bool {

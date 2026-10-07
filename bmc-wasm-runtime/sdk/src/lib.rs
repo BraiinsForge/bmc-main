@@ -392,7 +392,6 @@ pub mod tag;
 pub(crate) mod snapshot_cache;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod socket;
-#[cfg(any(target_arch = "wasm32", test))]
 pub mod ssdp;
 pub mod text;
 #[cfg(any(target_arch = "wasm32", test))]
