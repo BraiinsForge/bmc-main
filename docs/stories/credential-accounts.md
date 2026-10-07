@@ -58,7 +58,8 @@ came from. A WASM widget never sees the secret itself: the device attaches it to
 
 - Saving a new value reaches every widget using that account straight away, with nothing to restart.
 - Taking an account away from a widget removes its access immediately.
-- An account still in use cannot be deleted; the device names the widgets holding it so the user can free it first.
+- Deleting an account still in use first names the widgets holding it; once the user confirms, it is removed from every
+  one of them and then deleted.
 - A widget whose credential disappears returns to the same state as one that never had it, rather than failing
   obscurely.
 
