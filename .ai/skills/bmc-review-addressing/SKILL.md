@@ -1,6 +1,6 @@
 ---
-name: review-addressing
-description: Work through inbound code-review feedback and CI failures on an MR/PR branch, one item at a time with the user in the loop — the counterpart to authoring a review (that's `code-review`). Use when the user says to address, go through, or handle the review threads, reviewer comments, or CI on their branch (e.g. "load the review and CI and go one by one", "let's address the review", "work through the MR comments"). Covers load threads+CI, parse the addressable set, a terse digest, a gitignored tracker + tasklist, then per item — explain the feedback, verify it against the code, recommend, and ask where to take it; on settling, implement, run comment-discipline, self-review, place the change (new commit vs a --fixup with target-finding and a trial fold), and offer to draft+post the thread reply only on confirm. Never commit/rebase/push/post/resolve without an explicit go for that specific action.
+name: bmc-review-addressing
+description: Work through inbound code-review feedback and CI failures on an MR/PR branch, one item at a time with the user in the loop — the counterpart to authoring a review (that's `code-review`). Use when the user says to address, go through, or handle the review threads, reviewer comments, or CI on their branch (e.g. "load the review and CI and go one by one", "let's address the review", "work through the MR comments", "we've got a review pass", "go through the reviewer's threads one by one", "fix the review feedback", "let's start on the review"). Covers load threads+CI, parse the addressable set, a terse digest, a gitignored tracker + tasklist, then per item — explain the feedback, verify it against the code, recommend, and ask where to take it; on settling, implement, run comment-discipline, self-review, place the change (new commit vs a --fixup with target-finding and a trial fold), and offer to draft+post the thread reply only on confirm. Never commit/rebase/push/post/resolve without an explicit go for that specific action.
 ---
 
 # Addressing review feedback
@@ -31,6 +31,9 @@ Pull the review threads and the branch's CI status together:
 - Note authorship, but don't let it lower your guard: some review notes were drafted by an agent and only vetted by the
   reviewer — still verify each one in the code (a drafted finding can be wrong).
 - Bucket by severity and file so the digest is scannable.
+- Spot clusters: threads that rewrite the same lines collapse into one code change with several replies.
+- Order blockers and clusters first, since they often reshape the code the nits sit on, then quick wins, then product
+  calls, then test coverage.
 
 ## 3. Terse digest
 
@@ -39,8 +42,11 @@ territory — resist restating each thread in full.
 
 ## 4. Tracker + tasklist
 
-- Write a gitignored tracker at `.claude/<TICKET>-review.local.md` (per-user, never committed): one stable ID per item,
-  the reviewer's point, your take, status.
+- Write a gitignored tracker at `.claude/<TICKET>-review.local.md` (per-user, never committed). Its overview table has
+  one row per item: a stable ID, the reviewer's point and your take. Keep every line of the table within 120 characters;
+  trim the wording to fit rather than wrapping a cell.
+- The table has no status column. Delete an item's row once it is fully addressed — fixed and responded to — so the
+  table only ever lists what is still open. When the last row goes, delete the whole document.
 - Create a tasklist mirroring it, one task per ID. That list is what "go one by one" walks.
 
 ## 5. One item at a time
@@ -59,7 +65,9 @@ from the take, and the user reads a message that names no complaint.
 
 Once you've settled on a solution **with the user**:
 
-05. **Implement** the agreed change — nothing more than was agreed.
+05. **Implement** the agreed change — nothing more than was agreed. Prove non-trivial behaviour: a regression spec that
+    fails before the change and passes after (see `repo-build-workflow`), or drive it in the mock and look at it
+    (scenario file plus `video-frame-extraction`).
 06. **Comment pass** — run the `comment-discipline` skill over the diff.
 07. **Self-review** — reread your change as a diff; confirm it does only what was agreed and that the project's validate
     target is green.
@@ -72,12 +80,23 @@ Once you've settled on a solution **with the user**:
       conflicts, `git rebase --abort`, say so, and pivot back to a standalone commit (or ask). Never force a conflicting
       fold.
     - Every git-state change happens only on the user's explicit go for that action: offer, wait, act.
-09. **Reply** — offer to draft the thread reply: one sentence on what changed, then the attribution footer your
-    instructions require (`*Written by Claude, acked by <you>.*`). Don't restate the complaint and don't quote commit
-    subjects unless the user asks for them — the reviewer reads the thread in place. Show the draft in chat; post only
-    when the user confirms (inline replies via the `gitlab-mr-inline-comments` skill). Never resolve the thread —
-    resolution is the reviewer's signal, not the author's.
-10. **Next** — drop the item's row from the tracker, then move to the following item.
+    - Commit only tracked source; gitignored generated files (mock scenario JSON, `*.scss.d.ts`) stay out. A renamed
+      CSS-module class fails `tsc` until its gitignored `*.scss.d.ts` is regenerated: the source is right, the generated
+      type is stale, which also shows at old fold points.
+09. **Reply** — offer to draft the thread reply: one sentence on what changed, then the reviewer footer
+    `gitlab-mr-reply` defines. Don't restate the complaint and don't quote commit subjects unless the user asks for them
+    — the reviewer reads the thread in place. Show the draft in chat; post only when the user confirms (inline replies
+    via the `gitlab-mr-inline-comments` skill). Never resolve the thread — resolution is the reviewer's signal, not the
+    author's.
+10. **Next** — once the reply is posted, delete the item's row from the tracker (and the tracker itself if that was the
+    last row), then move to the following item.
+
+## Rebasing onto the target branch
+
+When asked to rebase onto the MR's target (often after that branch was force-pushed), fetch it first, then replay only
+your own commits from an explicit old base: `git rebase --onto origin/<target> <parent-of-your-first-commit>`. A plain
+`git rebase origin/<target>` replays stale copies of the target's own commits when the target was rewritten (same
+subject, different SHA). Run the validate target again after: the new base commits must still fit the branch.
 
 ## Guardrails — never
 
