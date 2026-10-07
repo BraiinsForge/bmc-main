@@ -3141,7 +3141,8 @@ mod tests {
     };
     use crate::renderer::{AssetSuspendResult, AssetTagState, Renderer};
     use crate::test_harness::{
-        GlHarness, create_colour_only_fbo, create_readback_fbo, read_pixels_top_down,
+        GlHarness, create_colour_only_fbo, create_packed_stencil_fbo, create_readback_fbo,
+        read_pixels_top_down,
     };
     use crate::test_tracing::counting_warns;
     use crate::tree::VerticalAlign;
@@ -3239,6 +3240,24 @@ mod tests {
             renderer.stencil_pool.len(),
             1,
             "two layers of one size must not pool two stencils"
+        );
+    }
+
+    #[test]
+    fn static_layers_share_a_packed_screen_stencil() {
+        const SIZE: u32 = 64;
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_packed_stencil_fbo(&harness.gl, SIZE, SIZE);
+        let mut renderer =
+            unsafe { FemtoVgRenderer::new(harness.load_fn(), SIZE, SIZE, fbo_id, 0) }
+                .expect("BUG: renderer init failed");
+        let screen = Some(screen_stencil(&harness.gl, fbo, &renderer));
+
+        let attached = capture_layer_stencil(&mut renderer, "widget:packed", SIZE, SIZE);
+
+        assert_eq!(
+            attached, screen,
+            "a packed depth-stencil screen target must still lend its stencil"
         );
     }
 

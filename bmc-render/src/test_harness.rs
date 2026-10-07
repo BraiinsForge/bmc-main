@@ -174,32 +174,55 @@ pub(crate) fn create_real_texture(gl: &glow::Context) -> glow::Texture {
 /// Like the `create_real_*` helpers above, the returned objects are not owned by
 /// anything — the texture and renderbuffer live until the harness's context goes
 /// away with the test. Nothing here is meant to outlive one `GlHarness`.
-#[expect(clippy::cast_possible_wrap)]
+///
+/// The stencil is `STENCIL_INDEX8` alone, as the device's export buffers carry.
 pub fn create_readback_fbo(
     gl: &glow::Context,
     width: u32,
     height: u32,
 ) -> (glow::Framebuffer, u32) {
+    create_stencilled_fbo(
+        gl,
+        width,
+        height,
+        glow::STENCIL_INDEX8,
+        glow::STENCIL_ATTACHMENT,
+    )
+}
+
+/// [`create_readback_fbo`] with a packed `DEPTH24_STENCIL8`,
+/// as the capture and testbed binaries give their screen target.
+pub fn create_packed_stencil_fbo(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+) -> (glow::Framebuffer, u32) {
+    create_stencilled_fbo(
+        gl,
+        width,
+        height,
+        glow::DEPTH24_STENCIL8,
+        glow::DEPTH_STENCIL_ATTACHMENT,
+    )
+}
+
+#[expect(clippy::cast_possible_wrap)]
+fn create_stencilled_fbo(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+    format: u32,
+    attachment: u32,
+) -> (glow::Framebuffer, u32) {
     use glow::HasContext as _;
     let fbo = create_colour_fbo(gl, width, height);
     unsafe {
-        // FemtoVG needs a stencil attachment for concave fills.
         let rbo = gl
             .create_renderbuffer()
             .expect("BUG: create_renderbuffer failed");
         gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
-        gl.renderbuffer_storage(
-            glow::RENDERBUFFER,
-            glow::DEPTH24_STENCIL8,
-            width as i32,
-            height as i32,
-        );
-        gl.framebuffer_renderbuffer(
-            glow::FRAMEBUFFER,
-            glow::DEPTH_STENCIL_ATTACHMENT,
-            glow::RENDERBUFFER,
-            Some(rbo),
-        );
+        gl.renderbuffer_storage(glow::RENDERBUFFER, format, width as i32, height as i32);
+        gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, attachment, glow::RENDERBUFFER, Some(rbo));
         gl.bind_renderbuffer(glow::RENDERBUFFER, None);
     }
     assert_complete(gl);
