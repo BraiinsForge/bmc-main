@@ -18,6 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_wasm_protocol::AudioId;
+
 /// Audio playback volume, in 0–100.
 ///
 /// Values are clamped at construction, so the host never sees an
@@ -43,6 +45,27 @@ impl From<Volume> for u32 {
     }
 }
 
+/// Play a registered audio sample at the given [`Volume`].
+///
+/// Fire-and-forget: the host mixes and plays asynchronously. `None`
+/// no-ops, so callers can thread an `Option<AudioId>` straight from
+/// `ensure_audio_registered` without unwrapping.
+pub fn audio_play(sound_id: Option<AudioId>, volume: Volume) {
+    let Some(id) = sound_id else { return };
+    Platform::play(id, volume);
+}
+
+/// Stop playback of a registered audio sample. `None` no-ops.
+pub fn audio_stop(sound_id: Option<AudioId>) {
+    let Some(id) = sound_id else { return };
+    Platform::stop(id);
+}
+
+trait AudioSink {
+    fn play(id: AudioId, volume: Volume);
+    fn stop(id: AudioId);
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use bmc_wasm_protocol::AudioId;
@@ -55,22 +78,40 @@ mod wasm {
         fn host_audio_stop(sound_id: u32);
     }
 
-    /// Play a registered audio sample at the given [`Volume`].
-    ///
-    /// Fire-and-forget: the host mixes and plays asynchronously. `None`
-    /// no-ops, so callers can thread an `Option<AudioId>` straight from
-    /// `ensure_audio_registered` without unwrapping.
-    pub fn audio_play(sound_id: Option<AudioId>, volume: Volume) {
-        let Some(id) = sound_id else { return };
-        unsafe { host_audio_play(id.to_ffi(), u32::from(volume)) }
-    }
+    pub(super) struct Host;
 
-    /// Stop playback of a registered audio sample. `None` no-ops.
-    pub fn audio_stop(sound_id: Option<AudioId>) {
-        let Some(id) = sound_id else { return };
-        unsafe { host_audio_stop(id.to_ffi()) }
+    impl super::AudioSink for Host {
+        fn play(id: AudioId, volume: Volume) {
+            unsafe { host_audio_play(id.to_ffi(), u32::from(volume)) }
+        }
+
+        fn stop(id: AudioId) {
+            unsafe { host_audio_stop(id.to_ffi()) }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::AudioId;
+
+    use super::Volume;
+
+    pub(super) struct Host;
+
+    impl super::AudioSink for Host {
+        fn play(_: AudioId, _: Volume) {
+            panic!("BUG: audio_play() called off-target — no host plays audio")
+        }
+
+        fn stop(_: AudioId) {
+            panic!("BUG: audio_stop() called off-target — no host plays audio")
+        }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{audio_play, audio_stop};
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;

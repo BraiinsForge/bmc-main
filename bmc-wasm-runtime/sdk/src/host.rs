@@ -38,9 +38,7 @@ pub use assets::{
 pub use assets::{image_dimensions_ref, register_bitmap_fit_ref};
 
 mod audio;
-pub use audio::Volume;
-#[cfg(target_arch = "wasm32")]
-pub use audio::{audio_play, audio_stop};
+pub use audio::{Volume, audio_play, audio_stop};
 
 mod clock;
 pub use clock::SystemTime;
