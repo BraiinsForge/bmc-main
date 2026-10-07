@@ -242,6 +242,7 @@ const BMM101_CAPTION_FONT_SIZE: u16 = 20;
 /// The line box the frame draws each caption in.
 pub(super) const BMM101_CAPTION_LINE_HEIGHT: f32 = 26.0;
 const BMM101_TIME_FONT_SIZE: u16 = 80;
+const BMM101_TIME_FONT_SIZE_NO_SECONDS: u16 = 120;
 const BMM101_EDGE_PADDING: f32 = 16.0;
 const BMM101_AMPM_GAP: f32 = 8.0;
 
@@ -275,7 +276,11 @@ fn bmm101(now: SystemTime, params: &Params, tz: Option<&Tz>, palette: &ClockPale
         caption(line, palette.text)
     });
     let metrics = TimeRow {
-        font_size: BMM101_TIME_FONT_SIZE,
+        font_size: if params.show_seconds {
+            BMM101_TIME_FONT_SIZE
+        } else {
+            BMM101_TIME_FONT_SIZE_NO_SECONDS
+        },
         inline_ampm: is_12h.then_some(InlineAmPm {
             font_size: BMM101_CAPTION_FONT_SIZE,
             gap: BMM101_AMPM_GAP,

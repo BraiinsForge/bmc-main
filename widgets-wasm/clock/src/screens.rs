@@ -226,6 +226,30 @@ mod tests {
         }
     }
 
+    /// Without seconds the digits are shorter, so they grow to fill the width.
+    #[test]
+    fn the_bmm101_digits_grow_when_the_seconds_are_hidden() {
+        install_prague(false);
+        let digits_size = |show_seconds| {
+            let params = Params {
+                show_seconds,
+                ..fixtures::default_params()
+            };
+            let view = fixtures::at_bucket(SizeBucket::Bmm101, fixtures::DESIGN_MOMENT, params);
+            let Node::Column(_, slots) = clock_view(&view) else {
+                panic!("BUG: the digital face is a column of slots");
+            };
+            let Node::Center(_, row) = &slots[3] else {
+                panic!("BUG: the time row is centred");
+            };
+            let [Node::Paragraph { base_style, .. }] = row.as_slice() else {
+                panic!("BUG: a 24-hour time row is the digits alone");
+            };
+            base_style.size
+        };
+        assert_eq!((digits_size(true), digits_size(false)), (80, 120));
+    }
+
     #[test]
     fn the_rectangular_dial_numbers_its_quarters() {
         install_prague(false);

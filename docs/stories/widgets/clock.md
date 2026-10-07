@@ -83,6 +83,6 @@ digital face on BMM101, which has a layout of its own.
 
 - On the rectangular BMM panels the configured face style is honoured.
 - The BMM101 digital face puts the timezone above the time and the date below it, in the device's numeric date format,
-  with AM/PM beside the time in 12-hour mode.
+  with AM/PM beside the time in 12-hour mode. With seconds hidden the time grows into the width they free.
 - On the round BFM100 the analog round face is always shown regardless of the configured style — its round dial is the
   only face that fits a round display without clipping at the corners.
