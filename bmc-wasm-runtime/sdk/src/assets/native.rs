@@ -20,79 +20,107 @@
 
 use std::cell::RefCell;
 
-use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
 use super::{AssetIdProvider, Audio, Bitmap, Svg};
 use crate::cache::CacheSource;
 use crate::mesh::Mesh;
 
-type IconRegistrar = fn(&str, &[u8]) -> Option<SvgId>;
-type BitmapRegistrar = fn(&str, &[u8]) -> Option<BitmapId>;
-type MeshRegistrar = fn(&str, &[u8]) -> Option<MeshId>;
-/// `(tag, rgba, width, height)` — pre-decoded pixels, upload only.
-type ImageRegistrar = fn(&str, &[u8], u32, u32) -> Option<BitmapId>;
+/// What the runtime does with an asset's bytes, done here by the embedder.
+pub trait AssetHost {
+    fn register_svg(&self, tag: &str, data: &[u8]) -> Option<SvgId>;
+    fn register_bitmap(&self, tag: &str, data: &[u8]) -> Option<BitmapId>;
+    fn register_bitmap_nearest(&self, tag: &str, data: &[u8]) -> Option<BitmapId>;
+    fn register_mesh(&self, tag: &str, data: &[u8]) -> Option<MeshId>;
+    /// Pre-decoded pixels, upload only.
+    fn register_bitmap_rgba(
+        &self,
+        tag: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<BitmapId>;
+}
 
 thread_local! {
-    static ICON_REGISTRAR: RefCell<IconRegistrar> = RefCell::new(|_, _| panic!("BUG: icon registrar not initialized — call init_icon_registrar()"));
-    static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = RefCell::new(|_, _| panic!("BUG: bitmap registrar not initialized — call init_bitmap_registrar()"));
-    static IMAGE_REGISTRAR: RefCell<ImageRegistrar> = RefCell::new(|_, _, _, _| panic!("BUG: image registrar not initialized — call init_image_registrar()"));
-    static MESH_REGISTRAR: RefCell<MeshRegistrar> = RefCell::new(|_, _| panic!("BUG: mesh registrar not initialized — call init_mesh_registrar()"));
+    static ASSET_HOST: RefCell<Option<Box<dyn AssetHost>>> = const { RefCell::new(None) };
 }
 
-/// Initialize the icon registrar for native targets.
-pub fn init_icon_registrar(f: IconRegistrar) {
-    ICON_REGISTRAR.with(|r| *r.borrow_mut() = f);
+/// Install this thread's asset host, which the skin registers through too.
+pub fn install_asset_host(host: impl AssetHost + 'static) {
+    ASSET_HOST.with(|slot| *slot.borrow_mut() = Some(Box::new(host)));
+    bmc_render_skin::init(super::register_skin_bitmap);
 }
 
-/// Initialize the bitmap registrar for native targets.
-pub fn init_bitmap_registrar(f: BitmapRegistrar) {
-    BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = f);
-}
-
-/// Initialize the image registrar for native targets.
-pub fn init_image_registrar(f: ImageRegistrar) {
-    IMAGE_REGISTRAR.with(|r| *r.borrow_mut() = f);
-}
-
-/// Initialize the mesh registrar for native targets.
-pub fn init_mesh_registrar(f: MeshRegistrar) {
-    MESH_REGISTRAR.with(|r| *r.borrow_mut() = f);
-}
-
-/// Install dummy-id registrars for widget unit tests,
+/// Install a host handing out dummy ids for widget unit tests,
 /// which assemble asset-bearing nodes without rendering them.
 ///
 /// Per-thread, so call it at the top of each test.
-/// Anything actually rendering (the gallery) must install real registrars instead.
+/// Anything actually rendering (the gallery) must install a real host instead.
 pub fn init_test_registrars() {
-    init_icon_registrar(|_, _| SvgId::from_wire(1));
-    init_bitmap_registrar(|_, _| BitmapId::from_wire(1));
-    init_mesh_registrar(|_, _| MeshId::from_wire(1));
-    init_image_registrar(|_, _, _, _| BitmapId::from_wire(1));
+    install_asset_host(TestAssetHost);
+}
+
+struct TestAssetHost;
+
+impl AssetHost for TestAssetHost {
+    fn register_svg(&self, _: &str, _: &[u8]) -> Option<SvgId> {
+        SvgId::from_wire(1)
+    }
+
+    fn register_bitmap(&self, _: &str, _: &[u8]) -> Option<BitmapId> {
+        BitmapId::from_wire(1)
+    }
+
+    fn register_bitmap_nearest(&self, _: &str, _: &[u8]) -> Option<BitmapId> {
+        BitmapId::from_wire(1)
+    }
+
+    fn register_mesh(&self, _: &str, _: &[u8]) -> Option<MeshId> {
+        MeshId::from_wire(1)
+    }
+
+    fn register_bitmap_rgba(&self, _: &str, _: &[u8], _: u32, _: u32) -> Option<BitmapId> {
+        BitmapId::from_wire(1)
+    }
+}
+
+fn with_host<R>(register: impl FnOnce(&dyn AssetHost) -> R) -> R {
+    ASSET_HOST.with(|slot| {
+        let host = slot.borrow();
+        register(
+            host.as_deref()
+                .expect("BUG: no asset host installed on this thread — call install_asset_host()"),
+        )
+    })
 }
 
 pub(super) struct Host;
 
 impl AssetIdProvider for Host {
     fn svg(icon: &Svg) -> Option<SvgId> {
-        ICON_REGISTRAR.with(|r| r.borrow()(icon.name, icon.source.data()))
+        with_host(|host| host.register_svg(icon.name, icon.source.data()))
     }
 
     fn bitmap(bmp: &Bitmap) -> Option<BitmapId> {
-        BITMAP_REGISTRAR.with(|r| r.borrow()(bmp.name, bmp.source.data()))
+        with_host(|host| host.register_bitmap(bmp.name, bmp.source.data()))
     }
 
     fn image(source: CacheSource<'_>) -> Option<BitmapId> {
         let entry = crate::cache::read_bytes(source.tag())?;
         let (width, height, _identity) = bmc_wasm_protocol::decode_image_meta(&entry.metadata)?;
-        IMAGE_REGISTRAR.with(|r| r.borrow()(source.tag(), &entry.bytes, width, height))
+        with_host(|host| host.register_bitmap_rgba(source.tag(), &entry.bytes, width, height))
     }
 
     fn mesh(mesh: &Mesh) -> Option<MeshId> {
-        MESH_REGISTRAR.with(|r| r.borrow()(mesh.name, mesh.source.data()))
+        with_host(|host| host.register_mesh(mesh.name, mesh.source.data()))
     }
 
     fn audio(_audio: &Audio) -> Option<AudioId> {
         panic!("ensure_audio_registered() is not available on native targets")
+    }
+
+    fn skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+        with_host(|host| host.register_bitmap_nearest(tag, source.data()))
     }
 }

@@ -21,9 +21,8 @@
 //! Asset registration (icons, bitmaps, audio, meshes).
 //!
 //! On WASM targets, registration goes through host FFI calls.
-//! On native targets (the gallery), callers must initialize pluggable registrars
-//! via `init_icon_registrar`, `init_bitmap_registrar`, `init_mesh_registrar`,
-//! and `init_image_registrar` before any registration occurs.
+//! On native targets (the gallery), the embedder installs an `AssetHost`
+//! with `install_asset_host` before any registration occurs.
 //!
 //! The host's registry is idempotent by `name` — the SDK keeps no consumer-side
 //! cache; every call routes through the host, which returns the same ID for the
@@ -40,6 +39,7 @@ trait AssetIdProvider {
     fn image(source: CacheSource<'_>) -> Option<BitmapId>;
     fn mesh(mesh: &Mesh) -> Option<MeshId>;
     fn audio(audio: &Audio) -> Option<AudioId>;
+    fn skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId>;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -50,10 +50,7 @@ mod wasm;
 #[cfg(not(target_arch = "wasm32"))]
 use native::Host as Platform;
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{
-    init_bitmap_registrar, init_icon_registrar, init_image_registrar, init_mesh_registrar,
-    init_test_registrars,
-};
+pub use native::{AssetHost, init_test_registrars, install_asset_host};
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
 
@@ -105,10 +102,15 @@ pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
     Platform::bitmap(bmp)
 }
 
+/// A skin bitmap, registered with nearest-neighbour filtering.
+pub(crate) fn register_skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+    Platform::skin_bitmap(tag, source)
+}
+
 /// Restore a bitmap from a cache source (e.g. `cache::lazy_get(tag)`).
 ///
 /// On the device the RGBA goes mmap → texture entirely host-side;
-/// natively the calling side's own store is read and the registrar
+/// natively the calling side's own store is read and the installed `AssetHost`
 /// uploads. `None` on a cache miss or unreadable metadata.
 #[must_use]
 pub fn register_image(source: CacheSource<'_>) -> Option<BitmapId> {

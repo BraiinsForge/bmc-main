@@ -504,11 +504,7 @@ thread_local! {
 pub fn begin_tree() {
     use std::sync::Once;
     static SKIN_INIT: Once = Once::new();
-    SKIN_INIT.call_once(|| {
-        bmc_render_skin::init(|tag, source| {
-            host::register_bitmap_nearest_package(tag, source.package_ref())
-        });
-    });
+    SKIN_INIT.call_once(|| bmc_render_skin::init(crate::assets::register_skin_bitmap));
 
     TREE_BUFFER.with(|buf| buf.borrow_mut().clear());
 }

@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
 use super::{AssetIdProvider, Audio, Bitmap, Svg};
 use crate::cache::CacheSource;
@@ -46,5 +46,9 @@ impl AssetIdProvider for Host {
 
     fn audio(audio: &Audio) -> Option<AudioId> {
         host::register_audio_package(audio.name, audio.source.package_ref())
+    }
+
+    fn skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+        host::register_bitmap_nearest_package(tag, source.package_ref())
     }
 }

@@ -693,7 +693,6 @@ dependencies = [
  "bmc-platform",
  "bmc-render",
  "bmc-render-keyboard",
- "bmc-render-skin",
  "bmc-system-overlay",
  "bmc-wasm-sdk",
  "braiins-pool",

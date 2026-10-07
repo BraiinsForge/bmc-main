@@ -21,11 +21,11 @@
 //! Renders SDK trees through bmc-render's femtovg pipeline onto a gallery stage.
 //!
 //! gallery owns the framebuffer and its chrome; this module draws into a femtovg
-//! image of its own and copies that across. Renderer and layout state live in
-//! thread-locals, because the SDK's asset registrars are bare `fn` pointers that
-//! cannot capture — the single-render-thread contract the SDK has everywhere.
+//! image of its own and copies that across.
+//! Renderer and layout state live in thread-locals,
+//! matching the single-render-thread contract the SDK has everywhere.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
 
@@ -36,7 +36,9 @@ use bmc_render::tree::{NodeContext, TouchHit};
 use bmc_render::{
     AnimationState, ModalState, ProcessContext, ScrollState, TransitionState, TransitionStateKey,
 };
+use bmc_wasm_sdk::assets::AssetHost;
 use bmc_wasm_sdk::tree::Node;
+use bmc_wasm_sdk::{BitmapId, MeshId, SvgId};
 // eframe's glow, not the one femtovg links: only raw GL names cross between the
 // two, so the versions never have to agree.
 use gallery::eframe::egui::{Id, Ui};
@@ -56,9 +58,8 @@ pub type CustomRenderFn =
     Box<dyn FnMut(&mut dyn Renderer, &mut InteractionState, f32, f32, u32) -> bool>;
 
 thread_local! {
-    /// Boxed so the pointer the registrars hold stays valid as the option moves.
+    /// Boxed so the pointer the asset host holds stays valid as the option moves.
     static RENDERER: RefCell<Option<Box<FemtoVgRenderer>>> = const { RefCell::new(None) };
-    static RENDERER_PTR: Cell<*mut FemtoVgRenderer> = const { Cell::new(std::ptr::null_mut()) };
     /// Ours only to put the framebuffer back the way femtovg found it: it binds
     /// the image it draws into and leaves it bound, and everything egui paints
     /// after a stage would land there instead of on the window.
@@ -94,62 +95,48 @@ impl Image {
     }
 }
 
-// ── Asset registrars ────────────────────────────────────────────────
+// ── Asset host ──────────────────────────────────────────────────────
 //
-// They fire while a scene builds its nodes and re-entrantly from canvas draw
-// closures, so the pointer stays set rather than bracketing each render.
+// Registration fires while a scene builds its nodes and re-entrantly
+// from canvas draw closures, so the host holds a pointer rather than borrowing RENDERER.
 
-macro_rules! registrar {
-    ($name:ident, $method:ident -> $id:ty) => {
-        fn $name(tag: &str, data: &[u8]) -> Option<$id> {
-            let ptr = RENDERER_PTR.with(Cell::get);
-            assert!(
-                !ptr.is_null(),
-                "asset registered before the first Deck stage, or from a spawned thread; \
-                 scenes must register assets on the render thread"
-            );
-            // SAFETY: the pointer is the boxed renderer in this thread's RENDERER,
-            // which outlives every scene call; registrars only run on this thread.
-            unsafe { &mut *ptr }.$method(tag, data)
-        }
-    };
+/// The boxed renderer in this thread's RENDERER, registering the SDK's assets.
+struct DeckAssetHost(*mut FemtoVgRenderer);
+
+impl DeckAssetHost {
+    fn with_renderer<R>(&self, register: impl FnOnce(&mut FemtoVgRenderer) -> R) -> R {
+        // SAFETY: RENDERER keeps the box alive for every scene call,
+        // and the SDK holds its asset host per thread, so this runs on the thread that owns it.
+        register(unsafe { &mut *self.0 })
+    }
 }
 
-registrar!(registrar_icon, register_svg -> bmc_wasm_sdk::SvgId);
-registrar!(registrar_bitmap, register_bitmap -> bmc_wasm_sdk::BitmapId);
-registrar!(registrar_mesh, register_mesh -> bmc_wasm_sdk::MeshId);
+impl AssetHost for DeckAssetHost {
+    fn register_svg(&self, tag: &str, data: &[u8]) -> Option<SvgId> {
+        self.with_renderer(|renderer| renderer.register_svg(tag, data))
+    }
 
-fn registrar_bitmap_nearest(
-    tag: &str,
-    source: bmc_wasm_sdk::StaticAssetSource,
-) -> Option<bmc_wasm_sdk::BitmapId> {
-    let ptr = RENDERER_PTR.with(Cell::get);
-    assert!(
-        !ptr.is_null(),
-        "asset registered before the first Deck stage, or from a spawned thread; \
-         scenes must register assets on the render thread"
-    );
-    // SAFETY: the pointer is the boxed renderer in this thread's RENDERER,
-    // which outlives every scene call; registrars only run on this thread.
-    unsafe { &mut *ptr }.register_bitmap_nearest(tag, source.data())
-}
+    fn register_bitmap(&self, tag: &str, data: &[u8]) -> Option<BitmapId> {
+        self.with_renderer(|renderer| renderer.register_bitmap(tag, data))
+    }
 
-/// Uploads already-decoded pixels, so it takes their size
-/// where the others take encoded bytes — outside what [`registrar`] shapes.
-fn registrar_image_rgba(
-    tag: &str,
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-) -> Option<bmc_wasm_sdk::BitmapId> {
-    let ptr = RENDERER_PTR.with(Cell::get);
-    assert!(
-        !ptr.is_null(),
-        "asset registered before the first Deck stage, or from a spawned thread; \
-         scenes must register assets on the render thread"
-    );
-    // SAFETY: as above — this thread's boxed renderer, on this thread only.
-    unsafe { &mut *ptr }.register_bitmap_rgba(tag, rgba, width, height)
+    fn register_bitmap_nearest(&self, tag: &str, data: &[u8]) -> Option<BitmapId> {
+        self.with_renderer(|renderer| renderer.register_bitmap_nearest(tag, data))
+    }
+
+    fn register_mesh(&self, tag: &str, data: &[u8]) -> Option<MeshId> {
+        self.with_renderer(|renderer| renderer.register_mesh(tag, data))
+    }
+
+    fn register_bitmap_rgba(
+        &self,
+        tag: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<BitmapId> {
+        self.with_renderer(|renderer| renderer.register_bitmap_rgba(tag, rgba, width, height))
+    }
 }
 
 /// The layout and interaction state one staged frame keeps between frames,
@@ -222,18 +209,12 @@ fn init_renderer_with(loader: &gallery::GlLoader, [width, height]: [u32; 2], fbo
             .expect("BUG: failed to create the FemtoVG renderer")
         },
     );
-    RENDERER_PTR.with(|p| p.set(&raw mut *renderer));
+    bmc_wasm_sdk::assets::install_asset_host(DeckAssetHost(&raw mut *renderer));
     RENDERER.set(Some(renderer));
     // SAFETY: same loader, same context femtovg just bound itself to.
     GL.set(Some(unsafe {
         glow::Context::from_loader_function_cstr(|symbol| loader(symbol))
     }));
-
-    bmc_wasm_sdk::assets::init_icon_registrar(registrar_icon);
-    bmc_wasm_sdk::assets::init_bitmap_registrar(registrar_bitmap);
-    bmc_wasm_sdk::assets::init_mesh_registrar(registrar_mesh);
-    bmc_wasm_sdk::assets::init_image_registrar(registrar_image_rgba);
-    bmc_render_skin::init(registrar_bitmap_nearest);
 }
 
 /// Which egui frame a stage is being drawn for, and how much time it carries.
