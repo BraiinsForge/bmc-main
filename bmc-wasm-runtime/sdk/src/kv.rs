@@ -41,45 +41,15 @@
 //! kv::delete("pairing_guid");
 //! ```
 
-// Host function imports
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_kv_set(key_ptr: *const u8, key_len: u32, val_ptr: *const u8, val_len: u32);
-    fn host_kv_get(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
-    fn host_kv_delete(key_ptr: *const u8, key_len: u32);
-}
-
 /// Store a value for a key. Overwrites any existing value.
 pub fn set(key: &str, value: &[u8]) {
-    unsafe {
-        host_kv_set(
-            key.as_ptr(),
-            key.len() as u32,
-            value.as_ptr(),
-            value.len() as u32,
-        );
-    }
+    Platform::set(key, value);
 }
 
 /// Retrieve the value for a key. Returns `None` if not found.
-///
-/// Uses a two-call pattern: first call gets the length, second call
-/// reads the data into an allocated buffer.
 #[must_use]
 pub fn get(key: &str) -> Option<Vec<u8>> {
-    let len = unsafe { host_kv_get(key.as_ptr(), key.len() as u32, core::ptr::null_mut(), 0) };
-    if len < 0 {
-        return None;
-    }
-    if len == 0 {
-        return Some(Vec::new());
-    }
-    let mut buf = vec![0u8; len as usize];
-    let len2 = unsafe { host_kv_get(key.as_ptr(), key.len() as u32, buf.as_mut_ptr(), len as u32) };
-    if len2 < 0 {
-        return None;
-    }
-    Some(buf)
+    Platform::get(key)
 }
 
 /// Retrieve a string value for a key. Returns `None` if not found or not valid UTF-8.
@@ -90,7 +60,86 @@ pub fn get_string(key: &str) -> Option<String> {
 
 /// Delete a key and its value.
 pub fn delete(key: &str) {
-    unsafe {
-        host_kv_delete(key.as_ptr(), key.len() as u32);
+    Platform::delete(key);
+}
+
+trait KvStore {
+    fn set(key: &str, value: &[u8]);
+    fn get(key: &str) -> Option<Vec<u8>>;
+    fn delete(key: &str);
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_kv_set(key_ptr: *const u8, key_len: u32, val_ptr: *const u8, val_len: u32);
+        fn host_kv_get(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
+        fn host_kv_delete(key_ptr: *const u8, key_len: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::KvStore for Host {
+        fn set(key: &str, value: &[u8]) {
+            unsafe {
+                host_kv_set(
+                    key.as_ptr(),
+                    key.len() as u32,
+                    value.as_ptr(),
+                    value.len() as u32,
+                );
+            }
+        }
+
+        fn get(key: &str) -> Option<Vec<u8>> {
+            let len =
+                unsafe { host_kv_get(key.as_ptr(), key.len() as u32, core::ptr::null_mut(), 0) };
+            if len < 0 {
+                return None;
+            }
+            if len == 0 {
+                return Some(Vec::new());
+            }
+            let mut buf = vec![0u8; len as usize];
+            let len2 = unsafe {
+                host_kv_get(key.as_ptr(), key.len() as u32, buf.as_mut_ptr(), len as u32)
+            };
+            if len2 < 0 {
+                return None;
+            }
+            Some(buf)
+        }
+
+        fn delete(key: &str) {
+            unsafe {
+                host_kv_delete(key.as_ptr(), key.len() as u32);
+            }
+        }
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    pub(super) struct Host;
+
+    impl super::KvStore for Host {
+        fn set(_: &str, _: &[u8]) {
+            panic!("BUG: kv::set() called off-target — no host persists the store")
+        }
+
+        fn get(_: &str) -> Option<Vec<u8>> {
+            panic!("BUG: kv::get() called off-target — no host persists the store")
+        }
+
+        fn delete(_: &str) {
+            panic!("BUG: kv::delete() called off-target — no host persists the store")
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;

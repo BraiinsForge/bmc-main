@@ -358,7 +358,6 @@ pub mod host;
 pub mod http_listener;
 pub mod json;
 pub mod json_str;
-#[cfg(target_arch = "wasm32")]
 pub mod kv;
 pub mod led;
 pub mod log;
