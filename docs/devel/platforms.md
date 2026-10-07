@@ -82,6 +82,8 @@ Definitions:
 `BMC100` is the only current product whose logical display differs from the advertised mode: it crops the `600x1280`
 mode to a `480x1280` visible area, then the 270 degree scanout transform exposes it to the compositor as `1280x480`.
 
+`BMM100` and `BMM101` scan out `BGR565` and apply a panel color adjustment; see [Display Scanout](display-scanout.md).
+
 ## Capabilities
 
 `HardwareProfile::capabilities()` projects the profile into the `HardwareCapabilities` value used by `bmc` core.
