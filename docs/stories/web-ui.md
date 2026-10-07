@@ -116,6 +116,18 @@ firmware rebuild.
   brightness as a setting event.
 - Changes apply immediately — no widget restart required (settings delivery is handled by the `deck_widget` protocol).
 
+### Open the miner interface first on a miner
+
+> As a miner owner, I want the device's address to open the miner configuration, so the address I have always typed to
+> manage a miner still takes me there.
+
+- On a miner (BMM100, BMM101, BFM100), opening `http://<miner-ip>/` shows the BOSer interface, served under `/bos`.
+- The display configuration stays reachable at its own pages (`/display`, `/settings`, …) and through the links in the
+  BOSer interface.
+- During initial setup and Wi-Fi reconfiguration, the device address keeps opening the setup pages instead.
+- The browser does not remember the jump to `/bos`, so after a factory reset the address opens setup again.
+- On a Deck (BMC100), the device address keeps opening the display configuration.
+
 ## Constraints
 
 - **Feature parity** with the pre-Wayland web UI is the baseline for scene and widget management.
