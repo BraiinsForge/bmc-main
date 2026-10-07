@@ -27,6 +27,13 @@ pub struct SystemTime {
 }
 
 impl SystemTime {
+    #[must_use]
+    pub fn now() -> Self {
+        Self {
+            unix_secs: Platform::unix_secs(),
+        }
+    }
+
     /// Project into local wall-clock fields for `tz`.
     /// Returns `None` when the host doesn't recognise the tz name.
     #[must_use]
@@ -66,6 +73,10 @@ fn decompose(unix_secs: i64) -> LocalDateTime {
     }
 }
 
+trait ClockProvider {
+    fn unix_secs() -> i64;
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     #[link(wasm_import_module = "env")]
@@ -73,14 +84,32 @@ mod wasm {
         fn host_get_system_time(out_ptr: *mut u8);
     }
 
-    impl super::SystemTime {
-        #[must_use]
-        pub fn now() -> Self {
+    pub(super) struct Host;
+
+    impl super::ClockProvider for Host {
+        fn unix_secs() -> i64 {
             let mut buf = [0u8; 8];
             unsafe { host_get_system_time(buf.as_mut_ptr()) }
-            Self {
-                unix_secs: i64::from_le_bytes(buf),
-            }
+            i64::from_le_bytes(buf)
         }
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    pub(super) struct Host;
+
+    impl super::ClockProvider for Host {
+        fn unix_secs() -> i64 {
+            panic!(
+                "BUG: SystemTime::now() called off-target — no host keeps the time; supply it explicitly"
+            )
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
