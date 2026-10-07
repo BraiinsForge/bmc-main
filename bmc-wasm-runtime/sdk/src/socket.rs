@@ -33,6 +33,8 @@
 //! When the peer closes the connection, the callback gets [`SocketEvent::Closed`]
 //! and the stored handle reaches nothing, so clear or replace it there.
 //!
+//! Off-target there is no host to connect through, so connecting or writing panics.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -73,17 +75,6 @@ use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::SocketId;
 
-// Host function imports
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_tls_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
-    fn host_tls_connect_insecure(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
-    fn host_tcp_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
-    fn host_socket_write(socket_id: u32, data_ptr: *const u8, data_len: u32) -> u32;
-    fn host_socket_close(socket_id: u32);
-}
-
 /// Callback type: `fn(socket, event)`.
 pub type Callback = fn(&Socket, &SocketEvent<'_>);
 
@@ -96,11 +87,8 @@ impl Socket {
     ///
     /// Does nothing once the connection has closed,
     /// such as on a callback's argument after the callback closed the stored handle.
-    #[cfg(target_arch = "wasm32")]
     pub fn write(&self, data: &[u8]) {
-        unsafe {
-            host_socket_write(self.0.to_wire(), data.as_ptr(), data.len() as u32);
-        }
+        Platform::write(self.0, data);
     }
 
     /// Close the connection. An event already due in the same delivery pass is dropped.
@@ -112,10 +100,7 @@ impl Socket {
 impl Drop for Socket {
     fn drop(&mut self) {
         CONNECTIONS.with_borrow_mut(|connections| connections.remove(&self.0));
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            host_socket_close(self.0.to_wire());
-        }
+        Platform::close(self.0);
     }
 }
 
@@ -156,13 +141,10 @@ fn register_callback(cb: Callback) -> usize {
 /// called. Certificate verification is enabled.
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned Socket closes it"]
 pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
+    let socket_id = Platform::tls_connect(host, port)?;
     let cb_idx = register_callback(callback);
-    let socket_id = SocketId::from_wire(unsafe {
-        host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port))
-    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Some(Socket(socket_id))
 }
@@ -173,13 +155,10 @@ pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> 
 /// Chromecast receivers.
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned Socket closes it"]
 pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option<Socket> {
+    let socket_id = Platform::tls_connect_insecure(host, port)?;
     let cb_idx = register_callback(callback);
-    let socket_id = SocketId::from_wire(unsafe {
-        host_tls_connect_insecure(host.as_ptr(), host.len() as u32, u32::from(port))
-    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Some(Socket(socket_id))
 }
@@ -189,48 +168,22 @@ pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option
 /// called.
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned Socket closes it"]
 pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
+    let socket_id = Platform::tcp_connect(host, port)?;
     let cb_idx = register_callback(callback);
-    let socket_id = SocketId::from_wire(unsafe {
-        host_tcp_connect(host.as_ptr(), host.len() as u32, u32::from(port))
-    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Some(Socket(socket_id))
 }
 
-/// Called by the host when a socket event is ready.
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly the requested bytes"
+/// Hand an event to the callback of its socket, if a handle still holds it.
+///
+/// A close unregisters the socket before the callback runs.
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(dead_code, reason = "off-target no host delivers events")
 )]
-#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
-pub extern "C" fn __on_socket_event(socket_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
-    let Some(socket_id) = SocketId::from_wire(socket_id) else {
-        return;
-    };
-
-    let data = if data_len > 0 && data_ptr != 0 {
-        unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
-    } else {
-        Vec::new()
-    };
-
-    let event = match event_type {
-        0 => SocketEvent::Connected,
-        1 => SocketEvent::Data(&data),
-        2 => {
-            let code = if data.len() >= 4 {
-                u32::from_le_bytes([data[0], data[1], data[2], data[3]])
-            } else {
-                1
-            };
-            SocketEvent::Closed(code)
-        }
-        _ => return,
-    };
-
+fn deliver(socket_id: SocketId, event: &SocketEvent<'_>) {
     let is_close = matches!(event, SocketEvent::Closed(_));
 
     let cb = CONNECTIONS
@@ -245,9 +198,142 @@ pub extern "C" fn __on_socket_event(socket_id: u32, event_type: u32, data_ptr: u
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would close the connection.
-        cb(&ManuallyDrop::new(Socket(socket_id)), &event);
+        cb(&ManuallyDrop::new(Socket(socket_id)), event);
     }
 }
+
+trait SocketTransport {
+    fn tls_connect(host: &str, port: u16) -> Option<SocketId>;
+    fn tls_connect_insecure(host: &str, port: u16) -> Option<SocketId>;
+    fn tcp_connect(host: &str, port: u16) -> Option<SocketId>;
+    fn write(socket_id: SocketId, data: &[u8]);
+    fn close(socket_id: SocketId);
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::SocketId;
+
+    use super::{SocketEvent, deliver};
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_tls_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
+        fn host_tls_connect_insecure(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
+        fn host_tcp_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
+        fn host_socket_write(socket_id: u32, data_ptr: *const u8, data_len: u32) -> u32;
+        fn host_socket_close(socket_id: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::SocketTransport for Host {
+        fn tls_connect(host: &str, port: u16) -> Option<SocketId> {
+            SocketId::from_wire(unsafe {
+                host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port))
+            })
+        }
+
+        fn tls_connect_insecure(host: &str, port: u16) -> Option<SocketId> {
+            SocketId::from_wire(unsafe {
+                host_tls_connect_insecure(host.as_ptr(), host.len() as u32, u32::from(port))
+            })
+        }
+
+        fn tcp_connect(host: &str, port: u16) -> Option<SocketId> {
+            SocketId::from_wire(unsafe {
+                host_tcp_connect(host.as_ptr(), host.len() as u32, u32::from(port))
+            })
+        }
+
+        fn write(socket_id: SocketId, data: &[u8]) {
+            unsafe {
+                host_socket_write(socket_id.to_wire(), data.as_ptr(), data.len() as u32);
+            }
+        }
+
+        fn close(socket_id: SocketId) {
+            unsafe {
+                host_socket_close(socket_id.to_wire());
+            }
+        }
+    }
+
+    /// Called by the host when a socket event is ready.
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_socket_event(
+        socket_id: u32,
+        event_type: u32,
+        data_ptr: u32,
+        data_len: u32,
+    ) {
+        let Some(socket_id) = SocketId::from_wire(socket_id) else {
+            return;
+        };
+
+        let data = if data_len > 0 && data_ptr != 0 {
+            unsafe {
+                Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize)
+            }
+        } else {
+            Vec::new()
+        };
+
+        let event = match event_type {
+            0 => SocketEvent::Connected,
+            1 => SocketEvent::Data(&data),
+            2 => {
+                let code = if data.len() >= 4 {
+                    u32::from_le_bytes([data[0], data[1], data[2], data[3]])
+                } else {
+                    1
+                };
+                SocketEvent::Closed(code)
+            }
+            _ => return,
+        };
+
+        deliver(socket_id, &event);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::SocketId;
+
+    pub(super) struct Host;
+
+    impl super::SocketTransport for Host {
+        fn tls_connect(_: &str, _: u16) -> Option<SocketId> {
+            panic!("BUG: tls_connect() called off-target — no host to connect through")
+        }
+
+        fn tls_connect_insecure(_: &str, _: u16) -> Option<SocketId> {
+            panic!("BUG: tls_connect_insecure() called off-target — no host to connect through")
+        }
+
+        fn tcp_connect(_: &str, _: u16) -> Option<SocketId> {
+            panic!("BUG: tcp_connect() called off-target — no host to connect through")
+        }
+
+        fn write(_: SocketId, _: &[u8]) {
+            panic!("BUG: Socket::write() called off-target — no host to connect through")
+        }
+
+        /// Only a test holds a handle off-target, and there is no host connection to close.
+        fn close(_: SocketId) {}
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {
@@ -255,7 +341,7 @@ mod tests {
 
     use bmc_wasm_protocol::SocketId;
 
-    use super::{__on_socket_event, CONNECTIONS, Callback, Socket, SocketEvent, register_callback};
+    use super::{CONNECTIONS, Callback, Socket, SocketEvent, register_callback};
 
     thread_local! {
         static SEEN: Cell<Option<SocketId>> = const { Cell::new(None) };
@@ -270,7 +356,7 @@ mod tests {
     }
 
     fn deliver(id: SocketId) {
-        __on_socket_event(id.to_wire(), 0, 0, 0);
+        super::deliver(id, &SocketEvent::Connected);
     }
 
     fn is_registered(id: SocketId) -> bool {
