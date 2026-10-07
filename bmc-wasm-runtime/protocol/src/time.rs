@@ -23,7 +23,7 @@
 //! Each type owns the bytes it travels as, so the host writing them and
 //! the widget reading them cannot drift apart.
 //!
-//! With `domain`, the host's calendar too: `wall_clock` and `utc_offset_secs` read
+//! With the `host` feature, the host's calendar too: `wall_clock` and `utc_offset_secs` read
 //! any zone chrono knows and `Local`, `zone_offset_secs` only the zones the device ships.
 
 const MONTHS: [&str; 12] = [
@@ -202,7 +202,7 @@ impl LocalDateTime {
 
 /// A UTC instant under a chrono strftime pattern, or `None` for an instant
 /// chrono cannot represent or a pattern it cannot format.
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 #[must_use]
 pub fn strftime_utc(unix_secs: i64, pattern: &str) -> Option<String> {
     use core::fmt::Write;
@@ -215,13 +215,13 @@ pub fn strftime_utc(unix_secs: i64, pattern: &str) -> Option<String> {
 
 /// A zone chrono can read an instant in: any IANA name
 /// it knows, or `Local` for the process's own.
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 enum Zone {
     Named(chrono_tz::Tz),
     Local,
 }
 
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 impl Zone {
     fn parse(name: &str) -> Option<Self> {
         if name == "Local" {
@@ -242,7 +242,7 @@ impl Zone {
 
 /// The wall clock a UTC instant reads in any zone chrono knows, or `Local`;
 /// `None` where the zone is unknown.
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 #[must_use]
 pub fn wall_clock(unix_secs: i64, zone: &str) -> Option<LocalDateTime> {
     use chrono::{Datelike, Timelike};
@@ -261,7 +261,7 @@ pub fn wall_clock(unix_secs: i64, zone: &str) -> Option<LocalDateTime> {
 
 /// The UTC offset in seconds of any zone chrono knows, or `Local`,
 /// at an instant so DST is honoured; `None` where the zone is unknown.
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 #[must_use]
 pub fn utc_offset_secs(unix_secs: i64, zone: &str) -> Option<i32> {
     Some(Zone::parse(zone)?.at(unix_secs)?.offset().local_minus_utc())
@@ -269,7 +269,7 @@ pub fn utc_offset_secs(unix_secs: i64, zone: &str) -> Option<i32> {
 
 /// [`utc_offset_secs`] for the zones the device ships — `bmc_shared_time`'s
 /// curated OpenWrt set, the one `tz!` checks against — and `None` for any other.
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 #[must_use]
 pub fn zone_offset_secs(unix_secs: i64, zone: &str) -> Option<i32> {
     bmc_shared_time::time::Timezone::lookup(zone)?;
@@ -370,7 +370,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "domain"))]
+#[cfg(all(test, feature = "host"))]
 mod calendar_tests {
     use super::{LocalDateTime, strftime_utc, utc_offset_secs, wall_clock, zone_offset_secs};
 

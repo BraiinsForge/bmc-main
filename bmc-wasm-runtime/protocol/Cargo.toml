@@ -25,9 +25,15 @@ serde = ["dep:serde"]
 egui = ["dep:egui"]
 # Off by default so the wasm SDK build path stays free of Wayland-protocol types.
 widget-protocol = ["dep:bmc-widget-protocol"]
+# What the host computes for a guest, shared with native SDK builds.
 # Off by default so the wasm SDK build path stays free
 # of the formatting core (formato) and the calendar (chrono-tz).
-domain = ["dep:bmc-shared-time", "dep:bmc-shared-utils", "dep:chrono", "dep:chrono-tz"]
+host = [
+    "dep:bmc-shared-time",
+    "dep:bmc-shared-utils",
+    "dep:chrono",
+    "dep:chrono-tz",
+]
 
 [lints]
 workspace = true

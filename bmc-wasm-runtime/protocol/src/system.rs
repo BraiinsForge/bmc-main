@@ -259,7 +259,7 @@ impl TryFrom<u8> for UnitSystem {
 }
 
 // Wire → domain conversions, feature-gated so the wasm SDK path stays formato-free.
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 impl From<NumberFormat> for bmc_shared_utils::number_format::NumberFormat {
     fn from(value: NumberFormat) -> Self {
         match value {
@@ -271,7 +271,7 @@ impl From<NumberFormat> for bmc_shared_utils::number_format::NumberFormat {
     }
 }
 
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 impl From<TemperatureUnit> for bmc_shared_utils::temperature::TemperatureUnit {
     fn from(value: TemperatureUnit) -> Self {
         match value {
@@ -281,7 +281,7 @@ impl From<TemperatureUnit> for bmc_shared_utils::temperature::TemperatureUnit {
     }
 }
 
-#[cfg(feature = "domain")]
+#[cfg(feature = "host")]
 impl From<UnitSystem> for bmc_shared_utils::unit_system::UnitSystem {
     fn from(value: UnitSystem) -> Self {
         match value {
