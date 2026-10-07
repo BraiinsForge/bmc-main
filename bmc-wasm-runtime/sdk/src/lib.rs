@@ -401,7 +401,6 @@ pub mod typography;
 pub mod tz;
 pub mod udp_broadcast;
 pub mod url;
-#[cfg(any(target_arch = "wasm32", test))]
 pub mod ws;
 pub mod xml;
 
@@ -433,7 +432,6 @@ pub use slot::*;
 pub use tree::*;
 pub use tz::Tz;
 pub use ufmt;
-#[cfg(target_arch = "wasm32")]
 pub use ws::{Ws, WsEvent, ws_connect};
 pub use xml::XmlDoc;
 

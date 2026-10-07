@@ -32,6 +32,8 @@
 //! When the peer closes the connection, the callback gets [`WsEvent::Close`]
 //! and the stored handle reaches nothing, so clear or replace it there.
 //!
+//! Off-target there is no host to connect through, so connecting or sending panics.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -68,20 +70,6 @@ use std::collections::HashMap;
 
 use bmc_wasm_protocol::WebsocketId;
 
-// Host function imports
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_ws_connect(
-        url_ptr: *const u8,
-        url_len: u32,
-        headers_ptr: *const u8,
-        headers_len: u32,
-    ) -> u32;
-    fn host_ws_send(ws_id: u32, msg_ptr: *const u8, msg_len: u32) -> u32;
-    fn host_ws_close(ws_id: u32);
-}
-
 /// The only handle to a WebSocket connection; dropping it closes the connection.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Ws(WebsocketId);
@@ -91,11 +79,8 @@ impl Ws {
     ///
     /// Does nothing once the connection has closed,
     /// such as on a callback's argument after the callback closed the stored handle.
-    #[cfg(target_arch = "wasm32")]
     pub fn send(&self, message: &str) {
-        unsafe {
-            host_ws_send(self.0.to_wire(), message.as_ptr(), message.len() as u32);
-        }
+        Platform::send(self.0, message);
     }
 
     /// Close the connection. An event already due in the same delivery pass is dropped.
@@ -107,10 +92,7 @@ impl Ws {
 impl Drop for Ws {
     fn drop(&mut self) {
         CONNECTIONS.with_borrow_mut(|connections| connections.remove(&self.0));
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            host_ws_close(self.0.to_wire());
-        }
+        Platform::close(self.0);
     }
 }
 
@@ -158,63 +140,25 @@ fn register_callback(cb: Callback) -> usize {
 /// `on_event` with the borrowed [`Ws`] and a [`WsEvent`].
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs
-/// (same format as [`fetch`](crate::fetch())).
+/// (same format as `fetch()`).
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned Ws closes it"]
 pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Option<Ws> {
+    let ws_id = Platform::connect(url, headers)?;
     let cb_idx = register_callback(on_event);
-    let (h_ptr, h_len) = match headers {
-        Some(h) => (h.as_ptr(), h.len() as u32),
-        None => (core::ptr::null(), 0),
-    };
-    let ws_id = WebsocketId::from_wire(unsafe {
-        host_ws_connect(url.as_ptr(), url.len() as u32, h_ptr, h_len)
-    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(ws_id, cb_idx));
     Some(Ws(ws_id))
 }
 
-/// Called by the host when a WebSocket event occurs.
+/// Hand an event to the callback of its connection, if a handle still holds it.
 ///
-/// Event types:
-/// - 0 = Open (data empty)
-/// - 1 = Message (data = UTF-8 text)
-/// - 2 = Close (data = 2 bytes LE close code)
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly the requested bytes"
+/// A close unregisters the connection before the callback runs.
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(dead_code, reason = "off-target no host delivers events")
 )]
-#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
-pub extern "C" fn __on_ws_event(ws_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
-    let Some(ws_id) = WebsocketId::from_wire(ws_id) else {
-        return;
-    };
-
-    let data = if data_len > 0 && data_ptr != 0 {
-        unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
-    } else {
-        Vec::new()
-    };
-
-    let event = match event_type {
-        0 => WsEvent::Open,
-        1 => {
-            let text = core::str::from_utf8(&data).unwrap_or_default();
-            WsEvent::Message(text)
-        }
-        2 => {
-            let code = if data.len() >= 2 {
-                u16::from_le_bytes([data[0], data[1]])
-            } else {
-                1006
-            };
-            WsEvent::Close(code)
-        }
-        _ => return,
-    };
-
+fn deliver(ws_id: WebsocketId, event: &WsEvent<'_>) {
     let is_close = matches!(event, WsEvent::Close(_));
 
     // Copy the callback out before invoking (callback may call ws_connect)
@@ -230,9 +174,128 @@ pub extern "C" fn __on_ws_event(ws_id: u32, event_type: u32, data_ptr: u32, data
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would close the connection.
-        cb(&ManuallyDrop::new(Ws(ws_id)), &event);
+        cb(&ManuallyDrop::new(Ws(ws_id)), event);
     }
 }
+
+trait WebsocketClient {
+    fn connect(url: &str, headers: Option<&str>) -> Option<WebsocketId>;
+    fn send(ws_id: WebsocketId, message: &str);
+    fn close(ws_id: WebsocketId);
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::WebsocketId;
+
+    use super::{WsEvent, deliver};
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_ws_connect(
+            url_ptr: *const u8,
+            url_len: u32,
+            headers_ptr: *const u8,
+            headers_len: u32,
+        ) -> u32;
+        fn host_ws_send(ws_id: u32, msg_ptr: *const u8, msg_len: u32) -> u32;
+        fn host_ws_close(ws_id: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::WebsocketClient for Host {
+        fn connect(url: &str, headers: Option<&str>) -> Option<WebsocketId> {
+            let (h_ptr, h_len) = match headers {
+                Some(h) => (h.as_ptr(), h.len() as u32),
+                None => (core::ptr::null(), 0),
+            };
+            WebsocketId::from_wire(unsafe {
+                host_ws_connect(url.as_ptr(), url.len() as u32, h_ptr, h_len)
+            })
+        }
+
+        fn send(ws_id: WebsocketId, message: &str) {
+            unsafe {
+                host_ws_send(ws_id.to_wire(), message.as_ptr(), message.len() as u32);
+            }
+        }
+
+        fn close(ws_id: WebsocketId) {
+            unsafe { host_ws_close(ws_id.to_wire()) }
+        }
+    }
+
+    /// Called by the host when a WebSocket event occurs.
+    ///
+    /// Event types:
+    /// - 0 = Open (data empty)
+    /// - 1 = Message (data = UTF-8 text)
+    /// - 2 = Close (data = 2 bytes LE close code)
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_ws_event(ws_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
+        let Some(ws_id) = WebsocketId::from_wire(ws_id) else {
+            return;
+        };
+
+        let data = if data_len > 0 && data_ptr != 0 {
+            unsafe {
+                Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize)
+            }
+        } else {
+            Vec::new()
+        };
+
+        let event = match event_type {
+            0 => WsEvent::Open,
+            1 => {
+                let text = core::str::from_utf8(&data).unwrap_or_default();
+                WsEvent::Message(text)
+            }
+            2 => {
+                let code = if data.len() >= 2 {
+                    u16::from_le_bytes([data[0], data[1]])
+                } else {
+                    1006
+                };
+                WsEvent::Close(code)
+            }
+            _ => return,
+        };
+
+        deliver(ws_id, &event);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::WebsocketId;
+
+    pub(super) struct Host;
+
+    impl super::WebsocketClient for Host {
+        fn connect(_: &str, _: Option<&str>) -> Option<WebsocketId> {
+            panic!("BUG: ws_connect() called off-target — no host to connect through")
+        }
+
+        fn send(_: WebsocketId, _: &str) {
+            panic!("BUG: Ws::send() called off-target — no host to connect through")
+        }
+
+        /// Only a test holds a handle off-target, and there is no host connection to close.
+        fn close(_: WebsocketId) {}
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {
@@ -240,7 +303,7 @@ mod tests {
 
     use bmc_wasm_protocol::WebsocketId;
 
-    use super::{__on_ws_event, CONNECTIONS, Callback, Ws, WsEvent, register_callback};
+    use super::{CONNECTIONS, Callback, Ws, WsEvent, register_callback};
 
     thread_local! {
         static SEEN: Cell<Option<WebsocketId>> = const { Cell::new(None) };
@@ -255,7 +318,7 @@ mod tests {
     }
 
     fn deliver(id: WebsocketId) {
-        __on_ws_event(id.to_wire(), 0, 0, 0);
+        super::deliver(id, &WsEvent::Open);
     }
 
     fn is_registered(id: WebsocketId) -> bool {
