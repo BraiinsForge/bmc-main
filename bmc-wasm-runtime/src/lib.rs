@@ -108,7 +108,6 @@
 //!   host-allocated buffers.
 
 mod runtime_limits;
-mod xml;
 
 mod audio_registry;
 pub mod disk_cache;

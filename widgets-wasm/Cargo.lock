@@ -183,6 +183,7 @@ dependencies = [
  "chrono-tz",
  "hex",
  "palette",
+ "roxmltree",
  "rrule",
  "serde_json",
 ]

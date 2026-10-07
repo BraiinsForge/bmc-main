@@ -1555,6 +1555,7 @@ dependencies = [
  "egui",
  "hex",
  "palette",
+ "roxmltree 0.20.0",
  "rrule",
  "serde",
  "serde_json",

@@ -408,7 +408,6 @@ pub mod udp_broadcast;
 pub mod url;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod ws;
-#[cfg(target_arch = "wasm32")]
 pub mod xml;
 
 pub use bmc_render_macros::*;
@@ -442,7 +441,6 @@ pub use tz::Tz;
 pub use ufmt;
 #[cfg(target_arch = "wasm32")]
 pub use ws::{Ws, WsEvent, ws_connect};
-#[cfg(target_arch = "wasm32")]
 pub use xml::XmlDoc;
 
 /// Helper for `button!` macro — converts label to String.

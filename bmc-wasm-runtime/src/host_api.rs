@@ -64,8 +64,8 @@ use crate::runtime::{
 };
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::system::SystemSnapshot;
-use crate::xml::XmlDocumentIndex;
 use bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache;
+use bmc_wasm_protocol::xml::XmlDocumentIndex;
 
 pub(crate) fn namespaced_tag(instance_id: &str, tag: &str) -> String {
     format!("{instance_id}:{tag}")

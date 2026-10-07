@@ -18,29 +18,31 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Owned XML lookup index for the WASM host API.
+//! How a widget reads XML: the host answers for a wasm guest,
+//! and the native SDK reads the same way through this index.
 
 use std::collections::HashMap;
 
-use anyhow::Result;
-
 /// Owned lookup data for one parsed XML document.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct XmlDocumentIndex {
+pub struct XmlDocumentIndex {
     first_text_by_local_name: HashMap<String, String>,
     first_attrs_by_local_name: HashMap<String, HashMap<String, String>>,
 }
 
 impl XmlDocumentIndex {
-    /// Parse XML once and build the owned lookup index used by the host API.
-    pub(crate) fn from_xml(xml: &str) -> Result<Self> {
-        let doc = roxmltree::Document::parse(xml)?;
-        Ok(Self::from_document(&doc))
+    /// Parse XML once and build the owned lookup index;
+    /// `None` for bytes that are not UTF-8 or not well-formed XML.
+    #[must_use]
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        let xml = core::str::from_utf8(bytes).ok()?;
+        let doc = roxmltree::Document::parse(xml).ok()?;
+        Some(Self::from_document(&doc))
     }
 
-    /// Resolve a supported host XML path to an indexed string result.
+    /// Resolve a supported XML path to its text.
     #[must_use]
-    pub(crate) fn get_str(&self, path: &str) -> Option<&str> {
+    pub fn get_str(&self, path: &str) -> Option<&str> {
         match parse_xml_lookup_path(path)? {
             XmlLookupPath::Text(local_name) => self
                 .first_text_by_local_name
@@ -55,6 +57,16 @@ impl XmlDocumentIndex {
                 .and_then(|attrs| attrs.get(attr_name))
                 .map(String::as_str),
         }
+    }
+
+    /// The text at the path read as a number.
+    /// `None` for a `NaN`, which the host's wire uses to mean absent.
+    #[must_use]
+    pub fn get_f64(&self, path: &str) -> Option<f64> {
+        self.get_str(path)?
+            .parse::<f64>()
+            .ok()
+            .filter(|value| !value.is_nan())
     }
 
     fn from_document(doc: &roxmltree::Document<'_>) -> Self {
@@ -124,7 +136,7 @@ fn extract_text_children(node: roxmltree::Node<'_, '_>) -> Option<String> {
 mod tests {
     use super::XmlDocumentIndex;
 
-    const FEED_XML: &str = r#"
+    const FEED_XML: &[u8] = br#"
         <rss xmlns:dc="http://purl.org/dc/elements/1.1/">
             <channel>
                 <item>
@@ -132,11 +144,16 @@ mod tests {
                     <dc:title>Launch</dc:title>
                     <res protocolInfo="http-get:*:audio/mpeg:*" duration="00:01:02" />
                     <ttl>15</ttl>
+                    <ratio>NaN</ratio>
                     <title>Fallback</title>
                 </item>
             </channel>
         </rss>
     "#;
+
+    fn feed() -> XmlDocumentIndex {
+        XmlDocumentIndex::parse(FEED_XML).expect("BUG: test XML should build an index")
+    }
 
     fn lookup_text<'a>(index: &'a XmlDocumentIndex, local_name: &str) -> Option<&'a str> {
         index
@@ -159,8 +176,7 @@ mod tests {
 
     #[test]
     fn xml_index_matches_text_lookup_semantics() {
-        let index =
-            XmlDocumentIndex::from_xml(FEED_XML).expect("BUG: test XML should build an index");
+        let index = feed();
 
         assert_eq!(index.get_str("//title"), Some("Launch"));
         assert_eq!(index.get_str("//dc:title"), Some("Launch"));
@@ -171,8 +187,7 @@ mod tests {
 
     #[test]
     fn xml_index_matches_attribute_lookup_semantics() {
-        let index =
-            XmlDocumentIndex::from_xml(FEED_XML).expect("BUG: test XML should build an index");
+        let index = feed();
 
         assert_eq!(index.get_str("//res/@duration"), Some("00:01:02"));
         assert_eq!(lookup_attr(&index, "res", "duration"), Some("00:01:02"));
@@ -186,14 +201,14 @@ mod tests {
 
     #[test]
     fn xml_index_uses_first_matching_element_for_attributes() {
-        let xml = r#"
+        let xml = br#"
             <root>
                 <entry />
                 <entry duration="10" />
             </root>
         "#;
 
-        let index = XmlDocumentIndex::from_xml(xml).expect("BUG: test XML should build an index");
+        let index = XmlDocumentIndex::parse(xml).expect("BUG: test XML should build an index");
 
         assert_eq!(index.get_str("//entry/@duration"), None);
         assert_eq!(lookup_attr(&index, "entry", "duration"), None);
@@ -201,6 +216,20 @@ mod tests {
 
     #[test]
     fn xml_index_rejects_invalid_xml() {
-        assert!(XmlDocumentIndex::from_xml("<root>").is_err());
+        assert_eq!(XmlDocumentIndex::parse(b"<root>"), None);
+    }
+
+    #[test]
+    fn xml_index_rejects_bytes_that_are_not_utf8() {
+        assert_eq!(XmlDocumentIndex::parse(b"<root>\xff</root>"), None);
+    }
+
+    #[test]
+    fn a_number_reads_only_from_numeric_text() {
+        let index = feed();
+
+        assert_eq!(index.get_f64("//ttl"), Some(15.0));
+        assert_eq!(index.get_f64("//title"), None, "text is no number");
+        assert_eq!(index.get_f64("//ratio"), None, "NaN reads as absent");
     }
 }

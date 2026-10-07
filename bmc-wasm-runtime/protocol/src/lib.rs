@@ -46,6 +46,8 @@ pub mod timer;
 pub mod version;
 pub mod versioned_snapshot;
 pub(crate) mod wire;
+#[cfg(feature = "host")]
+pub mod xml;
 
 pub use animation::*;
 pub use arc::*;

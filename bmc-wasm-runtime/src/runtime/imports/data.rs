@@ -24,11 +24,11 @@ use anyhow::{Result, bail};
 use bmc_wasm_protocol::json::{self, JsonKind};
 use bmc_wasm_protocol::system::{NumberFormat, TemperatureUnit, UnitSystem};
 use bmc_wasm_protocol::time::{parse_calendar_date, parse_datetime, strftime_utc, wall_clock};
+use bmc_wasm_protocol::xml::XmlDocumentIndex;
 use bmc_wasm_protocol::{JsonId, XmlId};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::HostState;
-use crate::xml::XmlDocumentIndex;
 
 use super::super::memory::{read_bytes, read_string, write_to_wasm};
 use super::super::time::{expand_rrule_impl, format_number_with_prefs, tz_convert_legacy_wire};
@@ -649,11 +649,7 @@ fn register_xml_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
 
-            let Ok(xml_str) = String::from_utf8(bytes) else {
-                return 0;
-            };
-
-            let Ok(xml_index) = XmlDocumentIndex::from_xml(&xml_str) else {
+            let Some(xml_index) = XmlDocumentIndex::parse(&bytes) else {
                 return 0;
             };
 
@@ -704,9 +700,11 @@ fn register_xml_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 return f64::NAN;
             };
 
-            let state = caller.data();
-            xml_lookup_text(&state.xml_indices, doc_id, &path)
-                .and_then(|s| s.parse::<f64>().ok())
+            caller
+                .data()
+                .xml_indices
+                .get(&doc_id)
+                .and_then(|index| index.get_f64(&path))
                 .unwrap_or(f64::NAN)
         },
     )?;
@@ -1182,12 +1180,11 @@ mod tests {
     use std::path::Path;
 
     use bmc_wasm_protocol::XmlId;
-
-    use crate::xml::XmlDocumentIndex;
+    use bmc_wasm_protocol::xml::XmlDocumentIndex;
 
     use super::{json_kind_impl, json_len_impl, kv_disk_path, validate_kv_key, xml_lookup_text};
 
-    const XML_WIDGET_FEED: &str = r#"
+    const XML_WIDGET_FEED: &[u8] = br#"
         <rss>
             <channel>
                 <item>
@@ -1266,8 +1263,7 @@ mod tests {
         let doc_id = XmlId::from_wire(1).expect("BUG: 1 is a valid wire ID");
         xml_docs.insert(
             doc_id,
-            XmlDocumentIndex::from_xml(XML_WIDGET_FEED)
-                .expect("BUG: test XML should build an index"),
+            XmlDocumentIndex::parse(XML_WIDGET_FEED).expect("BUG: test XML should build an index"),
         );
 
         assert_eq!(
@@ -1277,10 +1273,6 @@ mod tests {
         assert_eq!(
             xml_lookup_text(&xml_docs, doc_id, "//pubDate"),
             Some("Sat, 12 Apr 2026 18:00:00 GMT".to_owned())
-        );
-        assert_eq!(
-            xml_lookup_text(&xml_docs, doc_id, "//ttl").and_then(|value| value.parse::<f64>().ok()),
-            Some(15.0)
         );
         assert_eq!(
             xml_lookup_text(&xml_docs, doc_id, "//res/@duration"),
@@ -1294,22 +1286,5 @@ mod tests {
         xml_docs.remove(&doc_id);
 
         assert_eq!(xml_lookup_text(&xml_docs, doc_id, "//title"), None);
-    }
-
-    #[test]
-    fn xml_lookup_f64_rejects_non_numeric_fields() {
-        let mut xml_docs = HashMap::new();
-        let doc_id = XmlId::from_wire(1).expect("BUG: 1 is a valid wire ID");
-        xml_docs.insert(
-            doc_id,
-            XmlDocumentIndex::from_xml(XML_WIDGET_FEED)
-                .expect("BUG: test XML should build an index"),
-        );
-
-        assert_eq!(
-            xml_lookup_text(&xml_docs, doc_id, "//title")
-                .and_then(|value| value.parse::<f64>().ok()),
-            None
-        );
     }
 }
