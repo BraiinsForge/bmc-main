@@ -32,7 +32,7 @@ use axum::{
     extract::{ConnectInfo, Path, Request, State},
     http::HeaderValue,
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::{any, get},
 };
 use bmc_platform::HardwareCapabilities;
@@ -377,10 +377,17 @@ impl<T: BmcManager> HttpServer<T> {
             ),
             None => get(Self::file_handler_with_index_fallback),
         };
+        // A miner owner expects the miner UI at the device's address.
+        // Temporary, since after a factory reset the portal serves setup at `/` again.
+        let root = if boser.is_some() && self.hardware_capabilities.boser_managed {
+            get(|| async { Redirect::temporary(Self::BOSER_FRONTEND_PREFIX) })
+        } else {
+            get(Self::index_handler)
+        };
         let index_state = IndexState::new(www_storage, self.manager.clone(), boser);
 
         Router::new()
-            .route(ROOT_URL_ENDPOINT, get(Self::index_handler))
+            .route(ROOT_URL_ENDPOINT, root)
             .route(WIFI_SETUP_URL_ENDPOINT, get(Self::wifi_setup_index_handler))
             .route(DEVICE_SETUP_URL_ENDPOINT, get(Self::device_setup_handler))
             .route("/{*file_path}", catch_all)
