@@ -20,8 +20,8 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-//! Test doubles shared by the unit tests: a [`BmcManager`] whose every method
-//! panics, for code under test that must hold a manager without consulting it.
+//! Test doubles shared by the unit tests: a [`BmcManager`] that panics on every method,
+//! except a network stack the test hands it, so code under test cannot consult it by accident.
 
 use std::path::Path;
 
@@ -74,8 +74,18 @@ impl session::Manager for StubSessionManager {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct StubManager;
+#[derive(Debug, Default)]
+pub(crate) struct StubManager {
+    network: Option<bmc_net::mock::MockNetworkManager>,
+}
+
+impl StubManager {
+    pub(crate) fn with_network(network: bmc_net::mock::MockNetworkManager) -> Self {
+        Self {
+            network: Some(network),
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl BmcManager for StubManager {
@@ -147,6 +157,6 @@ impl BmcManager for StubManager {
         unimplemented!("{UNREACHABLE}")
     }
     fn network_manager(&self) -> &dyn bmc_net::NetworkManager {
-        unimplemented!("{UNREACHABLE}")
+        self.network.as_ref().expect(UNREACHABLE)
     }
 }

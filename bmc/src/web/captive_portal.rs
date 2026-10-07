@@ -352,6 +352,23 @@ mod tests {
         );
     }
 
+    /// A boser-managed device redirects its root to boser's frontend;
+    /// the portal must claim `/` first, or setup is unreachable.
+    #[test]
+    fn the_root_opens_setup_until_the_device_is_operational() {
+        for state in [
+            BmcState::FactoryDefault,
+            BmcState::WifiReconfiguration,
+            BmcState::SetupPending,
+        ] {
+            assert_eq!(
+                should_redirect(&request("10.0.0.21", "/"), state),
+                Some(Redirect::Direct),
+                "{state:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_setup_endpoint_the_state_serves_is_left_alone() {
         assert_eq!(

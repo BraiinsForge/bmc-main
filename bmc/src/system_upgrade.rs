@@ -2779,7 +2779,7 @@ mod tests {
             let service = SystemUpgradeService::new(
                 index,
                 &PathBuf::from("/nonexistent/upgrade.img"),
-                Arc::new(StubManager),
+                Arc::new(StubManager::default()),
                 StateService::new(),
                 scheduler,
                 tokio::time::Instant::now(),

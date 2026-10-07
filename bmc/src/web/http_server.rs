@@ -1332,6 +1332,9 @@ mod tests {
         use tokio::net::{TcpListener, TcpStream};
 
         use super::*;
+        use bmc_net::NetworkManager as _;
+        use bmc_net::mock::MockNetworkManager;
+
         use crate::test_support::StubManager;
 
         /// `hello from boser`, gzip-compressed.
@@ -1452,6 +1455,22 @@ mod tests {
         /// holds `index.html` and one asset of ours. The directory is returned
         /// so it lives as long as the router.
         async fn proxy_router() -> (Router, tempfile::TempDir) {
+            router_for(bmc_platform::Product::Bmc100, Some(stub_boser().await))
+        }
+
+        fn router_for(
+            product: bmc_platform::Product,
+            boser: Option<SocketAddr>,
+        ) -> (Router, tempfile::TempDir) {
+            let (server, www) = server_for(product, boser, StubManager::default());
+            (server.routes(), www)
+        }
+
+        fn server_for<M: BmcManager>(
+            product: bmc_platform::Product,
+            boser: Option<SocketAddr>,
+            manager: M,
+        ) -> (HttpServer<M>, tempfile::TempDir) {
             let www = tempfile::tempdir().expect("BUG: create the www root");
             std::fs::write(www.path().join("index.html"), "<html>bmc</html>")
                 .expect("BUG: write index.html");
@@ -1463,16 +1482,15 @@ mod tests {
                 www_root_path: www.path().to_path_buf(),
                 www_assets_path: www.path().join("assets"),
                 www_var_path: www.path().join("var"),
-                boser: Some(stub_boser().await),
+                boser,
             };
             let server = HttpServer::new(
                 config,
-                Arc::new(StubManager),
+                Arc::new(manager),
                 Arc::new(WidgetRegistry::new(Vec::new())),
-                bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
-                    .capabilities(),
+                bmc_platform::HardwareProfile::for_product(product).capabilities(),
             );
-            (server.routes(), www)
+            (server, www)
         }
 
         async fn send(router: &Router, request: Request) -> (StatusCode, HeaderMap, Vec<u8>) {
@@ -1510,7 +1528,7 @@ mod tests {
             });
             HttpServer::new(
                 ServerConfig::default().set_boser(Some(address)),
-                Arc::new(StubManager),
+                Arc::new(StubManager::default()),
                 Arc::new(WidgetRegistry::new(Vec::new())),
                 bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
                     .capabilities(),
@@ -1673,7 +1691,7 @@ mod tests {
                             www_var_path: www.path().join("var"),
                             boser,
                         },
-                        Arc::new(StubManager),
+                        Arc::new(StubManager::default()),
                         Arc::new(WidgetRegistry::new(Vec::new())),
                         caps,
                     );
@@ -1775,6 +1793,101 @@ mod tests {
             assert_eq!(body, b"body{}");
             let (_, _, body) = send(&router, request("GET", "/assets/boser.png", "")).await;
             assert_eq!(body, b"boser asset");
+        }
+
+        /// A miner owner types the device's address expecting the miner UI.
+        #[tokio::test]
+        async fn a_boser_managed_device_opens_the_boser_frontend_at_the_root() {
+            for product in [
+                bmc_platform::Product::Bmm100,
+                bmc_platform::Product::Bmm101,
+                bmc_platform::Product::Bfm100,
+            ] {
+                let (router, _www) = router_for(product, Some(stub_boser().await));
+                let (status, headers, _) = send(&router, request("GET", "/", "")).await;
+                assert_eq!(
+                    status,
+                    StatusCode::TEMPORARY_REDIRECT,
+                    "{product:?}: a remembered redirect would skip setup after a factory reset"
+                );
+                assert_eq!(
+                    headers.get(LOCATION).map(HeaderValue::as_bytes),
+                    Some(b"/bos".as_slice()),
+                    "{product:?}"
+                );
+
+                let (status, _, body) = send(&router, request("GET", "/display", "")).await;
+                assert_eq!(status, StatusCode::OK, "{product:?}");
+                assert_eq!(
+                    body, b"<html>bmc</html>",
+                    "{product:?}: our UI stays reachable"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn a_clock_keeps_its_own_frontend_at_the_root() {
+            let (router, _www) =
+                router_for(bmc_platform::Product::Bmc100, Some(stub_boser().await));
+            let (status, _, body) = send(&router, request("GET", "/", "")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, b"<html>bmc</html>");
+        }
+
+        /// Redirecting would land on a `/bos` nothing serves.
+        #[tokio::test]
+        async fn a_miner_mock_without_a_boser_address_keeps_its_own_frontend_at_the_root() {
+            let (router, _www) = router_for(bmc_platform::Product::Bmm101, None);
+            let (status, _, body) = send(&router, request("GET", "/", "")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, b"<html>bmc</html>");
+        }
+
+        #[tokio::test]
+        async fn a_miner_opens_setup_at_the_root_until_it_is_operational() {
+            let boser = stub_boser().await;
+            let wifi_reconfiguration = MockNetworkManager::default();
+            wifi_reconfiguration
+                .provisioning()
+                .mark_wifi_reconfig()
+                .await
+                .expect("BUG: the mock flag always moves");
+            let cases = [
+                (
+                    "factory default",
+                    MockNetworkManager::with_provisioning(true, false),
+                    WIFI_SETUP_URL_ENDPOINT,
+                ),
+                (
+                    "wifi reconfiguration",
+                    wifi_reconfiguration,
+                    WIFI_SETUP_URL_ENDPOINT,
+                ),
+                (
+                    "setup pending",
+                    MockNetworkManager::with_provisioning(false, true),
+                    DEVICE_SETUP_URL_ENDPOINT,
+                ),
+                (
+                    "operational",
+                    MockNetworkManager::with_provisioning(false, false),
+                    "/bos",
+                ),
+            ];
+            for (state, network, location) in cases {
+                let (server, _www) = server_for(
+                    bmc_platform::Product::Bmm101,
+                    Some(boser),
+                    StubManager::with_network(network),
+                );
+                let (status, headers, _) = send(&server.build(), request("GET", "/", "")).await;
+                assert!(status.is_redirection(), "{state}: {status}");
+                assert_eq!(
+                    headers.get(LOCATION).map(HeaderValue::as_bytes),
+                    Some(location.as_bytes()),
+                    "{state}"
+                );
+            }
         }
 
         #[tokio::test]

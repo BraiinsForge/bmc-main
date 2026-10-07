@@ -99,7 +99,7 @@ async fn self_managed(stop: StopBehaviour) -> SelfManaged {
     let service = SystemUpgradeService::new(
         StubIndex,
         &image_dir.path().join("upgrade.img"),
-        Arc::new(StubManager),
+        Arc::new(StubManager::default()),
         StateService::new(),
         scheduler,
         tokio::time::Instant::now(),
