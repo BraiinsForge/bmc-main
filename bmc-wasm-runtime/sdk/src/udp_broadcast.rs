@@ -31,6 +31,8 @@
 //! The callback borrows the broadcast its event belongs to;
 //! to stop the broadcast from there, take the stored handle.
 //!
+//! Off-target there is no host to send broadcasts, so starting one panics.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -60,14 +62,6 @@ use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::UdpBroadcastId;
 
-// Host function imports
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_udp_broadcast(port: u32, msg_ptr: *const u8, msg_len: u32, timeout_secs: u32) -> u32;
-    fn host_udp_broadcast_stop(broadcast_id: u32);
-}
-
 /// Callback type: `fn(broadcast, event)`.
 pub type BroadcastCallback = fn(&UdpBroadcast, &UdpBroadcastEvent<'_>);
 
@@ -85,10 +79,7 @@ impl UdpBroadcast {
 impl Drop for UdpBroadcast {
     fn drop(&mut self) {
         BROADCASTS.with_borrow_mut(|broadcasts| broadcasts.remove(&self.0));
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            host_udp_broadcast_stop(self.0.to_wire());
-        }
+        Platform::stop(self.0);
     }
 }
 
@@ -125,7 +116,6 @@ fn register_callback(cb: BroadcastCallback) -> usize {
 /// periodically (every 30s) and listens for `timeout_secs` after each send.
 ///
 /// Returns `None` if the host refuses the broadcast before it is queued.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned UdpBroadcast stops it"]
 pub fn udp_broadcast(
     port: u32,
@@ -133,51 +123,18 @@ pub fn udp_broadcast(
     timeout_secs: u32,
     callback: BroadcastCallback,
 ) -> Option<UdpBroadcast> {
+    let broadcast_id = Platform::start(port, message, timeout_secs)?;
     let cb_idx = register_callback(callback);
-    let broadcast_id = UdpBroadcastId::from_wire(unsafe {
-        host_udp_broadcast(port, message.as_ptr(), message.len() as u32, timeout_secs)
-    })?;
     BROADCASTS.with(|b| b.borrow_mut().insert(broadcast_id, cb_idx));
     Some(UdpBroadcast(broadcast_id))
 }
 
-/// Called by the host when a UDP broadcast event is ready.
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly the requested bytes"
+/// Hand an event to the callback of its broadcast, if a handle still holds it.
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(dead_code, reason = "off-target no host delivers events")
 )]
-#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
-pub extern "C" fn __on_udp_broadcast_event(
-    broadcast_id: u32,
-    data_ptr: u32,
-    data_len: u32,
-    source_ptr: u32,
-    source_len: u32,
-) {
-    let Some(broadcast_id) = UdpBroadcastId::from_wire(broadcast_id) else {
-        return;
-    };
-
-    // Take ownership first, then borrow — avoids dangling reference.
-    let owned_data = if data_len > 0 && data_ptr != 0 {
-        unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
-    } else {
-        Vec::new()
-    };
-    let owned_source = if source_len > 0 && source_ptr != 0 {
-        unsafe {
-            Vec::from_raw_parts(
-                source_ptr as *mut u8,
-                source_len as usize,
-                source_len as usize,
-            )
-        }
-    } else {
-        Vec::new()
-    };
-    let data = core::str::from_utf8(&owned_data).unwrap_or("");
-    let source = core::str::from_utf8(&owned_source).unwrap_or("");
-
+fn deliver(broadcast_id: UdpBroadcastId, data: &str, source: &str) {
     let event = UdpBroadcastEvent::Response { data, source };
 
     let cb = BROADCASTS
@@ -190,6 +147,107 @@ pub extern "C" fn __on_udp_broadcast_event(
     }
 }
 
+trait Broadcaster {
+    fn start(port: u32, message: &str, timeout_secs: u32) -> Option<UdpBroadcastId>;
+    fn stop(broadcast_id: UdpBroadcastId);
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::UdpBroadcastId;
+
+    use super::deliver;
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_udp_broadcast(
+            port: u32,
+            msg_ptr: *const u8,
+            msg_len: u32,
+            timeout_secs: u32,
+        ) -> u32;
+        fn host_udp_broadcast_stop(broadcast_id: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::Broadcaster for Host {
+        fn start(port: u32, message: &str, timeout_secs: u32) -> Option<UdpBroadcastId> {
+            UdpBroadcastId::from_wire(unsafe {
+                host_udp_broadcast(port, message.as_ptr(), message.len() as u32, timeout_secs)
+            })
+        }
+
+        fn stop(broadcast_id: UdpBroadcastId) {
+            unsafe { host_udp_broadcast_stop(broadcast_id.to_wire()) }
+        }
+    }
+
+    /// Called by the host when a UDP broadcast event is ready.
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the sizes it asked __alloc for"
+    )]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_udp_broadcast_event(
+        broadcast_id: u32,
+        data_ptr: u32,
+        data_len: u32,
+        source_ptr: u32,
+        source_len: u32,
+    ) {
+        let Some(broadcast_id) = UdpBroadcastId::from_wire(broadcast_id) else {
+            return;
+        };
+
+        // Take ownership first, then borrow — avoids dangling reference.
+        let owned_data = if data_len > 0 && data_ptr != 0 {
+            unsafe {
+                Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize)
+            }
+        } else {
+            Vec::new()
+        };
+        let owned_source = if source_len > 0 && source_ptr != 0 {
+            unsafe {
+                Vec::from_raw_parts(
+                    source_ptr as *mut u8,
+                    source_len as usize,
+                    source_len as usize,
+                )
+            }
+        } else {
+            Vec::new()
+        };
+        let data = core::str::from_utf8(&owned_data).unwrap_or("");
+        let source = core::str::from_utf8(&owned_source).unwrap_or("");
+
+        deliver(broadcast_id, data, source);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::UdpBroadcastId;
+
+    pub(super) struct Host;
+
+    impl super::Broadcaster for Host {
+        fn start(_: u32, _: &str, _: u32) -> Option<UdpBroadcastId> {
+            panic!("BUG: udp_broadcast() called off-target — no host sends broadcasts")
+        }
+
+        /// Only a test holds a handle off-target, and there is no host broadcast to stop.
+        fn stop(_: UdpBroadcastId) {}
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
+
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
@@ -197,8 +255,7 @@ mod tests {
     use bmc_wasm_protocol::UdpBroadcastId;
 
     use super::{
-        __on_udp_broadcast_event, BROADCASTS, BroadcastCallback, UdpBroadcast, UdpBroadcastEvent,
-        register_callback,
+        BROADCASTS, BroadcastCallback, UdpBroadcast, UdpBroadcastEvent, register_callback,
     };
 
     thread_local! {
@@ -214,7 +271,7 @@ mod tests {
     }
 
     fn deliver(id: UdpBroadcastId) {
-        __on_udp_broadcast_event(id.to_wire(), 0, 0, 0, 0);
+        super::deliver(id, "", "");
     }
 
     fn is_registered(id: UdpBroadcastId) -> bool {

@@ -401,7 +401,6 @@ pub mod tree;
 pub mod types;
 pub mod typography;
 pub mod tz;
-#[cfg(any(target_arch = "wasm32", test))]
 pub mod udp_broadcast;
 pub mod url;
 #[cfg(any(target_arch = "wasm32", test))]
