@@ -45,9 +45,7 @@ pub use audio::{audio_play, audio_stop};
 mod clock;
 pub use clock::SystemTime;
 
-#[cfg(target_arch = "wasm32")]
 mod random;
-#[cfg(target_arch = "wasm32")]
 pub use random::random_u32;
 
 mod render;

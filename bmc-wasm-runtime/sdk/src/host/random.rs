@@ -18,13 +18,46 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_random_u32() -> u32;
-}
-
-/// Get a random `u32` from the host, which seeds it for deterministic replay.
+/// Get a random `u32` from the host: seeded from the clock on the device,
+/// while tools such as capture and the test host may pin the seed.
 #[must_use]
 pub fn random_u32() -> u32 {
-    unsafe { host_random_u32() }
+    Platform::random_u32()
 }
+
+trait RandomProvider {
+    fn random_u32() -> u32;
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_random_u32() -> u32;
+    }
+
+    pub(super) struct Host;
+
+    impl super::RandomProvider for Host {
+        fn random_u32() -> u32 {
+            unsafe { host_random_u32() }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    pub(super) struct Host;
+
+    impl super::RandomProvider for Host {
+        fn random_u32() -> u32 {
+            panic!("BUG: random_u32() called off-target — no host seeds randomness")
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
