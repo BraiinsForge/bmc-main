@@ -20,7 +20,8 @@
 
 //! Host function bindings and types.
 //!
-//! Most bindings exist only on `wasm32`, where there is a host to call.
+//! Most bindings exist only on `wasm32`, where there is a host to call;
+//! the rest also build off-target, where they panic.
 
 // Re-export from protocol — single source of truth for wire-format enums
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
@@ -49,15 +50,11 @@ mod random;
 #[cfg(target_arch = "wasm32")]
 pub use random::random_u32;
 
-#[cfg(target_arch = "wasm32")]
 mod render;
-#[cfg(target_arch = "wasm32")]
 pub use render::{button, draw_text, fill_rect, request_frame, request_frame_after, submit_tree};
 
 mod touch;
-pub use touch::TouchHit;
-#[cfg(target_arch = "wasm32")]
-pub use touch::{get_touch_click, get_touch_drag};
+pub use touch::{TouchHit, get_touch_click, get_touch_drag};
 
 mod viewport;
 pub use viewport::{

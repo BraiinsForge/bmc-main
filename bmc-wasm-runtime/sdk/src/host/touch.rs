@@ -43,6 +43,27 @@ impl TouchHit {
     }
 }
 
+/// Get the click position for an interactive canvas (one-shot, on finger-up).
+///
+/// Returns `None` if the canvas was not clicked this frame.
+#[must_use]
+pub fn get_touch_click(key: &str) -> Option<TouchHit> {
+    Platform::click(key)
+}
+
+/// Get the drag position for an interactive canvas (continuous, while finger is down).
+///
+/// Returns `None` if the canvas is not being dragged this frame.
+#[must_use]
+pub fn get_touch_drag(key: &str) -> Option<TouchHit> {
+    Platform::drag(key)
+}
+
+trait TouchInputProvider {
+    fn click(key: &str) -> Option<TouchHit>;
+    fn drag(key: &str) -> Option<TouchHit>;
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::TouchHit;
@@ -64,36 +85,52 @@ mod wasm {
         }
     }
 
-    /// Get the click position for an interactive canvas (one-shot, on finger-up).
-    ///
-    /// Returns `None` if the canvas was not clicked this frame.
-    #[must_use]
-    pub fn get_touch_click(key: &str) -> Option<TouchHit> {
-        let mut buf = [0u8; 16];
-        let clicked =
-            unsafe { host_get_touch_click(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
-        if clicked != 0 {
-            Some(TouchHit::from_buf(&buf))
-        } else {
-            None
+    pub(super) struct Host;
+
+    impl super::TouchInputProvider for Host {
+        fn click(key: &str) -> Option<TouchHit> {
+            let mut buf = [0u8; 16];
+            let clicked =
+                unsafe { host_get_touch_click(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
+            if clicked != 0 {
+                Some(TouchHit::from_buf(&buf))
+            } else {
+                None
+            }
+        }
+
+        fn drag(key: &str) -> Option<TouchHit> {
+            let mut buf = [0u8; 16];
+            let dragging =
+                unsafe { host_get_touch_drag(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
+            if dragging != 0 {
+                Some(TouchHit::from_buf(&buf))
+            } else {
+                None
+            }
         }
     }
+}
 
-    /// Get the drag position for an interactive canvas (continuous, while finger is down).
-    ///
-    /// Returns `None` if the canvas is not being dragged this frame.
-    #[must_use]
-    pub fn get_touch_drag(key: &str) -> Option<TouchHit> {
-        let mut buf = [0u8; 16];
-        let dragging =
-            unsafe { host_get_touch_drag(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
-        if dragging != 0 {
-            Some(TouchHit::from_buf(&buf))
-        } else {
-            None
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use super::TouchHit;
+
+    pub(super) struct Host;
+
+    impl super::TouchInputProvider for Host {
+        fn click(_: &str) -> Option<TouchHit> {
+            panic!("BUG: get_touch_click() called off-target — no host reports touches")
+        }
+
+        fn drag(_: &str) -> Option<TouchHit> {
+            panic!("BUG: get_touch_drag() called off-target — no host reports touches")
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{get_touch_click, get_touch_drag};
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
