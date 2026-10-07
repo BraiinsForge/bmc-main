@@ -50,7 +50,6 @@ mdns-sd.workspace = true
 memmap2.workspace = true
 mime.workspace = true
 roxmltree.workspace = true
-rrule.workspace = true
 rustix.workspace = true
 rustls.workspace = true
 serde.workspace = true

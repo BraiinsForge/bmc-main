@@ -21,8 +21,7 @@
 //! Formatting and calendar/time helpers for the WASM runtime.
 
 use bmc_wasm_protocol::system::NumberFormat;
-use bmc_wasm_protocol::time::{CalendarDate, utc_offset_secs, wall_clock};
-use chrono::{DateTime, Datelike, NaiveDate};
+use bmc_wasm_protocol::time::{RruleError, expand_rrule, utc_offset_secs, wall_clock};
 
 pub(super) fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u32) -> String {
     bmc_shared_utils::number_format::NumberFormat::from(nf).format_number(value, decimals as usize)
@@ -37,9 +36,6 @@ pub(super) fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u
 /// rrule_len: u16 LE, rrule: [u8]
 /// ```
 pub(super) fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
-    use rrule::RRuleSet;
-    use std::fmt::Write;
-
     if input.len() < 18 {
         tracing::warn!("expand_rrule: input too short ({} bytes)", input.len());
         return Vec::new();
@@ -64,14 +60,9 @@ pub(super) fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
         Some(s)
     };
 
-    let Some(tzid_raw) = read_str(&mut pos) else {
+    let Some(tzid) = read_str(&mut pos) else {
         tracing::warn!("expand_rrule: failed to read tzid");
         return Vec::new();
-    };
-    let tzid = if tzid_raw.is_empty() {
-        None
-    } else {
-        Some(tzid_raw)
     };
     let Some(dtstart_str) = read_str(&mut pos) else {
         tracing::warn!("expand_rrule: failed to read dtstart");
@@ -82,38 +73,21 @@ pub(super) fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
         return Vec::new();
     };
 
-    let mut rrule_input = String::with_capacity(256);
-
-    if let Some(tz) = tzid {
-        let _ = writeln!(rrule_input, "DTSTART;TZID={tz}:{dtstart_str}");
-    } else if dtstart_str.ends_with('Z') {
-        let _ = writeln!(rrule_input, "DTSTART:{dtstart_str}");
-    } else {
-        let _ = writeln!(rrule_input, "DTSTART:{dtstart_str}Z");
-    }
-
-    let _ = write!(rrule_input, "RRULE:{rrule_str}");
-
-    let rrule_set: RRuleSet = match rrule_input.parse() {
-        Ok(s) => s,
-        Err(e) => {
+    match expand_rrule(
+        rrule_str,
+        dtstart_str,
+        (!tzid.is_empty()).then_some(tzid),
+        window_start,
+        window_end,
+        max_count,
+    ) {
+        Ok(timestamps) => timestamps,
+        Err(RruleError::InvalidRule(e)) => {
             tracing::warn!("expand_rrule: failed to parse RRULE: {e}");
-            return Vec::new();
+            Vec::new()
         }
-    };
-
-    let Some(after) = DateTime::from_timestamp(window_start, 0) else {
-        return Vec::new();
-    };
-    let Some(before) = DateTime::from_timestamp(window_end, 0) else {
-        return Vec::new();
-    };
-    let after = after.with_timezone(&rrule::Tz::UTC);
-    let before = before.with_timezone(&rrule::Tz::UTC);
-
-    let result = rrule_set.after(after).before(before).all(max_count);
-
-    result.dates.into_iter().map(|dt| dt.timestamp()).collect()
+        Err(RruleError::WindowOutOfRange) => Vec::new(),
+    }
 }
 
 /// The 20-byte answer widgets built against SDK 0.5 decode.
@@ -136,52 +110,31 @@ pub(super) fn tz_convert_legacy_wire(unix_secs: i64, tz_name: &str) -> Option<[u
     Some(buf)
 }
 
-/// Read a `YYYY-MM-DD` date, which names a day rather than an instant.
-///
-/// Kept apart from the timestamp parser rather than folded into it as a
-/// fallback: turning a date into an instant would mean inventing a time,
-/// and converting that into a zone behind UTC lands on the day before.
-pub(super) fn parse_calendar_date_impl(s: &str) -> Option<CalendarDate> {
-    let date = s.parse::<NaiveDate>().ok()?;
-    Some(CalendarDate {
-        year: u16::try_from(date.year()).ok()?,
-        month: u8::try_from(date.month()).ok()?,
-        day: u8::try_from(date.day()).ok()?,
-        weekday: u8::try_from(date.weekday().num_days_from_monday()).ok()?,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use bmc_wasm_protocol::system::NumberFormat;
 
-    use super::{format_number_with_prefs, parse_calendar_date_impl};
+    use super::{expand_rrule_impl, format_number_with_prefs};
 
-    /// Friday the 21st of August 2026, weekday 4 counting Monday as 0.
+    /// The SDK writes a missing zone as empty text.
     #[test]
-    fn a_calendar_date_carries_the_weekday_it_was_resolved_with() {
-        let date = parse_calendar_date_impl("2026-08-21").expect("BUG: a well-formed date");
-        assert_eq!(
-            (date.year, date.month, date.day, date.weekday),
-            (2026, 8, 21, 4)
-        );
-    }
-
-    /// The two parsers divide the shapes between them: whatever names an
-    /// instant belongs to the other one, and neither guesses.
-    #[test]
-    fn a_calendar_date_refuses_anything_carrying_a_time() {
-        for text in [
-            "2026-08-21T10:30:00Z",
-            "2026-08-21 10:30:00",
-            "",
-            "not a date at all",
-        ] {
-            assert!(
-                parse_calendar_date_impl(text).is_none(),
-                "`{text}` read as a date",
-            );
+    fn an_empty_wire_zone_expands_as_utc() {
+        const SEPTEMBER_MORNING: i64 = 1_789_381_800;
+        const DAY: i64 = 86_400;
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&(SEPTEMBER_MORNING - 1).to_le_bytes());
+        wire.extend_from_slice(&(SEPTEMBER_MORNING + 10 * DAY).to_le_bytes());
+        wire.extend_from_slice(&10_u16.to_le_bytes());
+        for field in ["", "20260914T103000", "FREQ=DAILY;COUNT=2"] {
+            let len = u16::try_from(field.len()).expect("BUG: a test field fits u16");
+            wire.extend_from_slice(&len.to_le_bytes());
+            wire.extend_from_slice(field.as_bytes());
         }
+
+        assert_eq!(
+            expand_rrule_impl(&wire),
+            [SEPTEMBER_MORNING, SEPTEMBER_MORNING + DAY]
+        );
     }
 
     #[test]

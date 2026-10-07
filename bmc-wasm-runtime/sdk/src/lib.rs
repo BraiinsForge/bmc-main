@@ -414,7 +414,6 @@ pub mod xml;
 pub use bmc_render_macros::*;
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;
-#[cfg(target_arch = "wasm32")]
 pub use calendar::{parse_calendar_date, parse_datetime};
 pub use format::{
     FormatDateOpts, FormatTimeOpts, format_date, format_duration, format_f64_fixed, format_time,

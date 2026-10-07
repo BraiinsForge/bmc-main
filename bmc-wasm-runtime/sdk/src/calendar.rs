@@ -23,7 +23,7 @@
 //!
 //! These functions delegate heavy computation to the host to avoid
 //! pulling `rrule` + `chrono-tz` (~1.8 MB) into the WASM binary.
-//! Off-device the timezone conversion runs the host's own implementation instead.
+//! Off-device they run the host's own implementations instead.
 //!
 //! # Example
 //!
@@ -56,8 +56,60 @@ pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
     Platform::wall_clock(unix_secs, timezone)
 }
 
+/// Parse a date-time into a unix timestamp, in the relaxed RFC 3339 the
+/// host's parser accepts: `2026-02-13T10:15:56Z`, the same with a space
+/// separator, or with a `+02:00`-style offset.
+///
+/// Returns `None` unless the text names an instant. A UTC offset is
+/// required, so a bare `2026-02-13 10:15:56` is refused rather than
+/// guessed at; for a day without a time use [`parse_calendar_date`].
+#[must_use]
+pub fn parse_datetime(s: &str) -> Option<i64> {
+    Platform::parse_datetime(s)
+}
+
+/// Parse a `YYYY-MM-DD` date, which names a day rather than an instant.
+///
+/// Returns `None` if the text is not such a date.
+#[must_use]
+pub fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
+    Platform::parse_calendar_date(s)
+}
+
+/// Expand an RRULE into concrete occurrence timestamps (UTC).
+///
+/// Returns a vector of unix timestamps for each occurrence within the
+/// `[window_start, window_end]` range, capped at `max_count`.
+///
+/// Returns an empty vec if the RRULE is invalid or no occurrences fall
+/// within the window.
+#[must_use]
+pub fn expand_rrule(
+    rrule: &str,
+    dtstart: &str,
+    tzid: Option<&str>,
+    window_start: i64,
+    window_end: i64,
+    max_count: u16,
+) -> Vec<i64> {
+    Platform::expand_rrule(rrule, dtstart, tzid, window_start, window_end, max_count)
+}
+
 trait CalendarWallClockProvider {
     fn wall_clock(unix_secs: i64, timezone: &str) -> Option<LocalDateTime>;
+}
+
+trait CalendarParsingProvider {
+    fn parse_datetime(s: &str) -> Option<i64>;
+    fn parse_calendar_date(s: &str) -> Option<CalendarDate>;
+    fn expand_rrule(
+        rrule: &str,
+        dtstart: &str,
+        tzid: Option<&str>,
+        window_start: i64,
+        window_end: i64,
+        max_count: u16,
+    ) -> Vec<i64>;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -107,102 +159,85 @@ mod wasm {
         }
     }
 
-    /// Parse a date-time into a unix timestamp, in the relaxed RFC 3339 the
-    /// host's parser accepts: `2026-02-13T10:15:56Z`, the same with a space
-    /// separator, or with a `+02:00`-style offset.
-    ///
-    /// Returns `None` unless the text names an instant. A UTC offset is
-    /// required, so a bare `2026-02-13 10:15:56` is refused rather than
-    /// guessed at; for a day without a time use [`parse_calendar_date`].
-    #[must_use]
-    pub fn parse_datetime(s: &str) -> Option<i64> {
-        #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
-        let val = unsafe { host_parse_datetime(s.as_ptr(), s.len() as u32) };
-        if val == i64::MIN { None } else { Some(val) }
-    }
-
-    /// Parse a `YYYY-MM-DD` date, which names a day rather than an instant.
-    ///
-    /// Returns `None` if the text is not such a date.
-    #[must_use]
-    pub fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
-        let mut buf = [0_u8; CalendarDate::WIRE_LEN];
-        #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
-        let rc = unsafe { host_parse_calendar_date(s.as_ptr(), s.len() as u32, buf.as_mut_ptr()) };
-        if rc < 0 {
-            return None;
-        }
-        CalendarDate::from_wire(buf)
-    }
-
-    /// Expand an RRULE into concrete occurrence timestamps (UTC).
-    ///
-    /// Returns a vector of unix timestamps for each occurrence within the
-    /// `[window_start, window_end]` range, capped at `max_count`.
-    ///
-    /// Returns an empty vec if the RRULE is invalid or no occurrences fall
-    /// within the window.
-    ///
-    /// ## Wire format (input)
-    ///
-    /// ```text
-    /// window_start: i64 LE    [0..8]
-    /// window_end:   i64 LE    [8..16]
-    /// max_count:    u16 LE    [16..18]
-    /// tzid_len:     u16 LE    [18..20]   (0 = no TZID)
-    /// tzid:         [u8]      [20..20+tzid_len]
-    /// dtstart_len:  u16 LE    [..]
-    /// dtstart:      [u8]
-    /// rrule_len:    u16 LE    [..]
-    /// rrule:        [u8]
-    /// ```
-    ///
-    /// Output: packed `i64[]` LE (UTC timestamps).
-    #[must_use]
-    pub fn expand_rrule(
-        rrule: &str,
-        dtstart: &str,
-        tzid: Option<&str>,
-        window_start: i64,
-        window_end: i64,
-        max_count: u16,
-    ) -> Vec<i64> {
-        let tzid = tzid.unwrap_or("");
-        let cap = 18 + 2 + tzid.len() + 2 + dtstart.len() + 2 + rrule.len();
-        let mut buf = Vec::with_capacity(cap);
-
-        buf.extend_from_slice(&window_start.to_le_bytes());
-        buf.extend_from_slice(&window_end.to_le_bytes());
-        buf.extend_from_slice(&max_count.to_le_bytes());
-        push_str(&mut buf, tzid);
-        push_str(&mut buf, dtstart);
-        push_str(&mut buf, rrule);
-
-        // Two-call pattern: first get required output size
-        let needed =
-            unsafe { host_expand_rrule(buf.as_ptr(), buf.len() as u32, core::ptr::null_mut(), 0) };
-        if needed <= 0 {
-            return Vec::new();
+    impl super::CalendarParsingProvider for Host {
+        fn parse_datetime(s: &str) -> Option<i64> {
+            #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
+            let val = unsafe { host_parse_datetime(s.as_ptr(), s.len() as u32) };
+            if val == i64::MIN { None } else { Some(val) }
         }
 
-        let mut out = vec![0u8; needed as usize];
-        let written = unsafe {
-            host_expand_rrule(
-                buf.as_ptr(),
-                buf.len() as u32,
-                out.as_mut_ptr(),
-                needed as u32,
-            )
-        };
-        if written <= 0 {
-            return Vec::new();
+        fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
+            let mut buf = [0_u8; CalendarDate::WIRE_LEN];
+            #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
+            let rc =
+                unsafe { host_parse_calendar_date(s.as_ptr(), s.len() as u32, buf.as_mut_ptr()) };
+            if rc < 0 {
+                return None;
+            }
+            CalendarDate::from_wire(buf)
         }
 
-        // Decode packed i64[] little-endian
-        out.truncate(written as usize);
-        out.chunks_exact(8)
-            .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
-            .collect()
+        /// ## Wire format (input)
+        ///
+        /// ```text
+        /// window_start: i64 LE    [0..8]
+        /// window_end:   i64 LE    [8..16]
+        /// max_count:    u16 LE    [16..18]
+        /// tzid_len:     u16 LE    [18..20]   (0 = no TZID)
+        /// tzid:         [u8]      [20..20+tzid_len]
+        /// dtstart_len:  u16 LE    [..]
+        /// dtstart:      [u8]
+        /// rrule_len:    u16 LE    [..]
+        /// rrule:        [u8]
+        /// ```
+        ///
+        /// Output: packed `i64[]` LE (UTC timestamps).
+        fn expand_rrule(
+            rrule: &str,
+            dtstart: &str,
+            tzid: Option<&str>,
+            window_start: i64,
+            window_end: i64,
+            max_count: u16,
+        ) -> Vec<i64> {
+            let tzid = tzid.unwrap_or("");
+            let cap = 18 + 2 + tzid.len() + 2 + dtstart.len() + 2 + rrule.len();
+            let mut buf = Vec::with_capacity(cap);
+
+            buf.extend_from_slice(&window_start.to_le_bytes());
+            buf.extend_from_slice(&window_end.to_le_bytes());
+            buf.extend_from_slice(&max_count.to_le_bytes());
+            push_str(&mut buf, tzid);
+            push_str(&mut buf, dtstart);
+            push_str(&mut buf, rrule);
+
+            // Two-call pattern: first get required output size
+            let needed = unsafe {
+                host_expand_rrule(buf.as_ptr(), buf.len() as u32, core::ptr::null_mut(), 0)
+            };
+            if needed <= 0 {
+                return Vec::new();
+            }
+
+            let mut out = vec![0u8; needed as usize];
+            let written = unsafe {
+                host_expand_rrule(
+                    buf.as_ptr(),
+                    buf.len() as u32,
+                    out.as_mut_ptr(),
+                    needed as u32,
+                )
+            };
+            if written <= 0 {
+                return Vec::new();
+            }
+
+            // Decode packed i64[] little-endian
+            out.truncate(written as usize);
+            out.chunks_exact(8)
+                .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+                .collect()
+        }
     }
 
     /// Push a length-prefixed string into a binary buffer (u16 LE length + bytes).
@@ -215,28 +250,57 @@ mod wasm {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::LocalDateTime;
+    use bmc_wasm_protocol::time::{self, RruleError};
+
+    use super::{CalendarDate, LocalDateTime};
 
     pub(super) struct Host;
 
     impl super::CalendarWallClockProvider for Host {
         fn wall_clock(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
-            bmc_wasm_protocol::time::wall_clock(unix_secs, timezone)
+            time::wall_clock(unix_secs, timezone)
+        }
+    }
+
+    impl super::CalendarParsingProvider for Host {
+        fn parse_datetime(s: &str) -> Option<i64> {
+            time::parse_datetime(s)
+        }
+
+        fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
+            time::parse_calendar_date(s)
+        }
+
+        fn expand_rrule(
+            rrule: &str,
+            dtstart: &str,
+            tzid: Option<&str>,
+            window_start: i64,
+            window_end: i64,
+            max_count: u16,
+        ) -> Vec<i64> {
+            match time::expand_rrule(rrule, dtstart, tzid, window_start, window_end, max_count) {
+                Ok(timestamps) => timestamps,
+                // The warning the host logs on the device.
+                Err(RruleError::InvalidRule(reason)) => {
+                    crate::log_warn!("expand_rrule: failed to parse RRULE: {}", reason.as_str());
+                    Vec::new()
+                }
+                Err(RruleError::WindowOutOfRange) => Vec::new(),
+            }
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-#[cfg(target_arch = "wasm32")]
-pub use wasm::{expand_rrule, parse_calendar_date, parse_datetime};
 
 #[cfg(not(target_arch = "wasm32"))]
 use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {
-    use super::{LocalDateTime, tz_convert};
+    use super::{LocalDateTime, expand_rrule, parse_calendar_date, parse_datetime, tz_convert};
 
     /// Monday the 14th of September 2026, 10:30 UTC.
     const SEPTEMBER_MORNING: i64 = 1_789_381_800;
@@ -260,5 +324,28 @@ mod tests {
     #[test]
     fn tz_convert_refuses_an_unknown_zone() {
         assert_eq!(tz_convert(SEPTEMBER_MORNING, "Not/AZone"), None);
+    }
+
+    #[test]
+    fn the_parsers_read_off_the_device() {
+        assert_eq!(
+            parse_datetime("2026-09-14T10:30:00Z"),
+            Some(SEPTEMBER_MORNING)
+        );
+        assert_eq!(
+            parse_calendar_date("2026-09-14").map(|date| date.weekday),
+            Some(0)
+        );
+        assert_eq!(
+            expand_rrule(
+                "FREQ=DAILY;COUNT=1",
+                "20260914T103000Z",
+                None,
+                SEPTEMBER_MORNING - 1,
+                SEPTEMBER_MORNING + 1,
+                10,
+            ),
+            vec![SEPTEMBER_MORNING]
+        );
     }
 }

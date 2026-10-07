@@ -24,7 +24,8 @@
 //! the widget reading them cannot drift apart.
 //!
 //! With the `host` feature, the host's calendar too: `wall_clock` and `utc_offset_secs` read
-//! any zone chrono knows and `Local`, `zone_offset_secs` only the zones the device ships.
+//! any zone chrono knows and `Local`, `zone_offset_secs` only the zones the device ships,
+//! plus the date and RRULE parsers.
 
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -276,6 +277,90 @@ pub fn zone_offset_secs(unix_secs: i64, zone: &str) -> Option<i32> {
     utc_offset_secs(unix_secs, zone)
 }
 
+/// A date-time as a unix timestamp, in the relaxed RFC 3339 chrono reads:
+/// `2026-02-13T10:15:56Z`, the same with a space separator, or with a `+02:00`-style offset.
+/// `None` unless the text names an instant, so a time without an offset is refused.
+#[cfg(feature = "host")]
+#[must_use]
+pub fn parse_datetime(text: &str) -> Option<i64> {
+    text.parse::<chrono::DateTime<chrono::Utc>>()
+        .ok()
+        .map(|at| at.timestamp())
+}
+
+/// Read a `YYYY-MM-DD` date, which names a day rather than an instant.
+///
+/// Kept apart from [`parse_datetime`] rather than folded into it as a
+/// fallback: turning a date into an instant would mean inventing a time,
+/// and converting that into a zone behind UTC lands on the day before.
+#[cfg(feature = "host")]
+#[must_use]
+pub fn parse_calendar_date(text: &str) -> Option<CalendarDate> {
+    use chrono::Datelike;
+
+    let date = text.parse::<chrono::NaiveDate>().ok()?;
+    Some(CalendarDate {
+        year: u16::try_from(date.year()).ok()?,
+        month: u8::try_from(date.month()).ok()?,
+        day: u8::try_from(date.day()).ok()?,
+        weekday: u8::try_from(date.weekday().num_days_from_monday()).ok()?,
+    })
+}
+
+/// Why [`expand_rrule`] produced nothing.
+#[cfg(feature = "host")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum RruleError {
+    /// The rule, its start or its zone did not parse.
+    InvalidRule(String),
+    /// A window edge is an instant chrono cannot represent.
+    WindowOutOfRange,
+}
+
+/// The UTC timestamps of an RRULE's occurrences in `[window_start, window_end]`,
+/// at most `max_count` of them.
+///
+/// Without a zone `dtstart` reads as UTC, with or without its `Z`.
+#[cfg(feature = "host")]
+pub fn expand_rrule(
+    rrule: &str,
+    dtstart: &str,
+    tzid: Option<&str>,
+    window_start: i64,
+    window_end: i64,
+    max_count: u16,
+) -> Result<Vec<i64>, RruleError> {
+    use core::fmt::Write;
+
+    let mut input = String::with_capacity(256);
+    if let Some(tz) = tzid {
+        let _ = writeln!(input, "DTSTART;TZID={tz}:{dtstart}");
+    } else if dtstart.ends_with('Z') {
+        let _ = writeln!(input, "DTSTART:{dtstart}");
+    } else {
+        let _ = writeln!(input, "DTSTART:{dtstart}Z");
+    }
+    let _ = write!(input, "RRULE:{rrule}");
+
+    let set: rrule::RRuleSet = input
+        .parse()
+        .map_err(|err: rrule::RRuleError| RruleError::InvalidRule(err.to_string()))?;
+    let window_edge = |unix_secs| {
+        chrono::DateTime::from_timestamp(unix_secs, 0)
+            .map(|at| at.with_timezone(&rrule::Tz::UTC))
+            .ok_or(RruleError::WindowOutOfRange)
+    };
+    let occurrences = set
+        .after(window_edge(window_start)?)
+        .before(window_edge(window_end)?)
+        .all(max_count);
+    Ok(occurrences
+        .dates
+        .into_iter()
+        .map(|at| at.timestamp())
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CalendarDate, LocalDateTime, month_short};
@@ -372,7 +457,10 @@ mod tests {
 
 #[cfg(all(test, feature = "host"))]
 mod calendar_tests {
-    use super::{LocalDateTime, strftime_utc, utc_offset_secs, wall_clock, zone_offset_secs};
+    use super::{
+        LocalDateTime, RruleError, expand_rrule, parse_calendar_date, parse_datetime, strftime_utc,
+        utc_offset_secs, wall_clock, zone_offset_secs,
+    };
 
     /// Monday the 14th of September 2026, 10:30 UTC.
     const SEPTEMBER_MORNING: i64 = 1_789_381_800;
@@ -433,5 +521,84 @@ mod calendar_tests {
             assert_eq!(zone_offset_secs(JANUARY_NOON, zone), None, "{zone}");
         }
         assert_eq!(utc_offset_secs(JANUARY_NOON, "Asia/Calcutta"), Some(19_800));
+    }
+
+    #[test]
+    fn a_timestamp_reads_only_with_an_offset() {
+        for text in [
+            "2026-09-14T10:30:00Z",
+            "2026-09-14 10:30:00Z",
+            "2026-09-14T12:30:00+02:00",
+        ] {
+            assert_eq!(parse_datetime(text), Some(SEPTEMBER_MORNING), "{text}");
+        }
+        assert_eq!(
+            parse_datetime("2026-09-14 10:30:00"),
+            None,
+            "a time without an offset names no instant"
+        );
+    }
+
+    /// Friday the 21st of August 2026, weekday 4 counting Monday as 0.
+    #[test]
+    fn a_calendar_date_carries_the_weekday_it_was_resolved_with() {
+        let date = parse_calendar_date("2026-08-21").expect("BUG: a well-formed date");
+        assert_eq!(
+            (date.year, date.month, date.day, date.weekday),
+            (2026, 8, 21, 4)
+        );
+    }
+
+    /// The two parsers divide the shapes between them: whatever names an
+    /// instant belongs to the other one, and neither guesses.
+    #[test]
+    fn a_calendar_date_refuses_anything_carrying_a_time() {
+        for text in [
+            "2026-08-21T10:30:00Z",
+            "2026-08-21 10:30:00",
+            "",
+            "not a date at all",
+        ] {
+            assert!(
+                parse_calendar_date(text).is_none(),
+                "`{text}` read as a date",
+            );
+        }
+    }
+
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn a_daily_rule_expands_inside_its_window() {
+        assert_eq!(
+            expand_rrule(
+                "FREQ=DAILY;COUNT=3",
+                "20260914T103000Z",
+                None,
+                SEPTEMBER_MORNING - 1,
+                SEPTEMBER_MORNING + 10 * DAY,
+                10,
+            ),
+            Ok(vec![
+                SEPTEMBER_MORNING,
+                SEPTEMBER_MORNING + DAY,
+                SEPTEMBER_MORNING + 2 * DAY,
+            ])
+        );
+    }
+
+    #[test]
+    fn a_rule_that_does_not_parse_is_an_error() {
+        assert!(matches!(
+            expand_rrule(
+                "FREQ=SOMETIMES",
+                "20260914T103000Z",
+                None,
+                0,
+                SEPTEMBER_MORNING,
+                10
+            ),
+            Err(RruleError::InvalidRule(_))
+        ));
     }
 }

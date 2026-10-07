@@ -13,6 +13,7 @@ chrono-tz = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 hex.workspace = true
 palette.workspace = true
+rrule = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
@@ -28,12 +29,13 @@ egui = ["dep:egui"]
 widget-protocol = ["dep:bmc-widget-protocol"]
 # What the host computes for a guest, shared with native SDK builds.
 # Off by default so the wasm SDK build path stays free of the formatting core (formato),
-# the calendar (chrono-tz) and the JSON reader (serde_json).
+# the calendar (chrono-tz, rrule) and the JSON reader (serde_json).
 host = [
     "dep:bmc-shared-time",
     "dep:bmc-shared-utils",
     "dep:chrono",
     "dep:chrono-tz",
+    "dep:rrule",
     "dep:serde_json",
 ]
 
