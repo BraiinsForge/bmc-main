@@ -500,7 +500,6 @@ thread_local! {
 }
 
 /// Begin building a tree (clears buffer)
-#[cfg(target_arch = "wasm32")]
 pub fn begin_tree() {
     use std::sync::Once;
     static SKIN_INIT: Once = Once::new();
@@ -510,7 +509,6 @@ pub fn begin_tree() {
 }
 
 /// Submit the serialized tree to the host and clear the buffer.
-#[cfg(target_arch = "wasm32")]
 pub fn submit_and_clear(width: u32, height: u32) {
     TREE_BUFFER.with(|buf| {
         let b = buf.borrow();
@@ -542,7 +540,6 @@ where
 // ============================================================================
 
 use crate::TouchHit;
-#[cfg(target_arch = "wasm32")]
 use crate::host;
 
 /// Parameters for `Draw::with_drop_shadow`.
@@ -2447,7 +2444,6 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
 }
 
 /// Collect interaction keys from the tree (buttons, touchable canvases, progress bars).
-#[cfg(target_arch = "wasm32")]
 fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
     match node {
         Node::Button { id, .. } => keys.push(id.clone()),
@@ -2503,7 +2499,15 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
                 keys.push(tab.click_id.clone());
             }
         }
-        _ => {}
+        Node::Paragraph { .. }
+        | Node::Spacer { .. }
+        | Node::Canvas { .. }
+        | Node::Notification { .. }
+        | Node::RelTime { .. }
+        | Node::Tag { .. }
+        | Node::Switcher { .. }
+        | Node::Skeleton { .. }
+        | Node::ProgressBar { .. } => {}
     }
 }
 
@@ -2511,7 +2515,6 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
 /// Returns click and drag interactions keyed by string IDs.
 #[must_use]
 #[expect(clippy::needless_pass_by_value)] // Node is consumed by serialization
-#[cfg(target_arch = "wasm32")]
 pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     let mut keys = Vec::new();
     collect_interaction_keys(&root, &mut keys);
