@@ -718,9 +718,14 @@ impl FemtoVgRenderer {
     unsafe fn drain_gl_errors(&self) {
         const MAX_DRAIN: usize = 8;
         for _ in 0..MAX_DRAIN {
-            if unsafe { self.gl.get_error() } == glow::NO_ERROR {
+            let gl_error = unsafe { self.gl.get_error() };
+            if gl_error == glow::NO_ERROR {
                 return;
             }
+            tracing::debug!(
+                gl_error,
+                "discarding a GL error an earlier call left queued"
+            );
         }
     }
 
