@@ -360,7 +360,6 @@ pub mod json;
 pub mod json_str;
 #[cfg(target_arch = "wasm32")]
 pub mod kv;
-#[cfg(target_arch = "wasm32")]
 pub mod led;
 pub mod log;
 #[cfg(feature = "math-3d")]
@@ -421,7 +420,6 @@ pub use format::{
 pub use host::*;
 pub use json::{JsonDoc, JsonKind};
 pub use json_str::JsonStr;
-#[cfg(target_arch = "wasm32")]
 pub use led::LedEffect;
 pub use mesh::*;
 #[cfg(target_arch = "wasm32")]

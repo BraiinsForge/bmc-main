@@ -28,21 +28,6 @@
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope};
 pub use bmc_wasm_protocol::Color;
 
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_led_set_endless(effect: u8, r: u8, g: u8, b: u8, period_ms: u32, scope: u32);
-    fn host_led_set_temporary(
-        effect: u8,
-        r: u8,
-        g: u8,
-        b: u8,
-        period_ms: u32,
-        duration_ms: u32,
-        scope: u32,
-    );
-    fn host_led_stop();
-}
-
 /// Set an LED effect.
 ///
 /// `duration_ms = None` runs the effect until superseded or stopped;
@@ -72,15 +57,98 @@ fn set_effect_scoped(
     duration_ms: Option<u32>,
     scope: LedScope,
 ) {
-    let (r, g, b) = (color.red(), color.green(), color.blue());
-    let scope = scope as u32;
     match duration_ms {
-        None => unsafe { host_led_set_endless(effect as u8, r, g, b, period_ms, scope) },
-        Some(d) => unsafe { host_led_set_temporary(effect as u8, r, g, b, period_ms, d, scope) },
+        None => Platform::set_endless(effect, color, period_ms, scope),
+        Some(d) => Platform::set_temporary(effect, color, period_ms, d, scope),
     }
 }
 
 /// Cancel every LED request this widget has outstanding.
 pub fn stop() {
-    unsafe { host_led_stop() }
+    Platform::stop();
 }
+
+trait LedSink {
+    fn set_endless(effect: LedEffect, color: Color, period_ms: u32, scope: LedScope);
+    fn set_temporary(
+        effect: LedEffect,
+        color: Color,
+        period_ms: u32,
+        duration_ms: u32,
+        scope: LedScope,
+    );
+    fn stop();
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use super::{Color, LedEffect, LedScope};
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_led_set_endless(effect: u8, r: u8, g: u8, b: u8, period_ms: u32, scope: u32);
+        fn host_led_set_temporary(
+            effect: u8,
+            r: u8,
+            g: u8,
+            b: u8,
+            period_ms: u32,
+            duration_ms: u32,
+            scope: u32,
+        );
+        fn host_led_stop();
+    }
+
+    pub(super) struct Host;
+
+    impl super::LedSink for Host {
+        fn set_endless(effect: LedEffect, color: Color, period_ms: u32, scope: LedScope) {
+            let (r, g, b) = (color.red(), color.green(), color.blue());
+            unsafe { host_led_set_endless(effect as u8, r, g, b, period_ms, scope as u32) }
+        }
+
+        fn set_temporary(
+            effect: LedEffect,
+            color: Color,
+            period_ms: u32,
+            duration_ms: u32,
+            scope: LedScope,
+        ) {
+            let (r, g, b) = (color.red(), color.green(), color.blue());
+            unsafe {
+                host_led_set_temporary(effect as u8, r, g, b, period_ms, duration_ms, scope as u32);
+            }
+        }
+
+        fn stop() {
+            unsafe { host_led_stop() }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use super::{Color, LedEffect, LedScope};
+
+    pub(super) struct Host;
+
+    impl super::LedSink for Host {
+        fn set_endless(_: LedEffect, _: Color, _: u32, _: LedScope) {
+            panic!("BUG: an LED effect was set off-target — no host drives the LEDs")
+        }
+
+        fn set_temporary(_: LedEffect, _: Color, _: u32, _: u32, _: LedScope) {
+            panic!("BUG: an LED effect was set off-target — no host drives the LEDs")
+        }
+
+        fn stop() {
+            panic!("BUG: led::stop() called off-target — no host drives the LEDs")
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
