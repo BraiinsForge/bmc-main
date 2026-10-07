@@ -33,6 +33,9 @@
 //! The callback borrows the listener its request arrived on;
 //! to close the listener from there, take the stored handle.
 //!
+//! Off-target there is no host to listen with,
+//! so listening, reading the port or responding panics.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -70,23 +73,6 @@ use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
-// Host function imports
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_http_listen(port: u32) -> u32;
-    fn host_http_respond(
-        request_id: u32,
-        status: u32,
-        headers_ptr: *const u8,
-        headers_len: u32,
-        body_ptr: *const u8,
-        body_len: u32,
-    );
-    fn host_http_close_listener(listener_id: u32);
-    fn host_http_get_port(listener_id: u32) -> u32;
-}
-
 /// Callback type: `fn(listener, request)`.
 pub type RequestCallback = fn(&HttpListener, &HttpRequest);
 
@@ -99,10 +85,9 @@ impl HttpListener {
     ///
     /// Returns 0 once the listener is closed,
     /// such as on a callback's argument after the callback closed the stored handle.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn port(&self) -> u16 {
-        unsafe { host_http_get_port(self.0.to_wire()) as u16 }
+        Platform::port(self.0)
     }
 
     /// Close the listener. A request already due in the same delivery pass is dropped.
@@ -114,10 +99,7 @@ impl HttpListener {
 impl Drop for HttpListener {
     fn drop(&mut self) {
         LISTENERS.with_borrow_mut(|listeners| listeners.remove(&self.0));
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            host_http_close_listener(self.0.to_wire());
-        }
+        Platform::close(self.0);
     }
 }
 
@@ -135,18 +117,8 @@ impl HttpRequest {
     /// Send an HTTP response for this request.
     ///
     /// Headers should be newline-delimited `"Key: Value"` pairs.
-    #[cfg(target_arch = "wasm32")]
     pub fn respond(&self, status: u16, headers: &str, body: &[u8]) {
-        unsafe {
-            host_http_respond(
-                self.request_id.to_wire(),
-                u32::from(status),
-                headers.as_ptr(),
-                headers.len() as u32,
-                body.as_ptr(),
-                body.len() as u32,
-            );
-        }
+        Platform::respond(self.request_id, status, headers, body);
     }
 }
 
@@ -175,93 +147,187 @@ fn register_callback(cb: RequestCallback) -> usize {
 /// The `callback` is invoked for each inbound request.
 ///
 /// Returns `None` if the host refuses the listener or cannot bind it.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned HttpListener closes it"]
 pub fn http_listen(port: u16, callback: RequestCallback) -> Option<HttpListener> {
+    let listener_id = Platform::listen(port)?;
     let cb_idx = register_callback(callback);
-    let listener_id = HttpListenerId::from_wire(unsafe { host_http_listen(u32::from(port)) })?;
     LISTENERS.with_borrow_mut(|listeners| listeners.insert(listener_id, cb_idx));
     Some(HttpListener(listener_id))
 }
 
-/// Called by the host when an inbound HTTP request is ready.
-#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
-pub extern "C" fn __on_http_request(
-    listener_id: u32,
-    request_id: u32,
-    method_ptr: u32,
-    method_len: u32,
-    path_ptr: u32,
-    path_len: u32,
-    headers_ptr: u32,
-    headers_len: u32,
-    body_ptr: u32,
-    body_len: u32,
-) {
-    let Some(listener_id) = HttpListenerId::from_wire(listener_id) else {
-        return;
-    };
-    let Some(request_id) = HttpRequestId::from_wire(request_id) else {
-        return;
-    };
-
-    let method = take_string(method_ptr, method_len);
-    let path = take_string(path_ptr, path_len);
-    let headers = take_string(headers_ptr, headers_len);
-    let body = take_vec(body_ptr, body_len);
-
-    let req = HttpRequest {
-        request_id,
-        method,
-        path,
-        headers,
-        body,
-    };
-
+/// Hand a request to the callback of its listener, if a handle still holds it.
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(dead_code, reason = "off-target no host delivers requests")
+)]
+fn deliver(listener_id: HttpListenerId, req: &HttpRequest) {
     let cb = LISTENERS
         .with(|l| l.borrow().get(&listener_id).copied())
         .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
 
     if let Some(cb) = cb {
         // Borrowed for the request only; dropping it would close the listener.
-        cb(&ManuallyDrop::new(HttpListener(listener_id)), &req);
+        cb(&ManuallyDrop::new(HttpListener(listener_id)), req);
     }
 }
 
-/// Take ownership of a host-allocated string buffer.
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly the requested bytes"
-)]
-fn take_string(ptr: u32, len: u32) -> String {
-    if len == 0 || ptr == 0 {
-        return String::new();
-    }
-    let bytes = unsafe { Vec::from_raw_parts(ptr as *mut u8, len as usize, len as usize) };
-    String::from_utf8(bytes).unwrap_or_default()
+trait HttpServer {
+    fn listen(port: u16) -> Option<HttpListenerId>;
+    fn port(listener_id: HttpListenerId) -> u16;
+    fn close(listener_id: HttpListenerId);
+    fn respond(request_id: HttpRequestId, status: u16, headers: &str, body: &[u8]);
 }
 
-/// Take ownership of a host-allocated byte buffer.
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly the requested bytes"
-)]
-fn take_vec(ptr: u32, len: u32) -> Vec<u8> {
-    if len == 0 || ptr == 0 {
-        return Vec::new();
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
+
+    use super::{HttpRequest, deliver};
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_http_listen(port: u32) -> u32;
+        fn host_http_respond(
+            request_id: u32,
+            status: u32,
+            headers_ptr: *const u8,
+            headers_len: u32,
+            body_ptr: *const u8,
+            body_len: u32,
+        );
+        fn host_http_close_listener(listener_id: u32);
+        fn host_http_get_port(listener_id: u32) -> u32;
     }
-    unsafe { Vec::from_raw_parts(ptr as *mut u8, len as usize, len as usize) }
+
+    pub(super) struct Host;
+
+    impl super::HttpServer for Host {
+        fn listen(port: u16) -> Option<HttpListenerId> {
+            HttpListenerId::from_wire(unsafe { host_http_listen(u32::from(port)) })
+        }
+
+        fn port(listener_id: HttpListenerId) -> u16 {
+            unsafe { host_http_get_port(listener_id.to_wire()) as u16 }
+        }
+
+        fn close(listener_id: HttpListenerId) {
+            unsafe { host_http_close_listener(listener_id.to_wire()) }
+        }
+
+        fn respond(request_id: HttpRequestId, status: u16, headers: &str, body: &[u8]) {
+            unsafe {
+                host_http_respond(
+                    request_id.to_wire(),
+                    u32::from(status),
+                    headers.as_ptr(),
+                    headers.len() as u32,
+                    body.as_ptr(),
+                    body.len() as u32,
+                );
+            }
+        }
+    }
+
+    /// Called by the host when an inbound HTTP request is ready.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_http_request(
+        listener_id: u32,
+        request_id: u32,
+        method_ptr: u32,
+        method_len: u32,
+        path_ptr: u32,
+        path_len: u32,
+        headers_ptr: u32,
+        headers_len: u32,
+        body_ptr: u32,
+        body_len: u32,
+    ) {
+        let Some(listener_id) = HttpListenerId::from_wire(listener_id) else {
+            return;
+        };
+        let Some(request_id) = HttpRequestId::from_wire(request_id) else {
+            return;
+        };
+
+        let method = take_string(method_ptr, method_len);
+        let path = take_string(path_ptr, path_len);
+        let headers = take_string(headers_ptr, headers_len);
+        let body = take_vec(body_ptr, body_len);
+
+        let req = HttpRequest {
+            request_id,
+            method,
+            path,
+            headers,
+            body,
+        };
+
+        deliver(listener_id, &req);
+    }
+
+    /// Take ownership of a host-allocated string buffer.
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    fn take_string(ptr: u32, len: u32) -> String {
+        if len == 0 || ptr == 0 {
+            return String::new();
+        }
+        let bytes = unsafe { Vec::from_raw_parts(ptr as *mut u8, len as usize, len as usize) };
+        String::from_utf8(bytes).unwrap_or_default()
+    }
+
+    /// Take ownership of a host-allocated byte buffer.
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    fn take_vec(ptr: u32, len: u32) -> Vec<u8> {
+        if len == 0 || ptr == 0 {
+            return Vec::new();
+        }
+        unsafe { Vec::from_raw_parts(ptr as *mut u8, len as usize, len as usize) }
+    }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
+
+    pub(super) struct Host;
+
+    impl super::HttpServer for Host {
+        fn listen(_: u16) -> Option<HttpListenerId> {
+            panic!("BUG: http_listen() called off-target — no host to listen with")
+        }
+
+        fn port(_: HttpListenerId) -> u16 {
+            panic!("BUG: HttpListener::port() called off-target — no host to listen with")
+        }
+
+        /// Only a test holds a handle off-target, and there is no host listener to close.
+        fn close(_: HttpListenerId) {}
+
+        fn respond(_: HttpRequestId, _: u16, _: &str, _: &[u8]) {
+            panic!("BUG: HttpRequest::respond() called off-target — no host to listen with")
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
 
-    use bmc_wasm_protocol::HttpListenerId;
+    use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
-    use super::{
-        __on_http_request, HttpListener, HttpRequest, LISTENERS, RequestCallback, register_callback,
-    };
+    use super::{HttpListener, HttpRequest, LISTENERS, RequestCallback, register_callback};
 
     thread_local! {
         static SEEN: Cell<Option<HttpListenerId>> = const { Cell::new(None) };
@@ -276,7 +342,14 @@ mod tests {
     }
 
     fn deliver(id: HttpListenerId) {
-        __on_http_request(id.to_wire(), 1, 0, 0, 0, 0, 0, 0, 0, 0);
+        let request = HttpRequest {
+            request_id: HttpRequestId::from_wire(1).expect("BUG: test ids are non-zero"),
+            method: String::new(),
+            path: String::new(),
+            headers: String::new(),
+            body: Vec::new(),
+        };
+        super::deliver(id, &request);
     }
 
     fn is_registered(id: HttpListenerId) -> bool {
