@@ -363,7 +363,6 @@ pub mod led;
 pub mod log;
 #[cfg(feature = "math-3d")]
 pub mod math;
-#[cfg(any(target_arch = "wasm32", test))]
 pub mod mdns;
 pub mod mesh;
 pub mod modal;

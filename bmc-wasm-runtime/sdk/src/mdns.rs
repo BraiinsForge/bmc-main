@@ -31,6 +31,8 @@
 //! The browse callback borrows the browse its event belongs to;
 //! to stop the browse from there, take the stored handle.
 //!
+//! Off-target there is no host mDNS daemon, so browsing or registering panics.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -62,26 +64,7 @@ use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
 
-#[cfg(target_arch = "wasm32")]
 use crate::fmt;
-
-// Host function imports
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_mdns_browse(svc_types_ptr: *const u8, svc_types_len: u32) -> u32;
-    fn host_mdns_stop(browse_id: u32);
-    fn host_mdns_register(
-        svc_ptr: *const u8,
-        svc_len: u32,
-        name_ptr: *const u8,
-        name_len: u32,
-        port: u32,
-        txt_ptr: *const u8,
-        txt_len: u32,
-    ) -> u32;
-    fn host_mdns_unregister(reg_id: u32);
-}
 
 /// Callback type: `fn(browse, event)`.
 pub type BrowseCallback = fn(&MdnsBrowse, &MdnsEvent<'_>);
@@ -100,10 +83,7 @@ impl MdnsBrowse {
 impl Drop for MdnsBrowse {
     fn drop(&mut self) {
         BROWSES.with_borrow_mut(|browses| browses.remove(&self.0));
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            host_mdns_stop(self.0.to_wire());
-        }
+        Platform::stop(self.0);
     }
 }
 
@@ -120,10 +100,7 @@ impl MdnsRegistration {
 
 impl Drop for MdnsRegistration {
     fn drop(&mut self) {
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            host_mdns_unregister(self.0.to_wire());
-        }
+        Platform::unregister(self.0);
     }
 }
 
@@ -162,13 +139,11 @@ fn register_callback(cb: BrowseCallback) -> usize {
 /// Service types should be like `"_googlecast._tcp"` (the host appends `.local.`).
 ///
 /// Returns `None` if the host refuses the browse before it is queued.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned MdnsBrowse stops it"]
 pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> Option<MdnsBrowse> {
-    let cb_idx = register_callback(callback);
     let joined = service_types.join("\n");
-    let browse_id =
-        MdnsBrowseId::from_wire(unsafe { host_mdns_browse(joined.as_ptr(), joined.len() as u32) })?;
+    let browse_id = Platform::browse(&joined)?;
+    let cb_idx = register_callback(callback);
     BROWSES.with(|b| b.borrow_mut().insert(browse_id, cb_idx));
     Some(MdnsBrowse(browse_id))
 }
@@ -178,7 +153,6 @@ pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> Option<M
 /// TXT records are key-value pairs used for service metadata.
 ///
 /// Returns `None` if the host refuses the registration.
-#[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned MdnsRegistration unregisters the service"]
 pub fn mdns_register(
     service_type: &str,
@@ -191,54 +165,150 @@ pub fn mdns_register(
         .map(|(k, v)| fmt!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("\n");
-    MdnsRegId::from_wire(unsafe {
-        host_mdns_register(
-            service_type.as_ptr(),
-            service_type.len() as u32,
-            name.as_ptr(),
-            name.len() as u32,
-            u32::from(port),
-            txt_str.as_ptr(),
-            txt_str.len() as u32,
-        )
-    })
-    .map(MdnsRegistration)
+    Platform::register(service_type, name, port, &txt_str).map(MdnsRegistration)
 }
 
-/// Called by the host when an mDNS event is ready.
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly the requested bytes"
+/// Hand an event to the callback of its browse, if a handle still holds it.
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(dead_code, reason = "off-target no host delivers events")
 )]
-#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
-pub extern "C" fn __on_mdns_event(browse_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
-    let Some(browse_id) = MdnsBrowseId::from_wire(browse_id) else {
-        return;
-    };
-
-    // Take ownership first, then borrow — avoids dangling reference.
-    let owned = if data_len > 0 && data_ptr != 0 {
-        unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
-    } else {
-        Vec::new()
-    };
-    let data = core::str::from_utf8(&owned).unwrap_or("");
-
-    let event = match event_type {
-        0 => MdnsEvent::Found(data),
-        1 => MdnsEvent::Removed(data),
-        _ => return,
-    };
-
+fn deliver(browse_id: MdnsBrowseId, event: &MdnsEvent<'_>) {
     let cb = BROWSES
         .with(|b| b.borrow().get(&browse_id).copied())
         .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would stop the browse.
-        cb(&ManuallyDrop::new(MdnsBrowse(browse_id)), &event);
+        cb(&ManuallyDrop::new(MdnsBrowse(browse_id)), event);
     }
 }
+
+trait MdnsDaemon {
+    fn browse(service_types: &str) -> Option<MdnsBrowseId>;
+    fn stop(browse_id: MdnsBrowseId);
+    fn register(service_type: &str, name: &str, port: u16, txt: &str) -> Option<MdnsRegId>;
+    fn unregister(reg_id: MdnsRegId);
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
+
+    use super::{MdnsEvent, deliver};
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_mdns_browse(svc_types_ptr: *const u8, svc_types_len: u32) -> u32;
+        fn host_mdns_stop(browse_id: u32);
+        fn host_mdns_register(
+            svc_ptr: *const u8,
+            svc_len: u32,
+            name_ptr: *const u8,
+            name_len: u32,
+            port: u32,
+            txt_ptr: *const u8,
+            txt_len: u32,
+        ) -> u32;
+        fn host_mdns_unregister(reg_id: u32);
+    }
+
+    pub(super) struct Host;
+
+    impl super::MdnsDaemon for Host {
+        fn browse(service_types: &str) -> Option<MdnsBrowseId> {
+            MdnsBrowseId::from_wire(unsafe {
+                host_mdns_browse(service_types.as_ptr(), service_types.len() as u32)
+            })
+        }
+
+        fn stop(browse_id: MdnsBrowseId) {
+            unsafe { host_mdns_stop(browse_id.to_wire()) }
+        }
+
+        fn register(service_type: &str, name: &str, port: u16, txt: &str) -> Option<MdnsRegId> {
+            MdnsRegId::from_wire(unsafe {
+                host_mdns_register(
+                    service_type.as_ptr(),
+                    service_type.len() as u32,
+                    name.as_ptr(),
+                    name.len() as u32,
+                    u32::from(port),
+                    txt.as_ptr(),
+                    txt.len() as u32,
+                )
+            })
+        }
+
+        fn unregister(reg_id: MdnsRegId) {
+            unsafe { host_mdns_unregister(reg_id.to_wire()) }
+        }
+    }
+
+    /// Called by the host when an mDNS event is ready.
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_mdns_event(
+        browse_id: u32,
+        event_type: u32,
+        data_ptr: u32,
+        data_len: u32,
+    ) {
+        let Some(browse_id) = MdnsBrowseId::from_wire(browse_id) else {
+            return;
+        };
+
+        // Take ownership first, then borrow — avoids dangling reference.
+        let owned = if data_len > 0 && data_ptr != 0 {
+            unsafe {
+                Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize)
+            }
+        } else {
+            Vec::new()
+        };
+        let data = core::str::from_utf8(&owned).unwrap_or("");
+
+        let event = match event_type {
+            0 => MdnsEvent::Found(data),
+            1 => MdnsEvent::Removed(data),
+            _ => return,
+        };
+
+        deliver(browse_id, &event);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
+
+    pub(super) struct Host;
+
+    impl super::MdnsDaemon for Host {
+        fn browse(_: &str) -> Option<MdnsBrowseId> {
+            panic!("BUG: mdns_browse() called off-target — no host runs an mDNS daemon")
+        }
+
+        /// Only a test holds a handle off-target, and there is no host browse to stop.
+        fn stop(_: MdnsBrowseId) {}
+
+        fn register(_: &str, _: &str, _: u16, _: &str) -> Option<MdnsRegId> {
+            panic!("BUG: mdns_register() called off-target — no host runs an mDNS daemon")
+        }
+
+        /// Only a test holds a handle off-target, and there is no host advertisement to end.
+        fn unregister(_: MdnsRegId) {}
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {
@@ -246,9 +316,7 @@ mod tests {
 
     use bmc_wasm_protocol::MdnsBrowseId;
 
-    use super::{
-        __on_mdns_event, BROWSES, BrowseCallback, MdnsBrowse, MdnsEvent, register_callback,
-    };
+    use super::{BROWSES, BrowseCallback, MdnsBrowse, MdnsEvent, register_callback};
 
     thread_local! {
         static SEEN: Cell<Option<MdnsBrowseId>> = const { Cell::new(None) };
@@ -263,7 +331,7 @@ mod tests {
     }
 
     fn deliver(id: MdnsBrowseId) {
-        __on_mdns_event(id.to_wire(), 0, 0, 0);
+        super::deliver(id, &MdnsEvent::Found(""));
     }
 
     fn is_registered(id: MdnsBrowseId) -> bool {
