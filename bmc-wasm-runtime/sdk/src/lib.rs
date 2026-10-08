@@ -376,7 +376,6 @@ pub mod profile;
 pub mod progress_bar;
 pub mod relative_time;
 pub mod skeleton;
-#[cfg(target_arch = "wasm32")]
 pub mod slot;
 pub mod status_overlay;
 pub mod switcher;
@@ -422,7 +421,6 @@ pub use poll::{
     Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod,
     register as register_poll,
 };
-#[cfg(target_arch = "wasm32")]
 pub use slot::*;
 pub use tree::*;
 pub use tz::Tz;

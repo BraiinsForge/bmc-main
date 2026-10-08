@@ -43,11 +43,9 @@
 //! `BitmapSlot::new("album_art")` and `BitmapSlot::new("album_art_thumb")`
 //! coexist safely — eviction respects segment boundaries (`:`).
 //!
-//! Slots are wasm32-only. On native targets (the gallery) they panic; static
-//! assets registered via `Bitmap`/`Svg`/`Mesh`/`Audio` cover the gallery
-//! use case.
-
-#![cfg(target_arch = "wasm32")]
+//! Off-target there is no host to hold the slots, so the calls panic.
+//! The gallery has no use for them: its static assets register
+//! through `Bitmap`, `Svg`, `Mesh` and `Audio`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -124,7 +122,6 @@ impl BitmapSlot {
     }
 
     /// Decode a callback-scoped host fetch body without copying it into WASM.
-    #[must_use]
     pub fn set_fit_ref<'a>(
         &self,
         body: FetchBodyRef<'a>,
@@ -199,29 +196,36 @@ pub fn image_decode_is_pending(job_id: ImageJobId) -> bool {
     IMAGE_PENDING.with(|p| p.borrow().contains_key(&job_id))
 }
 
-/// Host entry point: dispatch a finished decode to its `set_fit` callback.
-#[unsafe(no_mangle)]
-pub extern "C" fn __on_image_ready(job_id: u32, bitmap_id: u32) {
-    let Some(job_id) = ImageJobId::from_wire(job_id) else {
-        return;
-    };
-    let bitmap = BitmapId::from_ffi(bitmap_id);
-    let cb = IMAGE_PENDING
-        .with(|p| p.borrow_mut().remove(&job_id))
-        .and_then(|idx| IMAGE_CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
-    if let Some(cb) = cb {
-        cb(job_id, bitmap);
-    }
-}
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use bmc_wasm_protocol::{BitmapId, ImageJobId};
 
-/// Reclaim a decode's pending entry without dispatching — fired when the decode
-/// finished while dormant (the result stays cached until a draw uses it).
-#[unsafe(no_mangle)]
-pub extern "C" fn __on_image_dropped(job_id: u32) {
-    let Some(job_id) = ImageJobId::from_wire(job_id) else {
-        return;
-    };
-    IMAGE_PENDING.with(|p| p.borrow_mut().remove(&job_id));
+    use super::{IMAGE_CALLBACKS, IMAGE_PENDING};
+
+    /// Host entry point: dispatch a finished decode to its `set_fit` callback.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_image_ready(job_id: u32, bitmap_id: u32) {
+        let Some(job_id) = ImageJobId::from_wire(job_id) else {
+            return;
+        };
+        let bitmap = BitmapId::from_ffi(bitmap_id);
+        let cb = IMAGE_PENDING
+            .with(|p| p.borrow_mut().remove(&job_id))
+            .and_then(|idx| IMAGE_CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+        if let Some(cb) = cb {
+            cb(job_id, bitmap);
+        }
+    }
+
+    /// Reclaim a decode's pending entry without dispatching — fired when the decode
+    /// finished while dormant (the result stays cached until a draw uses it).
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_image_dropped(job_id: u32) {
+        let Some(job_id) = ImageJobId::from_wire(job_id) else {
+            return;
+        };
+        IMAGE_PENDING.with(|p| p.borrow_mut().remove(&job_id));
+    }
 }
 
 define_slot! {
