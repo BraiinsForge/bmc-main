@@ -65,11 +65,14 @@ GC400. Fading the gain out with saturation also kept the badges but added more t
 8-bit lookup table broke the gray ramp. On the GC400 a full-frame swizzle pass takes about 2.8 ms without the curve, 5.7
 ms with both segments on the peak, and 6.9 ms with the luma rise.
 
-## Verifying shader changes on hardware
+## Verifying shader changes
 
-The GC400 compiles shaders at draw time. A shader that passes software GLES tests and GLSL compile and link can still
-fail there, and the failure leaves the `RG16` scanout buffers black while the intermediate and screen captures look
-fine. Any change to `scanout_swizzle.frag` or its uniforms needs a run on a BMM device: confirm the panel shows the
-expected colors, and compare the pass timing with the adjustment enabled and disabled. Small shader differences show up
-in that timing: splitting the curve into separate float uniforms or applying the unused alpha each cost 0.5–1 ms per
-frame.
+The tests in `scanout_swizzle.rs` compile the shader with and without the adjustment on Mesa's llvmpipe, draw probe
+colors through it and check them against the curve in Rust. They need headless EGL: run them in the `ci` dev shell
+(`nix develop .#ci`), whose `BMC_REQUIRE_HEADLESS_EGL` turns a missing EGL into a failure instead of a silent skip.
+
+The GC400 compiles shaders at draw time. A shader that passes those tests can still fail there, and the failure leaves
+the `RG16` scanout buffers black while the intermediate and screen captures look fine. Any change to
+`scanout_swizzle.frag` or its uniforms needs a run on a BMM device: confirm the panel shows the expected colors, and
+compare the pass timing with the adjustment enabled and disabled. Small shader differences show up in that timing:
+splitting the curve into separate float uniforms or applying the unused alpha each cost 0.5–1 ms per frame.

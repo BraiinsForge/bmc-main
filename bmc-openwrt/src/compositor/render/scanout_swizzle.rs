@@ -34,7 +34,7 @@ use smithay::{
         allocator::dmabuf::Dmabuf,
         renderer::{
             Bind, Frame as RendererFrame, ImportDma, Renderer,
-            gles::{GlesRenderer, GlesTexProgram, Uniform, UniformName},
+            gles::{GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName},
         },
     },
     reexports::drm::control::framebuffer,
@@ -48,14 +48,55 @@ const SWIZZLE_SHADER: &str = include_str!("scanout_swizzle.frag");
 
 pub struct ScanoutSwizzler {
     buffers: BufferPool,
+    pass: SwizzlePass,
+}
+
+impl ScanoutSwizzler {
+    pub fn new(
+        renderer: &mut GlesRenderer,
+        width: u32,
+        height: u32,
+        adjustment: Option<bmc_platform::ColorAdjustment>,
+    ) -> Result<Self> {
+        Ok(Self {
+            buffers: BufferPool::new(width, height, ScanoutFormat::Rgb565),
+            pass: SwizzlePass::new(renderer, width, height, adjustment)?,
+        })
+    }
+
+    /// Apply the optional panel adjustment and write a BGR565 scanout buffer.
+    /// Return its framebuffer handle for page-flip.
+    pub fn present(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        output: &DrmOutput,
+        intermediate: &Dmabuf,
+    ) -> Result<framebuffer::Handle> {
+        let texture = renderer
+            .import_dmabuf(intermediate, None)
+            .context("Failed to import composited buffer as swizzle source")?;
+
+        let scanout = self.buffers.back_buffer(output)?;
+        let fb = scanout.fb;
+        self.pass
+            .draw(renderer, &mut scanout.dmabuf, &texture)
+            .context("Failed to draw BGR565 scanout buffer")?;
+
+        self.buffers.swap();
+        Ok(fb)
+    }
+}
+
+/// The shader with its uniforms, drawing into any target the renderer can bind.
+struct SwizzlePass {
     program: GlesTexProgram,
     uniforms: Vec<Uniform<'static>>,
     width: u32,
     height: u32,
 }
 
-impl ScanoutSwizzler {
-    pub fn new(
+impl SwizzlePass {
+    fn new(
         renderer: &mut GlesRenderer,
         width: u32,
         height: u32,
@@ -78,7 +119,6 @@ impl ScanoutSwizzler {
             .compile_custom_texture_shader(shader, &uniform_names)
             .context("Failed to compile BGR565 swizzle shader")?;
         Ok(Self {
-            buffers: BufferPool::new(width, height, ScanoutFormat::Rgb565),
             program,
             uniforms,
             width,
@@ -86,23 +126,17 @@ impl ScanoutSwizzler {
         })
     }
 
-    /// Apply the optional panel adjustment and write a BGR565 scanout buffer.
-    /// Return its framebuffer handle for page-flip.
-    pub fn present(
-        &mut self,
+    fn draw<T>(
+        &self,
         renderer: &mut GlesRenderer,
-        output: &DrmOutput,
-        intermediate: &Dmabuf,
-    ) -> Result<framebuffer::Handle> {
-        let texture = renderer
-            .import_dmabuf(intermediate, None)
-            .context("Failed to import composited buffer as swizzle source")?;
-
-        let scanout = self.buffers.back_buffer(output)?;
-        let fb = scanout.fb;
-
+        target: &mut T,
+        texture: &GlesTexture,
+    ) -> Result<()>
+    where
+        GlesRenderer: Bind<T>,
+    {
         let mut framebuffer = renderer
-            .bind(&mut scanout.dmabuf)
+            .bind(target)
             .context("Failed to bind BGR565 scanout target")?;
 
         #[expect(clippy::cast_possible_wrap)]
@@ -116,7 +150,7 @@ impl ScanoutSwizzler {
             .context("Failed to begin swizzle frame")?;
         frame
             .render_texture_from_to(
-                &texture,
+                texture,
                 src,
                 dst,
                 &[dst],
@@ -128,10 +162,7 @@ impl ScanoutSwizzler {
             )
             .context("Failed to render BGR565 swizzle pass")?;
         let _sync = frame.finish().context("Failed to finish swizzle frame")?;
-        drop(framebuffer);
-
-        self.buffers.swap();
-        Ok(fb)
+        Ok(())
     }
 }
 
@@ -190,8 +221,17 @@ fn adjustment_uniforms(adjustment: Option<bmc_platform::ColorAdjustment>) -> Vec
 #[cfg(test)]
 mod tests {
     use bmc_platform::{HardwareProfile, Product};
+    use smithay::backend::{
+        allocator::Fourcc,
+        egl::{EGLContext, EGLDisplay, native::EGLSurfacelessDisplay},
+        renderer::{
+            Bind, ExportMem, ImportMem, Offscreen,
+            gles::{GlesRenderer, GlesTexture},
+        },
+    };
+    use smithay::utils::{Rectangle, Size};
 
-    use super::{GainCurve, adjustment_uniforms};
+    use super::{GainCurve, SwizzlePass, adjustment_uniforms};
 
     #[test]
     fn unadjusted_panels_require_no_color_uniforms() {
@@ -313,6 +353,110 @@ mod tests {
                 shown[1] > rgb[1],
                 "a bright accent still takes the peak curve's lift: {hex:06X}"
             );
+        }
+    }
+
+    /// Set by the Nix `ci` profile, which supplies Mesa:
+    /// an EGL failure there is a broken profile, and a skip would pass a test that never ran.
+    const REQUIRE_EGL: &str = "BMC_REQUIRE_HEADLESS_EGL";
+
+    fn headless_renderer() -> Option<GlesRenderer> {
+        let init = || -> anyhow::Result<GlesRenderer> {
+            // SAFETY: only smithay creates or terminates EGL displays in this test binary,
+            // and it shares one tracked instance between the tests that run in parallel.
+            let display = unsafe { EGLDisplay::new(EGLSurfacelessDisplay) }?;
+            let context = EGLContext::new(&display)?;
+            // SAFETY: the context was created just above and is current on no other thread.
+            Ok(unsafe { GlesRenderer::new(context) }?)
+        };
+        match init() {
+            Ok(renderer) => Some(renderer),
+            Err(err) => {
+                assert!(
+                    std::env::var_os(REQUIRE_EGL).is_none(),
+                    "{REQUIRE_EGL} is set, so skipping would pass a shader that never compiled: {err:#}"
+                );
+                eprintln!("skipping: headless EGL init failed, run in the `ci` dev shell: {err:#}");
+                None
+            }
+        }
+    }
+
+    /// Draw `probes` as one row through the real shader and return the bytes it writes,
+    /// in the swapped order the panel receives.
+    fn draw_probes(
+        adjustment: Option<bmc_platform::ColorAdjustment>,
+        probes: &[u32],
+    ) -> Option<Vec<[u8; 3]>> {
+        let mut renderer = headless_renderer()?;
+        let width = u32::try_from(probes.len()).expect("BUG: a handful of probes");
+        let pass = SwizzlePass::new(&mut renderer, width, 1, adjustment)
+            .expect("the swizzle shader must compile and link");
+        let size = Size::from((i32::try_from(width).expect("BUG: a handful of probes"), 1));
+        let pixels: Vec<u8> = probes
+            .iter()
+            .flat_map(|hex| {
+                let [_, r, g, b] = hex.to_be_bytes();
+                [r, g, b, 0xFF]
+            })
+            .collect();
+        let texture = renderer
+            .import_memory(&pixels, Fourcc::Abgr8888, size, false)
+            .expect("BUG: llvmpipe imports RGBA8 textures");
+        let mut target: GlesTexture = renderer
+            .create_buffer(Fourcc::Abgr8888, size)
+            .expect("BUG: llvmpipe renders into RGBA8 textures");
+        pass.draw(&mut renderer, &mut target, &texture)
+            .expect("the swizzle pass must draw");
+        let framebuffer = renderer
+            .bind(&mut target)
+            .expect("BUG: the target was just rendered into");
+        let mapping = renderer
+            .copy_framebuffer(&framebuffer, Rectangle::from_size(size), Fourcc::Abgr8888)
+            .expect("BUG: llvmpipe reads back RGBA8");
+        let bytes = renderer
+            .map_texture(&mapping)
+            .expect("BUG: a finished copy maps");
+        let (written, _) = bytes.as_chunks::<4>();
+        Some(written.iter().map(|&[x, y, z, _]| [x, y, z]).collect())
+    }
+
+    #[test]
+    fn unadjusted_shader_swaps_red_and_blue() {
+        let Some(written) = draw_probes(None, &[0x12_34_56, 0xFF_00_00, 0x6F_6F_6F]) else {
+            return;
+        };
+        assert_eq!(
+            written,
+            [[0x56, 0x34, 0x12], [0x00, 0x00, 0xFF], [0x6F, 0x6F, 0x6F]],
+            "the ST7365P expects blue in the red bits and colors stay untouched"
+        );
+    }
+
+    #[test]
+    fn adjusted_shader_matches_the_tested_curve() {
+        let (curve, floor) = bmm101();
+        let adjustment = HardwareProfile::for_product(Product::Bmm101)
+            .display
+            .color_adjustment;
+        let probes = [
+            0x00_00_00, 0x26_26_26, 0x39_39_39, 0x6F_6F_6F, 0xC6_C6_C6, 0xFF_FF_FF, 0x4F_09_0D,
+            0xFF_B3_B2, 0x0E_3F_25, 0x34_C0_6A, 0xF4_C0_1A, 0x28_3C_C8,
+        ];
+        let Some(written) = draw_probes(adjustment, &probes) else {
+            return;
+        };
+        for (hex, [b, g, r]) in probes.into_iter().zip(written) {
+            let expected = curve
+                .adjust(floor, srgb(hex))
+                .map(|channel| channel * 255.0);
+            for (shader, rust) in [r, g, b].into_iter().zip(expected) {
+                assert!(
+                    (f32::from(shader) - rust).abs() <= 1.0,
+                    "the GLSL curve drifted from the one the Rust tests check: \
+                     {hex:06X} -> {r:02X}{g:02X}{b:02X}, expected {expected:?}"
+                );
+            }
         }
     }
 }
