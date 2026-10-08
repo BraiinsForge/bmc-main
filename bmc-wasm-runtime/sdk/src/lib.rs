@@ -345,7 +345,6 @@ fn install_panic_hook() {
     }));
 }
 
-// -- WASM-only modules (require host FFI) --
 #[cfg(target_arch = "wasm32")]
 pub mod alloc;
 pub mod assets;

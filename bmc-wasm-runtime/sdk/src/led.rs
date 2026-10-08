@@ -24,6 +24,8 @@
 //! that takes an optional duration (endless when `None`, temporary
 //! when `Some`). `stop()` cancels every outstanding LED request from
 //! this widget — it is also the only way to turn the strip off.
+//!
+//! Off-target there is no host to drive the LEDs, so the calls panic.
 
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope};
 pub use bmc_wasm_protocol::Color;

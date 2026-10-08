@@ -22,7 +22,9 @@
 //!
 //! Provides simple key-value storage that persists across widget restarts
 //! and hot-reloads. The host manages file I/O; WASM widgets just call
-//! `kv_set` / `kv_get` / `kv_delete`.
+//! `set` / `get` / `delete`.
+//!
+//! Off-target there is no host to persist the store, so the calls panic.
 //!
 //! # Example
 //!
