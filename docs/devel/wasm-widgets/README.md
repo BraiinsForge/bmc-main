@@ -46,6 +46,11 @@ How a widget reads its assigned viewport and the active logical display through 
 `display_info()`. Covers rectangular versus round shape signals, platform viewports, testbed platform selection, and the
 temporary compatibility fallback to `widget_size()` / `SizeVariant::{Small, Medium, Large, Full}`.
 
+### [Timers](timers.md)
+
+How a widget does periodic background work that continues while it is off screen: starting and stopping a timer, what a
+tick may do, the limits a timer runs under, and how missed periods arrive.
+
 ## Previews
 
 `tools/render_shots.py <widget>` renders every viewport the widget's manifest supports to a PNG under
