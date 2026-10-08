@@ -20,8 +20,7 @@
 
 //! Host function bindings and types.
 //!
-//! Off-target, where there is no host to call, the bindings panic —
-//! apart from a few that exist only on `wasm32`.
+//! Off-target, where there is no host to call, the bindings panic.
 
 // Re-export from protocol — single source of truth for wire-format enums
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
@@ -29,13 +28,11 @@ pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 mod assets;
 pub use assets::{
     RetainedImageDimensions, decode_image, evict_all, evict_prefix, image_dimensions,
-    max_image_pixels, register_audio, register_audio_package, register_bitmap, register_bitmap_fit,
-    register_bitmap_from_cache, register_bitmap_nearest, register_bitmap_nearest_package,
-    register_bitmap_package, register_mesh, register_mesh_package, register_svg,
-    register_svg_package,
+    image_dimensions_ref, max_image_pixels, register_audio, register_audio_package,
+    register_bitmap, register_bitmap_fit, register_bitmap_fit_ref, register_bitmap_from_cache,
+    register_bitmap_nearest, register_bitmap_nearest_package, register_bitmap_package,
+    register_mesh, register_mesh_package, register_svg, register_svg_package,
 };
-#[cfg(target_arch = "wasm32")]
-pub use assets::{image_dimensions_ref, register_bitmap_fit_ref};
 
 mod audio;
 pub use audio::{Volume, audio_play, audio_stop};

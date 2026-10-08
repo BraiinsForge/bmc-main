@@ -20,6 +20,8 @@
 
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
 
+use crate::net::FetchBodyRef;
+
 /// Register icon data with the host under `tag`. Idempotent host-side.
 /// Wire `0` lifts to `None`.
 #[must_use]
@@ -97,6 +99,19 @@ pub fn register_bitmap_fit(
     Platform::register_bitmap_fit(tag, data, max_w, max_h, cover, identity)
 }
 
+/// Start a fitted bitmap decode from a callback-scoped host fetch body.
+/// Rejection returns the body reference for another operation.
+pub fn register_bitmap_fit_ref<'a>(
+    tag: &str,
+    body: FetchBodyRef<'a>,
+    max_w: u32,
+    max_h: u32,
+    cover: bool,
+    identity: &[u8],
+) -> Result<ImageJobId, FetchBodyRef<'a>> {
+    Platform::register_bitmap_fit_ref(tag, body, max_w, max_h, cover, identity)
+}
+
 /// Restore a bitmap from its per-instance cache entry
 /// (host-side mmap → texture; no bytes cross into wasm).
 /// `None` on a miss.
@@ -146,6 +161,15 @@ pub struct RetainedImageDimensions {
     pub max_source_pixels: u64,
 }
 
+/// Get image dimensions without copying a retained fetch body into WASM.
+/// The host-detected format determines the returned source-pixel allowance.
+/// Callers must reject images whose width times height exceeds that
+/// allowance before registering a decode.
+#[must_use]
+pub fn image_dimensions_ref(body: &FetchBodyRef<'_>) -> Option<RetainedImageDimensions> {
+    Platform::image_dimensions_ref(body)
+}
+
 /// Decode image data (PNG, JPEG, etc.) to RGBA pixels on the host.
 #[must_use]
 pub fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
@@ -180,6 +204,14 @@ trait AssetRegistry {
         cover: bool,
         identity: &[u8],
     ) -> Option<ImageJobId>;
+    fn register_bitmap_fit_ref<'a>(
+        tag: &str,
+        body: FetchBodyRef<'a>,
+        max_w: u32,
+        max_h: u32,
+        cover: bool,
+        identity: &[u8],
+    ) -> Result<ImageJobId, FetchBodyRef<'a>>;
     fn register_bitmap_from_cache(tag: &str) -> Option<BitmapId>;
     fn evict_prefix(prefix: &str) -> u32;
     fn evict_all() -> u32;
@@ -187,6 +219,7 @@ trait AssetRegistry {
 
 trait ImageDecodeProvider {
     fn image_dimensions(data: &[u8]) -> Option<(u32, u32)>;
+    fn image_dimensions_ref(body: &FetchBodyRef<'_>) -> Option<RetainedImageDimensions>;
     fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)>;
     fn max_image_pixels() -> u32;
 }
@@ -439,6 +472,29 @@ mod wasm {
             })
         }
 
+        fn register_bitmap_fit_ref<'a>(
+            tag: &str,
+            body: FetchBodyRef<'a>,
+            max_w: u32,
+            max_h: u32,
+            cover: bool,
+            identity: &[u8],
+        ) -> Result<ImageJobId, FetchBodyRef<'a>> {
+            let job_id = ImageJobId::from_wire(unsafe {
+                host_register_bitmap_fit_ref(
+                    tag.as_ptr(),
+                    tag.len() as u32,
+                    body.request_id_wire(),
+                    max_w,
+                    max_h,
+                    u32::from(cover),
+                    identity.as_ptr(),
+                    identity.len() as u32,
+                )
+            });
+            job_id.ok_or(body)
+        }
+
         #[expect(clippy::cast_possible_truncation)]
         fn evict_prefix(prefix: &str) -> u32 {
             unsafe { host_evict_prefix(prefix.as_ptr(), prefix.len() as u32) }
@@ -465,6 +521,26 @@ mod wasm {
             Some((w, h))
         }
 
+        fn image_dimensions_ref(body: &FetchBodyRef<'_>) -> Option<RetainedImageDimensions> {
+            let mut max_source_pixels = 0;
+            let packed = unsafe {
+                host_image_dimensions_ref(body.request_id_wire(), &raw mut max_source_pixels)
+            };
+            if packed < 0 {
+                return None;
+            }
+            let width = (packed >> 32) as u32;
+            let height = (packed & 0xFFFF_FFFF) as u32;
+            if width == 0 || height == 0 {
+                return None;
+            }
+            Some(RetainedImageDimensions {
+                width,
+                height,
+                max_source_pixels,
+            })
+        }
+
         fn decode_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
             let (w, h) = Self::image_dimensions(data)?;
             let needed = w * h * 4;
@@ -483,62 +559,14 @@ mod wasm {
             unsafe { host_max_image_pixels() }
         }
     }
-
-    /// Start a fitted bitmap decode from a callback-scoped host fetch body.
-    /// Rejection returns the body reference for another operation.
-    #[must_use]
-    pub fn register_bitmap_fit_ref<'a>(
-        tag: &str,
-        body: FetchBodyRef<'a>,
-        max_w: u32,
-        max_h: u32,
-        cover: bool,
-        identity: &[u8],
-    ) -> Result<ImageJobId, FetchBodyRef<'a>> {
-        let job_id = ImageJobId::from_wire(unsafe {
-            host_register_bitmap_fit_ref(
-                tag.as_ptr(),
-                tag.len() as u32,
-                body.request_id_wire(),
-                max_w,
-                max_h,
-                u32::from(cover),
-                identity.as_ptr(),
-                identity.len() as u32,
-            )
-        });
-        job_id.ok_or(body)
-    }
-
-    /// Get image dimensions without copying a retained fetch body into WASM.
-    /// The host-detected format determines the returned source-pixel allowance.
-    /// Callers must reject images whose width times height exceeds that
-    /// allowance before registering a decode.
-    #[must_use]
-    pub fn image_dimensions_ref(body: &FetchBodyRef<'_>) -> Option<RetainedImageDimensions> {
-        let mut max_source_pixels = 0;
-        let packed = unsafe {
-            host_image_dimensions_ref(body.request_id_wire(), &raw mut max_source_pixels)
-        };
-        if packed < 0 {
-            return None;
-        }
-        let width = (packed >> 32) as u32;
-        let height = (packed & 0xFFFF_FFFF) as u32;
-        if width == 0 || height == 0 {
-            return None;
-        }
-        Some(RetainedImageDimensions {
-            width,
-            height,
-            max_source_pixels,
-        })
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
+
+    use super::RetainedImageDimensions;
+    use crate::net::FetchBodyRef;
 
     pub(super) struct Host;
 
@@ -596,6 +624,17 @@ mod native {
             panic!("BUG: register_bitmap_fit() called off-target — no host holds assets")
         }
 
+        fn register_bitmap_fit_ref<'a>(
+            _: &str,
+            _: FetchBodyRef<'a>,
+            _: u32,
+            _: u32,
+            _: bool,
+            _: &[u8],
+        ) -> Result<ImageJobId, FetchBodyRef<'a>> {
+            panic!("BUG: register_bitmap_fit_ref() called off-target — no host holds assets")
+        }
+
         fn register_bitmap_from_cache(_: &str) -> Option<BitmapId> {
             panic!("BUG: register_bitmap_from_cache() called off-target — no host holds assets")
         }
@@ -614,6 +653,10 @@ mod native {
             panic!("BUG: image_dimensions() called off-target — no host decodes images")
         }
 
+        fn image_dimensions_ref(_: &FetchBodyRef<'_>) -> Option<RetainedImageDimensions> {
+            panic!("BUG: image_dimensions_ref() called off-target — no host decodes images")
+        }
+
         fn decode_image(_: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
             panic!("BUG: decode_image() called off-target — no host decodes images")
         }
@@ -626,8 +669,6 @@ mod native {
 
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-#[cfg(target_arch = "wasm32")]
-pub use wasm::{image_dimensions_ref, register_bitmap_fit_ref};
 
 #[cfg(not(target_arch = "wasm32"))]
 use native::Host as Platform;
