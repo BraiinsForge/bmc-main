@@ -50,7 +50,7 @@ use bmc_render::{
 
 use bmc_wasm_protocol::{
     AudioId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId,
-    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
+    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, TimerId, UdpBroadcastId, WebsocketId, XmlId,
 };
 
 use crate::audio_registry::AudioRegistry;
@@ -58,7 +58,7 @@ use crate::image_decode_lock::ImageDecodePermit;
 use crate::log_once::LoggedSites;
 use crate::network::NetworkInfo;
 use crate::runtime::{
-    CredentialRefusal, CredentialView, FetchAgent, FetchLogLimiter, ParamsSnapshot,
+    CredentialRefusal, CredentialView, FetchAgent, FetchLogLimiter, ParamsSnapshot, TimerTable,
 };
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::system::SystemSnapshot;
@@ -928,6 +928,8 @@ pub(crate) struct StagedGuestDeliveries {
     pub ssdp_events: Vec<(SsdpSearchId, SsdpEvent)>,
     pub udp_events: Vec<(UdpBroadcastId, UdpBroadcastEvent)>,
     pub http_requests: Vec<(HttpListenerId, HttpInboundRequest)>,
+    /// Each due timer with the number of periods its tick covers.
+    pub timer_ticks: Vec<(TimerId, u32)>,
     renderer_activity: RendererDeliveryActivity,
 }
 
@@ -941,6 +943,7 @@ impl StagedGuestDeliveries {
             && self.ssdp_events.is_empty()
             && self.udp_events.is_empty()
             && self.http_requests.is_empty()
+            && self.timer_ticks.is_empty()
     }
 }
 
@@ -1164,6 +1167,8 @@ pub(crate) struct HostState {
 
     /// Next HTTP listener ID counter (for `HttpListenerId::alloc`).
     pub next_http_listener_id: u32,
+
+    pub(crate) timers: TimerTable,
 
     /// Per-request response senders: request_id → sender for the response.
     pub http_response_txs: HashMap<HttpRequestId, mpsc::Sender<HttpListenerResponse>>,
@@ -1513,6 +1518,10 @@ impl HostState {
             kv_cache: HashMap::new(),
             http_listeners: HashMap::new(),
             next_http_listener_id: 1,
+            timers: TimerTable::new(
+                resource_limits.max_timers,
+                resource_limits.min_timer_period_ms,
+            ),
             http_response_txs: HashMap::new(),
             next_http_request_id: 1,
             fetch_interceptor: None,

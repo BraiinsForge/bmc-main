@@ -27,6 +27,7 @@ mod fetch_logging;
 mod imports;
 mod memory;
 mod time;
+mod timers;
 
 pub use background::FetchAgent;
 pub(crate) use fetch_logging::{FetchLogDecision, FetchLogLimiter};
@@ -40,6 +41,7 @@ pub(crate) use fetch_logging::{FetchLogDecision, FetchLogLimiter};
 pub(crate) use imports::credentials::CredentialRefusal;
 pub use imports::credentials::{BoundCredential, CredentialView};
 pub(crate) use imports::params::ParamsSnapshot;
+pub(crate) use timers::{TimerRefusal, TimerTable};
 
 pub use backend::DisplayInfo as RuntimeDisplayInfo;
 pub use backend::{

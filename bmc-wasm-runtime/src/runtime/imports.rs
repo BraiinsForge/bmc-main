@@ -30,6 +30,7 @@ mod network;
 pub(crate) mod params;
 mod render;
 mod system;
+mod timer;
 
 use anyhow::Result;
 use bmc_render::renderer::Renderer;
@@ -50,6 +51,7 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     eviction::register(linker)?;
     params::register(linker)?;
     credentials::register(linker)?;
+    timer::register(linker)?;
     Ok(())
 }
 

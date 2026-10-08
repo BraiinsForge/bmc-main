@@ -257,6 +257,11 @@ define_id! {
     HttpListenerId, "http listener", u32
 }
 
+define_id! {
+    /// Periodic timer handle, used to correlate `__on_timer` ticks.
+    TimerId, "timer", u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

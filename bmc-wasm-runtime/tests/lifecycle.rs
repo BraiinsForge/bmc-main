@@ -1000,7 +1000,7 @@ fn sdk_version_constant_matches_fixture_assumption() {
     let (major, minor, patch) = WasmWidgetRuntime::host_sdk_version();
     let packed = u64::from(major) | (u64::from(minor) << 16) | (u64::from(patch) << 32);
     assert_eq!(
-        packed, 524_288,
+        packed, 589_824,
         "host SDK version drifted to ({major}, {minor}, {patch}); \
          bumping `SDK_VERSION` means updating this pinned literal."
     );

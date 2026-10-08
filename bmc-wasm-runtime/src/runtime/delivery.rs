@@ -24,8 +24,8 @@
 
 use anyhow::Result;
 use bmc_wasm_protocol::{
-    BitmapId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId,
-    SsdpSearchId, UdpBroadcastId, WebsocketId,
+    BitmapId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId,
+    ON_TIMER_EXPORT, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId,
 };
 use std::ptr::NonNull;
 use std::time::Duration;
@@ -1205,6 +1205,61 @@ impl WasmWidgetRuntime {
         !self.store.data().http_listeners.is_empty()
     }
 
+    fn stage_timer_ticks(&mut self) {
+        let state = self.store.data_mut();
+        let ticks = state.timers.take_due(state.monotonic_ms);
+        #[cfg(feature = "testing")]
+        {
+            state.delivered_events += ticks.len() as u64;
+        }
+        state.staged_guest_deliveries.timer_ticks.extend(ticks);
+    }
+
+    /// Call `__on_timer(timer_id, elapsed_periods)` once per due timer.
+    fn deliver_staged_timer_ticks(&mut self) {
+        let ticks = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.timer_ticks);
+        if ticks.is_empty() {
+            return;
+        }
+
+        debug_assert!(
+            self.on_timer_func.is_some(),
+            "BUG: a timer starts only when the widget exports __on_timer"
+        );
+        let Some(on_timer) = self.on_timer_func else {
+            tracing::error!(
+                dropped = ticks.len(),
+                "timer ticks staged for a widget without __on_timer"
+            );
+            return;
+        };
+
+        for (timer_id, elapsed_periods) in ticks {
+            // An earlier callback in this pass may have stopped it.
+            if !self.store.data().timers.is_running(timer_id) {
+                continue;
+            }
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) = on_timer.call(&mut self.store, (timer_id.to_wire(), elapsed_periods)) {
+                self.record_guest_trap(ON_TIMER_EXPORT, &e);
+                break;
+            }
+        }
+    }
+
+    /// Time until the next timer tick is due, measured from `monotonic_ms`.
+    #[must_use]
+    pub fn next_timer_due_in(&self, monotonic_ms: u64) -> Option<Duration> {
+        self.store
+            .data()
+            .timers
+            .next_due_in_ms(monotonic_ms)
+            .map(Duration::from_millis)
+    }
+
     /// Record a trap taken by a guest delivery callback.
     ///
     /// Keeps the first one: later callbacks in the same pass run on an instance
@@ -1238,6 +1293,7 @@ impl WasmWidgetRuntime {
         self.stage_ssdp_events();
         self.stage_udp_broadcast_events();
         self.stage_http_requests();
+        self.stage_timer_ticks();
     }
 
     /// Whether a renderer-backed delivery scope has concrete work to run.
@@ -1275,6 +1331,8 @@ impl WasmWidgetRuntime {
         self.deliver_staged_udp_broadcast_events();
         self.take_guest_trap()?;
         self.deliver_staged_http_requests();
+        self.take_guest_trap()?;
+        self.deliver_staged_timer_ticks();
         self.take_guest_trap()
     }
 

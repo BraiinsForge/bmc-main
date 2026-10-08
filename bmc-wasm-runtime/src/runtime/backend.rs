@@ -29,8 +29,8 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    BLACK, BitmapId, ICON_METER, MeshId, RED_60, SDK_INIT_EXPORT, SDK_VERSION, SVG_RESERVED_MIN,
-    SvgId, version_unpack,
+    BLACK, BitmapId, ICON_METER, MeshId, ON_TIMER_EXPORT, RED_60, SDK_INIT_EXPORT, SDK_VERSION,
+    SVG_RESERVED_MIN, SvgId, version_unpack,
 };
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
@@ -863,6 +863,10 @@ pub struct WasmWidgetRuntime {
     /// Optional guest exports fired on the dormancy/wake edge.
     on_wake_func: Option<wasmi::TypedFunc<(), ()>>,
     on_sleep_func: Option<wasmi::TypedFunc<(), ()>>,
+
+    /// Optional guest export that receives timer ticks;
+    /// timers start only when it is present.
+    pub(super) on_timer_func: Option<wasmi::TypedFunc<(u32, u32), ()>>,
     pending_hook: Option<PendingHook>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
@@ -1085,6 +1089,13 @@ impl WasmWidgetRuntime {
             .ok();
         let on_wake_func = instance.get_typed_func::<(), ()>(&store, "on_wake").ok();
         let on_sleep_func = instance.get_typed_func::<(), ()>(&store, "on_sleep").ok();
+        let on_timer_func = instance
+            .get_typed_func::<(u32, u32), ()>(&store, ON_TIMER_EXPORT)
+            .ok();
+        store
+            .data_mut()
+            .timers
+            .set_exports_on_timer(on_timer_func.is_some());
         tracing::info!(
             instance_id = %instance_id,
             width,
@@ -1094,6 +1105,7 @@ impl WasmWidgetRuntime {
             has_on_system_update = on_system_update_func.is_some(),
             has_on_touch = on_touch_func.is_some(),
             has_on_network_update = on_network_update_func.is_some(),
+            has_on_timer = on_timer_func.is_some(),
             "runtime instantiated"
         );
 
@@ -1118,6 +1130,7 @@ impl WasmWidgetRuntime {
             on_network_update_func,
             on_wake_func,
             on_sleep_func,
+            on_timer_func,
             pending_hook: None,
             sdk_version,
             fuel_per_frame,
@@ -1572,6 +1585,7 @@ impl WasmWidgetRuntime {
         let state = self.store.data_mut();
         state.system_time = system_time;
         state.monotonic_ms = monotonic_ms;
+        state.timers.observe_clock(monotonic_ms);
         // Clamp so that wasm_delta doesn't underflow when time rewinds
         // (e.g. after a capture span resets the timeline cursor).
         state.frame_schedule.last_wasm_render_at_ms = state

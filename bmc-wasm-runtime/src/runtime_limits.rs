@@ -20,6 +20,11 @@
 
 //! Per-runtime limits for host-side resources spawned on behalf of a widget.
 
+use std::num::NonZeroU32;
+
+const DEFAULT_MIN_TIMER_PERIOD_MS: NonZeroU32 =
+    NonZeroU32::new(1_000).expect("BUG: 1000 is non-zero");
+
 /// Caps for background resources owned by a single [`crate::WasmWidgetRuntime`].
 ///
 /// These defaults are intentionally conservative because widgets run in an
@@ -45,6 +50,13 @@ pub struct RuntimeResourceLimits {
     pub max_http_listeners: usize,
     /// Maximum image-decode jobs in flight (background decode threads).
     pub max_image_decodes: usize,
+    /// Maximum active periodic timers.
+    pub max_timers: usize,
+    /// Shortest period a timer may run at.
+    ///
+    /// Timers exist for background work such as sampling;
+    /// animation runs on frame requests instead.
+    pub min_timer_period_ms: NonZeroU32,
 }
 
 impl Default for RuntimeResourceLimits {
@@ -59,6 +71,8 @@ impl Default for RuntimeResourceLimits {
             max_udp_broadcasts: 4,
             max_http_listeners: 2,
             max_image_decodes: 1,
+            max_timers: 4,
+            min_timer_period_ms: DEFAULT_MIN_TIMER_PERIOD_MS,
         }
     }
 }
@@ -80,5 +94,6 @@ mod tests {
         assert!(limits.max_udp_broadcasts > 0);
         assert!(limits.max_http_listeners > 0);
         assert!(limits.max_image_decodes > 0);
+        assert!(limits.max_timers > 0);
     }
 }

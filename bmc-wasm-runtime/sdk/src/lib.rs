@@ -261,7 +261,8 @@
 //! after wake.
 //!
 //! Dormancy stops renders, not deliveries: param, system and credential
-//! updates, fetch replies and socket callbacks all keep arriving off-scene.
+//! updates, fetch replies, socket callbacks and `timer` ticks
+//! all keep arriving off-scene.
 //! A widget that starts work from them therefore keeps the host busy for a
 //! scene nobody is looking at. There is no import that answers "am I dormant";
 //! a widget that needs to know tracks the `on_sleep`/`on_wake` edge itself.
@@ -293,6 +294,8 @@
 //!
 //! \* Same gating for `on_params_update`, `on_system_update`,
 //!   `on_credentials_update`, `on_touch`, and `on_network_update`.
+//!   Every delivery callback follows the same column,
+//!   from fetch replies and socket events to `timer` ticks.
 //!
 //! ¹ Returns the touch-not-present sentinel after a warning, once per widget.
 //!   Defensive reads compose naturally — the widget gets `None`
@@ -396,6 +399,8 @@ pub mod socket;
 #[cfg(target_arch = "wasm32")]
 pub mod ssdp;
 pub mod text;
+#[cfg(any(target_arch = "wasm32", test))]
+pub mod timer;
 pub mod tree;
 pub mod types;
 pub mod typography;

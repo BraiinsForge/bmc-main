@@ -78,10 +78,32 @@ fn trapping_callback_wat() -> String {
     )
 }
 
-#[test]
-fn delivery_callback_trap_is_reported_not_swallowed() {
-    let wasm = wat::parse_str(trapping_callback_wat()).expect("BUG: trapping WAT must parse");
-    let mut runtime = WasmWidgetRuntime::new(
+fn spinning_timer_wat() -> String {
+    format!(
+        r#"
+    (module
+      (import "env" "host_timer_start" (func $start (param i32) (result i32)))
+
+      (memory (export "memory") 1)
+
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const {})
+
+      (func (export "init")
+        (drop (call $start (i32.const 1000))))
+
+      (func (export "__on_timer") (param $id i32) (param $elapsed i32)
+        (loop $spin (br $spin)))
+
+      (func (export "render") (param i32)))
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
+}
+
+fn runtime(wat: &str, config: RuntimeConfig) -> WasmWidgetRuntime {
+    let wasm = wat::parse_str(wat).expect("BUG: fixture WAT must parse");
+    WasmWidgetRuntime::new(
         &wasm,
         64,
         64,
@@ -93,14 +115,22 @@ fn delivery_callback_trap_is_reported_not_swallowed() {
             dpi: 1,
         },
         Local::now().fixed_offset(),
+        config,
+    )
+    .expect("BUG: runtime construct")
+}
+
+#[test]
+fn delivery_callback_trap_is_reported_not_swallowed() {
+    let mut runtime = runtime(
+        &trapping_callback_wat(),
         RuntimeConfig {
             fetch_interceptor: Some(Box::new(|_method, _url| {
                 Some(InterceptedReply::new(200, b"ok".to_vec()))
             })),
             ..RuntimeConfig::default()
         },
-    )
-    .expect("BUG: runtime construct");
+    );
 
     runtime.set_time(Local::now().fixed_offset(), 1);
     let error = runtime
@@ -108,6 +138,31 @@ fn delivery_callback_trap_is_reported_not_swallowed() {
         .expect_err("a trapping __on_fetch_response must be reported to the host");
     assert!(
         error.to_string().contains("__on_fetch_response"),
+        "the reported trap should name the callback that took it, got: {error}"
+    );
+}
+
+#[test]
+fn a_timer_tick_out_of_fuel_is_reported_not_swallowed() {
+    let mut runtime = runtime(
+        &spinning_timer_wat(),
+        RuntimeConfig {
+            fuel_per_frame: 10_000,
+            ..RuntimeConfig::default()
+        },
+    );
+    runtime.set_time(Local::now().fixed_offset(), 0);
+    runtime
+        .poll_deliveries()
+        .expect("BUG: no tick is due before the first period ends");
+
+    runtime.set_time(Local::now().fixed_offset(), 1_000);
+    let error = runtime
+        .poll_deliveries()
+        .expect_err("a tick that runs out of fuel must be reported to the host");
+
+    assert!(
+        error.to_string().contains("__on_timer"),
         "the reported trap should name the callback that took it, got: {error}"
     );
 }
