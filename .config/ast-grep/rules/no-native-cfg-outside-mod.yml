@@ -7,6 +7,7 @@
 # A `cfg!(target_arch …)` branch is a native arm too, wherever it sits.
 #
 # Wasm-only items stay allowed: they have one implementation, so nothing can drift.
+# So do lint expectations, `cfg_attr(…, expect(…))`: they implement nothing.
 
 id: no-native-cfg-outside-mod
 language: rust
@@ -23,9 +24,19 @@ rule:
         - any:
             - kind: attribute_item
             - kind: inner_attribute_item
-        # `target_arch` anywhere inside a `not(…)`, nested `any`/`all` included;
-        # a lone `)` would close the `not` first, so `all(not(test), target_arch …)` stays out.
-        - regex: not\s*\((?:[^()]|\([^()]*\)|\()*target_arch
+        # `target_arch` anywhere inside a `not(…)`, nested `any`/`all` included.
+        - has:
+            kind: token_tree
+            stopBy: end
+            follows:
+              pattern: not
+            has:
+              pattern: target_arch
+              stopBy: end
+        - not:
+            any:
+              - pattern: "#[cfg_attr($$$CONDITION, expect($$$LINT))]"
+              - pattern: "#![cfg_attr($$$CONDITION, expect($$$LINT))]"
         - not:
             precedes:
               any:
@@ -39,4 +50,6 @@ rule:
                     - kind: block_comment
     - all:
         - pattern: cfg!($$$)
-        - regex: target_arch
+        - has:
+            pattern: target_arch
+            stopBy: end
