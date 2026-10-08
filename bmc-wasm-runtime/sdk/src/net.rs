@@ -18,19 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#![cfg_attr(
-    test,
-    expect(
-        clippy::cast_possible_truncation,
-        reason = "native compilation only exposes the wasm32 host ABI for response tests"
-    )
-)]
-
 //! Network fetching for WASM widgets.
 //!
 //! Provides `fetch()` and `fetch_after()` for HTTP requests. The host performs
 //! the actual network I/O in the background and delivers responses by calling
 //! the `__on_fetch_response` export.
+//!
+//! Off-target there is no host to fetch with, so the calls panic.
 //!
 //! # Example
 //!
@@ -52,14 +46,11 @@
 //! }
 //! ```
 
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::time::Duration;
 
 use bmc_wasm_protocol::{FetchOutcome, FetchRequestId, MediaTypePart};
 
-#[cfg(target_arch = "wasm32")]
 use crate::json::JsonDoc;
 
 /// Default per-call cap on every fetch operation (DNS, connect, send, recv),
@@ -85,6 +76,13 @@ pub struct FetchResponse {
 }
 
 #[derive(Debug)]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(
+        dead_code,
+        reason = "only the host's response export builds a response"
+    )
+)]
 enum FetchResponseBody {
     Guest(Vec<u8>),
     Host { len: u32 },
@@ -102,10 +100,6 @@ impl FetchBodyRef<'_> {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
-    }
-
-    pub(crate) const fn request_id_wire(&self) -> u32 {
-        self.request_id.to_wire()
     }
 }
 
@@ -129,15 +123,7 @@ impl FetchResponse {
     /// Readable only while this response's own callback runs.
     #[must_use]
     pub fn header(&self, name: &str) -> Option<String> {
-        read_host_string(|ptr, cap| unsafe {
-            host_fetch_header(
-                self.request_id.to_wire(),
-                name.as_ptr(),
-                buffer_len(name.len()),
-                ptr,
-                cap,
-            )
-        })
+        Platform::header(self.request_id, name)
     }
 
     /// The origin's `Content-Type`, verbatim.
@@ -153,9 +139,7 @@ impl FetchResponse {
     /// header is missing, unparsable, or carries no such piece.
     #[must_use]
     pub fn media_type(&self, part: MediaTypePart) -> Option<String> {
-        read_host_string(|ptr, cap| unsafe {
-            host_fetch_media_type(self.request_id.to_wire(), part.to_wire(), ptr, cap)
-        })
+        Platform::media_type(self.request_id, part)
     }
 
     /// Response body as bytes, or an empty slice when [`Self::body_ref`] owns it.
@@ -194,7 +178,6 @@ impl FetchResponse {
     /// # Panics
     ///
     /// Panics when the body is host-owned and unavailable to the JSON parser.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn json(&self) -> JsonDoc {
         JsonDoc::parse(self.json_body())
@@ -210,79 +193,12 @@ impl FetchResponse {
     }
 }
 
-// Host function imports
-#[link(wasm_import_module = "env")]
-unsafe extern "C" {
-    fn host_fetch(
-        timeout_ms: u32,
-        method_ptr: *const u8,
-        method_len: u32,
-        url_ptr: *const u8,
-        url_len: u32,
-        headers_ptr: *const u8,
-        headers_len: u32,
-        body_ptr: *const u8,
-        body_len: u32,
-    ) -> u32;
-    fn host_fetch_after(
-        delay_ms: u32,
-        timeout_ms: u32,
-        method_ptr: *const u8,
-        method_len: u32,
-        url_ptr: *const u8,
-        url_len: u32,
-        headers_ptr: *const u8,
-        headers_len: u32,
-        body_ptr: *const u8,
-        body_len: u32,
-    ) -> u32;
-    fn host_fetch_cancel(request_id: u32) -> u32;
-    fn host_fetch_response_body_ref(request_id: u32) -> u32;
-    fn host_fetch_header(
-        request_id: u32,
-        name_ptr: *const u8,
-        name_len: u32,
-        out_ptr: *mut u8,
-        out_cap: u32,
-    ) -> i32;
-    fn host_fetch_media_type(request_id: u32, part: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
-}
-
 type Callback = fn(&FetchResponse);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResponseBodyDelivery {
     Guest,
     Host,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PendingFetch {
-    callback_idx: usize,
-    body_delivery: ResponseBodyDelivery,
-}
-
-thread_local! {
-    /// Registered callbacks indexed by position.
-    static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
-    /// Maps request IDs to callback and body-delivery metadata.
-    static PENDING: RefCell<HashMap<FetchRequestId, PendingFetch>> = RefCell::new(HashMap::new());
-}
-
-/// Register a callback and return its index.
-fn register_callback(cb: Callback) -> usize {
-    CALLBACKS.with(|cbs| {
-        let mut cbs = cbs.borrow_mut();
-        // Reuse existing slot if same function pointer
-        for (i, existing) in cbs.iter().enumerate() {
-            if *existing as usize == cb as usize {
-                return i;
-            }
-        }
-        let idx = cbs.len();
-        cbs.push(cb);
-        idx
-    })
 }
 
 /// Fetch a URL with GET method. The host performs the request in the background.
@@ -318,11 +234,7 @@ pub fn fetch_after(
 /// runs, once, with [`FetchOutcome::Aborted`] rather than with data.
 #[must_use]
 pub fn cancel(request_id: FetchRequestId) -> bool {
-    let stopped = unsafe { host_fetch_cancel(request_id.to_wire()) } != 0;
-    if stopped {
-        PENDING.with(|p| p.borrow_mut().remove(&request_id));
-    }
-    stopped
+    Platform::cancel(request_id)
 }
 
 /// Builder for HTTP fetch requests with method, headers, and optional body.
@@ -430,25 +342,7 @@ impl<'a> FetchRequest<'a> {
     /// resource limit.
     #[must_use]
     pub fn send(self, callback: Callback) -> Option<FetchRequestId> {
-        let cb_idx = register_callback(callback);
-        let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
-        let (h_ptr, h_len) = optional_raw(self.headers);
-        let (b_ptr, b_len) = optional_bytes_raw(self.body);
-        let request_id = FetchRequestId::from_wire(unsafe {
-            host_fetch(
-                timeout_ms(self.timeout),
-                m_ptr,
-                m_len,
-                self.url.as_ptr(),
-                self.url.len() as u32,
-                h_ptr,
-                h_len,
-                b_ptr,
-                b_len,
-            )
-        })?;
-        insert_pending(request_id, cb_idx, self.body_delivery);
-        Some(request_id)
+        Platform::fetch(&self, callback)
     }
 
     /// Send the request after a delay (in milliseconds).
@@ -456,144 +350,355 @@ impl<'a> FetchRequest<'a> {
     /// Returns `None` if the host rejects the request before it is queued.
     #[must_use]
     pub fn send_after(self, delay_ms: u32, callback: Callback) -> Option<FetchRequestId> {
-        let cb_idx = register_callback(callback);
-        let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
-        let (h_ptr, h_len) = optional_raw(self.headers);
-        let (b_ptr, b_len) = optional_bytes_raw(self.body);
-        let request_id = FetchRequestId::from_wire(unsafe {
-            host_fetch_after(
-                delay_ms,
-                timeout_ms(self.timeout),
-                m_ptr,
-                m_len,
-                self.url.as_ptr(),
-                self.url.len() as u32,
-                h_ptr,
-                h_len,
-                b_ptr,
-                b_len,
-            )
-        })?;
-        insert_pending(request_id, cb_idx, self.body_delivery);
-        Some(request_id)
+        Platform::fetch_after(delay_ms, &self, callback)
     }
 }
 
-fn insert_pending(
-    request_id: FetchRequestId,
-    callback_idx: usize,
-    requested_delivery: ResponseBodyDelivery,
-) {
-    let body_delivery = match requested_delivery {
-        ResponseBodyDelivery::Guest => ResponseBodyDelivery::Guest,
-        ResponseBodyDelivery::Host => {
-            if unsafe { host_fetch_response_body_ref(request_id.to_wire()) } != 0 {
-                ResponseBodyDelivery::Host
-            } else {
-                ResponseBodyDelivery::Guest
+trait Fetcher {
+    fn fetch(request: &FetchRequest<'_>, callback: Callback) -> Option<FetchRequestId>;
+    fn fetch_after(
+        delay_ms: u32,
+        request: &FetchRequest<'_>,
+        callback: Callback,
+    ) -> Option<FetchRequestId>;
+    fn cancel(request_id: FetchRequestId) -> bool;
+    fn header(request_id: FetchRequestId, name: &str) -> Option<String>;
+    fn media_type(request_id: FetchRequestId, part: MediaTypePart) -> Option<String>;
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use bmc_wasm_protocol::{FetchRequestId, MediaTypePart};
+
+    use super::{
+        Callback, FetchBodyRef, FetchRequest, FetchResponse, FetchResponseBody,
+        ResponseBodyDelivery,
+    };
+
+    #[derive(Debug, Clone, Copy)]
+    struct PendingFetch {
+        callback_idx: usize,
+        body_delivery: ResponseBodyDelivery,
+    }
+
+    thread_local! {
+        /// Registered callbacks indexed by position.
+        static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
+        /// Maps request IDs to callback and body-delivery metadata.
+        static PENDING: RefCell<HashMap<FetchRequestId, PendingFetch>> = RefCell::new(HashMap::new());
+    }
+
+    /// Register a callback and return its index.
+    fn register_callback(cb: Callback) -> usize {
+        CALLBACKS.with(|cbs| {
+            let mut cbs = cbs.borrow_mut();
+            // Reuse existing slot if same function pointer
+            for (i, existing) in cbs.iter().enumerate() {
+                if *existing as usize == cb as usize {
+                    return i;
+                }
+            }
+            let idx = cbs.len();
+            cbs.push(cb);
+            idx
+        })
+    }
+
+    fn insert_pending(
+        request_id: FetchRequestId,
+        callback: Callback,
+        requested_delivery: ResponseBodyDelivery,
+    ) {
+        let body_delivery = match requested_delivery {
+            ResponseBodyDelivery::Guest => ResponseBodyDelivery::Guest,
+            ResponseBodyDelivery::Host => {
+                if unsafe { host_fetch_response_body_ref(request_id.to_wire()) } != 0 {
+                    ResponseBodyDelivery::Host
+                } else {
+                    ResponseBodyDelivery::Guest
+                }
+            }
+        };
+        let callback_idx = register_callback(callback);
+        PENDING.with(|pending| {
+            pending.borrow_mut().insert(
+                request_id,
+                PendingFetch {
+                    callback_idx,
+                    body_delivery,
+                },
+            );
+        });
+    }
+
+    impl FetchBodyRef<'_> {
+        pub(crate) const fn request_id_wire(&self) -> u32 {
+            self.request_id.to_wire()
+        }
+    }
+
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_fetch(
+            timeout_ms: u32,
+            method_ptr: *const u8,
+            method_len: u32,
+            url_ptr: *const u8,
+            url_len: u32,
+            headers_ptr: *const u8,
+            headers_len: u32,
+            body_ptr: *const u8,
+            body_len: u32,
+        ) -> u32;
+        fn host_fetch_after(
+            delay_ms: u32,
+            timeout_ms: u32,
+            method_ptr: *const u8,
+            method_len: u32,
+            url_ptr: *const u8,
+            url_len: u32,
+            headers_ptr: *const u8,
+            headers_len: u32,
+            body_ptr: *const u8,
+            body_len: u32,
+        ) -> u32;
+        fn host_fetch_cancel(request_id: u32) -> u32;
+        fn host_fetch_response_body_ref(request_id: u32) -> u32;
+        fn host_fetch_header(
+            request_id: u32,
+            name_ptr: *const u8,
+            name_len: u32,
+            out_ptr: *mut u8,
+            out_cap: u32,
+        ) -> i32;
+        fn host_fetch_media_type(request_id: u32, part: u32, out_ptr: *mut u8, out_cap: u32)
+        -> i32;
+    }
+
+    pub(super) struct Host;
+
+    impl super::Fetcher for Host {
+        fn fetch(request: &FetchRequest<'_>, callback: Callback) -> Option<FetchRequestId> {
+            let (m_ptr, m_len) = (request.method.as_ptr(), request.method.len() as u32);
+            let (h_ptr, h_len) = optional_raw(request.headers);
+            let (b_ptr, b_len) = optional_bytes_raw(request.body);
+            let request_id = FetchRequestId::from_wire(unsafe {
+                host_fetch(
+                    timeout_ms(request.timeout),
+                    m_ptr,
+                    m_len,
+                    request.url.as_ptr(),
+                    request.url.len() as u32,
+                    h_ptr,
+                    h_len,
+                    b_ptr,
+                    b_len,
+                )
+            })?;
+            insert_pending(request_id, callback, request.body_delivery);
+            Some(request_id)
+        }
+
+        fn fetch_after(
+            delay_ms: u32,
+            request: &FetchRequest<'_>,
+            callback: Callback,
+        ) -> Option<FetchRequestId> {
+            let (m_ptr, m_len) = (request.method.as_ptr(), request.method.len() as u32);
+            let (h_ptr, h_len) = optional_raw(request.headers);
+            let (b_ptr, b_len) = optional_bytes_raw(request.body);
+            let request_id = FetchRequestId::from_wire(unsafe {
+                host_fetch_after(
+                    delay_ms,
+                    timeout_ms(request.timeout),
+                    m_ptr,
+                    m_len,
+                    request.url.as_ptr(),
+                    request.url.len() as u32,
+                    h_ptr,
+                    h_len,
+                    b_ptr,
+                    b_len,
+                )
+            })?;
+            insert_pending(request_id, callback, request.body_delivery);
+            Some(request_id)
+        }
+
+        fn cancel(request_id: FetchRequestId) -> bool {
+            let stopped = unsafe { host_fetch_cancel(request_id.to_wire()) } != 0;
+            if stopped {
+                PENDING.with(|p| p.borrow_mut().remove(&request_id));
+            }
+            stopped
+        }
+
+        fn header(request_id: FetchRequestId, name: &str) -> Option<String> {
+            read_host_string(|ptr, cap| unsafe {
+                host_fetch_header(
+                    request_id.to_wire(),
+                    name.as_ptr(),
+                    buffer_len(name.len()),
+                    ptr,
+                    cap,
+                )
+            })
+        }
+
+        fn media_type(request_id: FetchRequestId, part: MediaTypePart) -> Option<String> {
+            read_host_string(|ptr, cap| unsafe {
+                host_fetch_media_type(request_id.to_wire(), part.to_wire(), ptr, cap)
+            })
+        }
+    }
+
+    fn timeout_ms(timeout: Duration) -> u32 {
+        u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX)
+    }
+
+    fn optional_raw(s: Option<&str>) -> (*const u8, u32) {
+        match s {
+            Some(s) => (s.as_ptr(), s.len() as u32),
+            None => (core::ptr::null(), 0),
+        }
+    }
+
+    fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
+        match b {
+            Some(b) => (b.as_ptr(), b.len() as u32),
+            None => (core::ptr::null(), 0),
+        }
+    }
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "buffer lengths fit u32 on wasm32"
+    )]
+    fn buffer_len(len: usize) -> u32 {
+        len as u32
+    }
+
+    /// Guessing wrong costs one extra host call;
+    /// a `Content-Type` never needs it.
+    const HEADER_READ_HINT: usize = 128;
+
+    /// Read a host-written string through `call`, which reports the full byte
+    /// length whatever buffer it got, and a negative value for one it lacks.
+    ///
+    /// A value that changed length between the calls is dropped, not truncated.
+    fn read_host_string(mut call: impl FnMut(*mut u8, u32) -> i32) -> Option<String> {
+        let mut buf = vec![0_u8; HEADER_READ_HINT];
+        let actual = usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()?;
+        if actual > buf.len() {
+            buf = vec![0_u8; actual];
+            if usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()? != actual {
+                return None;
             }
         }
-    };
-    PENDING.with(|pending| {
-        pending.borrow_mut().insert(
+        buf.truncate(actual);
+        String::from_utf8(buf).ok()
+    }
+
+    /// Called by the host when a fetch response is ready.
+    ///
+    /// Guest-delivered bodies arrive through `__alloc`; opted-in bodies remain
+    /// host-owned and are valid only while the registered callback runs.
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_fetch_response(
+        request_id: u32,
+        status: u32,
+        body_ptr: u32,
+        body_len: u32,
+    ) {
+        let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+            return;
+        };
+
+        let pending = PENDING.with(|p| p.borrow_mut().remove(&request_id));
+        let body = match pending.map(|pending| pending.body_delivery) {
+            Some(ResponseBodyDelivery::Host) => FetchResponseBody::Host { len: body_len },
+            Some(ResponseBodyDelivery::Guest) | None => {
+                let body = if body_len > 0 && body_ptr != 0 {
+                    unsafe {
+                        Vec::from_raw_parts(
+                            body_ptr as *mut u8,
+                            body_len as usize,
+                            body_len as usize,
+                        )
+                    }
+                } else {
+                    Vec::new()
+                };
+                FetchResponseBody::Guest(body)
+            }
+        };
+
+        let response = FetchResponse {
+            status,
             request_id,
-            PendingFetch {
-                callback_idx,
-                body_delivery,
-            },
-        );
-    });
-}
+            body,
+        };
 
-fn timeout_ms(timeout: Duration) -> u32 {
-    u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX)
-}
-
-fn optional_raw(s: Option<&str>) -> (*const u8, u32) {
-    match s {
-        Some(s) => (s.as_ptr(), s.len() as u32),
-        None => (core::ptr::null(), 0),
-    }
-}
-
-fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
-    match b {
-        Some(b) => (b.as_ptr(), b.len() as u32),
-        None => (core::ptr::null(), 0),
-    }
-}
-
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "buffer lengths fit u32 on wasm32"
-)]
-fn buffer_len(len: usize) -> u32 {
-    len as u32
-}
-
-/// Guessing wrong costs one extra host call;
-/// a `Content-Type` never needs it.
-const HEADER_READ_HINT: usize = 128;
-
-/// Read a host-written string through `call`, which reports the full byte
-/// length whatever buffer it got, and a negative value for one it lacks.
-///
-/// A value that changed length between the calls is dropped, not truncated.
-fn read_host_string(mut call: impl FnMut(*mut u8, u32) -> i32) -> Option<String> {
-    let mut buf = vec![0_u8; HEADER_READ_HINT];
-    let actual = usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()?;
-    if actual > buf.len() {
-        buf = vec![0_u8; actual];
-        if usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()? != actual {
-            return None;
+        // Copy the callback out before invoking it because it may register another fetch.
+        let cb = pending.and_then(|pending| {
+            CALLBACKS.with(|cbs| cbs.borrow().get(pending.callback_idx).copied())
+        });
+        if let Some(cb) = cb {
+            cb(&response);
         }
     }
-    buf.truncate(actual);
-    String::from_utf8(buf).ok()
 }
 
-/// Called by the host when a fetch response is ready.
-///
-/// Guest-delivered bodies arrive through `__alloc`; opted-in bodies remain
-/// host-owned and are valid only while the registered callback runs.
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "__alloc returns exactly body_len bytes"
-)]
-#[unsafe(no_mangle)]
-pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u32, body_len: u32) {
-    let Some(request_id) = FetchRequestId::from_wire(request_id) else {
-        return;
-    };
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_wasm_protocol::{FetchRequestId, MediaTypePart};
 
-    let pending = PENDING.with(|p| p.borrow_mut().remove(&request_id));
-    let body = match pending.map(|pending| pending.body_delivery) {
-        Some(ResponseBodyDelivery::Host) => FetchResponseBody::Host { len: body_len },
-        Some(ResponseBodyDelivery::Guest) | None => {
-            let body = if body_len > 0 && body_ptr != 0 {
-                unsafe {
-                    Vec::from_raw_parts(body_ptr as *mut u8, body_len as usize, body_len as usize)
-                }
-            } else {
-                Vec::new()
-            };
-            FetchResponseBody::Guest(body)
+    use super::{Callback, FetchRequest};
+
+    pub(super) struct Host;
+
+    impl super::Fetcher for Host {
+        fn fetch(request: &FetchRequest<'_>, _: Callback) -> Option<FetchRequestId> {
+            panic!(
+                "BUG: {} {} sent off-target — no host to fetch with",
+                request.method, request.url
+            )
         }
-    };
 
-    let response = FetchResponse {
-        status,
-        request_id,
-        body,
-    };
+        fn fetch_after(_: u32, request: &FetchRequest<'_>, _: Callback) -> Option<FetchRequestId> {
+            panic!(
+                "BUG: {} {} sent off-target — no host to fetch with",
+                request.method, request.url
+            )
+        }
 
-    // Copy the callback out before invoking it because it may register another fetch.
-    let cb = pending
-        .and_then(|pending| CALLBACKS.with(|cbs| cbs.borrow().get(pending.callback_idx).copied()));
-    if let Some(cb) = cb {
-        cb(&response);
+        fn cancel(_: FetchRequestId) -> bool {
+            panic!("BUG: net::cancel() called off-target — no host to fetch with")
+        }
+
+        fn header(_: FetchRequestId, _: &str) -> Option<String> {
+            panic!("BUG: FetchResponse::header() called off-target — no host to fetch with")
+        }
+
+        fn media_type(_: FetchRequestId, _: MediaTypePart) -> Option<String> {
+            panic!("BUG: FetchResponse::media_type() called off-target — no host to fetch with")
+        }
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::Host as Platform;
 
 #[cfg(test)]
 impl FetchResponse {
@@ -649,7 +754,7 @@ mod tests {
 
         assert_eq!(response.text(), None);
         assert_eq!(
-            response.body_ref().map(|body| body.request_id_wire()),
+            response.body_ref().map(|body| body.request_id.to_wire()),
             Some(1)
         );
     }

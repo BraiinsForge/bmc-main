@@ -140,7 +140,7 @@ fn register_callback(cb: Callback) -> usize {
 /// `on_event` with the borrowed [`Ws`] and a [`WsEvent`].
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs
-/// (same format as `fetch()`).
+/// (same format as [`fetch`](crate::fetch())).
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
 #[must_use = "dropping the returned Ws closes it"]

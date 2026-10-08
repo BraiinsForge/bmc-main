@@ -24,10 +24,10 @@
 //! The SDK sends the poll's request, hands each reply to its `OnReply` handler
 //! with the borrowed handle, and sends the next request on the [`Config`] cadence.
 //! Dropping the handle, or calling `Handle::stop`, ends the poll and cancels its live fetch.
+//!
+//! Off-target a poll panics once it sends, as [`crate::net`] does.
 
-#[cfg(any(target_arch = "wasm32", test))]
 use std::collections::HashMap;
-#[cfg(any(target_arch = "wasm32", test))]
 use std::mem::ManuallyDrop;
 use std::time::Duration;
 
@@ -175,7 +175,6 @@ pub trait FetchBackend {
     fn cancel(&mut self, id: FetchRequestId) -> bool;
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 struct Poll {
     build: Build,
     config: Config,
@@ -198,19 +197,16 @@ struct Poll {
 /// and widgets key their own state on [`Handle::index`].
 /// The cost is one empty slot per ended poll for the widget's lifetime,
 /// which only matters to a widget that registers polls over and over.
-#[cfg(any(target_arch = "wasm32", test))]
 #[derive(Default)]
 pub(crate) struct Registry {
     polls: Vec<Option<Poll>>,
     routes: HashMap<FetchRequestId, usize>,
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 fn poll_mut(polls: &mut [Option<Poll>], index: usize) -> Option<&mut Poll> {
     polls.get_mut(index)?.as_mut()
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 impl Registry {
     pub(crate) fn register(&mut self, build: Build, config: Config) -> usize {
         let index = self.polls.len();
@@ -519,7 +515,6 @@ impl Registry {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReplyAction {
     Ignore,
@@ -528,7 +523,7 @@ pub(crate) enum ReplyAction {
     Deliver(usize),
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(test)))]
 mod backend {
     use crate::net::{self, FetchRequest};
 
@@ -622,7 +617,6 @@ mod backend {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 mod glue {
     use std::cell::RefCell;
     use std::mem::ManuallyDrop;
@@ -779,7 +773,6 @@ mod glue {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 pub use glue::{OnReply, register};
 
 #[cfg(test)]

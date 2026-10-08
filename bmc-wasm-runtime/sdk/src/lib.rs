@@ -365,7 +365,6 @@ pub mod math;
 pub mod mdns;
 pub mod mesh;
 pub mod modal;
-#[cfg(any(target_arch = "wasm32", test))]
 pub mod net;
 pub mod network;
 pub mod notification;
@@ -415,12 +414,10 @@ pub use json::{JsonDoc, JsonKind};
 pub use json_str::JsonStr;
 pub use led::LedEffect;
 pub use mesh::*;
-#[cfg(target_arch = "wasm32")]
 pub use net::*;
 pub use network::NetworkInfo;
 pub use number_input::*;
 pub use orientation::Orientation;
-#[cfg(target_arch = "wasm32")]
 pub use poll::{
     Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod,
     register as register_poll,
