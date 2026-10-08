@@ -27,7 +27,7 @@ use std::net::Ipv4Addr;
 use std::os::unix::net::UnixStream;
 use std::rc::Rc;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bmc_system_overlay::{Snapshot, SnapshotVersion, VersionedSnapshot};
 use bmc_wasm_host::lifecycle::{LifecycleEgl, LifecycleSurface};
@@ -978,5 +978,39 @@ fn reacquiring_a_render_target_resets_the_warm_up() {
     assert!(
         slot.needs_render(Instant::now()),
         "the warm-up render must be allowed immediately after acquisition"
+    );
+}
+
+// ── widget timers ──────────────────────────────────────────────────
+
+fn one_second_timer_widget_wat() -> String {
+    format!(
+        r#"
+    (module
+      (import "env" "host_timer_start" (func $start (param i32) (result i32)))
+      (memory (export "memory") 1)
+      (func (export "__bmc_sdk_init") (result i64) i64.const {})
+      (func (export "init") (drop (call $start (i32.const 1000))))
+      (func (export "__on_timer") (param i32) (param i32))
+      (func (export "render") (param i32)))
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
+}
+
+#[test]
+fn a_dormant_slot_reports_its_timer_deadline_to_the_poll_loop() {
+    let wat = one_second_timer_widget_wat();
+    let mut slot = test_slot(&wat);
+    let now = Instant::now();
+
+    enter_state(&mut slot, bmc_widget_protocol::LifecycleState::Dormant);
+    slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
+
+    assert_eq!(
+        slot.poll_inputs(now + Duration::from_millis(400))
+            .timer_due_in,
+        Some(Duration::from_millis(600)),
+        "a dormant slot must report its timer deadline on the clock it feeds the runtime"
     );
 }

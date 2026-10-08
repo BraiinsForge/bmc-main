@@ -828,6 +828,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
     pub fn poll_inputs(&self, now: Instant) -> crate::main_loop::SlotPollInputs {
         crate::main_loop::SlotPollInputs {
             retry_in: self.retry_in(now),
+            timer_due_in: self.runtime.next_timer_due_in(self.monotonic_ms(now)),
             is_renderable: self.is_renderable(),
             is_blocked: self.is_blocked() || !self.render_buffer_available(),
             frame_callback_enabled: self.frame_callback_enabled(),

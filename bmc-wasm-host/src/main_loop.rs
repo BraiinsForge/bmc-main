@@ -58,6 +58,7 @@ const GC_SETTLE_DELAY: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SlotPollInputs {
     pub retry_in: Option<Duration>,
+    pub timer_due_in: Option<Duration>,
     pub is_renderable: bool,
     pub is_blocked: bool,
     pub frame_callback_enabled: bool,
@@ -85,6 +86,10 @@ pub fn compute_poll_timeout_from_inputs(slots: &[SlotPollInputs]) -> i32 {
         // `retry_in` drives lifecycle progression (e.g. Entering→Visible), not rendering,
         // so it contributes regardless of whether the slot wants to render right now.
         if let Some(d) = slot.retry_in {
+            push(&mut best, d);
+        }
+        // Widget timers tick in every lifecycle state, dormant included.
+        if let Some(d) = slot.timer_due_in {
             push(&mut best, d);
         }
         if !slot.is_renderable || slot.is_blocked {

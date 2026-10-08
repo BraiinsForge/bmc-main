@@ -146,6 +146,31 @@ fn retry_timer_contributes_even_for_non_renderable_slot() {
 }
 
 #[test]
+fn widget_timer_wakes_the_host_for_a_dormant_slot() {
+    let slot = SlotPollInputs {
+        is_renderable: false,
+        timer_due_in: Some(Duration::from_millis(700)),
+        ..SlotPollInputs::default()
+    };
+    assert_eq!(
+        compute_poll_timeout_from_inputs(&[slot]),
+        700,
+        "a dormant widget's timer must not wait for an unrelated wakeup"
+    );
+}
+
+#[test]
+fn widget_timer_wakes_the_host_for_a_blocked_slot() {
+    let slot = SlotPollInputs {
+        is_renderable: true,
+        is_blocked: true,
+        timer_due_in: Some(Duration::from_millis(400)),
+        ..SlotPollInputs::default()
+    };
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 400);
+}
+
+#[test]
 fn minimum_across_multiple_slot_contributions_wins() {
     let s1 = SlotPollInputs {
         is_renderable: true,
