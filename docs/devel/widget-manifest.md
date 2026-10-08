@@ -103,8 +103,9 @@ attributes and enforced by any JSON Schema validator. Examples:
 - `+0.0` / `-0.0` collide in `Double` `enum_values` dedup — JSON Schema treats them as distinct numbers; the runtime
   treats them as the same selection.
 - Required params (i.e. `optional: false`) **must** declare a `default_value`, so a scene saved against the current
-  manifest stores a value for every key. Params stored before an upgrade that added a key lack it until the widget
-  migrates them (BDK-723). An `array` param is the exception: an omitted `default_value` is the empty list.
+  manifest stores a value for every key. Nothing fills in a key the widget later requires: params stored before then
+  lack it until the widget migrates them. An `array` param is the exception: an omitted `default_value` is the empty
+  list.
 - `array` params cannot be `optional` — `min_items: 0` is how a list says it may be empty, so the widget always receives
   a list, never `null`.
 - `min_items` ≤ `max_items`, and an array's `default_value` holds between `min_items` and `max_items` items, each valid
@@ -136,9 +137,10 @@ When the compositor loads a widget instance:
 2. The scene-management path checks the selected placement against the manifest's `supported_viewports`. The derived
    descriptor contains viewport shape, width, height, and DPI; each field must fall inside one of the manifest's
    inclusive constraints.
-3. The compositor sends the params as stored for the scene. Saving a scene stores every declared key, defaults included,
-   but the compositor merges nothing at load: a param a later widget version added is missing until the widget migrates
-   it (BDK-723).
+3. The compositor sends the params as stored for the scene. Saving a scene checks them against the manifest and stores
+   every declared key, defaults included, but the compositor neither merges nor checks anything at load: a key the
+   widget later requires stays missing, and a value whose type or options the widget later changed stays as stored,
+   until the widget migrates them.
 4. The widget binary is spawned as a Wayland client.
 5. The compositor sends viewport/display geometry and the stored params as JSON via the `deck_widget` initial configure
    batch.

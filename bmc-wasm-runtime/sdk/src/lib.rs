@@ -316,11 +316,11 @@ pub extern "C" fn __bmc_sdk_init() -> u64 {
 /// path is meaningless for out-of-tree widgets and the host adds the widget name.
 /// Without it, `panic = "abort"` traps as a bare `unreachable`.
 ///
-/// Verified on-device — a missing-param panic reads in the host log
+/// Verified on-device — a widget panic reads in the host log
 /// (widget name supplied by the host's per-widget tracing span):
 ///
 /// ```text
-/// ERROR widget{wasm="weather.wasm"}: widget panic at typed.rs:52: BUG: required param `location` missing from snapshot
+/// ERROR widget{wasm="weather.wasm"}: widget panic at typed.rs:52: …
 /// ```
 #[cfg(target_arch = "wasm32")]
 fn install_panic_hook() {

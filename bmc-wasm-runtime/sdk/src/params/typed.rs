@@ -33,16 +33,17 @@
 //!
 //! [`ParamRead::read_required`] panics when the snapshot is missing or null for the key.
 //! Saving a scene stores every declared key, defaults included,
-//! but nothing fills in a key a later widget version added:
-//! params stored before that upgrade lack it until the widget migrates them (BDK-723).
+//! but nothing fills in a key or list-row field the widget later requires:
+//! params stored before then lack it until the widget migrates them.
 //!
 //! [`ParamRead::read_optional`] returns `None` for missing or null entries.
 //!
 //! ## Values of another type
 //!
-//! The host validates every value against the manifest,
-//! so a value or list item of another type, or an enum value outside its options, is a host bug:
-//! required and optional reads alike panic rather than skip it.
+//! The host checks values against the manifest when a scene is saved, not when it loads,
+//! so a value stored before the widget changed a param's type or options reaches it as stored.
+//! Required and optional reads alike panic on a value or list item of another type,
+//! or an enum value outside its options, rather than skip it.
 //!
 //! ## Enums
 //!
@@ -59,13 +60,13 @@ use super::{Object, Params, Value};
 /// Implemented for every [`ValueRead`] type and for a `Vec` of one.
 pub trait ParamRead: Sized {
     /// Read a required key. Panics when the snapshot is missing or null for `key`:
-    /// params stored before the widget declared it lack it until migrated (BDK-723).
+    /// params stored before the widget required it lack it until migrated.
     #[must_use]
     fn read_required(snap: &Params, key: &str) -> Self {
         Self::read_optional(snap, key).unwrap_or_else(|| {
             panic!(
                 "required param `{key}` missing from the snapshot: \
-                params stored before the widget declared it lack it until migrated (BDK-723)"
+                params stored before the widget required it lack it until migrated"
             )
         })
     }
@@ -76,11 +77,11 @@ pub trait ParamRead: Sized {
 
 impl<T: ValueRead> ParamRead for T {
     fn read_optional(snap: &Params, key: &str) -> Option<Self> {
-        read_present(snap, key, T::from_value)
+        read_present(snap, key, |value| T::from_value(value).ok())
     }
 }
 
-/// `None` when `key` is missing or null; a value `read` refuses is a host bug.
+/// `None` when `key` is missing or null; panics on a value `read` refuses.
 fn read_present<'s, T>(
     snap: &'s Params,
     key: &str,
@@ -90,39 +91,53 @@ fn read_present<'s, T>(
     if matches!(value, Value::Null) {
         return None;
     }
-    Some(
-        read(value)
-            .unwrap_or_else(|| panic!("BUG: param `{key}` does not match the manifest type")),
-    )
+    Some(read(value).unwrap_or_else(|| {
+        panic!(
+            "param `{key}` does not match the manifest type: \
+            params stored before the widget changed it keep the old value until migrated"
+        )
+    }))
+}
+
+/// Why a [`Value`] did not read as the type asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReadError {
+    /// A value of another type, or an enum value outside its options.
+    Mismatch,
+    /// A row lacks this required field, or holds it as null.
+    MissingField(String),
 }
 
 /// Materialise a typed value out of one [`Value`].
 pub trait ValueRead: Sized {
-    /// `None` for a null or a value of another type.
-    fn from_value(value: Value<'_>) -> Option<Self>;
+    /// [`ReadError::Mismatch`] for a null or a value of another type.
+    /// Read a row's fields through [`required_field`] and [`optional_field`],
+    /// which handle absence and null.
+    fn from_value(value: Value<'_>) -> Result<Self, ReadError>;
 }
 
 impl ValueRead for String {
-    fn from_value(value: Value<'_>) -> Option<Self> {
-        value.as_str().map(str::to_owned)
+    fn from_value(value: Value<'_>) -> Result<Self, ReadError> {
+        value.as_str().map(str::to_owned).ok_or(ReadError::Mismatch)
     }
 }
 
 impl ValueRead for i32 {
-    fn from_value(value: Value<'_>) -> Option<Self> {
-        value.as_i32()
+    fn from_value(value: Value<'_>) -> Result<Self, ReadError> {
+        value.as_i32().ok_or(ReadError::Mismatch)
     }
 }
 
 impl ValueRead for f64 {
-    fn from_value(value: Value<'_>) -> Option<Self> {
-        value.as_f64()
+    fn from_value(value: Value<'_>) -> Result<Self, ReadError> {
+        value.as_f64().ok_or(ReadError::Mismatch)
     }
 }
 
 impl ValueRead for bool {
-    fn from_value(value: Value<'_>) -> Option<Self> {
-        value.as_bool()
+    fn from_value(value: Value<'_>) -> Result<Self, ReadError> {
+        value.as_bool().ok_or(ReadError::Mismatch)
     }
 }
 
@@ -132,28 +147,34 @@ impl<T: ValueRead> ParamRead for Vec<T> {
         Some(
             list.iter()
                 .enumerate()
-                .map(|(i, item)| {
-                    T::from_value(item).unwrap_or_else(|| {
-                        panic!("BUG: param `{key}` item {i} does not match the manifest item type")
-                    })
+                .map(|(i, item)| match T::from_value(item) {
+                    Ok(item) => item,
+                    Err(ReadError::Mismatch) => panic!(
+                        "param `{key}` item {i} does not match the manifest item type: \
+                        items stored before the widget changed it keep the old value until migrated"
+                    ),
+                    Err(ReadError::MissingField(field)) => panic!(
+                        "required field `{field}` of param `{key}` item {i} is missing: \
+                        rows stored before the widget required it lack it until migrated"
+                    ),
                 })
                 .collect(),
         )
     }
 }
 
-/// A required field of an object item; `None` when it is absent, null or of another type.
-#[must_use]
-pub fn required_field<T: ValueRead>(row: &Object<'_>, key: &str) -> Option<T> {
-    T::from_value(row.get(key)?)
+/// A required field of an object item; absent or null is [`ReadError::MissingField`].
+pub fn required_field<T: ValueRead>(row: &Object<'_>, key: &str) -> Result<T, ReadError> {
+    match row.get(key) {
+        None | Some(Value::Null) => Err(ReadError::MissingField(key.to_owned())),
+        Some(value) => T::from_value(value),
+    }
 }
 
-/// An optional field of an object item: `Some(None)` when absent or null,
-/// but `None` when of another type, which fails the whole row.
-#[must_use]
-pub fn optional_field<T: ValueRead>(row: &Object<'_>, key: &str) -> Option<Option<T>> {
+/// An optional field of an object item: `None` when absent or null.
+pub fn optional_field<T: ValueRead>(row: &Object<'_>, key: &str) -> Result<Option<T>, ReadError> {
     match row.get(key) {
-        None | Some(Value::Null) => Some(None),
+        None | Some(Value::Null) => Ok(None),
         Some(value) => T::from_value(value).map(Some),
     }
 }
@@ -166,8 +187,13 @@ pub fn optional_field<T: ValueRead>(row: &Object<'_>, key: &str) -> Option<Optio
 macro_rules! impl_manifest_str_enum {
     ($t:ty) => {
         impl $crate::params::typed::ValueRead for $t {
-            fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
-                <$t>::from_manifest_value(value.as_str()?)
+            fn from_value(
+                value: $crate::params::Value<'_>,
+            ) -> Result<Self, $crate::params::typed::ReadError> {
+                value
+                    .as_str()
+                    .and_then(<$t>::from_manifest_value)
+                    .ok_or($crate::params::typed::ReadError::Mismatch)
             }
         }
     };
@@ -179,8 +205,13 @@ macro_rules! impl_manifest_str_enum {
 macro_rules! impl_manifest_i32_enum {
     ($t:ty) => {
         impl $crate::params::typed::ValueRead for $t {
-            fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
-                <$t>::from_manifest_value(value.as_i32()?)
+            fn from_value(
+                value: $crate::params::Value<'_>,
+            ) -> Result<Self, $crate::params::typed::ReadError> {
+                value
+                    .as_i32()
+                    .and_then(<$t>::from_manifest_value)
+                    .ok_or($crate::params::typed::ReadError::Mismatch)
             }
         }
     };
@@ -192,8 +223,13 @@ macro_rules! impl_manifest_i32_enum {
 macro_rules! impl_manifest_f64_enum {
     ($t:ty) => {
         impl $crate::params::typed::ValueRead for $t {
-            fn from_value(value: $crate::params::Value<'_>) -> Option<Self> {
-                <$t>::from_manifest_value(value.as_f64()?)
+            fn from_value(
+                value: $crate::params::Value<'_>,
+            ) -> Result<Self, $crate::params::typed::ReadError> {
+                value
+                    .as_f64()
+                    .and_then(<$t>::from_manifest_value)
+                    .ok_or($crate::params::typed::ReadError::Mismatch)
             }
         }
     };
@@ -310,14 +346,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `s` does not match the manifest type")]
+    #[should_panic(expected = "param `s` does not match the manifest type: \
+                               params stored before the widget changed it keep the old value")]
     fn required_panics_on_a_value_of_another_type() {
         let p = build(&[("s", Entry::I32(1))]);
         let _: String = ParamRead::read_required(&p, "s");
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `s` does not match the manifest type")]
+    #[should_panic(expected = "param `s` does not match the manifest type")]
     fn optional_panics_on_a_value_of_another_type() {
         let p = build(&[("s", Entry::I32(1))]);
         let _ = <String as ParamRead>::read_optional(&p, "s");
@@ -341,14 +378,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `l` item 1 does not match the manifest item type")]
+    #[should_panic(expected = "param `l` item 1 does not match the manifest item type: \
+                               items stored before the widget changed it keep the old value")]
     fn list_item_of_another_type_panics() {
         let p = build(&[("l", Entry::List(&[Entry::I32(1), Entry::Str("two")]))]);
         let _ = <Vec<i32> as ParamRead>::read_required(&p, "l");
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `l` does not match the manifest type")]
+    #[should_panic(expected = "param `l` does not match the manifest type")]
     fn list_param_holding_no_list_panics() {
         let p = build(&[("l", Entry::I32(1))]);
         let _ = <Vec<i32> as ParamRead>::read_required(&p, "l");
@@ -363,9 +401,9 @@ mod tests {
     }
 
     impl ValueRead for Link {
-        fn from_value(value: Value<'_>) -> Option<Self> {
-            let row = value.as_object()?;
-            Some(Self {
+        fn from_value(value: Value<'_>) -> Result<Self, ReadError> {
+            let row = value.as_object().ok_or(ReadError::Mismatch)?;
+            Ok(Self {
                 label: required_field(&row, "label")?,
                 url: optional_field(&row, "url")?,
             })
@@ -400,8 +438,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `links` item 0 does not match the manifest item type")]
-    fn object_row_without_a_required_field_panics() {
+    #[should_panic(
+        expected = "required field `label` of param `links` item 0 is missing: \
+                               rows stored before the widget required it"
+    )]
+    fn object_row_without_a_required_field_names_it() {
         let p = build(&[(
             "links",
             Entry::List(&[Entry::Object(&[("url", Entry::Str("https://x"))])]),
@@ -410,7 +451,27 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `links` item 0 does not match the manifest item type")]
+    #[should_panic(expected = "required field `label` of param `links` item 0 is missing")]
+    fn object_row_with_a_null_required_field_names_it() {
+        let p = build(&[(
+            "links",
+            Entry::List(&[Entry::Object(&[("label", Entry::Null)])]),
+        )]);
+        let _ = <Vec<Link> as ParamRead>::read_required(&p, "links");
+    }
+
+    #[test]
+    #[should_panic(expected = "param `links` item 0 does not match the manifest item type")]
+    fn object_row_with_a_required_field_of_another_type_panics() {
+        let p = build(&[(
+            "links",
+            Entry::List(&[Entry::Object(&[("label", Entry::I32(1))])]),
+        )]);
+        let _ = <Vec<Link> as ParamRead>::read_required(&p, "links");
+    }
+
+    #[test]
+    #[should_panic(expected = "param `links` item 0 does not match the manifest item type")]
     fn object_row_with_an_optional_field_of_another_type_panics() {
         let p = build(&[(
             "links",
@@ -455,14 +516,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `c` does not match the manifest type")]
+    #[should_panic(expected = "param `c` does not match the manifest type")]
     fn str_enum_panics_on_unknown_value() {
         let p = build(&[("c", Entry::Str("green"))]);
         let _ = <Color as ParamRead>::read_required(&p, "c");
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `c` does not match the manifest type")]
+    #[should_panic(expected = "param `c` does not match the manifest type")]
     fn str_enum_optional_panics_on_unknown_value() {
         let p = build(&[("c", Entry::Str("green"))]);
         let _ = <Color as ParamRead>::read_optional(&p, "c");
@@ -478,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BUG: param `c` item 0 does not match the manifest item type")]
+    #[should_panic(expected = "param `c` item 0 does not match the manifest item type")]
     fn str_enum_list_panics_on_an_unknown_item() {
         let p = build(&[("c", Entry::List(&[Entry::Str("green")]))]);
         let _ = <Vec<Color> as ParamRead>::read_required(&p, "c");

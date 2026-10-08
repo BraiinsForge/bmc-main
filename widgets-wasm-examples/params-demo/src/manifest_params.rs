@@ -175,9 +175,11 @@ pub struct LinksItem {
     pub tone: LinksItemTone,
 }
 impl snapshot::typed::ValueRead for LinksItem {
-    fn from_value(value: snapshot::Value<'_>) -> Option<Self> {
-        let row = value.as_object()?;
-        Some(Self {
+    fn from_value(value: snapshot::Value<'_>) -> Result<Self, snapshot::typed::ReadError> {
+        let row = value
+            .as_object()
+            .ok_or(snapshot::typed::ReadError::Mismatch)?;
+        Ok(Self {
             label: snapshot::typed::required_field(&row, "label")?,
             url: snapshot::typed::optional_field(&row, "url")?,
             tone: snapshot::typed::required_field(&row, "tone")?,

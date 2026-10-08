@@ -163,7 +163,7 @@ fn emit_params_block(
         );
     }
     // The emitted code and the SDK's enum macros name these unqualified.
-    for prelude in ["Option", "String", "Vec"] {
+    for prelude in ["Option", "Result", "String", "Vec"] {
         symbols.declare(MODULE, &format_ident!("{prelude}"), "the Rust prelude");
     }
     // Resolve identifiers once so the same name is used consistently across the struct
@@ -701,9 +701,11 @@ fn row_ty(
         }
 
         impl snapshot::typed::ValueRead for #row {
-            fn from_value(value: snapshot::Value<'_>) -> Option<Self> {
-                let row = value.as_object()?;
-                Some(Self {
+            fn from_value(
+                value: snapshot::Value<'_>,
+            ) -> Result<Self, snapshot::typed::ReadError> {
+                let row = value.as_object().ok_or(snapshot::typed::ReadError::Mismatch)?;
+                Ok(Self {
                     #(#reads)*
                 })
             }
@@ -1123,6 +1125,7 @@ mod tests {
                 "links_item": tone("Links item"),
                 "links_item_tone": tone("Links item tone"),
                 "option": tone("Option"),
+                "result": tone("Result"),
             }),
             serde_json::json!({}),
         );
@@ -1131,6 +1134,7 @@ mod tests {
             r#"- module: `LinksItem` from rows of param "links", param "links_item""#,
             r#"- module: `LinksItemTone` from field "tone" of param "links", param "links_item_tone""#,
             r#"- module: `Option` from the Rust prelude, param "option""#,
+            r#"- module: `Result` from the Rust prelude, param "result""#,
             r#"- struct LinksItem of param "links": `my_label` from field "my-label", field "my_label""#,
         ] {
             assert!(report.contains(line), "missing {line:?} in:\n{report}");
