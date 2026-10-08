@@ -116,6 +116,7 @@ pub use disk_cache::{DiskCache, reclaim_orphaned_temps};
 mod host_api;
 mod image_decode_lock;
 pub mod led_request;
+mod log_once;
 pub mod network;
 mod package_assets;
 #[cfg(feature = "perf-overlay")]

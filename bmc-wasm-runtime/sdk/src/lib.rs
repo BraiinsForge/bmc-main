@@ -275,7 +275,8 @@
 //!   of the offending guest call and kills the widget.
 //!   Used when calling the import from the wrong phase indicates a structural
 //!   widget bug whose silent no-op would mask a real failure.
-//! - **soft-fail** — the import logs a warn-once and returns a "nothing here" sentinel
+//! - **soft-fail** — the import warns once per widget (repeats log at debug level)
+//!   and returns a "nothing here" sentinel
 //!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
 //!   is reasonable and the widget composes naturally with the sentinel.
 //!
@@ -293,11 +294,11 @@
 //! \* Same gating for `on_params_update`, `on_system_update`,
 //!   `on_credentials_update`, `on_touch`, and `on_network_update`.
 //!
-//! ¹ Returns the touch-not-present sentinel after a one-time warn.
+//! ¹ Returns the touch-not-present sentinel after a warning, once per widget.
 //!   Defensive reads compose naturally — the widget gets `None`
 //!   the same way it would on a frame where no touch occurred.
 //!
-//! ² Silently dropped after a one-time warn. Honouring the request
+//! ² Dropped, with a warning once per widget. Honouring the request
 //!   would queue work on a runtime that's about to be dropped.
 
 // cast_sign_loss only fires on wasm32 (gated FFI code).

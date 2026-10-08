@@ -29,16 +29,15 @@
 //!   Used for imports that can only produce a meaningful side effect during `render`
 //!   (tree submission, touch readback), where a violation indicates a structural
 //!   widget bug we want to surface loudly rather than paper over.
-//! * [`forbid_unload`] — return without effect after `tracing::warn` once.
+//! * [`forbid_unload`] — return without effect after a warning, once per widget per import.
 //!   Used for imports that are *meaningful* in most phases but pointless during
 //!   teardown (frame requests after `unload` would be acted on by a runtime that's
 //!   about to be dropped).
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use wasmi::Caller;
 
 use crate::host_api::{HostState, Lifecycle};
+use crate::log_once::warn_once;
 
 /// Trap the guest call with a clear message naming the rule that was violated.
 ///
@@ -88,20 +87,21 @@ pub(super) fn require_render(
 /// Returns `true` if the import body should run,
 /// `false` if it should return its "nothing-here" sentinel (typically `0`).
 pub(super) fn render_or_warn(
-    caller: &Caller<'_, HostState>,
+    caller: &mut Caller<'_, HostState>,
     import_name: &'static str,
-    warned: &AtomicBool,
 ) -> bool {
     let actual = caller.data().current_lifecycle;
     if actual == Lifecycle::Render {
         return true;
     }
-    if !warned.swap(true, Ordering::Relaxed) {
-        tracing::warn!(
-            "host import `{import_name}` called outside `render` (was {actual:?}) — \
-             returning empty. See the lifecycle guard matrix in `bmc_wasm_sdk` crate docs."
-        );
-    }
+    let state = caller.data_mut();
+    warn_once!(
+        state.logged_sites,
+        key: import_name;
+        instance_id = %state.instance_id,
+        "host import `{import_name}` called outside `render` (was {actual:?}) — \
+         returning empty. See the lifecycle guard matrix in `bmc_wasm_sdk` crate docs."
+    );
     false
 }
 
@@ -117,26 +117,17 @@ pub(super) fn render_or_warn(
 ///
 /// Returns `true` if the call should proceed,
 /// `false` if the runtime should silently no-op.
-pub(super) fn forbid_unload(
-    caller: &Caller<'_, HostState>,
-    import_name: &'static str,
-    warned: &AtomicBool,
-) -> bool {
+pub(super) fn forbid_unload(caller: &mut Caller<'_, HostState>, import_name: &'static str) -> bool {
     if caller.data().current_lifecycle != Lifecycle::Unload {
         return true;
     }
-    if !warned.swap(true, Ordering::Relaxed) {
-        tracing::warn!(
-            "host import `{import_name}` called during `unload` — ignored. \
-             Unload is a synchronous teardown phase; frame requests cannot be honoured."
-        );
-    }
+    let state = caller.data_mut();
+    warn_once!(
+        state.logged_sites,
+        key: import_name;
+        instance_id = %state.instance_id,
+        "host import `{import_name}` called during `unload` — ignored. \
+         Unload is a synchronous teardown phase; frame requests cannot be honoured."
+    );
     false
-}
-
-/// Convenience for the warn-once latches used by [`forbid_unload`].
-/// Declare one per import site so the warn fires at most once per process per import,
-/// not once per widget instance, which would still be a flood for hot-reload churn.
-pub(super) const fn warned_latch() -> AtomicBool {
-    AtomicBool::new(false)
 }

@@ -40,7 +40,7 @@ use crate::host_api::HostState;
 
 use super::super::backend::{RendererAssetRestorer, write_touch_hit};
 use super::super::memory::{read_bytes, read_string};
-use super::guards::{forbid_unload, render_or_warn, require_render, warned_latch};
+use super::guards::{forbid_unload, render_or_warn, require_render};
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_primitives(linker)?;
@@ -128,14 +128,11 @@ fn register_primitives(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 fn register_frame_control(linker: &mut Linker<HostState>) -> Result<()> {
-    static REQUEST_FRAME_WARNED: std::sync::atomic::AtomicBool = warned_latch();
-    static REQUEST_FRAME_AFTER_WARNED: std::sync::atomic::AtomicBool = warned_latch();
-
     linker.func_wrap(
         "env",
         "host_request_frame",
         |mut caller: Caller<'_, HostState>| {
-            if !forbid_unload(&caller, "host_request_frame", &REQUEST_FRAME_WARNED) {
+            if !forbid_unload(&mut caller, "host_request_frame") {
                 return;
             }
             let state = caller.data_mut();
@@ -147,11 +144,7 @@ fn register_frame_control(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_request_frame_after",
         |mut caller: Caller<'_, HostState>, delay_ms: u32| {
-            if !forbid_unload(
-                &caller,
-                "host_request_frame_after",
-                &REQUEST_FRAME_AFTER_WARNED,
-            ) {
+            if !forbid_unload(&mut caller, "host_request_frame_after") {
                 return;
             }
             let state = caller.data_mut();
@@ -443,16 +436,13 @@ fn commit_submitted_frame(
 }
 
 fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
-    static TOUCH_CLICK_WARNED: std::sync::atomic::AtomicBool = warned_latch();
-    static TOUCH_DRAG_WARNED: std::sync::atomic::AtomicBool = warned_latch();
-
     linker.func_wrap("env", "host_submit_tree", submit_tree)?;
 
     linker.func_wrap(
         "env",
         "host_get_touch_click",
         |mut caller: Caller<'_, HostState>, key_ptr: u32, key_len: u32, out_ptr: u32| -> i32 {
-            if !render_or_warn(&caller, "host_get_touch_click", &TOUCH_CLICK_WARNED) {
+            if !render_or_warn(&mut caller, "host_get_touch_click") {
                 return 0;
             }
             let Some(key) = read_string(&caller, key_ptr, key_len) else {
@@ -469,7 +459,7 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_get_touch_drag",
         |mut caller: Caller<'_, HostState>, key_ptr: u32, key_len: u32, out_ptr: u32| -> i32 {
-            if !render_or_warn(&caller, "host_get_touch_drag", &TOUCH_DRAG_WARNED) {
+            if !render_or_warn(&mut caller, "host_get_touch_drag") {
                 return 0;
             }
             let Some(key) = read_string(&caller, key_ptr, key_len) else {

@@ -55,6 +55,7 @@ use bmc_wasm_protocol::{
 
 use crate::audio_registry::AudioRegistry;
 use crate::image_decode_lock::ImageDecodePermit;
+use crate::log_once::LoggedSites;
 use crate::network::NetworkInfo;
 use crate::runtime::{
     CredentialRefusal, CredentialView, FetchAgent, FetchLogLimiter, ParamsSnapshot,
@@ -1191,6 +1192,8 @@ pub(crate) struct HostState {
 
     pub(crate) fetch_log_limiter: FetchLogLimiter,
 
+    pub(crate) logged_sites: LoggedSites,
+
     /// Headers of the response being delivered right now, held only for its
     /// `__on_fetch_response` call — the one window a widget can read them in.
     pub(crate) delivering_fetch_headers: Option<(FetchRequestId, Vec<(String, String)>)>,
@@ -1517,6 +1520,7 @@ impl HostState {
             hermetic: None,
             fetch_observer: None,
             fetch_log_limiter: FetchLogLimiter::default(),
+            logged_sites: LoggedSites::default(),
             delivering_fetch_headers: None,
             #[cfg(feature = "testing")]
             fetch_log_probe: FetchLogProbe::default(),
