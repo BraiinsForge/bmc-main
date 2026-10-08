@@ -532,6 +532,12 @@ pub struct SceneRenderer {
     #[cfg(feature = "profiling")]
     finish_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
+    swizzle_w: ii_stopwatch::StopWatch,
+    /// Holds the GPU time of compose and swizzle,
+    /// whose own stopwatches only cover submission.
+    #[cfg(feature = "profiling")]
+    gpu_wait_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
     flip_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
     render_every: ii_stopwatch::Every,
@@ -609,6 +615,10 @@ impl SceneRenderer {
             compose_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
             finish_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            swizzle_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            gpu_wait_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
             flip_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
@@ -1046,11 +1056,17 @@ impl SceneRenderer {
         // intermediate is itself the scanout buffer.
         let scanout_fb = match (self.swizzler.as_mut(), intermediate) {
             (Some(swizzler), Some(intermediate)) => {
-                swizzler.present(self.egl.renderer(), &self.output, &intermediate)?
+                ii_stopwatch::stopwatch_start!(self.swizzle_w);
+                let scanout_fb =
+                    swizzler.present(self.egl.renderer(), &self.output, &intermediate)?;
+                ii_stopwatch::stopwatch_stop!(self.swizzle_w);
+                scanout_fb
             }
             _ => fb,
         };
+        ii_stopwatch::stopwatch_start!(self.gpu_wait_w);
         self.egl.wait_for_rendering_completion()?;
+        ii_stopwatch::stopwatch_stop!(self.gpu_wait_w);
 
         ii_stopwatch::stopwatch_start!(self.flip_w);
         self.output.page_flip(scanout_fb, &damage_rects)?;
@@ -1061,15 +1077,20 @@ impl SceneRenderer {
         #[cfg(feature = "profiling")]
         if ii_stopwatch::every_expired!(self.render_every) {
             tracing::info!(
-                "render_scene: bind={} compose={} finish={} flip={}",
+                "render_scene: bind={} compose={} finish={} swizzle={} gpu_wait={} flip={} {}",
                 self.bind_w,
                 self.compose_w,
                 self.finish_w,
-                self.flip_w
+                self.swizzle_w,
+                self.gpu_wait_w,
+                self.flip_w,
+                self.output.take_transfer_report()
             );
             ii_stopwatch::stopwatch_reset!(self.bind_w);
             ii_stopwatch::stopwatch_reset!(self.compose_w);
             ii_stopwatch::stopwatch_reset!(self.finish_w);
+            ii_stopwatch::stopwatch_reset!(self.swizzle_w);
+            ii_stopwatch::stopwatch_reset!(self.gpu_wait_w);
             ii_stopwatch::stopwatch_reset!(self.flip_w);
         }
 

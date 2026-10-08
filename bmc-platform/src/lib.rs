@@ -188,6 +188,16 @@ pub enum DisplayPixelFormat {
     Bgr565,
 }
 
+impl DisplayPixelFormat {
+    #[must_use]
+    pub const fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Xrgb8888 => 4,
+            Self::Bgr565 => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibleArea {
     pub x: u32,

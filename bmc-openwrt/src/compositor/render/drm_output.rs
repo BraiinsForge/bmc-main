@@ -21,6 +21,8 @@
 //! DRM output device management.
 
 use anyhow::{Context, Result};
+#[cfg(feature = "profiling")]
+use smithay::utils::{Clock, Monotonic};
 use smithay::{
     backend::drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneState},
     reexports::drm::control::{Device as ControlDevice, Mode, connector, crtc, framebuffer, plane},
@@ -48,6 +50,22 @@ pub struct DrmOutput {
     /// own clock at fire time and more accurate (it's the real presentation
     /// time, not an approximation). `None` until the first vblank.
     last_vblank_ms: Option<u32>,
+    /// When the pending flip was committed, on the clock of the kernel's event timestamps.
+    #[cfg(feature = "profiling")]
+    committed_at: Option<Duration>,
+    /// Commit to the kernel's flip-complete timestamp.
+    /// MIPI DBI panels send that event once the SPI write ends,
+    /// so there it times the panel transfer, without the event loop's latency.
+    #[cfg(feature = "profiling")]
+    transfer: ii_stopwatch::Jitter,
+    #[cfg(feature = "profiling")]
+    sent_bytes: usize,
+    #[cfg(feature = "profiling")]
+    pixel_format: bmc_platform::DisplayPixelFormat,
+    /// Start of the window the next [`Self::take_transfer_report`] covers.
+    /// Reports come with renders, so an idle window runs long.
+    #[cfg(feature = "profiling")]
+    report_since: std::time::Instant,
 }
 
 impl DrmOutput {
@@ -133,6 +151,16 @@ impl DrmOutput {
             frame_count: 0,
             flip_pending: false,
             last_vblank_ms: None,
+            #[cfg(feature = "profiling")]
+            committed_at: None,
+            #[cfg(feature = "profiling")]
+            transfer: ii_stopwatch::Jitter::new(),
+            #[cfg(feature = "profiling")]
+            sent_bytes: 0,
+            #[cfg(feature = "profiling")]
+            pixel_format: display_profile.pixel_format,
+            #[cfg(feature = "profiling")]
+            report_since: std::time::Instant::now(),
         })
     }
 
@@ -208,6 +236,14 @@ impl DrmOutput {
         reason = "wrapping at ~49.7 days is acceptable for frame-callback time"
     )]
     pub fn on_vblank(&mut self, timestamp: Duration) {
+        #[cfg(feature = "profiling")]
+        if let Some(transfer) = self
+            .committed_at
+            .take()
+            .and_then(|committed_at| timestamp.checked_sub(committed_at))
+        {
+            self.transfer.add(transfer);
+        }
         self.flip_pending = false;
         self.last_vblank_ms = Some(timestamp.as_millis() as u32);
     }
@@ -265,6 +301,8 @@ impl DrmOutput {
             config: Some(plane_config),
         };
 
+        #[cfg(feature = "profiling")]
+        let committed_at = Duration::from(Clock::<Monotonic>::new().now());
         if self.frame_count == 0 {
             self.surface
                 .commit([plane_state], true)
@@ -278,8 +316,32 @@ impl DrmOutput {
 
         self.flip_pending = true;
         self.frame_count = self.frame_count.wrapping_add(1);
+        #[cfg(feature = "profiling")]
+        {
+            self.committed_at = Some(committed_at);
+            self.sent_bytes +=
+                self.width as usize * self.height as usize * self.pixel_format.bytes_per_pixel();
+        }
 
         Ok(())
+    }
+
+    /// Panel transfers since the last call, then reset.
+    /// Format: `transfer=<flips>:<avg>/<max> sent=<bytes>B window=<elapsed>`.
+    #[cfg(feature = "profiling")]
+    pub fn take_transfer_report(&mut self) -> String {
+        let report = format!(
+            "transfer={}:{:?}/{:?} sent={}B window={:.1?}",
+            self.transfer.n,
+            self.transfer.avg(),
+            self.transfer.max,
+            self.sent_bytes,
+            self.report_since.elapsed()
+        );
+        self.transfer.reset();
+        self.sent_bytes = 0;
+        self.report_since = std::time::Instant::now();
+        report
     }
 }
 
