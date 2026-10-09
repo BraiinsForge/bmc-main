@@ -209,7 +209,16 @@ export class GrpcMockInterceptor {
                                     ...responseBase,
                                     message: responseData,
                                 } as UnaryResponse;
-                                setTimeout(() => resolveRequest(response), getResponseDelay());
+                                const timer = setTimeout(() => resolveRequest(response), getResponseDelay());
+                                // Rejects on abort the way fetch does.
+                                request.signal.addEventListener(
+                                    'abort',
+                                    () => {
+                                        clearTimeout(timer);
+                                        rejectRequest(request.signal.reason);
+                                    },
+                                    { once: true },
+                                );
                                 return;
                             }
 

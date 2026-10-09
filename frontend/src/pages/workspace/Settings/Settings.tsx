@@ -170,6 +170,9 @@ interface State {
         displayNightmodeBrightness: FieldState<pb.BrightnessInfo>;
         displayNightmodeInterval: FieldState<pb.TimeInterval>;
         displayNightmodeScreenOffTimeout: FieldState<number>;
+
+        // Upgrades
+        autoUpgrade: FieldState<boolean>;
     };
 
     upgradeFromFeedStatus: UpgradeFromFeedStatus;
@@ -214,6 +217,9 @@ const getInitialState = (): State => ({
         displayNightmodeBrightness: getFieldStateDefault(),
         displayNightmodeInterval: getFieldStateDefault(),
         displayNightmodeScreenOffTimeout: getFieldStateDefault(),
+
+        // Upgrades
+        autoUpgrade: getFieldStateDefault(),
     } satisfies Record<string, FieldState<any>>,
 
     upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
@@ -283,7 +289,7 @@ class View extends Component<Props, State> {
         const q = [this.#generalFetch(), this.#fetchSystemInfo(), this.#displayFetch()];
         if (soundConfigurable(capabilities)) q.push(this.#soundFetch());
         if (ledConfigurable(capabilities)) q.push(this.#ledFetch());
-        if (!upgradesManaged(capabilities)) q.push(this.#upgradesFeedCheck());
+        if (!upgradesManaged(capabilities)) q.push(this.#upgradesFeedCheck(), this.#upgradesAutoFetch());
         await Promise.allSettled(q);
     };
 
@@ -1603,12 +1609,50 @@ class View extends Component<Props, State> {
         });
     };
 
-    #updatesToggle = (enabled: boolean): void => console.log(enabled);
+    private upgradesAutoFetchAbort = pb.abort.get();
+    #upgradesAutoFetch = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.upgradesAutoFetchAbort.replace();
+            const { enabled } = await pb.rpc.upgrade.getAutoUpgrade({}, { signal });
+            this.#setField('autoUpgrade', s => getFieldStateDefault({ value: enabled, errors: s.errors }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            this.#setField('autoUpgrade', getFieldStateDefault());
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load automatic updates setting!' });
+            toast.error(msg);
+        }
+    };
+    private upgradesEnableAutoAbort = pb.abort.get();
+    #upgradesEnableAuto = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            this.#setField('autoUpgrade', s => ({ ...s, value: true, isSaving: true, errors: [] }));
+            const { signal } = this.upgradesEnableAutoAbort.replace();
+            await pb.rpc.upgrade.setAutoUpgrade({ enabled: true }, { signal });
+            toast.success(formatMessage({ defaultMessage: 'Automatic updates enabled' }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to enable automatic updates!' });
+            toast.error(msg);
+        }
+        await this.#upgradesAutoFetch();
+        this.#setField('autoUpgrade', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
+    };
     #updatesRender = (): ReactNode => {
-        const { upgradeFromFeedStatus, upgradeFromFeedErrors, data } = this.state;
+        const { upgradeFromFeedStatus, upgradeFromFeedErrors, data, values } = this.state;
+        const automaticUpgrades = this.#getFieldStruct(values.autoUpgrade, this.#upgradesEnableAuto);
+        // Users may turn automatic updates back on, never off.
+        automaticUpgrades.disabled ||= values.autoUpgrade.value !== false;
         return (
             <SectionUpgrade
-                automaticUpgrades={{ value: true, onChange: this.#updatesToggle, disabled: true }}
+                automaticUpgrades={automaticUpgrades}
                 versionCurrent={data.metadata?.version ?? null}
                 status={upgradeFromFeedStatus}
                 errors={upgradeFromFeedErrors}

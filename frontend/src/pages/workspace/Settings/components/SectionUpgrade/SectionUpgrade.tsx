@@ -42,7 +42,7 @@ import {
     Overlay,
     Tick,
 } from '@/components';
-import { InlineLoading, Toggle } from '@carbon/react';
+import { InlineLoading, Toggle, ToggleSkeleton } from '@carbon/react';
 import { Upgrade as IconUpgrade, ChevronDown, ChevronUp, Restart as IconRestart } from '@carbon/react/icons';
 
 // Styles
@@ -460,15 +460,19 @@ class View extends Component<Props, State> {
                         })}
                         disabled={automaticUpgrades.disabled}
                     >
-                        <Toggle
-                            id={$('data-collection')}
-                            size="md"
-                            toggled={!!automaticUpgrades.value}
-                            onToggle={automaticUpgrades.onChange}
-                            disabled={automaticUpgrades.disabled}
-                            labelA={formatMessage({ defaultMessage: 'Off' })}
-                            labelB={formatMessage({ defaultMessage: 'On' })}
-                        />
+                        {automaticUpgrades.value == null ? (
+                            <ToggleSkeleton aria-label={formatMessage({ defaultMessage: 'Automatic Updates' })} />
+                        ) : (
+                            <Toggle
+                                id={$('data-collection')}
+                                size="md"
+                                toggled={automaticUpgrades.value}
+                                onToggle={automaticUpgrades.onChange}
+                                disabled={automaticUpgrades.disabled}
+                                labelA={formatMessage({ defaultMessage: 'Off' })}
+                                labelB={formatMessage({ defaultMessage: 'On' })}
+                            />
+                        )}
                     </Field>
 
                     {this.#renderUpgradeBox()}

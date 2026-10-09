@@ -124,19 +124,24 @@ function installMocks(startUpgrade: StartUpgradeMock): void {
     });
 }
 
-function renderPage(hash = '#updates') {
-    return render(
+// `page: false` leaves the page but keeps this Toaster; a remounted one shows no toast.
+function pageTree(hash: string, page = true) {
+    return (
         <HelmetProvider>
             <IntlProvider locale="en">
                 <AppContext.Provider value={appContext}>
                     <MemoryRouter initialEntries={[`/${hash}`]}>
-                        <Settings />
+                        {page && <Settings />}
                         <Toaster />
                     </MemoryRouter>
                 </AppContext.Provider>
             </IntlProvider>
-        </HelmetProvider>,
+        </HelmetProvider>
     );
+}
+
+function renderPage(hash = '#updates') {
+    return render(pageTree(hash));
 }
 
 const startButton = (): HTMLElement => screen.getByRole('button', { name: /Download & Upgrade/i });
@@ -415,5 +420,145 @@ describe('Settings Sound & Light gating (BDK-794)', () => {
         expect(rpc.getSoundVolumeSettings).not.toHaveBeenCalled();
         expect(rpc.getBootSoundSettings).not.toHaveBeenCalled();
         expect(rpc.getLedSettings).not.toHaveBeenCalled();
+    });
+});
+
+function installAutoUpgradeMocks(init: { enabled: boolean } | 'unavailable', setFails = false) {
+    let enabled = init === 'unavailable' ? false : init.enabled;
+    const setAutoUpgrade = rstest.fn(({ req }: { req: pb.SetAutoUpgradeRequest }) => {
+        if (setFails) throw new ConnectError('mock: config not saved', Code.Internal);
+        enabled = req.enabled;
+        return {};
+    });
+    store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+    registerMocks(pb.services.UpgradeService, {
+        checkForUpgrade: () => pb.create(pb.CheckForUpgradeResponseSchema, {}),
+        getAutoUpgrade: () => {
+            if (init === 'unavailable') throw new ConnectError('mock: unreachable', Code.Unavailable);
+            return pb.create(pb.GetAutoUpgradeResponseSchema, { enabled });
+        },
+        setAutoUpgrade,
+    });
+    return { setAutoUpgrade };
+}
+const autoUpgradeSwitch = (): HTMLButtonElement => screen.getByRole('switch');
+
+// Users must not opt out of automatic updates,
+// but a device a developer opted out must be recoverable from the UI.
+describe('Settings automatic updates (BDK-926)', () => {
+    test('automatic updates that are on cannot be switched off', async () => {
+        rstest.useFakeTimers();
+        installAutoUpgradeMocks({ enabled: true });
+
+        renderPage('#updates');
+        await advance(300);
+
+        expect(autoUpgradeSwitch().getAttribute('aria-checked')).toBe('true');
+        expect(autoUpgradeSwitch().disabled).toBe(true);
+    });
+
+    test('automatic updates that are off can be switched back on', async () => {
+        rstest.useFakeTimers();
+        const rpc = installAutoUpgradeMocks({ enabled: false });
+
+        renderPage('#updates');
+        await advance(300);
+        expect(autoUpgradeSwitch().getAttribute('aria-checked')).toBe('false');
+        expect(autoUpgradeSwitch().disabled).toBe(false);
+
+        fireEvent.click(autoUpgradeSwitch());
+        await advance(0);
+
+        expect(rpc.setAutoUpgrade).toHaveBeenCalledTimes(1);
+        expect(rpc.setAutoUpgrade.mock.calls[0]?.[0].req.enabled).toBe(true);
+        expect(autoUpgradeSwitch().getAttribute('aria-checked')).toBe('true');
+        expect(autoUpgradeSwitch().disabled).toBe(true);
+    });
+
+    test('a failed enable shows the device state again', async () => {
+        rstest.useFakeTimers();
+        installAutoUpgradeMocks({ enabled: false }, true);
+
+        renderPage('#updates');
+        await advance(300);
+        fireEvent.click(autoUpgradeSwitch());
+        await advance(0);
+
+        expect(screen.getByText(/mock: config not saved/)).toBeTruthy();
+        expect(autoUpgradeSwitch().getAttribute('aria-checked')).toBe('false');
+        expect(autoUpgradeSwitch().disabled).toBe(false);
+    });
+
+    test('a failed enable that cannot reread the state does not claim it is on', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+        let reads = 0;
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => pb.create(pb.CheckForUpgradeResponseSchema, {}),
+            getAutoUpgrade: () => {
+                reads += 1;
+                if (reads > 1) throw new ConnectError('mock: unreachable', Code.Unavailable);
+                return pb.create(pb.GetAutoUpgradeResponseSchema, { enabled: false });
+            },
+            setAutoUpgrade: () => {
+                throw new ConnectError('mock: config not saved', Code.Internal);
+            },
+        });
+
+        renderPage('#updates');
+        await advance(300);
+        fireEvent.click(autoUpgradeSwitch());
+        await advance(0);
+
+        expect(screen.queryByRole('switch')).toBeNull();
+    });
+
+    test('an unknown state shows no switch rather than a false Off', async () => {
+        rstest.useFakeTimers();
+        installAutoUpgradeMocks('unavailable');
+
+        renderPage('#updates');
+        await advance(300);
+
+        expect(screen.queryByRole('switch')).toBeNull();
+    });
+
+    test('a state still loading shows no switch rather than a false Off', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => pb.create(pb.CheckForUpgradeResponseSchema, {}),
+            getAutoUpgrade: ({ conf }) => {
+                conf({ delay: 60_000 });
+                return pb.create(pb.GetAutoUpgradeResponseSchema, { enabled: false });
+            },
+        });
+
+        renderPage('#updates');
+        await advance(300);
+
+        expect(screen.queryByRole('switch')).toBeNull();
+    });
+
+    test('leaving the page cancels an enable in flight, toast included', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => pb.create(pb.CheckForUpgradeResponseSchema, {}),
+            getAutoUpgrade: () => pb.create(pb.GetAutoUpgradeResponseSchema, { enabled: false }),
+            setAutoUpgrade: ({ conf }) => {
+                conf({ delay: 1000 });
+                return {};
+            },
+        });
+
+        const { rerender } = renderPage('#updates');
+        await advance(300);
+        fireEvent.click(autoUpgradeSwitch());
+        await advance(0);
+        rerender(pageTree('#updates', false));
+        await advance(2000);
+
+        expect(screen.queryByText(/Automatic updates enabled/)).toBeNull();
     });
 });

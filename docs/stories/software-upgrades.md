@@ -22,7 +22,8 @@ interruption the upgrade requires.
 > As a user, I want automatic updates to keep looking for the latest software whenever my device is in use, so it still
 > stays current when it is normally switched off or disconnected overnight.
 
-- Initial device setup enables automatic updates; the user can turn them off or back on from the system upgrade page.
+- Initial device setup enables automatic updates, and the user cannot turn them off. If they are off, the user can turn
+  them back on from the system upgrade page.
 - An enabled device checks every two hours rather than relying on a single nightly maintenance window.
 - Each device staggers its checks, so many devices do not contact the update service at the same instant.
 - A newly configured device checks once as soon as setup finishes instead of waiting for its first scheduled check.
@@ -56,7 +57,7 @@ interruption the upgrade requires.
   provides another opportunity.
 - Scheduled automatic checks do not run during the first 30 minutes after a normal startup. This avoids competing with
   startup work; the one-time check after initial setup is exempt.
-- Automatic updates install available upgrades without asking for confirmation. Turning automatic updates off leaves
-  manual checking and installation available.
+- Automatic updates install available upgrades without asking for confirmation. While automatic updates are off, manual
+  checking and installation stay available.
 - A firmware upgrade requires a full device reboot. The exact interruption for an application-only update is reported by
   the upgrade offer rather than inferred solely from the update type.
