@@ -47,7 +47,6 @@ use smithay::{
 
 use super::render::{BufferPool, DrmOutput, EglContext, ScanoutFormat, ScanoutSwizzler};
 use super::scene_cycling::TransitionFrame;
-use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
 
 const BACKGROUND_COLOR: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
@@ -216,15 +215,6 @@ fn draw_rect_on_frame(
         tracing::warn!("Failed to draw separator rect {:?}: {:?}", dst, e);
     }
 }
-
-// `draw_separator_grids` and `draw_logo_scenes` repaint without reporting into
-// the frame's `damage_rects`, which only holds up while `DrmOutput::page_flip`
-// discards damage clips. Fail the build rather than the panel if that flips
-// before the two draws are damage-tracked.
-const _: () = assert!(
-    !DrmOutput::DAMAGE_CLIPS_ENABLED,
-    "BUG: the logo, caption and separator draws do not report damage - damage-track them before enabling damage clips"
-);
 
 /// A combined scene showing the separator grid this frame: the x-offset the
 /// grid slides with during swipes and transitions, and the opacity it fades
@@ -752,7 +742,6 @@ impl SceneRenderer {
         dirty: &[ObjectId],
         capture_frames: Vec<image_copy_capture::Frame>,
         capture_active: bool,
-        output_damage: &OutputDamage,
     ) -> Result<(bool, Vec<image_copy_capture::Frame>, bool)> {
         // Flip-pending gating happens in the caller (egl_compositor) so that
         // dirty_buffers aren't consumed when the render would be skipped.
@@ -870,10 +859,6 @@ impl SceneRenderer {
             .context("Failed to begin frame")?;
 
         let output_rect = Rectangle::from_size(output_size);
-        let mut damage_rects = match output_damage {
-            OutputDamage::Full => vec![output_rect],
-            OutputDamage::Widgets(_) => Vec::new(),
-        };
 
         let mut renderable_items = Vec::new();
 
@@ -905,12 +890,6 @@ impl SceneRenderer {
                 self.scanout_transform,
             );
 
-            if let OutputDamage::Widgets(dirty_widgets) = output_damage
-                && dirty_widgets.contains(&placement.instance_id)
-            {
-                damage_rects.push(dst);
-            }
-
             renderable_items.push((
                 buffer_id.clone(),
                 placement.instance_id.clone(),
@@ -939,8 +918,6 @@ impl SceneRenderer {
                 .context("Failed to clear uncovered output regions")?;
         }
 
-        // Neither the logo/caption nor the separator draws below report into
-        // `damage_rects`; see the assert next to `draw_separator_grids`.
         draw_logo_scenes(
             &mut frame,
             &self.output,
@@ -1045,12 +1022,6 @@ impl SceneRenderer {
         }
         ii_stopwatch::stopwatch_stop!(self.finish_w);
 
-        let damage_rects = if damage_rects.is_empty() {
-            vec![output_rect]
-        } else {
-            merge_damage_rects(damage_rects)
-        };
-
         // For BGR565 panels the page-flipped buffer is the swizzler's RG16
         // scanout, produced from the natural-RGB intermediate. Otherwise the
         // intermediate is itself the scanout buffer.
@@ -1069,7 +1040,7 @@ impl SceneRenderer {
         ii_stopwatch::stopwatch_stop!(self.gpu_wait_w);
 
         ii_stopwatch::stopwatch_start!(self.flip_w);
-        self.output.page_flip(scanout_fb, &damage_rects)?;
+        self.output.page_flip(scanout_fb)?;
         ii_stopwatch::stopwatch_stop!(self.flip_w);
 
         self.buffers.swap();
@@ -1246,44 +1217,6 @@ fn uncovered_output_regions(
     Rectangle::subtract_rects_many_in_place(vec![output_rect], drawn_regions)
 }
 
-fn merge_damage_rects(
-    damage_rects: Vec<Rectangle<i32, Physical>>,
-) -> Vec<Rectangle<i32, Physical>> {
-    let mut merged = Vec::new();
-
-    for rect in damage_rects {
-        if let Some(existing) = merged
-            .iter_mut()
-            .find(|existing| rectangles_overlap(existing, &rect))
-        {
-            *existing = rectangle_union(existing, &rect);
-        } else {
-            merged.push(rect);
-        }
-    }
-
-    merged
-}
-
-fn rectangles_overlap(lhs: &Rectangle<i32, Physical>, rhs: &Rectangle<i32, Physical>) -> bool {
-    lhs.loc.x < rhs.loc.x + rhs.size.w
-        && rhs.loc.x < lhs.loc.x + lhs.size.w
-        && lhs.loc.y < rhs.loc.y + rhs.size.h
-        && rhs.loc.y < lhs.loc.y + lhs.size.h
-}
-
-fn rectangle_union(
-    lhs: &Rectangle<i32, Physical>,
-    rhs: &Rectangle<i32, Physical>,
-) -> Rectangle<i32, Physical> {
-    let x1 = lhs.loc.x.min(rhs.loc.x);
-    let y1 = lhs.loc.y.min(rhs.loc.y);
-    let x2 = (lhs.loc.x + lhs.size.w).max(rhs.loc.x + rhs.size.w);
-    let y2 = (lhs.loc.y + lhs.size.h).max(rhs.loc.y + rhs.size.h);
-
-    Rectangle::from_loc_and_size((x1, y1), (x2 - x1, y2 - y1))
-}
-
 /// Collect visible widgets from a scene into the render list
 /// with the scene's x offset and opacity.
 fn collect_scene_widgets(
@@ -1306,9 +1239,7 @@ fn collect_scene_widgets(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        merge_damage_rects, rectangle_union, texture_damage_rect, uncovered_output_regions,
-    };
+    use super::{texture_damage_rect, uncovered_output_regions};
     use crate::compositor::scene_renderer::{
         place_widget, scanout_transform, touch_to_logical, widget_transform, with_row_flip,
     };
@@ -1493,41 +1424,6 @@ mod tests {
         assert_eq!(
             touch_to_logical(640.0, 240.0, w, h, TouchTransform::Deg0),
             (640.0, 240.0),
-        );
-    }
-
-    #[test]
-    fn overlapping_damage_rectangles_are_merged() {
-        let merged = merge_damage_rects(vec![
-            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (10, 10)),
-            Rectangle::<i32, Physical>::from_loc_and_size((5, 5), (10, 10)),
-        ]);
-
-        assert_eq!(
-            merged,
-            vec![Rectangle::<i32, Physical>::from_loc_and_size(
-                (0, 0),
-                (15, 15)
-            )]
-        );
-    }
-
-    #[test]
-    fn disjoint_damage_rectangles_stay_separate() {
-        let lhs = Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (10, 10));
-        let rhs = Rectangle::<i32, Physical>::from_loc_and_size((20, 20), (10, 10));
-
-        assert_eq!(merge_damage_rects(vec![lhs, rhs]), vec![lhs, rhs]);
-    }
-
-    #[test]
-    fn rectangle_union_covers_both_inputs() {
-        let lhs = Rectangle::<i32, Physical>::from_loc_and_size((10, 20), (5, 5));
-        let rhs = Rectangle::<i32, Physical>::from_loc_and_size((12, 18), (8, 10));
-
-        assert_eq!(
-            rectangle_union(&lhs, &rhs),
-            Rectangle::<i32, Physical>::from_loc_and_size((10, 18), (10, 10))
         );
     }
 

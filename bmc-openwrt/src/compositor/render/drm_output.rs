@@ -69,14 +69,6 @@ pub struct DrmOutput {
 }
 
 impl DrmOutput {
-    /// Whether [`Self::page_flip`] hands damage clips to KMS, `false` while
-    /// the Etnaviv stall documented there is uncharacterised. A const rather
-    /// than a bare `None` at the call site so the preconditions for
-    /// re-enabling can assert on it at compile time — see the assert beside
-    /// the overlay draws in `scene_renderer`, which repaint without reporting
-    /// damage.
-    pub const DAMAGE_CLIPS_ENABLED: bool = false;
-
     pub fn new(display_path: &Path, display_profile: bmc_platform::DisplayProfile) -> Result<Self> {
         tracing::info!("Opening display device: {:?}", display_path);
 
@@ -255,11 +247,7 @@ impl DrmOutput {
         self.last_vblank_ms
     }
 
-    pub fn page_flip(
-        &mut self,
-        fb: framebuffer::Handle,
-        damage: &[Rectangle<i32, Physical>],
-    ) -> Result<()> {
+    pub fn page_flip(&mut self, fb: framebuffer::Handle) -> Result<()> {
         let src_size: Size<f64, BufferCoord> =
             Size::from((f64::from(self.width), f64::from(self.height)));
         let src_rect = Rectangle::from_size(src_size);
@@ -268,29 +256,11 @@ impl DrmOutput {
         let dst_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let dst_rect = Rectangle::from_size(dst_size);
 
-        // Passing a `PlaneDamageClips` blob on every atomic commit — the
-        // originally-intended consumer of the `damage` argument — caused
-        // the Etnaviv KMS path to periodically stall for ~300 ms on the
-        // Deck's Vivante GC400, manifesting as sub-20 Hz choppiness
-        // (see docs/devlogs/BDK-389-combined-scene/glyph-damage-bisect).
-        // Until that's characterised upstream or behind a GPU probe, keep
-        // `Self::DAMAGE_CLIPS_ENABLED` false and the argument in the
-        // signature so the damage-tracker plumbing in scene_renderer stays in
-        // place. Re-enabling means flipping that const and building the clips
-        // blob here — and the compile-time assert keyed off it in
-        // scene_renderer then fails until the scene placeholder and separator
-        // draws, which repaint without reporting damage, are damage-tracked
-        // too. Otherwise their
-        // appearance/disappearance (e.g. a logo scene receiving its first
-        // widget commit) leaves stale overlay pixels on the panel.
-        let _ = damage;
-
         let plane_config = PlaneConfig {
             src: src_rect,
             dst: dst_rect,
             transform: Transform::Normal,
             alpha: 1.0,
-            // Gated by `Self::DAMAGE_CLIPS_ENABLED`; see above.
             damage_clips: None,
             fb,
             fence: None,

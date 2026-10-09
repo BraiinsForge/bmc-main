@@ -817,7 +817,6 @@ impl EglCompositor {
                     let capture_frames: Vec<_> =
                         std::mem::take(&mut app_state.compositor.pending_capture_frames);
                     let capture_active = !app_state.compositor.capture_sessions.is_empty();
-                    let output_damage = app_state.compositor.current_output_damage();
                     let logical_width = renderer.logical_size().0;
                     let transition_frame = app_state
                         .automatic_cycling
@@ -832,7 +831,6 @@ impl EglCompositor {
                             &dirty,
                             capture_frames,
                             capture_active,
-                            &output_damage,
                         )
                         .unwrap_or_else(|e| {
                             tracing::error!("Render error: {}", e);
@@ -1218,7 +1216,7 @@ impl AppState {
 
         self.compositor.widgets.cancel_automatic_transition();
         self.finish_automatic_transition_interruption();
-        self.compositor.mark_full_output_damage();
+        self.compositor.mark_output_damage();
         if self.pending_lifecycle_emission {
             return;
         }
@@ -1354,7 +1352,7 @@ impl AppState {
                     self.automatic_cycling.phase(),
                     AutomaticCyclingPhase::Transition { .. }
                 ) {
-                    self.compositor.mark_full_output_damage();
+                    self.compositor.mark_output_damage();
                 }
                 self.schedule_scene_cycling_timer(now);
             }
@@ -1385,7 +1383,7 @@ impl AppState {
                     return;
                 }
                 self.automatic_cycling.enter_transition(now);
-                self.compositor.mark_full_output_damage();
+                self.compositor.mark_output_damage();
                 self.schedule_scene_cycling_timer(now);
             }
             AutomaticCyclingAction::FinishTransition => {
@@ -2162,7 +2160,7 @@ fn clamp_initial_lifecycle(state: LifecycleState) -> LifecycleState {
 /// render finishes, so the host starts re-rendering after the compositor's GPU
 /// work for the frame is done rather than racing it across the handoff.
 fn after_scene_change(state: &mut AppState) {
-    state.compositor.mark_full_output_damage();
+    state.compositor.mark_output_damage();
     state.pending_lifecycle_emission = true;
     state.destinations_emptied_at = Some(Instant::now());
 }
@@ -2184,7 +2182,7 @@ fn after_scene_change(state: &mut AppState) {
 /// ordering. Leave the emission armed instead — the deferred flush reads
 /// the tracker at emission time, so it coalesces this drag's transitions.
 fn after_drag_scene_update(state: &mut AppState) {
-    state.compositor.mark_full_output_damage();
+    state.compositor.mark_output_damage();
     if state.pending_lifecycle_emission {
         return;
     }

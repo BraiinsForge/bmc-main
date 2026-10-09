@@ -216,7 +216,7 @@ pub struct CompositorState {
     /// fail cleanly instead of poisoning normal rendering.
     pub capture_enabled: bool,
 
-    output_damage: OutputDamageTracker,
+    output_damaged: bool,
 }
 
 #[derive(Debug)]
@@ -250,48 +250,6 @@ struct WidgetFrameClockState {
     latest_generation: Option<NonZeroU64>,
     last_presented_generation: Option<NonZeroU64>,
     last_callback_fired_at: Option<Instant>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OutputDamage {
-    Full,
-    Widgets(std::collections::HashSet<InstanceId>),
-}
-
-#[derive(Debug, Default)]
-struct OutputDamageTracker {
-    full_damage: bool,
-    widgets: std::collections::HashSet<InstanceId>,
-}
-
-impl OutputDamageTracker {
-    fn mark_full(&mut self) {
-        self.full_damage = true;
-        self.widgets.clear();
-    }
-
-    fn mark_widget(&mut self, instance_id: &InstanceId) {
-        if !self.full_damage {
-            self.widgets.insert(instance_id.clone());
-        }
-    }
-
-    fn snapshot(&self) -> OutputDamage {
-        if self.full_damage {
-            OutputDamage::Full
-        } else {
-            OutputDamage::Widgets(self.widgets.clone())
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        !self.full_damage && self.widgets.is_empty()
-    }
-
-    fn clear(&mut self) {
-        self.full_damage = false;
-        self.widgets.clear();
-    }
 }
 
 fn should_complete_frame_callback(
@@ -342,10 +300,6 @@ impl CompositorState {
     #[expect(
         clippy::too_many_arguments,
         reason = "compositor construction threads display geometry, seat, and the hardware profile"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one initialiser line per protocol's state, each of which the compositor owns"
     )]
     pub fn new(
         display: &Display<Self>,
@@ -464,10 +418,7 @@ impl CompositorState {
             dirty_buffers: Vec::new(),
             pending_capture_frames: Vec::new(),
             capture_enabled: true,
-            output_damage: OutputDamageTracker {
-                full_damage: true,
-                widgets: std::collections::HashSet::new(),
-            },
+            output_damaged: true,
         }
     }
 
@@ -721,16 +672,8 @@ impl CompositorState {
             .retain(|pending| pending.instance_id.as_ref() != Some(instance_id));
     }
 
-    pub fn mark_full_output_damage(&mut self) {
-        self.output_damage.mark_full();
-    }
-
-    pub fn mark_widget_output_damage(&mut self, instance_id: &InstanceId) {
-        self.output_damage.mark_widget(instance_id);
-    }
-
-    pub fn current_output_damage(&self) -> OutputDamage {
-        self.output_damage.snapshot()
+    pub fn mark_output_damage(&mut self) {
+        self.output_damaged = true;
     }
 
     /// Derived from output damage — any pending damage means the next
@@ -738,11 +681,11 @@ impl CompositorState {
     /// truth removes a class of "marked damage but forgot to flag redraw"
     /// bugs.
     pub fn needs_redraw(&self) -> bool {
-        !self.output_damage.is_empty()
+        self.output_damaged
     }
 
     pub fn clear_output_damage(&mut self) {
-        self.output_damage.clear();
+        self.output_damaged = false;
     }
 
     /// Send the initial `lifecycle` event for a widget that has just
@@ -859,7 +802,7 @@ impl CompositorState {
         };
 
         resource.revealed();
-        self.mark_full_output_damage();
+        self.mark_output_damage();
         true
     }
 
@@ -994,7 +937,7 @@ impl CompositorState {
             self.dirty_buffers.push(id);
         }
         if had_buffer_change || effects.needs_damage || had_damage || had_callbacks {
-            self.mark_full_output_damage();
+            self.mark_output_damage();
         }
         self.rearm_screen_edge_on_unmap(surface, unmapped);
 
@@ -1008,7 +951,7 @@ impl DeckWidgetHandler for CompositorState {
     }
 
     fn drop_widget_render_state(&mut self, instance_id: &InstanceId) {
-        self.mark_full_output_damage();
+        self.mark_output_damage();
         self.drop_widget_callback_state(instance_id);
         self.drop_widget_render_surface(instance_id);
         self.drop_widget_buffers(instance_id);
@@ -1072,7 +1015,7 @@ impl CompositorHandler for CompositorState {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
                         if let Some(id) = instance_id.as_ref() {
-                            self.mark_widget_output_damage(id);
+                            self.mark_output_damage();
                             // Release previous buffer so the client can reuse or
                             // destroy it.  Without this the client allocates a new
                             // buffer every frame and old textures leak.
@@ -1091,13 +1034,13 @@ impl CompositorHandler for CompositorState {
                             self.dirty_buffers.push(buffer.id());
                             self.widget_buffers.push((buffer.clone(), id.clone()));
                         } else {
-                            self.mark_full_output_damage();
+                            self.mark_output_damage();
                             tracing::debug!("Buffer attached to unknown surface (no instance_id)");
                         }
                     }
                     BufferAssignment::Removed => {
                         if let Some(ref id) = instance_id {
-                            self.mark_widget_output_damage(id);
+                            self.mark_output_damage();
                             for (old_buf, _) in
                                 self.widget_buffers.iter().filter(|(_, eid)| eid == id)
                             {
@@ -1116,11 +1059,7 @@ impl CompositorHandler for CompositorState {
             // This covers Slint widgets that render to the same buffer without
             // re-attaching.
             if had_frame_callbacks {
-                if let Some(id) = instance_id.as_ref() {
-                    self.mark_widget_output_damage(id);
-                } else {
-                    self.mark_full_output_damage();
-                }
+                self.mark_output_damage();
             }
 
             // Drain frame_callbacks and damage to prevent unbounded accumulation.
@@ -1153,7 +1092,7 @@ impl BufferHandler for CompositorState {
             self.dirty_buffers.retain(|id| id != &buffer_id);
         }
         for instance_id in removed_instances {
-            self.mark_widget_output_damage(&instance_id);
+            self.mark_output_damage();
             tracing::debug!(
                 "Dropped destroyed buffer {:?} for widget {}",
                 buffer_id,
@@ -1174,7 +1113,7 @@ impl BufferHandler for CompositorState {
             .is_some();
         if cleared_layer {
             self.dirty_buffers.retain(|id| id != &buffer_id);
-            self.mark_full_output_damage();
+            self.mark_output_damage();
             tracing::debug!("Dropped destroyed buffer {:?} for layer surface", buffer_id);
         }
     }
@@ -1247,7 +1186,7 @@ impl WlrLayerShellHandler for CompositorState {
         _namespace: String,
     ) {
         self.layer_surfaces.push(LayerEntry::new(surface, layer));
-        self.mark_full_output_damage();
+        self.mark_output_damage();
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
@@ -1264,7 +1203,7 @@ impl WlrLayerShellHandler for CompositorState {
             if let Some(id) = old_id {
                 self.invalidated_buffers.push(id);
             }
-            self.mark_full_output_damage();
+            self.mark_output_damage();
             let destroyed_surface = surface.wl_surface().clone();
             self.screen_edge_sessions
                 .retain(|session| session.surface != destroyed_surface);
@@ -1411,10 +1350,7 @@ wl::delegate_dispatch!(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        OutputDamage, OutputDamageTracker, remove_destroyed_widget_buffers,
-        should_complete_frame_callback,
-    };
+    use super::{remove_destroyed_widget_buffers, should_complete_frame_callback};
     use std::collections::HashMap;
     use std::num::NonZeroU64;
 
@@ -1477,41 +1413,6 @@ mod tests {
             Some(gen_n(1)),
             &eligible_generations,
         ));
-    }
-
-    #[test]
-    fn full_damage_overrides_widget_damage() {
-        let mut tracker = OutputDamageTracker::default();
-        tracker.mark_widget(&String::from("clock-left"));
-        tracker.mark_full();
-
-        assert_eq!(tracker.snapshot(), OutputDamage::Full);
-    }
-
-    #[test]
-    fn widget_damage_accumulates_instances() {
-        let mut tracker = OutputDamageTracker::default();
-        tracker.mark_widget(&String::from("clock-left"));
-        tracker.mark_widget(&String::from("clock-right"));
-
-        let OutputDamage::Widgets(widgets) = tracker.snapshot() else {
-            panic!("BUG: tracker should keep partial widget damage");
-        };
-        assert_eq!(widgets.len(), 2);
-        assert!(widgets.contains("clock-left"));
-        assert!(widgets.contains("clock-right"));
-    }
-
-    #[test]
-    fn clearing_damage_resets_tracker() {
-        let mut tracker = OutputDamageTracker::default();
-        tracker.mark_full();
-        tracker.clear();
-
-        assert_eq!(
-            tracker.snapshot(),
-            OutputDamage::Widgets(std::collections::HashSet::new()),
-        );
     }
 
     #[test]
@@ -2228,7 +2129,7 @@ mod compositor_protocol_test {
 /// Drives a real in-process Wayland client/server handshake over a
 /// `UnixStream::pair()` to lock in the invariant that keeps a callback-only
 /// layer-surface commit from starving its own callback: `commit_layer_surface`
-/// must mark full output damage whenever it drained any queued frame
+/// must mark output damage whenever it drained any queued frame
 /// callbacks, even when the commit carried no buffer and no damage, because
 /// `send_layer_frame_callbacks` only ever runs after a render.
 #[cfg(test)]
@@ -2246,7 +2147,7 @@ mod layer_frame_callback_damage_test {
         zwlr_layer_shell_v1, zwlr_layer_surface_v1,
     };
 
-    use super::{ClientState, CompositorState, OutputDamage};
+    use super::{ClientState, CompositorState};
 
     #[derive(Default)]
     struct TestClient {
@@ -2575,7 +2476,7 @@ mod layer_frame_callback_damage_test {
     }
 
     #[test]
-    fn callback_only_layer_commit_marks_full_output_damage() {
+    fn callback_only_layer_commit_marks_output_damage() {
         let mut display: Display<CompositorState> =
             Display::new().expect("BUG: test Wayland display should initialize");
         let mut compositor = CompositorState::new(
@@ -2649,9 +2550,8 @@ mod layer_frame_callback_damage_test {
 
         pump_server_only(&mut display, &mut compositor, &conn);
         compositor.clear_output_damage();
-        assert_eq!(
-            compositor.current_output_damage(),
-            OutputDamage::Widgets(std::collections::HashSet::new()),
+        assert!(
+            !compositor.needs_redraw(),
             "test setup should start from a clean damage state before the probe commit"
         );
 
@@ -2666,10 +2566,9 @@ mod layer_frame_callback_damage_test {
             1,
             "callback-only commit should have queued the frame callback"
         );
-        assert_eq!(
-            compositor.current_output_damage(),
-            OutputDamage::Full,
-            "callback-only commit must mark full output damage, or its callback \
+        assert!(
+            compositor.needs_redraw(),
+            "callback-only commit must mark output damage, or its callback \
              would starve forever since send_layer_frame_callbacks only runs after a render"
         );
 

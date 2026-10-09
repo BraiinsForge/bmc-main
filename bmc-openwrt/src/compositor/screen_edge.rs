@@ -186,7 +186,7 @@ impl Dispatch<DeckAutoHideScreenEdgeV1, ScreenEdgeUserData> for CompositorState 
                 session.flags.armed = false;
                 session.flags.revealed = true;
                 resource.revealed();
-                state.mark_full_output_damage();
+                state.mark_output_damage();
             }
             deck_auto_hide_screen_edge_v1::Request::Destroy => {
                 state
