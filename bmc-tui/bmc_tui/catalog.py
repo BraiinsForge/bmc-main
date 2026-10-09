@@ -53,11 +53,13 @@ from rich.markup import escape
 
 from bmc_tui import console, nix_progress, rig
 from bmc_tui.bos_version import BosVersion, VersionName, parse_bos_version
+from bmc_tui.boser_rest import BoserRest
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.nix import ABSENT_ATTR, Attr, Built, Nix, Pkg, StorePath
 from bmc_tui.package_version import planner_keeps_installed
 from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, require, stage
+from bmc_tui.ubus_session import ssh_session
 
 _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
 # Probe and invoke the CLI at the profile we deploy into, not
@@ -334,6 +336,7 @@ class Deployment:
     prefix: str = _DECK_PACKAGES  # attr root for the build profile (see package_prefix)
     resolved: list[Pkg] = field(default_factory=list)
     built: list[Built] = field(default_factory=list)
+    auto_upgrade_disabled: bool = False
 
 
 @stage("Compatible bmc-nix-cli present")
@@ -523,19 +526,76 @@ def register_packages(dev: Device, plan: Deployment) -> str:
     return f"{names} → generation {console.lit(generation)}" if generation else names
 
 
-@stage("Clear upgrade servers")
-def clear_upgrade_servers(dev: Device) -> str:
-    try:
-        dev.run(f"{_NIX_CLI} clear-servers")
-    except subprocess.CalledProcessError as error:
-        # A plan without bmc-nix-cli leaves the previously deployed CLI in
-        # the profile, and that one may predate the subcommand.
-        if "unrecognized subcommand" not in (error.stderr or ""):
-            raise
-        return "on-device bmc-nix-cli predates clear-servers; servers left untouched"
+# grpcurl exits with 64 plus the gRPC status code of a failed call.
+_GRPCURL_EXIT_UNIMPLEMENTED = 64 + 12
+# A failed dial, DEADLINE_EXCEEDED or UNAVAILABLE: no bmc answers behind the tunnel.
+_GRPCURL_EXITS_UNREACHABLE = frozenset({1, 64 + 4, 64 + 14})
+_AUTO_UPGRADE_RETRY_INTERVAL_S = 2.0
+
+
+@stage("Disable automatic upgrades")
+def disable_auto_upgrade(dev: Device, plan: Deployment) -> str:
+    """Keep automatic upgrades from replacing the packages about to be deployed."""
     if dry_run.get():
-        return "would clear package servers"
-    return "package servers cleared; scheduled upgrade checks fail until servers are re-registered"
+        plan.auto_upgrade_disabled = True
+        return "would disable automatic upgrades"
+    result = _set_auto_upgrade_off(dev, max_time=_GRPCURL_MAX_TIME)
+    if result is None:
+        # Aborting would keep deploy from installing what brings a crashed bmc back.
+        return "bmc does not answer; disabling once the deployed packages are active"
+    plan.auto_upgrade_disabled = True
+    return result
+
+
+@stage("Disable automatic upgrades after activation")
+def disable_deferred_auto_upgrade(dev: Device, plan: Deployment) -> str:
+    """Disable automatic upgrades once the deployed bmc answers, if that did not happen earlier."""
+    done_if(plan.auto_upgrade_disabled)
+    deadline = time.monotonic() + _BMC_READY_TIMEOUT
+    while True:
+        remaining = deadline - time.monotonic()
+        require(
+            remaining > 0,
+            f"bmc did not answer within {_BMC_READY_TIMEOUT:.0f}s; automatic upgrades are still on",
+        )
+        if (result := _set_auto_upgrade_off(dev, max_time=max(1, int(remaining)))) is not None:
+            break
+        time.sleep(_AUTO_UPGRADE_RETRY_INTERVAL_S)
+    plan.auto_upgrade_disabled = True
+    return result
+
+
+def _set_auto_upgrade_off(dev: Device, *, max_time: int) -> str | None:
+    """Turn automatic upgrades off, or return None when no bmc answers."""
+    session_timeout = max_time + int(BoserRest.timeout)
+    with (
+        dev.forward(_GRPC_PORT) as address,
+        ssh_session(dev, timeout_s=session_timeout) as session_id,
+    ):
+        argv = _grpcurl_argv(
+            address,
+            "UpgradeService/SetAutoUpgrade",
+            data={"enabled": False},
+            cookie=f"session_id={session_id}",
+            max_time=max_time,
+        )
+        try:
+            proc = subprocess.run(
+                argv, capture_output=True, text=True, check=False, timeout=max_time
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        if proc.returncode == 0:
+            return "automatic upgrades disabled"
+        if proc.returncode in _GRPCURL_EXITS_UNREACHABLE:
+            return None
+        require(
+            proc.returncode == _GRPCURL_EXIT_UNIMPLEMENTED,
+            f"SetAutoUpgrade failed: {proc.stderr.strip()}",
+        )
+        # Products Boser manages refuse the call, as Boser owns the setting there.
+        BoserRest(f"http://{address}", token=session_id).set_auto_upgrade(enabled=False)
+    return "Boser's automatic upgrades disabled"
 
 
 def _register_server_cmd(entry: dict[str, object]) -> str:
@@ -3100,7 +3160,7 @@ def run_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
         msg = "BUG: CheckForUpgrade did not run before StartUpgrade"
         raise RuntimeError(msg)
     argv = _grpcurl_argv(
-        dev,
+        _grpc_address(dev),
         "UpgradeService/StartUpgrade",
         data={"upgradeId": upgrade_id},
         cookie=cycle.cookie,
@@ -3243,7 +3303,7 @@ def _grpcurl(
 ) -> dict[str, Any]:
     """Unary gRPC call via grpcurl; returns the decoded response message."""
 
-    argv = _grpcurl_argv(dev, method, data=data, cookie=cookie, max_time=max_time)
+    argv = _grpcurl_argv(_grpc_address(dev), method, data=data, cookie=cookie, max_time=max_time)
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, check=True, timeout=max_time)
     except subprocess.CalledProcessError as e:
@@ -3260,8 +3320,12 @@ def _grpcurl(
     return response
 
 
+def _grpc_address(dev: Device) -> str:
+    return f"{dev.host}:{_GRPC_PORT}"
+
+
 def _grpcurl_argv(
-    dev: Device,
+    address: str,
     method: str,
     *,
     data: dict[str, Any] | None,
@@ -3274,7 +3338,7 @@ def _grpcurl_argv(
     if cookie is not None:
         argv += ["-H", f"cookie: {cookie}"]
     argv += ["-d", json.dumps(data or {})]
-    return [*argv, f"{dev.host}:{_GRPC_PORT}", f"{_GRPC_PACKAGE}.{method}"]
+    return [*argv, address, f"{_GRPC_PACKAGE}.{method}"]
 
 
 def _stream_events(argv: list[str]) -> list[dict[str, Any]]:
@@ -3777,7 +3841,7 @@ def await_bmc_ready(dev: Device, cycle: FirmwareCycle) -> str:
             )
             subprocess.run(
                 _grpcurl_argv(
-                    dev,
+                    _grpc_address(dev),
                     "AuthenticationService/Login",
                     data={"password": cycle.password},
                     cookie=None,
@@ -3808,7 +3872,7 @@ def require_auto_upgrade_disabled(dev: Device, session: GrpcSession) -> str:
     # arrives without any "enabled" key at all.
     require(
         not response.get("enabled"),
-        "auto-upgrade is enabled — disable it via SetAutoUpgrade or the web UI first",
+        "auto-upgrade is enabled — disable it via SetAutoUpgrade or `deck deploy` first",
     )
     return "auto-upgrade disabled"
 
@@ -3933,7 +3997,7 @@ def run_firmware_stream(dev: Device, cycle: FirmwareCycle) -> StreamResult:
         msg = "BUG: CheckForUpgrade did not run before StartUpgrade"
         raise RuntimeError(msg)
     argv = _grpcurl_argv(
-        dev,
+        _grpc_address(dev),
         "UpgradeService/StartUpgrade",
         data={"upgradeId": upgrade_id},
         cookie=cycle.cookie,

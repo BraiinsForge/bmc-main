@@ -26,20 +26,25 @@ device state even under `--dry-run`. `run`/`push` are mutations — under
 (`reachable`, `board`, `version`) so call-sites never type raw ssh for them.
 
 All subprocess work goes through an injected `Exec` backend (`run` captures,
-`stream` feeds stdin) so tests need no real ssh.
+`stream` feeds stdin) so tests need no real ssh. `forward` is the exception:
+it spawns its own ssh, as the tunnel must keep listening while the caller
+dials it.
 """
 
 import json
 import shlex
+import socket
 import subprocess
+import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NewType, Protocol
 
 from bmc_tui import console
-from bmc_tui.stage import dry_run, require
+from bmc_tui.stage import Abort, dry_run, require
 
 # Key-based, accept-new host key, no password — unlike the VM's sshpass path.
 _SSH_OPTS = [
@@ -71,6 +76,24 @@ _WINDOW_MARK = "bmc-tui-log-window"
 # range encodes remote signal death (128+N, or a negative -N wrapped to an
 # unsigned byte) — what a reboot's shutdown does to the live session.
 _SESSION_DEATH_FLOOR = 128
+
+
+_FORWARD_TIMEOUT_S = 15.0
+
+
+def _await_listening(proc: "subprocess.Popen[str]", port: int, what: str) -> None:
+    deadline = time.monotonic() + _FORWARD_TIMEOUT_S
+    while proc.poll() is None:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise Abort(f"{what}: no listener within {_FORWARD_TIMEOUT_S:.0f}s") from None
+            time.sleep(0.1)
+        else:
+            return
+    stderr = proc.stderr.read().strip() if proc.stderr is not None else ""
+    raise Abort(f"{what} failed (ssh exit {proc.returncode}): {stderr}")
 
 
 def _is_session_death(returncode: int) -> bool:
@@ -181,6 +204,38 @@ class Device:
 
     def _ssh_argv(self, command: str) -> list[str]:
         return ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", command]
+
+    @contextmanager
+    def forward(self, remote_port: int) -> Iterator[str]:
+        """Yield a local `host:port` that SSH forwards to `remote_port` on the device.
+
+        Reaches the device wherever SSH does, ssh-config aliases and jump hosts included.
+        """
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            local_port = probe.getsockname()[1]
+        argv = [
+            "ssh",
+            *_SSH_OPTS,
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-N",
+            "-L",
+            f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}",
+            self.login,
+        ]
+        with subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as proc:
+            try:
+                _await_listening(proc, local_port, f"forwarding {self.login}:{remote_port}")
+                yield f"127.0.0.1:{local_port}"
+            finally:
+                proc.terminate()
 
     def read(self, command: str) -> str:
         """Run a read-only command and return its stripped stdout. Always runs,

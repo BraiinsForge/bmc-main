@@ -56,7 +56,9 @@ class Deploy:
         console.header("Deploy packages")
         dev.print()
 
+        catalog.ensure_grpcurl()
         catalog.ensure_device_reachable(dev)
+        catalog.disable_auto_upgrade(dev, plan)
         catalog.ensure_nix_cli(backend, dev)
         catalog.resolve_packages(backend, plan)
         catalog.build_packages(backend, plan)
@@ -64,8 +66,8 @@ class Deploy:
         catalog.remove_superseded_packages(dev, plan)
         old_pid = catalog.compositor_pid(dev)
         catalog.register_packages(dev, plan)
-        catalog.clear_upgrade_servers(dev)
         catalog.await_package_activation(dev, old_pid=old_pid)
+        catalog.disable_deferred_auto_upgrade(dev, plan)
 
 
 @entrypoint

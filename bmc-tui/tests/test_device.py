@@ -20,14 +20,16 @@
 
 """Unit tests for the SSH device transport."""
 
+import socket
 import subprocess
+import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
 
 from bmc_tui.device import Device, RemotePath
-from bmc_tui.stage import dry_run
+from bmc_tui.stage import Abort, dry_run
 
 
 class _FakeExec:
@@ -337,3 +339,60 @@ def test_run_captured_skips_under_dry_run() -> None:
     finally:
         dry_run.reset(token)
     assert backend.runs == []
+
+
+_FORWARDING_SSH = """
+import socket, sys
+from pathlib import Path
+Path(sys.argv[0]).with_name("argv").write_text("\\n".join(sys.argv[1:]))
+local = sys.argv[sys.argv.index("-L") + 1]
+host, port = local.split(":")[:2]
+listener = socket.create_server((host, int(port)))
+while True:
+    listener.accept()[0].close()
+"""
+
+
+def _fake_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> Path:
+    ssh = tmp_path / "ssh"
+    ssh.write_text(f"#!{sys.executable}\n{body}")
+    ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{Path(sys.executable).parent}")
+    return ssh
+
+
+def _accepts(address: str) -> bool:
+    host, port = address.split(":")
+    try:
+        socket.create_connection((host, int(port)), timeout=1).close()
+    except OSError:
+        return False
+    return True
+
+
+def test_forward_yields_a_local_port_ssh_forwards_to_the_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+
+    with Device("deck").forward(80) as address:
+        assert _accepts(address)
+        argv = (tmp_path / "argv").read_text().splitlines()
+
+    assert f"{address}:127.0.0.1:80" in argv, "the device side is its loopback web port"
+    assert "ExitOnForwardFailure=yes" in argv, "a refused forward must fail, not hang"
+    assert argv[-1] == "root@deck"
+    assert not _accepts(address), "the tunnel must not outlive the block"
+
+
+def test_a_refused_forward_aborts_with_ssh_s_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_ssh(
+        tmp_path,
+        monkeypatch,
+        "import sys\nprint('administratively prohibited', file=sys.stderr)\nsys.exit(255)\n",
+    )
+
+    with pytest.raises(Abort, match="administratively prohibited"), Device("deck").forward(80):
+        pytest.fail("a refused forward must not yield")

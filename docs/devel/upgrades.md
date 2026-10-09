@@ -141,11 +141,16 @@ occurrence.
 
 ### Developer Opt-Out
 
-After registering the new profile, `deck deploy` runs the installed `bmc-nix-cli clear-servers` command on the device.
-The command empties `servers[]` and writes the result directly into the runtime file at `/etc/nix-upgrade/servers.json`.
-It creates that runtime file even when the previous registry came solely from the shipped `servers.json.default` file.
-It preserves the factory entry and bootstrap marker, while leaving the existing `/etc/nix/nix.conf` entirely unchanged.
-Package probes then fail with `NoEnabledServers`, blocking automatic upgrades on a development device as intended.
+Before it changes anything on the device, `deck deploy` turns automatic upgrades off, so a scheduled check cannot
+replace the packages it is about to register. It reaches the device API through an SSH tunnel, and authorizes the call
+with a ubus session it creates as root over SSH, so it needs no device password: the BMC application and Boser both
+accept any live ubus session. Deploy calls `UpgradeService.SetAutoUpgrade` first. Boser-managed products reject it, as
+Boser owns the setting there, so deploy sends Boser's `PATCH /api/v1/upgrade/auto-upgrade` instead. When the BMC
+application does not answer, deploy goes on, so it can install a fix for a crashing build, and turns automatic upgrades
+off once the deployed packages are active.
+
+The package servers stay registered, and manual checks and upgrades keep working. Where the web UI shows the Upgrades
+tab, it can turn automatic upgrades back on, but it cannot turn them off.
 
 Run `deck register-server <device>` to replay the server entries from the shipped `servers.json.default` on the device.
 Use the `--url`, `--id`, and `--key` options to select an entry or override its identifier, URL, and key as appropriate.

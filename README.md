@@ -161,12 +161,8 @@ On a Deck running firmware 26.09, deploy the packages built from your checkout t
 nix run .#deck -- deploy --device "$DEVICE_IP"
 ```
 
-**Current limitation:** `deck deploy` clears the Deck's upgrade servers, so the device no longer upgrades automatically
-after deployment. To restore the default upgrade servers and allow automatic upgrades again, run:
-
-```shell
-nix run .#deck -- register-server --device "$DEVICE_IP"
-```
+`deck deploy` turns automatic upgrades off, so they do not replace the deployed packages. Manual upgrades keep working,
+and Settings → Upgrades in the web UI turns automatic upgrades back on.
 
 Subsequent iterations also use `deck deploy`; see [`docs/deployment.md`](docs/deployment.md) for package selection,
 debug profiles, and faster native-binary iteration. Note that if you make changes to the bmc-wasm-runtime, you should

@@ -43,14 +43,16 @@ def test_deploy_observes_activation_without_hard_restart(
     monkeypatch.setattr(deploy.console, "header", lambda _title: None)
     monkeypatch.setattr(deploy.nix, "real", lambda **_kwargs: object())
     for name in (
+        "ensure_grpcurl",
         "ensure_device_reachable",
         "ensure_nix_cli",
         "resolve_packages",
         "build_packages",
         "copy_closures",
         "remove_superseded_packages",
+        "disable_deferred_auto_upgrade",
         "register_packages",
-        "clear_upgrade_servers",
+        "disable_auto_upgrade",
     ):
         monkeypatch.setattr(deploy.catalog, name, lambda *_args, **_kwargs: None)
 
@@ -72,3 +74,41 @@ def test_deploy_observes_activation_without_hard_restart(
 
     assert len(observed) == 1
     assert observed[0][1] == old_pid
+
+
+def test_deploy_disables_automatic_upgrades_before_touching_the_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deploy, "Device", _Device)
+    monkeypatch.setattr(deploy.console, "header", lambda _title: None)
+    monkeypatch.setattr(deploy.nix, "real", lambda **_kwargs: object())
+    calls: list[str] = []
+    for name in (
+        "ensure_grpcurl",
+        "ensure_device_reachable",
+        "ensure_nix_cli",
+        "resolve_packages",
+        "build_packages",
+        "copy_closures",
+        "remove_superseded_packages",
+        "compositor_pid",
+        "disable_deferred_auto_upgrade",
+        "register_packages",
+        "await_package_activation",
+        "disable_auto_upgrade",
+    ):
+        monkeypatch.setattr(
+            deploy.catalog, name, lambda *_args, _name=name, **_kwargs: calls.append(_name)
+        )
+
+    deploy.Deploy(device="deck").run()
+
+    deferred = calls.index("await_package_activation") + 1
+    assert calls[deferred] == "disable_deferred_auto_upgrade", (
+        "a bmc that did not answer before the deploy answers only once its packages are active"
+    )
+    assert calls[:3] == [
+        "ensure_grpcurl",
+        "ensure_device_reachable",
+        "disable_auto_upgrade",
+    ], "automatic upgrades must be off, or the deploy refused, before the device changes"

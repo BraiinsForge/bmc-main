@@ -18,7 +18,7 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-"""Restore or register upgrade servers on a device after a deploy cleared them."""
+"""Restore or register upgrade servers on a device after `clear-servers` emptied them."""
 
 from dataclasses import dataclass
 
