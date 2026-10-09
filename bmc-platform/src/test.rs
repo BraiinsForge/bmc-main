@@ -403,6 +403,20 @@ fn pixel_format_is_bgr565_only_for_bmm() {
 }
 
 #[test]
+fn only_bmm_panels_transfer_changed_regions() {
+    let cases = [
+        (Product::Bmc100, PanelTransfer::FullFrame),
+        (Product::Bmm100, PanelTransfer::ChangedRegions),
+        (Product::Bmm101, PanelTransfer::ChangedRegions),
+        (Product::Bfm100, PanelTransfer::FullFrame),
+    ];
+    for (product, expected) in cases {
+        let profile = HardwareProfile::for_product(product);
+        assert_eq!(profile.display.panel_transfer, expected, "{product:?}");
+    }
+}
+
+#[test]
 fn only_the_deck_has_an_upgrade_asset() {
     assert!(IndexBmcPlatform::try_from(BosPlatform::Bmc1).is_ok());
     for platform in [BosPlatform::Am2, BosPlatform::Bmm1, BosPlatform::Bfm1] {

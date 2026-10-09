@@ -198,6 +198,18 @@ impl DisplayPixelFormat {
     }
 }
 
+/// How much of each frame the compositor sends to the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelTransfer {
+    /// Every flip carries the whole frame.
+    FullFrame,
+    /// Only the regions that differ from the frame the panel last received.
+    /// Pays off when the panel keeps the frame in its own memory and takes partial writes,
+    /// and its bus is slow enough that a whole frame costs tens of milliseconds
+    /// (about 81 ms on `BMM101`).
+    ChangedRegions,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibleArea {
     pub x: u32,
@@ -280,6 +292,7 @@ pub struct DisplayProfile {
     pub seam_overlap_px: i32,
     pub pixel_format: DisplayPixelFormat,
     pub color_adjustment: Option<ColorAdjustment>,
+    pub panel_transfer: PanelTransfer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -448,6 +461,9 @@ impl HardwareProfile {
                     seam_overlap_px: 4,
                     pixel_format: DisplayPixelFormat::Xrgb8888,
                     color_adjustment: None,
+                    // The LTDC scans the whole frame out to the video-mode DSI panel every refresh,
+                    // and its plane has no FB_DAMAGE_CLIPS, so partial transfers would save nothing.
+                    panel_transfer: PanelTransfer::FullFrame,
                 },
                 slot_grid: Some(SlotGrid {
                     columns: 4,
@@ -480,6 +496,7 @@ impl HardwareProfile {
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Bgr565,
                     color_adjustment: Some(BMM101_COLOR_ADJUSTMENT),
+                    panel_transfer: PanelTransfer::ChangedRegions,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -505,6 +522,7 @@ impl HardwareProfile {
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Bgr565,
                     color_adjustment: Some(BMM101_COLOR_ADJUSTMENT),
+                    panel_transfer: PanelTransfer::ChangedRegions,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -530,6 +548,8 @@ impl HardwareProfile {
                     seam_overlap_px: 0,
                     pixel_format: DisplayPixelFormat::Xrgb8888,
                     color_adjustment: None,
+                    // Nobody has measured whether partial transfers pay off on this panel.
+                    panel_transfer: PanelTransfer::FullFrame,
                 },
                 slot_grid: None,
                 led_strip: None,
