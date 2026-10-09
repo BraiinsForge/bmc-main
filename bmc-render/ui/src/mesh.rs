@@ -23,6 +23,9 @@
 //! The format is produced by `include_mesh!` at compile time and consumed
 //! by the host-side `MeshRenderer` at runtime.
 
+use crate::assets::StaticAssetSource;
+use crate::orientation::Orientation;
+
 /// Magic bytes: "MDL2" in little-endian (V2 adds MSDF format + body/label
 /// colors). V1 ("MDL1") is no longer accepted; meshes are rebuilt with the
 /// runtime, so backward compatibility isn't required.
@@ -81,3 +84,166 @@ pub const VERTEX_SIZE: usize = 12;
 
 /// Per-vertex size without UVs: 3x i16 pos + 1x u32 packed normal = 10 bytes.
 pub const VERTEX_SIZE_NO_UV: usize = 10;
+
+/// Static 3D mesh descriptor (output of `include_mesh!`).
+///
+/// WASM builds load the optimized mesh from the widget package; native builds
+/// retain embedded bytes for storybook rendering.
+///
+/// `face_normals` contains per-face normals in glTF Y-up space, ordered by
+/// display face number (index 0 = face 1). Extracted from glTF `extras` at
+/// compile time. Empty if the model has no face normal metadata.
+#[derive(Debug)]
+pub struct Mesh {
+    pub source: StaticAssetSource,
+    pub face_normals: &'static [[f32; 3]],
+    /// Stable, unique-per-host registration tag (e.g. `"crate::stem"`).
+    pub name: &'static str,
+    /// Why `include_mesh!` could not pack the mesh,
+    /// in a build that defers its errors; `None` otherwise.
+    pub error: Option<&'static str>,
+}
+
+/// Directional light angles, in degrees.
+#[derive(Debug, Clone, Copy)]
+pub struct LightAngles {
+    pub pitch: f32,
+    pub yaw: f32,
+}
+
+/// UV-rect highlight tint. `uv_rect` is `(u_min, v_min, u_max, v_max)` in UV
+/// space; `color` is sRGB `(r, g, b)` in `[0, 1]`.
+#[derive(Debug, Clone, Copy)]
+pub struct Highlight {
+    pub uv_rect: [f32; 4],
+    pub color: [f32; 3],
+}
+
+/// Camera, transform, and lighting parameters for rendering a 3D mesh.
+#[derive(Debug, Clone, Copy)]
+pub struct MeshView {
+    /// Vertical field of view in degrees.
+    pub fov: f32,
+    /// Camera distance from origin.
+    pub distance: f32,
+    /// Object orientation (unit quaternion).
+    pub orientation: Orientation,
+    /// Object position offset.
+    pub position: [f32; 3],
+    /// Uniform scale factor.
+    pub scale: f32,
+    /// Directional light angles (in degrees). `None` = unlit.
+    pub light: Option<LightAngles>,
+    /// Ambient light level (0.0–1.0). Controls brightness of shadowed faces.
+    pub ambient: f32,
+    /// Specular highlight strength (0.0–1.0).
+    pub specular: f32,
+    /// UV-rect highlight tint. `None` = no highlight.
+    pub highlight: Option<Highlight>,
+}
+
+impl Default for MeshView {
+    fn default() -> Self {
+        Self {
+            fov: 45.0,
+            distance: 3.0,
+            orientation: Orientation::IDENTITY,
+            position: [0.0; 3],
+            scale: 1.0,
+            light: None,
+            ambient: 0.3,
+            specular: 0.4,
+            highlight: None,
+        }
+    }
+}
+
+// ── Mesh draw arguments ─────────────────────────────────────────────
+
+/// Camera + 3D transform parameters for a mesh draw.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshTransform {
+    pub fov: f32,
+    pub distance: f32,
+    /// Orientation quaternion `(x, y, z, w)`.
+    pub quat: [f32; 4],
+    /// Offset relative to the draw rect centre in mesh-local units.
+    pub position: [f32; 3],
+    pub scale: f32,
+}
+
+/// Directional lighting.
+/// `pitch == NaN` is the sentinel for "lighting disabled" (matches [`MeshView::light`] being `None`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshLighting {
+    pub pitch: f32,
+    pub yaw: f32,
+    pub ambient: f32,
+    pub specular: f32,
+}
+
+/// Optional UV-rect highlight tint.
+/// `u_min == NaN` is the sentinel for "no highlight".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshHighlight {
+    pub u_min: f32,
+    pub v_min: f32,
+    pub u_max: f32,
+    pub v_max: f32,
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
+
+/// Bundle of every per-draw mesh parameter,
+/// as the wire carries it and the renderer consumes it.
+/// One struct rather than a wide tuple, so a field added here
+/// reaches every signature at once and a dirty check compares every field by definition.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshDrawArgs {
+    pub transform: MeshTransform,
+    pub lighting: MeshLighting,
+    pub highlight: MeshHighlight,
+}
+
+impl From<MeshView> for MeshDrawArgs {
+    fn from(view: MeshView) -> Self {
+        let light = view.light.unwrap_or(LightAngles {
+            pitch: f32::NAN,
+            yaw: f32::NAN,
+        });
+        let highlight = view.highlight.unwrap_or(Highlight {
+            uv_rect: [f32::NAN, 0.0, 0.0, 0.0],
+            color: [0.0, 0.0, 0.0],
+        });
+        Self {
+            transform: MeshTransform {
+                fov: view.fov,
+                distance: view.distance,
+                quat: [
+                    view.orientation.x,
+                    view.orientation.y,
+                    view.orientation.z,
+                    view.orientation.w,
+                ],
+                position: view.position,
+                scale: view.scale,
+            },
+            lighting: MeshLighting {
+                pitch: light.pitch,
+                yaw: light.yaw,
+                ambient: view.ambient,
+                specular: view.specular,
+            },
+            highlight: MeshHighlight {
+                u_min: highlight.uv_rect[0],
+                v_min: highlight.uv_rect[1],
+                u_max: highlight.uv_rect[2],
+                v_max: highlight.uv_rect[3],
+                r: highlight.color[0],
+                g: highlight.color[1],
+                b: highlight.color[2],
+            },
+        }
+    }
+}

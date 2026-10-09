@@ -40,8 +40,13 @@ pub mod xml;
 
 pub use bmc_ui::{
     animation, arc, colors, display, fill, mesh, nodes, progress, relative_time, skeleton, svg,
-    text,
 };
+
+/// Not in the list above: at `bmc_ui`'s root the `text` module
+/// sits beside the `text` node builder, which a plain re-export would carry along.
+pub mod text {
+    pub use bmc_ui::text::*;
+}
 
 pub use animation::*;
 pub use arc::*;
@@ -52,7 +57,11 @@ pub use fetch::{FetchOutcome, MediaTypePart};
 pub use fill::*;
 pub use ids::*;
 pub use image_meta::{decode_image_meta, encode_image_meta};
-pub use mesh::*;
+pub use mesh::{
+    FLAG_HAS_NORMAL_MAP, FLAG_HAS_TANGENTS, FLAG_HAS_TEXTURE, FLAG_HAS_UVS, HEADER_SIZE,
+    MAX_TEXTURE_SIZE, MAX_TRIANGLES, MAX_VERTICES, MESH_MAGIC, TextureFormat, VERTEX_SIZE,
+    VERTEX_SIZE_NO_UV,
+};
 pub use nodes::*;
 pub use progress::*;
 pub use relative_time::*;

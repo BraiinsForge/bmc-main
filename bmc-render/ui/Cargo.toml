@@ -7,11 +7,14 @@ license = "GPL-3.0-or-later"
 [dependencies]
 bmc-widget-protocol = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
+glam = { workspace = true, optional = true }
 hex.workspace = true
 palette.workspace = true
 
 [features]
 default = []
+# `Orientation` ↔ `glam::Quat` conversions for consumers doing their own 3D math.
+math-3d = ["dep:glam"]
 # Colour conversions for egui consumers;
 # off so the wasm SDK never sees egui.
 egui = ["dep:egui"]
