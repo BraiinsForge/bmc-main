@@ -109,6 +109,16 @@ impl BufferPool {
             .expect("BUG: buffer should exist"))
     }
 
+    /// The buffer the last successful flip handed to the panel, if any.
+    pub fn front(&self) -> Option<&RenderBuffer> {
+        self.buffers[self.current_slot].as_ref()
+    }
+
+    /// The buffer [`Self::back_buffer`] hands out, once allocated.
+    pub fn back(&self) -> Option<&RenderBuffer> {
+        self.buffers[1 - self.current_slot].as_ref()
+    }
+
     pub fn swap(&mut self) {
         self.current_slot = 1 - self.current_slot;
     }
@@ -170,5 +180,19 @@ impl BufferPool {
             dmabuf,
             fb,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BufferPool, ScanoutFormat};
+
+    #[test]
+    fn a_fresh_pool_has_no_front_buffer() {
+        let pool = BufferPool::new(480, 320, ScanoutFormat::Rgb565);
+        assert!(
+            pool.front().is_none(),
+            "nothing has been flipped yet, so the first transfer must be the whole frame"
+        );
     }
 }

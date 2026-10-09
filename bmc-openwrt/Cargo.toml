@@ -9,6 +9,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 # rust/toml/lock unless a crate opts extra files in here.
 [package.metadata.nix]
 include = [
+    "src/compositor/render/frame_diff.frag",
     "src/compositor/render/scanout_swizzle.frag",
     "src/assets/deck_logo.png",
     "src/assets/loading_scene_text.png",

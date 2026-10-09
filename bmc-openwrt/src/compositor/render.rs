@@ -23,9 +23,11 @@
 mod buffer_pool;
 mod drm_output;
 mod egl_context;
+mod frame_diff;
 mod scanout_swizzle;
 
 pub use buffer_pool::{BufferPool, ScanoutFormat};
 pub use drm_output::DrmOutput;
 pub use egl_context::EglContext;
+pub use frame_diff::{Flip, FrameDiffer, Transfer, flip_and_advance, next_transfer};
 pub use scanout_swizzle::ScanoutSwizzler;

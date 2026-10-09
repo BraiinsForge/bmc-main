@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 use bmc::compositor::ScenePlaceholder;
 use bmc::scene::WidgetPosition;
 use bmc_gpu_render_lock::GpuRenderLock;
-use bmc_platform::{DisplayPixelFormat, DisplayTransform, Product};
+use bmc_platform::{DisplayPixelFormat, DisplayProfile, DisplayTransform, PanelTransfer, Product};
 use bmc_shared_utils::include_png;
 use smithay::{
     backend::allocator::Fourcc,
@@ -45,7 +45,10 @@ use smithay::{
     },
 };
 
-use super::render::{BufferPool, DrmOutput, EglContext, ScanoutFormat, ScanoutSwizzler};
+use super::render::{
+    BufferPool, DrmOutput, EglContext, Flip, FrameDiffer, ScanoutFormat, ScanoutSwizzler, Transfer,
+    flip_and_advance, next_transfer,
+};
 use super::scene_cycling::TransitionFrame;
 use super::widget_tracker::WidgetTracker;
 
@@ -497,6 +500,9 @@ pub struct SceneRenderer {
     /// Present `XRGB8888` directly (`None`) or run a BGR565 swizzle output pass
     /// over a separate `RG16` scanout buffer before page-flip (`Some`).
     swizzler: Option<ScanoutSwizzler>,
+    /// Limits each flip to the regions that changed since the last one
+    /// (`Some`), or sends whole frames (`None`).
+    frame_differ: Option<FrameDiffer>,
     /// Texture cache: maps WlBuffer ObjectId to cached GlesTexture
     texture_cache: HashMap<ObjectId, GlesTexture>,
     /// Branding logo drawn when a scene has no rendered content, from
@@ -528,6 +534,10 @@ pub struct SceneRenderer {
     #[cfg(feature = "profiling")]
     gpu_wait_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
+    diff_w: ii_stopwatch::StopWatch,
+    #[cfg(feature = "profiling")]
+    unchanged_frames: usize,
+    #[cfg(feature = "profiling")]
     flip_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
     render_every: ii_stopwatch::Every,
@@ -557,12 +567,17 @@ impl SceneRenderer {
     pub fn new(
         mut egl: EglContext,
         output: DrmOutput,
-        scanout_transform: DisplayTransform,
-        seam_overlap_px: i32,
-        pixel_format: DisplayPixelFormat,
-        color_adjustment: Option<bmc_platform::ColorAdjustment>,
+        display: &DisplayProfile,
         logo_png: Option<&'static [u8]>,
     ) -> Result<Self> {
+        let DisplayProfile {
+            scanout_transform,
+            seam_overlap_px,
+            pixel_format,
+            color_adjustment,
+            panel_transfer,
+            ..
+        } = *display;
         let (width, height) = (output.width(), output.height());
         let (logical_w, logical_h) = output.logical_size();
         tracing::info!(
@@ -585,11 +600,24 @@ impl SceneRenderer {
                     .context("Failed to set up BGR565 swizzle output pass")?,
             ),
         };
+        let frame_differ = match panel_transfer {
+            PanelTransfer::FullFrame => None,
+            PanelTransfer::ChangedRegions => {
+                // Whole frames still reach the panel without it, so a diff
+                // that cannot set up must not keep the compositor down.
+                FrameDiffer::new(egl.renderer(), width, height)
+                    .inspect_err(|e| {
+                        tracing::error!("Frame diff unavailable, sending whole frames: {e:#}");
+                    })
+                    .ok()
+            }
+        };
         Ok(Self {
             egl,
             output,
             buffers: BufferPool::new(width, height, ScanoutFormat::Xrgb8888),
             swizzler,
+            frame_differ,
             texture_cache: HashMap::new(),
             logo_png,
             // Overlay textures are loaded lazily on first use (see render_scene).
@@ -609,6 +637,10 @@ impl SceneRenderer {
             swizzle_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
             gpu_wait_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            diff_w: ii_stopwatch::StopWatch::default(),
+            #[cfg(feature = "profiling")]
+            unchanged_frames: 0,
             #[cfg(feature = "profiling")]
             flip_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
@@ -1035,31 +1067,61 @@ impl SceneRenderer {
             }
             _ => fb,
         };
-        ii_stopwatch::stopwatch_start!(self.gpu_wait_w);
-        self.egl.wait_for_rendering_completion()?;
-        ii_stopwatch::stopwatch_stop!(self.gpu_wait_w);
+        ii_stopwatch::stopwatch_start!(self.diff_w);
+        let (transfer, read_back) = self.transfer();
+        ii_stopwatch::stopwatch_stop!(self.diff_w);
+        // The diff samples the finished frame, so its readback has already waited
+        // for the composition and swizzle; one wait per frame is enough.
+        if !read_back {
+            ii_stopwatch::stopwatch_start!(self.gpu_wait_w);
+            self.egl.wait_for_rendering_completion()?;
+            ii_stopwatch::stopwatch_stop!(self.gpu_wait_w);
+        }
 
-        ii_stopwatch::stopwatch_start!(self.flip_w);
-        self.output.page_flip(scanout_fb)?;
-        ii_stopwatch::stopwatch_stop!(self.flip_w);
-
-        self.buffers.swap();
-        if let Some(swizzler) = self.swizzler.as_mut() {
-            swizzler.swap();
+        let flip = flip_and_advance(
+            &transfer,
+            |clips| {
+                ii_stopwatch::stopwatch_start!(self.flip_w);
+                let flipped = self.output.page_flip(scanout_fb, clips);
+                ii_stopwatch::stopwatch_stop!(self.flip_w);
+                flipped
+            },
+            || {
+                self.buffers.swap();
+                if let Some(swizzler) = self.swizzler.as_mut() {
+                    swizzler.swap();
+                }
+            },
+        )?;
+        #[cfg(feature = "profiling")]
+        if matches!(flip, Flip::Skipped) {
+            self.unchanged_frames += 1;
+        }
+        if let Flip::ClipsRefused(e) = flip {
+            tracing::error!(
+                "Page flip failed with damage clips and went through without them; \
+                 sending whole frames until restart: {e:#}"
+            );
+            self.frame_differ = None;
         }
 
         #[cfg(feature = "profiling")]
         if ii_stopwatch::every_expired!(self.render_every) {
             tracing::info!(
-                "render_scene: bind={} compose={} finish={} swizzle={} gpu_wait={} flip={} {}",
+                "render_scene: bind={} compose={} finish={} swizzle={} gpu_wait={} diff={} \
+                 unchanged={} flip={} {}",
                 self.bind_w,
                 self.compose_w,
                 self.finish_w,
                 self.swizzle_w,
                 self.gpu_wait_w,
+                self.diff_w,
+                self.unchanged_frames,
                 self.flip_w,
                 self.output.take_transfer_report()
             );
+            self.unchanged_frames = 0;
+            ii_stopwatch::stopwatch_reset!(self.diff_w);
             ii_stopwatch::stopwatch_reset!(self.bind_w);
             ii_stopwatch::stopwatch_reset!(self.compose_w);
             ii_stopwatch::stopwatch_reset!(self.finish_w);
@@ -1069,6 +1131,35 @@ impl SceneRenderer {
         }
 
         Ok((true, Vec::new(), false))
+    }
+
+    /// What the flip of the frame just rendered into the scanout back buffer has to send,
+    /// and whether the diff read that frame back.
+    fn transfer(&mut self) -> (Transfer, bool) {
+        let takes_clips = self.output.takes_damage_clips();
+        let pool = self
+            .swizzler
+            .as_ref()
+            .map_or(&self.buffers, ScanoutSwizzler::buffers);
+        let renderer = self.egl.renderer();
+        let mut read_back = false;
+        let transfer = next_transfer(&mut self.frame_differ, |differ| {
+            let new = pool
+                .back()
+                .expect("BUG: the frame was just rendered into the scanout back buffer");
+            // No flip has gone through yet, so the panel holds no known frame.
+            let Some(previous) = pool.front() else {
+                return Ok(None);
+            };
+            let mask = differ.diff(renderer, &new.dmabuf, &previous.dmabuf)?;
+            read_back = true;
+            Ok(Some(mask))
+        });
+        if takes_clips {
+            (transfer, read_back)
+        } else {
+            (transfer.without_clips(), read_back)
+        }
     }
 
     /// Whether the capture cache holds valid pixel data from at least one

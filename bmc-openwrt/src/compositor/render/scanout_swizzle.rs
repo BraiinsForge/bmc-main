@@ -86,6 +86,10 @@ impl ScanoutSwizzler {
         Ok(fb)
     }
 
+    pub fn buffers(&self) -> &BufferPool {
+        &self.buffers
+    }
+
     /// Make the last presented buffer the front one, once its page flip went through.
     pub fn swap(&mut self) {
         self.buffers.swap();

@@ -24,7 +24,7 @@ use anyhow::{Context, Result};
 #[cfg(feature = "profiling")]
 use smithay::utils::{Clock, Monotonic};
 use smithay::{
-    backend::drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneState},
+    backend::drm::{DrmDevice, DrmDeviceFd, DrmSurface, PlaneConfig, PlaneDamageClips, PlaneState},
     reexports::drm::control::{Device as ControlDevice, Mode, connector, crtc, framebuffer, plane},
     utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
 };
@@ -50,6 +50,7 @@ pub struct DrmOutput {
     /// own clock at fire time and more accurate (it's the real presentation
     /// time, not an approximation). `None` until the first vblank.
     last_vblank_ms: Option<u32>,
+    damage_clips_supported: bool,
     /// When the pending flip was committed, on the clock of the kernel's event timestamps.
     #[cfg(feature = "profiling")]
     committed_at: Option<Duration>,
@@ -97,6 +98,12 @@ impl DrmOutput {
 
         let planes = surface.planes();
         let primary_plane = planes.primary.first().context("No primary plane")?.handle;
+        let damage_clips_supported = plane_has_property(&drm, primary_plane, "FB_DAMAGE_CLIPS")
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to read the primary plane's properties: {e:#}");
+                false
+            });
+        tracing::info!("Primary plane takes damage clips: {damage_clips_supported}");
 
         let mode_width = u32::from(mode.size().0);
         let mode_height = u32::from(mode.size().1);
@@ -143,6 +150,7 @@ impl DrmOutput {
             frame_count: 0,
             flip_pending: false,
             last_vblank_ms: None,
+            damage_clips_supported,
             #[cfg(feature = "profiling")]
             committed_at: None,
             #[cfg(feature = "profiling")]
@@ -223,6 +231,12 @@ impl DrmOutput {
         self.flip_pending
     }
 
+    /// Whether the primary plane has `FB_DAMAGE_CLIPS`,
+    /// without which the driver ignores the clips [`Self::page_flip`] takes and sends whole frames.
+    pub fn takes_damage_clips(&self) -> bool {
+        self.damage_clips_supported
+    }
+
     #[expect(
         clippy::cast_possible_truncation,
         reason = "wrapping at ~49.7 days is acceptable for frame-callback time"
@@ -247,7 +261,16 @@ impl DrmOutput {
         self.last_vblank_ms
     }
 
-    pub fn page_flip(&mut self, fb: framebuffer::Handle) -> Result<()> {
+    /// Put `fb` on the panel.
+    /// `clips` limits the transfer to those regions,
+    /// which must cover every pixel that differs from the frame the panel holds;
+    /// `None` sends the whole frame.
+    /// MIPI DBI drivers send the bounding box of all clips as one window.
+    pub fn page_flip(
+        &mut self,
+        fb: framebuffer::Handle,
+        clips: Option<&[Rectangle<i32, Physical>]>,
+    ) -> Result<()> {
         let src_size: Size<f64, BufferCoord> =
             Size::from((f64::from(self.width), f64::from(self.height)));
         let src_rect = Rectangle::from_size(src_size);
@@ -255,13 +278,25 @@ impl DrmOutput {
         #[expect(clippy::cast_possible_wrap)]
         let dst_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let dst_rect = Rectangle::from_size(dst_size);
+        let damage_clips = clips
+            .map(|rects| {
+                PlaneDamageClips::from_damage(
+                    self.surface.device_fd(),
+                    src_rect,
+                    dst_rect,
+                    rects.iter().copied(),
+                )
+            })
+            .transpose()
+            .context("Failed to build plane damage clips")?
+            .flatten();
 
         let plane_config = PlaneConfig {
             src: src_rect,
             dst: dst_rect,
             transform: Transform::Normal,
             alpha: 1.0,
-            damage_clips: None,
+            damage_clips: damage_clips.as_ref().map(PlaneDamageClips::blob),
             fb,
             fence: None,
         };
@@ -289,11 +324,21 @@ impl DrmOutput {
         #[cfg(feature = "profiling")]
         {
             self.committed_at = Some(committed_at);
-            self.sent_bytes +=
-                self.width as usize * self.height as usize * self.pixel_format.bytes_per_pixel();
+            self.sent_bytes += self.transferred_pixels(clips) * self.pixel_format.bytes_per_pixel();
         }
 
         Ok(())
+    }
+
+    /// Pixels a MIPI DBI driver sends for `clips`: their bounding box.
+    #[cfg(feature = "profiling")]
+    fn transferred_pixels(&self, clips: Option<&[Rectangle<i32, Physical>]>) -> usize {
+        let full = self.width as usize * self.height as usize;
+        let Some(bounds) = clips.and_then(|rects| rects.iter().copied().reduce(Rectangle::merge))
+        else {
+            return full;
+        };
+        usize::try_from(bounds.size.w).unwrap_or(0) * usize::try_from(bounds.size.h).unwrap_or(0)
     }
 
     /// Panel transfers since the last call, then reset.
@@ -313,6 +358,13 @@ impl DrmOutput {
         self.report_since = std::time::Instant::now();
         report
     }
+}
+
+fn plane_has_property(drm: &DrmDevice, plane: plane::Handle, name: &str) -> Result<bool> {
+    Ok(drm
+        .get_properties(plane)?
+        .as_hashmap(drm)?
+        .contains_key(name))
 }
 
 #[must_use]
