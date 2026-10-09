@@ -152,6 +152,12 @@ off once the deployed packages are active.
 The package servers stay registered, and manual checks and upgrades keep working. Where the web UI shows the Upgrades
 tab, it can turn automatic upgrades back on, but it cannot turn them off.
 
+Earlier deploys emptied `servers[]` with `bmc-nix-cli clear-servers`. Once automatic upgrades are off, deploy removes a
+runtime `servers.json` whose `servers[]` is empty, so the shipped `servers.json.default` applies again. Restoring the
+servers first would let an automatic upgrade that is still on replace the deployed packages. Deploy keeps the file when
+the default has no enabled server or a different factory entry, or the file holds a bootstrapped factory entry, as
+removing it would lose the device's factory entry.
+
 Run `deck register-server <device>` to replay the server entries from the shipped `servers.json.default` on the device.
 Use the `--url`, `--id`, and `--key` options to select an entry or override its identifier, URL, and key as appropriate.
 When no usable default entry exists, provide all three options to register one explicitly during device recovery itself.

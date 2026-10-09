@@ -526,6 +526,38 @@ def register_packages(dev: Device, plan: Deployment) -> str:
     return f"{names} → generation {console.lit(generation)}" if generation else names
 
 
+@stage("Restore cleared upgrade servers")
+def restore_cleared_servers(dev: Device) -> str:
+    """Undo the `clear-servers` that earlier deploys ran.
+
+    Without the runtime file, the shipped default applies again.
+    """
+    raw = dev.read(f"if [ -e {SERVERS_JSON} ]; then cat {SERVERS_JSON}; fi")
+    done_if(not raw.strip())
+    try:
+        config = json.loads(raw)
+    except json.JSONDecodeError as error:
+        return f"{SERVERS_JSON} is not valid JSON ({error}); bmc-nix quarantines it"
+    done_if(not isinstance(config, dict) or config.get("servers") != [])
+    kept = f"the emptied {SERVERS_JSON} stays"
+    default_raw = dev.read(f"cat {_SERVERS_JSON_DEFAULT} 2>/dev/null || true")
+    try:
+        defaults = _default_server_entries(default_raw)
+    except Abort as error:
+        return f"{kept}: {error}"
+    if not any(entry["enabled"] is True for entry in defaults):
+        return f"{kept}: no enabled server in {_SERVERS_JSON_DEFAULT} to fall back to"
+    # The runtime factory key verifies firmware inits; falling back must not swap it.
+    if config.get("factory") != json.loads(default_raw).get("factory"):
+        return f"{kept}: its factory entry differs from {_SERVERS_JSON_DEFAULT}"
+    # Only the marker lets `register-server` update a bootstrapped factory.
+    if config.get("bootstrapped_factory"):
+        return f"{kept}: it holds a bootstrapped factory entry"
+    dev.run(f"rm {SERVERS_JSON}")
+    removed = "would remove" if dry_run.get() else "removed"
+    return f"{removed} the emptied {SERVERS_JSON}; the shipped default applies again"
+
+
 # grpcurl exits with 64 plus the gRPC status code of a failed call.
 _GRPCURL_EXIT_UNIMPLEMENTED = 64 + 12
 # A failed dial, DEADLINE_EXCEEDED or UNAVAILABLE: no bmc answers behind the tunnel.

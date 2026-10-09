@@ -68,6 +68,7 @@ class Deploy:
         catalog.register_packages(dev, plan)
         catalog.await_package_activation(dev, old_pid=old_pid)
         catalog.disable_deferred_auto_upgrade(dev, plan)
+        catalog.restore_cleared_servers(dev)
 
 
 @entrypoint

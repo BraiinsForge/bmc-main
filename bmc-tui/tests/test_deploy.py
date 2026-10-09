@@ -52,6 +52,7 @@ def test_deploy_observes_activation_without_hard_restart(
         "remove_superseded_packages",
         "disable_deferred_auto_upgrade",
         "register_packages",
+        "restore_cleared_servers",
         "disable_auto_upgrade",
     ):
         monkeypatch.setattr(deploy.catalog, name, lambda *_args, **_kwargs: None)
@@ -95,6 +96,7 @@ def test_deploy_disables_automatic_upgrades_before_touching_the_device(
         "disable_deferred_auto_upgrade",
         "register_packages",
         "await_package_activation",
+        "restore_cleared_servers",
         "disable_auto_upgrade",
     ):
         monkeypatch.setattr(
@@ -112,3 +114,6 @@ def test_deploy_disables_automatic_upgrades_before_touching_the_device(
         "ensure_device_reachable",
         "disable_auto_upgrade",
     ], "automatic upgrades must be off, or the deploy refused, before the device changes"
+    assert calls[-1] == "restore_cleared_servers", (
+        "restored servers must not reach an automatic upgrade that is still on"
+    )
