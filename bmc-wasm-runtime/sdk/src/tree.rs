@@ -55,7 +55,7 @@ use crate::mesh::{Mesh, MeshView};
 pub use bmc_wasm_protocol::{PropsData, TextStyle};
 
 pub use bmc_render_skin::{
-    ButtonSkin, NinePatch, NinePatchAsset, Skin, SkinAsset, SkinEntry, SliderSkin,
+    ButtonSkin, NinePatch, NinePatchAsset, Skin, SkinAsset, SkinEntry, SkinRegistry, SliderSkin,
     ensure_nine_patch_registered,
 };
 

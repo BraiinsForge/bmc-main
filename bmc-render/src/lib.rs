@@ -89,6 +89,11 @@ mod test_tracing;
 pub mod colors {
     pub use bmc_wasm_protocol::colors::*;
 }
+
+/// The shared UI vocabulary: tree, codec, design-system types.
+pub mod ui {
+    pub use bmc_ui::*;
+}
 pub use tree::{
     ProcessContext, deserialize_tree, layout_and_render, layout_and_render_with_asset_resolver,
     process_tree,

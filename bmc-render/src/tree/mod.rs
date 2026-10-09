@@ -65,7 +65,6 @@ pub fn take_debug_layout() -> bool {
 mod decode;
 mod frame;
 mod layout;
-mod model;
 mod paint;
 mod walk;
 
@@ -73,10 +72,18 @@ mod walk;
 pub use crate::components::notification::{
     measure_notification_banner, render_notification_banner,
 };
+pub use bmc_ui::tree::*;
 pub use bmc_wasm_protocol::{
     AutoFit, CrossAlign, FontFamily, FontWeight, Justify, PropsData, TextAlign, TextOverflow,
     TextStyle, VerticalAlign,
 };
+
+/// The host's names for the shared tree types.
+pub type TreeNode = Node;
+pub type DrawCommand = Draw;
+pub type SpanData = Span;
+pub type HostAnimationDef = AnimationDef;
+pub type HostTransitionDef = TransitionDef;
 
 pub(crate) use paint::render_taffy_node;
 
@@ -90,15 +97,9 @@ pub use frame::{
 pub(crate) use walk::{AnimationContext, outline_box};
 #[cfg(test)]
 pub(crate) use walk::{DynamicHalf, Outlines, stroke_inside};
-pub use walk::{EmitMode, LayoutOutline, StaticLayer, TouchHit, TreeResult};
+pub use walk::{EmitMode, LayoutOutline, StaticLayer, TreeResult};
 
 pub use decode::{deserialize_tree, deserialize_tree_keyed};
-
-pub use model::{
-    ButtonSkinData, DrawCommand, HostAnimationDef, HostTransitionDef, NinePatchData,
-    SliderSkinData, SpanData, TreeNode, center, col, dimmed, fixed_height, make_button, row,
-    spacer, text,
-};
 
 #[cfg(test)]
 mod tests;

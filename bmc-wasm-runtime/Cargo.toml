@@ -121,6 +121,7 @@ path = "src/bin/capture/main.rs"
 required-features = ["capture"]
 
 [dev-dependencies]
+bmc-ui = { path = "../bmc-render/ui" }
 bmc-wasm-assets = { path = "../bmc-wasm-assets" }
 # A renderer for unit tests of the host's layer bookkeeping, which needs no GL.
 bmc-render = { path = "../bmc-render", features = ["test-support"] }

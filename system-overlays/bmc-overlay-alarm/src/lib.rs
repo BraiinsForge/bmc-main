@@ -31,8 +31,8 @@ use std::vec;
 use bmc_render::colors::{BLACK, Color, GRAY_30, ORANGE_30, ORANGE_40, ORANGE_50, WHITE};
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{
-    DrawCommand, FontFamily, FontWeight, TextAlign, TextStyle, TreeNode, VerticalAlign, col,
-    fixed_height, row, text,
+    DrawCommand, FontFamily, FontWeight, Interpolation, TextAlign, TextStyle, TreeNode,
+    VerticalAlign, col, fixed_height, row, text,
 };
 use bmc_system_overlay::{
     AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
@@ -149,7 +149,7 @@ fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Tr
                 dash: None,
             },
             closed: true,
-            smooth: false,
+            interpolation: Interpolation::Linear,
         });
     }
 

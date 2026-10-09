@@ -166,124 +166,72 @@ void main() {
 
 // ── Mesh draw arguments ─────────────────────────────────────────────
 
-/// Camera + 3D transform parameters for a mesh draw.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeshTransform {
-    pub fov: f32,
-    pub distance: f32,
-    /// Orientation quaternion `(x, y, z, w)`.
-    pub quat: [f32; 4],
-    /// Offset relative to the draw rect centre in mesh-local units.
-    pub position: [f32; 3],
-    pub scale: f32,
-}
+pub use bmc_ui::mesh::{MeshDrawArgs, MeshHighlight, MeshLighting, MeshTransform};
 
-/// Directional lighting. `pitch == NaN` is the sentinel for "lighting
-/// disabled" (matches `MeshView::light: None` in the SDK).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeshLighting {
-    pub pitch: f32,
-    pub yaw: f32,
-    pub ambient: f32,
-    pub specular: f32,
-}
-
-/// Optional UV-rect highlight tint. `u_min == NaN` is the sentinel for
-/// "no highlight".
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeshHighlight {
-    pub u_min: f32,
-    pub v_min: f32,
-    pub u_max: f32,
-    pub v_max: f32,
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-}
-
-/// Bundle of every per-draw mesh parameter passed through the renderer
-/// trait, the `DrawCommand::Mesh` variant, and `MeshRenderer::render`.
-/// Grouping them in one struct avoids the wide-tuple drift that would
-/// otherwise force every signature change to be edited at six sites, and
-/// lets `SlotState` dirty-check every field by definition.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeshDrawArgs {
-    pub transform: MeshTransform,
-    pub lighting: MeshLighting,
-    pub highlight: MeshHighlight,
-}
-
+/// Not dirty against itself, unlike a fixture carrying the `NaN` sentinels.
 #[cfg(test)]
-impl MeshDrawArgs {
-    /// Not dirty against itself, unlike a fixture carrying the `NaN` sentinels.
-    pub(crate) const ZERO: Self = Self {
-        transform: MeshTransform {
-            fov: 0.0,
-            distance: 0.0,
-            quat: [0.0; 4],
-            position: [0.0; 3],
-            scale: 0.0,
-        },
-        lighting: MeshLighting {
-            pitch: 0.0,
-            yaw: 0.0,
-            ambient: 0.0,
-            specular: 0.0,
-        },
-        highlight: MeshHighlight {
-            u_min: 0.0,
-            v_min: 0.0,
-            u_max: 0.0,
-            v_max: 0.0,
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-        },
-    };
-}
+pub(crate) const ZERO_MESH_ARGS: MeshDrawArgs = MeshDrawArgs {
+    transform: MeshTransform {
+        fov: 0.0,
+        distance: 0.0,
+        quat: [0.0; 4],
+        position: [0.0; 3],
+        scale: 0.0,
+    },
+    lighting: MeshLighting {
+        pitch: 0.0,
+        yaw: 0.0,
+        ambient: 0.0,
+        specular: 0.0,
+    },
+    highlight: MeshHighlight {
+        u_min: 0.0,
+        v_min: 0.0,
+        u_max: 0.0,
+        v_max: 0.0,
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+    },
+};
 
-impl MeshDrawArgs {
-    /// Field-by-field dirty check. Treats `NaN` either-side as "changed" so
-    /// `Some(...) ↔ None` lighting / highlight transitions invalidate the
-    /// cached slot.
-    fn dirty_against(&self, prev: &Self) -> bool {
-        let t = &self.transform;
-        let pt = &prev.transform;
-        if is_dirty(pt.fov, t.fov)
-            || is_dirty(pt.distance, t.distance)
-            || is_dirty(pt.scale, t.scale)
-        {
-            return true;
-        }
-        for i in 0..4 {
-            if is_dirty(pt.quat[i], t.quat[i]) {
-                return true;
-            }
-        }
-        for i in 0..3 {
-            if is_dirty(pt.position[i], t.position[i]) {
-                return true;
-            }
-        }
-        let l = &self.lighting;
-        let pl = &prev.lighting;
-        if is_dirty(pl.pitch, l.pitch)
-            || is_dirty(pl.yaw, l.yaw)
-            || is_dirty(pl.ambient, l.ambient)
-            || is_dirty(pl.specular, l.specular)
-        {
-            return true;
-        }
-        let h = &self.highlight;
-        let ph = &prev.highlight;
-        is_dirty(ph.u_min, h.u_min)
-            || is_dirty(ph.v_min, h.v_min)
-            || is_dirty(ph.u_max, h.u_max)
-            || is_dirty(ph.v_max, h.v_max)
-            || is_dirty(ph.r, h.r)
-            || is_dirty(ph.g, h.g)
-            || is_dirty(ph.b, h.b)
+/// Field-by-field dirty check. Treats `NaN` either-side as "changed" so
+/// `Some(...) ↔ None` lighting / highlight transitions invalidate the
+/// cached slot.
+fn args_dirty_against(args: &MeshDrawArgs, prev: &MeshDrawArgs) -> bool {
+    let t = &args.transform;
+    let pt = &prev.transform;
+    if is_dirty(pt.fov, t.fov) || is_dirty(pt.distance, t.distance) || is_dirty(pt.scale, t.scale) {
+        return true;
     }
+    for i in 0..4 {
+        if is_dirty(pt.quat[i], t.quat[i]) {
+            return true;
+        }
+    }
+    for i in 0..3 {
+        if is_dirty(pt.position[i], t.position[i]) {
+            return true;
+        }
+    }
+    let l = &args.lighting;
+    let pl = &prev.lighting;
+    if is_dirty(pl.pitch, l.pitch)
+        || is_dirty(pl.yaw, l.yaw)
+        || is_dirty(pl.ambient, l.ambient)
+        || is_dirty(pl.specular, l.specular)
+    {
+        return true;
+    }
+    let h = &args.highlight;
+    let ph = &prev.highlight;
+    is_dirty(ph.u_min, h.u_min)
+        || is_dirty(ph.v_min, h.v_min)
+        || is_dirty(ph.u_max, h.u_max)
+        || is_dirty(ph.v_max, h.v_max)
+        || is_dirty(ph.r, h.r)
+        || is_dirty(ph.g, h.g)
+        || is_dirty(ph.b, h.b)
 }
 
 // ── Per-slot dirty state ────────────────────────────────────────────

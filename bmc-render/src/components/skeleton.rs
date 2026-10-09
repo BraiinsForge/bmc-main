@@ -35,22 +35,10 @@
 //! static, matching Carbon's own reduced-motion path, to leave the GPU
 //! budget to the widget's content.
 
-use bmc_wasm_protocol::{Color, SkeletonKind};
+use bmc_ui::SkeletonData;
+use bmc_wasm_protocol::SkeletonKind;
 
 use crate::renderer::Renderer;
-
-#[derive(Clone, Copy, Default, Debug)]
-pub struct SkeletonData {
-    pub kind: SkeletonKind,
-    /// Glyph count the slot would have held (`Text` / `Heading`).
-    pub chars: f32,
-    /// Font size of the text the slot stands in for (`Text` / `Heading`).
-    pub font_size: f32,
-    /// Explicit box for `Placeholder`, and the bar height for `Fill`.
-    pub width: f32,
-    pub height: f32,
-    pub color: Color,
-}
 
 /// Carbon `.cds--skeleton__text` bar height.
 const TEXT_H: f32 = 16.0;
@@ -63,30 +51,30 @@ const HEADING_H: f32 = 24.0;
 /// which run a little wider than their prose.
 const GLYPH_ADVANCE: f32 = 0.55;
 
-impl SkeletonData {
-    /// The node's layout size. `Fill`'s width comes from its container,
-    /// so it reports none and stretches.
-    pub(crate) fn layout_size(&self) -> (Option<f32>, f32) {
-        match self.kind {
-            // Both text roles size to the line their text would have held.
-            SkeletonKind::Text | SkeletonKind::Heading => (Some(self.bar_width()), self.font_size),
-            SkeletonKind::Placeholder => (Some(self.width), self.height),
-            SkeletonKind::Fill => (None, self.height),
+/// The node's layout size. `Fill`'s width comes from its container,
+/// so it reports none and stretches.
+pub(crate) fn layout_size(skeleton: &SkeletonData) -> (Option<f32>, f32) {
+    match skeleton.kind {
+        // Both text roles size to the line their text would have held.
+        SkeletonKind::Text | SkeletonKind::Heading => {
+            (Some(bar_width(skeleton)), skeleton.font_size)
         }
+        SkeletonKind::Placeholder => (Some(skeleton.width), skeleton.height),
+        SkeletonKind::Fill => (None, skeleton.height),
     }
+}
 
-    fn bar_width(&self) -> f32 {
-        self.chars * self.font_size * GLYPH_ADVANCE
-    }
+fn bar_width(skeleton: &SkeletonData) -> f32 {
+    skeleton.chars * skeleton.font_size * GLYPH_ADVANCE
+}
 
-    /// The bar's height inside the node's box; text roles center theirs
-    /// in the line box, the others fill it.
-    fn bar_height(&self) -> f32 {
-        match self.kind {
-            SkeletonKind::Text => TEXT_H,
-            SkeletonKind::Heading => HEADING_H,
-            SkeletonKind::Placeholder | SkeletonKind::Fill => self.height,
-        }
+/// The bar's height inside the node's box; text roles center theirs
+/// in the line box, the others fill it.
+fn bar_height(skeleton: &SkeletonData) -> f32 {
+    match skeleton.kind {
+        SkeletonKind::Text => TEXT_H,
+        SkeletonKind::Heading => HEADING_H,
+        SkeletonKind::Placeholder | SkeletonKind::Fill => skeleton.height,
     }
 }
 
@@ -100,7 +88,7 @@ pub(crate) fn render_skeleton(
     w: f32,
     h: f32,
 ) {
-    let bar_h = skeleton.bar_height().min(h);
+    let bar_h = bar_height(skeleton).min(h);
     let bar_y = y + (h - bar_h) / 2.0;
     renderer.fill_rect(x, bar_y, w, bar_h, skeleton.color);
 }

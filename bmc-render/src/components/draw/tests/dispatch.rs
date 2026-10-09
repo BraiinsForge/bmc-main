@@ -133,7 +133,15 @@ fn render_target_resolves_asset_ids_at_each_draw_including_shadow_content() {
             0.0,
             false,
         );
-        target.draw_mesh(0.0, 0.0, 1.0, 1.0, 0, mesh, MeshDrawArgs::ZERO);
+        target.draw_mesh(
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            0,
+            mesh,
+            crate::gpu::mesh::ZERO_MESH_ARGS,
+        );
     }
 
     let expected = [

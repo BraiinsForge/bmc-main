@@ -26,25 +26,25 @@
     clippy::cast_sign_loss
 )]
 
-use bmc_wasm_protocol::{Color, ProgressKind};
+use bmc_ui::{ProgressMode, SliderSkin};
+use bmc_wasm_protocol::Color;
 
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
-use crate::tree::{AnimationContext, SliderSkinData};
+use crate::tree::AnimationContext;
 
 // ── Data ─────────────────────────────────────────────────────────────
 
 /// Host-side progress bar rendering data.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProgressBarData {
     pub track_h: f32,
-    pub mode: ProgressKind,
-    pub fraction: f32,
+    pub mode: ProgressMode,
     pub active: bool,
     pub fill_color: Color,
     pub track_color: Color,
     pub bg_color: Color,
-    pub skin: Option<SliderSkinData>,
+    pub skin: Option<SliderSkin>,
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -88,12 +88,12 @@ fn render_progress_bar_flat(
     // Center on the laid-out box, which flex may have grown or (for the
     // thumb-less meter) shrunk past the notional bar height.
     let mid_y = y + h / 2.0;
-    let is_indeterminate = pb.mode == ProgressKind::Indeterminate;
-    let fraction = pb.fraction.clamp(0.0, 1.0);
+    let is_indeterminate = matches!(pb.mode, ProgressMode::Indeterminate);
+    let fraction = pb.mode.fraction().clamp(0.0, 1.0);
     let fill_w = w * fraction;
 
     // Meter: rounded track and fill, no drag thumb, no squiggle.
-    if pb.mode == ProgressKind::Meter {
+    if matches!(pb.mode, ProgressMode::Meter(_)) {
         let track_y = mid_y - half_track;
         renderer.fill_rounded_rect(x, track_y, w, track_h, half_track, pb.track_color);
         if fill_w > 0.0 {
@@ -152,7 +152,7 @@ fn render_progress_bar_flat(
 fn render_progress_bar_skinned(
     renderer: &mut RenderTarget<'_, '_, '_>,
     pb: &ProgressBarData,
-    skin: &SliderSkinData,
+    skin: &SliderSkin,
     x: f32,
     y: f32,
     w: f32,
@@ -171,9 +171,9 @@ fn render_progress_bar_skinned(
 
     // Draw thumb at progress position (scale down when bar is narrow)
     if let Some(thumb_id) = skin.thumb_id
-        && pb.mode == ProgressKind::Slider
+        && let ProgressMode::Slider(fraction) = pb.mode
     {
-        let fraction = pb.fraction.clamp(0.0, 1.0);
+        let fraction = fraction.clamp(0.0, 1.0);
         let thumb_w = f32::from(skin.thumb_w);
         let thumb_h = f32::from(skin.thumb_h);
         let scale = (w / (thumb_w * 4.0)).min(1.0);

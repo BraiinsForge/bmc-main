@@ -20,13 +20,13 @@
 
 //! One frame's pass over the tree: layout, the static/dynamic split, and rendering.
 
+use super::TreeNode;
 use super::decode::deserialize_tree;
 #[cfg(feature = "frame-timings")]
 use super::gpu_pass_timing_enabled;
 use super::layout::NodeContext;
 use super::layout::build_taffy_node;
 use super::layout::compute_taffy_layout;
-use super::model::TreeNode;
 use super::paint::render_taffy_node;
 use super::walk::AnimationContext;
 use super::walk::DynamicHalf;

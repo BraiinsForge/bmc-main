@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 crate-type = ["rlib"]
 
 [dependencies]
-bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
+bmc-ui = { path = "../ui" }
 
 [lints.rust]
 unused_must_use = "deny"

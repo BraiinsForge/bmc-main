@@ -84,8 +84,8 @@ fn a_button_sizes_itself_around_its_shaped_label() {
                 button: Some(ButtonContext {
                     id: "btn".to_owned(),
                     label: LABEL.to_owned(),
-                    style: 0,
-                    size: size as u8,
+                    style: ButtonStyle::Primary,
+                    size,
                     icon_id: None,
                     disabled: false,
                     skin: None,

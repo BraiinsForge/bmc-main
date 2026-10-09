@@ -1,28 +1,27 @@
 # bmc-render-skin
 
-Lightweight skin and 9-patch types shared between native rendering and WASM widgets.
+Skin and 9-patch registration with the host.
 
 ## Purpose
 
-Defines `NinePatch`, `NinePatchAsset`, `Skin`, `SkinAsset`, `ButtonSkin`, `SliderSkin`, and `SkinPalette` types. Also
-provides the `parse_nine_patch_insets` utility that reads stretch markers from `.9.png` borders.
+The skin types (`NinePatch`, `NinePatchAsset`, `Skin`, `SkinAsset`, `ButtonSkin`, `SliderSkin`) and the `.9.png` inset
+parser live in `bmc-ui` and are re-exported here. This crate adds the one impure step: turning a compile-time asset into
+a registered `BitmapId` through a registrar the host installs with `init()`, as `ensure_nine_patch_registered` and the
+`SkinRegistry` extension trait on `Skin`.
 
-Intentionally keeps its dependency footprint minimal (only `bmc-wasm-protocol`) so that both heavy-weight consumers
-(`bmc-render` with GPU deps) and lightweight consumers (`bmc-wasm-sdk` compiled to WASM) can depend on it without
+Depends only on `bmc-ui`, so both `bmc-render` (GPU deps) and `bmc-wasm-sdk` (compiled to WASM) can use it without
 pulling in rendering libraries.
 
 ## Boundaries
 
 **IS its responsibility:**
 
-- Skin, 9-patch, button skin, and slider skin type definitions
-- Color palette types for skin theming
-- 9-patch inset parsing from pixel data (pure logic, no image decoding)
 - Runtime bitmap registration via a pluggable callback (`init()`)
-- Hex color string parsing utility
+- Registering a skin's 9-patches and a `NinePatchAsset` with the host
 
 **IS NOT its responsibility:**
 
+- The skin and 9-patch types themselves, and inset parsing (that is `bmc-ui`)
 - Image decoding (done by proc macros at build time)
 - Actual rendering of 9-patches or skins (done by `bmc-render`)
 - Asset embedding macros (done by `bmc-render-macros`)

@@ -25,11 +25,11 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
-/// Maps SVG file stem → name of the protocol-side `SvgId` constant.
+/// Maps SVG file stem → name of the `bmc-ui` `SvgId` constant.
 ///
 /// The build script emits a table that *references* these constants by name
 /// rather than reconstructing IDs from raw `u16` values. This keeps the
-/// `from_wire` boundary inside the protocol crate.
+/// `from_wire` boundary inside `bmc-ui`.
 const BUILTIN_ICON_MAP: &[(&str, &str)] = &[
     ("close", "ICON_CLOSE"),
     ("error--solid", "ICON_ERROR"),
@@ -130,18 +130,18 @@ fn main() {
         }
     }
 
-    // Generate Rust source with the icon data table. References the protocol
-    // crate's named constants directly so no `from_wire`/`from_raw` boundary
+    // Generate Rust source with the icon data table. References `bmc-ui`'s
+    // named constants directly so no `from_wire`/`from_raw` boundary
     // is exposed in generated code.
     let mut generated = String::from(
-        "use bmc_wasm_protocol::SvgId;\n\
+        "use bmc_ui::SvgId;\n\
          /// Built-in icon data compiled from SVGs at build time.\n\
          pub const BUILTIN_ICON_DATA: &[(SvgId, &[u8])] = &[\n",
     );
     for (stem, const_name) in &entries {
         writeln!(
             generated,
-            "    (bmc_wasm_protocol::{const_name}, include_bytes!(concat!(env!(\"OUT_DIR\"), \"/icon_{stem}.bin\"))),"
+            "    (bmc_ui::{const_name}, include_bytes!(concat!(env!(\"OUT_DIR\"), \"/icon_{stem}.bin\"))),"
         )
         .unwrap_or_else(|e| panic!("failed to write generated source: {e}"));
     }

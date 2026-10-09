@@ -18,7 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use super::decode::TreeReader;
 use super::layout::{ButtonContext, split_min_content_words};
 use super::*;
 use crate::FrameTimings;
@@ -34,7 +33,6 @@ use taffy::prelude::*;
 mod banding;
 mod capture;
 mod damage_span;
-mod decode;
 mod dim;
 mod emit_mode;
 mod intrinsic_size;
@@ -613,4 +611,10 @@ fn within(outer: &[crate::interaction::Rect], inner: crate::interaction::Rect) -
             && o.x + o.w >= inner.x + inner.w
             && o.y + o.h >= inner.y + inner.h
     })
+}
+
+#[test]
+fn test_props_size() {
+    // In-memory size may differ from wire SIZE due to alignment padding
+    assert!(std::mem::size_of::<PropsData>() >= PropsData::SIZE);
 }

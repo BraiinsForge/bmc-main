@@ -19,8 +19,8 @@
 // the grant above.
 
 use bmc_render::tree::{DrawCommand, TreeNode};
+use bmc_ui::{Draw, canvas, encode};
 use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing, Color, FontWeight, PropsData, TextStyle};
-use bmc_wasm_sdk::{Draw, canvas, tree::serialize_node_to_bytes};
 
 #[test]
 fn sdk_curved_text_decodes_on_the_host_for_each_anchor_and_facing() {
@@ -63,7 +63,7 @@ fn sdk_curved_text_decodes_on_the_host_for_each_anchor_and_facing() {
         ),
     ];
 
-    let bytes = serialize_node_to_bytes(&canvas(PropsData::default(), draws));
+    let bytes = encode(&canvas(PropsData::default(), draws));
     let TreeNode::Canvas { draws, .. } =
         bmc_render::deserialize_tree(&bytes).expect("BUG: SDK must serialize a valid canvas tree")
     else {

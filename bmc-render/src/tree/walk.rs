@@ -21,6 +21,7 @@
 //! What the layout and paint walks share: the emission mode, the animation
 //! context threaded through them, and what a walk reports back.
 
+use super::TouchHit;
 use crate::interaction::Rect;
 use crate::partition::Band;
 use crate::renderer::{RenderShapes as _, RenderTarget};
@@ -218,19 +219,6 @@ pub(crate) fn stroke_inside(rect: Rect) -> Option<Rect> {
             rect.h - 2.0 * INSET,
         )
     })
-}
-
-/// Touch interaction info (position relative to element, plus element dimensions).
-#[derive(Debug, Clone, Copy)]
-pub struct TouchHit {
-    /// Local x position (relative to element left edge)
-    pub x: f32,
-    /// Local y position (relative to element top edge)
-    pub y: f32,
-    /// Element layout width
-    pub width: f32,
-    /// Element layout height
-    pub height: f32,
 }
 
 /// Result from processing a tree

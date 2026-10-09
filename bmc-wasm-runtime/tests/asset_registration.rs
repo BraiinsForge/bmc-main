@@ -138,53 +138,31 @@ impl AssetKind {
         }
     }
 
-    fn demand_draw(self, raw_id: u32) -> bmc_wasm_sdk::Draw {
+    fn demand_draw(self, raw_id: u32) -> bmc_ui::Draw {
         match self {
-            Self::Svg => bmc_wasm_sdk::Draw::svg_builtin(
+            Self::Svg => bmc_ui::Draw::svg_id(
                 0.0,
                 0.0,
                 64.0,
                 64.0,
-                SvgId::from_ffi(raw_id).expect("BUG: fixture SVG ID must be valid"),
+                Some(SvgId::from_ffi(raw_id).expect("BUG: fixture SVG ID must be valid")),
                 bmc_wasm_protocol::colors::WHITE,
             ),
-            Self::Bitmap | Self::BitmapNearest => bmc_wasm_sdk::Draw::bitmap_id(
+            Self::Bitmap | Self::BitmapNearest => bmc_ui::Draw::bitmap_id(
                 0.0,
                 0.0,
                 64.0,
                 64.0,
                 Some(BitmapId::from_ffi(raw_id).expect("BUG: fixture bitmap ID must be valid")),
             ),
-            Self::Mesh => bmc_wasm_sdk::Draw::Mesh {
-                x: 0.0,
-                y: 0.0,
-                w: 64.0,
-                h: 64.0,
-                mesh_id: Some(
-                    MeshId::from_ffi(raw_id).expect("BUG: fixture mesh ID must be valid"),
-                ),
-                fov: 45.0,
-                distance: 3.0,
-                qx: 0.0,
-                qy: 0.0,
-                qz: 0.0,
-                qw: 1.0,
-                px: 0.0,
-                py: 0.0,
-                pz: 0.0,
-                scale: 1.0,
-                light_pitch: f32::NAN,
-                light_yaw: f32::NAN,
-                ambient: 0.3,
-                specular: 0.4,
-                hl_u_min: f32::NAN,
-                hl_v_min: 0.0,
-                hl_u_max: 0.0,
-                hl_v_max: 0.0,
-                hl_r: 0.0,
-                hl_g: 0.0,
-                hl_b: 0.0,
-            },
+            Self::Mesh => bmc_ui::Draw::mesh_id(
+                0.0,
+                0.0,
+                64.0,
+                64.0,
+                Some(MeshId::from_ffi(raw_id).expect("BUG: fixture mesh ID must be valid")),
+                bmc_ui::MeshView::default(),
+            ),
         }
     }
 }
@@ -223,10 +201,9 @@ fn package_registration_wat(kind: AssetKind, id: &[u8; 32]) -> String {
 }
 
 fn package_demand_wat(kind: AssetKind, id: &[u8; 32]) -> String {
-    bmc_wasm_sdk::init_test_registrars();
     let wire_marker = 0xA55A_u16;
-    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
-        bmc_wasm_sdk::PropsData::default(),
+    let tree = bmc_ui::encode(&bmc_ui::canvas(
+        bmc_ui::PropsData::default(),
         [kind.demand_draw(u32::from(wire_marker))],
     ));
     let marker = wire_marker.to_le_bytes();
@@ -295,20 +272,14 @@ fn package_demand_wat(kind: AssetKind, id: &[u8; 32]) -> String {
 
 fn cache_bitmap_demand_wat() -> String {
     let bitmap_id = BitmapId::from_ffi(1).expect("BUG: first bitmap registry ID must be valid");
-    cache_bitmap_demand_wat_for(bmc_wasm_sdk::Draw::bitmap_id(
-        0.0,
-        0.0,
-        1.0,
-        1.0,
-        Some(bitmap_id),
-    ))
+    cache_bitmap_demand_wat_for(bmc_ui::Draw::bitmap_id(0.0, 0.0, 1.0, 1.0, Some(bitmap_id)))
 }
 
 fn shadowed_cache_bitmap_demand_wat() -> String {
     let bitmap_id = BitmapId::from_ffi(1).expect("BUG: first bitmap registry ID must be valid");
     cache_bitmap_demand_wat_for(
-        bmc_wasm_sdk::Draw::bitmap_id(0.0, 0.0, 1.0, 1.0, Some(bitmap_id)).with_drop_shadow(
-            bmc_wasm_sdk::DropShadow {
+        bmc_ui::Draw::bitmap_id(0.0, 0.0, 1.0, 1.0, Some(bitmap_id)).with_drop_shadow(
+            bmc_ui::DropShadow {
                 dx: 1.0,
                 dy: 1.0,
                 blur: 2.0,
@@ -318,11 +289,8 @@ fn shadowed_cache_bitmap_demand_wat() -> String {
     )
 }
 
-fn cache_bitmap_demand_wat_for(draw: bmc_wasm_sdk::Draw) -> String {
-    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
-        bmc_wasm_sdk::PropsData::default(),
-        [draw],
-    ));
+fn cache_bitmap_demand_wat_for(draw: bmc_ui::Draw) -> String {
+    let tree = bmc_ui::encode(&bmc_ui::canvas(bmc_ui::PropsData::default(), [draw]));
     let tree_ptr = DORMANT_CACHE_TAG.len();
     let mut data = Vec::from(DORMANT_CACHE_TAG.as_bytes());
     data.extend_from_slice(&tree);
@@ -500,21 +468,36 @@ fn selective_cache_bitmap_demand_wat() -> String {
     let used_id = BitmapId::from_ffi(1).expect("BUG: first bitmap registry ID must be valid");
     let unused_id = BitmapId::from_ffi(2).expect("BUG: second bitmap registry ID must be valid");
     let bitmap = |id| {
-        bmc_wasm_sdk::canvas(
-            bmc_wasm_sdk::PropsData {
+        bmc_ui::canvas(
+            bmc_ui::PropsData {
                 width: 64.0,
                 height: 64.0,
-                ..bmc_wasm_sdk::PropsData::default()
+                ..bmc_ui::PropsData::default()
             },
-            [bmc_wasm_sdk::Draw::bitmap_id(0.0, 0.0, 1.0, 1.0, Some(id))],
+            [bmc_ui::Draw::bitmap_id(0.0, 0.0, 1.0, 1.0, Some(id))],
         )
     };
-    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::col(
-        bmc_wasm_sdk::PropsData::default(),
-        [
-            bitmap(used_id),
-            bmc_wasm_sdk::modal("closed", false, "", vec![bitmap(unused_id)], None),
-        ],
+    let closed_modal = bmc_ui::Node::Modal {
+        modal_id: "closed".to_owned(),
+        is_open: false,
+        title: String::new(),
+        content_height: 0.0,
+        padding: 0,
+        backdrop_alpha: 0,
+        bg_color: bmc_ui::Color::default(),
+        header_color: bmc_ui::Color::default(),
+        title_color: bmc_ui::Color::default(),
+        max_width: 0,
+        body: vec![bitmap(unused_id)],
+        footer_primary_key: String::new(),
+        footer_primary_label: String::new(),
+        footer_secondary_key: String::new(),
+        footer_secondary_label: String::new(),
+        footer_danger: false,
+    };
+    let tree = bmc_ui::encode(&bmc_ui::col(
+        bmc_ui::PropsData::default(),
+        [bitmap(used_id), closed_modal],
     ));
     let unused_tag = "unused-cache";
     let unused_tag_ptr = DORMANT_CACHE_TAG.len();
@@ -570,11 +553,10 @@ fn selective_cache_bitmap_demand_wat() -> String {
 }
 
 fn package_bitmap_fit_collision_wat(id: &[u8; 32], bitmap: &[u8]) -> String {
-    bmc_wasm_sdk::init_test_registrars();
     let wire_marker = 0xA55A_u16;
-    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
-        bmc_wasm_sdk::PropsData::default(),
-        [bmc_wasm_sdk::Draw::bitmap_id(
+    let tree = bmc_ui::encode(&bmc_ui::canvas(
+        bmc_ui::PropsData::default(),
+        [bmc_ui::Draw::bitmap_id(
             0.0,
             0.0,
             1.0,

@@ -19,7 +19,7 @@
 // the grant above.
 
 use super::{
-    MeshDrawArgs, MeshRenderer, MeshReservations, UploadedMesh, atlas, release_mesh_index,
+    MeshRenderer, MeshReservations, UploadedMesh, ZERO_MESH_ARGS, atlas, release_mesh_index,
 };
 use crate::renderer::{AssetSuspendResult, AssetTagState};
 use crate::test_harness::{GlHarness, create_real_buffer, create_real_texture};
@@ -223,7 +223,7 @@ fn evicting_mesh_invalidates_atlas_slot_before_id_reuse() {
     let id = renderer
         .register_mesh(gl, "old", &mesh)
         .expect("BUG: initial registration must succeed");
-    let args = MeshDrawArgs::ZERO;
+    let args = ZERO_MESH_ARGS;
     assert!(renderer.slots[0].check_and_update(id, &args));
     assert!(!renderer.slots[0].check_and_update(id, &args));
 

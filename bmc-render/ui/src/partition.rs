@@ -101,7 +101,20 @@ impl Band {
 /// itself. Every reader has to agree: a draw emitted with the dynamic half but
 /// missing from the damage set is scissored away and disappears.
 pub fn canvas_bands(draws: &[Draw]) -> impl Iterator<Item = Band> + '_ {
-    let mut seen_dynamic = false;
+    canvas_bands_after(draws, false)
+}
+
+/// The [`Band`] of each draw, seeded with whether the canvas itself
+/// already paints over the dynamic half.
+///
+/// Paint order runs through the whole tree, not one canvas at a time.
+/// A canvas the walk banded [`Band::Above`] covers content it must keep
+/// painting after, so every draw in it bands `Above` too,
+/// including the ones before its own first dynamic draw.
+pub fn canvas_bands_after(
+    draws: &[Draw],
+    mut seen_dynamic: bool,
+) -> impl Iterator<Item = Band> + '_ {
     draws.iter().map(move |draw| {
         if draw_is_dynamic(draw) {
             seen_dynamic = true;
@@ -171,7 +184,10 @@ pub fn node_self_is_dynamic(node: &Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Band, canvas_bands, draw_is_dynamic, node_is_dynamic, node_self_is_dynamic};
+    use super::{
+        Band, canvas_bands, canvas_bands_after, draw_is_dynamic, node_is_dynamic,
+        node_self_is_dynamic,
+    };
     use crate::animation::{AnimProperty, ColorSpace, Easing, LoopMode};
     use crate::arc::{ArcCap, ArcFill, ArcSegments};
     use crate::colors::Color;
@@ -473,5 +489,14 @@ mod tests {
     #[test]
     fn a_canvas_with_nothing_dynamic_is_entirely_in_the_layer() {
         assert_eq!(bands(&[leaf(), leaf()]), [Band::Below, Band::Below]);
+    }
+
+    /// A canvas following dynamic content paints after it as a whole,
+    /// so the draws before its own first dynamic one band `Above` too.
+    #[test]
+    fn a_canvas_after_dynamic_content_bands_every_draw_above() {
+        let draws = vec![leaf(), animated(leaf()), leaf()];
+        let bands: Vec<_> = canvas_bands_after(&draws, true).collect();
+        assert_eq!(bands, vec![Band::Above, Band::Dynamic, Band::Above]);
     }
 }

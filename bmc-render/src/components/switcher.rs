@@ -31,7 +31,7 @@ use bmc_wasm_protocol::*;
 use crate::interaction::{InteractionState, Rect};
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
-use crate::tree::{TouchHit, TreeResult};
+use crate::tree::{SwitcherTab, TouchHit, TreeResult};
 
 // ── Geometry / theme ─────────────────────────────────────────────────
 
@@ -50,11 +50,8 @@ const DISABLED_ALPHA: f32 = 0.4;
 
 // ── Data ─────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
-pub struct SwitcherTabData {
-    pub icon: Option<SvgId>,
-    pub click_id: String,
-}
+/// The host's name for the shared [`SwitcherTab`].
+pub type SwitcherTabData = SwitcherTab;
 
 #[derive(Clone, Debug)]
 pub struct SwitcherData {

@@ -114,7 +114,7 @@ fn skeleton_beside_animation() -> TreeNode {
         PropsData::default(),
         vec![
             moving_dot(0.0),
-            TreeNode::Skeleton(crate::components::skeleton::SkeletonData {
+            TreeNode::Skeleton(SkeletonData {
                 kind: bmc_wasm_protocol::SkeletonKind::Placeholder,
                 chars: 0.0,
                 font_size: 0.0,
@@ -162,7 +162,7 @@ fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
         w: 40.0,
         h: 40.0,
         mesh_id: MeshId::from_wire(wire),
-        args: MeshDrawArgs::ZERO,
+        args: crate::gpu::mesh::ZERO_MESH_ARGS,
     };
     let dynamic_mesh = MeshId::from_wire(2).expect("BUG: fixture mesh ID must be non-zero");
     let tree = TreeNode::Canvas {

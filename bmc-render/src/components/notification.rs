@@ -23,6 +23,7 @@
 #![expect(clippy::cast_precision_loss)]
 #![allow(clippy::wildcard_imports)]
 
+use bmc_ui::NotificationKind;
 use bmc_wasm_protocol::*;
 use taffy::prelude::*;
 
@@ -44,20 +45,20 @@ const NOTIF_TEXT_LEFT: f32 = NOTIF_BORDER_W + NOTIF_PAD + NOTIF_ICON_SIZE + NOTI
 /// Notification data for measurement and rendering
 #[derive(Clone, Debug)]
 pub(crate) struct NotificationData {
-    pub kind: u8,
+    pub kind: NotificationKind,
     pub title: String,
     pub subtitle: String,
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-/// Returns (accent_color, icon_id) for a notification kind byte.
-fn notification_accent(kind: u8) -> (Color, SvgId) {
+/// Returns (accent_color, icon_id) for a notification kind.
+fn notification_accent(kind: NotificationKind) -> (Color, SvgId) {
     match kind {
-        0 => (RED_60, ICON_ERROR),
-        1 => (ORANGE_40, ICON_WARNING),
-        2 => (GREEN_40, ICON_SUCCESS),
-        _ => (VIOLET_50, ICON_INFO),
+        NotificationKind::Error => (RED_60, ICON_ERROR),
+        NotificationKind::Warning => (ORANGE_40, ICON_WARNING),
+        NotificationKind::Success => (GREEN_40, ICON_SUCCESS),
+        NotificationKind::Info => (VIOLET_50, ICON_INFO),
     }
 }
 
@@ -80,15 +81,7 @@ fn notification_subtitle_style() -> TextStyle {
 }
 
 fn plain_spans(text: &str) -> [SpanData; 1] {
-    [SpanData {
-        text: text.to_owned(),
-        weight: None,
-        color: None,
-        size: None,
-        italic: false,
-        underline: false,
-        strikethrough: false,
-    }]
+    [SpanData::plain(text)]
 }
 
 // ── Measurement ──────────────────────────────────────────────────────

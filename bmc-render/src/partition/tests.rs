@@ -19,14 +19,14 @@
 // the grant above.
 
 use super::{
-    Band, HashMap, HostPaintState, Range, ScrollState, canvas_bands, canvas_bands_after,
-    draw_is_dynamic, has_static_content, host_layout_key, node_is_dynamic, node_self_is_dynamic,
-    static_bytes_key, static_hash,
+    HashMap, HostPaintState, Range, ScrollState, has_static_content, host_layout_key,
+    node_is_dynamic, node_self_is_dynamic, static_bytes_key, static_hash,
 };
 use crate::tree::{DrawCommand, HostAnimationDef, HostTransitionDef, TreeNode};
+use bmc_ui::{ProgressMode, TagIcon};
 use bmc_wasm_protocol::{
-    AnimProperty, ArcCap, ArcFill, ArcSegments, Color, ColorSpace, Easing, LoopMode, ProgressKind,
-    PropsData, RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments, TagKind, TextStyle,
+    AnimProperty, ArcCap, ArcFill, ArcSegments, Color, ColorSpace, Easing, LoopMode, PropsData,
+    RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments, TagKind, TextStyle,
 };
 
 fn leaf() -> DrawCommand {
@@ -73,15 +73,6 @@ fn transitioned(inner: DrawCommand) -> DrawCommand {
     }
 }
 
-fn inert_modified(inner: DrawCommand) -> DrawCommand {
-    DrawCommand::Modified {
-        animations: Vec::new(),
-        transition: None,
-        color_space: ColorSpace::default(),
-        inner: Box::new(inner),
-    }
-}
-
 fn canvas(draws: Vec<DrawCommand>) -> TreeNode {
     TreeNode::Canvas {
         props: PropsData::default(),
@@ -94,138 +85,11 @@ fn spacer() -> TreeNode {
     TreeNode::Spacer { flex: 1.0 }
 }
 
-#[test]
-fn plain_draw_is_static() {
-    assert!(!draw_is_dynamic(&leaf()));
-}
-
-#[test]
-fn animation_and_transition_each_make_a_draw_dynamic() {
-    assert!(draw_is_dynamic(&animated(leaf())));
-    assert!(draw_is_dynamic(&transitioned(leaf())));
-}
-
-#[test]
-fn modified_without_animation_or_transition_stays_static() {
-    assert!(!draw_is_dynamic(&inert_modified(leaf())));
-}
-
-#[test]
-fn dynamic_draw_nested_under_wrappers_is_found() {
-    let wrapped = DrawCommand::Centered {
-        inner: Box::new(DrawCommand::Rotated {
-            angle: 0.5,
-            inner: Box::new(animated(leaf())),
-        }),
-    };
-    assert!(draw_is_dynamic(&wrapped));
-}
-
-#[test]
-fn static_wrappers_stay_static() {
-    let wrapped = DrawCommand::Centered {
-        inner: Box::new(DrawCommand::Rotated {
-            angle: 0.5,
-            inner: Box::new(leaf()),
-        }),
-    };
-    assert!(!draw_is_dynamic(&wrapped));
-}
-
-#[test]
-fn canvas_is_dynamic_only_when_one_of_its_draws_is() {
-    assert!(!node_is_dynamic(&canvas(vec![leaf(), leaf()])));
-    assert!(node_is_dynamic(&canvas(vec![leaf(), animated(leaf())])));
-}
-
-/// A clock: static dial, transitioned hands, static centre dot drawn last.
-#[test]
-fn clock_shaped_canvas_is_dynamic() {
-    let clock = canvas(vec![
-        leaf(),
-        leaf(),
-        transitioned(leaf()),
-        transitioned(leaf()),
-        transitioned(leaf()),
-        leaf(),
-    ]);
-    assert!(node_is_dynamic(&clock));
-}
-
-#[test]
-fn container_is_dynamic_when_any_child_is() {
-    let all_static = TreeNode::Row(PropsData::default(), vec![spacer(), canvas(vec![leaf()])]);
-    assert!(!node_is_dynamic(&all_static));
-
-    let one_dynamic = TreeNode::Row(
-        PropsData::default(),
-        vec![spacer(), canvas(vec![animated(leaf())])],
-    );
-    assert!(node_is_dynamic(&one_dynamic));
-}
-
-#[test]
-fn dynamic_child_propagates_through_nested_containers() {
-    let deep = TreeNode::Column(
-        PropsData::default(),
-        vec![TreeNode::Center(
-            PropsData::default(),
-            vec![TreeNode::Tag {
-                kind: TagKind::Info,
-                icon: None,
-                content: Box::new(canvas(vec![animated(leaf())])),
-            }],
-        )],
-    );
-    assert!(node_is_dynamic(&deep));
-}
-
-#[test]
-fn container_with_animated_child_is_subtree_dynamic_but_paints_static() {
-    let node = TreeNode::Row(PropsData::default(), vec![canvas(vec![animated(leaf())])]);
-    assert!(node_is_dynamic(&node), "subtree must be walked");
-    assert!(
-        !node_self_is_dynamic(&node),
-        "its own background must come from the cached layer"
-    );
-}
-
-#[test]
-fn host_driven_nodes_paint_themselves_dynamically() {
-    let pb = TreeNode::ProgressBar {
-        touch_key: None,
-        track_h: 4.0,
-        mode: ProgressKind::Indeterminate,
-        fraction: 0.0,
-        active: true,
-        fill_color: Color::from_rgb(1, 2, 3),
-        track_color: Color::from_rgb(1, 2, 3),
-        bg_color: Color::from_rgb(1, 2, 3),
-        skin: None,
-    };
-    assert!(node_self_is_dynamic(&pb));
-}
-
-#[test]
-fn host_driven_nodes_are_always_dynamic() {
-    let rel_time = TreeNode::RelTime {
-        anchor: 0,
-        format: RelTimeFormat {
-            length: RelTimeLength::Short,
-            segments: RelTimeSegments::Single,
-        },
-        clamp: RelTimeClamp::default(),
-        style: TextStyle::default(),
-    };
-    assert!(node_is_dynamic(&rel_time));
-}
-
 fn progress_bar(track_h: f32, fraction: f32) -> TreeNode {
     TreeNode::ProgressBar {
         touch_key: None,
         track_h,
-        mode: ProgressKind::Meter,
-        fraction,
+        mode: ProgressMode::Meter(fraction),
         active: true,
         fill_color: Color::from_rgb(1, 2, 3),
         track_color: Color::from_rgb(1, 2, 3),
@@ -253,7 +117,7 @@ fn rel_time_at(anchor: i64) -> TreeNode {
 fn a_rel_time_label_change_moves_the_layout_key() {
     let tag = TreeNode::Tag {
         kind: TagKind::Info,
-        icon: None,
+        icon: TagIcon::Hidden,
         content: Box::new(rel_time_at(0)),
     };
 
@@ -271,7 +135,7 @@ fn a_rel_time_label_change_moves_the_layout_key() {
 fn a_rel_time_holding_its_label_holds_the_layout_key() {
     let tag = TreeNode::Tag {
         kind: TagKind::Info,
-        icon: None,
+        icon: TagIcon::Hidden,
         content: Box::new(rel_time_at(0)),
     };
 
@@ -381,15 +245,6 @@ fn a_border_alone_is_static_content() {
     assert!(has_static_content(&bordered_row(Vec::new())));
 }
 
-/// A canvas following dynamic content paints after it as a whole,
-/// so the draws before its own first dynamic one band `Above` too.
-#[test]
-fn a_canvas_after_dynamic_content_bands_every_draw_above() {
-    let draws = vec![leaf(), animated(leaf()), leaf()];
-    let bands: Vec<_> = canvas_bands_after(&draws, true).collect();
-    assert_eq!(bands, vec![Band::Above, Band::Dynamic, Band::Above]);
-}
-
 /// Where a static node lands is the walk's question, not this one's.
 #[test]
 fn an_absolute_static_node_over_a_dynamic_canvas_is_static_content() {
@@ -398,109 +253,6 @@ fn an_absolute_static_node_over_a_dynamic_canvas_is_static_content() {
         vec![canvas(vec![animated(leaf())]), absolute_paragraph()],
     );
     assert!(has_static_content(&over));
-}
-
-/// `has_static_content` answers for the host-driven nodes from its own
-/// arms, which holds only while the two predicates agree on that set.
-#[test]
-fn a_node_that_repaints_itself_is_dynamic_as_a_subtree() {
-    let rel_time = TreeNode::RelTime {
-        anchor: 0,
-        format: RelTimeFormat {
-            length: RelTimeLength::Short,
-            segments: RelTimeSegments::Single,
-        },
-        clamp: RelTimeClamp::default(),
-        style: TextStyle::default(),
-    };
-    let progress = TreeNode::ProgressBar {
-        touch_key: None,
-        track_h: 4.0,
-        mode: ProgressKind::Indeterminate,
-        fraction: 0.0,
-        active: true,
-        fill_color: Color::from_rgb(1, 2, 3),
-        track_color: Color::from_rgb(1, 2, 3),
-        bg_color: Color::from_rgb(1, 2, 3),
-        skin: None,
-    };
-    let modal = TreeNode::Modal {
-        modal_id: "m".to_owned(),
-        is_open: false,
-        padding: 0,
-        backdrop_alpha: 0,
-        title: String::new(),
-        content_height: 0.0,
-        bg_color: Color::default(),
-        header_color: Color::default(),
-        title_color: Color::default(),
-        max_width: 0,
-        body: Vec::new(),
-        footer_primary_key: String::new(),
-        footer_primary_label: String::new(),
-        footer_secondary_key: String::new(),
-        footer_secondary_label: String::new(),
-        footer_danger: false,
-    };
-    for node in [
-        rel_time,
-        progress,
-        modal,
-        spacer(),
-        canvas(vec![leaf()]),
-        canvas(vec![animated(leaf())]),
-    ] {
-        assert!(
-            !node_self_is_dynamic(&node) || node_is_dynamic(&node),
-            "{node:?} repaints itself but is not dynamic as a subtree",
-        );
-    }
-}
-
-#[test]
-fn leaf_content_nodes_are_static() {
-    assert!(!node_is_dynamic(&spacer()));
-    assert!(!node_is_dynamic(&TreeNode::Notification {
-        kind: 0,
-        title: "t".to_owned(),
-        subtitle: "s".to_owned(),
-    }));
-}
-// ── canvas_bands ────────────────────────────────────────────────
-
-fn bands(draws: &[DrawCommand]) -> Vec<Band> {
-    canvas_bands(draws).collect()
-}
-
-#[test]
-fn statics_before_the_first_dynamic_draw_go_in_the_layer() {
-    assert_eq!(
-        bands(&[leaf(), leaf(), animated(leaf())]),
-        [Band::Below, Band::Below, Band::Dynamic]
-    );
-}
-
-#[test]
-fn a_track_drawn_over_an_animated_globe_paints_with_the_dynamic_half() {
-    // A transitioned sphere, then the ground track and marker on top of it.
-    assert_eq!(
-        bands(&[transitioned(leaf()), leaf(), leaf()]),
-        [Band::Dynamic, Band::Above, Band::Above]
-    );
-}
-
-#[test]
-fn a_centre_cap_between_two_hands_stays_above_both() {
-    // Hour and minute hands, the cap over their pivot, then the second hand.
-    assert_eq!(
-        bands(&[transitioned(leaf()), leaf(), transitioned(leaf()), leaf()]),
-        [Band::Dynamic, Band::Above, Band::Dynamic, Band::Above]
-    );
-}
-
-#[test]
-fn a_canvas_with_nothing_dynamic_is_entirely_in_the_layer() {
-    assert_eq!(bands(&[leaf(), leaf()]), [Band::Below, Band::Below]);
 }
 
 #[test]

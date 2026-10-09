@@ -22,21 +22,19 @@
 
 #![expect(clippy::cast_precision_loss)]
 
-use super::model::ButtonSkinData;
-use super::model::DrawCommand;
-use super::model::SpanData;
-use super::model::TreeNode;
 use super::walk::TreeResult;
-use crate::components::ButtonSize;
+use super::{DrawCommand, ProgressMode, SkeletonData, Span, SpanData, TreeNode};
 use crate::components::modal::ModalInfo;
 use crate::components::notification::{NotificationData, measure_notification};
 use crate::components::progress_bar::ProgressBarData;
-use crate::components::skeleton::SkeletonData;
+use crate::components::skeleton;
 use crate::components::switcher::{SwitcherData, switcher_size};
-use crate::components::tag::{TAG_PAD_VERT, TagData, tag_content_padding};
+use crate::components::tag::{TAG_PAD_VERT, TagData, resolve_icon, tag_content_padding};
+use crate::components::{ButtonSize, ButtonStyle};
 use crate::renderer::Renderer;
 use anyhow::Result;
-use bmc_wasm_protocol::{BitmapId, Color, ProgressKind, SvgId};
+use bmc_ui::ButtonSkin;
+use bmc_wasm_protocol::{BitmapId, Color, SvgId};
 use bmc_wasm_protocol::{CrossAlign, Justify, PropsData, TextOverflow, TextStyle};
 use taffy::prelude::*;
 use taffy::{Overflow, Point};
@@ -53,11 +51,11 @@ pub(super) struct ParagraphData {
 pub(crate) struct ButtonContext {
     pub(super) id: String,
     pub(super) label: String,
-    pub(super) style: u8,
-    pub(super) size: u8,
+    pub(super) style: ButtonStyle,
+    pub(super) size: ButtonSize,
     pub(super) icon_id: Option<SvgId>,
     pub(super) disabled: bool,
-    pub(super) skin: Option<ButtonSkinData>,
+    pub(super) skin: Option<ButtonSkin>,
 }
 
 /// Nine-patch background image data. `bitmap_id == None` means no background.
@@ -317,15 +315,7 @@ fn build_taffy_node_inner(
                     self_dynamic: false,
                     paragraph: Some(ParagraphData {
                         base_style: *style,
-                        spans: vec![SpanData {
-                            text,
-                            weight: None,
-                            color: None,
-                            size: None,
-                            italic: false,
-                            underline: false,
-                            strikethrough: false,
-                        }],
+                        spans: vec![Span::plain(text)],
                     }),
                     ..Default::default()
                 }),
@@ -339,6 +329,7 @@ fn build_taffy_node_inner(
             content,
         } => {
             let content_id = build_taffy_node(taffy, content, now_unix_secs, result, modals)?;
+            let icon = resolve_icon(*kind, *icon);
             let (pad_left, pad_right) = tag_content_padding(icon.is_some());
             let style = Style {
                 flex_direction: FlexDirection::Row,
@@ -362,10 +353,7 @@ fn build_taffy_node_inner(
                 Some(NodeContext {
                     dynamic: false,
                     self_dynamic: false,
-                    tag: Some(TagData {
-                        kind: *kind,
-                        icon: *icon,
-                    }),
+                    tag: Some(TagData { kind: *kind, icon }),
                     ..Default::default()
                 }),
             )?;
@@ -382,8 +370,7 @@ fn build_taffy_node_inner(
             stretch,
             skin,
         } => {
-            let sz = ButtonSize::from(*btn_size);
-            let height = sz.height();
+            let height = btn_size.height();
 
             let style = Style {
                 size: Size {
@@ -413,7 +400,7 @@ fn build_taffy_node_inner(
                         size: *btn_size,
                         icon_id: *icon_id,
                         disabled: *disabled,
-                        skin: skin.clone(),
+                        skin: *skin,
                     }),
                     ..Default::default()
                 }),
@@ -576,7 +563,7 @@ fn build_taffy_node_inner(
         }
 
         TreeNode::Skeleton(data) => {
-            let (width, height) = data.layout_size();
+            let (width, height) = skeleton::layout_size(data);
             let style = Style {
                 size: Size {
                     width: width.map_or_else(auto, length),
@@ -669,7 +656,6 @@ fn build_taffy_node_inner(
             touch_key,
             track_h,
             mode,
-            fraction,
             active,
             fill_color,
             track_color,
@@ -683,7 +669,7 @@ fn build_taffy_node_inner(
                 // Skinned: thumb may be taller than track
                 let thumb_h = skin.as_ref().map_or(0.0, |s| f32::from(s.thumb_h));
                 effective_h.max(thumb_h)
-            } else if *mode == ProgressKind::Meter {
+            } else if matches!(mode, ProgressMode::Meter(_)) {
                 // No drag thumb to budget for — the meter is just its track.
                 effective_h
             } else {
@@ -707,12 +693,11 @@ fn build_taffy_node_inner(
                     progress_bar: Some(ProgressBarData {
                         track_h: *track_h,
                         mode: *mode,
-                        fraction: *fraction,
                         active: *active,
                         fill_color: *fill_color,
                         track_color: *track_color,
                         bg_color: *bg_color,
-                        skin: skin.clone(),
+                        skin: *skin,
                     }),
                     ..Default::default()
                 }),
@@ -842,7 +827,7 @@ pub(crate) fn compute_taffy_layout(
                 }
 
                 if let Some(ref btn) = ctx.button {
-                    let sz = ButtonSize::from(btn.size);
+                    let sz = btn.size;
                     let h = sz.height();
                     let w = if btn.icon_id.is_some() && btn.label.is_empty() {
                         h

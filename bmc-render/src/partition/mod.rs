@@ -18,18 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Static/dynamic partition of a widget tree.
+//! Static/dynamic partition of a widget tree: the keys of its static half.
 //!
-//! An animation-only frame replays the cached tree without running the guest,
-//! so the static subtrees can be rasterised once and reused. A node is
-//! **dynamic** when it — or any descendant — can change while the guest is
-//! idle: an animated or transitioned draw, a host-driven time label, a
-//! self-animating widget. Everything else is static, because every animatable
-//! property is a draw-time transform applied after layout and so never
-//! reflows.
-//!
-//! Classification is conservative — a node wrongly called dynamic costs a
-//! redraw, one wrongly called static renders a stale frame.
+//! Which nodes and draws are dynamic is [`bmc_ui::partition`]'s call,
+//! re-exported here; this module hashes the static half
+//! and decides whether a cached layer of it is worth having.
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -37,156 +30,14 @@ use std::fmt::{self, Write as _};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Range;
 
-use crate::ScrollState;
-use crate::tree::{DrawCommand, TreeNode};
+pub use bmc_ui::partition::{
+    Band, canvas_bands, canvas_bands_after, draw_is_dynamic, node_is_dynamic, node_self_is_dynamic,
+};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{BitmapId, PropsData};
 
-/// Whether `draw`, or anything it wraps, can change while the guest is idle.
-#[must_use]
-pub fn draw_is_dynamic(draw: &DrawCommand) -> bool {
-    match draw {
-        // `Modified` wraps both `.animate*()` and `.transition()`, and one
-        // carrying neither is inert, so test the payload, not the variant.
-        DrawCommand::Modified {
-            animations,
-            transition,
-            inner,
-            ..
-        } => !animations.is_empty() || transition.is_some() || draw_is_dynamic(inner),
-        DrawCommand::Centered { inner }
-        | DrawCommand::Orbit { inner, .. }
-        | DrawCommand::Rotated { inner, .. }
-        | DrawCommand::Shadow { inner, .. } => draw_is_dynamic(inner),
-        DrawCommand::Rect { .. }
-        | DrawCommand::Circle { .. }
-        | DrawCommand::Arc { .. }
-        | DrawCommand::Svg { .. }
-        | DrawCommand::Bitmap { .. }
-        | DrawCommand::Path { .. }
-        | DrawCommand::Sphere { .. }
-        | DrawCommand::Mesh { .. }
-        | DrawCommand::Text { .. }
-        | DrawCommand::CurvedText { .. }
-        | DrawCommand::AutofitText { .. }
-        | DrawCommand::NinePatch { .. }
-        | DrawCommand::Qr { .. } => false,
-    }
-}
-
-/// Where a draw sits in its canvas's paint order relative to the dynamic half.
-///
-/// The cached layer is composited at one point in the frame, so it can only
-/// hold content that paints *before* everything dynamic. A static draw pushed
-/// after a dynamic one has to keep painting after it — putting it in the layer
-/// inverts the two and it vanishes under the dynamic content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Band {
-    /// Static and painted before anything dynamic: the cached layer.
-    Below,
-    /// Repainted every frame.
-    Dynamic,
-    /// Static, but ordered after dynamic content, so it repaints with the
-    /// dynamic half to keep that order. A layer of its own would restore the
-    /// caching, at a full-surface texture and a blit per widget.
-    Above,
-}
-
-impl Band {
-    /// Whether the cached layer holds this draw.
-    #[must_use]
-    pub fn is_in_layer(self) -> bool {
-        matches!(self, Self::Below)
-    }
-}
-
-/// The [`Band`] of each draw, in paint order.
-///
-/// One pass answering for the whole canvas, because [`Band::Above`] is a
-/// property of a draw's position among its siblings rather than of the draw
-/// itself. Every reader has to agree: a draw emitted with the dynamic half but
-/// missing from the damage set is scissored away and disappears.
-pub fn canvas_bands(draws: &[DrawCommand]) -> impl Iterator<Item = Band> + '_ {
-    canvas_bands_after(draws, false)
-}
-
-/// The [`Band`] of each draw, seeded with whether the canvas itself
-/// already paints over the dynamic half.
-///
-/// Paint order runs through the whole tree, not one canvas at a time.
-/// A canvas the walk banded [`Band::Above`] covers content it must keep
-/// painting after, so every draw in it bands `Above` too,
-/// including the ones before its own first dynamic draw.
-pub fn canvas_bands_after(
-    draws: &[DrawCommand],
-    mut seen_dynamic: bool,
-) -> impl Iterator<Item = Band> + '_ {
-    draws.iter().map(move |draw| {
-        if draw_is_dynamic(draw) {
-            seen_dynamic = true;
-            Band::Dynamic
-        } else if seen_dynamic {
-            Band::Above
-        } else {
-            Band::Below
-        }
-    })
-}
-
-/// Whether `node`, or any descendant, can change while the guest is idle.
-#[must_use]
-pub fn node_is_dynamic(node: &TreeNode) -> bool {
-    match node {
-        // `Scroll` is no more dynamic than what it holds: its offset only
-        // moves under touch, and a touch already forces a full guest frame.
-        TreeNode::Column(_, children)
-        | TreeNode::Row(_, children)
-        | TreeNode::Center(_, children)
-        | TreeNode::Scroll { children, .. } => children.iter().any(node_is_dynamic),
-        TreeNode::Tag { content, .. } => node_is_dynamic(content),
-        TreeNode::Dimmed { child, .. } => node_is_dynamic(child),
-        TreeNode::Canvas { draws, .. } => draws.iter().any(draw_is_dynamic),
-        // Host-driven: these advance without the guest running. Calling a
-        // modal always-dynamic is cheap — a closed one draws nothing.
-        TreeNode::RelTime { .. } | TreeNode::ProgressBar { .. } | TreeNode::Modal { .. } => true,
-        // Leaves the guest owns; a skeleton's bar has no progress of its own.
-        TreeNode::Paragraph { .. }
-        | TreeNode::Button { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Notification { .. } => false,
-    }
-}
-
-/// Whether this node's **own paint** can change while the guest is idle.
-///
-/// Distinct from [`node_is_dynamic`], which asks about the whole subtree: a
-/// container holding an animated child must be descended into, but its own
-/// background belongs in the cached layer — emitting it in the dynamic pass
-/// paints over everything the layer supplied.
-///
-/// Canvas draws are excluded here because they are gated individually.
-#[must_use]
-pub fn node_self_is_dynamic(node: &TreeNode) -> bool {
-    match node {
-        // Its taffy node is the child's own.
-        TreeNode::Dimmed { child, .. } => node_self_is_dynamic(child),
-        TreeNode::RelTime { .. } | TreeNode::ProgressBar { .. } | TreeNode::Modal { .. } => true,
-        TreeNode::Column(..)
-        | TreeNode::Row(..)
-        | TreeNode::Center(..)
-        | TreeNode::Scroll { .. }
-        | TreeNode::Tag { .. }
-        | TreeNode::Canvas { .. }
-        | TreeNode::Paragraph { .. }
-        | TreeNode::Button { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Notification { .. } => false,
-    }
-}
+use crate::ScrollState;
+use crate::tree::TreeNode;
 
 /// Key the static half of a tree from the wire bytes it was decoded from.
 ///
@@ -282,7 +133,7 @@ fn hash_layout_contribution<H: Hasher>(node: &TreeNode, now_unix_secs: i64, hash
             ..
         } => {
             hash_debug(track_h, hasher);
-            hash_debug(mode, hasher);
+            hash_debug(&mode.kind(), hasher);
             hash_debug(skin, hasher);
         }
         TreeNode::Column(_, children)

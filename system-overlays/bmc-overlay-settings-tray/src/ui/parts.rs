@@ -28,7 +28,7 @@ use super::{
 use std::time::Duration;
 
 use bmc_render::tree::{
-    DrawCommand, HostAnimationDef, PropsData, TextStyle, TreeNode, col, row, text,
+    DrawCommand, HostAnimationDef, PropsData, QrStyle, TextStyle, TreeNode, col, row, text,
 };
 use bmc_system_overlay::DisplayShape;
 use bmc_wasm_protocol::colors::{BLACK, GREEN_50, TRANSPARENT, WHITE};
@@ -343,9 +343,11 @@ pub(super) fn ip_qr(ip: &str, size: f32) -> TreeNode {
             x: 0.0,
             y: 0.0,
             size,
-            dark: BLACK,
-            light: WHITE,
-            quiet_zone: WIDE_QR_QUIET_ZONE,
+            style: QrStyle {
+                dark: BLACK,
+                light: WHITE,
+                quiet_zone: WIDE_QR_QUIET_ZONE,
+            },
             text: format!("http://{ip}"),
         }],
     }

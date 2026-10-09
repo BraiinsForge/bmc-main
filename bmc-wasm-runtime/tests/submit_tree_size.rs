@@ -52,9 +52,9 @@ const PROBE_Y: i32 = 180;
 
 /// A widget submitting a static green rect covering the size it claims.
 fn claimed_size_wat(width: u16, height: u16) -> String {
-    let node = bmc_wasm_sdk::canvas(
-        bmc_wasm_sdk::PropsData::default(),
-        [bmc_wasm_sdk::Draw::rect(
+    let node = bmc_ui::canvas(
+        bmc_ui::PropsData::default(),
+        [bmc_ui::Draw::rect(
             0.0,
             0.0,
             f32::from(width),
@@ -62,7 +62,7 @@ fn claimed_size_wat(width: u16, height: u16) -> String {
             Color::from_rgb(0, 255, 0),
         )],
     );
-    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&node);
+    let tree = bmc_ui::encode(&node);
     format!(
         r#"
         (module

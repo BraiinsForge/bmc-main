@@ -33,7 +33,7 @@
 
 use std::borrow::Cow;
 
-use bmc_render_skin::{NinePatch, Skin, SkinEntry};
+use bmc_render_skin::{NinePatch, Skin, SkinEntry, SkinRegistry as _};
 use bmc_wasm_protocol::colors::Color;
 
 use crate::layout::KeyCode;

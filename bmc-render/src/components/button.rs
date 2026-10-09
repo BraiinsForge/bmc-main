@@ -26,8 +26,8 @@ use crate::colors::*;
 use crate::interaction::{InteractionState, Rect};
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
-use crate::tree::ButtonSkinData;
 
+use bmc_ui::ButtonSkin;
 use bmc_wasm_protocol::SvgId;
 use bmc_wasm_protocol::colors::Color;
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
@@ -107,7 +107,7 @@ pub fn draw_button(
     size: ButtonSize,
     icon_id: Option<SvgId>,
     disabled: bool,
-    skin: Option<&ButtonSkinData>,
+    skin: Option<&ButtonSkin>,
 ) -> (bool, Option<(f32, f32)>) {
     let mut target = RenderTarget::new(renderer, None);
     draw_button_with_target(
@@ -141,7 +141,7 @@ pub(crate) fn draw_button_with_target(
     size: ButtonSize,
     icon_id: Option<SvgId>,
     disabled: bool,
-    skin: Option<&ButtonSkinData>,
+    skin: Option<&ButtonSkin>,
 ) -> (bool, Option<(f32, f32)>) {
     let bounds = Rect::new(x, y, w, h);
 
@@ -234,7 +234,7 @@ fn draw_button_disabled(
     style: ButtonStyle,
     size: ButtonSize,
     icon_id: Option<SvgId>,
-    skin: Option<&ButtonSkinData>,
+    skin: Option<&ButtonSkin>,
 ) {
     let fg_color = if let Some(skin) = skin {
         let np = &skin.normal;

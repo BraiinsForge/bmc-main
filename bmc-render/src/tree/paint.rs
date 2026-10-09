@@ -20,23 +20,21 @@
 
 //! Painting laid-out taffy nodes through a [`Renderer`].
 
-#![expect(clippy::cast_lossless)]
-
+use super::TouchHit;
 use super::layout::NodeContext;
 use super::layout::ParagraphData;
 use super::walk::AnimationContext;
 use super::walk::EmitMode;
-use super::walk::TouchHit;
 use super::walk::TreeResult;
 use super::walk::outline_box;
 use crate::ScrollState;
 use crate::components::draw::render_draw_command;
+use crate::components::draw_button_with_target;
 use crate::components::notification::render_notification;
 use crate::components::progress_bar::render_progress_bar;
 use crate::components::skeleton::render_skeleton;
 use crate::components::switcher::{register_switcher_hits, render_switcher};
 use crate::components::tag::render_tag;
-use crate::components::{ButtonSize, ButtonStyle, draw_button_with_target};
 use crate::interaction::InteractionState;
 use crate::interaction::Rect;
 use crate::partition::Band;
@@ -235,8 +233,8 @@ fn render_taffy_node_body(
                     y,
                     w,
                     h,
-                    ButtonStyle::from(btn.style as u32),
-                    ButtonSize::from(btn.size),
+                    btn.style,
+                    btn.size,
                     btn.icon_id,
                     btn.disabled,
                     btn.skin.as_ref(),

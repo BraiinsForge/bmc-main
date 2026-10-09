@@ -626,24 +626,24 @@ fn cache_lifecycle_probe_wat() -> String {
 
 fn active_asset_tree_bytes() -> Vec<u8> {
     let svg_id = SvgId::from_ffi(1).expect("BUG: first SVG registry ID must be valid");
-    let draw = bmc_wasm_sdk::Draw::svg_builtin(
+    let draw = bmc_ui::Draw::svg_id(
         0.0,
         0.0,
         32.0,
         32.0,
-        svg_id,
+        Some(svg_id),
         bmc_wasm_protocol::colors::Color::from_rgba(0xFF, 0xFF, 0xFF, 0xFF),
     )
     .animate(
-        bmc_wasm_sdk::AnimProperty::Alpha,
+        bmc_ui::AnimProperty::Alpha,
         1.0,
         0.5,
         10_000,
-        bmc_wasm_sdk::Easing::Linear,
-        bmc_wasm_sdk::LoopMode::Forever,
+        bmc_ui::Easing::Linear,
+        bmc_ui::LoopMode::Forever,
     );
-    let node = bmc_wasm_sdk::canvas(bmc_wasm_sdk::PropsData::default(), [draw]);
-    bmc_wasm_sdk::serialize_node_to_bytes(&node)
+    let node = bmc_ui::canvas(bmc_ui::PropsData::default(), [draw]);
+    bmc_ui::encode(&node)
 }
 
 fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
@@ -728,9 +728,9 @@ fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
 /// without running the guest.
 /// The rect is translucent so a second draw over it shows in its pixels.
 fn submit_then_burn_wat() -> String {
-    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
-        bmc_wasm_sdk::PropsData::default(),
-        [bmc_wasm_sdk::Draw::rect(
+    let tree = bmc_ui::encode(&bmc_ui::canvas(
+        bmc_ui::PropsData::default(),
+        [bmc_ui::Draw::rect(
             144.0,
             104.0,
             32.0,
@@ -738,12 +738,12 @@ fn submit_then_burn_wat() -> String {
             bmc_wasm_protocol::colors::Color::from_rgba(0xFF, 0xFF, 0xFF, 0x80),
         )
         .animate(
-            bmc_wasm_sdk::AnimProperty::Alpha,
+            bmc_ui::AnimProperty::Alpha,
             1.0,
             0.5,
             10_000,
-            bmc_wasm_sdk::Easing::Linear,
-            bmc_wasm_sdk::LoopMode::Forever,
+            bmc_ui::Easing::Linear,
+            bmc_ui::LoopMode::Forever,
         )],
     ));
     format!(

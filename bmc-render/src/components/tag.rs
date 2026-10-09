@@ -21,6 +21,7 @@
 //! Tag pill component — Carbon status label rendered as a rounded, themed
 //! chrome (background + leading icon) around an embedder-composed content child.
 
+use bmc_ui::TagIcon;
 use bmc_wasm_protocol::{
     BLUE_50, Color, GRAY_100, ICON_ERROR, ICON_INFO, ICON_WARNING, ORANGE_40, RED_50, SvgId,
     TagKind,
@@ -69,6 +70,16 @@ pub fn tag_theme(kind: TagKind) -> TagTheme {
     }
 }
 
+/// The glyph a tag of `kind` leads with: the theme's for `Default`, none for `Hidden`.
+#[must_use]
+pub fn resolve_icon(kind: TagKind, icon: TagIcon) -> Option<SvgId> {
+    match icon {
+        TagIcon::Default => Some(tag_theme(kind).icon),
+        TagIcon::Hidden => None,
+        TagIcon::Custom(id) => Some(id),
+    }
+}
+
 /// Taffy `(left, right)` content padding, reserving the leading icon lane.
 pub(crate) fn tag_content_padding(has_icon: bool) -> (f32, f32) {
     let left = if has_icon {
@@ -110,45 +121,22 @@ pub(crate) fn render_tag(
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_protocol::{ICON_WARNING, NODE_SPACER, NODE_TAG, ORANGE_40, TagIconMode, TagKind};
+    use bmc_ui::TagIcon;
+    use bmc_wasm_protocol::{ICON_CLOSE, ICON_WARNING, ORANGE_40, TagKind};
 
-    use super::tag_theme;
-    use crate::tree::{TreeNode, deserialize_tree};
-
-    /// Wire for a tag wrapping a spacer content child.
-    fn tag_wire(kind: TagKind, icon_mode: u8, icon: u16) -> Vec<u8> {
-        let mut bytes = vec![NODE_TAG, kind as u8, icon_mode];
-        bytes.extend_from_slice(&icon.to_le_bytes());
-        bytes.push(NODE_SPACER);
-        bytes.extend_from_slice(&1.0_f32.to_le_bytes());
-        bytes
-    }
+    use super::{resolve_icon, tag_theme};
 
     #[test]
-    fn default_icon_mode_resolves_to_theme() {
-        let node = deserialize_tree(&tag_wire(TagKind::Warning, TagIconMode::Default as u8, 0))
-            .expect("BUG: Tag should deserialize");
-        assert!(matches!(
-            node,
-            TreeNode::Tag {
-                kind: TagKind::Warning,
-                icon: Some(id),
-                ..
-            } if id == ICON_WARNING
-        ));
-    }
-
-    #[test]
-    fn hidden_icon_mode_resolves_to_none() {
-        let node = deserialize_tree(&tag_wire(TagKind::Error, TagIconMode::Hidden as u8, 0))
-            .expect("BUG: Tag should deserialize");
-        assert!(matches!(node, TreeNode::Tag { icon: None, .. }));
-    }
-
-    #[test]
-    fn unknown_icon_mode_is_rejected() {
-        // Strict TryFrom: an unknown mode fails deserialization, never silently defaults.
-        assert!(deserialize_tree(&tag_wire(TagKind::Info, 99, 0)).is_err());
+    fn each_icon_mode_resolves_against_the_theme() {
+        assert_eq!(
+            resolve_icon(TagKind::Warning, TagIcon::Default),
+            Some(ICON_WARNING)
+        );
+        assert_eq!(resolve_icon(TagKind::Error, TagIcon::Hidden), None);
+        assert_eq!(
+            resolve_icon(TagKind::Info, TagIcon::Custom(ICON_CLOSE)),
+            Some(ICON_CLOSE)
+        );
     }
 
     #[test]

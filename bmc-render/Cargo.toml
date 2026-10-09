@@ -20,6 +20,7 @@ include = [
 [dependencies]
 anyhow.workspace = true
 bmc-render-skin = { path = "skin" }
+bmc-ui = { path = "ui" }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol", features = ["id-pool"] }
 foldhash.workspace = true
 ii-stopwatch.workspace = true

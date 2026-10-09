@@ -71,7 +71,7 @@ impl SlotState {
             || self
                 .prev_args
                 .as_ref()
-                .is_none_or(|prev| args.dirty_against(prev));
+                .is_none_or(|prev| super::args_dirty_against(args, prev));
         if dirty {
             self.prev_mesh_id = Some(mesh_id);
             self.prev_args = Some(*args);
@@ -124,7 +124,7 @@ mod tests {
     use super::{
         DIRTY_EPSILON, SlotState, is_dirty, mesh_id_from_storage_index, mesh_id_to_storage_index,
     };
-    use crate::gpu::mesh::MeshDrawArgs;
+    use crate::gpu::mesh::ZERO_MESH_ARGS;
 
     #[test]
     fn mesh_ids_are_one_based() {
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn invalidating_matching_mesh_keeps_args_and_forces_redraw() {
         let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must produce an ID");
-        let args = MeshDrawArgs::ZERO;
+        let args = ZERO_MESH_ARGS;
         let mut slot = SlotState::new();
         assert!(slot.check_and_update(id, &args));
         let prev_args = slot.prev_args;
@@ -170,7 +170,7 @@ mod tests {
     fn invalidating_nonmatching_mesh_leaves_slot_unchanged() {
         let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must produce an ID");
         let other = mesh_id_from_storage_index(1).expect("BUG: index 1 must produce an ID");
-        let args = MeshDrawArgs::ZERO;
+        let args = ZERO_MESH_ARGS;
         let mut slot = SlotState::new();
         assert!(slot.check_and_update(id, &args));
         let prev_args = slot.prev_args;

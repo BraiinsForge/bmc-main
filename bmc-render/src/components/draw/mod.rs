@@ -30,6 +30,7 @@
               bounded integer indices (pixel positions, QR module counts)"
 )]
 
+use bmc_ui::{Interpolation, NinePatch, QrStyle};
 use bmc_wasm_protocol::{
     AnimProperty, ArcFill, ArcSegments, Color, Dash, Fill, PathPaint, TRANSPARENT,
 };
@@ -460,9 +461,12 @@ fn render_draw_inner(
             x,
             y,
             size,
-            dark,
-            light,
-            quiet_zone,
+            style:
+                QrStyle {
+                    dark,
+                    light,
+                    quiet_zone,
+                },
             text,
         } => {
             let es = *size * scale;
@@ -501,11 +505,14 @@ fn render_draw_inner(
             y,
             w,
             h,
-            bitmap_id,
-            left,
-            top,
-            right,
-            bottom,
+            nine_patch:
+                NinePatch {
+                    bitmap_id,
+                    left,
+                    top,
+                    right,
+                    bottom,
+                },
         } => {
             let Some(bitmap_id) = *bitmap_id else { return };
             let ew = *w * scale;
@@ -1001,11 +1008,12 @@ fn render_draw_inner(
             points,
             paint,
             closed,
-            smooth,
+            interpolation,
         } => {
             if points.len() < 2 {
                 return;
             }
+            let smooth = *interpolation == Interpolation::CatmullRom;
             // Transform points: apply canvas offset + accumulated offset + scale
             let transformed: Vec<(f32, f32)> = points
                 .iter()
@@ -1033,7 +1041,7 @@ fn render_draw_inner(
                     renderer.fill_path_paint(
                         pts,
                         &effective_fill(fill, color_override, alpha),
-                        *smooth,
+                        smooth,
                     );
                 }
                 PathPaint::Stroke { color, width, dash } => {
@@ -1044,7 +1052,7 @@ fn render_draw_inner(
                             renderer.stroke_path(&run, *width * scale, paint_color, false, false);
                         }
                     } else {
-                        renderer.stroke_path(pts, *width * scale, paint_color, *closed, *smooth);
+                        renderer.stroke_path(pts, *width * scale, paint_color, *closed, smooth);
                     }
                 }
             }

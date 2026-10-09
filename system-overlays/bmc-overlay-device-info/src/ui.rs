@@ -28,8 +28,8 @@ use std::time::Instant;
 use bmc_render::colors::{BLACK, GRAY_40, VIOLET_50, WHITE};
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{
-    DrawCommand, FontFamily, FontWeight, TextAlign, TextStyle, TreeNode, col, fixed_height, row,
-    text,
+    DrawCommand, FontFamily, FontWeight, QrStyle, TextAlign, TextStyle, TreeNode, col,
+    fixed_height, row, text,
 };
 use bmc_system_overlay::{AccessPoint, FrameKind, RenderOutcome, TreeUi};
 use bmc_wasm_protocol::{CrossAlign, Fill, GRAY_60, Justify, PropsData, TRANSPARENT};
@@ -413,9 +413,11 @@ fn qr(payload: &str, size: f32) -> TreeNode {
             x: 0.0,
             y: 0.0,
             size,
-            dark: BLACK,
-            light: WHITE,
-            quiet_zone: QR_QUIET_ZONE,
+            style: QrStyle {
+                dark: BLACK,
+                light: WHITE,
+                quiet_zone: QR_QUIET_ZONE,
+            },
             text: payload.to_owned(),
         }],
     }

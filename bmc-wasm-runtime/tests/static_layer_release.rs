@@ -24,9 +24,9 @@
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
+use bmc_ui::{AnimProperty, Draw, Easing, LoopMode, Node, PropsData, canvas, col, encode};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
-use bmc_wasm_sdk::{AnimProperty, Draw, Easing, LoopMode, Node, PropsData};
 
 #[path = "common/asset_fixtures.rs"]
 #[expect(
@@ -41,11 +41,11 @@ use common::headless_egl;
 const WHITE: Color = Color::from_rgba(0xFF, 0xFF, 0xFF, 0xFF);
 
 fn tree_bytes(node: &Node) -> Vec<u8> {
-    bmc_wasm_sdk::serialize_node_to_bytes(node)
+    encode(node)
 }
 
 fn canvas_tree(draw: Draw) -> Vec<u8> {
-    tree_bytes(&bmc_wasm_sdk::canvas(PropsData::default(), [draw]))
+    tree_bytes(&canvas(PropsData::default(), [draw]))
 }
 
 fn static_rect() -> Draw {
@@ -215,11 +215,11 @@ fn a_capture_left_empty_by_banding_releases_the_layer() {
         ..sized
     };
     // Static, but laid over the animation, so it repaints with the dynamic half.
-    let overlaid = tree_bytes(&bmc_wasm_sdk::col(
+    let overlaid = tree_bytes(&col(
         PropsData::default(),
         [
-            bmc_wasm_sdk::canvas(sized, [animated_rect()]),
-            bmc_wasm_sdk::canvas(over, [static_rect()]),
+            canvas(sized, [animated_rect()]),
+            canvas(over, [static_rect()]),
         ],
     ));
     let (mut runtime, mut renderer) = probe(&gl, &[overlaid]);

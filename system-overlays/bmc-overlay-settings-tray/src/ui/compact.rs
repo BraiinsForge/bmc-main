@@ -32,9 +32,11 @@ use super::{
     COMPACT_CONNECTION_ICON_SIZE, COMPACT_GAP, COMPACT_INFO_SIZE, COMPACT_QR_SIZE, Content,
     ControlIcons, NO_DATA_PLACEHOLDER, Panel, SLIDER_TRACK_H, Tier, WifiView, brightness_fraction,
 };
-use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text};
+use bmc_render::tree::{
+    ProgressMode, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
+};
 use bmc_wasm_protocol::colors::{GRAY_40, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{CrossAlign, ProgressKind, TextAlign, TextOverflow};
+use bmc_wasm_protocol::{CrossAlign, TextAlign, TextOverflow};
 
 /// A draggable slider holding no value of its own. The drag position comes
 /// back on `key`; the caller feeds the new fraction in on the next frame.
@@ -42,8 +44,7 @@ pub(super) fn slider(key: &'static str, fraction: f32) -> TreeNode {
     TreeNode::ProgressBar {
         touch_key: Some(key.to_owned()),
         track_h: SLIDER_TRACK_H,
-        mode: ProgressKind::Slider,
-        fraction: fraction.clamp(0.0, 1.0),
+        mode: ProgressMode::Slider(fraction.clamp(0.0, 1.0)),
         active: false,
         fill_color: WHITE,
         track_color: GRAY_40,

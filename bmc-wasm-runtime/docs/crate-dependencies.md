@@ -41,10 +41,10 @@
 
 | Crate                 | Role                                                                                                                              | Location                          |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `bmc-ui`              | Design-system vocabulary and tree-wire primitives: colours, text styles, node tags, renderer ids, asset descriptors               | `bmc-render/ui/`                  |
+| `bmc-ui`              | The widget tree, its codec and design-system vocabulary: colours, text styles, skins, renderer ids, asset descriptors             | `bmc-render/ui/`                  |
 | `bmc-wasm-protocol`   | Guest↔host contract beyond the tree: params, system snapshots, fetch, versioning; re-exports `bmc-ui`                             | `bmc-wasm-runtime/protocol/`      |
 | `bmc-icon-compiler`   | SVG → compact binary icon compilation                                                                                             | `bmc-wasm-runtime/icon-compiler/` |
-| `bmc-render-skin`     | Skin/theme definitions (9-patch, palettes)                                                                                        | `bmc-render/skin/`                |
+| `bmc-render-skin`     | Skin and 9-patch registration with the host (types from `bmc-ui`)                                                                 | `bmc-render/skin/`                |
 | `bmc-render-macros`   | Asset proc macros (`include_icon!`, `include_bitmap!`, `include_mesh!`, `include_audio!`, `include_skin!`, `include_nine_patch!`) | `bmc-render/macros/`              |
 | `bmc-wasm-sdk-macros` | Compile-time `json!` / `fmt!` template proc macros                                                                                | `bmc-wasm-runtime/sdk-macros/`    |
 | `bmc-wasm-sdk`        | Widget authoring API (tree builders, host bindings)                                                                               | `bmc-wasm-runtime/sdk/`           |
