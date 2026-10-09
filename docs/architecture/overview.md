@@ -96,7 +96,9 @@ compositor composites their surfaces into the final frame and presents it on the
    into a GBM-backed buffer (`XRGB8888`, double-buffered in `compositor/render/buffer_pool.rs`).
 3. The composited buffer is attached to the DRM CRTC; presentation is driven by DRM atomic page-flip on vblank
    (synthetic 60 Hz tick when running headless). On BMM products a swizzle pass copies it into a `BGR565` scanout
-   buffer, which is attached instead; see [Display Scanout](../devel/display-scanout.md).
+   buffer, which is attached instead. Each flip there sends only the regions that changed since the frame the panel
+   holds, and skips the flip when nothing did; the cases that fall back to whole frames are in
+   [Display Scanout](../devel/display-scanout.md#partial-transfers).
 
 ## State Machine
 

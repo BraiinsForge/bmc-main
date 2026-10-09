@@ -23,7 +23,8 @@ reports the failure, so a broken filesystem never pins the user to the last stat
 ### [Display Scanout](display-scanout.md)
 
 How the compositor presents a frame on each panel: the `BGR565` swizzle pass the BMM panels need, the panel color
-adjustment it applies, and why screen captures show design colors rather than what the panel receives.
+adjustment it applies, the partial transfers that send their SPI panels only what changed, and why screen captures show
+design colors rather than what the panel receives.
 
 ### [Boser-managed Platform Ownership](boser-managed-platforms.md)
 
