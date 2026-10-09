@@ -66,6 +66,7 @@ impl ScanoutSwizzler {
 
     /// Apply the optional panel adjustment and write a BGR565 scanout buffer.
     /// Return its framebuffer handle for page-flip.
+    /// The buffer stays the back buffer until [`Self::swap`].
     pub fn present(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -82,8 +83,12 @@ impl ScanoutSwizzler {
             .draw(renderer, &mut scanout.dmabuf, &texture)
             .context("Failed to draw BGR565 scanout buffer")?;
 
-        self.buffers.swap();
         Ok(fb)
+    }
+
+    /// Make the last presented buffer the front one, once its page flip went through.
+    pub fn swap(&mut self) {
+        self.buffers.swap();
     }
 }
 

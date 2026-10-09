@@ -1073,6 +1073,9 @@ impl SceneRenderer {
         ii_stopwatch::stopwatch_stop!(self.flip_w);
 
         self.buffers.swap();
+        if let Some(swizzler) = self.swizzler.as_mut() {
+            swizzler.swap();
+        }
 
         #[cfg(feature = "profiling")]
         if ii_stopwatch::every_expired!(self.render_every) {
