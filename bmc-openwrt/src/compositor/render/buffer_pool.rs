@@ -77,7 +77,9 @@ pub struct RenderBuffer {
 
 pub struct BufferPool {
     buffers: [Option<RenderBuffer>; 2],
-    current_slot: usize,
+    /// Slot of the buffer the last successful flip handed to the panel,
+    /// or `None` before the first one.
+    front: Option<usize>,
     width: u32,
     height: u32,
     format: ScanoutFormat,
@@ -87,15 +89,36 @@ impl BufferPool {
     pub fn new(width: u32, height: u32, format: ScanoutFormat) -> Self {
         Self {
             buffers: [None, None],
-            current_slot: 0,
+            front: None,
             width,
             height,
             format,
         }
     }
 
+    /// Allocate both buffers now rather than on first use, and return their dmabufs.
+    pub fn allocate(&mut self, output: &DrmOutput) -> Result<[Dmabuf; 2]> {
+        for slot in &mut self.buffers {
+            if slot.is_none() {
+                *slot = Some(Self::allocate_buffer(
+                    output,
+                    self.width,
+                    self.height,
+                    self.format,
+                )?);
+            }
+        }
+        let [first, second] = &self.buffers;
+        Ok([first, second].map(|slot| {
+            slot.as_ref()
+                .expect("BUG: both slots were just allocated")
+                .dmabuf
+                .clone()
+        }))
+    }
+
     pub fn back_buffer(&mut self, output: &DrmOutput) -> Result<&mut RenderBuffer> {
-        let slot = 1 - self.current_slot;
+        let slot = self.back_slot();
         if self.buffers[slot].is_none() {
             self.buffers[slot] = Some(Self::allocate_buffer(
                 output,
@@ -111,16 +134,26 @@ impl BufferPool {
 
     /// The buffer the last successful flip handed to the panel, if any.
     pub fn front(&self) -> Option<&RenderBuffer> {
-        self.buffers[self.current_slot].as_ref()
+        self.front.and_then(|slot| self.buffers[slot].as_ref())
     }
 
     /// The buffer [`Self::back_buffer`] hands out, once allocated.
     pub fn back(&self) -> Option<&RenderBuffer> {
-        self.buffers[1 - self.current_slot].as_ref()
+        self.buffers[self.back_slot()].as_ref()
     }
 
+    /// Make the back buffer the front one, once its page flip went through.
     pub fn swap(&mut self) {
-        self.current_slot = 1 - self.current_slot;
+        self.front = Some(self.back_slot());
+    }
+
+    #[cfg(test)]
+    pub(super) fn front_slot(&self) -> Option<usize> {
+        self.front
+    }
+
+    fn back_slot(&self) -> usize {
+        self.front.map_or(1, |front| 1 - front)
     }
 
     fn allocate_buffer(
@@ -194,5 +227,24 @@ mod tests {
             pool.front().is_none(),
             "nothing has been flipped yet, so the first transfer must be the whole frame"
         );
+    }
+
+    #[test]
+    fn a_swap_hands_the_back_slot_to_the_front() {
+        let mut pool = BufferPool::new(480, 320, ScanoutFormat::Rgb565);
+        let first_back = pool.back_slot();
+
+        pool.swap();
+        assert_eq!(pool.front_slot(), Some(first_back));
+        assert_ne!(
+            pool.back_slot(),
+            first_back,
+            "the next frame must not render into the buffer the panel holds"
+        );
+
+        let second_back = pool.back_slot();
+        pool.swap();
+        assert_eq!(pool.front_slot(), Some(second_back));
+        assert_eq!(pool.back_slot(), first_back);
     }
 }

@@ -29,7 +29,8 @@ use smithay::{
     backend::{
         allocator::{Buffer, Fourcc, dmabuf::Dmabuf},
         renderer::{
-            Bind, Frame as RendererFrame, ImportDma, Offscreen, Renderer,
+            Bind, Color32F, Frame as RendererFrame, ImportDma, Offscreen, Renderer, Texture,
+            TextureFilter,
             gles::{
                 GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName, UniformType, ffi,
             },
@@ -52,6 +53,17 @@ const READBACK_TEXEL_BYTES: usize = 4;
 /// Texture unit the previous frame is bound to;
 /// smithay binds the drawn texture to unit 0.
 const PREVIOUS_TEXTURE_UNIT: usize = 1;
+
+/// The one pixel the self-test changes.
+/// Off the grid's origin and its diagonal, so a mirrored or transposed read lands elsewhere.
+const TEST_PIXEL: (usize, usize) = (CELL + 1, 2 * CELL + 2);
+
+/// Colour of the self-test frames.
+/// A sampler with nothing usable bound reads black, which this never matches.
+const TEST_BASE: Color32F = Color32F::new(0.5, 0.5, 0.5, 1.0);
+
+/// Colour of [`TEST_PIXEL`], apart from [`TEST_BASE`] in every channel.
+const TEST_MARK: Color32F = Color32F::new(1.0, 0.0, 1.0, 1.0);
 
 /// More errors in a row than GL has distinct error flags to hold.
 const MAX_STALE_GL_ERRORS: usize = 16;
@@ -270,6 +282,41 @@ struct OpenRect {
     top_row: usize,
 }
 
+/// What the startup check reads back for two frames that differ in [`TEST_PIXEL`].
+struct SelfTest {
+    identical: CellMask,
+    /// The marked frame diffed against the unmarked one.
+    marked_new: CellMask,
+    /// The unmarked frame diffed against the marked one.
+    marked_previous: CellMask,
+}
+
+impl SelfTest {
+    fn check(&self) -> Result<()> {
+        ensure!(
+            self.identical.is_empty(),
+            "identical frames differ in {:?}",
+            self.identical.rects()
+        );
+        let (x, y) = TEST_PIXEL;
+        let expected = [Rectangle::from_loc_and_size(
+            (to_gl(x - x % CELL), to_gl(y - y % CELL)),
+            (to_gl(CELL), to_gl(CELL)),
+        )];
+        for (frame, mask) in [
+            ("new", &self.marked_new),
+            ("previous", &self.marked_previous),
+        ] {
+            ensure!(
+                mask.rects() == expected,
+                "the pixel marked at ({x}, {y}) in the {frame} frame came back as {:?}",
+                mask.rects()
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Shader pass writing one pixel per cell, 1.0 where the cell changed,
 /// read back to the CPU.
 pub struct FrameDiffer {
@@ -322,8 +369,55 @@ impl FrameDiffer {
         })
     }
 
-    /// Cells where `new` differs from `previous`. Both must be finished
-    /// frames of this differ's size.
+    /// A differ for frames of `width × height`,
+    /// tested on the two `scanout` buffers before it is trusted with the panel.
+    /// A pass that draws nothing reads back as identical frames differing,
+    /// and one that reads cells mirrored or transposed misplaces [`TEST_PIXEL`].
+    ///
+    /// Pass or fail, the test leaves both buffers black,
+    /// so no test pixel shows through a translucent widget drawn over them.
+    pub fn checked(
+        renderer: &mut GlesRenderer,
+        width: u32,
+        height: u32,
+        scanout: [Dmabuf; 2],
+    ) -> Result<Self> {
+        let mut differ = Self::new(renderer, width, height)?;
+        let [mut base, mut marked] = scanout;
+        let size = Size::from((to_gl(differ.width), to_gl(differ.height)));
+        let tested = differ.self_test(renderer, &mut base, &mut marked, size);
+        let cleared = [&mut base, &mut marked].into_iter().try_for_each(|frame| {
+            fill_frame(
+                renderer,
+                frame,
+                size,
+                &[(Color32F::BLACK, Rectangle::from_size(size))],
+            )
+        });
+        tested.context("Frame diff self-test failed")?;
+        cleared.context("Failed to clear the frame diff test frames")?;
+        Ok(differ)
+    }
+
+    fn self_test(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        base: &mut Dmabuf,
+        marked: &mut Dmabuf,
+        size: Size<i32, Physical>,
+    ) -> Result<()> {
+        paint_test_frame(renderer, base, size, false)?;
+        paint_test_frame(renderer, marked, size, true)?;
+        SelfTest {
+            identical: self.diff(renderer, base, base)?,
+            marked_new: self.diff(renderer, marked, base)?,
+            marked_previous: self.diff(renderer, base, marked)?,
+        }
+        .check()
+    }
+
+    /// Cells where `new` differs from `previous`,
+    /// both finished frames of this differ's size.
     pub fn diff(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -345,7 +439,40 @@ impl FrameDiffer {
         let previous_texture = renderer
             .import_dmabuf(previous, None)
             .context("Failed to import the previous frame")?;
+        self.diff_textures(renderer, &new_texture, &previous_texture)
+    }
 
+    fn diff_textures(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        new: &GlesTexture,
+        previous: &GlesTexture,
+    ) -> Result<CellMask> {
+        let size = Size::<i32, BufferCoord>::from((to_gl(self.width), to_gl(self.height)));
+        ensure!(
+            new.size() == size && previous.size() == size,
+            "BUG: frames of {:?} and {:?} do not match the {size:?} the diff was set up for",
+            new.size(),
+            previous.size(),
+        );
+        // Read `new` with nearest filtering, as `bind_previous` reads `previous`:
+        // with coarse sub-texel precision, linear filtering at a texel centre
+        // can blend in a neighbour and turn a static edge into a change.
+        renderer.downscale_filter(TextureFilter::Nearest)?;
+        renderer.upscale_filter(TextureFilter::Nearest)?;
+        let mask = self.draw_cells(renderer, new, previous);
+        // Back to smithay's default, which the compositor draws with.
+        renderer.downscale_filter(TextureFilter::Linear)?;
+        renderer.upscale_filter(TextureFilter::Linear)?;
+        mask
+    }
+
+    fn draw_cells(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        new: &GlesTexture,
+        previous: &GlesTexture,
+    ) -> Result<CellMask> {
         let mut target = renderer
             .bind(&mut self.cells)
             .context("Failed to bind frame diff target")?;
@@ -359,7 +486,7 @@ impl FrameDiffer {
             gl.ClearColor(1.0, 1.0, 1.0, 1.0);
             gl.Clear(ffi::COLOR_BUFFER_BIT);
         })?;
-        let previous_id = previous_texture.tex_id();
+        let previous_id = previous.tex_id();
         frame.with_context(|gl| bind_previous(gl, previous_id))?;
         let dst = Rectangle::from_size(self.grid_size);
         let src = Rectangle::from_size(Size::<f64, BufferCoord>::from((
@@ -367,7 +494,7 @@ impl FrameDiffer {
             f64::from(self.frame_size.1),
         )));
         let drawn = frame.render_texture_from_to(
-            &new_texture,
+            new,
             src,
             dst,
             &[dst],
@@ -407,6 +534,57 @@ impl FrameDiffer {
         }
         Ok(mask)
     }
+}
+
+/// Fill `target` with [`TEST_BASE`], plus [`TEST_PIXEL`] in [`TEST_MARK`] when `marked`.
+fn paint_test_frame<T>(
+    renderer: &mut GlesRenderer,
+    target: &mut T,
+    size: Size<i32, Physical>,
+    marked: bool,
+) -> Result<()>
+where
+    GlesRenderer: Bind<T>,
+{
+    let (x, y) = TEST_PIXEL;
+    let mark = (
+        TEST_MARK,
+        Rectangle::from_loc_and_size((to_gl(x), to_gl(y)), (1, 1)),
+    );
+    let base = (TEST_BASE, Rectangle::from_size(size));
+    if marked {
+        fill_frame(renderer, target, size, &[base, mark])
+    } else {
+        fill_frame(renderer, target, size, &[base])
+    }
+}
+
+/// Paint each colour over its rectangle of `target`, in order, and wait for the GPU.
+fn fill_frame<T>(
+    renderer: &mut GlesRenderer,
+    target: &mut T,
+    size: Size<i32, Physical>,
+    fills: &[(Color32F, Rectangle<i32, Physical>)],
+) -> Result<()>
+where
+    GlesRenderer: Bind<T>,
+{
+    let mut framebuffer = renderer
+        .bind(target)
+        .context("Failed to bind a frame diff test frame")?;
+    let mut frame = renderer
+        .render(&mut framebuffer, size, Transform::Normal)
+        .context("Failed to begin a frame diff test frame")?;
+    for (colour, rect) in fills {
+        frame
+            .clear(*colour, &[*rect])
+            .context("Failed to paint a frame diff test frame")?;
+    }
+    frame
+        .finish()
+        .context("Failed to finish a frame diff test frame")?
+        .wait()
+        .context("Interrupted waiting for a frame diff test frame")
 }
 
 /// Read the `columns × rows` cell flags into `readback`.
@@ -483,9 +661,20 @@ fn to_gl(value: usize) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CELL, CellMask, Flip, Transfer, flip_and_advance, next_transfer};
     use anyhow::Result;
-    use smithay::utils::{Physical, Rectangle};
+    use smithay::{
+        backend::{
+            allocator::Fourcc,
+            renderer::{ImportMem, Offscreen, gles::GlesTexture},
+        },
+        utils::{Buffer as BufferCoord, Physical, Rectangle, Size},
+    };
+
+    use super::super::headless_egl::headless_renderer;
+    use super::{
+        CELL, CellMask, Flip, FrameDiffer, SelfTest, TEST_PIXEL, Transfer, flip_and_advance,
+        next_transfer, paint_test_frame,
+    };
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Physical> {
         Rectangle::from_loc_and_size((x, y), (w, h))
@@ -610,6 +799,145 @@ mod tests {
             panic!("a differ that is off must not diff again")
         });
         assert_eq!(transfer, Transfer::WholeFrame);
+    }
+
+    /// A 480×320 mask with only `cell` changed.
+    fn mask_with(cell: (usize, usize)) -> CellMask {
+        let mut mask = CellMask::new(480, 320);
+        mask.mark(cell.0, cell.1);
+        mask
+    }
+
+    fn test_pixel_cell() -> (usize, usize) {
+        (TEST_PIXEL.0.div_euclid(CELL), TEST_PIXEL.1.div_euclid(CELL))
+    }
+
+    #[test]
+    fn a_diff_that_finds_the_marked_cell_passes_the_self_test() {
+        let test = SelfTest {
+            identical: CellMask::new(480, 320),
+            marked_new: mask_with(test_pixel_cell()),
+            marked_previous: mask_with(test_pixel_cell()),
+        };
+        test.check().expect("the expected masks must pass");
+    }
+
+    #[test]
+    fn a_previous_sampler_reading_black_fails_the_self_test() {
+        let mut everywhere = CellMask::new(480, 320);
+        for row in 0..320_usize.div_ceil(CELL) {
+            for column in 0..480_usize.div_ceil(CELL) {
+                everywhere.mark(column, row);
+            }
+        }
+        let test = SelfTest {
+            identical: everywhere.clone(),
+            marked_new: everywhere.clone(),
+            marked_previous: everywhere,
+        };
+        assert!(
+            test.check().is_err(),
+            "grey against black differs everywhere, even between identical frames"
+        );
+    }
+
+    #[test]
+    fn a_transposed_read_fails_the_self_test() {
+        let (column, row) = test_pixel_cell();
+        let test = SelfTest {
+            identical: CellMask::new(480, 320),
+            marked_new: mask_with((row, column)),
+            marked_previous: mask_with((row, column)),
+        };
+        assert!(test.check().is_err());
+    }
+
+    #[test]
+    fn the_self_test_passes_on_llvmpipe() {
+        let Some(mut renderer) = headless_renderer() else {
+            return;
+        };
+        let mut differ = FrameDiffer::new(&mut renderer, 480, 320)
+            .expect("the diff shader must compile on llvmpipe");
+        let [base, marked] = [false, true].map(|marked| {
+            let mut frame: GlesTexture = renderer
+                .create_buffer(Fourcc::Abgr8888, Size::from((480, 320)))
+                .expect("BUG: llvmpipe renders into RGBA8 textures");
+            paint_test_frame(&mut renderer, &mut frame, Size::from((480, 320)), marked)
+                .expect("the test frame must paint on llvmpipe");
+            frame
+        });
+
+        let test = SelfTest {
+            identical: differ
+                .diff_textures(&mut renderer, &base, &base)
+                .expect("the diff pass must draw and read back"),
+            marked_new: differ
+                .diff_textures(&mut renderer, &marked, &base)
+                .expect("the diff pass must draw and read back"),
+            marked_previous: differ
+                .diff_textures(&mut renderer, &base, &marked)
+                .expect("the diff pass must draw and read back"),
+        };
+
+        test.check().expect("the self-test must pass on llvmpipe");
+    }
+
+    #[test]
+    fn frames_of_another_size_are_not_diffed() {
+        let Some(mut renderer) = headless_renderer() else {
+            return;
+        };
+        let mut differ = FrameDiffer::new(&mut renderer, 480, 320)
+            .expect("the diff shader must compile on llvmpipe");
+        let taller: GlesTexture = renderer
+            .create_buffer(Fourcc::Abgr8888, Size::from((480, 336)))
+            .expect("BUG: llvmpipe renders into RGBA8 textures");
+
+        let outcome = differ.diff_textures(&mut renderer, &taller, &taller);
+
+        assert!(
+            outcome.is_err(),
+            "a diff of the top 480×320 would miss changes below it"
+        );
+    }
+
+    #[test]
+    fn the_shader_marks_the_cells_a_frame_changed_in() {
+        let Some(mut renderer) = headless_renderer() else {
+            return;
+        };
+        let (width, height) = (480_usize, 320_usize);
+        let mut differ = FrameDiffer::new(&mut renderer, 480, 320)
+            .expect("the diff shader must compile on llvmpipe");
+        let previous: Vec<u8> = (0..width * height * 4)
+            .map(|i| u8::try_from(i % 239).expect("BUG: a value below 239 fits in u8"))
+            .collect();
+        let mut new = previous.clone();
+        // A digit-sized change, and a single pixel in the frame's last cell.
+        for y in 160..228 {
+            for x in 150..236 {
+                new[(y * width + x) * 4 + 1] ^= 0x80;
+            }
+        }
+        new[((height - 1) * width + width - 1) * 4 + 2] ^= 0x01;
+        let size = Size::<i32, BufferCoord>::from((480, 320));
+        let previous = renderer
+            .import_memory(&previous, Fourcc::Abgr8888, size, false)
+            .expect("BUG: llvmpipe imports RGBA8 textures");
+        let new = renderer
+            .import_memory(&new, Fourcc::Abgr8888, size, false)
+            .expect("BUG: llvmpipe imports RGBA8 textures");
+
+        let mask = differ
+            .diff_textures(&mut renderer, &new, &previous)
+            .expect("the diff pass must draw and read back");
+
+        assert_eq!(
+            mask.rects(),
+            vec![rect(148, 160, 88, 68), rect(476, 316, 4, 4)],
+            "the cells around each change, and nothing else"
+        );
     }
 
     #[test]

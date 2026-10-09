@@ -587,7 +587,7 @@ impl SceneRenderer {
             logical_w,
             logical_h
         );
-        let swizzler = match pixel_format {
+        let mut swizzler = match pixel_format {
             DisplayPixelFormat::Xrgb8888 => {
                 anyhow::ensure!(
                     color_adjustment.is_none(),
@@ -600,12 +600,25 @@ impl SceneRenderer {
                     .context("Failed to set up BGR565 swizzle output pass")?,
             ),
         };
+        let mut buffers = BufferPool::new(width, height, ScanoutFormat::Xrgb8888);
+        let gpu_render_lock = GpuRenderLock::from_env()?;
         let frame_differ = match panel_transfer {
             PanelTransfer::FullFrame => None,
+            // Whole frames still reach the panel without the differ,
+            // so one that cannot set up must not keep the compositor down.
+            // Its self-test draws, so setup holds the GPU lock like every other draw.
             PanelTransfer::ChangedRegions => {
-                // Whole frames still reach the panel without it, so a diff
-                // that cannot set up must not keep the compositor down.
-                FrameDiffer::new(egl.renderer(), width, height)
+                let scanout = match swizzler.as_mut() {
+                    Some(swizzler) => swizzler.allocate(&output),
+                    None => buffers.allocate(&output),
+                };
+                scanout
+                    .context("Failed to allocate the scanout buffers")
+                    .and_then(|scanout| {
+                        let _gpu_render_lock =
+                            gpu_render_lock.lock("compositor_frame_diff_init")?;
+                        FrameDiffer::checked(egl.renderer(), width, height, scanout)
+                    })
                     .inspect_err(|e| {
                         tracing::error!("Frame diff unavailable, sending whole frames: {e:#}");
                     })
@@ -615,7 +628,7 @@ impl SceneRenderer {
         Ok(Self {
             egl,
             output,
-            buffers: BufferPool::new(width, height, ScanoutFormat::Xrgb8888),
+            buffers,
             swizzler,
             frame_differ,
             texture_cache: HashMap::new(),
@@ -624,7 +637,7 @@ impl SceneRenderer {
             logo_texture: OverlayTexture::Unloaded,
             loading_text_texture: OverlayTexture::Unloaded,
             capture_cache: CaptureCache::empty(),
-            gpu_render_lock: GpuRenderLock::from_env()?,
+            gpu_render_lock,
             scanout_transform,
             seam_overlap_px,
             #[cfg(feature = "profiling")]

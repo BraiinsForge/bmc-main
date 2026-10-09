@@ -90,6 +90,11 @@ impl ScanoutSwizzler {
         &self.buffers
     }
 
+    /// Allocate both scanout buffers now rather than on first use, and return their dmabufs.
+    pub fn allocate(&mut self, output: &DrmOutput) -> Result<[Dmabuf; 2]> {
+        self.buffers.allocate(output)
+    }
+
     /// Make the last presented buffer the front one, once its page flip went through.
     pub fn swap(&mut self) {
         self.buffers.swap();
@@ -237,7 +242,23 @@ mod tests {
     use smithay::utils::{Rectangle, Size};
 
     use super::super::headless_egl::headless_renderer;
-    use super::{GainCurve, SwizzlePass, adjustment_uniforms};
+    use super::{GainCurve, ScanoutSwizzler, SwizzlePass, adjustment_uniforms};
+
+    #[test]
+    fn a_swap_reaches_the_scanout_pool() {
+        let Some(mut renderer) = headless_renderer() else {
+            return;
+        };
+        let mut swizzler = ScanoutSwizzler::new(&mut renderer, 480, 320, None)
+            .expect("the swizzle shader must compile and link");
+
+        swizzler.swap();
+
+        assert!(
+            swizzler.buffers().front_slot().is_some(),
+            "the frame diff compares against the front buffer of this pool"
+        );
+    }
 
     #[test]
     fn unadjusted_panels_require_no_color_uniforms() {
