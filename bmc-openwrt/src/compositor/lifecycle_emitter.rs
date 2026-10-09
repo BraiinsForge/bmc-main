@@ -66,6 +66,11 @@ impl LifecycleEmitter {
     /// to `Dormant` (a widget that left the scene-cycling list goes
     /// off-screen by definition); the emitter then forgets them, since
     /// the corresponding `WidgetData` is gone on the protocol side.
+    ///
+    /// The tracker's state can move twice between two steps,
+    /// as with a committed swipe and a swipe back before the next rendered frame.
+    /// When that skips a state the protocol requires,
+    /// the skipped state goes out first; see [`missed_state`].
     pub fn step(&mut self, next: &HashMap<InstanceId, LifecycleState>) -> Emission {
         let mut releases: Vec<(InstanceId, LifecycleState)> = Vec::new();
         let mut acquires: Vec<(InstanceId, LifecycleState)> = Vec::new();
@@ -73,6 +78,17 @@ impl LifecycleEmitter {
         for (id, new_state) in next {
             let prev = self.last.insert(id.clone(), *new_state);
             if prev == Some(*new_state) {
+                continue;
+            }
+            if let Some(missed) = prev.and_then(|prev| missed_state(prev, *new_state)) {
+                tracing::debug!(
+                    instance = ?id, ?prev, ?missed, next = ?new_state,
+                    "lifecycle: emitting a state the last step skipped",
+                );
+                Self::guard_transition(id, prev, missed);
+                acquires.push((id.clone(), missed));
+                Self::guard_transition(id, Some(missed), *new_state);
+                acquires.push((id.clone(), *new_state));
                 continue;
             }
             Self::guard_transition(id, prev, *new_state);
@@ -106,15 +122,17 @@ impl LifecycleEmitter {
         Emission { releases, acquires }
     }
 
+    /// Cross-checks [`missed_state`] against [`legal_transition`]:
+    /// with every forbidden pair bridged, no step emits one.
     fn guard_transition(id: &InstanceId, prev: Option<LifecycleState>, next: LifecycleState) {
         if !legal_transition(prev, next) {
             tracing::error!(
                 instance = ?id, ?prev, next = ?next,
-                "BUG: tracker produced XML-forbidden lifecycle transition; emitting anyway",
+                "BUG: missed_state left an XML-forbidden lifecycle transition unbridged; emitting anyway",
             );
             debug_assert!(
                 false,
-                "BUG: tracker produced XML-forbidden lifecycle transition {prev:?} -> {next:?} for instance {id:?}",
+                "BUG: missed_state left the XML-forbidden lifecycle transition {prev:?} -> {next:?} unbridged for instance {id:?}",
             );
         }
     }
@@ -137,6 +155,21 @@ impl LifecycleEmitter {
     /// re-emit the same state.
     pub(super) fn record_initial(&mut self, instance_id: &InstanceId, state: LifecycleState) {
         self.last.insert(instance_id.clone(), state);
+    }
+}
+
+/// The state a widget passed through between `prev` and `next`
+/// when no step saw it, or `None` when `prev -> next` is itself legal.
+///
+/// A widget leaves only from on screen and enters only from off screen,
+/// so `Leaving` follows `Visible` and `Entering` follows `Prepared`.
+/// That covers every pair `deck_widget_surface_v1.lifecycle` forbids.
+fn missed_state(prev: LifecycleState, next: LifecycleState) -> Option<LifecycleState> {
+    use LifecycleState::{Dormant, Entering, Leaving, Prepared, Visible};
+    match (prev, next) {
+        (Dormant | Prepared | Entering, Leaving) => Some(Visible),
+        (Visible | Leaving, Entering) => Some(Prepared),
+        _ => None,
     }
 }
 
@@ -330,11 +363,60 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(debug_assertions), ignore = "debug_assert! is a no-op in release")]
-    #[should_panic(expected = "XML-forbidden lifecycle transition")]
-    fn step_debug_asserts_on_forbidden_emission() {
+    fn a_skipped_visible_is_emitted_before_leaving() {
         let mut e = LifecycleEmitter::new();
         let _ = e.step(&next(&[("a", LifecycleState::Entering)]));
+
+        let em = e.step(&next(&[("a", LifecycleState::Leaving)]));
+
+        assert_eq!(
+            em.acquires,
+            vec![
+                (String::from("a"), LifecycleState::Visible),
+                (String::from("a"), LifecycleState::Leaving),
+            ],
+            "a widget dragged in and straight back out was on screen in between"
+        );
+    }
+
+    #[test]
+    fn a_skipped_prepared_is_emitted_before_entering() {
+        let mut e = LifecycleEmitter::new();
         let _ = e.step(&next(&[("a", LifecycleState::Leaving)]));
+
+        let em = e.step(&next(&[("a", LifecycleState::Entering)]));
+
+        assert_eq!(
+            em.acquires,
+            vec![
+                (String::from("a"), LifecycleState::Prepared),
+                (String::from("a"), LifecycleState::Entering),
+            ],
+            "a widget swiped away and straight back was off screen in between"
+        );
+    }
+
+    #[test]
+    fn every_state_change_is_emitted_as_legal_transitions() {
+        use LifecycleState::{Dormant, Entering, Leaving, Prepared, Visible};
+        let states = [Dormant, Prepared, Visible, Entering, Leaving];
+        for from in states {
+            for to in states {
+                let mut e = LifecycleEmitter::new();
+                let _ = e.step(&next(&[("a", from)]));
+
+                let em = e.step(&next(&[("a", to)]));
+
+                let mut prev = from;
+                for (_, state) in em.releases.iter().chain(&em.acquires) {
+                    assert!(
+                        legal_transition(Some(prev), *state),
+                        "{from:?} -> {to:?} emitted the forbidden hop {prev:?} -> {state:?}"
+                    );
+                    prev = *state;
+                }
+                assert_eq!(prev, to, "{from:?} -> {to:?} must end in {to:?}");
+            }
+        }
     }
 }

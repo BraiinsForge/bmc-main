@@ -2192,14 +2192,14 @@ fn after_drag_scene_update(state: &mut AppState) {
 }
 
 /// Flush the lifecycle transitions armed by [`after_scene_change`], once the
-/// compositor has rendered a frame of the committed scene. No-op unless an
-/// emission is pending.
-fn emit_pending_lifecycle(state: &mut AppState) {
+/// compositor has rendered a frame of the committed scene.
+/// Returns what went out: nothing unless an emission is pending.
+fn emit_pending_lifecycle(state: &mut AppState) -> Emission {
     if !state.pending_lifecycle_emission {
-        return;
+        return Emission::default();
     }
     state.pending_lifecycle_emission = false;
-    emit_lifecycle_transitions(state);
+    emit_lifecycle_transitions(state)
 }
 
 fn handle_set_scene_cycling_suspended_command(state: &mut AppState, suspended: bool) {
@@ -2973,9 +2973,9 @@ mod tests {
         ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
         GestureState, LifecycleSink, LifecycleState, RedrawState, TRANSITION_WARM_UP_TIMEOUT,
         TouchSlot, TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout,
-        emit_lifecycle_batches, emit_lifecycle_transitions, emit_transition_incoming_batch,
-        handle_command, process_protocol_events, scene_buffers_committed,
-        transition_incoming_widget_ids, transition_warm_up_ready,
+        emit_lifecycle_batches, emit_lifecycle_transitions, emit_pending_lifecycle,
+        emit_transition_incoming_batch, handle_command, process_protocol_events,
+        scene_buffers_committed, transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
@@ -4772,6 +4772,56 @@ mod tests {
             vec!["a".to_owned()],
             "a lift past the commit threshold must not advance off the scene \
              the reset chose"
+        );
+    }
+
+    /// A swipe back that starts before the committed swipe's lifecycle flushed.
+    /// The first drag emits inline (`a` Entering, `b` Leaving),
+    /// the commit defers its emission to the next handled frame,
+    /// and the second drag reverses both widgets while that emission is pending.
+    #[test]
+    fn a_swipe_back_before_the_frame_emits_only_legal_transitions() {
+        let mut state = make_cycling_app_state();
+
+        state.on_touch_down(&FakeTouchEvent::at_x(0, 1, 400.0));
+        state.on_touch_motion(&FakeTouchEvent::at_x(0, 20, 100.0));
+        assert_eq!(
+            state.compositor.lifecycle.last_state(&"a".to_owned()),
+            Some(LifecycleState::Entering),
+            "a drag with nothing pending emits inline"
+        );
+        state.on_touch_up(&FakeTouchEvent::at_x(0, 40, 100.0));
+        assert!(
+            state.pending_lifecycle_emission,
+            "the commit must defer its emission to the next handled frame"
+        );
+
+        // On hardware the destination still holds the buffers it drew before the swipe,
+        // so the warm-up ceiling does not hold the drag back.
+        state.destinations_emptied_at = Some(
+            Instant::now()
+                .checked_sub(TRANSITION_WARM_UP_TIMEOUT * 2)
+                .expect("BUG: the test clock must reach two ceilings back"),
+        );
+        state.on_touch_down(&FakeTouchEvent::at_x(0, 60, 100.0));
+        state.on_touch_motion(&FakeTouchEvent::at_x(0, 80, 400.0));
+        assert!(
+            state.scene_drag_active,
+            "the swipe back must activate a scene drag"
+        );
+
+        let emission = emit_pending_lifecycle(&mut state);
+
+        assert!(emission.releases.is_empty(), "{emission:?}");
+        assert_eq!(
+            emission.acquires,
+            vec![
+                ("a".to_owned(), LifecycleState::Visible),
+                ("a".to_owned(), LifecycleState::Leaving),
+                ("b".to_owned(), LifecycleState::Prepared),
+                ("b".to_owned(), LifecycleState::Entering),
+            ],
+            "each widget passes through the state the swipe back skipped"
         );
     }
 
