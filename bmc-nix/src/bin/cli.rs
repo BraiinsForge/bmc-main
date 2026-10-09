@@ -33,6 +33,8 @@ use bmc_nix::types::{
 use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
 
+#[path = "cli/add_missing.rs"]
+mod add_missing;
 #[path = "cli/progress.rs"]
 mod progress;
 
@@ -289,6 +291,16 @@ enum Commands {
         /// `latest`, or a positive integer generation number.
         #[arg(long, default_value = "current")]
         base: BaseSelector,
+
+        /// Install only the names the profile does not have yet, and
+        /// change nothing while a next-boot generation is staged.
+        #[arg(long, conflicts_with_all = ["base", "no_activate"])]
+        if_missing: bool,
+
+        /// With --if-missing: change nothing unless `current` is this
+        /// generation (a `<profile>/<N>-link` path).
+        #[arg(long, requires = "if_missing", value_name = "GENERATION")]
+        if_current: Option<PathBuf>,
 
         #[command(flatten)]
         common: ProfileCommonArgs,
@@ -846,33 +858,7 @@ async fn cmd_add_packages(
     no_activate: bool,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        name.len() == version.len() && name.len() == store_path.len(),
-        "--name, --version, and --store-path must each be provided the same number of times \
-         (got {}, {}, {} respectively)",
-        name.len(),
-        version.len(),
-        store_path.len(),
-    );
-
-    let add_packages: Vec<bmc_nix::types::ResolvedPackage> = name
-        .into_iter()
-        .zip(version)
-        .zip(store_path)
-        .map(|((n, v), sp)| bmc_nix::types::ResolvedPackage {
-            name: n,
-            version: v,
-            store_path: sp,
-            category: None,
-            description: None,
-            upgrade_strategy: None,
-            install_strategy: None,
-            installed_by: bmc_nix::types::InstalledBy::User,
-            installed_from: "local".into(),
-            pinned: None,
-            metadata: std::collections::BTreeMap::new(),
-        })
-        .collect();
+    let add_packages = local_packages(name, version, store_path)?;
 
     std::fs::create_dir_all(&profile_dir)?;
 
@@ -899,6 +885,41 @@ async fn cmd_add_packages(
         println!("{}", generation.path.display());
     }
     Ok(())
+}
+
+/// Pair the repeated `--name`/`--version`/`--store-path` flags into
+/// packages installed by the user from a local path.
+fn local_packages(
+    name: Vec<String>,
+    version: Vec<String>,
+    store_path: Vec<String>,
+) -> anyhow::Result<Vec<bmc_nix::types::ResolvedPackage>> {
+    anyhow::ensure!(
+        name.len() == version.len() && name.len() == store_path.len(),
+        "--name, --version, and --store-path must each be provided the same number of times \
+         (got {}, {}, {} respectively)",
+        name.len(),
+        version.len(),
+        store_path.len(),
+    );
+    Ok(name
+        .into_iter()
+        .zip(version)
+        .zip(store_path)
+        .map(|((n, v), sp)| bmc_nix::types::ResolvedPackage {
+            name: n,
+            version: v,
+            store_path: sp,
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: bmc_nix::types::InstalledBy::User,
+            installed_from: "local".into(),
+            pinned: None,
+            metadata: std::collections::BTreeMap::new(),
+        })
+        .collect())
 }
 
 async fn cmd_remove_packages(
@@ -1516,20 +1537,34 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             version,
             store_path,
             base,
+            if_missing,
+            if_current,
             common,
         } => {
-            cmd_add_packages(
-                name,
-                version,
-                store_path,
-                common.profile_dir,
-                common.hooks_dir,
-                common.hooks_override_path,
-                base,
-                common.no_activate,
-                log_format,
-            )
-            .await
+            if if_missing {
+                add_missing::cmd_add_missing_packages(
+                    local_packages(name, version, store_path)?,
+                    if_current,
+                    common.profile_dir,
+                    common.hooks_dir,
+                    common.hooks_override_path,
+                    log_format,
+                )
+                .await
+            } else {
+                cmd_add_packages(
+                    name,
+                    version,
+                    store_path,
+                    common.profile_dir,
+                    common.hooks_dir,
+                    common.hooks_override_path,
+                    base,
+                    common.no_activate,
+                    log_format,
+                )
+                .await
+            }
         }
 
         Commands::RemovePackages {
