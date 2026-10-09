@@ -156,6 +156,8 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/api/v1/upgrade/check":
             started = any(path == "/api/v1/upgrade/start" for _m, path, _t, _b in script.requests)
             return self._reply(200, script.recheck if started else script.check)
+        if self.path == "/api/v1/upgrade/auto-upgrade":
+            return self._reply(200, {"enabled": body["enabled"], "schedule": None})
         if self.path == "/api/v1/upgrade/state":
             return self._reply(200, script.state)
         if self.path == "/api/v1/upgrade/start":
@@ -180,6 +182,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
     def do_GET(self) -> None:
+        self._handle()
+
+    def do_PATCH(self) -> None:
         self._handle()
 
     def do_POST(self) -> None:

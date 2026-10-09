@@ -18,14 +18,14 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-"""Boser's REST upgrade API: login, check, start and the state event stream."""
+"""Boser's REST upgrade API: login, auto-upgrade, check, start and the state event stream."""
 
 import json
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from bmc_tui.stage import Abort
@@ -37,17 +37,18 @@ _STREAM_PATH = "/api/v1/upgrade/state/events"
 @dataclass
 class BoserRest:
     base_url: str
-    password: str = ""
+    password: str = field(default="", repr=False)
     timeout: float = 30.0  # per request; the event stream carries its own deadline
-
-    def __post_init__(self) -> None:
-        self._token: str | None = None
+    token: str | None = field(default=None, repr=False)  # an existing session; `login` replaces it
 
     def login(self) -> None:
         body = self._json(
             "POST", "/api/v1/auth/login", {"username": "root", "password": self.password}
         )
-        self._token = str(body["token"])
+        self.token = str(body["token"])
+
+    def set_auto_upgrade(self, *, enabled: bool) -> None:
+        self._json("PATCH", "/api/v1/upgrade/auto-upgrade", {"enabled": enabled})
 
     def check(self, packages: list[str]) -> dict[str, Any]:
         return self._json("POST", "/api/v1/upgrade/check", {"packages": packages})
@@ -91,8 +92,8 @@ class BoserRest:
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> urllib.request.Request:
         headers = {"Accept": "application/json"}
-        if self._token is not None:
-            headers["Authorization"] = self._token
+        if self.token is not None:
+            headers["Authorization"] = self.token
         data = None
         if body is not None:
             headers["Content-Type"] = "application/json"

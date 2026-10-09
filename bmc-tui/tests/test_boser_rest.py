@@ -119,3 +119,19 @@ def test_a_device_that_accepts_the_connection_but_never_answers_is_a_readable_ab
         client = BoserRest(f"http://{stub.address}", "", timeout=0.1)
         with pytest.raises(Abort, match=r"POST /api/v1/auth/login: the device went quiet"):
             client.login()
+
+
+def test_an_existing_session_turns_automatic_upgrades_off_without_a_login() -> None:
+    script = Script()
+    with BoserStub(script) as stub:
+        BoserRest(f"http://{stub.address}", token=boser_stub.TOKEN).set_auto_upgrade(enabled=False)
+    assert script.requests == [
+        ("PATCH", "/api/v1/upgrade/auto-upgrade", boser_stub.TOKEN, {"enabled": False})
+    ], "deploy holds a ubus session, not the device password"
+
+
+def test_credentials_stay_out_of_the_repr() -> None:
+    """Rich tracebacks print locals, a client among them."""
+    client = BoserRest("http://h", "the-password", token="the-session")
+    assert "the-password" not in repr(client)
+    assert "the-session" not in repr(client)
