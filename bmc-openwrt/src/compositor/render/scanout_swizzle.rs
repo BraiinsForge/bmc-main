@@ -232,14 +232,11 @@ mod tests {
     use bmc_platform::{HardwareProfile, Product};
     use smithay::backend::{
         allocator::Fourcc,
-        egl::{EGLContext, EGLDisplay, native::EGLSurfacelessDisplay},
-        renderer::{
-            Bind, ExportMem, ImportMem, Offscreen,
-            gles::{GlesRenderer, GlesTexture},
-        },
+        renderer::{Bind, ExportMem, ImportMem, Offscreen, gles::GlesTexture},
     };
     use smithay::utils::{Rectangle, Size};
 
+    use super::super::headless_egl::headless_renderer;
     use super::{GainCurve, SwizzlePass, adjustment_uniforms};
 
     #[test]
@@ -362,32 +359,6 @@ mod tests {
                 shown[1] > rgb[1],
                 "a bright accent still takes the peak curve's lift: {hex:06X}"
             );
-        }
-    }
-
-    /// Set by the Nix `ci` profile, which supplies Mesa:
-    /// an EGL failure there is a broken profile, and a skip would pass a test that never ran.
-    const REQUIRE_EGL: &str = "BMC_REQUIRE_HEADLESS_EGL";
-
-    fn headless_renderer() -> Option<GlesRenderer> {
-        let init = || -> anyhow::Result<GlesRenderer> {
-            // SAFETY: only smithay creates or terminates EGL displays in this test binary,
-            // and it shares one tracked instance between the tests that run in parallel.
-            let display = unsafe { EGLDisplay::new(EGLSurfacelessDisplay) }?;
-            let context = EGLContext::new(&display)?;
-            // SAFETY: the context was created just above and is current on no other thread.
-            Ok(unsafe { GlesRenderer::new(context) }?)
-        };
-        match init() {
-            Ok(renderer) => Some(renderer),
-            Err(err) => {
-                assert!(
-                    std::env::var_os(REQUIRE_EGL).is_none(),
-                    "{REQUIRE_EGL} is set, so skipping would pass a shader that never compiled: {err:#}"
-                );
-                eprintln!("skipping: headless EGL init failed, run in the `ci` dev shell: {err:#}");
-                None
-            }
         }
     }
 
