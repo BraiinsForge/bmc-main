@@ -29,6 +29,7 @@ members = [
     "bmc-render/keyboard",
     "bmc-render/macros",
     "bmc-render/skin",
+    "bmc-render/ui",
     "bmc-scheduler",
     "bmc-shared/*",
     "bmc-support",
@@ -235,6 +236,7 @@ bmc-support = { path = "bmc-support" }
 bmc-support-openwrt = { path = "bmc-support-openwrt" }
 bmc-svg-compiler = { path = "bmc-wasm-runtime/svg-compiler" }
 bmc-system-overlay = { path = "system-overlays/bmc-system-overlay" }
+bmc-ui = { path = "bmc-render/ui" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bmc-upgrade-types = { path = "bmc-upgrade/types" }
 bmc-virt-ipc = { path = "bmc-virt/ipc" }

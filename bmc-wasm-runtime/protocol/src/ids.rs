@@ -25,93 +25,19 @@
 //! a socket ID is expected). Absent IDs are modelled as `Option<*Id>`,
 //! never as a magic in-band sentinel.
 //!
-//! Wire format: each ID encodes as its inner integer. Zero is reserved as
-//! the absent sentinel — `from_wire(0)` returns `None`, `to_wire(None)`
-//! writes `0`. Outside the wire/FFI seam, prefer `Option<*Id>` over the
-//! raw value.
+//! Wire format: each ID encodes as its inner integer.
+//! Zero is reserved as the absent sentinel — `from_wire(0)` returns `None`,
+//! `to_wire(None)` writes `0`. Outside the wire/FFI seam, prefer `Option<*Id>`
+//! over the raw value.
+//!
+//! The `u16` renderer ids come from `bmc-ui`;
+//! the `u32` network and data handles and the host-side `IdPool` are defined here.
 
 #[cfg(any(feature = "id-pool", test))]
 use std::fmt;
 
-macro_rules! define_id {
-    ($(#[$meta:meta])* $name:ident, $kind:literal, $inner:ty) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub struct $name($inner);
-
-        impl $name {
-            #[must_use]
-            pub const fn from_wire(raw: $inner) -> Option<Self> {
-                if raw == 0 { None } else { Some(Self(raw)) }
-            }
-
-            #[must_use]
-            pub const fn to_wire(self) -> $inner {
-                self.0
-            }
-
-            /// Bump a registry counter and return the fresh ID. Counter
-            /// must start at `1`; panics on overflow or zero start.
-            #[must_use]
-            pub fn alloc(counter: &mut $inner) -> Self {
-                let raw = *counter;
-                assert_ne!(
-                    raw, 0,
-                    concat!("BUG: ", $kind, " allocator counter is 0; must start at 1"),
-                );
-                *counter = counter
-                    .checked_add(1)
-                    .unwrap_or_else(|| panic!(concat!("BUG: ", $kind, " ID space exhausted")));
-                Self(raw)
-            }
-        }
-    };
-}
-
-/// FFI bridge for the u16 renderer ids.
-/// They are u16 in storage and in the render-tree wire format
-/// (compact — 2 bytes per draw node), but wasm has no integer type
-/// narrower than i32, so they cross host imports/exports as u32.
-/// `to_ffi` widens (free); `from_ffi` narrows + range-checks.
-macro_rules! u16_ffi_bridge {
-    ($($name:ident),+ $(,)?) => { $(
-        impl $name {
-            #[must_use]
-            pub fn to_ffi(self) -> u32 {
-                u32::from(self.to_wire())
-            }
-
-            #[must_use]
-            pub fn from_ffi(raw: u32) -> Option<Self> {
-                u16::try_from(raw).ok().and_then(Self::from_wire)
-            }
-        }
-    )+ };
-}
-
-// ── Renderer resources (u16 wire) ───────────────────────────────────
-
-define_id! {
-    /// Opaque handle returned by SVG registration.
-    SvgId, "svg", u16
-}
-
-define_id! {
-    /// Opaque handle returned by bitmap registration.
-    BitmapId, "bitmap", u16
-}
-
-define_id! {
-    /// Opaque handle returned by mesh registration.
-    MeshId, "mesh", u16
-}
-
-define_id! {
-    /// Opaque handle returned by audio registration.
-    AudioId, "audio", u16
-}
-
-u16_ffi_bridge!(SvgId, BitmapId, MeshId, AudioId);
+use bmc_ui::define_id;
+pub use bmc_ui::ids::*;
 
 #[cfg(any(feature = "id-pool", test))]
 mod reusable_id {

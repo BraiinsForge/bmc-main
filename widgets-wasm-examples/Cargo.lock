@@ -110,7 +110,7 @@ dependencies = [
 name = "bmc-render-skin"
 version = "0.1.0"
 dependencies = [
- "bmc-wasm-protocol",
+ "bmc-ui",
 ]
 
 [[package]]
@@ -142,6 +142,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-ui"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "palette",
+]
+
+[[package]]
 name = "bmc-wasm-assets"
 version = "0.1.0"
 dependencies = [
@@ -160,10 +168,9 @@ version = "0.1.0"
 dependencies = [
  "bmc-shared-time",
  "bmc-shared-utils",
+ "bmc-ui",
  "chrono",
  "chrono-tz",
- "hex",
- "palette",
  "roxmltree",
  "rrule",
  "serde_json",

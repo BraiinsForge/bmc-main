@@ -1,0 +1,27 @@
+# `bmc-ui` is the one crate the native renderer and the wasm SDK both compile,
+# so a target gate in it would hand one side a different type than the other.
+# A macro whose output must differ per target picks the variant in its output
+# (`bmc-render/macros`), never in a type defined here.
+# The `target_*` keys are listed by name; a new key needs adding.
+
+id: no-target-cfg-in-ui
+language: rust
+severity: error
+
+message: Target gate in `bmc-ui` — the crate is the same on every target; branch in the consumer or the macro output.
+
+files:
+  - "bmc-render/ui/src/**/*.rs"
+
+rule:
+  any:
+    - pattern: target_abi
+    - pattern: target_arch
+    - pattern: target_endian
+    - pattern: target_env
+    - pattern: target_family
+    - pattern: target_feature
+    - pattern: target_has_atomic
+    - pattern: target_os
+    - pattern: target_pointer_width
+    - pattern: target_vendor

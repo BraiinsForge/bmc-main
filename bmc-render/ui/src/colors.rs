@@ -131,21 +131,21 @@ impl Color {
 
     /// Green channel (0–255).
     #[must_use]
-    #[cfg_attr(not(target_arch = "wasm32"), expect(clippy::cast_possible_truncation))]
+    #[expect(clippy::cast_possible_truncation)]
     pub const fn green(self) -> u8 {
         (self.0 >> 16) as u8
     }
 
     /// Blue channel (0–255).
     #[must_use]
-    #[cfg_attr(not(target_arch = "wasm32"), expect(clippy::cast_possible_truncation))]
+    #[expect(clippy::cast_possible_truncation)]
     pub const fn blue(self) -> u8 {
         (self.0 >> 8) as u8
     }
 
     /// Alpha channel (0–255).
     #[must_use]
-    #[cfg_attr(not(target_arch = "wasm32"), expect(clippy::cast_possible_truncation))]
+    #[expect(clippy::cast_possible_truncation)]
     pub const fn alpha(self) -> u8 {
         self.0 as u8
     }
@@ -184,10 +184,7 @@ impl Color {
     /// `0.0` (transparent). Debug builds assert the input is in range so
     /// upstream bugs surface loudly instead of producing wrapped alpha.
     #[must_use]
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)
-    )]
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub const fn with_alpha(self, alpha: f32) -> Self {
         debug_assert!(alpha >= 0.0 && alpha <= 1.0, "alpha must be in [0, 1]");
         let clamped = if alpha > 1.0 {

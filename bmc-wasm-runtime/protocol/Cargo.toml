@@ -7,12 +7,9 @@ license = "GPL-3.0-or-later"
 [dependencies]
 bmc-shared-time = { workspace = true, optional = true }
 bmc-shared-utils = { workspace = true, optional = true }
-bmc-widget-protocol = { workspace = true, optional = true }
+bmc-ui = { workspace = true }
 chrono = { workspace = true, optional = true }
 chrono-tz = { workspace = true, optional = true }
-egui = { workspace = true, optional = true }
-hex.workspace = true
-palette.workspace = true
 roxmltree = { workspace = true, optional = true }
 rrule = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
@@ -25,9 +22,9 @@ id-pool = []
 # Off by default so the SDK build path doesn't pick up serde
 serde = ["dep:serde"]
 # Colour conversions for egui consumers; off so the wasm SDK never sees egui.
-egui = ["dep:egui"]
+egui = ["bmc-ui/egui"]
 # Off by default so the wasm SDK build path stays free of Wayland-protocol types.
-widget-protocol = ["dep:bmc-widget-protocol"]
+widget-protocol = ["bmc-ui/widget-protocol"]
 # What the host computes for a guest, shared with native SDK builds.
 # Off by default so the wasm SDK build path stays free of the formatting core (formato),
 # the calendar (chrono-tz, rrule) and the JSON and XML readers (serde_json, roxmltree).

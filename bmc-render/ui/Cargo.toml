@@ -1,0 +1,23 @@
+[package]
+name = "bmc-ui"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+bmc-widget-protocol = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+hex.workspace = true
+palette.workspace = true
+
+[features]
+default = []
+# Colour conversions for egui consumers;
+# off so the wasm SDK never sees egui.
+egui = ["dep:egui"]
+# Off by default so the wasm SDK build path
+# stays free of Wayland-protocol types.
+widget-protocol = ["dep:bmc-widget-protocol"]
+
+[lints]
+workspace = true

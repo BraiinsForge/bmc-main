@@ -20,34 +20,28 @@
 
 //! Shared protocol definitions for WASM widgets.
 //! This crate contains constants and types shared between the SDK (WASM) and host.
+//! The design-system vocabulary and tree-wire primitives live in `bmc-ui`;
+//! this crate re-exports them so one dependency covers the whole contract.
 
-pub mod animation;
-pub mod arc;
 pub mod assets;
-pub mod colors;
-pub mod display;
 pub mod fetch;
-pub mod fill;
 pub mod ids;
 pub mod image_meta;
 pub mod json;
-pub mod mesh;
-pub mod nodes;
 pub mod params;
-pub mod progress;
-pub mod relative_time;
-pub mod skeleton;
-pub mod svg;
 pub mod system;
 pub mod tags;
-pub mod text;
 pub mod time;
 pub mod timer;
 pub mod version;
 pub mod versioned_snapshot;
-pub(crate) mod wire;
 #[cfg(feature = "host")]
 pub mod xml;
+
+pub use bmc_ui::{
+    animation, arc, colors, display, fill, mesh, nodes, progress, relative_time, skeleton, svg,
+    text,
+};
 
 pub use animation::*;
 pub use arc::*;

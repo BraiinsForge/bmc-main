@@ -13,6 +13,7 @@ severity: error
 message: Allocating fmt macro in widget code — use `ufmt::uwrite!` instead.
 
 files:
+  - "bmc-render/ui/src/**/*.rs"
   - "bmc-wasm-runtime/sdk/src/**/*.rs"
   - "bmc-wasm-runtime/protocol/src/**/*.rs"
   - "widgets-wasm-examples/*/src/**/*.rs"

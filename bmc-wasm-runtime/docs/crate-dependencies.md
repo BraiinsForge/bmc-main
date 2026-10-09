@@ -17,7 +17,7 @@
               │   │           │     │            │
               │   ▼           ▼     ▼            ▼
               │ ┌────────────────┐ ┌─────────────────────┐
-              │ │ bmc-wasm-sdk-  │ │  bmc-wasm-protocol  │ ◄── leaf (no deps)
+              │ │ bmc-wasm-sdk-  │ │  bmc-wasm-protocol  │ ──→ bmc-ui ◄── leaf (no deps)
               │ │     macros     │ │                     │
               │ └────────┬───────┘ └─────────────────────┘
               │          │                ▲
@@ -41,7 +41,8 @@
 
 | Crate                 | Role                                                                                                                              | Location                          |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `bmc-wasm-protocol`   | Wire-format types, color system, node constants                                                                                   | `bmc-wasm-runtime/protocol/`      |
+| `bmc-ui`              | Design-system vocabulary and tree-wire primitives: colours, text styles, node tags, renderer ids, asset descriptors               | `bmc-render/ui/`                  |
+| `bmc-wasm-protocol`   | Guest↔host contract beyond the tree: params, system snapshots, fetch, versioning; re-exports `bmc-ui`                             | `bmc-wasm-runtime/protocol/`      |
 | `bmc-icon-compiler`   | SVG → compact binary icon compilation                                                                                             | `bmc-wasm-runtime/icon-compiler/` |
 | `bmc-render-skin`     | Skin/theme definitions (9-patch, palettes)                                                                                        | `bmc-render/skin/`                |
 | `bmc-render-macros`   | Asset proc macros (`include_icon!`, `include_bitmap!`, `include_mesh!`, `include_audio!`, `include_skin!`, `include_nine_patch!`) | `bmc-render/macros/`              |
@@ -53,5 +54,6 @@
 
 ## Leaf crates
 
-`bmc-wasm-protocol` and `bmc-icon-compiler` are the two true leaves — no path dependencies of their own. Both live under
-`bmc-wasm-runtime/` for historical reasons; the paths work and there's no benefit to moving them.
+`bmc-ui` and `bmc-icon-compiler` are the two true leaves — no path dependencies of their own. `bmc-wasm-protocol`
+depends only on `bmc-ui`. The protocol and icon-compiler crates live under `bmc-wasm-runtime/` for historical reasons;
+the paths work and there's no benefit to moving them.
