@@ -30,6 +30,7 @@
 //! `bmc-openwrt` rejects builds that remove its TRACE instrumentation.
 
 pub mod activation;
+pub mod add_missing;
 pub mod feed;
 pub mod fs_sync;
 pub mod gc;

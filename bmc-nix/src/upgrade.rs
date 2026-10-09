@@ -217,17 +217,52 @@ pub async fn apply_profile_change(
     hooks_dir: &str,
     hooks_override_path: Option<&Path>,
 ) -> Result<InstallResult, InstallError> {
-    // 1. Acquire profile lock
     let lock = profile::lock_profile(profile_dir)
         .await
         .map_err(InstallError::Lock)?;
+    apply_locked_profile_change(
+        &lock,
+        store,
+        profile_dir,
+        base_manifest,
+        merged,
+        add_packages,
+        remove_packages,
+        activation,
+        gc_config,
+        progress,
+        hooks_dir,
+        hooks_override_path,
+    )
+    .await
+}
 
+/// [`apply_profile_change`] for a caller that already holds the profile
+/// lock, so it can decide under the same acquisition whether to apply.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "orchestration entrypoint - every parameter is required"
+)]
+pub(crate) async fn apply_locked_profile_change(
+    lock: &profile::ProfileLock,
+    store: &impl store::StoreOperations,
+    profile_dir: &Path,
+    base_manifest: Option<Manifest>,
+    merged: Option<&MergedIndex>,
+    add_packages: &[ResolvedPackage],
+    remove_packages: &[String],
+    activation: ActivationMode,
+    gc_config: Option<&GcConfig>,
+    progress: Option<&dyn UpgradeProgress>,
+    hooks_dir: &str,
+    hooks_override_path: Option<&Path>,
+) -> Result<InstallResult, InstallError> {
     let (base, explicit_base) = resolve_base_manifest(profile_dir, base_manifest)?;
 
     // Capture the pre-activation `current` generation number, if any, so
     // GC doesn't reclaim it before the orchestration layer (service
     // restart planning, rollback) can read its manifest.
-    let previous_generation = previous_generation_number(profile_dir)?;
+    let previous_generation = current_generation_number(profile_dir)?;
 
     let plan = manifest::compute_upgrade_plan(&base, merged, add_packages, remove_packages)?;
 
@@ -257,7 +292,7 @@ pub async fn apply_profile_change(
     remove_stale_next(profile_dir)?;
     match activation {
         ActivationMode::Activate => {
-            activate_generation(profile_dir, &generation, &lock, progress).await?;
+            activate_generation(profile_dir, &generation, lock, progress).await?;
         }
         ActivationMode::Skip => {}
         ActivationMode::NextBoot { ref bos_version } => {
@@ -278,7 +313,7 @@ pub async fn apply_profile_change(
     Ok(install_result_from_plan(plan, Some(generation), gc))
 }
 
-fn resolve_base_manifest(
+pub(crate) fn resolve_base_manifest(
     profile_dir: &Path,
     base_manifest: Option<Manifest>,
 ) -> Result<(Manifest, bool), InstallError> {
@@ -300,7 +335,7 @@ fn resolve_base_manifest(
     Ok((base, explicit_base))
 }
 
-fn previous_generation_number(profile_dir: &Path) -> Result<Option<usize>, InstallError> {
+pub(crate) fn current_generation_number(profile_dir: &Path) -> Result<Option<usize>, InstallError> {
     Ok(profile::current_generation_link(profile_dir)
         .map_err(InstallError::ResolveCurrent)?
         .and_then(|p| {
