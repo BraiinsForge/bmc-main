@@ -876,7 +876,7 @@ fn standings(season_underway: bool) -> Json {
                 "team_color": team.livery,
                 "country_code": driver.country,
                 "country_flag_url": image_url("flag", driver.country),
-                "points": driver.points,
+                "points": f64::from(driver.points),
                 "headshot_url": image_url("headshot", driver.code),
             })
         })
@@ -918,7 +918,7 @@ fn driver_row(index: usize, today: NaiveDate) -> Json {
         "team": team.name,
         "team_color": team.livery,
         "ranking": index + 1,
-        "points": driver.points,
+        "points": f64::from(driver.points),
         "nationality": driver.country_name,
         "nationality_flag_url": image_url("flag", driver.country),
         "gp_wins": driver.gp_wins,
@@ -2047,6 +2047,13 @@ mod tests {
     fn the_off_season_empties_the_calendar_and_the_table() {
         assert_eq!(standings(false), serde_json::json!([]));
         assert_eq!(next_race(false, false, today()), serde_json::json!({}));
+    }
+
+    #[test]
+    fn points_are_decimal_numbers_as_nexus_sends_them() {
+        let why = "Nexus sends `325.0`, not `325`; an integer hides a widget that cannot read it";
+        assert!(standings(true)[0]["points"].is_f64(), "{why}");
+        assert!(driver_stats(today())[0]["points"].is_f64(), "{why}");
     }
 
     /// Reply from the endpoint serving `resource`, as `host` reached it.
