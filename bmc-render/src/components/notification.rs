@@ -23,13 +23,15 @@
 #![expect(clippy::cast_precision_loss)]
 #![allow(clippy::wildcard_imports)]
 
+// Vocabulary modules rather than the root, whose component builders clash
+// with taffy's prelude, `span` for one.
 use bmc_ui::NotificationKind;
-use bmc_wasm_protocol::*;
+use bmc_ui::{colors::*, ids::*, svg::*, text::*};
 use taffy::prelude::*;
 
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
-use crate::tree::{SpanData, min_content_paragraph_width};
+use crate::tree::{Span, min_content_paragraph_width};
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -80,8 +82,8 @@ fn notification_subtitle_style() -> TextStyle {
     }
 }
 
-fn plain_spans(text: &str) -> [SpanData; 1] {
-    [SpanData::plain(text)]
+fn plain_spans(text: &str) -> [Span; 1] {
+    [Span::plain(text)]
 }
 
 // ── Measurement ──────────────────────────────────────────────────────

@@ -21,15 +21,15 @@
 use super::*;
 
 /// An open modal whose body is a single static paragraph.
-fn modal_tree_with_body_text(text: &str) -> TreeNode {
-    let TreeNode::Column(props, mut children) = modal_tree(true) else {
+fn modal_tree_with_body_text(text: &str) -> Node {
+    let Node::Column(props, mut children) = modal_tree(true) else {
         unreachable!("BUG: modal_tree builds a Column")
     };
-    if let Some(TreeNode::Modal { body, .. }) = children.last_mut() {
-        *body = vec![TreeNode::Paragraph {
+    if let Some(Node::Modal { body, .. }) = children.last_mut() {
+        *body = vec![Node::Paragraph {
             props: PropsData::default(),
             base_style: TextStyle::default(),
-            spans: vec![SpanData {
+            spans: vec![Span {
                 text: text.to_owned(),
                 weight: None,
                 color: None,
@@ -40,15 +40,15 @@ fn modal_tree_with_body_text(text: &str) -> TreeNode {
             }],
         }];
     }
-    TreeNode::Column(props, children)
+    Node::Column(props, children)
 }
 
-fn modal_tree(is_open: bool) -> TreeNode {
-    TreeNode::Column(
+fn modal_tree(is_open: bool) -> Node {
+    Node::Column(
         PropsData::default(),
         vec![
-            TreeNode::Spacer { flex: 1.0 },
-            TreeNode::Modal {
+            Node::Spacer { flex: 1.0 },
+            Node::Modal {
                 modal_id: "confirm".to_owned(),
                 is_open,
                 padding: 8,
@@ -71,13 +71,13 @@ fn modal_tree(is_open: bool) -> TreeNode {
 }
 
 /// A modal that scrolls, with enough children to overflow its body.
-fn scrollable_modal_tree() -> TreeNode {
-    let TreeNode::Column(props, mut children) = modal_tree(true) else {
+fn scrollable_modal_tree() -> Node {
+    let Node::Column(props, mut children) = modal_tree(true) else {
         unreachable!("BUG: modal_tree builds a Column")
     };
-    if let Some(TreeNode::Modal { body, .. }) = children.last_mut() {
+    if let Some(Node::Modal { body, .. }) = children.last_mut() {
         *body = (0..4)
-            .map(|_| TreeNode::Canvas {
+            .map(|_| Node::Canvas {
                 props: PropsData {
                     width: 60.0,
                     height: 60.0,
@@ -88,7 +88,7 @@ fn scrollable_modal_tree() -> TreeNode {
             })
             .collect();
     }
-    TreeNode::Column(props, children)
+    Node::Column(props, children)
 }
 
 /// The modal overlays are walked after `render_tree` returns, so anything
@@ -188,11 +188,11 @@ fn a_closed_modal_damages_nothing() {
 }
 
 /// A scrolling modal with a footer button.
-fn modal_tree_with_footer() -> TreeNode {
-    let TreeNode::Column(props, mut children) = scrollable_modal_tree() else {
+fn modal_tree_with_footer() -> Node {
+    let Node::Column(props, mut children) = scrollable_modal_tree() else {
         unreachable!("BUG: scrollable_modal_tree builds a Column")
     };
-    if let Some(TreeNode::Modal {
+    if let Some(Node::Modal {
         footer_primary_key,
         footer_primary_label,
         ..
@@ -201,7 +201,7 @@ fn modal_tree_with_footer() -> TreeNode {
         "ok".clone_into(footer_primary_key);
         "OK".clone_into(footer_primary_label);
     }
-    TreeNode::Column(props, children)
+    Node::Column(props, children)
 }
 
 /// Outlines cover the modal's own frame beside the tree's boxes,

@@ -27,7 +27,7 @@ use crate::gpu::glyph_cache::{
     GlyphCache, GlyphLookup, GlyphQuad, PageBackend, PageCreateFailed, PageFaultKind, RasterGlyph,
 };
 use crate::gpu::renderer::FACES;
-use crate::tree::TextStyle;
+use bmc_ui::TextStyle;
 use cosmic_text::FontSystem;
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
 use rgb::FromSlice as _;

@@ -22,7 +22,7 @@
 
 #![expect(clippy::cast_precision_loss)]
 
-use crate::tree::{FontFamily, FontWeight, SpanData, TextAlign, TextOverflow, TextStyle};
+use bmc_ui::{FontFamily, FontWeight, Span, TextAlign, TextOverflow, TextStyle};
 use cosmic_text::{
     Align, Attrs, Buffer, Color, Ellipsize, EllipsizeHeightLimit, Family, FontSystem, LayoutGlyph,
     Metrics, Scroll, Shaping, Style, Weight, Wrap,
@@ -52,7 +52,7 @@ pub(super) const NO_SPAN: usize = usize::MAX;
 pub(super) fn shape_paragraph(
     font_system: &mut FontSystem,
     base_style: &TextStyle,
-    spans: &[SpanData],
+    spans: &[Span],
     max_width: Option<f32>,
 ) -> (Buffer, f32, f32) {
     let line_height = base_style.size as f32 * base_style.line_height;
@@ -368,7 +368,7 @@ pub(crate) fn baseline_to_alphabetic(
 ///
 /// Borrows unchanged when there is no CR, which is the common case. Span count
 /// and order are preserved, so span indices stay valid for styling.
-pub(super) fn normalize_carriage_returns(spans: &[SpanData]) -> std::borrow::Cow<'_, [SpanData]> {
+pub(super) fn normalize_carriage_returns(spans: &[Span]) -> std::borrow::Cow<'_, [Span]> {
     if !spans.iter().any(|s| s.text.contains('\r')) {
         return std::borrow::Cow::Borrowed(spans);
     }
@@ -408,7 +408,7 @@ pub(super) fn normalize_carriage_returns(spans: &[SpanData]) -> std::borrow::Cow
                     _ => text.push(c),
                 }
             }
-            SpanData {
+            Span {
                 text,
                 ..span.clone()
             }

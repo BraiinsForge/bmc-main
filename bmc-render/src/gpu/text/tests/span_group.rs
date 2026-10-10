@@ -24,7 +24,7 @@
 use super::{
     LineGlyphs, SpanGroup, extract_lines, normalize_carriage_returns, shape_paragraph, span_groups,
 };
-use crate::tree::{SpanData, TextStyle};
+use bmc_ui::{Span, TextStyle};
 
 /// An RTL script the shipped faces do not cover,
 /// so its glyphs come back as boxes —
@@ -32,8 +32,8 @@ use crate::tree::{SpanData, TextStyle};
 /// and holds either way.
 const HEBREW: &str = "\u{5e9}\u{5dc}\u{5d5}\u{5dd}";
 
-fn span(text: &str, underline: bool) -> SpanData {
-    SpanData {
+fn span(text: &str, underline: bool) -> Span {
+    Span {
         text: text.to_owned(),
         weight: None,
         color: None,
@@ -44,7 +44,7 @@ fn span(text: &str, underline: bool) -> SpanData {
     }
 }
 
-fn only_line(spans: &[SpanData]) -> LineGlyphs {
+fn only_line(spans: &[Span]) -> LineGlyphs {
     let normalized = normalize_carriage_returns(spans);
     let mut font_system = super::font_system();
     let (buffer, _, _) = shape_paragraph(

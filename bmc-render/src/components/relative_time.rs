@@ -20,7 +20,7 @@
 
 //! `RelativeTimeLive` — host-formatted, self-updating relative-time label.
 
-use bmc_wasm_protocol::{RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments};
+use bmc_ui::{RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments};
 
 const MINUTE: u64 = 60;
 const HOUR: u64 = 60 * MINUTE;
@@ -131,7 +131,7 @@ pub fn next_change_delay_ms(
 #[cfg(test)]
 mod tests {
     use super::{format_rel, next_change_delay_ms};
-    use bmc_wasm_protocol::{RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments};
+    use bmc_ui::{RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments};
 
     const fn fmt(length: RelTimeLength, segments: RelTimeSegments) -> RelTimeFormat {
         RelTimeFormat { length, segments }
@@ -272,9 +272,9 @@ mod tests {
 
     #[test]
     fn deserializes_from_wire() {
-        use bmc_wasm_protocol::{NODE_RELTIME, TextStyle};
+        use bmc_ui::{NODE_RELTIME, TextStyle};
 
-        use crate::tree::{TreeNode, deserialize_tree};
+        use crate::tree::{Node, deserialize_tree};
 
         let mut bytes = vec![NODE_RELTIME];
         bytes.extend_from_slice(&1_700_000_000_i64.to_le_bytes());
@@ -285,7 +285,7 @@ mod tests {
         let node = deserialize_tree(&bytes).expect("BUG: RelTime should deserialize");
         assert!(matches!(
             node,
-            TreeNode::RelTime {
+            Node::RelTime {
                 anchor: 1_700_000_000,
                 format: RelTimeFormat {
                     length: RelTimeLength::Short,

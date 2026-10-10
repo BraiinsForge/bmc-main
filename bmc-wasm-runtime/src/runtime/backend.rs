@@ -1357,7 +1357,7 @@ impl WasmWidgetRuntime {
 
     /// Re-render the last successfully submitted tree (no WASM execution).
     ///
-    /// Runs the cached `TreeNode` through the layout-and-render pipeline
+    /// Runs the cached `Node` through the layout-and-render pipeline
     /// without deserializing it again.
     ///
     /// Invariant: callers must be inside a [`Self::with_renderer`] scope so
@@ -2868,7 +2868,7 @@ mod tests {
         let mut runtime = minimal_runtime();
         let state = runtime.store.data_mut();
         state.frame_schedule.has_active_animations = true;
-        state.cached_tree = Some((bmc_render::tree::TreeNode::Spacer { flex: 1.0 }, 40.0, 40.0));
+        state.cached_tree = Some((bmc_render::tree::Node::Spacer { flex: 1.0 }, 40.0, 40.0));
         state.recent_dynamic_rects = [
             vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
             vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
@@ -2933,10 +2933,10 @@ mod tests {
         let mut runtime = minimal_runtime();
         let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
             .with_static_layers();
-        let panel = bmc_render::tree::TreeNode::Column(
-            bmc_render::tree::PropsData {
-                background: bmc_wasm_protocol::colors::Color::from_rgb(1, 2, 3),
-                ..bmc_render::tree::PropsData::default()
+        let panel = bmc_render::tree::Node::Column(
+            bmc_ui::PropsData {
+                background: bmc_ui::Color::from_rgb(1, 2, 3),
+                ..bmc_ui::PropsData::default()
             },
             Vec::new(),
         );
@@ -2991,10 +2991,10 @@ mod tests {
         let mut runtime = minimal_runtime();
         let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
             .with_static_layers();
-        let panel = bmc_render::tree::TreeNode::Column(
-            bmc_render::tree::PropsData {
-                background: bmc_wasm_protocol::colors::Color::from_rgb(1, 2, 3),
-                ..bmc_render::tree::PropsData::default()
+        let panel = bmc_render::tree::Node::Column(
+            bmc_ui::PropsData {
+                background: bmc_ui::Color::from_rgb(1, 2, 3),
+                ..bmc_ui::PropsData::default()
             },
             Vec::new(),
         );

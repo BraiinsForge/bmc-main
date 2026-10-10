@@ -72,19 +72,7 @@ mod walk;
 pub use crate::components::notification::{
     measure_notification_banner, render_notification_banner,
 };
-pub use bmc_ui::components::text::text;
 pub use bmc_ui::tree::*;
-pub use bmc_wasm_protocol::{
-    AutoFit, CrossAlign, FontFamily, FontWeight, Justify, PropsData, TextAlign, TextOverflow,
-    TextStyle, VerticalAlign,
-};
-
-/// The host's names for the shared tree types.
-pub type TreeNode = Node;
-pub type DrawCommand = Draw;
-pub type SpanData = Span;
-pub type HostAnimationDef = AnimationDef;
-pub type HostTransitionDef = TransitionDef;
 
 pub(crate) use paint::render_taffy_node;
 

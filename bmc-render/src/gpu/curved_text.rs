@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing};
+use bmc_ui::{ArcAnchor, ArcTextFacing};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlyphPlacement {

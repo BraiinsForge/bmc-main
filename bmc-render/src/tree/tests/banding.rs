@@ -24,8 +24,8 @@ use super::*;
 /// so the draw log identifies it.
 const STATIC_RECT: f32 = 37.0;
 
-fn sized_canvas(props: PropsData, draws: Vec<super::DrawCommand>) -> TreeNode {
-    TreeNode::Canvas {
+fn sized_canvas(props: PropsData, draws: Vec<super::Draw>) -> Node {
+    Node::Canvas {
         props: PropsData {
             width: 100.0,
             height: 50.0,
@@ -36,8 +36,8 @@ fn sized_canvas(props: PropsData, draws: Vec<super::DrawCommand>) -> TreeNode {
     }
 }
 
-fn static_draws() -> Vec<super::DrawCommand> {
-    vec![super::DrawCommand::Rect {
+fn static_draws() -> Vec<super::Draw> {
+    vec![super::Draw::Rect {
         x: 0.0,
         y: 0.0,
         w: STATIC_RECT,
@@ -46,21 +46,21 @@ fn static_draws() -> Vec<super::DrawCommand> {
     }]
 }
 
-fn animated_draws() -> Vec<super::DrawCommand> {
-    let TreeNode::Canvas { draws, .. } = moving_dot(10.0) else {
+fn animated_draws() -> Vec<super::Draw> {
+    let Node::Canvas { draws, .. } = moving_dot(10.0) else {
         unreachable!("BUG: `moving_dot` builds a canvas")
     };
     draws
 }
 
 /// A static canvas pinned over the animated one below it.
-fn static_over_dynamic() -> TreeNode {
+fn static_over_dynamic() -> Node {
     let over = PropsData {
         inset_top: 0.0,
         inset_left: 0.0,
         ..PropsData::default()
     };
-    TreeNode::Column(
+    Node::Column(
         PropsData::default(),
         vec![
             sized_canvas(PropsData::default(), animated_draws()),
@@ -70,8 +70,8 @@ fn static_over_dynamic() -> TreeNode {
 }
 
 /// The same two canvases as flex siblings, which never overlap.
-fn static_beside_dynamic() -> TreeNode {
-    TreeNode::Column(
+fn static_beside_dynamic() -> Node {
+    Node::Column(
         PropsData::default(),
         vec![
             sized_canvas(PropsData::default(), animated_draws()),
@@ -174,7 +174,7 @@ fn a_bordered_or_nine_patch_container_over_a_dynamic_one_damages_its_box() {
         ),
     ];
     for (decoration, props) in decorations {
-        let panel = TreeNode::Column(
+        let panel = Node::Column(
             PropsData {
                 width: panel_box.w,
                 height: panel_box.h,
@@ -184,7 +184,7 @@ fn a_bordered_or_nine_patch_container_over_a_dynamic_one_damages_its_box() {
             },
             Vec::new(),
         );
-        let tree = TreeNode::Column(
+        let tree = Node::Column(
             PropsData::default(),
             vec![sized_canvas(PropsData::default(), animated_draws()), panel],
         );
@@ -209,7 +209,7 @@ const PANEL: Color = Color::from_rgb(7, 77, 177);
 /// not draw by draw.
 #[test]
 fn a_container_over_a_dynamic_one_paints_and_damages_its_background_above() {
-    let panel = TreeNode::Column(
+    let panel = Node::Column(
         PropsData {
             width: 60.0,
             height: 30.0,
@@ -220,7 +220,7 @@ fn a_container_over_a_dynamic_one_paints_and_damages_its_background_above() {
         },
         Vec::new(),
     );
-    let tree = TreeNode::Column(
+    let tree = Node::Column(
         PropsData::default(),
         vec![sized_canvas(PropsData::default(), animated_draws()), panel],
     );
@@ -288,13 +288,13 @@ fn a_static_node_over_a_dynamic_one_reports_damage() {
 }
 
 /// The dial under the hands: static, but before the animation it sits under.
-fn dynamic_over_static() -> TreeNode {
+fn dynamic_over_static() -> Node {
     let over = PropsData {
         inset_top: 0.0,
         inset_left: 0.0,
         ..PropsData::default()
     };
-    TreeNode::Column(
+    Node::Column(
         PropsData::default(),
         vec![
             sized_canvas(PropsData::default(), static_draws()),
@@ -346,10 +346,10 @@ fn a_static_node_over_a_dynamic_one_after_a_scroll_container_paints_above() {
         inset_left: 0.0,
         ..PropsData::default()
     };
-    let tree = TreeNode::Column(
+    let tree = Node::Column(
         PropsData::default(),
         vec![
-            TreeNode::Scroll {
+            Node::Scroll {
                 scroll_key: "rows".to_owned(),
                 props: PropsData {
                     height: 50.0,
@@ -387,14 +387,14 @@ fn a_static_node_over_one_already_above_paints_above_too() {
         inset_left: 0.0,
         ..PropsData::default()
     };
-    let first_over = vec![super::DrawCommand::Rect {
+    let first_over = vec![super::Draw::Rect {
         x: 0.0,
         y: 0.0,
         w: 100.0,
         h: 50.0,
         fill: Fill::Solid(Color::from_rgb(4, 5, 6)),
     }];
-    let tree = TreeNode::Column(
+    let tree = Node::Column(
         PropsData::default(),
         vec![
             sized_canvas(PropsData::default(), animated_draws()),
@@ -453,13 +453,13 @@ fn a_static_node_beside_a_scrolled_out_dynamic_one_stays_in_the_layer() {
         height: 50.0,
         ..PropsData::default()
     };
-    let tree = TreeNode::Column(
+    let tree = Node::Column(
         PropsData::default(),
         vec![
-            TreeNode::Scroll {
+            Node::Scroll {
                 scroll_key: "rows".to_owned(),
                 props: viewport,
-                children: vec![TreeNode::Column(
+                children: vec![Node::Column(
                     PropsData::default(),
                     vec![
                         sized_canvas(PropsData::default(), Vec::new()),

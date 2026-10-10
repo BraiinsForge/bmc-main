@@ -337,7 +337,7 @@ fn submit_tree(
 fn decide_static_layer(
     renderer: &mut dyn Renderer,
     state: &mut HostState,
-    tree_node: &bmc_render::tree::TreeNode,
+    tree_node: &bmc_render::tree::Node,
     static_key: (u64, u64, u64),
 ) -> bool {
     let layered = bmc_render::partition::has_static_content(tree_node)
@@ -358,7 +358,7 @@ fn decide_static_layer(
 /// content that did not change.
 fn static_layer_key(
     state: &HostState,
-    tree_node: &bmc_render::tree::TreeNode,
+    tree_node: &bmc_render::tree::Node,
     static_bytes: u64,
     now_unix_secs: i64,
 ) -> ((u64, u64, u64), bool) {
@@ -384,7 +384,7 @@ fn static_layer_key(
 
 /// What a completed guest frame contributes to [`HostState`] beyond its draws.
 struct SubmittedFrame {
-    tree_node: bmc_render::tree::TreeNode,
+    tree_node: bmc_render::tree::Node,
     w: f32,
     h: f32,
     static_key: (u64, u64, u64),
@@ -482,8 +482,8 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
 mod tests {
     use super::{HostState, SubmittedFrame, commit_submitted_frame, decide_static_layer};
     use bmc_render::renderer::test_support::ShapingRecorder;
-    use bmc_render::tree::{TreeNode, TreeResult};
-    use bmc_wasm_protocol::{Color, PropsData};
+    use bmc_render::tree::{Node, TreeResult};
+    use bmc_ui::{Color, PropsData};
 
     const EMPTY_KEY: (u64, u64, u64) = (1, 2, 3);
     const OTHER_KEY: (u64, u64, u64) = (4, 5, 6);
@@ -498,8 +498,8 @@ mod tests {
     }
 
     /// Static content as far as the tree can tell.
-    fn panel() -> TreeNode {
-        TreeNode::Column(
+    fn panel() -> Node {
+        Node::Column(
             PropsData {
                 background: Color::from_rgb(1, 2, 3),
                 ..PropsData::default()

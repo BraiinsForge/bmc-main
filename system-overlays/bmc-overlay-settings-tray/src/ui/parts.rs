@@ -27,15 +27,12 @@ use super::{
 };
 use std::time::Duration;
 
-use bmc_render::tree::{
-    DrawCommand, HostAnimationDef, PropsData, QrStyle, TextStyle, TreeNode, col, row, text,
+use bmc_render::ui::{
+    AnimProperty, AnimationDef, BLACK, Color, ColorSpace, CrossAlign, Draw, Easing, Fill,
+    FontWeight, GREEN_50, LoopMode, Node, PropsData, QrStyle, SvgId, TRANSPARENT, TextAlign,
+    TextOverflow, TextStyle, WHITE, col, row, text,
 };
 use bmc_system_overlay::DisplayShape;
-use bmc_wasm_protocol::colors::{BLACK, GREEN_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{
-    AnimProperty, Color, ColorSpace, CrossAlign, Easing, Fill, FontWeight, LoopMode, SvgId,
-    TextAlign, TextOverflow,
-};
 
 pub(super) fn text_style(size: u32, color: Color) -> TextStyle {
     TextStyle {
@@ -46,7 +43,7 @@ pub(super) fn text_style(size: u32, color: Color) -> TextStyle {
 }
 
 /// A runtime string on one line, ending in "…" past `max_width` px.
-pub(super) fn capped_text(s: &str, size: u32, max_width: u32) -> TreeNode {
+pub(super) fn capped_text(s: &str, size: u32, max_width: u32) -> Node {
     text(
         s,
         TextStyle {
@@ -57,7 +54,7 @@ pub(super) fn capped_text(s: &str, size: u32, max_width: u32) -> TreeNode {
     )
 }
 
-pub(super) fn fixed_width(width: f32) -> TreeNode {
+pub(super) fn fixed_width(width: f32) -> Node {
     row(
         PropsData {
             width,
@@ -69,7 +66,7 @@ pub(super) fn fixed_width(width: f32) -> TreeNode {
 
 /// Wrap `node` with equal left/right padding by flanking it with fixed-width
 /// spacers; the content takes the remaining width.
-pub(super) fn pad_horizontal(node: TreeNode, padding: f32) -> TreeNode {
+pub(super) fn pad_horizontal(node: Node, padding: f32) -> Node {
     row(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -92,7 +89,7 @@ pub(super) fn pad_horizontal(node: TreeNode, padding: f32) -> TreeNode {
 /// Centered header row, on one line that ends in "…" if its column is too narrow.
 /// The centering column is what actually centers the text node; a bare paragraph
 /// with `align: Center` does not center under a stretching parent.
-pub(super) fn header_row(header: &str, size: u32) -> TreeNode {
+pub(super) fn header_row(header: &str, size: u32) -> Node {
     col(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -114,7 +111,7 @@ pub(super) fn header_row(header: &str, size: u32) -> TreeNode {
 
 /// The SETUP badge before a setup AP's SSID: what tells the user this is
 /// a network to join from a phone, not the one the device is on.
-pub(super) fn setup_badge(size: u32) -> TreeNode {
+pub(super) fn setup_badge(size: u32) -> Node {
     text(
         "SETUP",
         TextStyle {
@@ -126,7 +123,7 @@ pub(super) fn setup_badge(size: u32) -> TreeNode {
     )
 }
 
-pub(super) fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>, size: f32) -> TreeNode {
+pub(super) fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>, size: f32) -> Node {
     svg_icon(icons.for_signal(wifi_signal), size, TRANSPARENT)
 }
 
@@ -141,7 +138,7 @@ pub(super) fn connection_icon(
     icons: WifiIcons,
     wifi_signal: Option<i32>,
     size: f32,
-) -> TreeNode {
+) -> Node {
     match view {
         WifiView::Cable => svg_icon(icons.cable, size, WHITE),
         WifiView::Idle => wifi_icon(icons, wifi_signal, size),
@@ -150,15 +147,15 @@ pub(super) fn connection_icon(
 }
 
 /// A square icon. A `TRANSPARENT` tint keeps the artwork's own colours.
-pub(super) fn svg_icon(icon_id: Option<SvgId>, size: f32, tint: Color) -> TreeNode {
-    TreeNode::Canvas {
+pub(super) fn svg_icon(icon_id: Option<SvgId>, size: f32, tint: Color) -> Node {
+    Node::Canvas {
         props: PropsData {
             width: size,
             height: size,
             ..PropsData::default()
         },
         touch_key: None,
-        draws: vec![DrawCommand::Svg {
+        draws: vec![Draw::Svg {
             x: 0.0,
             y: 0.0,
             w: size,
@@ -199,7 +196,7 @@ pub(super) fn round_button(
     fill: Color,
     icon_tint: Color,
     hold: Option<Hold>,
-) -> TreeNode {
+) -> Node {
     let c = diameter / 2.0;
     let held = hold.is_some();
     let canvas_size = if held { diameter * 2.0 } else { diameter };
@@ -208,14 +205,14 @@ pub(super) fn round_button(
     if let Some(hold) = hold {
         draws.push(hold_circle(center, c, hold));
     }
-    draws.push(DrawCommand::Circle {
+    draws.push(Draw::Circle {
         cx: center,
         cy: center,
         r: c,
         fill: Fill::Solid(if held { fill.with_alpha(1.0) } else { fill }),
     });
     let (icon_w, icon_h) = (icon_size * icon.aspect, icon_size);
-    draws.push(DrawCommand::Svg {
+    draws.push(Draw::Svg {
         x: center - icon_w / 2.0,
         y: center - icon_h / 2.0,
         w: icon_w,
@@ -231,14 +228,14 @@ pub(super) fn round_button(
         ..PropsData::default()
     };
     if !held {
-        return TreeNode::Canvas {
+        return Node::Canvas {
             props: visual_props,
             touch_key: Some(key.to_owned()),
             draws,
         };
     }
 
-    let visual = TreeNode::Canvas {
+    let visual = Node::Canvas {
         props: PropsData {
             inset_top: -c,
             inset_left: -c,
@@ -249,7 +246,7 @@ pub(super) fn round_button(
     };
     // Keep the touch key on the button-sized canvas;
     // putting it on the oversized visual canvas would expand the interactive area.
-    let touch_target = TreeNode::Canvas {
+    let touch_target = Node::Canvas {
         props: PropsData {
             width: diameter,
             height: diameter,
@@ -303,10 +300,10 @@ pub(super) fn close_origin(panel: &Panel, tier: Tier) -> (f32, f32) {
 
 /// The 48×48 close target with its 24×24 gray glyph, absolutely positioned
 /// via `PropsData` insets (finite inset = absolute positioning).
-pub(super) fn close_button(panel: &Panel, tier: Tier, icon: Option<SvgId>) -> TreeNode {
+pub(super) fn close_button(panel: &Panel, tier: Tier, icon: Option<SvgId>) -> Node {
     let (left, top) = close_origin(panel, tier);
     let glyph_inset = (CLOSE_TARGET - CLOSE_GLYPH) / 2.0;
-    TreeNode::Canvas {
+    Node::Canvas {
         props: PropsData {
             width: CLOSE_TARGET,
             height: CLOSE_TARGET,
@@ -315,7 +312,7 @@ pub(super) fn close_button(panel: &Panel, tier: Tier, icon: Option<SvgId>) -> Tr
             ..PropsData::default()
         },
         touch_key: Some(CLOSE_KEY.to_owned()),
-        draws: vec![DrawCommand::Svg {
+        draws: vec![Draw::Svg {
             x: glyph_inset,
             y: glyph_inset,
             w: CLOSE_GLYPH,
@@ -331,15 +328,15 @@ pub(super) fn close_button(panel: &Panel, tier: Tier, icon: Option<SvgId>) -> Tr
 /// The QR code for the device's web UI, so scanning it opens the address
 /// printed beside it. Callers omit it while the IP is unknown,
 /// since a placeholder would scan as a dead link.
-pub(super) fn ip_qr(ip: &str, size: f32) -> TreeNode {
-    TreeNode::Canvas {
+pub(super) fn ip_qr(ip: &str, size: f32) -> Node {
+    Node::Canvas {
         props: PropsData {
             width: size,
             height: size,
             ..PropsData::default()
         },
         touch_key: None,
-        draws: vec![DrawCommand::Qr {
+        draws: vec![Draw::Qr {
             x: 0.0,
             y: 0.0,
             size,
@@ -358,7 +355,7 @@ pub(super) fn ip_qr(ip: &str, size: f32) -> TreeNode {
 /// It is drawn at the button radius and animated on from where the hold is now,
 /// so the renderer moves it on frames that replay the tree,
 /// and a tree rebuilt mid-hold carries on from the same spot.
-fn hold_circle(center: f32, radius: f32, hold: Hold) -> DrawCommand {
+fn hold_circle(center: f32, radius: f32, hold: Hold) -> Draw {
     let (progress, remaining) = (hold.progress(), hold.remaining());
     let mut animations = vec![linear_once(
         AnimProperty::Scale,
@@ -374,11 +371,11 @@ fn hold_circle(center: f32, radius: f32, hold: Hold) -> DrawCommand {
         let alpha = progress / HOLD_ALPHA_FULL_AT;
         animations.push(linear_once(AnimProperty::Alpha, alpha, 1.0, fade_left));
     }
-    DrawCommand::Modified {
+    Draw::Modified {
         animations,
         transition: None,
         color_space: ColorSpace::Oklab,
-        inner: Box::new(DrawCommand::Circle {
+        inner: Box::new(Draw::Circle {
             cx: center,
             cy: center,
             r: radius,
@@ -387,8 +384,8 @@ fn hold_circle(center: f32, radius: f32, hold: Hold) -> DrawCommand {
     }
 }
 
-fn linear_once(property: AnimProperty, from: f32, to: f32, over: Duration) -> HostAnimationDef {
-    HostAnimationDef {
+fn linear_once(property: AnimProperty, from: f32, to: f32, over: Duration) -> AnimationDef {
+    AnimationDef {
         property,
         from,
         to,
@@ -401,9 +398,7 @@ fn linear_once(property: AnimProperty, from: f32, to: f32, over: Duration) -> Ho
 
 #[cfg(test)]
 mod tests {
-    use bmc_render::tree::{DrawCommand, TreeNode};
-    use bmc_wasm_protocol::Fill;
-    use bmc_wasm_protocol::colors::TRANSPARENT;
+    use bmc_render::ui::{Draw, Fill, Node, TRANSPARENT};
 
     use super::*;
     use crate::ui::test_support::*;
@@ -426,12 +421,12 @@ mod tests {
             TRANSPARENT,
             Some(held(0.5)),
         );
-        let TreeNode::Column(_, children) = btn else {
+        let Node::Column(_, children) = btn else {
             panic!("expected layered hold button")
         };
         let [
-            TreeNode::Canvas { draws, .. },
-            TreeNode::Canvas {
+            Node::Canvas { draws, .. },
+            Node::Canvas {
                 draws: touch_draws,
                 touch_key,
                 ..
@@ -444,7 +439,7 @@ mod tests {
         assert!(touch_draws.is_empty());
         let (hold_radius, hold_fill) = hold_circle_at_start(&draws[0])
             .expect("BUG: a held button draws its hold circle first");
-        let DrawCommand::Circle {
+        let Draw::Circle {
             fill: Fill::Solid(circle),
             r,
             ..
@@ -460,7 +455,7 @@ mod tests {
             "the held button masks the progress circle underneath",
         );
         assert_close(*r, 56.0, "a hold button keeps the full fill radius");
-        let DrawCommand::Svg { color, .. } = draws[2] else {
+        let Draw::Svg { color, .. } = draws[2] else {
             panic!("expected icon after both circles")
         };
         assert_eq!(
@@ -481,16 +476,15 @@ mod tests {
                 TRANSPARENT,
                 Some(held(progress)),
             );
-            let TreeNode::Column(_, children) = btn else {
+            let Node::Column(_, children) = btn else {
                 panic!("expected layered hold button")
             };
-            let [TreeNode::Canvas { draws, .. }, TreeNode::Canvas { .. }] = children.as_slice()
-            else {
+            let [Node::Canvas { draws, .. }, Node::Canvas { .. }] = children.as_slice() else {
                 panic!("expected visual and touch canvases")
             };
             let (hold, _) = hold_circle_at_start(&draws[0])
                 .expect("BUG: a held button draws its hold circle first");
-            let DrawCommand::Circle { r: button, .. } = &draws[1] else {
+            let Draw::Circle { r: button, .. } = &draws[1] else {
                 panic!("expected button Circle")
             };
             (*button, hold)
@@ -527,10 +521,10 @@ mod tests {
             TRANSPARENT,
             None,
         );
-        let TreeNode::Canvas { draws, .. } = btn else {
+        let Node::Canvas { draws, .. } = btn else {
             panic!("expected Canvas")
         };
-        let DrawCommand::Circle { r, .. } = &draws[0] else {
+        let Draw::Circle { r, .. } = &draws[0] else {
             panic!("expected Circle")
         };
         assert_close(*r, 56.0, "the fill spans the tier diameter");
@@ -547,18 +541,18 @@ mod tests {
             TRANSPARENT,
             Some(held(0.5)),
         );
-        let TreeNode::Column(props, children) = btn else {
+        let Node::Column(props, children) = btn else {
             panic!("expected a fixed-size layered hold button")
         };
         assert_close(props.width, 64.0, "hold button keeps its layout width");
         assert_close(props.height, 64.0, "hold button keeps its layout height");
         let [
-            TreeNode::Canvas {
+            Node::Canvas {
                 props: visual_props,
                 touch_key: None,
                 draws,
             },
-            TreeNode::Canvas {
+            Node::Canvas {
                 props: touch_props,
                 touch_key: Some(touch_key),
                 draws: touch_draws,
@@ -577,7 +571,7 @@ mod tests {
         assert!(touch_draws.is_empty());
         let (r, _) = hold_circle_at_start(&draws[0]).expect("BUG: expected hold circle");
         assert_close(r, 48.0, "half-hold circle radius");
-        let DrawCommand::Circle { r, .. } = &draws[1] else {
+        let Draw::Circle { r, .. } = &draws[1] else {
             panic!("expected full-size button fill")
         };
         assert_close(*r, 32.0, "hold button fill radius");
@@ -633,9 +627,8 @@ mod tests {
         );
     }
 
-    fn hold_circle_animations(progress: f32) -> Vec<HostAnimationDef> {
-        let DrawCommand::Modified { animations, .. } = hold_circle(64.0, 32.0, held(progress))
-        else {
+    fn hold_circle_animations(progress: f32) -> Vec<AnimationDef> {
+        let Draw::Modified { animations, .. } = hold_circle(64.0, 32.0, held(progress)) else {
             panic!("expected an animated hold circle")
         };
         animations

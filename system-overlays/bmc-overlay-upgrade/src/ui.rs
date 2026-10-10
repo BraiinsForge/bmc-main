@@ -18,15 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_render::colors::{BLACK, GRAY_50, GRAY_70, VIOLET_60, WHITE};
-use bmc_render::tree::{
-    AutoFit, DrawCommand, FontFamily, FontWeight, HostAnimationDef, PropsData, TextAlign,
-    TextStyle, TreeNode, VerticalAlign,
+use bmc_render::ui::{
+    AnimProperty, AnimationDef, AutoFit, BLACK, Color, ColorSpace, Draw, Easing, Fill, FontFamily,
+    FontWeight, GRAY_50, GRAY_70, LoopMode, Node, PropsData, SvgId, TRANSPARENT, TextAlign,
+    TextStyle, VIOLET_60, VerticalAlign, WHITE,
 };
 use bmc_system_overlay::{DownloadProgress, UpgradeKind, UpgradePhase};
-use bmc_wasm_protocol::{
-    AnimProperty, Color, ColorSpace, Easing, Fill, LoopMode, SvgId, TRANSPARENT,
-};
 
 use crate::icons::UpgradeIcons;
 use crate::{SurfaceTier, UpgradeView};
@@ -108,8 +105,8 @@ fn text_draw(
     size: u32,
     color: Color,
     weight: FontWeight,
-) -> DrawCommand {
-    DrawCommand::Text {
+) -> Draw {
+    Draw::Text {
         x,
         y,
         text: text.into(),
@@ -125,8 +122,8 @@ fn text_draw(
     }
 }
 
-fn icon_draw(icon_id: Option<SvgId>, center_x: f32, top: f32, size: f32) -> DrawCommand {
-    DrawCommand::Svg {
+fn icon_draw(icon_id: Option<SvgId>, center_x: f32, top: f32, size: f32) -> Draw {
+    Draw::Svg {
         x: center_x - size / 2.0,
         y: top,
         w: size,
@@ -288,7 +285,7 @@ fn tier_for(surface: Surface) -> Tier {
 ///
 /// It is the longest string the overlay draws, and a canvas text draw is always
 /// a single unwrapped line, so a narrow display needs the paragraph path that
-/// [`DrawCommand::AutofitText`] reaches. `min_size` equal to the style size
+/// [`Draw::AutofitText`] reaches. `min_size` equal to the style size
 /// makes it wrap without shrinking.
 ///
 /// The wide tiers stay on the single-line draw rather than taking the box for
@@ -299,7 +296,7 @@ fn tier_for(surface: Surface) -> Tier {
     clippy::cast_precision_loss,
     reason = "type sizes are a couple of dozen pixels"
 )]
-fn safety_draw(safety: SafetyText, width: f32, center_y: f32, size: u32) -> DrawCommand {
+fn safety_draw(safety: SafetyText, width: f32, center_y: f32, size: u32) -> Draw {
     let SafetyText::Wrapped { lines, inset } = safety else {
         return text_draw(
             width / 2.0,
@@ -318,7 +315,7 @@ fn safety_draw(safety: SafetyText, width: f32, center_y: f32, size: u32) -> Draw
         reason = "body type sizes are a couple of dozen pixels"
     )]
     let floor = size as u16;
-    DrawCommand::AutofitText {
+    Draw::AutofitText {
         x: inset,
         y: center_y - size as f32 / 2.0,
         box_width: width - inset * 2.0,
@@ -339,8 +336,8 @@ fn safety_draw(safety: SafetyText, width: f32, center_y: f32, size: u32) -> Draw
     }
 }
 
-fn active_bar(draws: &mut Vec<DrawCommand>, x: f32, y: f32, width: f32, height: f32) {
-    draws.push(DrawCommand::Rect {
+fn active_bar(draws: &mut Vec<Draw>, x: f32, y: f32, width: f32, height: f32) {
+    draws.push(Draw::Rect {
         x,
         y,
         w: width,
@@ -350,8 +347,8 @@ fn active_bar(draws: &mut Vec<DrawCommand>, x: f32, y: f32, width: f32, height: 
     // The renderer's stock indeterminate bar draws a large playhead and
     // squiggle, unlike the stable strip. Keep the active treatment within the
     // same bar bounds as determinate progress.
-    draws.push(DrawCommand::Modified {
-        animations: vec![HostAnimationDef {
+    draws.push(Draw::Modified {
+        animations: vec![AnimationDef {
             property: AnimProperty::TranslateX,
             from: 0.0,
             to: width * 0.7,
@@ -362,7 +359,7 @@ fn active_bar(draws: &mut Vec<DrawCommand>, x: f32, y: f32, width: f32, height: 
         }],
         transition: None,
         color_space: ColorSpace::Oklab,
-        inner: Box::new(DrawCommand::Rect {
+        inner: Box::new(Draw::Rect {
             x,
             y,
             w: width * 0.3,
@@ -381,7 +378,7 @@ fn active_bar(draws: &mut Vec<DrawCommand>, x: f32, y: f32, width: f32, height: 
     reason = "a flat mapping keeps every phase's arrangement directly comparable"
 )]
 #[must_use]
-pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIcons) -> TreeNode {
+pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIcons) -> Node {
     let (width, height) = (surface.width as f32, surface.height as f32);
     // Content follows the upgrade kind; sizing follows the surface.
     let packages = matches!(view.kind(), UpgradeKind::Packages);
@@ -395,7 +392,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
         gap,
         ..
     } = tier;
-    let mut draws = vec![DrawCommand::Rect {
+    let mut draws = vec![Draw::Rect {
         x: 0.0,
         y: 0.0,
         w: width,
@@ -403,14 +400,14 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
         fill: Fill::Solid(BLACK),
     }];
     if surface.tier.is_card() {
-        draws.push(DrawCommand::Rect {
+        draws.push(Draw::Rect {
             x: 0.0,
             y: 0.0,
             w: width,
             h: COMPACT_EDGE_WIDTH,
             fill: Fill::Solid(GRAY_70),
         });
-        draws.push(DrawCommand::Rect {
+        draws.push(Draw::Rect {
             x: 0.0,
             y: 0.0,
             w: COMPACT_EDGE_WIDTH,
@@ -454,14 +451,14 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                         WHITE,
                         FontWeight::BOLD,
                     ));
-                    draws.push(DrawCommand::Rect {
+                    draws.push(Draw::Rect {
                         x: bar_x,
                         y: below_title_y,
                         w: bar_w,
                         h: bar_height,
                         fill: Fill::Solid(GRAY_50),
                     });
-                    draws.push(DrawCommand::Rect {
+                    draws.push(Draw::Rect {
                         x: bar_x,
                         y: below_title_y,
                         w: bar_w * fraction,
@@ -532,7 +529,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
             FontWeight::BOLD,
         )),
     }
-    TreeNode::Canvas {
+    Node::Canvas {
         props: PropsData {
             width,
             height,
@@ -559,7 +556,7 @@ mod tests {
     /// Draws for a view at `size`, on the surface that kind ships with:
     /// firmware fullscreen at the display's width, packages on that card size.
     /// The cases that pair a kind with another tier name it instead.
-    fn tree_draws(view: &UpgradeView, size: (u32, u32)) -> Vec<DrawCommand> {
+    fn tree_draws(view: &UpgradeView, size: (u32, u32)) -> Vec<Draw> {
         let tier = match view.kind() {
             UpgradeKind::Firmware => SurfaceTier::fullscreen_for_width(size.0),
             UpgradeKind::Packages => match size {
@@ -572,13 +569,13 @@ mod tests {
         surface_draws(view, size, tier)
     }
 
-    fn surface_draws(view: &UpgradeView, size: (u32, u32), tier: SurfaceTier) -> Vec<DrawCommand> {
+    fn surface_draws(view: &UpgradeView, size: (u32, u32), tier: SurfaceTier) -> Vec<Draw> {
         let surface = Surface {
             width: size.0,
             height: size.1,
             tier,
         };
-        let TreeNode::Canvas { draws, .. } = build_upgrade_tree(view, surface, test_icons()) else {
+        let Node::Canvas { draws, .. } = build_upgrade_tree(view, surface, test_icons()) else {
             panic!("BUG: upgrade presentation must remain a canvas");
         };
         draws
@@ -587,7 +584,7 @@ mod tests {
     /// Compact-card draws with the background and edge dividers dropped,
     /// so content assertions index from the first content element
     /// and survive a change of chrome.
-    fn compact_content_draws(view: &UpgradeView) -> Vec<DrawCommand> {
+    fn compact_content_draws(view: &UpgradeView) -> Vec<Draw> {
         let mut draws = tree_draws(view, crate::PACKAGE_CARD_SURFACE_SIZE_LARGE);
         draws.drain(..3);
         draws
@@ -595,7 +592,7 @@ mod tests {
 
     fn caption_style(view: &UpgradeView, size: (u32, u32)) -> (u32, FontWeight) {
         let draws = tree_draws(view, size);
-        let DrawCommand::Text { style, .. } = &draws[2] else {
+        let Draw::Text { style, .. } = &draws[2] else {
             panic!("BUG: the phase caption must be the third draw");
         };
         (style.size, style.weight)
@@ -664,7 +661,7 @@ mod tests {
 
         assert!(matches!(
             &draws[1],
-            DrawCommand::Svg {
+            Draw::Svg {
                 x: 600.0,
                 y: 176.5,
                 w: 80.0,
@@ -675,7 +672,7 @@ mod tests {
         ));
         assert!(matches!(
             &draws[2],
-            DrawCommand::Text { text, style, .. }
+            Draw::Text { text, style, .. }
                 if text == "Verifying firmware"
                     && style.size == 24
                     && style.weight == FontWeight::BOLD
@@ -684,7 +681,7 @@ mod tests {
         ));
         assert!(matches!(
             &draws[3],
-            DrawCommand::Text { text, style, .. }
+            Draw::Text { text, style, .. }
                 if text == SAFETY_TEXT
                     && style.size == 18
                     && style.weight == FontWeight::REGULAR
@@ -708,14 +705,14 @@ mod tests {
 
         assert!(matches!(
             &draws[2],
-            DrawCommand::Text { x: 650.0, text, style, .. }
+            Draw::Text { x: 650.0, text, style, .. }
                 if text == "Downloading firmware 54%..."
                     && style.size == 24
                     && style.weight == FontWeight::BOLD
         ));
         assert!(matches!(
             &draws[3],
-            DrawCommand::Rect {
+            Draw::Rect {
                 x: 128.0,
                 w: 1024.0,
                 h: 7.0,
@@ -724,7 +721,7 @@ mod tests {
         ));
         assert!(matches!(
             &draws[5],
-            DrawCommand::Text { text, style, .. }
+            Draw::Text { text, style, .. }
                 if text == "82 MB of 151 MB"
                     && style.size == 18
                     && style.color == GRAY_50
@@ -775,12 +772,12 @@ mod tests {
 
         assert!(matches!(
             &draws[1],
-            DrawCommand::Rect { x: 0.0, y: 0.0, w: 384.0, h: 2.0, fill: Fill::Solid(color) }
+            Draw::Rect { x: 0.0, y: 0.0, w: 384.0, h: 2.0, fill: Fill::Solid(color) }
                 if *color == GRAY_70
         ));
         assert!(matches!(
             &draws[2],
-            DrawCommand::Rect { x: 0.0, y: 0.0, w: 2.0, h: 192.0, fill: Fill::Solid(color) }
+            Draw::Rect { x: 0.0, y: 0.0, w: 2.0, h: 192.0, fill: Fill::Solid(color) }
                 if *color == GRAY_70
         ));
     }
@@ -795,7 +792,7 @@ mod tests {
 
         assert!(matches!(
             &draws[0],
-            DrawCommand::Svg {
+            Draw::Svg {
                 x: 172.0,
                 y: 53.5,
                 w: 40.0,
@@ -805,14 +802,14 @@ mod tests {
         ));
         assert!(matches!(
             &draws[1],
-            DrawCommand::Text { text, style, .. }
+            Draw::Text { text, style, .. }
                 if text == "Verifying packages"
                     && style.size == 20
                     && style.weight == FontWeight::BOLD
         ));
         assert!(matches!(
             &draws[2],
-            DrawCommand::Rect {
+            Draw::Rect {
                 x: 16.0,
                 w: 352.0,
                 h: 5.0,
@@ -828,7 +825,7 @@ mod tests {
         assert_eq!(draws.len(), 2);
         assert!(matches!(
             &draws[1],
-            DrawCommand::Text { text, .. } if text == "Preparing update"
+            Draw::Text { text, .. } if text == "Preparing update"
         ));
     }
 
@@ -840,7 +837,7 @@ mod tests {
             None,
         ));
 
-        let DrawCommand::Modified {
+        let Draw::Modified {
             animations, inner, ..
         } = &draws[3]
         else {
@@ -857,7 +854,7 @@ mod tests {
         assert_eq!(animation.loop_mode, LoopMode::PingPong);
         assert!(matches!(
             inner.as_ref(),
-            DrawCommand::Rect {
+            Draw::Rect {
                 x: 16.0,
                 h: 5.0,
                 ..
@@ -888,11 +885,11 @@ mod tests {
             let draws = compact_content_draws(&view);
             assert!(matches!(
                 &draws[0],
-                DrawCommand::Svg { icon_id: Some(id), .. } if id.to_wire() == expected_id
+                Draw::Svg { icon_id: Some(id), .. } if id.to_wire() == expected_id
             ));
             assert!(matches!(
                 &draws[1],
-                DrawCommand::Text { text, style, .. }
+                Draw::Text { text, style, .. }
                     if text == expected_title && style.color == WHITE
             ));
         }
@@ -904,11 +901,11 @@ mod tests {
     /// and down the surface as the run proceeds.
     #[test]
     fn the_icon_does_not_move_between_the_phases_of_one_run() {
-        let icon_y = |draws: &[DrawCommand]| {
+        let icon_y = |draws: &[Draw]| {
             draws
                 .iter()
                 .find_map(|draw| {
-                    if let DrawCommand::Svg { y, .. } = draw {
+                    if let Draw::Svg { y, .. } = draw {
                         Some(*y)
                     } else {
                         None
@@ -992,13 +989,13 @@ mod tests {
 
         assert!(matches!(
             &draws[4],
-            DrawCommand::Text { text, style, .. }
+            Draw::Text { text, style, .. }
                 if text == "Downloading 54%..." && style.size == 18
         ));
         assert!(
             !draws.iter().any(|draw| matches!(
                 draw,
-                DrawCommand::Text { text, .. } if text.contains(" MB of ")
+                Draw::Text { text, .. } if text.contains(" MB of ")
             )),
             "the byte counts have no line to sit on at 240x120"
         );
@@ -1019,11 +1016,11 @@ mod tests {
 
         assert!(matches!(
             &draws[1],
-            DrawCommand::Text { text, .. } if text == "Downloading packages 54%..."
+            Draw::Text { text, .. } if text == "Downloading packages 54%..."
         ));
         assert!(draws.iter().any(|draw| matches!(
             draw,
-            DrawCommand::Text { text, .. } if text == "82 MB of 151 MB"
+            Draw::Text { text, .. } if text == "82 MB of 151 MB"
         )));
     }
 
@@ -1042,7 +1039,7 @@ mod tests {
 
         assert!(matches!(
             &draws[3],
-            DrawCommand::AutofitText {
+            Draw::AutofitText {
                 x: 12.0,
                 box_width: 296.0,
                 box_height,
@@ -1073,7 +1070,7 @@ mod tests {
             );
             assert!(matches!(
                 &draws[3],
-                DrawCommand::Text { text, .. } if text == SAFETY_TEXT
+                Draw::Text { text, .. } if text == SAFETY_TEXT
             ));
         }
     }
@@ -1096,12 +1093,12 @@ mod tests {
 
         assert!(matches!(
             &draws[2],
-            DrawCommand::Text { x: 240.0, text, style, .. }
+            Draw::Text { x: 240.0, text, style, .. }
                 if text == "Downloading firmware 54%..." && style.size == 24
         ));
         assert!(matches!(
             &draws[3],
-            DrawCommand::Rect {
+            Draw::Rect {
                 x: 48.0,
                 w: 384.0,
                 h: 7.0,
@@ -1121,11 +1118,11 @@ mod tests {
 
         assert!(matches!(
             &draws[1],
-            DrawCommand::Svg { icon_id: Some(id), .. } if id.to_wire() == 3
+            Draw::Svg { icon_id: Some(id), .. } if id.to_wire() == 3
         ));
         assert!(matches!(
             &draws[2],
-            DrawCommand::Text { text, style, .. }
+            Draw::Text { text, style, .. }
                 if text == "Update Failed" && style.color == WHITE
         ));
     }

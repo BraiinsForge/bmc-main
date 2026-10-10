@@ -335,8 +335,8 @@ because a screen-edge overlay is only shown while both revealed *and* `tick`-vis
   setup runs, one swipe away. The other controls stay.
 - **Hold notice** — from the moment a hold starts until its outcome has shown, `ui::notice` lays a two-line notice over
   the section above the buttons: what the hold will do and how to cancel, then that it is underway, then why it failed.
-  Everything but the held button is wrapped in `TreeNode::Dimmed` at `DIMMED` and loses its touch keys; close dims but
-  stays live. A declined restart shows bmc's own sentence under "Can't restart now"; a pending timeout, where bmc said
+  Everything but the held button is wrapped in `Node::Dimmed` at `DIMMED` and loses its touch keys; close dims but stays
+  live. A declined restart shows bmc's own sentence under "Can't restart now"; a pending timeout, where bmc said
   nothing, shows the tray's "Restart failed / Try again". The failure stays for `ERROR_DISPLAY` (3 s). Restart wins if
   both FSMs report at once, which single-touch tracking makes unreachable in practice.
 - **Hold circle** — a held button grows a circle behind it that shrinks onto the button and fades in over the first 35 %
@@ -469,7 +469,7 @@ The two edge dividers key off `SurfaceTier::is_card`, not the kind: they exist t
 black widgets it overlaps, and a full-screen package surface has nothing beside it.
 
 A canvas text draw is always a single unwrapped line — `max_width` and `text_overflow` never reach the layout — so the
-one tier that needs wrapping draws the safety text through `DrawCommand::AutofitText`, whose paragraph path takes a box.
+one tier that needs wrapping draws the safety text through `Draw::AutofitText`, whose paragraph path takes a box.
 `min_size` equal to the style size makes it wrap without shrinking. The wider tiers stay on the single-line draw: the
 two paths anchor differently (glyph centre against line box), so moving stable copy across would shift it by a few
 pixels for no gain.

@@ -22,8 +22,8 @@
 
 use crate::gpu::text::to_femtovg_color;
 use crate::interaction::Rect;
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{ArcFill, ArcSegments, Fill};
+use bmc_ui::colors::Color;
+use bmc_ui::{ArcFill, ArcSegments, Fill};
 use femtovg::{Paint, Path};
 
 /// Logical size scaled to device pixels, saturating rather than wrapping.

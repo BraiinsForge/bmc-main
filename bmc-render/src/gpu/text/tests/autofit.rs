@@ -21,7 +21,7 @@
 #![expect(clippy::cast_precision_loss)]
 
 use super::{DEFAULT_MIN_AUTOFIT, autofit_bounds, search_fit_size};
-use crate::tree::AutoFit;
+use bmc_ui::AutoFit;
 
 // ── autofit_bounds ──────────────────────────────────────────────
 #[test]

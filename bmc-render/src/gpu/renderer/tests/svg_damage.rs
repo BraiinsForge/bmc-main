@@ -39,7 +39,7 @@ use crate::interaction::Rect;
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
-use crate::tree::{AnimationContext, DrawCommand, DynamicHalf, EmitMode, HostAnimationDef};
+use crate::tree::{AnimationContext, AnimationDef, Draw, DynamicHalf, EmitMode};
 use bmc_wasm_protocol::colors::WHITE;
 use bmc_wasm_protocol::{AnimProperty, ColorSpace, Easing, LoopMode};
 
@@ -148,7 +148,7 @@ fn draw(
     let icon_id = renderer
         .register_svg("fixture", &bmc_svg_compiler::compile_svg(&svg(body)))
         .expect("BUG: the fixture icon registers");
-    let icon = DrawCommand::Svg {
+    let icon = Draw::Svg {
         x,
         y,
         w,
@@ -158,8 +158,8 @@ fn draw(
         anti_alias: true,
         fills: Vec::new(),
     };
-    let scaled = DrawCommand::Modified {
-        animations: vec![HostAnimationDef {
+    let scaled = Draw::Modified {
+        animations: vec![AnimationDef {
             property: AnimProperty::Scale,
             from: frame.scale,
             to: frame.scale,
@@ -172,7 +172,7 @@ fn draw(
         color_space: ColorSpace::default(),
         inner: Box::new(icon),
     };
-    let command = DrawCommand::Rotated {
+    let command = Draw::Rotated {
         angle,
         inner: Box::new(scaled),
     };

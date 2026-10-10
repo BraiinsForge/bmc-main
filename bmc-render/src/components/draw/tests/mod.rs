@@ -25,9 +25,9 @@ use std::rc::Rc;
 use super::transition::{interpolate_draw_values, normalize_angle_deg, shortest_angle_delta_deg};
 use super::*;
 use crate::renderer::RendererAssetResolver;
-use crate::tree::{AutoFit, SpanData};
 use crate::{PrevDrawValues, TransitionStateKey};
-use bmc_wasm_protocol::*;
+use bmc_ui::*;
+use bmc_ui::{AutoFit, Span};
 
 mod dash;
 mod dispatch;
@@ -231,7 +231,7 @@ impl RenderText for RecordingRenderer {
     fn measure_paragraph(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _max_width: Option<f32>,
     ) -> (f32, f32) {
         (0.0, 0.0)
@@ -240,7 +240,7 @@ impl RenderText for RecordingRenderer {
     fn draw_paragraph(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _x: f32,
         _y: f32,
         _max_width: f32,
@@ -250,7 +250,7 @@ impl RenderText for RecordingRenderer {
     fn draw_paragraph_clipped(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _x: f32,
         _y: f32,
         _max_width: f32,
@@ -472,7 +472,7 @@ fn animation_context<'a>(
 #[expect(clippy::too_many_arguments)]
 fn render_draw_inner_for_test(
     renderer: &mut dyn Renderer,
-    draw: &DrawCommand,
+    draw: &Draw,
     cx: f32,
     cy: f32,
     cw: f32,

@@ -50,7 +50,7 @@ Widget at `widgets-wasm-examples/pomodoro/` with:
   `[spacer | primary]`.
 - **Modal API**: plain `modal()` function (replaced `modal()`/`modal_styled()` and aborted `modal!` macro). `ModalProps`
   includes `height`, `footer`, `margin`, colors, `max_width`.
-- **Modal body scroll**: reuses `TreeNode::Scroll` instead of custom scroll code.
+- **Modal body scroll**: reuses `Node::Scroll` instead of custom scroll code.
 - **Compact modal**: host auto-adapts header (32px), body padding (8px), button size (Small) for viewports ≤ 300px.
 - **`SizeVariant::width()`/`height()`**: canonical dimension accessors.
 

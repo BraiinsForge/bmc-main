@@ -23,13 +23,13 @@
 
 use super::parts::{ETHERNET, connection_icon, setup_badge, text_style};
 use super::{Content, ROUND_WIFI_ICON_SIZE, ROUND_WIFI_TEXT_SIZE, WifiView};
-use bmc_render::tree::{PropsData, TextStyle, TreeNode, row, text};
-use bmc_wasm_protocol::colors::WHITE;
-use bmc_wasm_protocol::{CrossAlign, Justify, TextOverflow};
+use bmc_render::ui::{
+    CrossAlign, Justify, Node, PropsData, TextOverflow, TextStyle, WHITE, row, text,
+};
 
 /// One centered line of the disc's station info,
 /// stretched across its column so only the SSID gives way when it runs out.
-fn centered_line(children: Vec<TreeNode>) -> TreeNode {
+fn centered_line(children: Vec<Node>) -> Node {
     row(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -41,7 +41,7 @@ fn centered_line(children: Vec<TreeNode>) -> TreeNode {
     )
 }
 
-fn ssid_text(ssid: &str) -> TreeNode {
+fn ssid_text(ssid: &str) -> Node {
     text(
         ssid,
         TextStyle {
@@ -54,7 +54,7 @@ fn ssid_text(ssid: &str) -> TreeNode {
 /// The disc's bottom line. The address heads the panel instead,
 /// so this line carries only what the device is online through.
 /// Every variant is one line tall, so the vertical budget holds either way.
-pub(super) fn station_line(content: Content<'_>) -> TreeNode {
+pub(super) fn station_line(content: Content<'_>) -> Node {
     let icon = connection_icon(
         content.wifi_view,
         content.icons,

@@ -23,9 +23,9 @@
 use super::FemtoVgRenderer;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
-use crate::tree::{SpanData, TextStyle};
-use bmc_wasm_protocol::colors::{TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{Fill, SVG_FLAG_HAS_FILL, SVG_OP_CLOSE, SVG_OP_LINE_TO, SVG_OP_MOVE_TO};
+use bmc_ui::colors::{TRANSPARENT, WHITE};
+use bmc_ui::{Fill, SVG_FLAG_HAS_FILL, SVG_OP_CLOSE, SVG_OP_LINE_TO, SVG_OP_MOVE_TO};
+use bmc_ui::{Span, TextStyle};
 
 pub(super) const W: u32 = 64;
 const H: u32 = 64;
@@ -141,7 +141,7 @@ fn a_span_colour_dims() {
             color: TRANSPARENT,
             ..TextStyle::default()
         };
-        let spans = [SpanData {
+        let spans = [Span {
             text: "H".to_owned(),
             weight: None,
             color: Some(WHITE),

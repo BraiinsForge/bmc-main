@@ -27,11 +27,8 @@ use super::multiline_text::{H, W, lit, render, span};
 use crate::FrameTimings;
 use crate::interaction::InteractionState;
 use crate::renderer::prelude::*;
-use crate::tree::{
-    EmitMode, LayerUse, ProcessContext, PropsData, TextAlign, TextOverflow, TextStyle, TreeNode,
-    layout_and_render,
-};
-use bmc_wasm_protocol::Color;
+use crate::tree::{EmitMode, LayerUse, Node, ProcessContext, layout_and_render};
+use bmc_ui::{Color, PropsData, TextAlign, TextOverflow, TextStyle};
 use taffy::prelude::TaffyTree;
 
 const X: f32 = 10.0;
@@ -142,18 +139,18 @@ fn a_clipped_row_keeps_its_descenders() {
     );
 
     // Under a root column: the root itself is pinned to the whole frame.
-    let row = TreeNode::Row(
+    let row = Node::Row(
         PropsData {
             width: BOX_W,
             ..PropsData::default()
         },
-        vec![TreeNode::Paragraph {
+        vec![Node::Paragraph {
             props: PropsData::default(),
             base_style: style,
             spans,
         }],
     );
-    let tree = TreeNode::Column(PropsData::default(), vec![row]);
+    let tree = Node::Column(PropsData::default(), vec![row]);
     let px = render(|r| {
         let mut interaction = InteractionState::new();
         let (mut modal_states, mut scroll_states) = (HashMap::new(), HashMap::new());

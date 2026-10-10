@@ -33,9 +33,9 @@ pub use super::{Counters, MAX_RESIDENT_ENTRIES};
 use crate::gpu::FemtoVgRenderer;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo};
-use crate::tree::{SpanData, TextStyle};
-use bmc_wasm_protocol::Color;
-use bmc_wasm_protocol::text::{ArcAnchor, ArcTextFacing};
+use bmc_ui::Color;
+use bmc_ui::text::{ArcAnchor, ArcTextFacing};
+use bmc_ui::{Span, TextStyle};
 
 pub mod counting_allocator {
     //! A `#[global_allocator]` wrapper
@@ -278,7 +278,7 @@ impl AllocGateHarness {
             outline_width: 2.0,
             ..style
         };
-        let spans = [SpanData {
+        let spans = [Span {
             text: MULTI_SCRIPT.to_owned(),
             weight: None,
             color: Some(white),

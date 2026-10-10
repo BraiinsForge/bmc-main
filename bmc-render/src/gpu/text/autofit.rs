@@ -20,7 +20,7 @@
 
 //! Choosing the largest font size that still fits a box.
 
-use crate::tree::AutoFit;
+use bmc_ui::AutoFit;
 
 /// Readability floor used when the caller does not specify `min_size`.
 pub(crate) const DEFAULT_MIN_AUTOFIT: u32 = 12;

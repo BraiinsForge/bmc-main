@@ -26,12 +26,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{
-    IdPool, SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_ID, SVG_FLAG_HAS_STROKE,
-    SVG_OP_CLOSE, SVG_OP_CUBIC_TO, SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO,
-    SVG_RESERVED_MIN, SvgId,
+use bmc_ui::{
+    Color, SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_ID, SVG_FLAG_HAS_STROKE, SVG_OP_CLOSE,
+    SVG_OP_CUBIC_TO, SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO, SVG_RESERVED_MIN, SvgId,
 };
+use bmc_wasm_protocol::IdPool;
 use femtovg::{FillRule, Paint, Path};
 
 use super::text::to_femtovg_color;
@@ -294,7 +293,7 @@ pub fn draw_svg(
     let tinted = |tint: femtovg::Color, own: femtovg::Color| {
         femtovg::Color::rgbaf(tint.r, tint.g, tint.b, tint.a * own.a)
     };
-    let tint = if color == bmc_wasm_protocol::colors::TRANSPARENT {
+    let tint = if color == bmc_ui::TRANSPARENT {
         None
     } else {
         Some(to_femtovg_color(color.to_u32()))

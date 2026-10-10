@@ -28,8 +28,8 @@ use std::ffi::c_void;
 use std::num::NonZeroU32;
 
 use anyhow::Result;
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{ArcCap, ArcFill, ArcSegments, BitmapId, Fill};
+use bmc_ui::colors::Color;
+use bmc_ui::{ArcCap, ArcFill, ArcSegments, BitmapId, Fill};
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, LineCap, Paint, Path, RenderTarget, Solidity};
 use glow::HasContext;

@@ -19,7 +19,7 @@
 // the grant above.
 
 use super::femtovg_baseline;
-use crate::tree::VerticalAlign;
+use bmc_ui::VerticalAlign;
 
 #[test]
 fn canvas_text_vertical_align_maps_to_femtovg_baselines() {

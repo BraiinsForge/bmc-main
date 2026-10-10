@@ -21,12 +21,14 @@
 use super::layout::{ButtonContext, split_min_content_words};
 use super::*;
 use crate::FrameTimings;
-use crate::components::ButtonSize;
+use crate::components::{ButtonSize, ButtonStyle};
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::InteractionState;
 use crate::interaction::Rect;
 use crate::renderer::prelude::*;
-use bmc_wasm_protocol::*;
+// Vocabulary modules rather than the root, whose component
+// builders clash with taffy's prelude, `span` for one.
+use bmc_ui::{animation::*, arc::*, colors::*, fill::*, ids::*, relative_time::*, text::*};
 use std::collections::HashMap;
 use taffy::prelude::*;
 
@@ -184,7 +186,7 @@ impl RenderText for KeyRecordingRenderer {
     fn measure_paragraph(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _max_width: Option<f32>,
     ) -> (f32, f32) {
         (0.0, 0.0)
@@ -193,7 +195,7 @@ impl RenderText for KeyRecordingRenderer {
     fn draw_paragraph(
         &mut self,
         _style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         _x: f32,
         _y: f32,
         _max_width: f32,
@@ -205,7 +207,7 @@ impl RenderText for KeyRecordingRenderer {
     fn draw_paragraph_clipped(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _x: f32,
         _y: f32,
         _max_width: f32,
@@ -409,7 +411,7 @@ impl Default for SlotState {
 fn render_with(
     state: &mut SlotState,
     renderer: &mut KeyRecordingRenderer,
-    tree: &TreeNode,
+    tree: &Node,
     static_layer: LayerUse,
 ) {
     let mut ctx = ProcessContext {
@@ -438,7 +440,7 @@ fn render_with(
 fn render_dynamic_pass(
     state: &mut SlotState,
     renderer: &mut KeyRecordingRenderer,
-    tree: &TreeNode,
+    tree: &Node,
     damage: &[crate::interaction::Rect],
 ) {
     let mut ctx = ProcessContext {
@@ -468,7 +470,7 @@ fn render_dynamic_pass(
 fn render_pass(
     state: &mut SlotState,
     renderer: &mut KeyRecordingRenderer,
-    tree: &TreeNode,
+    tree: &Node,
     emit: super::EmitMode,
 ) {
     let mut ctx = ProcessContext {
@@ -496,7 +498,7 @@ fn render_pass(
 fn render_once(
     state: &mut SlotState,
     renderer: &mut KeyRecordingRenderer,
-    tree: &TreeNode,
+    tree: &Node,
 ) -> super::TreeResult {
     let mut ctx = ProcessContext {
         interaction: &mut state.interaction,
@@ -533,7 +535,7 @@ fn assert_close(actual: f32, expected: f32) {
 fn capture_once(
     state: &mut SlotState,
     renderer: &mut KeyRecordingRenderer,
-    tree: &TreeNode,
+    tree: &Node,
 ) -> super::TreeResult {
     capture_collecting(state, renderer, tree, false, false)
 }
@@ -543,7 +545,7 @@ fn capture_once(
 fn capture_collecting(
     state: &mut SlotState,
     renderer: &mut KeyRecordingRenderer,
-    tree: &TreeNode,
+    tree: &Node,
     layout_outlines: bool,
     stroke_outlines: bool,
 ) -> super::TreeResult {
@@ -572,11 +574,11 @@ fn capture_collecting(
 
 /// A canvas whose one draw animates, so the walk tags it dynamic and the
 /// cached-frame pass repaints it.
-fn moving_dot(x: f32) -> TreeNode {
-    TreeNode::Canvas {
+fn moving_dot(x: f32) -> Node {
+    Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
-        draws: vec![animating(super::DrawCommand::Rect {
+        draws: vec![animating(super::Draw::Rect {
             x,
             y: 10.0,
             w: 12.0,
@@ -587,9 +589,9 @@ fn moving_dot(x: f32) -> TreeNode {
 }
 
 /// `inner` under a never-ending alpha animation, so it is always dynamic.
-fn animating(inner: super::DrawCommand) -> super::DrawCommand {
-    super::DrawCommand::Modified {
-        animations: vec![super::HostAnimationDef {
+fn animating(inner: super::Draw) -> super::Draw {
+    super::Draw::Modified {
+        animations: vec![super::AnimationDef {
             property: AnimProperty::Alpha,
             from: 0.0,
             to: 1.0,

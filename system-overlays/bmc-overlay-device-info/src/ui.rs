@@ -25,14 +25,13 @@
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
-use bmc_render::colors::{BLACK, GRAY_40, VIOLET_50, WHITE};
 use bmc_render::renderer::Renderer;
-use bmc_render::tree::{
-    DrawCommand, FontFamily, FontWeight, QrStyle, TextAlign, TextStyle, TreeNode, col,
-    fixed_height, row, text,
+use bmc_render::ui::{
+    BLACK, CrossAlign, Draw, Fill, FontFamily, FontWeight, GRAY_40, GRAY_60, Justify, Node,
+    PropsData, QrStyle, TRANSPARENT, TextAlign, TextStyle, VIOLET_50, WHITE, col, fixed_height,
+    row, text,
 };
 use bmc_system_overlay::{AccessPoint, FrameKind, RenderOutcome, TreeUi};
-use bmc_wasm_protocol::{CrossAlign, Fill, GRAY_60, Justify, PropsData, TRANSPARENT};
 
 use crate::icons::{DeviceInfoIcons, Icon};
 
@@ -320,7 +319,7 @@ pub(crate) fn tier_for(size: (u32, u32)) -> Tier {
 
 fn style(
     size: u32,
-    color: bmc_render::colors::Color,
+    color: bmc_render::ui::Color,
     weight: FontWeight,
     align: TextAlign,
 ) -> TextStyle {
@@ -335,7 +334,7 @@ fn style(
     }
 }
 
-fn eyebrow(tier: Tier) -> TreeNode {
+fn eyebrow(tier: Tier) -> Node {
     text(
         EYEBROW,
         style(
@@ -347,24 +346,24 @@ fn eyebrow(tier: Tier) -> TreeNode {
     )
 }
 
-fn title(tier: Tier, t: &str, align: TextAlign) -> TreeNode {
+fn title(tier: Tier, t: &str, align: TextAlign) -> Node {
     text(t, style(tier.title, WHITE, FontWeight::SEMIBOLD, align))
 }
 
 /// A title one step down the scale, for a heading that sits beside a screen's
 /// own without competing with it.
-fn title_small(tier: Tier, t: &str, align: TextAlign) -> TreeNode {
+fn title_small(tier: Tier, t: &str, align: TextAlign) -> Node {
     text(
         t,
         style(tier.title_small, WHITE, FontWeight::SEMIBOLD, align),
     )
 }
 
-fn content(tier: Tier, t: &str, align: TextAlign) -> TreeNode {
+fn content(tier: Tier, t: &str, align: TextAlign) -> Node {
     text(t, style(tier.content, GRAY_40, FontWeight::REGULAR, align))
 }
 
-fn subtitle(tier: Tier, t: &str, align: TextAlign) -> TreeNode {
+fn subtitle(tier: Tier, t: &str, align: TextAlign) -> Node {
     text(
         t,
         style(tier.subtitle, VIOLET_50, FontWeight::SEMIBOLD, align),
@@ -373,11 +372,11 @@ fn subtitle(tier: Tier, t: &str, align: TextAlign) -> TreeNode {
 
 /// `icon` shrunk to `max_width` when the artwork is wider than its column.
 /// The host scales the axes independently, so the box carries the aspect ratio.
-fn icon_within(icon: Icon, max_width: f32) -> TreeNode {
+fn icon_within(icon: Icon, max_width: f32) -> Node {
     let (authored_width, authored_height) = icon.size;
     let scale = (max_width / authored_width).min(1.0);
     let (width, height) = (authored_width * scale, authored_height * scale);
-    TreeNode::Canvas {
+    Node::Canvas {
         props: PropsData {
             width,
             height,
@@ -386,7 +385,7 @@ fn icon_within(icon: Icon, max_width: f32) -> TreeNode {
         },
         touch_key: None,
         // TRANSPARENT keeps the SVG's own colors instead of tinting it.
-        draws: vec![DrawCommand::Svg {
+        draws: vec![Draw::Svg {
             x: 0.0,
             y: 0.0,
             w: width,
@@ -401,15 +400,15 @@ fn icon_within(icon: Icon, max_width: f32) -> TreeNode {
 
 /// A QR code on its white plate: the quiet zone is painted in the light color,
 /// which reproduces the legacy white square without a separate rect.
-fn qr(payload: &str, size: f32) -> TreeNode {
-    TreeNode::Canvas {
+fn qr(payload: &str, size: f32) -> Node {
+    Node::Canvas {
         props: PropsData {
             width: size,
             height: size,
             ..PropsData::default()
         },
         touch_key: None,
-        draws: vec![DrawCommand::Qr {
+        draws: vec![Draw::Qr {
             x: 0.0,
             y: 0.0,
             size,
@@ -423,7 +422,7 @@ fn qr(payload: &str, size: f32) -> TreeNode {
     }
 }
 
-fn spacer() -> TreeNode {
+fn spacer() -> Node {
     col(
         PropsData {
             flex: 1.0,
@@ -433,7 +432,7 @@ fn spacer() -> TreeNode {
     )
 }
 
-fn fixed_width(width: f32) -> TreeNode {
+fn fixed_width(width: f32) -> Node {
     row(
         PropsData {
             width,
@@ -444,7 +443,7 @@ fn fixed_width(width: f32) -> TreeNode {
 }
 
 /// The black backdrop a screen is laid out on, filled by its columns.
-fn screen(tier: Tier, columns: Vec<TreeNode>) -> TreeNode {
+fn screen(tier: Tier, columns: Vec<Node>) -> Node {
     row(
         PropsData {
             background: BLACK,
@@ -461,9 +460,9 @@ fn screen(tier: Tier, columns: Vec<TreeNode>) -> TreeNode {
 /// It carries no touch key: the whole screen already dismisses, and a target
 /// that swallowed the touch would make the rest of the screen do nothing.
 /// It is here so the screen says it can be closed.
-fn close_affordance(icon_id: Icon) -> TreeNode {
+fn close_affordance(icon_id: Icon) -> Node {
     let glyph_inset = (CLOSE_TARGET - CLOSE_GLYPH) / 2.0;
-    TreeNode::Canvas {
+    Node::Canvas {
         props: PropsData {
             width: CLOSE_TARGET,
             height: CLOSE_TARGET,
@@ -472,7 +471,7 @@ fn close_affordance(icon_id: Icon) -> TreeNode {
             ..PropsData::default()
         },
         touch_key: None,
-        draws: vec![DrawCommand::Svg {
+        draws: vec![Draw::Svg {
             x: glyph_inset,
             y: glyph_inset,
             w: CLOSE_GLYPH,
@@ -488,16 +487,16 @@ fn close_affordance(icon_id: Icon) -> TreeNode {
 /// The settings-tray hint in the bottom-right, absolutely positioned so it sits
 /// outside the column layout and shifts nothing. Carried over from the legacy
 /// `connect_info` screen, which said the same thing about a swipe up.
-fn tray_hint(tier: Tier, icon_id: Icon) -> TreeNode {
+fn tray_hint(tier: Tier, icon_id: Icon) -> Node {
     let (glyph_width, glyph_height) = icon_id.size;
-    let glyph = TreeNode::Canvas {
+    let glyph = Node::Canvas {
         props: PropsData {
             width: glyph_width,
             height: glyph_height,
             ..PropsData::default()
         },
         touch_key: None,
-        draws: vec![DrawCommand::Svg {
+        draws: vec![Draw::Svg {
             x: 0.0,
             y: 0.0,
             w: glyph_width,
@@ -562,22 +561,22 @@ fn dismisses_on_touch(view: &DeviceInfoView) -> bool {
 }
 
 /// Put an absolutely-positioned node on a screen, outside its column layout.
-fn overlaid(tree: TreeNode, node: TreeNode) -> TreeNode {
-    let TreeNode::Row(props, mut columns) = tree else {
+fn overlaid(tree: Node, node: Node) -> Node {
+    let Node::Row(props, mut columns) = tree else {
         panic!("BUG: every screen is rooted in a row");
     };
     columns.push(node);
-    TreeNode::Row(props, columns)
+    Node::Row(props, columns)
 }
 
 /// Put the close glyph on a screen, outside its column layout.
-fn dismissable(tree: TreeNode, icon_id: Icon) -> TreeNode {
+fn dismissable(tree: Node, icon_id: Icon) -> Node {
     overlaid(tree, close_affordance(icon_id))
 }
 
 /// One full-height column of a screen: its blocks packed under the top inset,
 /// or centered in the full height.
-fn screen_column(tier: Tier, justify: Justify, children: Vec<TreeNode>) -> TreeNode {
+fn screen_column(tier: Tier, justify: Justify, children: Vec<Node>) -> Node {
     let mut nodes = match justify {
         Justify::Start => vec![fixed_height(tier.top_inset)],
         Justify::Center | Justify::End | Justify::SpaceBetween => Vec::new(),
@@ -596,7 +595,7 @@ fn screen_column(tier: Tier, justify: Justify, children: Vec<TreeNode>) -> TreeN
 }
 
 /// A label stacked tightly above the value it introduces.
-fn labeled(tier: Tier, label: &str, value: TreeNode) -> TreeNode {
+fn labeled(tier: Tier, label: &str, value: Node) -> Node {
     col(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -607,7 +606,7 @@ fn labeled(tier: Tier, label: &str, value: TreeNode) -> TreeNode {
     )
 }
 
-fn ssid_line(tier: Tier, ssid: &str) -> TreeNode {
+fn ssid_line(tier: Tier, ssid: &str) -> Node {
     labeled(
         tier,
         "Wi-Fi SSID",
@@ -623,7 +622,7 @@ fn ssid_line(tier: Tier, ssid: &str) -> TreeNode {
     )
 }
 
-fn ssid_lines(tier: Tier, ssid: Option<&str>) -> Vec<TreeNode> {
+fn ssid_lines(tier: Tier, ssid: Option<&str>) -> Vec<Node> {
     match ssid {
         Some(ssid) => vec![ssid_line(tier, ssid)],
         None => vec![content(
@@ -638,10 +637,10 @@ fn ssid_lines(tier: Tier, ssid: Option<&str>) -> Vec<TreeNode> {
 fn template_children(
     tier: Tier,
     show_eyebrow: bool,
-    icon_node: TreeNode,
+    icon_node: Node,
     title_text: &str,
-    lines: Vec<TreeNode>,
-) -> Vec<TreeNode> {
+    lines: Vec<Node>,
+) -> Vec<Node> {
     let mut children = Vec::new();
     if show_eyebrow {
         children.push(eyebrow(tier));
@@ -659,8 +658,8 @@ fn template_tree(
     show_eyebrow: bool,
     icon_id: Icon,
     title_text: &str,
-    lines: Vec<TreeNode>,
-) -> TreeNode {
+    lines: Vec<Node>,
+) -> Node {
     template_tree_with_icon_width(
         tier,
         tier.icon_width.other,
@@ -680,8 +679,8 @@ fn template_tree_with_icon_width(
     show_eyebrow: bool,
     icon_id: Icon,
     title_text: &str,
-    lines: Vec<TreeNode>,
-) -> TreeNode {
+    lines: Vec<Node>,
+) -> Node {
     screen(
         tier,
         vec![screen_column(
@@ -716,9 +715,9 @@ fn template_tree_with_qr(
     show_eyebrow: bool,
     icon_id: Icon,
     title_text: &str,
-    lines: Vec<TreeNode>,
+    lines: Vec<Node>,
     column: QrColumn<'_>,
-) -> TreeNode {
+) -> Node {
     /// Keeps the outer columns off the panel edges, on top of the column gap.
     const EDGE_INSET: f32 = 8.0;
 
@@ -747,7 +746,7 @@ fn template_tree_with_qr(
 /// The QR column, `QR_COLUMN_WIDTH` wide: a headline, the code,
 /// and the address it encodes.
 /// Centered rather than packed, since its stack leaves no room for a top inset.
-fn qr_column(tier: Tier, column: QrColumn<'_>) -> TreeNode {
+fn qr_column(tier: Tier, column: QrColumn<'_>) -> Node {
     let headline = col(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -780,20 +779,20 @@ fn qr_column(tier: Tier, column: QrColumn<'_>) -> TreeNode {
 }
 
 /// The rule between the two columns of a split screen, centered on the panel.
-fn vertical_separator(tier: Tier) -> TreeNode {
+fn vertical_separator(tier: Tier) -> Node {
     col(
         PropsData {
             justify_content: Justify::Center,
             ..PropsData::default()
         },
-        [TreeNode::Canvas {
+        [Node::Canvas {
             props: PropsData {
                 width: 1.0,
                 height: tier.separator_height,
                 ..PropsData::default()
             },
             touch_key: None,
-            draws: vec![DrawCommand::Rect {
+            draws: vec![Draw::Rect {
                 x: 0.0,
                 y: 0.0,
                 w: 1.0,
@@ -804,11 +803,11 @@ fn vertical_separator(tier: Tier) -> TreeNode {
     )
 }
 
-fn connected_info_tree(tier: Tier, icon_id: Icon, title_text: &str, ip: Ipv4Addr) -> TreeNode {
+fn connected_info_tree(tier: Tier, icon_id: Icon, title_text: &str, ip: Ipv4Addr) -> Node {
     connected_info_url_tree(tier, icon_id, title_text, &format!("http://{ip}/"))
 }
 
-fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &str) -> TreeNode {
+fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &str) -> Node {
     let logo = col(
         PropsData {
             margin: tier.icon_margin,
@@ -850,7 +849,7 @@ fn connecting_parts(
     tier: Tier,
     icons: DeviceInfoIcons,
     link: &Link,
-) -> (Icon, &'static str, Vec<TreeNode>) {
+) -> (Icon, &'static str, Vec<Node>) {
     match link {
         Link::Wifi { ssid } => (
             icons.wifi,
@@ -863,14 +862,14 @@ fn connecting_parts(
 
 /// The setup flow's connect progress: shown while joining the chosen network,
 /// and again while the uplink's address is still pending.
-fn setup_connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> TreeNode {
+fn setup_connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
     let (icon_id, title_text, lines) = connecting_parts(tier, icons, link);
     template_tree(tier, Justify::Start, true, icon_id, title_text, lines)
 }
 
 /// The operational flow's connect progress: the setup screen's parts, centered
 /// and saying what the device is still waiting for.
-fn connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> TreeNode {
+fn connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
     let (icon_id, title_text, mut lines) = connecting_parts(tier, icons, link);
     lines.push(content(tier, WAITING_FOR_IP, TextAlign::Center));
     template_tree(tier, Justify::Center, false, icon_id, title_text, lines)
@@ -886,7 +885,7 @@ fn setup_start_tree(
     device_name: &str,
     ap: Option<&AccessPoint>,
     uplinks: Uplinks,
-) -> TreeNode {
+) -> Node {
     let cable_hint = || content(tier, CABLE_HINT, TextAlign::Center);
     match ap {
         // Setup over a wired uplink: no AP to join, so no WiFi column -
@@ -942,7 +941,7 @@ fn setup_fatal_tree(
     icons: DeviceInfoIcons,
     device_name: &str,
     restarting: bool,
-) -> TreeNode {
+) -> Node {
     let (icon_id, line) = if restarting {
         (icons.refresh, format!("Restarting {device_name}..."))
     } else {
@@ -965,7 +964,7 @@ pub fn build_device_info_tree(
     tier: Tier,
     device_name: &str,
     miner: bool,
-) -> Option<TreeNode> {
+) -> Option<Node> {
     // The screens picture the device itself; a miner is not a desktop clock.
     let device_icon = if miner {
         icons.miner
@@ -1109,8 +1108,7 @@ mod tests {
     const DEVICE_NAME: &str = "Braiins Deck";
     const DECK_PANEL: (u32, u32) = (1_280, 480);
     use crate::icons::{DeviceInfoIcons, Icon};
-    use bmc_render::tree::{DrawCommand, TreeNode};
-    use bmc_wasm_protocol::SvgId;
+    use bmc_render::ui::{Draw, Node, SvgId};
     use std::net::Ipv4Addr;
 
     const IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 5);
@@ -1235,32 +1233,32 @@ mod tests {
     }
 
     /// Direct children of a container node, if any.
-    fn children(node: &TreeNode) -> Option<&[TreeNode]> {
+    fn children(node: &Node) -> Option<&[Node]> {
         match node {
-            TreeNode::Column(_, kids)
-            | TreeNode::Row(_, kids)
-            | TreeNode::Center(_, kids)
-            | TreeNode::Scroll { children: kids, .. } => Some(kids),
-            TreeNode::Tag { content, .. } | TreeNode::Dimmed { child: content, .. } => {
+            Node::Column(_, kids)
+            | Node::Row(_, kids)
+            | Node::Center(_, kids)
+            | Node::Scroll { children: kids, .. } => Some(kids),
+            Node::Tag { content, .. } | Node::Dimmed { child: content, .. } => {
                 Some(std::slice::from_ref(&**content))
             }
-            TreeNode::Paragraph { .. }
-            | TreeNode::Button { .. }
-            | TreeNode::Spacer { .. }
-            | TreeNode::Canvas { .. }
-            | TreeNode::Notification { .. }
-            | TreeNode::RelTime { .. }
-            | TreeNode::Modal { .. }
-            | TreeNode::ProgressBar { .. }
-            | TreeNode::Switcher { .. }
-            | TreeNode::Skeleton(_) => None,
+            Node::Paragraph { .. }
+            | Node::Button { .. }
+            | Node::Spacer { .. }
+            | Node::Canvas { .. }
+            | Node::Notification { .. }
+            | Node::RelTime { .. }
+            | Node::Modal { .. }
+            | Node::ProgressBar { .. }
+            | Node::Switcher { .. }
+            | Node::Skeleton(_) => None,
         }
     }
 
     /// Every span the screen puts on the panel, in render order.
-    fn texts(node: &TreeNode) -> Vec<String> {
+    fn texts(node: &Node) -> Vec<String> {
         let mut out = Vec::new();
-        if let TreeNode::Paragraph { spans, .. } = node {
+        if let Node::Paragraph { spans, .. } = node {
             out.extend(spans.iter().map(|span| span.text.clone()));
         }
         for kid in children(node).unwrap_or_default() {
@@ -1270,9 +1268,9 @@ mod tests {
     }
 
     /// Every draw the screen issues, from every canvas in the tree.
-    fn draws(node: &TreeNode) -> Vec<&DrawCommand> {
+    fn draws(node: &Node) -> Vec<&Draw> {
         let mut out = Vec::new();
-        if let TreeNode::Canvas { draws: own, .. } = node {
+        if let Node::Canvas { draws: own, .. } = node {
             out.extend(own.iter());
         }
         for kid in children(node).unwrap_or_default() {
@@ -1282,11 +1280,11 @@ mod tests {
     }
 
     /// What the screen's QR codes encode.
-    fn qr_payloads(tree: &TreeNode) -> Vec<&str> {
+    fn qr_payloads(tree: &Node) -> Vec<&str> {
         draws(tree)
             .into_iter()
             .filter_map(|draw| {
-                if let DrawCommand::Qr { text, .. } = draw {
+                if let Draw::Qr { text, .. } = draw {
                     Some(text.as_str())
                 } else {
                     None
@@ -1296,11 +1294,11 @@ mod tests {
     }
 
     /// Which registered icons the screen draws.
-    fn icon_ids(tree: &TreeNode) -> Vec<SvgId> {
+    fn icon_ids(tree: &Node) -> Vec<SvgId> {
         draws(tree)
             .into_iter()
             .filter_map(|draw| {
-                if let DrawCommand::Svg { icon_id, .. } = draw {
+                if let Draw::Svg { icon_id, .. } = draw {
                     *icon_id
                 } else {
                     None
@@ -1337,7 +1335,7 @@ mod tests {
         }
     }
 
-    fn tree_for(view: &DeviceInfoView) -> TreeNode {
+    fn tree_for(view: &DeviceInfoView) -> Node {
         build_device_info_tree(
             view,
             distinct_icons(),
@@ -1349,13 +1347,13 @@ mod tests {
     }
 
     /// The close glyph is the only absolutely positioned node on a screen.
-    fn has_close(tree: &TreeNode) -> bool {
-        let TreeNode::Row(_, columns) = tree else {
+    fn has_close(tree: &Node) -> bool {
+        let Node::Row(_, columns) = tree else {
             panic!("BUG: every screen is rooted in a row");
         };
-        columns.iter().any(
-            |node| matches!(node, TreeNode::Canvas { props, .. } if props.inset_right.is_finite()),
-        )
+        columns
+            .iter()
+            .any(|node| matches!(node, Node::Canvas { props, .. } if props.inset_right.is_finite()))
     }
 
     #[test]

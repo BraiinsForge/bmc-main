@@ -26,9 +26,9 @@ use crate::test_harness::{GlHarness, create_real_buffer, create_real_texture};
 use glow::HasContext;
 
 fn minimal_mesh() -> Vec<u8> {
-    let body_offset = bmc_wasm_protocol::mesh::HEADER_SIZE + atlas::AABB_SIZE;
+    let body_offset = bmc_ui::mesh::HEADER_SIZE + atlas::AABB_SIZE;
     let mut data = vec![0_u8; body_offset];
-    data[0..4].copy_from_slice(&bmc_wasm_protocol::mesh::MESH_MAGIC.to_le_bytes());
+    data[0..4].copy_from_slice(&bmc_ui::mesh::MESH_MAGIC.to_le_bytes());
     let offset = u32::try_from(body_offset)
         .expect("BUG: minimal mesh offset fits u32")
         .to_le_bytes();

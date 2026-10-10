@@ -35,8 +35,7 @@
 //! static, matching Carbon's own reduced-motion path, to leave the GPU
 //! budget to the widget's content.
 
-use bmc_ui::SkeletonData;
-use bmc_wasm_protocol::SkeletonKind;
+use bmc_ui::{SkeletonData, SkeletonKind};
 
 use crate::renderer::Renderer;
 

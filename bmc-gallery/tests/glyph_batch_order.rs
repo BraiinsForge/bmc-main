@@ -31,10 +31,10 @@
 //! downstream: the caller sees `FemtoVgRenderer` and public colours,
 //! not the cache or its keys.
 
-use bmc_render::colors::Color;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
 use bmc_render::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
+use bmc_render::ui::Color;
 
 const W: u32 = 512;
 const H: u32 = 256;

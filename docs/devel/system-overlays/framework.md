@@ -59,7 +59,7 @@ The trait re-exports the layer-shell `Layer` and `Anchor` enums from the crate r
 ## Rendering: the declarative tree
 
 Overlays draw with the same `bmc-render` tree pipeline the WASM widgets use — `col`/`row`/`text`/`button`/`canvas`, laid
-out host-side with Taffy and drawn with femtovg — but build the `TreeNode` structs directly in Rust, with no WASM
+out host-side with Taffy and drawn with femtovg — but build the `Node` structs directly in Rust, with no WASM
 serialization step. `TreeUi` (`src/tree.rs`) holds the persistent interaction, animation, and layout caches so an
 overlay can call `TreeUi::render(frame, size, delta_ms, renderer, build)` each frame without threading that state by
 hand. Touch is fed in with `push_touch`; the returned `TreeFrame` carries the `TreeResult`, which reports slider drags

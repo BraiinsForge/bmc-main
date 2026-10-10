@@ -38,7 +38,7 @@ fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, key
         stroke_outlines: false,
         damage_rects: &[],
     };
-    let tree = TreeNode::Column(PropsData::default(), vec![TreeNode::Spacer { flex: 1.0 }]);
+    let tree = Node::Column(PropsData::default(), vec![Node::Spacer { flex: 1.0 }]);
     let mut timings = FrameTimings::default();
     layout_and_render(&tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
         .expect("BUG: layout_and_render must succeed for a trivial tree");
@@ -46,15 +46,15 @@ fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, key
 
 /// A scroll container holding static content, so the frame both
 /// splits and scrolls — 200 px of children in a 100 px viewport.
-fn scrolling_tree() -> TreeNode {
-    let child = |y: f32| TreeNode::Canvas {
+fn scrolling_tree() -> Node {
+    let child = |y: f32| Node::Canvas {
         props: PropsData {
             width: 100.0,
             height: 100.0,
             ..PropsData::default()
         },
         touch_key: None,
-        draws: vec![super::DrawCommand::Rect {
+        draws: vec![super::Draw::Rect {
             x: 0.0,
             y,
             w: 100.0,
@@ -62,7 +62,7 @@ fn scrolling_tree() -> TreeNode {
             fill: Fill::Solid(Color::from_rgb(9, 9, 9)),
         }],
     };
-    TreeNode::Scroll {
+    Node::Scroll {
         scroll_key: "list".to_owned(),
         props: PropsData::default(),
         children: vec![child(0.0), child(100.0)],
@@ -109,13 +109,13 @@ fn a_capture_frame_applies_a_scroll_drag_once() {
 /// the other draws a frame makes.
 const SKELETON_BAR_H: f32 = 7.0;
 
-fn skeleton_beside_animation() -> TreeNode {
-    TreeNode::Column(
+fn skeleton_beside_animation() -> Node {
+    Node::Column(
         PropsData::default(),
         vec![
             moving_dot(0.0),
-            TreeNode::Skeleton(SkeletonData {
-                kind: bmc_wasm_protocol::SkeletonKind::Placeholder,
+            Node::Skeleton(SkeletonData {
+                kind: bmc_ui::SkeletonKind::Placeholder,
                 chars: 0.0,
                 font_size: 0.0,
                 width: 40.0,
@@ -156,7 +156,7 @@ fn a_skeleton_paints_once_on_a_capture_frame() {
 /// its meshes land on other atlas slots than on a reuse frame and re-render.
 #[test]
 fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
-    let mesh = |wire: u16| super::DrawCommand::Mesh {
+    let mesh = |wire: u16| super::Draw::Mesh {
         x: 0.0,
         y: 0.0,
         w: 40.0,
@@ -165,7 +165,7 @@ fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
         args: crate::gpu::mesh::ZERO_MESH_ARGS,
     };
     let dynamic_mesh = MeshId::from_wire(2).expect("BUG: fixture mesh ID must be non-zero");
-    let tree = TreeNode::Canvas {
+    let tree = Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![mesh(1), animating(mesh(2))],
@@ -289,7 +289,7 @@ fn a_capture_frame_strokes_its_outlines_over_the_layer() {
 /// the frame's scissors nest, so the inner one never paints outside the outer.
 #[test]
 fn a_nested_scroll_clips_what_it_holds_to_both_viewports() {
-    let canvas = |height: f32| TreeNode::Canvas {
+    let canvas = |height: f32| Node::Canvas {
         props: PropsData {
             width: 100.0,
             height,
@@ -299,12 +299,12 @@ fn a_nested_scroll_clips_what_it_holds_to_both_viewports() {
         draws: Vec::new(),
     };
     // The inner viewport spans rows 60..140, past the outer one's 0..100.
-    let tree = TreeNode::Scroll {
+    let tree = Node::Scroll {
         scroll_key: "outer".to_owned(),
         props: PropsData::default(),
         children: vec![
             canvas(60.0),
-            TreeNode::Scroll {
+            Node::Scroll {
                 scroll_key: "inner".to_owned(),
                 props: PropsData {
                     width: 100.0,

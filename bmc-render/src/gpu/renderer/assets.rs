@@ -30,8 +30,8 @@ use crate::gpu::sphere::SphereRenderer;
 use crate::renderer::SvgContent;
 use crate::renderer::prelude::*;
 use crate::renderer::{AssetSuspendResult, AssetTagState};
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
+use bmc_ui::colors::Color;
+use bmc_ui::{BitmapId, MeshId, SvgId};
 
 impl RenderAssets for FemtoVgRenderer {
     // -- Icons --

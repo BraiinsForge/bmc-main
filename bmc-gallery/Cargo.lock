@@ -767,7 +767,6 @@ dependencies = [
  "anyhow",
  "bmc-render",
  "bmc-system-overlay",
- "bmc-wasm-protocol",
  "tracing",
 ]
 
@@ -778,7 +777,6 @@ dependencies = [
  "anyhow",
  "bmc-render",
  "bmc-system-overlay",
- "bmc-wasm-protocol",
  "tracing",
 ]
 
@@ -789,7 +787,6 @@ dependencies = [
  "anyhow",
  "bmc-render",
  "bmc-system-overlay",
- "bmc-wasm-protocol",
  "serde",
  "serde_json",
  "tracing",
@@ -804,7 +801,6 @@ dependencies = [
  "bmc-net-observe",
  "bmc-render",
  "bmc-system-overlay",
- "bmc-wasm-protocol",
  "tracing",
 ]
 
@@ -816,7 +812,6 @@ dependencies = [
  "bmc-platform",
  "bmc-render",
  "bmc-system-overlay",
- "bmc-wasm-protocol",
  "tracing",
 ]
 
@@ -865,7 +860,6 @@ name = "bmc-render-keyboard"
 version = "0.1.0"
 dependencies = [
  "bmc-render",
- "bmc-wasm-protocol",
  "roxmltree 0.20.0",
  "tracing",
 ]

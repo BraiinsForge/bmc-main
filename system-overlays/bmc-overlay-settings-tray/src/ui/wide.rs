@@ -32,12 +32,12 @@ use super::{
     WIDE_SSID_WIDTH, WIDE_TOP_PAD, WIDE_WIFI_GAP, WIDE_WIFI_ICON_SIZE, WifiIcons, WifiView,
     control_row_nodes,
 };
-use bmc_render::tree::{PropsData, TreeNode, col, fixed_height, row, spacer, text};
-use bmc_wasm_protocol::CrossAlign;
-use bmc_wasm_protocol::colors::{GRAY_50, WHITE};
+use bmc_render::ui::{
+    CrossAlign, GRAY_50, Node, PropsData, WHITE, col, fixed_height, row, spacer, text,
+};
 
 /// One Large-tier info block: a small gray header over a white value node.
-fn info_block(header: &'static str, value: TreeNode) -> TreeNode {
+fn info_block(header: &'static str, value: Node) -> Node {
     col(
         PropsData {
             gap: INFO_HEADER_GAP,
@@ -60,7 +60,7 @@ pub(super) fn wide_header(
     wifi_signal: Option<i32>,
     ssid: &str,
     wifi_view: WifiView<'_>,
-) -> TreeNode {
+) -> Node {
     let value_size = WIDE_INFO_VALUE_SIZE;
     let icon = connection_icon(wifi_view, icons, wifi_signal, WIDE_WIFI_ICON_SIZE);
     let line = |name| {
@@ -157,17 +157,12 @@ pub(super) fn wide_header(
 /// block's top edge to the vertical middle, matching the stable design. The
 /// top half holds the info header and, while one is up, the notice over it;
 /// the bottom half the control rows.
-fn wide_halves(
-    header: TreeNode,
-    rows: Vec<TreeNode>,
-    h_pad: f32,
-    notice: Notice<'_>,
-) -> [TreeNode; 2] {
+fn wide_halves(header: Node, rows: Vec<Node>, h_pad: f32, notice: Notice<'_>) -> [Node; 2] {
     let half = PropsData {
         flex: 1.0,
         ..PropsData::default()
     };
-    let mut bottom_half: Vec<TreeNode> = Vec::new();
+    let mut bottom_half: Vec<Node> = Vec::new();
     for row_node in rows {
         bottom_half.push(pad_horizontal(row_node, h_pad));
         bottom_half.push(fixed_height(WIDE_ROW_GAP));
@@ -184,7 +179,7 @@ fn wide_halves(
 
 /// The Deck's flow children: the info header in the top half,
 /// the labeled control row in the bottom half.
-pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
+pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<Node> {
     let header = wide_header(
         content.hostname.unwrap_or(NO_DATA_PLACEHOLDER),
         content.ip,

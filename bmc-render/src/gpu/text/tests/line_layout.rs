@@ -33,7 +33,7 @@ use super::{
     LayoutDomain, ParagraphLayoutCache, baseline_to_alphabetic, cache_key, extract_lines,
     layout_cache_hasher, shape_paragraph,
 };
-use crate::tree::{FontFamily, TextStyle};
+use bmc_ui::{FontFamily, TextStyle};
 
 #[test]
 fn layout_domains_use_distinct_hash_namespaces() {

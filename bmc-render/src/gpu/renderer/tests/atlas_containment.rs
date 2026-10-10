@@ -27,9 +27,9 @@
 use super::FemtoVgRenderer;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo};
-use crate::tree::{SpanData, TextStyle};
-use bmc_wasm_protocol::text::{ArcAnchor, ArcTextFacing};
-use bmc_wasm_protocol::{AutoFit, Color};
+use bmc_ui::text::{ArcAnchor, ArcTextFacing};
+use bmc_ui::{AutoFit, Color};
+use bmc_ui::{Span, TextStyle};
 
 const W: u32 = 320;
 const H: u32 = 320;
@@ -55,8 +55,8 @@ fn styled(size: u32, italic: bool) -> TextStyle {
     }
 }
 
-fn span(text: &str) -> SpanData {
-    SpanData {
+fn span(text: &str) -> Span {
+    Span {
         text: text.to_owned(),
         weight: None,
         color: Some(WHITE),

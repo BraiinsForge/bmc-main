@@ -30,16 +30,16 @@
               bounded integer indices (pixel positions, QR module counts)"
 )]
 
-use bmc_ui::{Interpolation, NinePatch, QrStyle};
-use bmc_wasm_protocol::{
-    AnimProperty, ArcFill, ArcSegments, Color, Dash, Fill, PathPaint, TRANSPARENT,
+use bmc_ui::{
+    AnimProperty, ArcFill, ArcSegments, Color, Dash, Fill, Interpolation, NinePatch, PathPaint,
+    QrStyle, TRANSPARENT,
 };
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color};
 use crate::gpu::mesh::{MeshDrawArgs, MeshLighting, MeshTransform};
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
-use crate::tree::{AnimationContext, DrawCommand, HostAnimationDef};
+use crate::tree::{AnimationContext, AnimationDef, Draw};
 use crate::{AnimationState, TransitionState};
 
 mod transition;
@@ -194,7 +194,7 @@ fn dash_runs(points: &[(f32, f32)], on: f32, off: f32) -> Vec<Vec<(f32, f32)>> {
 
 pub(crate) fn render_draw_command(
     renderer: &mut RenderTarget<'_, '_, '_>,
-    draw: &DrawCommand,
+    draw: &Draw,
     cx: f32,
     cy: f32,
     cw: f32,
@@ -219,32 +219,32 @@ pub(crate) fn render_draw_command(
 }
 
 /// Get the bounds (width, height) of a draw command
-pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
+pub(crate) fn get_draw_bounds(draw: &Draw) -> (f32, f32) {
     match draw {
-        DrawCommand::Rect { w, h, .. }
-        | DrawCommand::Svg { w, h, .. }
-        | DrawCommand::Bitmap { w, h, .. }
-        | DrawCommand::Sphere { w, h, .. }
-        | DrawCommand::Mesh { w, h, .. }
-        | DrawCommand::NinePatch { w, h, .. } => (*w, *h),
-        DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
-        DrawCommand::Qr { size, .. } => (*size, *size),
-        DrawCommand::Arc { radius, width, .. } => {
+        Draw::Rect { w, h, .. }
+        | Draw::Svg { w, h, .. }
+        | Draw::Bitmap { w, h, .. }
+        | Draw::Sphere { w, h, .. }
+        | Draw::Mesh { w, h, .. }
+        | Draw::NinePatch { w, h, .. } => (*w, *h),
+        Draw::Circle { r, .. } => (*r * 2.0, *r * 2.0),
+        Draw::Qr { size, .. } => (*size, *size),
+        Draw::Arc { radius, width, .. } => {
             let d = 2.0 * radius + width;
             (d, d)
         }
-        DrawCommand::Centered { inner }
-        | DrawCommand::Rotated { inner, .. }
-        | DrawCommand::Modified { inner, .. }
-        | DrawCommand::Shadow { inner, .. }
-        | DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
-        DrawCommand::Text { .. } | DrawCommand::CurvedText { .. } => (0.0, 0.0),
-        DrawCommand::AutofitText {
+        Draw::Centered { inner }
+        | Draw::Rotated { inner, .. }
+        | Draw::Modified { inner, .. }
+        | Draw::Shadow { inner, .. }
+        | Draw::Orbit { inner, .. } => get_draw_bounds(inner),
+        Draw::Text { .. } | Draw::CurvedText { .. } => (0.0, 0.0),
+        Draw::AutofitText {
             box_width,
             box_height,
             ..
         } => (*box_width, *box_height),
-        DrawCommand::Path { points, .. } => {
+        Draw::Path { points, .. } => {
             if points.is_empty() {
                 (0.0, 0.0)
             } else {
@@ -350,7 +350,7 @@ impl DrawOffset {
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_draw_inner(
     renderer: &mut RenderTarget<'_, '_, '_>,
-    draw: &DrawCommand,
+    draw: &Draw,
     cx: f32,
     cy: f32,
     cw: f32,
@@ -365,7 +365,7 @@ fn render_draw_inner(
 ) {
     let (offset_x, offset_y) = (offset.x(), offset.y());
     match draw {
-        DrawCommand::Rect { x, y, w, h, fill } => {
+        Draw::Rect { x, y, w, h, fill } => {
             let ew = *w * scale;
             let eh = *h * scale;
             // Center-anchored scaling: offset by half the size difference
@@ -387,7 +387,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Svg {
+        Draw::Svg {
             x,
             y,
             w,
@@ -431,7 +431,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Bitmap {
+        Draw::Bitmap {
             x,
             y,
             w,
@@ -457,7 +457,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Qr {
+        Draw::Qr {
             x,
             y,
             size,
@@ -500,7 +500,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::NinePatch {
+        Draw::NinePatch {
             x,
             y,
             w,
@@ -543,7 +543,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Circle {
+        Draw::Circle {
             cx: circle_cx,
             cy: circle_cy,
             r,
@@ -555,7 +555,7 @@ fn render_draw_inner(
             let paint = effective_fill(fill, color_override, alpha);
             renderer.fill_circle_paint(cx + scx, cy + scy, er, &paint);
         }
-        DrawCommand::Arc {
+        Draw::Arc {
             cx: arc_cx,
             cy: arc_cy,
             radius,
@@ -603,7 +603,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Centered { inner } => {
+        Draw::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
             render_draw_inner(
                 renderer,
@@ -621,7 +621,7 @@ fn render_draw_inner(
                 anim_ctx,
             );
         }
-        DrawCommand::Orbit {
+        Draw::Orbit {
             radius,
             angle,
             inner,
@@ -646,7 +646,7 @@ fn render_draw_inner(
                 anim_ctx,
             );
         }
-        DrawCommand::Rotated { angle, inner } => {
+        Draw::Rotated { angle, inner } => {
             render_draw_inner(
                 renderer,
                 inner,
@@ -663,7 +663,7 @@ fn render_draw_inner(
                 anim_ctx,
             );
         }
-        DrawCommand::Shadow {
+        Draw::Shadow {
             dx,
             dy,
             blur,
@@ -692,7 +692,7 @@ fn render_draw_inner(
                 );
             });
         }
-        DrawCommand::Modified {
+        Draw::Modified {
             animations,
             transition,
             color_space,
@@ -809,7 +809,7 @@ fn render_draw_inner(
                     let eased_t = apply_easing(state.easing, t);
                     let interp =
                         interpolate_draw_values(&state.from, &state.target, eased_t, *color_space);
-                    if let DrawCommand::Arc { segments, .. } = inner.as_ref() {
+                    if let Draw::Arc { segments, .. } = inner.as_ref() {
                         // Segments stay at their absolute positions; the
                         // interpolated sweep clips them in the renderer, so the
                         // arc's length animates in place rather than remapping.
@@ -836,7 +836,7 @@ fn render_draw_inner(
                     if interp.color != current_values.color {
                         acc_color = Some(interp.color);
                     }
-                    if matches!(inner.as_ref(), DrawCommand::Sphere { .. }) {
+                    if matches!(inner.as_ref(), Draw::Sphere { .. }) {
                         sphere_override = Some((
                             interp.center_lat,
                             interp.center_lon,
@@ -845,7 +845,7 @@ fn render_draw_inner(
                             interp.light_lon,
                         ));
                     }
-                    if let DrawCommand::Mesh { args, .. } = inner.as_ref() {
+                    if let Draw::Mesh { args, .. } = inner.as_ref() {
                         mesh_override = Some(MeshOverride {
                             args: MeshDrawArgs {
                                 transform: MeshTransform {
@@ -883,7 +883,7 @@ fn render_draw_inner(
 
             if let (
                 Some((center_lat, center_lon, zoom, light_lat, light_lon)),
-                DrawCommand::Sphere {
+                Draw::Sphere {
                     x,
                     y,
                     w,
@@ -894,7 +894,7 @@ fn render_draw_inner(
                 },
             ) = (sphere_override, inner.as_ref())
             {
-                let overridden = DrawCommand::Sphere {
+                let overridden = Draw::Sphere {
                     x: *x,
                     y: *y,
                     w: *w,
@@ -924,7 +924,7 @@ fn render_draw_inner(
                 );
             } else if let (
                 Some(mo),
-                DrawCommand::Mesh {
+                Draw::Mesh {
                     x,
                     y,
                     w,
@@ -934,7 +934,7 @@ fn render_draw_inner(
                 },
             ) = (mesh_override, inner.as_ref())
             {
-                let overridden = DrawCommand::Mesh {
+                let overridden = Draw::Mesh {
                     x: *x,
                     y: *y,
                     w: *w,
@@ -957,10 +957,8 @@ fn render_draw_inner(
                     acc_color,
                     anim_ctx,
                 );
-            } else if let (Some(ao), DrawCommand::Arc { fill, cap, .. }) =
-                (arc_override, inner.as_ref())
-            {
-                let overridden = DrawCommand::Arc {
+            } else if let (Some(ao), Draw::Arc { fill, cap, .. }) = (arc_override, inner.as_ref()) {
+                let overridden = Draw::Arc {
                     cx: ao.cx,
                     cy: ao.cy,
                     radius: ao.radius,
@@ -1004,7 +1002,7 @@ fn render_draw_inner(
                 );
             }
         }
-        DrawCommand::Path {
+        Draw::Path {
             points,
             paint,
             closed,
@@ -1061,7 +1059,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Text { x, y, text, style } => {
+        Draw::Text { x, y, text, style } => {
             let rx = cx + *x + offset_x;
             let ry = cy + *y + offset_y;
             let mut render_style = *style;
@@ -1084,7 +1082,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::CurvedText {
+        Draw::CurvedText {
             cx: local_cx,
             cy: local_cy,
             radius,
@@ -1136,7 +1134,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::AutofitText {
+        Draw::AutofitText {
             x,
             y,
             box_width,
@@ -1198,7 +1196,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Sphere {
+        Draw::Sphere {
             x,
             y,
             w,
@@ -1254,7 +1252,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Mesh {
+        Draw::Mesh {
             x,
             y,
             w,
@@ -1287,7 +1285,7 @@ fn render_draw_inner(
 }
 
 /// Compute a content-based hash key for an animation definition + draw counter salt.
-fn animation_key(def: &HostAnimationDef, draw_counter: u32) -> u64 {
+fn animation_key(def: &AnimationDef, draw_counter: u32) -> u64 {
     // Simple FNV-like hash of the animation definition bytes
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     h ^= def.property as u64;

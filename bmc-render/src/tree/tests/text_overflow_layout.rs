@@ -33,8 +33,8 @@ fn style(text_overflow: TextOverflow) -> TextStyle {
     }
 }
 
-fn span(text: &str) -> SpanData {
-    SpanData {
+fn span(text: &str) -> Span {
+    Span {
         text: text.to_owned(),
         weight: None,
         color: None,
@@ -45,8 +45,8 @@ fn span(text: &str) -> SpanData {
     }
 }
 
-fn para(base_style: TextStyle, text: &str) -> TreeNode {
-    TreeNode::Paragraph {
+fn para(base_style: TextStyle, text: &str) -> Node {
+    Node::Paragraph {
         props: PropsData::default(),
         base_style,
         spans: vec![span(text)],
@@ -64,8 +64,8 @@ fn sized(width: f32) -> PropsData {
 ///
 /// The frame's root takes the whole frame whatever its props say,
 /// so `tree` goes under one for its own width to hold.
-fn render(tree: &TreeNode) -> Vec<DrawnParagraph> {
-    let root = TreeNode::Column(PropsData::default(), vec![tree.clone()]);
+fn render(tree: &Node) -> Vec<DrawnParagraph> {
+    let root = Node::Column(PropsData::default(), vec![tree.clone()]);
     let mut recorder = ShapingRecorder::new(FRAME_W, FRAME_H);
     let mut interaction = InteractionState::new();
     let (mut modal_states, mut scroll_states) = (HashMap::new(), HashMap::new());
@@ -111,7 +111,7 @@ const FULL_HEIGHT: Option<(f32, f32)> = Some((0.0, FRAME_H));
 
 #[test]
 fn an_overwide_clip_shrinks_to_its_row_and_is_clipped() {
-    let drawn = render(&TreeNode::Row(
+    let drawn = render(&Node::Row(
         sized(100.0),
         vec![para(style(TextOverflow::Clip), OVERWIDE)],
     ));
@@ -127,10 +127,7 @@ fn an_overwide_clip_shrinks_to_its_row_and_is_clipped() {
 #[test]
 fn a_clip_that_fits_is_drawn_unclipped() {
     let base_style = style(TextOverflow::Clip);
-    let drawn = render(&TreeNode::Row(
-        sized(FRAME_W),
-        vec![para(base_style, "Hash")],
-    ));
+    let drawn = render(&Node::Row(sized(FRAME_W), vec![para(base_style, "Hash")]));
 
     assert!(
         (drawn[0].max_width - natural_width(base_style, "Hash")).abs() < 0.5,
@@ -143,7 +140,7 @@ fn a_clip_that_fits_is_drawn_unclipped() {
 #[test]
 fn two_clipped_siblings_share_the_shrink() {
     let base_style = style(TextOverflow::Clip);
-    let drawn = render(&TreeNode::Row(
+    let drawn = render(&Node::Row(
         sized(100.0),
         vec![para(base_style, OVERWIDE), para(base_style, OVERWIDE)],
     ));
@@ -167,7 +164,7 @@ fn max_width_caps_a_clip_stretched_across_a_column() {
         max_width: 80,
         ..style(TextOverflow::Clip)
     };
-    let drawn = render(&TreeNode::Column(
+    let drawn = render(&Node::Column(
         sized(300.0),
         vec![para(base_style, OVERWIDE)],
     ));
@@ -196,10 +193,7 @@ fn a_capped_right_aligned_line_lands_in_one_box_under_every_mode() {
             align: TextAlign::Right,
             ..style(text_overflow)
         };
-        let drawn = render(&TreeNode::Column(
-            sized(300.0),
-            vec![para(base_style, "Hash")],
-        ));
+        let drawn = render(&Node::Column(sized(300.0), vec![para(base_style, "Hash")]));
         (drawn[0].x, drawn[0].max_width)
     })
     .collect();
@@ -209,9 +203,9 @@ fn a_capped_right_aligned_line_lands_in_one_box_under_every_mode() {
 
 #[test]
 fn the_shrink_reaches_through_a_column_in_a_row() {
-    let drawn = render(&TreeNode::Row(
+    let drawn = render(&Node::Row(
         sized(100.0),
-        vec![TreeNode::Column(
+        vec![Node::Column(
             PropsData::default(),
             vec![para(style(TextOverflow::Ellipsis), OVERWIDE)],
         )],
@@ -227,7 +221,7 @@ fn the_shrink_reaches_through_a_column_in_a_row() {
 #[test]
 fn a_clipped_paragraph_stays_one_line_tall() {
     let base_style = style(TextOverflow::Clip);
-    let drawn = render(&TreeNode::Column(
+    let drawn = render(&Node::Column(
         sized(100.0),
         vec![
             para(base_style, OVERWIDE),
@@ -249,7 +243,7 @@ fn an_ellipsis_squeezed_to_nothing_keeps_its_ellipsis() {
     let base_style = style(TextOverflow::Ellipsis);
     let (ellipsis_only, _) =
         ShapingRecorder::default().measure_paragraph(&base_style, &[span(OVERWIDE)], Some(0.0));
-    let drawn = render(&TreeNode::Row(sized(1.0), vec![para(base_style, OVERWIDE)]));
+    let drawn = render(&Node::Row(sized(1.0), vec![para(base_style, OVERWIDE)]));
 
     assert!(
         (drawn[0].max_width - ellipsis_only).abs() < 0.5,
@@ -261,7 +255,7 @@ fn an_ellipsis_squeezed_to_nothing_keeps_its_ellipsis() {
 #[test]
 fn wrap_still_wraps() {
     let base_style = style(TextOverflow::Wrap);
-    let drawn = render(&TreeNode::Column(
+    let drawn = render(&Node::Column(
         sized(100.0),
         vec![para(base_style, OVERWIDE), para(base_style, "after")],
     ));

@@ -19,14 +19,13 @@
 // the grant above.
 
 //! Pure UI-tree construction for the settings overlay. Builds a
-//! `bmc_render::tree::TreeNode` the GPU renderer lays out and paints. Kept free
+//! `bmc_render::tree::Node` the GPU renderer lays out and paints. Kept free
 //! of host/GL imports so it compiles and unit-tests on the host.
 
 use std::time::Duration;
 
-use bmc_render::tree::{PropsData, TreeNode, col};
+use bmc_render::ui::{Color, Node, PropsData, SvgId, col};
 use bmc_system_overlay::DisplayShape;
-use bmc_wasm_protocol::{Color, SvgId};
 
 mod compact;
 mod controls;
@@ -599,7 +598,7 @@ struct Content<'a> {
 }
 
 /// The control rows the content calls for, in the row split the tier wants.
-fn control_row_nodes(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
+fn control_row_nodes(content: Content<'_>, tier: Tier) -> Vec<Node> {
     let (pairs, singles) = control_groups(
         tier,
         &content.controls,
@@ -628,7 +627,7 @@ pub fn build_tree(
     controls_icons: ControlIcons,
     controls: Controls<'_>,
     status: Option<&Status>,
-) -> TreeNode {
+) -> Node {
     let tier = tier_for(&panel);
     let notice = Notice::new(status);
     let content = Content {
@@ -662,9 +661,7 @@ pub fn build_tree(
 
 #[cfg(test)]
 mod tests {
-    use bmc_render::tree::{PropsData, TreeNode};
-
-    use bmc_wasm_protocol::TextOverflow;
+    use bmc_render::ui::{Node, PropsData, TextOverflow};
 
     use super::*;
     use crate::ui::parts::close_origin;
@@ -764,14 +761,14 @@ mod tests {
         panel: &Panel,
         tier: Tier,
         setup: bool,
-        kids: &[TreeNode],
+        kids: &[Node],
         close_bottom: f32,
         panel_h: f32,
     ) {
         let [top, bottom, _close] = kids else {
             panic!("{panel:?}: wide root must be two halves + close");
         };
-        let (TreeNode::Column(top_props, top_kids), TreeNode::Column(bottom_props, bottom_kids)) =
+        let (Node::Column(top_props, top_kids), Node::Column(bottom_props, bottom_kids)) =
             (top, bottom)
         else {
             panic!("{panel:?}: halves must be columns");
@@ -841,17 +838,17 @@ mod tests {
     /// A row holding a bare canvas is the disc's station line, so the model
     /// covers the wide and round layouts only.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
-    fn expected_flow_height(node: &TreeNode, tier: Tier, layout: Layout, setup: bool) -> f32 {
+    fn expected_flow_height(node: &Node, tier: Tier, layout: Layout, setup: bool) -> f32 {
         let node = undimmed(node);
         if is_absolute(node) {
             return 0.0;
         }
-        if let TreeNode::Column(props, kids) = node
+        if let Node::Column(props, kids) = node
             && kids.is_empty()
         {
             return props.height;
         }
-        if matches!(node, TreeNode::Spacer { .. }) {
+        if matches!(node, Node::Spacer { .. }) {
             return 0.0;
         }
         let mut keys = Vec::new();
@@ -862,7 +859,7 @@ mod tests {
         let has_pair = keys.iter().any(|k| PAIR_KEYS.contains(&k.as_str()));
         let has_single = keys.iter().any(|k| SINGLE_KEYS.contains(&k.as_str()));
         // The section the notice hangs off stacks its children like the root does.
-        if let TreeNode::Column(_, kids) = node
+        if let Node::Column(_, kids) = node
             && kids.len() > 1
             && !(has_pair || has_single)
         {
@@ -1083,11 +1080,8 @@ mod tests {
 
     #[test]
     fn close_and_hold_circles_are_the_only_out_of_flow_canvases() {
-        fn absolute_canvases<'t>(
-            node: &'t TreeNode,
-            out: &mut Vec<(&'t PropsData, Option<&'t str>)>,
-        ) {
-            if let TreeNode::Canvas {
+        fn absolute_canvases<'t>(node: &'t Node, out: &mut Vec<(&'t PropsData, Option<&'t str>)>) {
+            if let Node::Canvas {
                 props, touch_key, ..
             } = node
                 && props.is_absolute()
@@ -1100,14 +1094,14 @@ mod tests {
                 }
             }
         }
-        fn hold_circle_columns(node: &TreeNode) -> usize {
+        fn hold_circle_columns(node: &Node) -> usize {
             let own = usize::from(matches!(
                 node,
-                TreeNode::Column(_, kids) if matches!(
+                Node::Column(_, kids) if matches!(
                     kids.as_slice(),
                     [
-                        TreeNode::Canvas { props, touch_key: None, .. },
-                        TreeNode::Canvas { touch_key: Some(_), .. },
+                        Node::Canvas { props, touch_key: None, .. },
+                        Node::Canvas { touch_key: Some(_), .. },
                     ] if props.is_absolute()
                 )
             ));
@@ -1160,7 +1154,7 @@ mod tests {
             assert!(
                 matches!(
                     last,
-                    TreeNode::Canvas { touch_key: Some(k), .. } if k == CLOSE_KEY
+                    Node::Canvas { touch_key: Some(k), .. } if k == CLOSE_KEY
                 ),
                 "{panel:?}: the close canvas is the last root child so it paints on top"
             );
@@ -1171,7 +1165,7 @@ mod tests {
     fn round_panel_roots_a_column() {
         assert!(matches!(
             build(round_panel(), WifiView::Idle),
-            TreeNode::Column(..)
+            Node::Column(..)
         ));
     }
 
@@ -1179,11 +1173,11 @@ mod tests {
     fn wide_and_narrow_both_root_a_column() {
         assert!(matches!(
             build(wide_panel(), WifiView::Idle),
-            TreeNode::Column(..)
+            Node::Column(..)
         ));
         assert!(matches!(
             build(narrow_panel(), WifiView::Idle),
-            TreeNode::Column(..)
+            Node::Column(..)
         ));
     }
 

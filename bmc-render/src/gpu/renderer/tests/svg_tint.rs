@@ -20,8 +20,8 @@
 
 use super::brightness::{FULL, W, render};
 use crate::renderer::prelude::*;
-use bmc_wasm_protocol::colors::{BLACK, WHITE};
-use bmc_wasm_protocol::{Color, SVG_FLAG_HAS_FILL, SVG_OP_CLOSE, SVG_OP_LINE_TO, SVG_OP_MOVE_TO};
+use bmc_ui::colors::{BLACK, WHITE};
+use bmc_ui::{Color, SVG_FLAG_HAS_FILL, SVG_OP_CLOSE, SVG_OP_LINE_TO, SVG_OP_MOVE_TO};
 
 /// The problem icon's arcs, as the svg compiler stores them.
 const ARC_ALPHA: u8 = 102;

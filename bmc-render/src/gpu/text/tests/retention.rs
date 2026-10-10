@@ -21,10 +21,10 @@
 use cosmic_text::FontSystem;
 
 use super::{ParagraphLayoutCache, font_system};
-use crate::tree::{SpanData, TextStyle};
+use bmc_ui::{Span, TextStyle};
 
-fn span(text: &str) -> [SpanData; 1] {
-    [SpanData {
+fn span(text: &str) -> [Span; 1] {
+    [Span {
         text: text.to_owned(),
         weight: None,
         color: None,

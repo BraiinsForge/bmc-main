@@ -27,7 +27,7 @@ use super::geometry::scissor_box;
 use crate::gpu::text::to_femtovg_color;
 use crate::interaction::Rect;
 use crate::renderer::prelude::*;
-use bmc_wasm_protocol::colors::Color;
+use bmc_ui::colors::Color;
 use femtovg::Paint;
 use femtovg::Path;
 use femtovg::RenderTarget;
@@ -889,7 +889,7 @@ impl RenderOffscreen for FemtoVgRenderer {
         // Sigma is logical pixels; scale to physical.
         // Clamp mirrors the SDK cap so a malformed
         // wire value can't request an unbounded blur.
-        let sigma = blur.clamp(0.0, bmc_wasm_protocol::DROP_SHADOW_BLUR_MAX) * dpi;
+        let sigma = blur.clamp(0.0, bmc_ui::DROP_SHADOW_BLUR_MAX) * dpi;
         if sigma > 0.0 {
             self.canvas.filter_image(
                 blurred,

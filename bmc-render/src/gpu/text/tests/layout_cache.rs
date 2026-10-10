@@ -28,7 +28,7 @@ use super::{
     LAYOUT_CACHE_CAPACITY, LAYOUT_CACHE_GLYPH_CAPACITY, LayoutDomain, LookupPhase,
     ParagraphLayoutCache, ParagraphLayoutEntry, single_line_cache_key,
 };
-use crate::tree::{SpanData, TextStyle};
+use bmc_ui::{Span, TextStyle};
 
 /// Repeating a single-line draw must reuse the extracted glyph allocation;
 /// rebuilding it on a cache hit would restore the per-draw allocation cost.
@@ -261,7 +261,7 @@ fn profile_separates_paragraph_lookups_from_single_line_lookups() {
     let mut font_system = font_system();
     let mut cache = ParagraphLayoutCache::new();
     let style = TextStyle::default();
-    let spans = [SpanData {
+    let spans = [Span {
         text: "paragraph".to_owned(),
         weight: None,
         color: None,

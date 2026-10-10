@@ -20,16 +20,16 @@
 
 use super::*;
 
-fn transition_arc(end_angle: f32, duration_ms: u32) -> DrawCommand {
-    DrawCommand::Modified {
+fn transition_arc(end_angle: f32, duration_ms: u32) -> Draw {
+    Draw::Modified {
         animations: Vec::new(),
-        transition: Some(crate::tree::HostTransitionDef {
+        transition: Some(crate::tree::TransitionDef {
             id_hash: 42,
             duration_ms,
             easing: Easing::Linear,
         }),
         color_space: ColorSpace::default(),
-        inner: Box::new(DrawCommand::Arc {
+        inner: Box::new(Draw::Arc {
             cx: 20.0,
             cy: 30.0,
             radius: 40.0,
@@ -78,20 +78,20 @@ fn recorded_arc_end_angle(renderer: &RecordingRenderer) -> f32 {
     *end_angle
 }
 
-fn transition_sphere(center_lon: f32, duration_ms: u32) -> DrawCommand {
+fn transition_sphere(center_lon: f32, duration_ms: u32) -> Draw {
     transition_sphere_with_easing(center_lon, duration_ms, Easing::Linear)
 }
 
-fn transition_sphere_with_easing(center_lon: f32, duration_ms: u32, easing: Easing) -> DrawCommand {
-    DrawCommand::Modified {
+fn transition_sphere_with_easing(center_lon: f32, duration_ms: u32, easing: Easing) -> Draw {
+    Draw::Modified {
         animations: Vec::new(),
-        transition: Some(crate::tree::HostTransitionDef {
+        transition: Some(crate::tree::TransitionDef {
             id_hash: 43,
             duration_ms,
             easing,
         }),
         color_space: ColorSpace::default(),
-        inner: Box::new(DrawCommand::Sphere {
+        inner: Box::new(Draw::Sphere {
             x: 0.0,
             y: 0.0,
             w: 100.0,
@@ -421,7 +421,7 @@ fn arc_transition_interpolates_sweep() {
     assert_eq!(*cap, ArcCap::Round);
 }
 
-fn gauge_arc(start_angle: f32, end_angle: f32, easing: Easing) -> DrawCommand {
+fn gauge_arc(start_angle: f32, end_angle: f32, easing: Easing) -> Draw {
     sized_arc(30.0, 6.0, (start_angle, end_angle), easing, Vec::new())
 }
 
@@ -430,17 +430,17 @@ fn sized_arc(
     width: f32,
     (start_angle, end_angle): (f32, f32),
     easing: Easing,
-    animations: Vec<crate::tree::HostAnimationDef>,
-) -> DrawCommand {
-    DrawCommand::Modified {
+    animations: Vec<crate::tree::AnimationDef>,
+) -> Draw {
+    Draw::Modified {
         animations,
-        transition: Some(crate::tree::HostTransitionDef {
+        transition: Some(crate::tree::TransitionDef {
             id_hash: 42,
             duration_ms: 500,
             easing,
         }),
         color_space: ColorSpace::default(),
-        inner: Box::new(DrawCommand::Arc {
+        inner: Box::new(Draw::Arc {
             cx: 50.0,
             cy: 50.0,
             radius,
@@ -459,8 +459,8 @@ fn sized_arc(
 /// a start angle travelling round, or wrapping past 12 o'clock,
 /// a radius growing, from zero too, with a thick stroke,
 /// and a radius or scale pulling the arc towards the ring's centre.
-fn arc_transitions() -> [(DrawCommand, DrawCommand); 10] {
-    let shrinking = crate::tree::HostAnimationDef {
+fn arc_transitions() -> [(Draw, Draw); 10] {
+    let shrinking = crate::tree::AnimationDef {
         property: AnimProperty::Scale,
         from: 1.0,
         to: 0.4,
@@ -523,7 +523,7 @@ fn every_arc_a_transition_paints_lands_inside_its_damage() {
         let mut animation_states = HashMap::new();
         let mut transition_states = HashMap::new();
         let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
-        let mut frame = |draw: &DrawCommand, anim_ctx: &mut AnimationContext<'_>, delta_ms| {
+        let mut frame = |draw: &Draw, anim_ctx: &mut AnimationContext<'_>, delta_ms| {
             anim_ctx.delta_ms = delta_ms;
             anim_ctx.frame_counter += 1;
             // Animation state is keyed by draw position, which the walk restarts each pass.

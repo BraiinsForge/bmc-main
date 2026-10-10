@@ -34,7 +34,7 @@ use super::shaping::span_groups;
 use crate::gpu::glyph_cache::GlyphCache;
 use crate::gpu::lru::{LruQueue, LruStore};
 use crate::renderer::TextLayoutCounters;
-use crate::tree::{SpanData, TextStyle};
+use bmc_ui::{Span, TextStyle};
 use cosmic_text::FontSystem;
 use femtovg::{Canvas, Paint, renderer::OpenGl};
 use std::collections::{HashMap, HashSet};
@@ -473,7 +473,7 @@ impl ParagraphLayoutCache {
         &mut self,
         font_system: &mut FontSystem,
         base_style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         max_width: Option<f32>,
     ) -> (f32, f32) {
         let entry = self.layout(font_system, base_style, spans, max_width);
@@ -489,7 +489,7 @@ impl ParagraphLayoutCache {
         &mut self,
         font_system: &mut FontSystem,
         base_style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         max_width: Option<f32>,
     ) -> &ParagraphLayoutEntry {
         self.layout_for(
@@ -505,7 +505,7 @@ impl ParagraphLayoutCache {
         &mut self,
         font_system: &mut FontSystem,
         base_style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         max_width: Option<f32>,
         phase: LookupPhase,
     ) -> &ParagraphLayoutEntry {
@@ -568,7 +568,7 @@ impl ParagraphLayoutCache {
         swash: &mut cosmic_text::SwashCache,
         font_table: &FontTable,
         base_style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         x: f32,
         y: f32,
         max_width: f32,
@@ -633,8 +633,8 @@ pub(super) fn layout_cache_hasher(
 /// (an outline colour, say) must not re-shape.
 ///
 /// The spans hash themselves, which is what keeps a field added
-/// to `SpanData` from going missing here.
-pub(super) fn cache_key(base_style: &TextStyle, spans: &[SpanData], max_width: Option<f32>) -> u64 {
+/// to `Span` from going missing here.
+pub(super) fn cache_key(base_style: &TextStyle, spans: &[Span], max_width: Option<f32>) -> u64 {
     let mut hasher = layout_cache_hasher(LayoutDomain::Paragraph);
 
     base_style.size.hash(&mut hasher);

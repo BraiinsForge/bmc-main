@@ -24,7 +24,7 @@
 //! shared atlas texture. Each slot tracks the last-rendered draw args so
 //! the next frame can skip GL work when the parameters haven't changed.
 
-use bmc_wasm_protocol::MeshId;
+use bmc_ui::MeshId;
 
 use super::MeshDrawArgs;
 

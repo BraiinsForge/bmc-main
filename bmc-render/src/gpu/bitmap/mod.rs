@@ -28,7 +28,8 @@ use std::fmt;
 use std::io::Cursor;
 use std::panic;
 
-use bmc_wasm_protocol::{BitmapId, IdPool};
+use bmc_ui::BitmapId;
+use bmc_wasm_protocol::IdPool;
 use femtovg::{ImageFlags, ImageId, ImageSource, Paint, Path};
 use imgref::ImgRef;
 use rgb::{FromSlice as _, RGBA8};

@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Retained per-frame state for rendering a `bmc_render` `TreeNode`.
+//! Retained per-frame state for rendering a `bmc_render` `Node`.
 //!
 //! [`TreeUi`] owns the persistent interaction/animation/transition caches that
 //! [`layout_and_render`] reads and updates, so an overlay can draw a declarative
@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 use bmc_render::interaction::InteractionState;
 use bmc_render::renderer::Renderer;
-use bmc_render::tree::{NodeContext, ProcessContext, TreeNode, TreeResult, layout_and_render};
+use bmc_render::tree::{Node, NodeContext, ProcessContext, TreeResult, layout_and_render};
 use bmc_render::{
     AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
 };
@@ -46,7 +46,7 @@ const STATIC_LAYER_KEY: &str = "bmc-system-overlay";
 
 /// The last successfully rendered tree and the size it was laid out at.
 struct CachedTree {
-    node: TreeNode,
+    node: Node,
     size: (u32, u32),
 }
 
@@ -57,7 +57,7 @@ pub struct TreeFrame {
     pub outcome: RenderOutcome,
 }
 
-/// Holds the layout/animation/interaction context for rendering a `TreeNode`.
+/// Holds the layout/animation/interaction context for rendering a `Node`.
 #[expect(missing_debug_implementations)]
 pub struct TreeUi {
     interaction: InteractionState,
@@ -107,7 +107,7 @@ impl TreeUi {
         size: (u32, u32),
         delta_ms: u32,
         renderer: &mut dyn Renderer,
-        build: impl FnOnce() -> TreeNode,
+        build: impl FnOnce() -> Node,
     ) -> anyhow::Result<TreeFrame> {
         let replay = frame == FrameKind::AnimationOnly
             && !self.interaction.has_pending_events()
@@ -146,7 +146,7 @@ impl TreeUi {
 
     fn render_node(
         &mut self,
-        node: &TreeNode,
+        node: &Node,
         size: (u32, u32),
         delta_ms: u32,
         renderer: &mut dyn Renderer,
@@ -236,12 +236,12 @@ mod tests {
     use super::TreeUi;
     use crate::overlay::{FrameKind, NextFrame, TouchEvent};
     use crate::test_support::TestRenderer;
-    use bmc_render::colors::Color;
-    use bmc_render::tree::TreeNode;
+    use bmc_render::tree::Node;
+    use bmc_render::ui::Color;
 
     /// A full-width ProgressBar carrying the brightness touch key.
-    fn slider_tree() -> TreeNode {
-        TreeNode::ProgressBar {
+    fn slider_tree() -> Node {
+        Node::ProgressBar {
             touch_key: Some("brightness".to_owned()),
             track_h: 8.0,
             mode: bmc_render::tree::ProgressMode::Slider(0.0),
@@ -254,12 +254,11 @@ mod tests {
     }
 
     /// An indeterminate bar, which the renderer animates on its own.
-    fn animated_tree() -> TreeNode {
-        TreeNode::ProgressBar {
+    fn animated_tree() -> Node {
+        Node::ProgressBar {
             touch_key: None,
             track_h: 8.0,
-            mode: bmc_wasm_protocol::ProgressKind::Indeterminate,
-            fraction: 0.0,
+            mode: bmc_render::tree::ProgressMode::Indeterminate,
             active: true,
             fill_color: Color::from_rgba(0, 255, 0, 255),
             track_color: Color::from_rgba(80, 80, 80, 255),

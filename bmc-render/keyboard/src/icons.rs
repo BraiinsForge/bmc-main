@@ -39,8 +39,7 @@ use std::collections::HashSet;
 
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render::ui::Svg;
-use bmc_wasm_protocol::SvgId;
+use bmc_render::ui::{Svg, SvgId};
 
 // Carbon Design System icons (Apache 2.0).
 // TODO(kubijo): manually clean up SVGs — remove padding, scale to 24, union paths.

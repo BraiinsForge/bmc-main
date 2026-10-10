@@ -27,9 +27,10 @@ use super::{
     NIGHT_ACTIVE, NIGHT_MODE_KEY, RESTART_KEY, Tier, VOLUME_DOWN_KEY, VOLUME_UP_KEY,
     WIFI_RECONFIG_KEY, WifiIcons,
 };
-use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, fixed_height, row, text};
-use bmc_wasm_protocol::colors::{GRAY_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{Color, CrossAlign, FontWeight, SvgId, TextAlign};
+use bmc_render::ui::{
+    Color, CrossAlign, FontWeight, GRAY_50, Node, PropsData, SvgId, TRANSPARENT, TextAlign,
+    TextStyle, WHITE, col, fixed_height, row, text,
+};
 
 /// A ±step pair (volume / brightness) with its value text below.
 /// With captions the block is a fixed-width column with bold value + gray name.
@@ -46,7 +47,7 @@ fn pair_group(
     value: u8,
     name: &str,
     pressed: Option<&str>,
-) -> TreeNode {
+) -> Node {
     let btn = |key: &'static str, icon: Option<SvgId>| {
         let p = pressed == Some(key);
         round_button(
@@ -126,7 +127,7 @@ fn single_group(
     hold: Option<Hold>,
     label: &str,
     sublabel: &str,
-) -> TreeNode {
+) -> Node {
     let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, hold);
     let Some(captions) = tier.captions else {
         return btn;
@@ -178,7 +179,7 @@ pub(super) fn control_groups(
     icons: ControlIcons,
     wifi_icons: WifiIcons,
     wifi: bool,
-) -> (Vec<TreeNode>, Vec<TreeNode>) {
+) -> (Vec<Node>, Vec<Node>) {
     let mut pairs = Vec::new();
     if let Some(v) = controls.volume {
         pairs.push(notice.button(
@@ -282,12 +283,8 @@ pub(super) fn control_groups(
 /// The control row nodes: one row (pairs + singles) on the Large tier, two
 /// rows ([pairs], [singles]) on medium/small, each row centered. Empty rows
 /// are dropped entirely.
-pub(super) fn control_rows(
-    tier: Tier,
-    pairs: Vec<TreeNode>,
-    singles: Vec<TreeNode>,
-) -> Vec<TreeNode> {
-    let centered = |groups: Vec<TreeNode>| {
+pub(super) fn control_rows(tier: Tier, pairs: Vec<Node>, singles: Vec<Node>) -> Vec<Node> {
+    let centered = |groups: Vec<Node>| {
         col(
             PropsData {
                 cross_align: CrossAlign::Center,
@@ -320,9 +317,8 @@ pub(super) fn control_rows(
 
 #[cfg(test)]
 mod tests {
-    use bmc_render::tree::DrawCommand;
-    use bmc_wasm_protocol::colors::{GRAY_50, TRANSPARENT, WHITE};
-    use bmc_wasm_protocol::{Color, Fill};
+    use bmc_render::tree::Draw;
+    use bmc_render::ui::{Color, Fill, GRAY_50, TRANSPARENT, WHITE};
 
     use super::*;
     use crate::ui::notice::DIMMED;
@@ -452,14 +448,14 @@ mod tests {
     fn night_colors(controls: Controls<'_>) -> (Color, Color) {
         let tree = build_with_controls(wide_panel(), controls, None);
         let draws = find_canvas(&tree, NIGHT_MODE_KEY).expect("BUG: night canvas must exist");
-        let DrawCommand::Circle {
+        let Draw::Circle {
             fill: Fill::Solid(fill),
             ..
         } = draws[0]
         else {
             panic!("expected Circle")
         };
-        let DrawCommand::Svg { color, .. } = draws[draws.len() - 1] else {
+        let Draw::Svg { color, .. } = draws[draws.len() - 1] else {
             panic!("expected Svg")
         };
         (fill, color)
@@ -528,7 +524,7 @@ mod tests {
         };
         let tree = build_with_controls(wide_panel(), controls, None);
         let draws = find_canvas(&tree, VOLUME_UP_KEY).expect("BUG: volume-up canvas must exist");
-        let DrawCommand::Circle {
+        let Draw::Circle {
             fill: Fill::Solid(fill),
             ..
         } = draws[0]
@@ -536,14 +532,14 @@ mod tests {
             panic!("expected Circle")
         };
         assert_eq!(fill, CIRCLE_PRESSED);
-        let DrawCommand::Svg { color, .. } = draws[draws.len() - 1] else {
+        let Draw::Svg { color, .. } = draws[draws.len() - 1] else {
             panic!("expected Svg")
         };
         assert_eq!(color, ICON_PRESSED_TINT);
 
         let unpressed =
             find_canvas(&tree, VOLUME_DOWN_KEY).expect("BUG: volume-down canvas must exist");
-        let DrawCommand::Circle {
+        let Draw::Circle {
             fill: Fill::Solid(fill),
             ..
         } = unpressed[0]

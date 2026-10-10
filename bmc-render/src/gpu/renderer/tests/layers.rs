@@ -25,7 +25,7 @@ use crate::test_harness::{
     read_pixels_top_down,
 };
 use crate::test_tracing::counting_warns;
-use bmc_wasm_protocol::{Color, Fill};
+use bmc_ui::{Color, Fill};
 use glow::HasContext;
 
 /// A failed probe has to reach `begin_static_layer`: left ungated, the

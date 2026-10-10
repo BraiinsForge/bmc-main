@@ -20,8 +20,7 @@
 
 //! Keyboard rendering — key grid, visual feedback, layout computation.
 
-use bmc_wasm_protocol::SvgId;
-use bmc_wasm_protocol::colors::Color;
+use bmc_render::ui::{Color, SvgId};
 
 use bmc_render::interaction::Rect;
 

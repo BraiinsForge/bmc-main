@@ -20,9 +20,8 @@
 
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render::ui::Svg;
+use bmc_render::ui::{Svg, SvgId};
 use bmc_system_overlay::register_icon;
-use bmc_wasm_protocol::SvgId;
 
 const TOOLS: Svg = include_svg!("assets/tools.svg");
 const CHECKMARK: Svg = include_svg!("assets/checkmark.svg");

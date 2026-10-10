@@ -1059,7 +1059,7 @@ pub(crate) struct HostState {
     pub stale_export_buffers: usize,
 
     /// Cached deserialized tree for animation-only frames (tree, width, height).
-    pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
+    pub cached_tree: Option<(bmc_render::tree::Node, f32, f32)>,
 
     /// Whether the running guest render has committed a tree.
     ///
@@ -2305,7 +2305,7 @@ mod tests {
     fn state_that_would_replay() -> HostState {
         let mut state = state_with_damage();
         state.frame_schedule.has_active_animations = true;
-        state.cached_tree = Some((bmc_render::tree::TreeNode::Spacer { flex: 1.0 }, 40.0, 40.0));
+        state.cached_tree = Some((bmc_render::tree::Node::Spacer { flex: 1.0 }, 40.0, 40.0));
         state
     }
 

@@ -28,10 +28,10 @@ use std::collections::{BTreeSet, HashMap};
 use cosmic_text::Buffer;
 
 use super::{NO_SPAN, normalize_carriage_returns, shape_paragraph, span_for_glyph};
-use crate::tree::{SpanData, TextStyle};
+use bmc_ui::{Span, TextStyle};
 
-fn span(text: &str) -> SpanData {
-    SpanData {
+fn span(text: &str) -> Span {
+    Span {
         text: text.to_owned(),
         weight: None,
         color: None,
@@ -44,7 +44,7 @@ fn span(text: &str) -> SpanData {
 
 /// Shape exactly as the draw path does: normalize first, so the buffer is the
 /// one whose glyphs `draw` would resolve.
-fn shape(spans: &[SpanData], max_width: f32) -> Buffer {
+fn shape(spans: &[Span], max_width: f32) -> Buffer {
     let normalized = normalize_carriage_returns(spans);
     let mut font_system = super::font_system();
     let style = TextStyle::default();
@@ -53,7 +53,7 @@ fn shape(spans: &[SpanData], max_width: f32) -> Buffer {
 }
 
 /// Each hard line's text, in the same normalized text the draw path slices.
-fn line_texts(spans: &[SpanData]) -> Vec<String> {
+fn line_texts(spans: &[Span]) -> Vec<String> {
     shape(spans, 400.0)
         .lines
         .iter()
@@ -85,7 +85,7 @@ fn is_unattributable(c: char) -> bool {
 /// alphabet no other span uses, so the owning span follows from a glyph's text
 /// alone. Nothing here reconstructs a byte offset, which is the point — that
 /// arithmetic is what [`super::shape_paragraph`]'s tagging removed.
-fn assert_span_attribution(spans: &[SpanData], max_width: f32) -> BTreeSet<usize> {
+fn assert_span_attribution(spans: &[Span], max_width: f32) -> BTreeSet<usize> {
     let mut owner = HashMap::new();
     for (i, s) in spans.iter().enumerate() {
         for c in s.text.chars().filter(|c| !is_unattributable(*c)) {
@@ -127,7 +127,7 @@ fn assert_span_attribution(spans: &[SpanData], max_width: f32) -> BTreeSet<usize
 /// Every glyph range must slice the line it indexes. `draw` uses `get`, so a
 /// range landing out of bounds or inside a multi-byte character silently drops
 /// text there; here it fails loudly instead.
-fn assert_glyph_ranges_slice_their_line(spans: &[SpanData], max_width: f32) {
+fn assert_glyph_ranges_slice_their_line(spans: &[Span], max_width: f32) {
     let buffer = shape(spans, max_width);
     for run in buffer.layout_runs() {
         for glyph in run.glyphs {

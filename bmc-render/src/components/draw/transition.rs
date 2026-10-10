@@ -22,32 +22,30 @@
 
 use crate::PrevDrawValues;
 use crate::animation::interpolate_color;
-use crate::tree::DrawCommand;
-use bmc_wasm_protocol::ColorSpace;
+use crate::tree::Draw;
+use bmc_ui::ColorSpace;
 
 use glam::{Quat, Vec3};
 
 /// Extract the static values from a draw command's innermost content for transition tracking.
 #[expect(clippy::too_many_lines)]
-pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
+pub(crate) fn extract_draw_values(draw: &Draw) -> PrevDrawValues {
     match draw {
-        DrawCommand::Bitmap { x, y, w, h, .. } | DrawCommand::NinePatch { x, y, w, h, .. } => {
-            PrevDrawValues {
-                x: *x,
-                y: *y,
-                w: *w,
-                h: *h,
-                ..Default::default()
-            }
-        }
-        DrawCommand::Qr { x, y, size, .. } => PrevDrawValues {
+        Draw::Bitmap { x, y, w, h, .. } | Draw::NinePatch { x, y, w, h, .. } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+            ..Default::default()
+        },
+        Draw::Qr { x, y, size, .. } => PrevDrawValues {
             x: *x,
             y: *y,
             w: *size,
             h: *size,
             ..Default::default()
         },
-        DrawCommand::Sphere {
+        Draw::Sphere {
             x,
             y,
             w,
@@ -70,7 +68,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             light_lon: *light_lon,
             ..Default::default()
         },
-        DrawCommand::Mesh {
+        Draw::Mesh {
             x, y, w, h, args, ..
         } => PrevDrawValues {
             x: *x,
@@ -97,7 +95,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             specular: args.lighting.specular,
             ..Default::default()
         },
-        DrawCommand::Rect { x, y, w, h, fill } => PrevDrawValues {
+        Draw::Rect { x, y, w, h, fill } => PrevDrawValues {
             x: *x,
             y: *y,
             w: *w,
@@ -105,7 +103,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             color: fill.primary_color(),
             ..Default::default()
         },
-        DrawCommand::Svg {
+        Draw::Svg {
             x, y, w, h, color, ..
         } => PrevDrawValues {
             x: *x,
@@ -115,7 +113,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             color: *color,
             ..Default::default()
         },
-        DrawCommand::Circle {
+        Draw::Circle {
             cx, cy, r, fill, ..
         } => PrevDrawValues {
             x: *cx,
@@ -124,7 +122,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             color: fill.primary_color(),
             ..Default::default()
         },
-        DrawCommand::Arc {
+        Draw::Arc {
             cx,
             cy,
             radius,
@@ -143,7 +141,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             arc_width: *width,
             ..Default::default()
         },
-        DrawCommand::Orbit {
+        Draw::Orbit {
             radius,
             angle,
             inner,
@@ -153,25 +151,25 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             vals.radius = *radius;
             vals
         }
-        DrawCommand::Rotated { angle, inner } => {
+        Draw::Rotated { angle, inner } => {
             let mut vals = extract_draw_values(inner);
             vals.rotation = *angle;
             vals
         }
-        DrawCommand::Centered { inner }
-        | DrawCommand::Modified { inner, .. }
-        | DrawCommand::Shadow { inner, .. } => extract_draw_values(inner),
-        DrawCommand::Path { paint, .. } => PrevDrawValues {
+        Draw::Centered { inner } | Draw::Modified { inner, .. } | Draw::Shadow { inner, .. } => {
+            extract_draw_values(inner)
+        }
+        Draw::Path { paint, .. } => PrevDrawValues {
             color: paint.primary_color(),
             ..Default::default()
         },
-        DrawCommand::Text { x, y, style, .. } => PrevDrawValues {
+        Draw::Text { x, y, style, .. } => PrevDrawValues {
             x: *x,
             y: *y,
             color: style.color,
             ..Default::default()
         },
-        DrawCommand::CurvedText {
+        Draw::CurvedText {
             cx,
             cy,
             radius,
@@ -186,7 +184,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             color: style.color,
             ..Default::default()
         },
-        DrawCommand::AutofitText {
+        Draw::AutofitText {
             x,
             y,
             box_width,

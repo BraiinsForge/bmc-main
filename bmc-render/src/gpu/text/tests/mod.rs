@@ -20,7 +20,7 @@
 
 use super::*;
 use super::{autofit::*, glyphs::*, layout_cache::*, shaping::*};
-use crate::tree::{FontFamily, FontWeight, SpanData};
+use bmc_ui::{FontFamily, FontWeight, Span};
 use cosmic_text::FontSystem;
 
 mod span_attribution;
@@ -54,8 +54,8 @@ fn line_style(size: f32, italic: bool) -> LineStyle {
     }
 }
 
-fn sized_span(text: &str, size: Option<u32>) -> SpanData {
-    SpanData {
+fn sized_span(text: &str, size: Option<u32>) -> Span {
+    Span {
         text: text.to_owned(),
         weight: None,
         color: None,

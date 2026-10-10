@@ -22,9 +22,8 @@
 //! a fully populated control set, and readers that pull text, canvases
 //! and widths back out of a built tree.
 
-use bmc_render::tree::{DrawCommand, HostAnimationDef, TextStyle, TreeNode};
+use bmc_render::ui::{AnimProperty, AnimationDef, Color, Draw, Fill, Node, SvgId, TextStyle};
 use bmc_system_overlay::DisplayShape;
-use bmc_wasm_protocol::{AnimProperty, Color, Fill, SvgId};
 
 use super::*;
 
@@ -101,7 +100,7 @@ pub(super) fn held_status() -> Status {
     status_at(Action::Restart, holding(0.5))
 }
 
-pub(super) fn build(panel: Panel, view: WifiView<'_>) -> TreeNode {
+pub(super) fn build(panel: Panel, view: WifiView<'_>) -> Node {
     build_tree(
         Some("braiins-deck"),
         Some("10.0.0.2"),
@@ -120,7 +119,7 @@ pub(super) fn build_with_controls(
     panel: Panel,
     controls: Controls<'_>,
     status: Option<&Status>,
-) -> TreeNode {
+) -> Node {
     build_tree(
         Some("braiins-deck"),
         Some("10.0.0.2"),
@@ -136,10 +135,10 @@ pub(super) fn build_with_controls(
 }
 
 /// Every SVG icon id the subtree draws, in tree order.
-pub(super) fn svg_ids(node: &TreeNode, out: &mut Vec<SvgId>) {
-    if let TreeNode::Canvas { draws, .. } = node {
+pub(super) fn svg_ids(node: &Node, out: &mut Vec<SvgId>) {
+    if let Node::Canvas { draws, .. } = node {
         out.extend(draws.iter().filter_map(|draw| {
-            if let DrawCommand::Svg { icon_id, .. } = draw {
+            if let Draw::Svg { icon_id, .. } = draw {
                 *icon_id
             } else {
                 None
@@ -152,52 +151,52 @@ pub(super) fn svg_ids(node: &TreeNode, out: &mut Vec<SvgId>) {
 }
 
 /// Direct children of a container node, if any.
-pub(super) fn children(node: &TreeNode) -> Option<&[TreeNode]> {
+pub(super) fn children(node: &Node) -> Option<&[Node]> {
     match node {
-        TreeNode::Column(_, kids)
-        | TreeNode::Row(_, kids)
-        | TreeNode::Center(_, kids)
-        | TreeNode::Scroll { children: kids, .. } => Some(kids),
-        TreeNode::Tag { content, .. } | TreeNode::Dimmed { child: content, .. } => {
+        Node::Column(_, kids)
+        | Node::Row(_, kids)
+        | Node::Center(_, kids)
+        | Node::Scroll { children: kids, .. } => Some(kids),
+        Node::Tag { content, .. } | Node::Dimmed { child: content, .. } => {
             Some(std::slice::from_ref(&**content))
         }
-        TreeNode::Paragraph { .. }
-        | TreeNode::Button { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Canvas { .. }
-        | TreeNode::Notification { .. }
-        | TreeNode::RelTime { .. }
-        | TreeNode::Modal { .. }
-        | TreeNode::ProgressBar { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_) => None,
+        Node::Paragraph { .. }
+        | Node::Button { .. }
+        | Node::Spacer { .. }
+        | Node::Canvas { .. }
+        | Node::Notification { .. }
+        | Node::RelTime { .. }
+        | Node::Modal { .. }
+        | Node::ProgressBar { .. }
+        | Node::Switcher { .. }
+        | Node::Skeleton(_) => None,
     }
 }
 
-pub(super) fn is_absolute(node: &TreeNode) -> bool {
+pub(super) fn is_absolute(node: &Node) -> bool {
     match node {
-        TreeNode::Column(props, _) | TreeNode::Row(props, _) | TreeNode::Center(props, _) => {
-            props.is_absolute()
-        }
-        TreeNode::Paragraph { props, .. }
-        | TreeNode::Canvas { props, .. }
-        | TreeNode::Scroll { props, .. } => props.is_absolute(),
-        TreeNode::Dimmed { child, .. } => is_absolute(child),
-        TreeNode::Button { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Notification { .. }
-        | TreeNode::RelTime { .. }
-        | TreeNode::Tag { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Modal { .. }
-        | TreeNode::ProgressBar { .. } => false,
+        Node::Column(props, _)
+        | Node::Row(props, _)
+        | Node::Center(props, _)
+        | Node::Paragraph { props, .. }
+        | Node::Canvas { props, .. }
+        | Node::Scroll { props, .. } => props.is_absolute(),
+        Node::Dimmed { child, .. } => is_absolute(child),
+        Node::Button { .. }
+        | Node::Spacer { .. }
+        | Node::Notification { .. }
+        | Node::RelTime { .. }
+        | Node::Tag { .. }
+        | Node::Switcher { .. }
+        | Node::Skeleton(_)
+        | Node::Modal { .. }
+        | Node::ProgressBar { .. } => false,
     }
 }
 
 /// Depth-first search for the first Canvas carrying `key`.
-pub(super) fn find_canvas<'t>(node: &'t TreeNode, key: &str) -> Option<&'t Vec<DrawCommand>> {
-    if let TreeNode::Canvas {
+pub(super) fn find_canvas<'t>(node: &'t Node, key: &str) -> Option<&'t Vec<Draw>> {
+    if let Node::Canvas {
         touch_key: Some(k),
         draws,
         ..
@@ -211,17 +210,14 @@ pub(super) fn find_canvas<'t>(node: &'t TreeNode, key: &str) -> Option<&'t Vec<D
 
 /// A hold circle's radius and colour as `pick` reads its animations:
 /// `|a| a.from` for the first frame, `|a| a.to` for the last.
-fn hold_circle_with(
-    draw: &DrawCommand,
-    pick: impl Fn(&HostAnimationDef) -> f32,
-) -> Option<(f32, Color)> {
-    let DrawCommand::Modified {
+fn hold_circle_with(draw: &Draw, pick: impl Fn(&AnimationDef) -> f32) -> Option<(f32, Color)> {
+    let Draw::Modified {
         animations, inner, ..
     } = draw
     else {
         return None;
     };
-    let DrawCommand::Circle {
+    let Draw::Circle {
         r,
         fill: Fill::Solid(color),
         ..
@@ -242,24 +238,24 @@ fn hold_circle_with(
 }
 
 /// A hold circle as the first frame after a build draws it.
-pub(super) fn hold_circle_at_start(draw: &DrawCommand) -> Option<(f32, Color)> {
+pub(super) fn hold_circle_at_start(draw: &Draw) -> Option<(f32, Color)> {
     hold_circle_with(draw, |a| a.from)
 }
 
 /// A hold circle as it ends up once its animations finish.
-pub(super) fn hold_circle_at_end(draw: &DrawCommand) -> Option<(f32, Color)> {
+pub(super) fn hold_circle_at_end(draw: &Draw) -> Option<(f32, Color)> {
     hold_circle_with(draw, |a| a.to)
 }
 
-pub(super) fn find_hold_circle_for_key(node: &TreeNode, key: &str) -> Option<(f32, Color)> {
-    if let TreeNode::Column(_, children) = node
+pub(super) fn find_hold_circle_for_key(node: &Node, key: &str) -> Option<(f32, Color)> {
+    if let Node::Column(_, children) = node
         && let [
-            TreeNode::Canvas {
+            Node::Canvas {
                 touch_key: None,
                 draws,
                 ..
             },
-            TreeNode::Canvas {
+            Node::Canvas {
                 touch_key: Some(canvas_key),
                 ..
             },
@@ -274,8 +270,8 @@ pub(super) fn find_hold_circle_for_key(node: &TreeNode, key: &str) -> Option<(f3
 }
 
 /// Recursively collect every keyed Canvas touch key in the tree.
-pub(super) fn canvas_keys(node: &TreeNode, out: &mut Vec<String>) {
-    if let TreeNode::Canvas {
+pub(super) fn canvas_keys(node: &Node, out: &mut Vec<String>) {
+    if let Node::Canvas {
         touch_key: Some(k), ..
     } = node
     {
@@ -289,18 +285,18 @@ pub(super) fn canvas_keys(node: &TreeNode, out: &mut Vec<String>) {
 }
 
 /// Every key in the tree that still takes touches, the slider's included.
-pub(super) fn touch_keys(node: &TreeNode) -> Vec<String> {
+pub(super) fn touch_keys(node: &Node) -> Vec<String> {
     let mut out = Vec::new();
     collect_touch_keys(node, &mut out);
     out.sort();
     out
 }
 
-fn collect_touch_keys(node: &TreeNode, out: &mut Vec<String>) {
-    if let TreeNode::Canvas {
+fn collect_touch_keys(node: &Node, out: &mut Vec<String>) {
+    if let Node::Canvas {
         touch_key: Some(k), ..
     }
-    | TreeNode::ProgressBar {
+    | Node::ProgressBar {
         touch_key: Some(k), ..
     } = node
     {
@@ -312,8 +308,8 @@ fn collect_touch_keys(node: &TreeNode, out: &mut Vec<String>) {
 }
 
 /// Whether the subtree contains the unkeyed WiFi status-icon canvas.
-pub(super) fn has_unkeyed_canvas(node: &TreeNode) -> bool {
-    if let TreeNode::Canvas {
+pub(super) fn has_unkeyed_canvas(node: &Node) -> bool {
+    if let Node::Canvas {
         touch_key: None, ..
     } = node
     {
@@ -323,10 +319,10 @@ pub(super) fn has_unkeyed_canvas(node: &TreeNode) -> bool {
 }
 
 /// Recursively collect the payload of every QR draw in the tree.
-pub(super) fn qr_texts(node: &TreeNode, out: &mut Vec<String>) {
-    if let TreeNode::Canvas { draws, .. } = node {
+pub(super) fn qr_texts(node: &Node, out: &mut Vec<String>) {
+    if let Node::Canvas { draws, .. } = node {
         out.extend(draws.iter().filter_map(|draw| {
-            if let DrawCommand::Qr { text, .. } = draw {
+            if let Draw::Qr { text, .. } = draw {
                 Some(text.clone())
             } else {
                 None
@@ -341,8 +337,8 @@ pub(super) fn qr_texts(node: &TreeNode, out: &mut Vec<String>) {
 }
 
 /// Recursively collect every span text in the tree.
-pub(super) fn collect_texts(node: &TreeNode, out: &mut Vec<String>) {
-    if let TreeNode::Paragraph { spans, .. } = node {
+pub(super) fn collect_texts(node: &Node, out: &mut Vec<String>) {
+    if let Node::Paragraph { spans, .. } = node {
         for span in spans {
             out.push(span.text.clone());
         }
@@ -355,8 +351,8 @@ pub(super) fn collect_texts(node: &TreeNode, out: &mut Vec<String>) {
 }
 
 /// The style of the paragraph holding `needle`.
-pub(super) fn style_of(node: &TreeNode, needle: &str) -> Option<TextStyle> {
-    if let TreeNode::Paragraph {
+pub(super) fn style_of(node: &Node, needle: &str) -> Option<TextStyle> {
+    if let Node::Paragraph {
         base_style, spans, ..
     } = node
         && spans.iter().any(|span| span.text == needle)
@@ -368,26 +364,26 @@ pub(super) fn style_of(node: &TreeNode, needle: &str) -> Option<TextStyle> {
         .find_map(|child| style_of(child, needle))
 }
 
-pub(super) fn text_color(node: &TreeNode, needle: &str) -> Option<Color> {
+pub(super) fn text_color(node: &Node, needle: &str) -> Option<Color> {
     style_of(node, needle).map(|style| style.color)
 }
 
-/// `node` with any [`TreeNode::Dimmed`] wrappers peeled off:
+/// `node` with any [`Node::Dimmed`] wrappers peeled off:
 /// what actually lays out.
-pub(super) fn undimmed(mut node: &TreeNode) -> &TreeNode {
-    while let TreeNode::Dimmed { child, .. } = node {
+pub(super) fn undimmed(mut node: &Node) -> &Node {
+    while let Node::Dimmed { child, .. } = node {
         node = child;
     }
     node
 }
 
 /// The brightness the first node `hit` accepts draws at:
-/// the product of the [`TreeNode::Dimmed`] factors above it.
-pub(super) fn brightness_where(node: &TreeNode, hit: &dyn Fn(&TreeNode) -> bool) -> Option<f32> {
+/// the product of the [`Node::Dimmed`] factors above it.
+pub(super) fn brightness_where(node: &Node, hit: &dyn Fn(&Node) -> bool) -> Option<f32> {
     if hit(node) {
         return Some(1.0);
     }
-    let own = if let TreeNode::Dimmed { brightness, .. } = node {
+    let own = if let Node::Dimmed { brightness, .. } = node {
         *brightness
     } else {
         1.0
@@ -399,25 +395,25 @@ pub(super) fn brightness_where(node: &TreeNode, hit: &dyn Fn(&TreeNode) -> bool)
 }
 
 /// [`brightness_where`] for the paragraph showing `needle`.
-pub(super) fn text_brightness(tree: &TreeNode, needle: &str) -> Option<f32> {
+pub(super) fn text_brightness(tree: &Node, needle: &str) -> Option<f32> {
     brightness_where(
         tree,
-        &|node| matches!(node, TreeNode::Paragraph { spans, .. } if spans.iter().any(|s| s.text == needle)),
+        &|node| matches!(node, Node::Paragraph { spans, .. } if spans.iter().any(|s| s.text == needle)),
     )
 }
 
 /// [`brightness_where`] for the canvas carrying `key`.
-pub(super) fn canvas_brightness(tree: &TreeNode, key: &str) -> Option<f32> {
+pub(super) fn canvas_brightness(tree: &Node, key: &str) -> Option<f32> {
     brightness_where(
         tree,
-        &|node| matches!(node, TreeNode::Canvas { touch_key: Some(k), .. } if k == key),
+        &|node| matches!(node, Node::Canvas { touch_key: Some(k), .. } if k == key),
     )
 }
 
 /// Largest text size in the subtree — the line height driver of a text
 /// band (hostname, caption).
-pub(super) fn max_text_size(node: &TreeNode) -> u32 {
-    let own = if let TreeNode::Paragraph { base_style, .. } = node {
+pub(super) fn max_text_size(node: &Node) -> u32 {
+    let own = if let Node::Paragraph { base_style, .. } = node {
         base_style.size
     } else {
         0
@@ -472,11 +468,11 @@ pub(super) fn line_width(s: &str, size: u32) -> f32 {
 /// not a cap — content too wide for its box still overflows the panel.
 /// Structurally worst-case, but only as accurate as [`HOSTNAME_CHAR_W`].
 #[expect(clippy::cast_precision_loss, reason = "child counts are small")]
-pub(super) fn min_content_width(node: &TreeNode) -> f32 {
-    if let TreeNode::Canvas { props, .. } = node {
+pub(super) fn min_content_width(node: &Node) -> f32 {
+    if let Node::Canvas { props, .. } = node {
         return props.width;
     }
-    if let TreeNode::Paragraph {
+    if let Node::Paragraph {
         base_style, spans, ..
     } = node
     {
@@ -485,15 +481,15 @@ pub(super) fn min_content_width(node: &TreeNode) -> f32 {
             .map(|span| line_width(&span.text, base_style.size))
             .sum();
     }
-    let kids: &[TreeNode] = children(node).unwrap_or_default();
+    let kids: &[Node] = children(node).unwrap_or_default();
     let flow_kids = kids.iter().filter(|child| !is_absolute(child));
-    let intrinsic = if let TreeNode::Row(props, _) = node {
+    let intrinsic = if let Node::Row(props, _) = node {
         let gaps = props.gap * flow_kids.clone().count().saturating_sub(1) as f32;
         flow_kids.map(min_content_width).sum::<f32>() + gaps
     } else {
         flow_kids.map(min_content_width).fold(0.0, f32::max)
     };
-    if let TreeNode::Row(props, _) | TreeNode::Column(props, _) = node {
+    if let Node::Row(props, _) | Node::Column(props, _) = node {
         return intrinsic.max(props.width);
     }
     intrinsic

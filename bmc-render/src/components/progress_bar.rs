@@ -26,8 +26,7 @@
     clippy::cast_sign_loss
 )]
 
-use bmc_ui::{ProgressMode, SliderSkin};
-use bmc_wasm_protocol::Color;
+use bmc_ui::{Color, ProgressMode, SliderSkin};
 
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;

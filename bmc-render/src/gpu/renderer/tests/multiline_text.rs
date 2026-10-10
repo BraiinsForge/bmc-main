@@ -31,8 +31,8 @@
 use super::FemtoVgRenderer;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
-use crate::tree::{SpanData, TextStyle};
-use bmc_wasm_protocol::{AutoFit, Color};
+use bmc_ui::{AutoFit, Color};
+use bmc_ui::{Span, TextStyle};
 
 pub(super) const W: u32 = 240;
 pub(super) const H: u32 = 110;
@@ -42,8 +42,8 @@ const TEXT_INSET: f32 = 2.0;
 const MAX_W: f32 = 236.0;
 const BOX_H: f32 = 106.0;
 
-pub(super) fn span(text: &str, color: Option<Color>) -> SpanData {
-    SpanData {
+pub(super) fn span(text: &str, color: Option<Color>) -> Span {
+    Span {
         text: text.to_owned(),
         weight: None,
         color,

@@ -28,18 +28,15 @@
 use std::time::Instant;
 use std::vec;
 
-use bmc_render::colors::{BLACK, Color, GRAY_30, ORANGE_30, ORANGE_40, ORANGE_50, WHITE};
 use bmc_render::renderer::Renderer;
-use bmc_render::tree::{
-    DrawCommand, FontFamily, FontWeight, Interpolation, TextAlign, TextStyle, TreeNode,
-    VerticalAlign, col, fixed_height, row, text,
+use bmc_render::ui::{
+    ArcCap, ArcFill, ArcSegments, BLACK, Color, CrossAlign, Draw, Fill, FontFamily, FontWeight,
+    GRAY_30, Interpolation, Node, ORANGE_30, ORANGE_40, ORANGE_50, PathPaint, PropsData,
+    TRANSPARENT, TextAlign, TextStyle, VerticalAlign, WHITE, col, fixed_height, row, text,
 };
 use bmc_system_overlay::{
     AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
     RenderOutcome, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
-};
-use bmc_wasm_protocol::{
-    ArcCap, ArcFill, ArcSegments, CrossAlign, Fill, PathPaint, PropsData, TRANSPARENT,
 };
 
 /// Touch key for the stop-alarm button; shared by its `Canvas` hit region and
@@ -119,12 +116,12 @@ pub struct AlarmView {
 /// flat fill. A `Canvas` instead carries arbitrary draw commands (fill, border,
 /// label) *and* a `touch_key`, so we get the custom look while the tap still
 /// flows through the framework's normal hit-testing.
-fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> TreeNode {
+fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Node {
     /// Logical size of every alarm action button.
     const BUTTON_W: f32 = 400.0;
     const BUTTON_H: f32 = 100.0;
 
-    let mut draws = vec![DrawCommand::Rect {
+    let mut draws = vec![Draw::Rect {
         x: 0.0,
         y: 0.0,
         w: BUTTON_W,
@@ -136,7 +133,7 @@ fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Tr
     // stays fully inside the canvas rather than clipping at the edge; `closed`
     // joins the last corner back to the first.
     if let Some(color) = border {
-        draws.push(DrawCommand::Path {
+        draws.push(Draw::Path {
             points: vec![
                 (0.5, 0.5),
                 (BUTTON_W - 0.5, 0.5),
@@ -156,7 +153,7 @@ fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Tr
     // Placed at the canvas centre; `align`/`vertical_align: Center` anchor the
     // glyph box on that point rather than its top-left. Pushed last so the
     // label paints on top of the fill and border.
-    draws.push(DrawCommand::Text {
+    draws.push(Draw::Text {
         x: BUTTON_W / 2.0,
         y: BUTTON_H / 2.0,
         text: label.to_owned(),
@@ -171,7 +168,7 @@ fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Tr
         },
     });
 
-    TreeNode::Canvas {
+    Node::Canvas {
         props: PropsData {
             width: BUTTON_W,
             height: BUTTON_H,
@@ -182,8 +179,8 @@ fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Tr
     }
 }
 
-fn draw_outline_circle(cx: f32, cy: f32, r: f32, color: Color) -> DrawCommand {
-    DrawCommand::Arc {
+fn draw_outline_circle(cx: f32, cy: f32, r: f32, color: Color) -> Draw {
+    Draw::Arc {
         cx,
         cy,
         radius: r,
@@ -196,7 +193,7 @@ fn draw_outline_circle(cx: f32, cy: f32, r: f32, color: Color) -> DrawCommand {
     }
 }
 
-fn background_rings(background_size: (u32, u32)) -> TreeNode {
+fn background_rings(background_size: (u32, u32)) -> Node {
     /// Concentric decorative rings behind the alarm content, outer edge fading out.
     /// `(opacity, radius_px)` on the 480×1280 firing screen; each ring is larger
     /// than the 480px width, so only its top and bottom arcs are visible.
@@ -210,7 +207,7 @@ fn background_rings(background_size: (u32, u32)) -> TreeNode {
         .map(|(opacity, r)| draw_outline_circle(w / 2.0, h / 2.0, r, ORANGE_40.with_alpha(opacity)))
         .collect();
 
-    TreeNode::Canvas {
+    Node::Canvas {
         props: PropsData {
             inset_left: 0.0,
             inset_top: 0.0,
@@ -226,7 +223,7 @@ fn background_rings(background_size: (u32, u32)) -> TreeNode {
 /// Build the time row: the large time text with an inline AM/PM marker
 /// vertically centred against it in 12-hour mode. In 24-hour mode
 /// (`view.period` empty) the row is just the time text.
-fn build_time_row(view: &AlarmView) -> TreeNode {
+fn build_time_row(view: &AlarmView) -> Node {
     let time_font_size: u16 = 200;
     let time_node = text(
         view.time.clone(),
@@ -292,7 +289,7 @@ fn build_time_row(view: &AlarmView) -> TreeNode {
 }
 
 #[must_use]
-pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
+pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> Node {
     // Fall back to a generic name for an unlabelled alarm so the screen never
     // shows a blank line above the time.
     let label = if view.label.is_empty() {

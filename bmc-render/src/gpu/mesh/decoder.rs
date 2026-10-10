@@ -31,7 +31,7 @@
 use anyhow::{Result, bail};
 use glow::HasContext;
 
-use bmc_wasm_protocol::mesh::{
+use bmc_ui::mesh::{
     FLAG_HAS_NORMAL_MAP, FLAG_HAS_TANGENTS, FLAG_HAS_TEXTURE, FLAG_HAS_UVS, HEADER_SIZE,
     MAX_TEXTURE_SIZE, MAX_TRIANGLES, MAX_VERTICES, MESH_MAGIC, TextureFormat,
 };
@@ -629,7 +629,7 @@ fn read_f32(data: &[u8], offset: usize) -> f32 {
 mod tests {
     use super::validate_mesh_header;
     use crate::gpu::mesh::atlas::AABB_SIZE;
-    use bmc_wasm_protocol::mesh::{
+    use bmc_ui::mesh::{
         FLAG_HAS_TEXTURE, FLAG_HAS_UVS, HEADER_SIZE, MAX_TEXTURE_SIZE, MAX_TRIANGLES, MAX_VERTICES,
         MESH_MAGIC,
     };

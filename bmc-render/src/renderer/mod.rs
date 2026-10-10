@@ -23,14 +23,14 @@
 //! All coordinates are f32. Implementations may round to integer
 //! internally if the backend requires it.
 
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{
-    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+use bmc_ui::colors::Color;
+use bmc_ui::{
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Fill, MeshId, Span,
+    SvgId, TextStyle,
 };
 
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::Rect;
-use crate::tree::{AutoFit, SpanData, TextStyle};
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -307,18 +307,11 @@ pub trait RenderText {
     fn measure_paragraph(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         max_width: Option<f32>,
     ) -> (f32, f32);
 
-    fn draw_paragraph(
-        &mut self,
-        style: &TextStyle,
-        spans: &[SpanData],
-        x: f32,
-        y: f32,
-        max_width: f32,
-    );
+    fn draw_paragraph(&mut self, style: &TextStyle, spans: &[Span], x: f32, y: f32, max_width: f32);
 
     /// [`Self::draw_paragraph`], scissored to `x..x + max_width`
     /// horizontally and `clip_top..clip_bottom` vertically.
@@ -326,7 +319,7 @@ pub trait RenderText {
     fn draw_paragraph_clipped(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         x: f32,
         y: f32,
         max_width: f32,
@@ -615,7 +608,7 @@ pub trait RenderAssets {
 pub trait RenderOffscreen {
     // -- Drop shadow --
 
-    /// Backend hook for `DrawCommand::Shadow`. `(cx, cy)` is the canvas origin;
+    /// Backend hook for `Draw::Shadow`. `(cx, cy)` is the canvas origin;
     /// `(fbo_w, fbo_h)` an offscreen size holding the inner content;
     /// `inner` rasterises the wrapped draw at FBO-local coordinates.
     ///

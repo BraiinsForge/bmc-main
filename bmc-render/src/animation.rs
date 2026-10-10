@@ -22,11 +22,11 @@
 
 #![expect(clippy::cast_precision_loss, clippy::integer_division)]
 
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{ColorSpace, Easing, LoopMode};
+use bmc_ui::colors::Color;
+use bmc_ui::{ColorSpace, Easing, LoopMode};
 
 use crate::AnimationState;
-use crate::tree::HostAnimationDef;
+use crate::tree::AnimationDef;
 
 /// Default frame cadence while a tree animates, shared by widgets and system overlays:
 /// ~30 fps (33 ms). Matches the mesh budget and the observed compositor rate on the Vivante GC400.
@@ -111,7 +111,7 @@ fn ease_out_bounce(t: f32) -> f32 {
 ///
 /// Returns the interpolated value and whether the animation is still active.
 pub fn compute_animation_value(
-    def: &HostAnimationDef,
+    def: &AnimationDef,
     state: &mut AnimationState,
     delta_ms: u32,
 ) -> (f32, bool) {
@@ -202,7 +202,7 @@ pub fn interpolate_color(from: Color, to: Color, t: f32, _color_space: ColorSpac
 #[cfg(test)]
 mod tests {
     use super::{apply_easing, easing_extremes};
-    use bmc_wasm_protocol::Easing;
+    use bmc_ui::Easing;
 
     const EVERY_EASING: [Easing; 11] = [
         Easing::Linear,

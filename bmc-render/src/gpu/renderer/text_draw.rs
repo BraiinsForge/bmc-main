@@ -34,11 +34,11 @@ use crate::gpu::text::{
 };
 use crate::renderer::prelude::*;
 use crate::renderer::{GlyphCacheCounters, TextLayoutCounters};
-use crate::tree::FontFamily;
-use crate::tree::FontWeight;
-use crate::tree::{AutoFit, SpanData, TextAlign, TextOverflow, TextStyle, VerticalAlign};
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing, WHITE};
+use bmc_ui::colors::Color;
+use bmc_ui::{ArcAnchor, ArcTextFacing, WHITE};
+use bmc_ui::{
+    AutoFit, FontFamily, FontWeight, Span, TextAlign, TextOverflow, TextStyle, VerticalAlign,
+};
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, Paint};
 use std::borrow::Cow;
@@ -245,7 +245,7 @@ impl RenderText for FemtoVgRenderer {
                 TextAlign::Right => x - width,
             };
 
-            if style.outline_color != crate::colors::TRANSPARENT && style.outline_width > 0.0 {
+            if style.outline_color != bmc_ui::TRANSPARENT && style.outline_width > 0.0 {
                 #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let rings = style.outline_width.ceil() as u32;
                 draw_anchored_lines_with_outline(
@@ -411,7 +411,7 @@ impl RenderText for FemtoVgRenderer {
             text_overflow: TextOverflow::Wrap,
             ..*style
         };
-        let spans = [SpanData {
+        let spans = [Span {
             text: text.to_string(),
             weight: None,
             color: None,
@@ -476,7 +476,7 @@ impl RenderText for FemtoVgRenderer {
     fn measure_paragraph(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         max_width: Option<f32>,
     ) -> (f32, f32) {
         self.paragraph_cache
@@ -486,7 +486,7 @@ impl RenderText for FemtoVgRenderer {
     fn draw_paragraph(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         x: f32,
         y: f32,
         max_width: f32,
@@ -510,7 +510,7 @@ impl RenderText for FemtoVgRenderer {
     fn draw_paragraph_clipped(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         x: f32,
         y: f32,
         max_width: f32,
@@ -563,13 +563,13 @@ impl FemtoVgRenderer {
     }
 
     /// Borrowed while nothing dims, so a lit paragraph clones no spans.
-    fn dim_spans<'s>(&self, spans: &'s [SpanData]) -> Cow<'s, [SpanData]> {
+    fn dim_spans<'s>(&self, spans: &'s [Span]) -> Cow<'s, [Span]> {
         if self.brightness >= 1.0 {
             return Cow::Borrowed(spans);
         }
         spans
             .iter()
-            .map(|span| SpanData {
+            .map(|span| Span {
                 color: span.color.map(|c| self.dim(c)),
                 ..span.clone()
             })

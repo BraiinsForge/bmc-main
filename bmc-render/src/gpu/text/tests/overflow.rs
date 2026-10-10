@@ -27,7 +27,7 @@ use super::{font_system, sized_span};
 use cosmic_text::{Buffer, FontSystem};
 
 use super::{cache_key, extract_lines, shape_paragraph};
-use crate::tree::{FontFamily, TextAlign, TextOverflow, TextStyle};
+use bmc_ui::{FontFamily, TextAlign, TextOverflow, TextStyle};
 
 const OVERWIDE: &str = "Grayscale Bitcoin Mini Trust ETF";
 const NARROW_BOX: f32 = 120.0;

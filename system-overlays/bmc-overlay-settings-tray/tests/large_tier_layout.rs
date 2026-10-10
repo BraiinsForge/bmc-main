@@ -45,12 +45,11 @@ use bmc_overlay_settings_tray::{SettingsTrayRenderState, SettingsTrayView, rende
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::prelude::*;
-use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
-use bmc_system_overlay::{DisplayShape, FrameKind, OverlayViewport, SettingsCaps};
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{
-    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+use bmc_render::ui::{
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color, Fill, MeshId,
+    Span, SvgId, TextOverflow, TextStyle,
 };
+use bmc_system_overlay::{DisplayShape, FrameKind, OverlayViewport, SettingsCaps};
 
 const DECK: OverlayViewport = OverlayViewport {
     width: 1_280,
@@ -211,7 +210,7 @@ impl RenderText for ProbeRenderer {
     fn measure_paragraph(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         max_width: Option<f32>,
     ) -> (f32, f32) {
         // Greedy word wrap like a real text backend: lines break at
@@ -280,7 +279,7 @@ impl RenderText for ProbeRenderer {
     fn draw_paragraph(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         _x: f32,
         y: f32,
         max_width: f32,
@@ -295,7 +294,7 @@ impl RenderText for ProbeRenderer {
     fn draw_paragraph_clipped(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _x: f32,
         _y: f32,
         _max_width: f32,

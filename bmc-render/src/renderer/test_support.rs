@@ -26,16 +26,16 @@
 //! which is what these tests exist to catch. Draws are recorded or discarded;
 //! no GL context is involved.
 
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{
-    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+use bmc_ui::colors::Color;
+use bmc_ui::{
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Fill, MeshId, Span,
+    SvgId, TextStyle,
 };
 
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::gpu::renderer::{Fonts, build_font_system, sans_line_style};
 use crate::gpu::text::ParagraphLayoutCache;
 use crate::renderer::prelude::*;
-use crate::tree::{AutoFit, SpanData, TextStyle};
 
 /// One recorded [`RenderText::draw_text`] call.
 #[derive(Clone, Debug, PartialEq)]
@@ -253,7 +253,7 @@ impl RenderText for ShapingRecorder {
     fn measure_paragraph(
         &mut self,
         style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         max_width: Option<f32>,
     ) -> (f32, f32) {
         self.layouts
@@ -263,7 +263,7 @@ impl RenderText for ShapingRecorder {
     fn draw_paragraph(
         &mut self,
         _style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         x: f32,
         y: f32,
         max_width: f32,
@@ -280,7 +280,7 @@ impl RenderText for ShapingRecorder {
     fn draw_paragraph_clipped(
         &mut self,
         _style: &TextStyle,
-        spans: &[SpanData],
+        spans: &[Span],
         x: f32,
         y: f32,
         max_width: f32,

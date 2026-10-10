@@ -24,8 +24,8 @@ const LIT: Color = Color::from_rgb(200, 0, 0);
 const SHADED: Color = Color::from_rgb(0, 0, 200);
 
 /// A 10×10 box painted `color`, positioned by `props`.
-fn swatch(color: Color, props: PropsData) -> TreeNode {
-    TreeNode::Column(
+fn swatch(color: Color, props: PropsData) -> Node {
+    Node::Column(
         PropsData {
             background: color,
             width: 10.0,
@@ -47,7 +47,7 @@ fn brightness_of(renderer: &KeyRecordingRenderer, color: Color) -> f32 {
 
 #[test]
 fn a_dimmed_subtree_paints_at_its_brightness_and_its_siblings_do_not() {
-    let tree = TreeNode::Column(
+    let tree = Node::Column(
         PropsData::default(),
         vec![
             super::dimmed(0.5, swatch(SHADED, PropsData::default())),
@@ -64,7 +64,7 @@ fn a_dimmed_subtree_paints_at_its_brightness_and_its_siblings_do_not() {
 fn nested_dims_multiply_and_unwind() {
     let tree = super::dimmed(
         0.5,
-        TreeNode::Column(
+        Node::Column(
             PropsData::default(),
             vec![
                 swatch(LIT, PropsData::default()),
@@ -93,8 +93,8 @@ fn a_dimmed_node_lays_out_as_its_child() {
             },
         )
     };
-    let rect_of = |child: TreeNode| {
-        let tree = TreeNode::Column(
+    let rect_of = |child: Node| {
+        let tree = Node::Column(
             PropsData::default(),
             vec![swatch(SHADED, PropsData::default()), child],
         );

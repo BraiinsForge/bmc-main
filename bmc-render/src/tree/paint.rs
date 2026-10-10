@@ -40,7 +40,7 @@ use crate::interaction::Rect;
 use crate::partition::Band;
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
-use bmc_wasm_protocol::{Color, GRAY_50, GRAY_60, TextOverflow};
+use bmc_ui::{Color, GRAY_50, GRAY_60, TextOverflow};
 use std::collections::HashMap;
 use taffy::prelude::*;
 
@@ -73,7 +73,7 @@ fn paints_own_box(ctx: &NodeContext) -> bool {
         || ctx.skeleton.is_some()
 }
 
-/// Paint `node_id` and its subtree at its [`super::TreeNode::Dimmed`] factor, if any,
+/// Paint `node_id` and its subtree at its [`super::Node::Dimmed`] factor, if any,
 /// restoring the renderer's brightness after.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn render_taffy_node(

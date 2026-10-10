@@ -18,8 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_render::tree::{DrawCommand, TreeNode};
-use bmc_ui::{Draw, canvas, encode};
+use bmc_ui::{Draw, Node, canvas, encode};
 use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing, Color, FontWeight, PropsData, TextStyle};
 
 #[test]
@@ -64,14 +63,14 @@ fn sdk_curved_text_decodes_on_the_host_for_each_anchor_and_facing() {
     ];
 
     let bytes = encode(&canvas(PropsData::default(), draws));
-    let TreeNode::Canvas { draws, .. } =
+    let Node::Canvas { draws, .. } =
         bmc_render::deserialize_tree(&bytes).expect("BUG: SDK must serialize a valid canvas tree")
     else {
         panic!("expected canvas root");
     };
 
     assert_eq!(draws.len(), 3);
-    let DrawCommand::CurvedText {
+    let Draw::CurvedText {
         anchor,
         facing,
         text,
@@ -90,7 +89,7 @@ fn sdk_curved_text_decodes_on_the_host_for_each_anchor_and_facing() {
             FontWeight::BOLD,
         ),
     );
-    let DrawCommand::CurvedText {
+    let Draw::CurvedText {
         anchor,
         facing,
         text,
@@ -103,7 +102,7 @@ fn sdk_curved_text_decodes_on_the_host_for_each_anchor_and_facing() {
         (*anchor, *facing, text.as_str()),
         (ArcAnchor::Center, ArcTextFacing::Inward, "CENTER"),
     );
-    let DrawCommand::CurvedText {
+    let Draw::CurvedText {
         anchor,
         facing,
         text,

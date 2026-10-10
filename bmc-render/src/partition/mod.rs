@@ -30,14 +30,14 @@ use std::fmt::{self, Write as _};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Range;
 
+use bmc_ui::colors::Color;
 pub use bmc_ui::partition::{
     Band, canvas_bands, canvas_bands_after, draw_is_dynamic, node_is_dynamic, node_self_is_dynamic,
 };
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, PropsData};
+use bmc_ui::{BitmapId, PropsData};
 
 use crate::ScrollState;
-use crate::tree::TreeNode;
+use crate::tree::Node;
 
 /// Key the static half of a tree from the wire bytes it was decoded from.
 ///
@@ -94,7 +94,7 @@ pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
 /// [`static_bytes_key`] deliberately skips dynamic nodes, which is right for paint
 /// and wrong for layout: the Taffy pass still measures a dynamic node, so it
 /// sizes the static siblings and ancestors that do reach the layer. A
-/// [`TreeNode::RelTime`] label growing from "9 seconds" to "10 seconds" widens
+/// [`Node::RelTime`] label growing from "9 seconds" to "10 seconds" widens
 /// the tag around it, and a layer holding the narrow pill shows the text
 /// running past its own background.
 ///
@@ -105,15 +105,15 @@ pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
 /// Cheap on purpose — an animation-only replay recomputes this every frame,
 /// where [`static_hash`] runs on guest frames only.
 #[must_use]
-pub fn host_layout_key(node: &TreeNode, now_unix_secs: i64) -> u64 {
+pub fn host_layout_key(node: &Node, now_unix_secs: i64) -> u64 {
     let mut hasher = DefaultHasher::new();
     hash_layout_contribution(node, now_unix_secs, &mut hasher);
     hasher.finish()
 }
 
-fn hash_layout_contribution<H: Hasher>(node: &TreeNode, now_unix_secs: i64, hasher: &mut H) {
+fn hash_layout_contribution<H: Hasher>(node: &Node, now_unix_secs: i64, hasher: &mut H) {
     match node {
-        TreeNode::RelTime {
+        Node::RelTime {
             anchor,
             format,
             clamp,
@@ -126,7 +126,7 @@ fn hash_layout_contribution<H: Hasher>(node: &TreeNode, now_unix_secs: i64, hash
             hash_debug(&label, hasher);
             hash_debug(style, hasher);
         }
-        TreeNode::ProgressBar {
+        Node::ProgressBar {
             track_h,
             mode,
             skin,
@@ -136,24 +136,24 @@ fn hash_layout_contribution<H: Hasher>(node: &TreeNode, now_unix_secs: i64, hash
             hash_debug(&mode.kind(), hasher);
             hash_debug(skin, hasher);
         }
-        TreeNode::Column(_, children)
-        | TreeNode::Row(_, children)
-        | TreeNode::Center(_, children)
-        | TreeNode::Scroll { children, .. } => {
+        Node::Column(_, children)
+        | Node::Row(_, children)
+        | Node::Center(_, children)
+        | Node::Scroll { children, .. } => {
             for child in children {
                 hash_layout_contribution(child, now_unix_secs, hasher);
             }
         }
-        TreeNode::Tag { content, .. } => hash_layout_contribution(content, now_unix_secs, hasher),
-        TreeNode::Dimmed { child, .. } => hash_layout_contribution(child, now_unix_secs, hasher),
-        TreeNode::Modal { .. }
-        | TreeNode::Canvas { .. }
-        | TreeNode::Paragraph { .. }
-        | TreeNode::Button { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Notification { .. } => {}
+        Node::Tag { content, .. } => hash_layout_contribution(content, now_unix_secs, hasher),
+        Node::Dimmed { child, .. } => hash_layout_contribution(child, now_unix_secs, hasher),
+        Node::Modal { .. }
+        | Node::Canvas { .. }
+        | Node::Paragraph { .. }
+        | Node::Button { .. }
+        | Node::Spacer { .. }
+        | Node::Switcher { .. }
+        | Node::Skeleton(_)
+        | Node::Notification { .. } => {}
     }
 }
 
@@ -205,35 +205,35 @@ fn props_paint(props: &PropsData) -> bool {
 /// Errs toward `true`: a wrong `true` costs one empty capture, a wrong
 /// `false` re-rasterises the static half. Neither changes what reaches screen.
 #[must_use]
-pub fn has_static_content(node: &TreeNode) -> bool {
+pub fn has_static_content(node: &Node) -> bool {
     debug_assert!(
         !node_self_is_dynamic(node) || node_is_dynamic(node),
         "a node that repaints itself while the guest is idle must be dynamic as a subtree",
     );
     match node {
         // Only the box decoration paints; no other container field draws.
-        TreeNode::Column(props, children)
-        | TreeNode::Row(props, children)
-        | TreeNode::Center(props, children)
-        | TreeNode::Scroll {
+        Node::Column(props, children)
+        | Node::Row(props, children)
+        | Node::Center(props, children)
+        | Node::Scroll {
             props, children, ..
         } => props_paint(props) || children.iter().any(has_static_content),
-        TreeNode::Canvas { props, draws, .. } => {
+        Node::Canvas { props, draws, .. } => {
             props_paint(props) || canvas_bands(draws).any(Band::is_in_layer)
         }
-        TreeNode::Tag { content, .. } => has_static_content(content),
-        TreeNode::Dimmed { child, .. } => has_static_content(child),
+        Node::Tag { content, .. } => has_static_content(content),
+        Node::Dimmed { child, .. } => has_static_content(child),
         // Never in the layer; a spacer paints nothing at all.
-        TreeNode::RelTime { .. }
-        | TreeNode::ProgressBar { .. }
-        | TreeNode::Modal { .. }
-        | TreeNode::Spacer { .. } => false,
+        Node::RelTime { .. }
+        | Node::ProgressBar { .. }
+        | Node::Modal { .. }
+        | Node::Spacer { .. } => false,
         // Always paints something.
-        TreeNode::Paragraph { .. }
-        | TreeNode::Button { .. }
-        | TreeNode::Switcher { .. }
-        | TreeNode::Skeleton(_)
-        | TreeNode::Notification { .. } => true,
+        Node::Paragraph { .. }
+        | Node::Button { .. }
+        | Node::Switcher { .. }
+        | Node::Skeleton(_)
+        | Node::Notification { .. } => true,
     }
 }
 

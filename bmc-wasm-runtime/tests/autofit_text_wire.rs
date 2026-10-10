@@ -20,8 +20,7 @@
 
 //! SDK→host round-trip for the AutofitText canvas draw command.
 
-use bmc_render::tree::{DrawCommand, TreeNode};
-use bmc_ui::{Draw, canvas, encode};
+use bmc_ui::{Draw, Node, canvas, encode};
 use bmc_wasm_protocol::{AutoFit, PropsData, TextStyle};
 
 #[test]
@@ -43,14 +42,14 @@ fn sdk_autofit_text_decodes_on_the_host() {
     )];
 
     let bytes = encode(&canvas(PropsData::default(), draws));
-    let TreeNode::Canvas { draws, .. } =
+    let Node::Canvas { draws, .. } =
         bmc_render::deserialize_tree(&bytes).expect("BUG: SDK must serialize a valid canvas tree")
     else {
         panic!("expected canvas root");
     };
 
     assert_eq!(draws.len(), 1);
-    let DrawCommand::AutofitText {
+    let Draw::AutofitText {
         mode,
         min_size,
         max_size,

@@ -23,9 +23,10 @@
 //! but the action's own button dims and stops taking touches.
 
 use super::{Action, Hold, Phase, Status};
-use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, dimmed, text};
-use bmc_wasm_protocol::colors::WHITE;
-use bmc_wasm_protocol::{CrossAlign, FontWeight, Justify, TextAlign};
+use bmc_render::ui::{
+    CrossAlign, FontWeight, Justify, Node, PropsData, TextAlign, TextStyle, WHITE, col, dimmed,
+    text,
+};
 
 /// How much the notice dims everything but the action's button,
 /// as the alpha of a black layer over it.
@@ -95,7 +96,7 @@ impl<'a> Notice<'a> {
 
     /// `node`, the button owning `key`: every button but the action's own
     /// dims and stops taking touches while the notice is up.
-    pub(super) fn button(self, key: &str, node: TreeNode) -> TreeNode {
+    pub(super) fn button(self, key: &str, node: Node) -> Node {
         match self.0 {
             Some(status) if status.action.key() != key => shade(node),
             Some(_) | None => node,
@@ -103,7 +104,7 @@ impl<'a> Notice<'a> {
     }
 
     /// `node`, anything that is not a button.
-    pub(super) fn surroundings(self, node: TreeNode) -> TreeNode {
+    pub(super) fn surroundings(self, node: Node) -> Node {
         match self.0 {
             Some(_) => shade(node),
             None => node,
@@ -112,7 +113,7 @@ impl<'a> Notice<'a> {
 
     /// The close button dims with the rest but keeps taking touches,
     /// so the tray can always be left.
-    pub(super) fn close(self, node: TreeNode) -> TreeNode {
+    pub(super) fn close(self, node: Node) -> Node {
         match self.0 {
             Some(_) => dimmed(DIMMED, node),
             None => node,
@@ -121,12 +122,7 @@ impl<'a> Notice<'a> {
 
     /// The section above the buttons: a column of `children`,
     /// dimmed under a lit notice of `size` while one is up.
-    pub(super) fn with_notice(
-        self,
-        props: PropsData,
-        size: u32,
-        children: Vec<TreeNode>,
-    ) -> TreeNode {
+    pub(super) fn with_notice(self, props: PropsData, size: u32, children: Vec<Node>) -> Node {
         let Some(status) = self.0 else {
             return col(props, children);
         };
@@ -140,37 +136,37 @@ impl<'a> Notice<'a> {
 }
 
 /// `node`, dimmed and with every touch target in it removed.
-fn shade(mut node: TreeNode) -> TreeNode {
+fn shade(mut node: Node) -> Node {
     disable(&mut node);
     dimmed(DIMMED, node)
 }
 
-fn disable(node: &mut TreeNode) {
+fn disable(node: &mut Node) {
     match node {
-        TreeNode::Canvas { touch_key, .. } | TreeNode::ProgressBar { touch_key, .. } => {
+        Node::Canvas { touch_key, .. } | Node::ProgressBar { touch_key, .. } => {
             *touch_key = None;
         }
-        TreeNode::Button { disabled, .. } | TreeNode::Switcher { disabled, .. } => {
+        Node::Button { disabled, .. } | Node::Switcher { disabled, .. } => {
             *disabled = true;
         }
-        TreeNode::Column(_, kids)
-        | TreeNode::Row(_, kids)
-        | TreeNode::Center(_, kids)
-        | TreeNode::Scroll { children: kids, .. }
-        | TreeNode::Modal { body: kids, .. } => kids.iter_mut().for_each(disable),
-        TreeNode::Tag { content: kid, .. } | TreeNode::Dimmed { child: kid, .. } => disable(kid),
-        TreeNode::Paragraph { .. }
-        | TreeNode::Spacer { .. }
-        | TreeNode::Notification { .. }
-        | TreeNode::RelTime { .. }
-        | TreeNode::Skeleton(_) => {}
+        Node::Column(_, kids)
+        | Node::Row(_, kids)
+        | Node::Center(_, kids)
+        | Node::Scroll { children: kids, .. }
+        | Node::Modal { body: kids, .. } => kids.iter_mut().for_each(disable),
+        Node::Tag { content: kid, .. } | Node::Dimmed { child: kid, .. } => disable(kid),
+        Node::Paragraph { .. }
+        | Node::Spacer { .. }
+        | Node::Notification { .. }
+        | Node::RelTime { .. }
+        | Node::Skeleton(_) => {}
     }
 }
 
 /// The notice, centered in an out-of-flow column. Zero insets on every side
 /// stretch it over the section it ends, and painting follows child order,
 /// so the lines land over the section's dimmed content.
-fn notice_overlay(notice: NoticeText<'_>, size: u32) -> TreeNode {
+fn notice_overlay(notice: NoticeText<'_>, size: u32) -> Node {
     let line = |s: &str, weight: FontWeight| {
         text(
             s,
@@ -201,16 +197,14 @@ fn notice_overlay(notice: NoticeText<'_>, size: u32) -> TreeNode {
 
 #[cfg(test)]
 mod tests {
-    use bmc_render::tree::{DrawCommand, TreeNode, fixed_height};
-    use bmc_wasm_protocol::FontWeight;
-    use bmc_wasm_protocol::colors::TRANSPARENT;
+    use bmc_render::ui::{Draw, FontWeight, Node, TRANSPARENT, fixed_height};
 
     use super::*;
     use crate::ui::test_support::*;
     use crate::ui::*;
 
-    fn overlays<'t>(node: &'t TreeNode, out: &mut Vec<&'t TreeNode>) {
-        if is_absolute(node) && matches!(node, TreeNode::Column(..)) {
+    fn overlays<'t>(node: &'t Node, out: &mut Vec<&'t Node>) {
+        if is_absolute(node) && matches!(node, Node::Column(..)) {
             out.push(node);
         }
         for kid in children(node).into_iter().flatten() {
@@ -219,10 +213,10 @@ mod tests {
     }
 
     /// The brightness the QR code draws at, if the layout prints one.
-    fn qr_brightness(tree: &TreeNode) -> Option<f32> {
+    fn qr_brightness(tree: &Node) -> Option<f32> {
         brightness_where(tree, &|node| {
-            matches!(node, TreeNode::Canvas { draws, .. }
-                if draws.iter().any(|draw| matches!(draw, DrawCommand::Qr { .. })))
+            matches!(node, Node::Canvas { draws, .. }
+                if draws.iter().any(|draw| matches!(draw, Draw::Qr { .. })))
         })
     }
 
@@ -347,7 +341,7 @@ mod tests {
         let tree = build_with_controls(narrow_panel(), all_controls(), Some(&status));
         let mut found = Vec::new();
         overlays(&tree, &mut found);
-        let [TreeNode::Column(_, lines)] = found.as_slice() else {
+        let [Node::Column(_, lines)] = found.as_slice() else {
             panic!("one notice column, got {}", found.len())
         };
         assert_eq!(lines.len(), 1, "the title alone");
@@ -361,7 +355,7 @@ mod tests {
             let tree = build_with_controls(panel, all_controls(), Some(&held_status()));
             let mut found = Vec::new();
             overlays(&tree, &mut found);
-            let [TreeNode::Column(props, _)] = found.as_slice() else {
+            let [Node::Column(props, _)] = found.as_slice() else {
                 panic!("{panel:?}: one notice column, got {}", found.len())
             };
             for inset in [
@@ -388,7 +382,7 @@ mod tests {
             let tree = build_with_controls(panel, all_controls(), Some(&held_status()));
             let mut found = Vec::new();
             overlays(&tree, &mut found);
-            let [TreeNode::Column(_, lines)] = found.as_slice() else {
+            let [Node::Column(_, lines)] = found.as_slice() else {
                 panic!("{panel:?}: the notice reads once")
             };
             let size = if layout_for(&panel) == Layout::Wide {
@@ -399,7 +393,7 @@ mod tests {
             let styles: Vec<_> = lines
                 .iter()
                 .map(|line| {
-                    let TreeNode::Paragraph {
+                    let Node::Paragraph {
                         base_style, spans, ..
                     } = line
                     else {
@@ -449,7 +443,7 @@ mod tests {
                 "{panel:?}: the notice precedes the buttons in flow"
             );
             if layout_for(&panel) == Layout::Wide {
-                let TreeNode::Column(_, top_kids) = &root_kids[0] else {
+                let Node::Column(_, top_kids) = &root_kids[0] else {
                     panic!("the top half is a column")
                 };
                 assert!(
@@ -463,14 +457,14 @@ mod tests {
 
     #[test]
     fn only_the_actions_button_stays_lit_and_live() {
-        let at = |node: &TreeNode| {
-            if let TreeNode::Dimmed { brightness, .. } = node {
+        let at = |node: &Node| {
+            if let Node::Dimmed { brightness, .. } = node {
                 *brightness
             } else {
                 1.0
             }
         };
-        let probe = |key: &str| TreeNode::Canvas {
+        let probe = |key: &str| Node::Canvas {
             props: PropsData::default(),
             touch_key: Some(key.to_owned()),
             draws: Vec::new(),

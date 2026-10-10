@@ -43,8 +43,8 @@ use bmc_overlay_settings_tray::{
 };
 use bmc_overlay_upgrade::{Surface, SurfaceTier, UpgradeRenderState, UpgradeView, render_upgrade};
 use bmc_platform::{HardwareProfile, Product};
-use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
+use bmc_render::ui::Color;
 use bmc_system_overlay::{
     AccessPoint, DisplayShape, DownloadProgress, FrameKind, OverlayViewport, SettingsCaps,
     UpgradeKind, UpgradePhase,

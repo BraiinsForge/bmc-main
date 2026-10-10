@@ -20,7 +20,7 @@
 
 //! One frame's pass over the tree: layout, the static/dynamic split, and rendering.
 
-use super::TreeNode;
+use super::Node;
 use super::decode::deserialize_tree;
 #[cfg(feature = "frame-timings")]
 use super::gpu_pass_timing_enabled;
@@ -43,7 +43,7 @@ use crate::{
     AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
 };
 use anyhow::Result;
-use bmc_wasm_protocol::Color;
+use bmc_ui::Color;
 use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(feature = "frame-timings")]
@@ -131,7 +131,7 @@ pub fn process_tree(
     height: f32,
     renderer: &mut dyn Renderer,
     ctx: &mut ProcessContext<'_>,
-) -> Result<(TreeNode, TreeResult, bool, FrameTimings)> {
+) -> Result<(Node, TreeResult, bool, FrameTimings)> {
     let mut timings = FrameTimings::default();
 
     // Phase 1: Deserialize
@@ -153,7 +153,7 @@ pub fn process_tree(
 ///
 /// Populates `timings.layout_us` and `timings.render_us`.
 pub fn layout_and_render(
-    tree_node: &TreeNode,
+    tree_node: &Node,
     width: f32,
     height: f32,
     renderer: &mut dyn Renderer,
@@ -165,7 +165,7 @@ pub fn layout_and_render(
 
 /// Layout and render a tree, resolving suspended assets immediately before their draws.
 pub fn layout_and_render_with_asset_resolver(
-    tree_node: &TreeNode,
+    tree_node: &Node,
     width: f32,
     height: f32,
     renderer: &mut dyn Renderer,
@@ -185,7 +185,7 @@ pub fn layout_and_render_with_asset_resolver(
 }
 
 fn layout_and_render_inner(
-    tree_node: &TreeNode,
+    tree_node: &Node,
     width: f32,
     height: f32,
     renderer: &mut dyn Renderer,

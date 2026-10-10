@@ -22,15 +22,13 @@
 
 #![allow(clippy::wildcard_imports)]
 
-use crate::colors::*;
 use crate::interaction::{InteractionState, Rect};
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
 
-use bmc_ui::ButtonSkin;
-use bmc_wasm_protocol::SvgId;
-use bmc_wasm_protocol::colors::Color;
-pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
+use bmc_ui::colors::*;
+pub use bmc_ui::{ButtonSize, ButtonStyle};
+use bmc_ui::{ButtonSkin, Color, SvgId};
 
 // Button semantic colors (normal, active/pressed)
 const BTN_PRIMARY_BG: Color = VIOLET_60;

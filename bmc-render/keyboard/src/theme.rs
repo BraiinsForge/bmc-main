@@ -34,13 +34,12 @@
 use std::borrow::Cow;
 
 use bmc_render::assets::SkinRegistry as _;
-use bmc_render::ui::{NinePatch, Skin, SkinEntry};
-use bmc_wasm_protocol::colors::Color;
+use bmc_render::ui::{Color, NinePatch, Skin, SkinEntry};
 
 use crate::layout::KeyCode;
 
 // Re-export for convenience — palette colors used in CARBON_DARK.
-use bmc_wasm_protocol::colors::{
+use bmc_render::ui::{
     BLUE_60, BLUE_70, GRAY_10, GRAY_20, GRAY_30, GRAY_40, GRAY_50, GRAY_60, GRAY_70, GRAY_80,
     GRAY_90, GRAY_100, TRANSPARENT, WHITE,
 };

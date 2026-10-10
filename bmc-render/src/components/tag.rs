@@ -21,10 +21,9 @@
 //! Tag pill component — Carbon status label rendered as a rounded, themed
 //! chrome (background + leading icon) around an embedder-composed content child.
 
-use bmc_ui::TagIcon;
-use bmc_wasm_protocol::{
+use bmc_ui::{
     BLUE_50, Color, GRAY_100, ICON_ERROR, ICON_INFO, ICON_WARNING, ORANGE_40, RED_50, SvgId,
-    TagKind,
+    TagIcon, TagKind,
 };
 
 use crate::renderer::RenderTarget;
@@ -122,7 +121,7 @@ pub(crate) fn render_tag(
 #[cfg(test)]
 mod tests {
     use bmc_ui::TagIcon;
-    use bmc_wasm_protocol::{ICON_CLOSE, ICON_WARNING, ORANGE_40, TagKind};
+    use bmc_ui::{ICON_CLOSE, ICON_WARNING, ORANGE_40, TagKind};
 
     use super::{resolve_icon, tag_theme};
 

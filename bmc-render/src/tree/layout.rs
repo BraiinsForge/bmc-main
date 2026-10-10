@@ -18,12 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Building the taffy tree from [`TreeNode`]s and measuring their content.
+//! Building the taffy tree from [`Node`]s and measuring their content.
 
 #![expect(clippy::cast_precision_loss)]
 
 use super::walk::TreeResult;
-use super::{DrawCommand, ProgressMode, SkeletonData, Span, SpanData, TreeNode};
+use super::{Draw, Node, ProgressMode, SkeletonData, Span};
 use crate::components::modal::ModalInfo;
 use crate::components::notification::{NotificationData, measure_notification};
 use crate::components::progress_bar::ProgressBarData;
@@ -34,8 +34,8 @@ use crate::components::{ButtonSize, ButtonStyle};
 use crate::renderer::Renderer;
 use anyhow::Result;
 use bmc_ui::ButtonSkin;
-use bmc_wasm_protocol::{BitmapId, Color, SvgId};
-use bmc_wasm_protocol::{CrossAlign, Justify, PropsData, TextOverflow, TextStyle};
+use bmc_ui::{BitmapId, Color, SvgId};
+use bmc_ui::{CrossAlign, Justify, PropsData, TextOverflow, TextStyle};
 use taffy::prelude::*;
 use taffy::{Overflow, Point};
 
@@ -43,7 +43,7 @@ use taffy::{Overflow, Point};
 #[derive(Clone, Debug)]
 pub(super) struct ParagraphData {
     pub(super) base_style: TextStyle,
-    pub(super) spans: Vec<SpanData>,
+    pub(super) spans: Vec<Span>,
 }
 
 /// Button data stored in taffy node context.
@@ -80,7 +80,7 @@ pub struct NodeContext {
     /// but paints a static background, which must come from the cached layer
     /// rather than be repainted over it.
     pub(crate) self_dynamic: bool,
-    /// The [`TreeNode::Dimmed`] factor this node's subtree draws at,
+    /// The [`Node::Dimmed`] factor this node's subtree draws at,
     /// relative to its parent. `None` rather than `1.0`,
     /// because the derived `Default` would otherwise dim to black.
     pub(super) dim: Option<f32>,
@@ -93,7 +93,7 @@ pub struct NodeContext {
     pub(super) bg_nine_patch: BgNinePatch,
     pub(super) paragraph: Option<ParagraphData>,
     pub(super) button: Option<ButtonContext>,
-    pub(super) draws: Vec<DrawCommand>, // canvas draw commands
+    pub(super) draws: Vec<Draw>, // canvas draw commands
     /// Touch interaction key for interactive canvases (None = decorative)
     pub(super) touch_key: Option<String>,
     pub(super) notification: Option<NotificationData>,
@@ -114,7 +114,7 @@ pub struct NodeContext {
 /// built without a context stays untagged and is treated as dynamic.
 pub(crate) fn build_taffy_node(
     taffy: &mut TaffyTree<NodeContext>,
-    node: &TreeNode,
+    node: &Node,
     now_unix_secs: i64,
     result: &mut TreeResult,
     modals: &mut Vec<ModalInfo>,
@@ -134,22 +134,22 @@ pub(crate) fn build_taffy_node(
 #[expect(clippy::too_many_lines)]
 fn build_taffy_node_inner(
     taffy: &mut TaffyTree<NodeContext>,
-    node: &TreeNode,
+    node: &Node,
     now_unix_secs: i64,
     result: &mut TreeResult,
     modals: &mut Vec<ModalInfo>,
 ) -> Result<taffy::NodeId> {
     match node {
-        TreeNode::Column(props, children)
-        | TreeNode::Row(props, children)
-        | TreeNode::Center(props, children) => {
+        Node::Column(props, children)
+        | Node::Row(props, children)
+        | Node::Center(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
                 .map(|c| build_taffy_node(taffy, c, now_unix_secs, result, modals))
                 .collect::<Result<_>>()?;
 
-            let is_center = matches!(node, TreeNode::Center(_, _));
-            let flex_dir = if matches!(node, TreeNode::Row(_, _)) {
+            let is_center = matches!(node, Node::Center(_, _));
+            let flex_dir = if matches!(node, Node::Row(_, _)) {
                 FlexDirection::Row
             } else {
                 FlexDirection::Column
@@ -244,7 +244,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Paragraph {
+        Node::Paragraph {
             props,
             base_style,
             spans,
@@ -294,7 +294,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::RelTime {
+        Node::RelTime {
             anchor,
             format,
             clamp,
@@ -323,7 +323,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Tag {
+        Node::Tag {
             kind,
             icon,
             content,
@@ -360,7 +360,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Button {
+        Node::Button {
             id: btn_id,
             label,
             style: btn_style,
@@ -408,7 +408,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Spacer { flex } => {
+        Node::Spacer { flex } => {
             let style = Style {
                 flex_grow: *flex,
                 ..Default::default()
@@ -416,7 +416,7 @@ fn build_taffy_node_inner(
             Ok(taffy.new_leaf(style)?)
         }
 
-        TreeNode::Canvas {
+        Node::Canvas {
             props,
             touch_key,
             draws,
@@ -459,7 +459,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Scroll {
+        Node::Scroll {
             scroll_key,
             props,
             children,
@@ -510,7 +510,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Notification {
+        Node::Notification {
             kind,
             title,
             subtitle,
@@ -533,7 +533,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Switcher {
+        Node::Switcher {
             active,
             disabled,
             tabs,
@@ -562,7 +562,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Skeleton(data) => {
+        Node::Skeleton(data) => {
             let (width, height) = skeleton::layout_size(data);
             let style = Style {
                 size: Size {
@@ -587,10 +587,10 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Dimmed { brightness, child } => {
+        Node::Dimmed { brightness, child } => {
             debug_assert!(
                 (0.0..=1.0).contains(brightness),
-                "BUG: TreeNode::Dimmed only dims, got {brightness}"
+                "BUG: Node::Dimmed only dims, got {brightness}"
             );
             let id = build_taffy_node(taffy, child, now_unix_secs, result, modals)?;
             if let Some(ctx) = taffy.get_node_context_mut(id) {
@@ -607,7 +607,7 @@ fn build_taffy_node_inner(
             Ok(id)
         }
 
-        TreeNode::Modal {
+        Node::Modal {
             modal_id,
             is_open,
             padding,
@@ -652,7 +652,7 @@ fn build_taffy_node_inner(
             Ok(taffy.new_leaf(style)?)
         }
 
-        TreeNode::ProgressBar {
+        Node::ProgressBar {
             touch_key,
             track_h,
             mode,
@@ -716,16 +716,16 @@ fn is_breaking_whitespace(c: char) -> bool {
 /// Split spans into words for min-content probing. A word ends only at
 /// breaking whitespace — it may cross span boundaries, so each word is
 /// a list of styled fragments preserving its parts' span styles.
-pub(super) fn split_min_content_words(spans: &[SpanData]) -> Vec<Vec<SpanData>> {
-    let mut words: Vec<Vec<SpanData>> = Vec::new();
-    let mut word: Vec<SpanData> = Vec::new();
+pub(super) fn split_min_content_words(spans: &[Span]) -> Vec<Vec<Span>> {
+    let mut words: Vec<Vec<Span>> = Vec::new();
+    let mut word: Vec<Span> = Vec::new();
     for span in spans {
         for (i, fragment) in span.text.split(is_breaking_whitespace).enumerate() {
             if i > 0 && !word.is_empty() {
                 words.push(std::mem::take(&mut word));
             }
             if !fragment.is_empty() {
-                word.push(SpanData {
+                word.push(Span {
                     text: fragment.to_owned(),
                     ..span.clone()
                 });
@@ -744,7 +744,7 @@ pub(super) fn split_min_content_words(spans: &[SpanData]) -> Vec<Vec<SpanData>> 
 pub(crate) fn min_content_paragraph_width(
     renderer: &mut dyn Renderer,
     base_style: &TextStyle,
-    spans: &[SpanData],
+    spans: &[Span],
 ) -> f32 {
     let mut min_width = 0.0_f32;
     for word in split_min_content_words(spans) {

@@ -22,12 +22,12 @@ use super::*;
 
 /// A centred draw an outer translate moves, so the frame exercises both
 /// halves of the renderer's offset at once.
-fn translated_centred_dot() -> TreeNode {
-    TreeNode::Canvas {
+fn translated_centred_dot() -> Node {
+    Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
-        draws: vec![super::DrawCommand::Modified {
-            animations: vec![super::HostAnimationDef {
+        draws: vec![super::Draw::Modified {
+            animations: vec![super::AnimationDef {
                 property: AnimProperty::TranslateY,
                 from: 0.0,
                 to: 30.0,
@@ -38,8 +38,8 @@ fn translated_centred_dot() -> TreeNode {
             }],
             transition: None,
             color_space: ColorSpace::default(),
-            inner: Box::new(super::DrawCommand::Centered {
-                inner: Box::new(super::DrawCommand::Rect {
+            inner: Box::new(super::Draw::Centered {
+                inner: Box::new(super::Draw::Rect {
                     x: 0.0,
                     y: 0.0,
                     w: 12.0,
@@ -58,7 +58,7 @@ fn translated_centred_dot() -> TreeNode {
 /// The span is two walks wide because the device rotates export buffers:
 /// this frame paints into the buffer the frame *before* last drew, so the
 /// region that one moved is still stale in it.
-fn assert_dynamic_draws_land_inside_span(older: &TreeNode, newer: &TreeNode) {
+fn assert_dynamic_draws_land_inside_span(older: &Node, newer: &Node) {
     let mut renderer = KeyRecordingRenderer::default();
     let mut state = SlotState::default();
 
@@ -92,9 +92,9 @@ fn assert_dynamic_draws_land_inside_span(older: &TreeNode, newer: &TreeNode) {
 }
 
 /// An 8 px square at `(x, y)` sliding 2 px right and back.
-fn sliding_square(x: f32, y: f32) -> super::DrawCommand {
-    super::DrawCommand::Modified {
-        animations: vec![super::HostAnimationDef {
+fn sliding_square(x: f32, y: f32) -> super::Draw {
+    super::Draw::Modified {
+        animations: vec![super::AnimationDef {
             property: AnimProperty::TranslateX,
             from: 0.0,
             to: 2.0,
@@ -105,7 +105,7 @@ fn sliding_square(x: f32, y: f32) -> super::DrawCommand {
         }],
         transition: None,
         color_space: ColorSpace::default(),
-        inner: Box::new(super::DrawCommand::Rect {
+        inner: Box::new(super::Draw::Rect {
             x,
             y,
             w: 8.0,
@@ -117,7 +117,7 @@ fn sliding_square(x: f32, y: f32) -> super::DrawCommand {
 
 #[test]
 fn draws_far_apart_in_one_canvas_report_a_rect_each() {
-    let tree = TreeNode::Canvas {
+    let tree = Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![sliding_square(2.0, 2.0), sliding_square(88.0, 88.0)],

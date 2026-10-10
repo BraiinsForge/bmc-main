@@ -87,11 +87,6 @@ pub mod test_harness;
 #[cfg(test)]
 mod test_tracing;
 
-// Re-export colors and color macro from protocol crate
-pub mod colors {
-    pub use bmc_wasm_protocol::colors::*;
-}
-
 /// The shared UI vocabulary: tree, codec, design-system types.
 pub mod ui {
     pub use bmc_ui::*;
@@ -105,7 +100,7 @@ pub use tree::{
 
 pub use glam::{Quat, Vec3};
 
-use bmc_wasm_protocol::{Easing, colors::Color};
+use bmc_ui::{Color, Easing};
 
 /// State for a single running animation instance.
 #[derive(Debug, Clone)]

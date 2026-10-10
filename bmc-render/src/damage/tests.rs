@@ -20,8 +20,8 @@
 
 use super::*;
 use crate::PrevDrawValues;
-use crate::tree::{HostAnimationDef, HostTransitionDef};
-use bmc_wasm_protocol::{
+use crate::tree::{AnimationDef, TransitionDef};
+use bmc_ui::{
     ArcCap, ArcFill, ArcSegments, AutoFit, ColorSpace, Fill, LoopMode, TextStyle, colors::Color,
 };
 
@@ -31,8 +31,8 @@ fn canvas() -> Rect {
     Rect::new(0.0, 0.0, 1280.0, 480.0)
 }
 
-fn square(x: f32, y: f32, side: f32) -> DrawCommand {
-    DrawCommand::Rect {
+fn square(x: f32, y: f32, side: f32) -> Draw {
+    Draw::Rect {
         x,
         y,
         w: side,
@@ -45,7 +45,7 @@ fn no_icons(_: SvgId) -> Option<SvgContent> {
     None
 }
 
-fn damage(draw: &DrawCommand) -> Option<Rect> {
+fn damage(draw: &Draw) -> Option<Rect> {
     canvas_draw_damage(draw, canvas(), &HashMap::new(), 0, &no_icons).region()
 }
 
@@ -63,7 +63,7 @@ fn a_still_draw_damages_its_box_plus_the_aa_fringe() {
 fn a_quarter_turn_sweeps_the_corner_arc_not_the_whole_disc() {
     // A corner square rotating a quarter turn about the canvas centre: the
     // disc would cover every side, a quarter turn only two.
-    let draw = DrawCommand::Rotated {
+    let draw = Draw::Rotated {
         angle: FRAC_PI_2,
         inner: Box::new(square(0.0, 0.0, 100.0)),
     };
@@ -82,8 +82,8 @@ fn a_quarter_turn_sweeps_the_corner_arc_not_the_whole_disc() {
 #[test]
 fn a_full_turn_covers_the_disc_through_the_pivot() {
     let mut draw = square(0.0, 0.0, 100.0);
-    draw = DrawCommand::Modified {
-        animations: vec![HostAnimationDef {
+    draw = Draw::Modified {
+        animations: vec![AnimationDef {
             property: AnimProperty::Rotate,
             from: 0.0,
             to: TAU,
@@ -109,13 +109,13 @@ fn a_full_turn_covers_the_disc_through_the_pivot() {
 
 #[test]
 fn an_outer_translate_moves_a_centered_draw() {
-    let centred = DrawCommand::Centered {
+    let centred = Draw::Centered {
         inner: Box::new(square(0.0, 0.0, 30.0)),
     };
     let still = damage(&centred).expect("BUG: a centred square is bounded");
 
-    let animated = DrawCommand::Modified {
-        animations: vec![HostAnimationDef {
+    let animated = Draw::Modified {
+        animations: vec![AnimationDef {
             property: AnimProperty::TranslateY,
             from: 20.0,
             to: 40.0,
@@ -139,10 +139,10 @@ fn an_outer_translate_moves_a_centered_draw() {
 
 #[test]
 fn a_nested_centered_replaces_its_parents_placement() {
-    let centred = || DrawCommand::Centered {
+    let centred = || Draw::Centered {
         inner: Box::new(square(0.0, 0.0, 30.0)),
     };
-    let orbited = DrawCommand::Orbit {
+    let orbited = Draw::Orbit {
         radius: 50.0,
         angle: 0.0,
         inner: Box::new(centred()),
@@ -160,8 +160,8 @@ fn a_nested_centered_replaces_its_parents_placement() {
 
 #[test]
 fn a_translate_animation_covers_both_ends() {
-    let draw = DrawCommand::Modified {
-        animations: vec![HostAnimationDef {
+    let draw = Draw::Modified {
+        animations: vec![AnimationDef {
             property: AnimProperty::TranslateX,
             from: -50.0,
             to: 100.0,
@@ -182,8 +182,8 @@ fn a_translate_animation_covers_both_ends() {
     );
 }
 
-fn scaling(from: f32, to: f32) -> HostAnimationDef {
-    HostAnimationDef {
+fn scaling(from: f32, to: f32) -> AnimationDef {
+    AnimationDef {
         property: AnimProperty::Scale,
         from,
         to,
@@ -196,7 +196,7 @@ fn scaling(from: f32, to: f32) -> HostAnimationDef {
 
 #[test]
 fn a_scale_animation_covers_its_largest_reach() {
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![scaling(1.0, 2.0)],
         transition: None,
         color_space: ColorSpace::default(),
@@ -214,7 +214,7 @@ fn a_scale_animation_covers_its_largest_reach() {
 /// the previous frame then stays on screen.
 #[test]
 fn two_scale_animations_compose_rather_than_taking_the_larger() {
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![scaling(1.0, 2.0), scaling(1.0, 2.0)],
         transition: None,
         color_space: ColorSpace::default(),
@@ -232,7 +232,7 @@ fn two_scale_animations_compose_rather_than_taking_the_larger() {
 /// the bound in below what the enlarging factor beside it reaches.
 #[test]
 fn a_shrinking_scale_does_not_narrow_the_bound() {
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![scaling(1.0, 2.0), scaling(1.0, 0.5)],
         transition: None,
         color_space: ColorSpace::default(),
@@ -248,7 +248,7 @@ fn a_shrinking_scale_does_not_narrow_the_bound() {
 
 #[test]
 fn a_mirroring_scale_covers_its_reflected_extent() {
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![scaling(-2.0, 1.0)],
         transition: None,
         color_space: ColorSpace::default(),
@@ -269,7 +269,7 @@ fn a_mirroring_scale_covers_its_reflected_extent() {
 fn an_overshooting_easing_widens_the_bound_past_its_endpoints() {
     let mut anim = scaling(1.0, 2.0);
     anim.easing = Easing::EaseOutElastic;
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![anim],
         transition: None,
         color_space: ColorSpace::default(),
@@ -312,9 +312,9 @@ fn damage_uses_the_active_transition_easing_after_the_definition_changes() {
             last_seen_frame: 0,
         },
     );
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: Vec::new(),
-        transition: Some(HostTransitionDef {
+        transition: Some(TransitionDef {
             id_hash: 7,
             duration_ms: 500,
             easing: Easing::Linear,
@@ -344,7 +344,7 @@ fn damage_uses_the_active_transition_easing_after_the_definition_changes() {
 /// stops half the growth short and strands the right and bottom edges.
 #[test]
 fn a_scaled_autofit_box_is_bounded_from_its_own_corner() {
-    let inner = DrawCommand::AutofitText {
+    let inner = Draw::AutofitText {
         x: 100.0,
         y: 100.0,
         box_width: 100.0,
@@ -355,7 +355,7 @@ fn a_scaled_autofit_box_is_bounded_from_its_own_corner() {
         text: "wide".to_owned(),
         style: TextStyle::default(),
     };
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![scaling(1.0, 2.0)],
         transition: None,
         color_space: ColorSpace::default(),
@@ -374,7 +374,7 @@ fn a_scaled_autofit_box_is_bounded_from_its_own_corner() {
 /// with it or the thick end of the ring falls outside the repaint.
 #[test]
 fn a_scaled_arc_transition_scales_its_stroke_margin_too() {
-    let inner = DrawCommand::Arc {
+    let inner = Draw::Arc {
         cx: 200.0,
         cy: 200.0,
         radius: 50.0,
@@ -399,9 +399,9 @@ fn a_scaled_arc_transition_scales_its_stroke_margin_too() {
             last_seen_frame: 0,
         },
     );
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![scaling(1.0, 2.0)],
-        transition: Some(HostTransitionDef {
+        transition: Some(TransitionDef {
             id_hash: 9,
             duration_ms: 500,
             easing: Easing::Linear,
@@ -438,9 +438,9 @@ fn a_transition_covers_the_span_between_its_recorded_ends() {
             last_seen_frame: 0,
         },
     );
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: Vec::new(),
-        transition: Some(HostTransitionDef {
+        transition: Some(TransitionDef {
             id_hash: 7,
             duration_ms: 500,
             easing: Easing::Linear,
@@ -459,7 +459,7 @@ fn a_transition_covers_the_span_between_its_recorded_ends() {
 }
 
 /// Wrap `inner` in a transition whose recorded start is `from`.
-fn transitioning(inner: DrawCommand, from: PrevDrawValues) -> (DrawCommand, Transitions) {
+fn transitioning(inner: Draw, from: PrevDrawValues) -> (Draw, Transitions) {
     let mut transitions = HashMap::new();
     transitions.insert(
         (0_u16, 7_u32),
@@ -472,9 +472,9 @@ fn transitioning(inner: DrawCommand, from: PrevDrawValues) -> (DrawCommand, Tran
             last_seen_frame: 0,
         },
     );
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: Vec::new(),
-        transition: Some(HostTransitionDef {
+        transition: Some(TransitionDef {
             id_hash: 7,
             duration_ms: 500,
             easing: Easing::Linear,
@@ -487,7 +487,7 @@ fn transitioning(inner: DrawCommand, from: PrevDrawValues) -> (DrawCommand, Tran
 
 #[test]
 fn a_thinning_arc_stroke_keeps_the_reach_of_its_thicker_end() {
-    let inner = DrawCommand::Arc {
+    let inner = Draw::Arc {
         cx: 200.0,
         cy: 200.0,
         radius: 50.0,
@@ -514,12 +514,12 @@ fn a_thinning_arc_stroke_keeps_the_reach_of_its_thicker_end() {
 }
 
 /// The 0..0.5 rad sector of a radius-50 ring about (200, 200), scaled `from..to`.
-fn scaled_sector(from: f32, to: f32) -> DrawCommand {
-    DrawCommand::Modified {
+fn scaled_sector(from: f32, to: f32) -> Draw {
+    Draw::Modified {
         animations: vec![scaling(from, to)],
         transition: None,
         color_space: ColorSpace::default(),
-        inner: Box::new(DrawCommand::Arc {
+        inner: Box::new(Draw::Arc {
             cx: 200.0,
             cy: 200.0,
             radius: 50.0,
@@ -559,7 +559,7 @@ fn a_flipping_arc_mirrors_its_sector_about_the_ring_centre() {
 /// The renderer moves the radius alone, so the stroke keeps its width all the way in.
 #[test]
 fn an_arc_collapsing_onto_its_centre_damages_every_radius_it_passes() {
-    let inner = DrawCommand::Arc {
+    let inner = Draw::Arc {
         cx: 200.0,
         cy: 200.0,
         radius: 0.0,
@@ -585,7 +585,7 @@ fn an_arc_collapsing_onto_its_centre_damages_every_radius_it_passes() {
 
 #[test]
 fn a_sphere_transition_falls_back_to_the_whole_canvas() {
-    let inner = DrawCommand::Sphere {
+    let inner = Draw::Sphere {
         x: 10.0,
         y: 10.0,
         w: 100.0,
@@ -611,9 +611,9 @@ fn a_sphere_transition_falls_back_to_the_whole_canvas() {
 
 #[test]
 fn an_unrecorded_transition_falls_back_to_the_whole_canvas() {
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: Vec::new(),
-        transition: Some(HostTransitionDef {
+        transition: Some(TransitionDef {
             id_hash: 7,
             duration_ms: 500,
             easing: Easing::Linear,
@@ -630,7 +630,7 @@ fn an_unrecorded_transition_falls_back_to_the_whole_canvas() {
 #[test]
 fn a_shadow_and_unmeasured_text_fall_back_to_the_whole_canvas() {
     assert!(
-        damage(&DrawCommand::Shadow {
+        damage(&Draw::Shadow {
             dx: 0.0,
             dy: 0.0,
             blur: 6.0,
@@ -641,7 +641,7 @@ fn a_shadow_and_unmeasured_text_fall_back_to_the_whole_canvas() {
         "a shadow composites a canvas-sized layer"
     );
     assert!(
-        damage(&DrawCommand::Text {
+        damage(&Draw::Text {
             x: 0.0,
             y: 0.0,
             text: "x".to_owned(),
@@ -687,7 +687,7 @@ fn a_clock_hand_costs_a_quarter_of_a_deck_screen() {
         480.0 / 2.0 - pivot_offset,
         side,
     );
-    let rotated = DrawCommand::Rotated {
+    let rotated = Draw::Rotated {
         angle: 0.0,
         inner: Box::new(inner),
     };
@@ -705,9 +705,9 @@ fn a_clock_hand_costs_a_quarter_of_a_deck_screen() {
             last_seen_frame: 0,
         },
     );
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: Vec::new(),
-        transition: Some(HostTransitionDef {
+        transition: Some(TransitionDef {
             id_hash: 1,
             duration_ms: 200,
             easing: Easing::Linear,
@@ -725,8 +725,8 @@ fn a_clock_hand_costs_a_quarter_of_a_deck_screen() {
     );
 }
 
-fn icon(x: f32, y: f32, w: f32, h: f32) -> DrawCommand {
-    DrawCommand::Svg {
+fn icon(x: f32, y: f32, w: f32, h: f32) -> Draw {
+    Draw::Svg {
         x,
         y,
         w,
@@ -757,14 +757,14 @@ const TOP_RIGHT_SLIVER: Rect = Rect {
     h: 10.0,
 };
 
-fn icon_damage(draw: &DrawCommand, content: SvgContent) -> Rect {
+fn icon_damage(draw: &Draw, content: SvgContent) -> Rect {
     canvas_draw_damage(draw, canvas(), &HashMap::new(), 0, &|_| Some(content))
         .region()
         .expect("BUG: an icon is bounded")
 }
 
 fn scaled_sliver(from: f32, to: f32) -> Rect {
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![scaling(from, to)],
         transition: None,
         color_space: ColorSpace::default(),
@@ -876,7 +876,7 @@ fn a_letterboxed_clock_hand_damages_its_sweep_not_its_square() {
         (398.0, 398.0),
         "the placement below assumes the hand's 398-unit square"
     );
-    let rotated = DrawCommand::Rotated {
+    let rotated = Draw::Rotated {
         angle: 0.0,
         inner: Box::new(icon(319.0 - 199.0, 240.0 - 198.0, 398.0, 398.0)),
     };
@@ -918,17 +918,17 @@ fn an_icon_reaching_far_off_its_box_damages_the_whole_canvas() {
 /// A shrink cancels a growth composed onto it, so the draw never leaves its box.
 #[test]
 fn a_shrink_and_a_growth_that_cancel_leave_the_box_unscaled() {
-    let half = HostAnimationDef {
+    let half = AnimationDef {
         from: 0.5,
         to: 0.5,
         ..scaling(1.0, 1.0)
     };
-    let double = HostAnimationDef {
+    let double = AnimationDef {
         from: 2.0,
         to: 2.0,
         ..scaling(1.0, 1.0)
     };
-    let draw = DrawCommand::Modified {
+    let draw = Draw::Modified {
         animations: vec![half, double],
         transition: None,
         color_space: ColorSpace::default(),

@@ -40,7 +40,7 @@ mod decoder;
 mod math;
 mod raii;
 
-use bmc_wasm_protocol::MeshId;
+use bmc_ui::MeshId;
 
 use crate::renderer::{AssetSuspendResult, AssetTagState};
 

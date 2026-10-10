@@ -26,7 +26,7 @@
 )]
 #![allow(clippy::wildcard_imports)]
 
-use bmc_wasm_protocol::*;
+use bmc_ui::*;
 
 use crate::interaction::{InteractionState, Rect};
 use crate::renderer::RenderTarget;
@@ -50,14 +50,11 @@ const DISABLED_ALPHA: f32 = 0.4;
 
 // ── Data ─────────────────────────────────────────────────────────────
 
-/// The host's name for the shared [`SwitcherTab`].
-pub type SwitcherTabData = SwitcherTab;
-
 #[derive(Clone, Debug)]
 pub struct SwitcherData {
     pub active: usize,
     pub disabled: bool,
-    pub tabs: Vec<SwitcherTabData>,
+    pub tabs: Vec<SwitcherTab>,
 }
 
 /// Intrinsic pill size: one fixed-width cell per tab.

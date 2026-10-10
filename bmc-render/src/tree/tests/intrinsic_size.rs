@@ -21,8 +21,8 @@
 use super::*;
 use crate::renderer::test_support::ShapingRecorder;
 
-fn span(text: &str) -> SpanData {
-    SpanData {
+fn span(text: &str) -> Span {
+    Span {
         text: text.to_owned(),
         weight: None,
         color: None,
@@ -33,7 +33,7 @@ fn span(text: &str) -> SpanData {
     }
 }
 
-fn word_texts(words: &[Vec<SpanData>]) -> Vec<Vec<&str>> {
+fn word_texts(words: &[Vec<Span>]) -> Vec<Vec<&str>> {
     words
         .iter()
         .map(|w| w.iter().map(|s| s.text.as_str()).collect())

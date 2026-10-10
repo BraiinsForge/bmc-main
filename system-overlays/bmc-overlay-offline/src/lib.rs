@@ -35,11 +35,12 @@ mod poller;
 
 use std::time::{Duration, Instant};
 
-use bmc_render::colors::{Color, RED_60, VIOLET_60};
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render::tree::{FontFamily, FontWeight, TextAlign, TextStyle, VerticalAlign};
-use bmc_render::ui::Svg;
+use bmc_render::ui::{
+    Color, FontFamily, FontWeight, RED_60, Svg, SvgId, TextAlign, TextStyle, VIOLET_60,
+    VerticalAlign,
+};
 use bmc_system_overlay::{
     FrameKind, LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome, SnapshotVersion,
     SystemOverlay, TickOutcome, VersionedSnapshot, register_icon,
@@ -298,7 +299,7 @@ fn render_chip(r: &mut dyn Renderer, size: (u32, u32)) {
     r.draw_canvas_text(LABEL, card.x + card.w / 2.0, card.y + card.h / 2.0, &style);
 }
 
-fn register_pickaxe(r: &mut dyn Renderer) -> Option<bmc_wasm_protocol::SvgId> {
+fn register_pickaxe(r: &mut dyn Renderer) -> Option<SvgId> {
     register_icon(PICKAXE.name, || {
         r.register_svg(PICKAXE.name, PICKAXE.source.data())
     })

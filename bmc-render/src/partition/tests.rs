@@ -22,15 +22,15 @@ use super::{
     HashMap, HostPaintState, Range, ScrollState, has_static_content, host_layout_key,
     node_is_dynamic, node_self_is_dynamic, static_bytes_key, static_hash,
 };
-use crate::tree::{DrawCommand, HostAnimationDef, HostTransitionDef, TreeNode};
-use bmc_ui::{ProgressMode, TagIcon};
-use bmc_wasm_protocol::{
+use crate::tree::{AnimationDef, Draw, Node, TransitionDef};
+use bmc_ui::{
     AnimProperty, ArcCap, ArcFill, ArcSegments, Color, ColorSpace, Easing, LoopMode, PropsData,
     RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments, TagKind, TextStyle,
 };
+use bmc_ui::{ProgressMode, TagIcon};
 
-fn leaf() -> DrawCommand {
-    DrawCommand::Arc {
+fn leaf() -> Draw {
+    Draw::Arc {
         cx: 20.0,
         cy: 30.0,
         radius: 40.0,
@@ -43,9 +43,9 @@ fn leaf() -> DrawCommand {
     }
 }
 
-fn animated(inner: DrawCommand) -> DrawCommand {
-    DrawCommand::Modified {
-        animations: vec![HostAnimationDef {
+fn animated(inner: Draw) -> Draw {
+    Draw::Modified {
+        animations: vec![AnimationDef {
             property: AnimProperty::Rotate,
             from: 0.0,
             to: 1.0,
@@ -60,10 +60,10 @@ fn animated(inner: DrawCommand) -> DrawCommand {
     }
 }
 
-fn transitioned(inner: DrawCommand) -> DrawCommand {
-    DrawCommand::Modified {
+fn transitioned(inner: Draw) -> Draw {
+    Draw::Modified {
         animations: Vec::new(),
-        transition: Some(HostTransitionDef {
+        transition: Some(TransitionDef {
             id_hash: 42,
             duration_ms: 500,
             easing: Easing::Linear,
@@ -73,20 +73,20 @@ fn transitioned(inner: DrawCommand) -> DrawCommand {
     }
 }
 
-fn canvas(draws: Vec<DrawCommand>) -> TreeNode {
-    TreeNode::Canvas {
+fn canvas(draws: Vec<Draw>) -> Node {
+    Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws,
     }
 }
 
-fn spacer() -> TreeNode {
-    TreeNode::Spacer { flex: 1.0 }
+fn spacer() -> Node {
+    Node::Spacer { flex: 1.0 }
 }
 
-fn progress_bar(track_h: f32, fraction: f32) -> TreeNode {
-    TreeNode::ProgressBar {
+fn progress_bar(track_h: f32, fraction: f32) -> Node {
+    Node::ProgressBar {
         touch_key: None,
         track_h,
         mode: ProgressMode::Meter(fraction),
@@ -98,8 +98,8 @@ fn progress_bar(track_h: f32, fraction: f32) -> TreeNode {
     }
 }
 
-fn rel_time_at(anchor: i64) -> TreeNode {
-    TreeNode::RelTime {
+fn rel_time_at(anchor: i64) -> Node {
+    Node::RelTime {
         anchor,
         format: RelTimeFormat {
             length: RelTimeLength::Short,
@@ -115,7 +115,7 @@ fn rel_time_at(anchor: i64) -> TreeNode {
 /// Miss the change and the text runs past its own background.
 #[test]
 fn a_rel_time_label_change_moves_the_layout_key() {
-    let tag = TreeNode::Tag {
+    let tag = Node::Tag {
         kind: TagKind::Info,
         icon: TagIcon::Hidden,
         content: Box::new(rel_time_at(0)),
@@ -133,7 +133,7 @@ fn a_rel_time_label_change_moves_the_layout_key() {
 /// once the label its layout was measured from actually changes.
 #[test]
 fn a_rel_time_holding_its_label_holds_the_layout_key() {
-    let tag = TreeNode::Tag {
+    let tag = Node::Tag {
         kind: TagKind::Info,
         icon: TagIcon::Hidden,
         content: Box::new(rel_time_at(0)),
@@ -156,7 +156,7 @@ fn a_rel_time_holding_its_label_holds_the_layout_key() {
 /// A `RelTime` beside static content shifts it, not just its own tag.
 #[test]
 fn a_rel_time_sibling_moves_the_layout_key_of_its_row() {
-    let row = TreeNode::Row(
+    let row = Node::Row(
         PropsData::default(),
         vec![canvas(vec![leaf()]), rel_time_at(0), spacer()],
     );
@@ -187,7 +187,7 @@ fn a_progress_track_moves_the_layout_key() {
 /// so a larger font reflows it even when the text holds.
 #[test]
 fn a_rel_time_style_moves_the_layout_key() {
-    let styled = |size: u32| TreeNode::RelTime {
+    let styled = |size: u32| Node::RelTime {
         anchor: 0,
         format: RelTimeFormat {
             length: RelTimeLength::Short,
@@ -209,15 +209,15 @@ fn a_rel_time_style_moves_the_layout_key() {
 /// widget without a `RelTime` pays a recapture per frame.
 #[test]
 fn a_tree_without_host_time_keys_the_same_at_any_instant() {
-    let tree = TreeNode::Column(
+    let tree = Node::Column(
         PropsData::default(),
         vec![canvas(vec![leaf(), animated(leaf())]), spacer()],
     );
     assert_eq!(host_layout_key(&tree, 0), host_layout_key(&tree, 10_000));
 }
 
-fn absolute_paragraph() -> TreeNode {
-    TreeNode::Paragraph {
+fn absolute_paragraph() -> Node {
+    Node::Paragraph {
         props: PropsData {
             inset_top: 0.0,
             ..PropsData::default()
@@ -227,8 +227,8 @@ fn absolute_paragraph() -> TreeNode {
     }
 }
 
-fn bordered_row(children: Vec<TreeNode>) -> TreeNode {
-    TreeNode::Row(
+fn bordered_row(children: Vec<Node>) -> Node {
+    Node::Row(
         PropsData {
             border_width: 2.0,
             border_color: Color::from_rgb(9, 9, 9),
@@ -248,7 +248,7 @@ fn a_border_alone_is_static_content() {
 /// Where a static node lands is the walk's question, not this one's.
 #[test]
 fn an_absolute_static_node_over_a_dynamic_canvas_is_static_content() {
-    let over = TreeNode::Row(
+    let over = Node::Row(
         PropsData::default(),
         vec![canvas(vec![animated(leaf())]), absolute_paragraph()],
     );
@@ -396,7 +396,7 @@ fn scroll_offsets_hash_independently_of_map_order() {
 
 #[test]
 fn all_animated_canvas_has_no_static_content() {
-    let node = TreeNode::Canvas {
+    let node = Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![animated(leaf()), animated(leaf())],
@@ -407,7 +407,7 @@ fn all_animated_canvas_has_no_static_content() {
 /// Behind the animation it would be [`Band::Above`] and not in the layer.
 #[test]
 fn one_static_draw_keeps_the_layer() {
-    let node = TreeNode::Canvas {
+    let node = Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![leaf(), animated(leaf())],
@@ -417,15 +417,15 @@ fn one_static_draw_keeps_the_layer() {
 
 #[test]
 fn container_background_counts_as_static_content() {
-    let dynamic_child = TreeNode::Canvas {
+    let dynamic_child = Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![animated(leaf())],
     };
-    let bare = TreeNode::Column(PropsData::default(), vec![dynamic_child.clone()]);
+    let bare = Node::Column(PropsData::default(), vec![dynamic_child.clone()]);
     assert!(!has_static_content(&bare));
 
-    let painted = TreeNode::Column(
+    let painted = Node::Column(
         PropsData {
             background: Color::from_rgb(10, 20, 30),
             ..PropsData::default()
@@ -437,14 +437,14 @@ fn container_background_counts_as_static_content() {
 
 #[test]
 fn static_content_surfaces_through_nesting() {
-    let leafy = TreeNode::Canvas {
+    let leafy = Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![leaf()],
     };
-    let nested = TreeNode::Column(
+    let nested = Node::Column(
         PropsData::default(),
-        vec![TreeNode::Row(PropsData::default(), vec![leafy])],
+        vec![Node::Row(PropsData::default(), vec![leafy])],
     );
     assert!(has_static_content(&nested));
 }

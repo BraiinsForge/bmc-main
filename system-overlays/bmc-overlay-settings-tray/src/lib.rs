@@ -21,7 +21,7 @@
 //! Swipe-from-top quick-settings overlay: round icon controls (±10 step
 //! buttons for brightness and volume, night-mode toggle, hold-to-confirm
 //! restart and WiFi reconfigure) plus WiFi station info. Ported from
-//! the `settings-stub` widget to a native `bmc-render` `TreeNode` overlay.
+//! the `settings-stub` widget to a native `bmc-render` `Node` overlay.
 //!
 //! The surface is fullscreen with a full input region so the tray blocks scene
 //! swipes behind it while up. It dismisses via its close button, an upward

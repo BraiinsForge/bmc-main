@@ -34,8 +34,8 @@ use std::fmt;
 use std::time::Instant;
 
 use bmc_render::FrameTimings;
-use bmc_render::colors::*;
 use bmc_render::renderer::Renderer;
+use bmc_render::ui::colors::*;
 
 use bmc_wasm_protocol::colors::Color;
 

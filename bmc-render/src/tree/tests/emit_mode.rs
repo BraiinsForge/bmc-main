@@ -73,7 +73,7 @@ fn the_dynamic_half_covers_only_what_was_painted() {
 /// render walk ever sees of it.
 #[test]
 fn build_taffy_node_tags_context_with_the_partition_classification() {
-    fn build(node: &TreeNode) -> (TaffyTree<NodeContext>, taffy::NodeId) {
+    fn build(node: &Node) -> (TaffyTree<NodeContext>, taffy::NodeId) {
         let mut taffy = TaffyTree::new();
         let mut result = TreeResult::default();
         let mut modals = Vec::new();
@@ -82,10 +82,10 @@ fn build_taffy_node_tags_context_with_the_partition_classification() {
         (taffy, id)
     }
 
-    let static_canvas = TreeNode::Canvas {
+    let static_canvas = Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
-        draws: vec![DrawCommand::Rect {
+        draws: vec![Draw::Rect {
             x: 0.0,
             y: 0.0,
             w: 4.0,
@@ -102,9 +102,9 @@ fn build_taffy_node_tags_context_with_the_partition_classification() {
         "a canvas of plain draws must be tagged static"
     );
 
-    let dynamic_tree = TreeNode::Column(
+    let dynamic_tree = Node::Column(
         PropsData::default(),
-        vec![TreeNode::RelTime {
+        vec![Node::RelTime {
             anchor: 0,
             format: RelTimeFormat {
                 length: RelTimeLength::Short,

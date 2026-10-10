@@ -43,9 +43,9 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use crate::components::draw::{extract_draw_values, get_draw_bounds};
 use crate::interaction::Rect;
 use crate::renderer::SvgContent;
-use crate::tree::DrawCommand;
+use crate::tree::Draw;
 use crate::{TransitionState, TransitionStateKey};
-use bmc_wasm_protocol::{AnimProperty, Easing, SvgId};
+use bmc_ui::{AnimProperty, Easing, SvgId};
 
 /// The accumulated transform range between the canvas and a leaf draw.
 ///
@@ -78,7 +78,7 @@ struct Transform {
 /// Which corner of a leaf box stays put as scale grows it.
 ///
 /// Most leaves scale about their centre, as `render_draw_inner` does with
-/// `sx = x + (w - w * scale) / 2`. [`DrawCommand::AutofitText`] does not:
+/// `sx = x + (w - w * scale) / 2`. [`Draw::AutofitText`] does not:
 /// it scales its box straight off `(x, y)`, and a centred bound then
 /// leaves the far edges out.
 #[derive(Clone, Copy)]
@@ -370,7 +370,7 @@ struct ArcTransition {
     radius: (f32, f32),
 }
 
-/// Where a [`DrawCommand::Arc`] strokes, with its angles in radians
+/// Where a [`Draw::Arc`] strokes, with its angles in radians
 /// clockwise from 12 o'clock.
 #[derive(Clone, Copy)]
 struct ArcGeometry {
@@ -382,8 +382,8 @@ struct ArcGeometry {
 }
 
 impl ArcGeometry {
-    fn of(draw: &DrawCommand) -> Option<Self> {
-        let DrawCommand::Arc {
+    fn of(draw: &Draw) -> Option<Self> {
+        let Draw::Arc {
             cx,
             cy,
             radius,
@@ -501,7 +501,7 @@ impl DrawDamage {
 /// would drop the pixel row the draw actually touches.
 #[must_use]
 pub(crate) fn canvas_draw_damage(
-    draw: &DrawCommand,
+    draw: &Draw,
     canvas: Rect,
     transitions: &HashMap<TransitionStateKey, TransitionState>,
     canvas_index: u16,
@@ -552,14 +552,14 @@ struct Scope<'a> {
     svg_content: &'a dyn Fn(SvgId) -> Option<SvgContent>,
 }
 
-fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Option<Rect> {
+fn bounded(draw: &Draw, transform: Transform, scope: &Scope<'_>) -> Option<Rect> {
     let canvas = scope.canvas;
     match draw {
-        DrawCommand::Rotated { angle, inner } => {
+        Draw::Rotated { angle, inner } => {
             bounded(inner, transform.add_rotation((*angle, *angle)), scope)
         }
 
-        DrawCommand::Centered { inner } => {
+        Draw::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
             let dx = (canvas.w - iw) / 2.0;
             let dy = (canvas.h - ih) / 2.0;
@@ -569,7 +569,7 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
         // A moving orbit angle would trace an arc of `radius` around the canvas
         // centre; a fixed one is just an offset. `Modified` refuses the moving
         // case, so reaching here means the angle is fixed.
-        DrawCommand::Orbit {
+        Draw::Orbit {
             radius,
             angle,
             inner,
@@ -580,7 +580,7 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
             bounded(inner, transform.set_layout(dx, dy), scope)
         }
 
-        DrawCommand::Modified {
+        Draw::Modified {
             animations,
             transition,
             inner,
@@ -604,11 +604,7 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
             }
         }
 
-        // The shadow renders its inner draw into a canvas-sized layer and
-        // composites the whole of it, so its reach is the canvas either way.
-        DrawCommand::Shadow { .. } => None,
-
-        DrawCommand::Svg {
+        Draw::Svg {
             x,
             y,
             w,
@@ -621,14 +617,14 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
             transform,
             scope,
         )),
-        DrawCommand::Rect { x, y, w, h, .. }
-        | DrawCommand::Bitmap { x, y, w, h, .. }
-        | DrawCommand::Sphere { x, y, w, h, .. }
-        | DrawCommand::Mesh { x, y, w, h, .. }
-        | DrawCommand::NinePatch { x, y, w, h, .. } => {
+        Draw::Rect { x, y, w, h, .. }
+        | Draw::Bitmap { x, y, w, h, .. }
+        | Draw::Sphere { x, y, w, h, .. }
+        | Draw::Mesh { x, y, w, h, .. }
+        | Draw::NinePatch { x, y, w, h, .. } => {
             Some(transform.apply(Rect::new(*x, *y, *w, *h), canvas.w, canvas.h))
         }
-        DrawCommand::AutofitText {
+        Draw::AutofitText {
             x,
             y,
             box_width,
@@ -640,21 +636,23 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
             canvas.h,
             ScaleAnchor::TopLeft,
         )),
-        DrawCommand::Qr { x, y, size, .. } => {
+        Draw::Qr { x, y, size, .. } => {
             Some(transform.apply(Rect::new(*x, *y, *size, *size), canvas.w, canvas.h))
         }
-        DrawCommand::Circle { cx, cy, r, .. } => Some(transform.apply(
+        Draw::Circle { cx, cy, r, .. } => Some(transform.apply(
             Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r),
             canvas.w,
             canvas.h,
         )),
-        DrawCommand::Arc { .. } => {
+        Draw::Arc { .. } => {
             ArcGeometry::of(draw).map(|arc| arc_bounds(arc, None, &transform, canvas))
         }
+        // The shadow renders its inner draw into a canvas-sized layer and
+        // composites the whole of it, so its reach is the canvas either way.
         // Text extents depend on shaping the host has not done at this point,
         // and a stroked path straddles its points by half a width this level
         // cannot read out of the paint.
-        DrawCommand::Text { .. } | DrawCommand::CurvedText { .. } | DrawCommand::Path { .. } => {
+        Draw::Shadow { .. } | Draw::Text { .. } | Draw::CurvedText { .. } | Draw::Path { .. } => {
             None
         }
     }
@@ -715,9 +713,9 @@ enum Modification {
 /// payloads moves the draw in a way this module cannot bound.
 fn modified_transform(
     transform: Transform,
-    animations: &[crate::tree::HostAnimationDef],
-    transition: Option<&crate::tree::HostTransitionDef>,
-    inner: &DrawCommand,
+    animations: &[crate::tree::AnimationDef],
+    transition: Option<&crate::tree::TransitionDef>,
+    inner: &Draw,
     transitions: &HashMap<TransitionStateKey, TransitionState>,
     canvas_index: u16,
 ) -> Option<Modification> {
@@ -748,7 +746,7 @@ fn modified_transform(
     // A mesh or sphere transition interpolates a 3D scale and position whose
     // projection this level cannot predict, so it may well paint outside the
     // box the draw declares.
-    if matches!(inner, DrawCommand::Mesh { .. } | DrawCommand::Sphere { .. }) {
+    if matches!(inner, Draw::Mesh { .. } | Draw::Sphere { .. }) {
         return None;
     }
     let (near, far) = transition_factors(state.easing);
@@ -831,7 +829,7 @@ fn transition_factors(easing: Easing) -> (f32, f32) {
 /// `0.0..=1.0` deliberately, so the eased lerp passes the endpoint it is
 /// heading for — an elastic 1 → 2 scale reaches 2.37. Bounding by the
 /// endpoints alone leaves that overshoot unrepainted.
-fn animated_range(anim: &crate::tree::HostAnimationDef) -> (f32, f32) {
+fn animated_range(anim: &crate::tree::AnimationDef) -> (f32, f32) {
     let (min_t, max_t) = crate::animation::easing_extremes(anim.easing);
     let span = anim.to - anim.from;
     let (a, b) = (anim.from + span * min_t, anim.from + span * max_t);

@@ -20,12 +20,11 @@
 
 //! Test-only headless [`Renderer`] stub shared across the crate's unit tests.
 
-use bmc_render::colors::Color;
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::prelude::*;
-use bmc_render::tree::{AutoFit, SpanData, TextStyle};
-use bmc_wasm_protocol::{
-    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+use bmc_render::ui::{
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color, Fill, MeshId,
+    Span, SvgId, TextStyle,
 };
 
 #[derive(Default)]
@@ -152,7 +151,7 @@ impl RenderText for TestRenderer {
     fn measure_paragraph(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _max_width: Option<f32>,
     ) -> (f32, f32) {
         (0.0, 0.0)
@@ -161,7 +160,7 @@ impl RenderText for TestRenderer {
     fn draw_paragraph(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _x: f32,
         _y: f32,
         _max_width: f32,
@@ -171,7 +170,7 @@ impl RenderText for TestRenderer {
     fn draw_paragraph_clipped(
         &mut self,
         _style: &TextStyle,
-        _spans: &[SpanData],
+        _spans: &[Span],
         _x: f32,
         _y: f32,
         _max_width: f32,

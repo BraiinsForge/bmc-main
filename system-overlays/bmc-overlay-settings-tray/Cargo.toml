@@ -23,7 +23,6 @@ anyhow.workspace = true
 bmc-net-observe.workspace = true
 bmc-render.workspace = true
 bmc-system-overlay.workspace = true
-bmc-wasm-protocol.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

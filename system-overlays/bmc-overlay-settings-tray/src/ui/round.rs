@@ -27,13 +27,13 @@ use super::{
     Content, LINE_H, NO_DATA_PLACEHOLDER, Panel, ROUND_BOTTOM_GAP, ROUND_CONTROLS_TOP, ROUND_H_PAD,
     ROUND_HEADER_SIZE, ROUND_HEADER_WIDTH, ROUND_ROW_GAP, ROUND_TOP_GAP, Tier, control_row_nodes,
 };
-use bmc_render::tree::{PropsData, TreeNode, fixed_height, spacer};
+use bmc_render::ui::{Node, PropsData, fixed_height, spacer};
 
 /// The BFM100's flow children: one column inside the disc's chord-safe band,
 /// with the control rows pinned to a fixed top edge.
 /// While one is up, the notice sits over the header's band.
 #[expect(clippy::cast_precision_loss, reason = "display sizes are small")]
-pub(super) fn round_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
+pub(super) fn round_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<Node> {
     let header_h = ROUND_HEADER_SIZE as f32 * LINE_H;
     let mut children = vec![content.notice.with_notice(
         PropsData::default(),

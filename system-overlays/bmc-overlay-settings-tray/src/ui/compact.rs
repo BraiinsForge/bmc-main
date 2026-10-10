@@ -32,16 +32,15 @@ use super::{
     COMPACT_CONNECTION_ICON_SIZE, COMPACT_GAP, COMPACT_INFO_SIZE, COMPACT_QR_SIZE, Content,
     ControlIcons, NO_DATA_PLACEHOLDER, Panel, SLIDER_TRACK_H, Tier, WifiView, brightness_fraction,
 };
-use bmc_render::tree::{
-    ProgressMode, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
+use bmc_render::ui::{
+    CrossAlign, GRAY_40, Node, ProgressMode, PropsData, TRANSPARENT, TextAlign, TextOverflow,
+    TextStyle, WHITE, col, fixed_height, row, spacer, text,
 };
-use bmc_wasm_protocol::colors::{GRAY_40, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{CrossAlign, TextAlign, TextOverflow};
 
 /// A draggable slider holding no value of its own. The drag position comes
 /// back on `key`; the caller feeds the new fraction in on the next frame.
-pub(super) fn slider(key: &'static str, fraction: f32) -> TreeNode {
-    TreeNode::ProgressBar {
+pub(super) fn slider(key: &'static str, fraction: f32) -> Node {
+    Node::ProgressBar {
         touch_key: Some(key.to_owned()),
         track_h: SLIDER_TRACK_H,
         mode: ProgressMode::Slider(fraction.clamp(0.0, 1.0)),
@@ -55,7 +54,7 @@ pub(super) fn slider(key: &'static str, fraction: f32) -> TreeNode {
 
 /// What the device is online through: the cable while it carries the uplink,
 /// else the station SSID, or the SETUP badge while setup runs.
-fn compact_connection_value(content: Content<'_>, style: TextStyle) -> TreeNode {
+fn compact_connection_value(content: Content<'_>, style: TextStyle) -> Node {
     let icon = connection_icon(
         content.wifi_view,
         content.icons,
@@ -81,7 +80,7 @@ fn compact_connection_value(content: Content<'_>, style: TextStyle) -> TreeNode 
 /// The compact address block. Both columns come from one list, so a row
 /// cannot appear on one side alone and slide the values out of line.
 /// Capped short of the close target floating over its top-right corner.
-fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode {
+fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> Node {
     let label_style = TextStyle {
         align: TextAlign::Left,
         ..text_style(COMPACT_INFO_SIZE, GRAY_40)
@@ -143,7 +142,7 @@ fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> TreeNode 
     )
 }
 
-fn compact_brightness_row(icons: ControlIcons, brightness: u8) -> TreeNode {
+fn compact_brightness_row(icons: ControlIcons, brightness: u8) -> Node {
     row(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -159,7 +158,7 @@ fn compact_brightness_row(icons: ControlIcons, brightness: u8) -> TreeNode {
 
 /// The compact control buttons, singles only. Brightness moved to the slider
 /// above, and no product on this layout has sound, so the ± pairs are empty.
-fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
+fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<Node> {
     let (_, singles) = control_groups(
         tier,
         &content.controls,
@@ -173,7 +172,7 @@ fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<TreeNode> {
 
 /// The BMM101 flow children: address block, the brightness slider where
 /// the capability allows one, then whichever buttons the product still has.
-pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<TreeNode> {
+pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<Node> {
     let mut section = vec![
         // Top padding is an explicit spacer, not container padding,
         // so the close button's absolute insets resolve against the panel box.
@@ -199,9 +198,8 @@ pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -
 
 #[cfg(test)]
 mod tests {
-    use bmc_render::tree::TreeNode;
-    use bmc_wasm_protocol::colors::GREEN_50;
-    use bmc_wasm_protocol::{FontWeight, SvgId};
+    use bmc_render::tree::Node;
+    use bmc_render::ui::{FontWeight, GREEN_50, SvgId};
 
     use super::*;
     use crate::ui::test_support::*;
@@ -216,7 +214,7 @@ mod tests {
         }
     }
 
-    fn signal_icons_drawn(tree: &TreeNode) -> Vec<SvgId> {
+    fn signal_icons_drawn(tree: &Node) -> Vec<SvgId> {
         let icons = distinct_icons();
         let signal = [icons.problem, icons.low, icons.fair, icons.strong];
         let mut ids = Vec::new();
@@ -225,7 +223,7 @@ mod tests {
         ids
     }
 
-    fn tray(wifi_signal: Option<i32>, view: WifiView<'_>) -> TreeNode {
+    fn tray(wifi_signal: Option<i32>, view: WifiView<'_>) -> Node {
         build_tree(
             Some("braiins-mini"),
             Some("10.0.0.42"),

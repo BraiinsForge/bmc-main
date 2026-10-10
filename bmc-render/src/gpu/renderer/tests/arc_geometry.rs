@@ -19,7 +19,7 @@
 // the grant above.
 
 use super::{ARC_CHUNK_MAX, arc_color_at, arc_point, arc_spans, chunk_span, sweep_fraction};
-use bmc_wasm_protocol::{ArcFill, ArcSegments, Color};
+use bmc_ui::{ArcFill, ArcSegments, Color};
 
 fn approx(a: f32, b: f32) {
     assert!((a - b).abs() < 1e-4, "{a} != {b}");

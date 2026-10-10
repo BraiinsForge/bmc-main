@@ -25,9 +25,8 @@
 
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render::ui::Svg;
+use bmc_render::ui::{Svg, SvgId};
 use bmc_system_overlay::register_icon;
-use bmc_wasm_protocol::SvgId;
 
 const WIFI: Svg = include_svg!("assets/wifi.svg");
 const WIFI_CONNECT: Svg = include_svg!("assets/wifi_connect.svg");

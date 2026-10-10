@@ -22,7 +22,7 @@ use super::FemtoVgRenderer;
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo};
-use bmc_wasm_protocol::Color;
+use bmc_ui::Color;
 
 const W: u32 = 320;
 const H: u32 = 320;

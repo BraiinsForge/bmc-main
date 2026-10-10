@@ -165,7 +165,7 @@ fn curved_text_dispatches_scaled_style_and_color_override() {
     let mut animation_states = HashMap::new();
     let mut transition_states = HashMap::new();
     let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
-    let draw = DrawCommand::CurvedText {
+    let draw = Draw::CurvedText {
         cx: 5.0,
         cy: 6.0,
         radius: 7.0,
@@ -223,7 +223,7 @@ fn curved_text_dispatches_scaled_style_and_color_override() {
 
 #[test]
 fn an_outer_translate_moves_a_centered_draw() {
-    fn centre_of(draw: &DrawCommand) -> (f32, f32) {
+    fn centre_of(draw: &Draw) -> (f32, f32) {
         let mut renderer = RecordingRenderer::default();
         let mut animation_states = HashMap::new();
         let mut transition_states = HashMap::new();
@@ -251,8 +251,8 @@ fn an_outer_translate_moves_a_centered_draw() {
         (*cx, *cy)
     }
 
-    let centred = || DrawCommand::Centered {
-        inner: Box::new(DrawCommand::CurvedText {
+    let centred = || Draw::Centered {
+        inner: Box::new(Draw::CurvedText {
             cx: 0.0,
             cy: 0.0,
             radius: 7.0,
@@ -265,8 +265,8 @@ fn an_outer_translate_moves_a_centered_draw() {
     };
 
     let still = centre_of(&centred());
-    let moved = centre_of(&DrawCommand::Modified {
-        animations: vec![HostAnimationDef {
+    let moved = centre_of(&Draw::Modified {
+        animations: vec![AnimationDef {
             property: AnimProperty::TranslateY,
             from: 20.0,
             to: 20.0,
@@ -293,7 +293,7 @@ fn curved_text_dispatches_inside_outer_rotation() {
     let mut animation_states = HashMap::new();
     let mut transition_states = HashMap::new();
     let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
-    let draw = DrawCommand::CurvedText {
+    let draw = Draw::CurvedText {
         cx: 5.0,
         cy: 6.0,
         radius: 7.0,
@@ -359,7 +359,7 @@ fn autofit_text_dispatches_to_renderer() {
     let mut animation_states = HashMap::new();
     let mut transition_states = HashMap::new();
     let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
-    let draw = DrawCommand::AutofitText {
+    let draw = Draw::AutofitText {
         x: 5.0,
         y: 7.0,
         box_width: 100.0,

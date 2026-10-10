@@ -18,19 +18,19 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Decoding the guest's wire-format tree into [`TreeNode`]s.
+//! Decoding the guest's wire-format tree into [`Node`]s.
 
-use super::TreeNode;
+use super::Node;
 use anyhow::Result;
 
 /// Deserialize a tree from bytes
-pub fn deserialize_tree(data: &[u8]) -> Result<TreeNode> {
+pub fn deserialize_tree(data: &[u8]) -> Result<Node> {
     Ok(decode_logged(data)?.root)
 }
 
 /// Deserialize a tree from bytes,
 /// along with the [`crate::partition::static_bytes_key`] of its static half.
-pub fn deserialize_tree_keyed(data: &[u8]) -> Result<(TreeNode, u64)> {
+pub fn deserialize_tree_keyed(data: &[u8]) -> Result<(Node, u64)> {
     let decoded = decode_logged(data)?;
     let key =
         crate::partition::static_bytes_key(&data[..decoded.consumed], &decoded.dynamic_ranges);

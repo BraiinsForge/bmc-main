@@ -31,14 +31,16 @@ use std::collections::HashMap;
 
 use taffy::prelude::*;
 
-use bmc_wasm_protocol::*;
+// Vocabulary modules rather than the root, whose component builders clash
+// with taffy's prelude, `span` for one.
+use bmc_ui::{colors::*, svg::*, text::*};
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button_with_target};
 use crate::interaction::{InteractionState, Rect};
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
 use crate::tree::{
-    AnimationContext, NodeContext, TouchHit, TreeNode, TreeResult, build_taffy_node,
+    AnimationContext, Node, NodeContext, TouchHit, TreeResult, build_taffy_node,
     compute_taffy_layout, outline_box, render_taffy_node,
 };
 use crate::{ModalState, ScrollState};
@@ -58,7 +60,7 @@ pub(crate) struct ModalInfo {
     pub(crate) title_color: Color,
     /// Maximum modal width. `0` = no limit.
     pub(crate) max_width: u16,
-    pub(crate) body: Vec<TreeNode>,
+    pub(crate) body: Vec<Node>,
     pub(crate) footer_primary_key: String,
     pub(crate) footer_primary_label: String,
     pub(crate) footer_secondary_key: String,
@@ -289,7 +291,7 @@ pub(crate) fn render_modal(
     // (see `bmc-render/src/tree/layout.rs` Scroll branch), so a uniform `padding` here is
     // the right shape; the right gap stays small.
     let body_scroll_key = format!("{}::body", modal.modal_id);
-    let body_scroll = TreeNode::Scroll {
+    let body_scroll = Node::Scroll {
         scroll_key: body_scroll_key,
         props: PropsData {
             gap: 8.0,
