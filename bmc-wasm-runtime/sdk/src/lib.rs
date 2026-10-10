@@ -387,6 +387,7 @@ pub mod url;
 pub mod ws;
 pub mod xml;
 
+pub use bmc_ui::*;
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;
 pub use calendar::{parse_calendar_date, parse_datetime};
@@ -410,25 +411,16 @@ pub use ufmt;
 pub use ws::{Ws, WsEvent, ws_connect};
 pub use xml::XmlDoc;
 
-// The tree, its component builders and the keyword macros are `bmc-ui`'s.
-// The modules keep their SDK paths; the macros expand against `bmc_ui`.
-pub use bmc_ui::components::{
-    modal, notification, number_input, progress_bar, relative_time, skeleton, status_overlay, tag,
-    text,
-};
-pub use bmc_ui::{button, fill, number_input, path, progress_bar, props, style};
-pub use bmc_ui::{mesh, orientation, typography};
+// `bmc_ui` and the protocol both have `ids`, `text` and `time` modules, so the root
+// picks: the protocol's ids and time are the host contract, the text types are `bmc_ui`'s.
+// `skeleton` is the builders' module rather than the kind enum's, as widgets write
+// `skeleton::text(…)`.
+pub use bmc_ui::components::skeleton;
+pub use bmc_ui::text;
+pub use bmc_wasm_protocol::{ids, time};
 
-pub use mesh::*;
-pub use modal::*;
-pub use notification::*;
-pub use number_input::*;
-pub use orientation::Orientation;
-pub use relative_time::*;
-pub use status_overlay::*;
+pub use assets::*;
 pub use switcher::*;
-pub use tag::*;
-pub use text::*;
 pub use tree::*;
 
 /// Connect to a WebSocket with optional headers, as `ws_connect` does.

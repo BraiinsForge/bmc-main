@@ -22,9 +22,8 @@ use std::cell::RefCell;
 
 use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
-use super::{AssetIdProvider, Audio, Bitmap, Svg};
+use super::{AssetIdProvider, Audio, Bitmap, Mesh, Svg};
 use crate::cache::CacheSource;
-use crate::mesh::Mesh;
 
 /// What the runtime does with an asset's bytes, done here by the embedder.
 pub trait AssetHost {

@@ -208,17 +208,15 @@ fn view_rectangular(
 fn with_status(root: Node, status: Status, shape: ViewportShape) -> Node {
     match status {
         Status::Ready => root,
-        Status::Stale(last_success) => status_overlay::with_stale_overlay(
+        Status::Stale(last_success) => with_stale_overlay(
             root,
             SystemTime {
                 unix_secs: last_success,
             },
             shape,
         ),
-        Status::Failed => {
-            status_overlay::with_error_overlay(root, "Halving prediction unavailable", shape)
-        }
-        Status::RateLimited => status_overlay::with_overlay(
+        Status::Failed => with_error_overlay(root, "Halving prediction unavailable", shape),
+        Status::RateLimited => with_overlay(
             root,
             tag(
                 TagKind::Warning,

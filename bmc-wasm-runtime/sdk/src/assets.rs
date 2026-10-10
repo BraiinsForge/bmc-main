@@ -29,11 +29,10 @@
 //! same `name`.
 
 pub use bmc_ui::assets::{Audio, Bitmap, Svg};
-use bmc_ui::{NinePatch, NinePatchAsset, Skin, SkinEntry};
+use bmc_ui::{Mesh, NinePatch, NinePatchAsset, Skin, SkinEntry};
 use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
 use crate::cache::CacheSource;
-use crate::mesh::Mesh;
 
 trait AssetIdProvider {
     fn svg(icon: &Svg) -> Option<SvgId>;

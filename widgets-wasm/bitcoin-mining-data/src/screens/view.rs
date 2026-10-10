@@ -621,19 +621,17 @@ pub fn bitcoin_mining_view(view: &ViewData) -> Node {
     };
     match view.status {
         Status::Ready => root,
-        Status::Stale(last_success) => status_overlay::with_stale_overlay(
+        Status::Stale(last_success) => with_stale_overlay(
             root,
             SystemTime {
                 unix_secs: last_success,
             },
             ViewportShape::Rectangular,
         ),
-        Status::Failed => status_overlay::with_error_overlay(
-            root,
-            "Bitcoin data unavailable",
-            ViewportShape::Rectangular,
-        ),
-        Status::RateLimited => status_overlay::with_overlay(
+        Status::Failed => {
+            with_error_overlay(root, "Bitcoin data unavailable", ViewportShape::Rectangular)
+        }
+        Status::RateLimited => with_overlay(
             root,
             tag(
                 TagKind::Warning,

@@ -186,7 +186,8 @@ fn menu_panel() -> Node {
                 background: GRAY_100
             ),
             [
-                button!(KEY_RELOAD, "Reload", style: Primary, icon: tree::ensure_registered(&ICON_RENEW)).stretch(),
+                button!(KEY_RELOAD, "Reload", style: Primary, icon: ensure_registered(&ICON_RENEW))
+                    .stretch(),
                 button!(KEY_CLOSE, "Close", style: Secondary).stretch(),
             ],
         )],

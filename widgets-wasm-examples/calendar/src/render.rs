@@ -167,9 +167,9 @@ pub fn render_agenda(state: &CalendarState, size: WidgetSize) -> Node {
 
 fn theme_toggle_fab(theme: &Theme) -> Node {
     let icon = if theme_key() == ThemeKey::Dark {
-        tree::ensure_registered(&THEME_LIGHT_ICON)
+        ensure_registered(&THEME_LIGHT_ICON)
     } else {
-        tree::ensure_registered(&THEME_DARK_ICON)
+        ensure_registered(&THEME_DARK_ICON)
     };
     let size = 36.0;
     let r = size / 2.0;

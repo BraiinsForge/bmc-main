@@ -20,10 +20,9 @@
 
 use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
-use super::{AssetIdProvider, Audio, Bitmap, Svg};
+use super::{AssetIdProvider, Audio, Bitmap, Mesh, Svg};
 use crate::cache::CacheSource;
 use crate::host;
-use crate::mesh::Mesh;
 
 pub(super) struct Host;
 

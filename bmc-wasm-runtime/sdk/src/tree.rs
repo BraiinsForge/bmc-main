@@ -25,13 +25,16 @@
 
 use std::cell::RefCell;
 
-pub use bmc_ui::skin::*;
 pub use bmc_ui::tree::*;
 use bmc_ui::{
-    Color, Mesh, MeshView, RED_50, TextAlign, TextStyle, VerticalAlign, encode, encode_into,
+    Bitmap, Color, Mesh, MeshView, NinePatchAsset, RED_50, Svg, TextAlign, TextStyle,
+    VerticalAlign, encode, encode_into,
 };
 
-pub use crate::assets::*;
+use crate::assets::{
+    ensure_bitmap_registered, ensure_mesh_registered, ensure_nine_patch_registered,
+    ensure_registered,
+};
 use crate::host;
 
 /// The draws that take an asset: each registers it with the host

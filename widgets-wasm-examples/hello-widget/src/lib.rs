@@ -108,15 +108,15 @@ fn icon_buttons_section() -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    button!("settings", "Settings", style: Primary, icon: tree::ensure_registered(&SETTINGS)),
-                    button!("apply", "Apply", style: Secondary, icon: tree::ensure_registered(&CHECKMARK)),
+                    button!("settings", "Settings", style: Primary, icon: ensure_registered(&SETTINGS)),
+                    button!("apply", "Apply", style: Secondary, icon: ensure_registered(&CHECKMARK)),
                 ],
             ),
             row(
                 props!(gap: 8.0),
                 [
-                    button!("search", "", style: Secondary, icon: tree::ensure_registered(&SEARCH)),
-                    button!("warning", "", style: Danger, icon: tree::ensure_registered(&WARNING)),
+                    button!("search", "", style: Secondary, icon: ensure_registered(&SEARCH)),
+                    button!("warning", "", style: Danger, icon: ensure_registered(&WARNING)),
                     button!("close", "", style: Primary, icon: ICON_CLOSE),
                 ],
             ),
@@ -411,14 +411,14 @@ fn medium_controls_section(counts: [u32; 4]) -> Node {
                         props!(gap: 5.0),
                         [
                             button!("open_modal", "Open Modal", style: Primary, size: Small),
-                            button!("settings", "", style: Primary, size: Small, icon: tree::ensure_registered(&SETTINGS)),
+                            button!("settings", "", style: Primary, size: Small, icon: ensure_registered(&SETTINGS)),
                         ],
                     ),
                     row(
                         props!(gap: 5.0),
                         [
-                            button!("apply", "", style: Secondary, size: Small, icon: tree::ensure_registered(&CHECKMARK)),
-                            button!("search", "", style: Secondary, size: Small, icon: tree::ensure_registered(&SEARCH)),
+                            button!("apply", "", style: Secondary, size: Small, icon: ensure_registered(&CHECKMARK)),
+                            button!("search", "", style: Secondary, size: Small, icon: ensure_registered(&SEARCH)),
                         ],
                     ),
                 ],
@@ -562,10 +562,10 @@ fn large_colors_and_icons_section() -> Node {
             row(
                 props!(gap: 6.0, wrap: true, cross_align: CrossAlign::Center),
                 [
-                    button!("settings", "Settings", style: Primary, size: Small, icon: tree::ensure_registered(&SETTINGS)),
-                    button!("apply", "Apply", style: Secondary, size: Small, icon: tree::ensure_registered(&CHECKMARK)),
-                    button!("search", "", style: Secondary, size: Small, icon: tree::ensure_registered(&SEARCH)),
-                    button!("warning", "", style: Danger, size: Small, icon: tree::ensure_registered(&WARNING)),
+                    button!("settings", "Settings", style: Primary, size: Small, icon: ensure_registered(&SETTINGS)),
+                    button!("apply", "Apply", style: Secondary, size: Small, icon: ensure_registered(&CHECKMARK)),
+                    button!("search", "", style: Secondary, size: Small, icon: ensure_registered(&SEARCH)),
+                    button!("warning", "", style: Danger, size: Small, icon: ensure_registered(&WARNING)),
                     button!("close", "", style: Primary, size: Small, icon: ICON_CLOSE),
                 ],
             ),

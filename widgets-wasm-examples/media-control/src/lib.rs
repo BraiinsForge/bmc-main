@@ -2316,7 +2316,7 @@ fn render_discovering(size: WidgetSize) -> Node {
                 button!(
                     fmt!("dev_{}", i),
                     &dev.name,
-                    icon: tree::ensure_registered(proto_icon),
+                    icon: ensure_registered(proto_icon),
                     style: Secondary,
                     size: Small,
                     skin: active_button_skin()
@@ -2546,7 +2546,7 @@ fn build_skin_picker_body() -> Vec<Node> {
 
     for (i, opt) in SKINS.iter().enumerate() {
         let preview_bitmap_id: Option<BitmapId> = match &opt.preview {
-            SkinPreview::Standalone(bmp) => tree::ensure_bitmap_registered(bmp),
+            SkinPreview::Standalone(bmp) => ensure_bitmap_registered(bmp),
             SkinPreview::FromSkin => opt
                 .skin
                 .and_then(|s| s.preview())
@@ -2808,7 +2808,7 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
 /// Tapping disconnects and returns to the device picker.
 /// Small variant uses icon-only to save horizontal space.
 fn render_switcher_button(size: WidgetSize) -> Node {
-    let icon = tree::ensure_registered(&icons::DEVICES_APPS);
+    let icon = ensure_registered(&icons::DEVICES_APPS);
     let skin = active_button_skin();
     if size.variant == SizeVariant::Small {
         button!("device", "", icon: icon, style: Secondary, size: Small, skin: skin)
@@ -2828,7 +2828,7 @@ fn render_switcher_button(size: WidgetSize) -> Node {
 /// Sub-target switcher button — shows current session/player name.
 /// Only rendered when the protocol has multiple sub-targets.
 fn render_sub_target_button(size: WidgetSize) -> Node {
-    let icon = tree::ensure_registered(&icons::DEVICES_APPS);
+    let icon = ensure_registered(&icons::DEVICES_APPS);
     let skin = active_button_skin();
     if size.variant == SizeVariant::Small {
         button!("sub_target", "", icon: icon, style: Secondary, size: Small, skin: skin)
@@ -2846,7 +2846,7 @@ fn render_sub_target_button(size: WidgetSize) -> Node {
 
 /// Skin picker button — icon-only paintbrush button.
 fn render_skin_button() -> Node {
-    let icon = tree::ensure_registered(&icons::SKIN);
+    let icon = ensure_registered(&icons::SKIN);
     button!("skin", "", icon: icon, style: Secondary, size: Small, skin: active_button_skin())
 }
 
@@ -2908,18 +2908,18 @@ fn render_progress(media: &MediaState) -> Node {
 fn transport_buttons(cd: &ControlsData, actions: &TransportActions) -> [Node; 3] {
     let skin = active_button_skin();
     [
-        button!("prev", "", icon: tree::ensure_registered(&icons::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous, skin: skin),
-        button!("play", "", icon: tree::ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled, skin: skin),
-        button!("next", "", icon: tree::ensure_registered(&icons::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next, skin: skin),
+        button!("prev", "", icon: ensure_registered(&icons::SKIP_BACK), style: Ghost, size: Small, disabled: !actions.can_previous, skin: skin),
+        button!("play", "", icon: ensure_registered(cd.play_icon), style: Ghost, size: Small, disabled: cd.play_disabled, skin: skin),
+        button!("next", "", icon: ensure_registered(&icons::SKIP_FORWARD), style: Ghost, size: Small, disabled: !actions.can_next, skin: skin),
     ]
 }
 
 fn volume_buttons(cd: &ControlsData) -> [Node; 3] {
     let skin = active_button_skin();
     [
-        button!("vol_down", "", icon: tree::ensure_registered(&icons::VOLUME_DOWN), style: Ghost, size: Small, skin: skin),
-        button!("vol_up", "", icon: tree::ensure_registered(&icons::VOLUME_UP), style: Ghost, size: Small, skin: skin),
-        button!("mute", "", icon: tree::ensure_registered(cd.mute_icon), style: Ghost, size: Small, skin: skin),
+        button!("vol_down", "", icon: ensure_registered(&icons::VOLUME_DOWN), style: Ghost, size: Small, skin: skin),
+        button!("vol_up", "", icon: ensure_registered(&icons::VOLUME_UP), style: Ghost, size: Small, skin: skin),
+        button!("mute", "", icon: ensure_registered(cd.mute_icon), style: Ghost, size: Small, skin: skin),
     ]
 }
 
