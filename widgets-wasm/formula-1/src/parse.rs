@@ -99,23 +99,12 @@ fn color(json: &JsonDoc, path: &str) -> bmc_wasm_sdk::Color {
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "positions, points, and counts are small non-negative wire integers"
+    reason = "positions and counts are small non-negative wire integers"
 )]
 fn small(json: &JsonDoc, path: &str) -> u8 {
     json.i64(path)
         .unwrap_or_default()
         .clamp(0, i64::from(u8::MAX)) as u8
-}
-
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "lap counts and points fit a u16 on the wire"
-)]
-fn medium(json: &JsonDoc, path: &str) -> u16 {
-    json.i64(path)
-        .unwrap_or_default()
-        .clamp(0, i64::from(u16::MAX)) as u16
 }
 
 /// A count the payload may not name, where zero would read as a real one:
@@ -140,7 +129,7 @@ pub fn standings(json: &JsonDoc) -> Result<Vec<StandingsRow>, Malformed> {
             team_color: color(json, &at("team_color")),
             country_code: text(json, &at("country_code")),
             country_flag_url: image(json, &at("country_flag_url")),
-            points: medium(json, &at("points")),
+            points: json.f64(&at("points")),
             headshot_url: image(json, &at("headshot_url")),
         });
     });
@@ -159,7 +148,7 @@ fn driver_stats_at(json: &JsonDoc, at: &impl Fn(&str) -> String) -> DriverStats 
         team: text(json, &at("team")),
         team_color: color(json, &at("team_color")),
         ranking: counted(json, &at("ranking")),
-        points: medium(json, &at("points")),
+        points: json.f64(&at("points")),
         nationality: text(json, &at("nationality")),
         nationality_flag_url: image(json, &at("nationality_flag_url")),
         gp_wins: json.i64(&at("gp_wins")).and_then(|v| u8::try_from(v).ok()),

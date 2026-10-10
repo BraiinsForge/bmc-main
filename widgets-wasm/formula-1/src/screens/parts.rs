@@ -57,10 +57,11 @@ pub mod color {
 /// painted as though it held something.
 const UNKNOWN: &str = "N/A";
 
-/// What a table's position column reads as where a row has no place.
-/// The column is sized for the two digits a place takes, and `N/A`
-/// overruns it at the widest frame's row font.
-pub const NO_ORDINAL: &str = "—";
+/// What a table's position column reads as where a row has no place,
+/// and its points column where a row has no total.
+/// The position column is sized for the two digits a place takes,
+/// and `N/A` overruns it at the widest frame's row font.
+pub const NO_TABLE_VALUE: &str = "—";
 
 pub mod font {
     pub const TITLE: u32 = 24;
@@ -346,6 +347,13 @@ pub fn date_range(start: CalendarDate, end: Option<CalendarDate>) -> String {
     fmt!("{} {ENDASH} {}", opening, day_and_month(end, month_first))
 }
 
+/// A championship total in the operator's number format.
+/// Nexus sends a decimal, but no points rule has awarded a fraction since 2022.
+#[must_use]
+pub fn points(total: f64) -> String {
+    format_number!(total, 0)
+}
+
 /// The largest box of `bitmap`'s own proportions that fits inside
 /// `width`×`height`, and the offset that centres it there.
 #[must_use]
@@ -476,11 +484,12 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::system::NumberFormat;
     use bmc_wasm_sdk::{Node, TextOverflow, assets, cache, encode_image_meta};
 
     use super::{
         CalendarDate, DateFormat, ENDASH, LabelWeight, Yields, clock, contained, date_range, flag,
-        font, stat_row, system, unbroken,
+        font, points, stat_row, system, unbroken,
     };
     use crate::images::{ImageKind, tag_for};
     use crate::model::ImageUrl;
@@ -555,6 +564,25 @@ mod tests {
             day,
             weekday: 0,
         }
+    }
+
+    #[test]
+    fn a_total_reads_as_a_whole_number() {
+        system::set_current(
+            system::SnapshotBuilder::new()
+                .number_format(NumberFormat::CommaGroupDotDecimal)
+                .build(),
+        );
+        assert_eq!(
+            points(325.0),
+            "325",
+            "a whole total must not print its zero decimal"
+        );
+        assert_eq!(
+            points(12.6),
+            "13",
+            "a stray fraction rounds rather than truncates"
+        );
     }
 
     #[test]

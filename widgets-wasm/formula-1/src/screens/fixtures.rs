@@ -40,17 +40,17 @@ use crate::screens::standings::StandingsViewData;
 /// The top ten as the server sends them, down to the spelling of a
 /// constructor and the three letters it calls a country by — a fixture
 /// of our own invention only agrees with itself.
-const GRID: [(&str, &str, &str, &str, u16); 10] = [
-    ("Kimi Antonelli", "ITA", "Mercedes", "00D7B6", 219),
-    ("Lewis Hamilton", "ENG", "Ferrari", "ED1131", 169),
-    ("George Russell", "ENG", "Mercedes", "00D7B6", 160),
-    ("Charles Leclerc", "MON", "Ferrari", "ED1131", 138),
-    ("Lando Norris", "ENG", "McLaren", "F47600", 128),
-    ("Max Verstappen", "NED", "Red Bull Racing", "0600EF", 109),
-    ("Oscar Piastri", "AUS", "McLaren", "F47600", 92),
-    ("Isack Hadjar", "FRA", "Red Bull Racing", "0600EF", 68),
-    ("Liam Lawson", "NZL", "Racing Bulls", "2B4562", 43),
-    ("Pierre Gasly", "FRA", "Alpine", "0090FF", 42),
+const GRID: [(&str, &str, &str, &str, f64); 10] = [
+    ("Kimi Antonelli", "ITA", "Mercedes", "00D7B6", 219.0),
+    ("Lewis Hamilton", "ENG", "Ferrari", "ED1131", 169.0),
+    ("George Russell", "ENG", "Mercedes", "00D7B6", 160.0),
+    ("Charles Leclerc", "MON", "Ferrari", "ED1131", 138.0),
+    ("Lando Norris", "ENG", "McLaren", "F47600", 128.0),
+    ("Max Verstappen", "NED", "Red Bull Racing", "0600EF", 109.0),
+    ("Oscar Piastri", "AUS", "McLaren", "F47600", 92.0),
+    ("Isack Hadjar", "FRA", "Red Bull Racing", "0600EF", 68.0),
+    ("Liam Lawson", "NZL", "Racing Bulls", "2B4562", 43.0),
+    ("Pierre Gasly", "FRA", "Alpine", "0090FF", 42.0),
 ];
 
 /// A fixture URL under the fake CDN, from whatever names the subject.
@@ -264,7 +264,7 @@ pub fn standings_rows() -> Vec<StandingsRow> {
                 team_color: team_color(livery),
                 country_code: (*country).to_owned(),
                 country_flag_url: flag_url(country),
-                points: *points,
+                points: Some(*points),
                 headshot_url: headshot_url(driver),
             },
         )
@@ -285,6 +285,7 @@ pub fn standings_unranked(bucket: SizeBucket) -> StandingsViewData {
     let mut view = standings(bucket);
     for row in &mut view.rows {
         row.position = None;
+        row.points = None;
     }
     view
 }
@@ -303,7 +304,7 @@ pub fn standings_empty(bucket: SizeBucket) -> StandingsViewData {
 pub fn standings_season_start(bucket: SizeBucket) -> StandingsViewData {
     let mut view = standings(bucket);
     for row in &mut view.rows {
-        row.points = 0;
+        row.points = Some(0.0);
     }
     view
 }
@@ -332,7 +333,7 @@ pub fn standings_widest(bucket: SizeBucket) -> StandingsViewData {
     for (row, (driver, team)) in view.rows.iter_mut().zip(LONGEST) {
         driver.clone_into(&mut row.driver_name);
         team.clone_into(&mut row.team_name);
-        row.points = 400 + row.position.map_or(0, u16::from);
+        row.points = Some(400.0 + row.position.map_or(0.0, f64::from));
     }
     view
 }
@@ -459,7 +460,7 @@ struct Driver {
     team: &'static str,
     livery: &'static str,
     ranking: u8,
-    points: u16,
+    points: f64,
     nationality: &'static str,
     gp_wins: u8,
     world_titles: u8,
@@ -477,7 +478,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Mercedes",
         livery: "00D7B6",
         ranking: 1,
-        points: 219,
+        points: 219.0,
         nationality: "Italy",
         gp_wins: 6,
         world_titles: 0,
@@ -493,7 +494,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Ferrari",
         livery: "ED1131",
         ranking: 2,
-        points: 169,
+        points: 169.0,
         nationality: "England",
         gp_wins: 106,
         world_titles: 7,
@@ -509,7 +510,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Mercedes",
         livery: "00D7B6",
         ranking: 3,
-        points: 160,
+        points: 160.0,
         nationality: "England",
         gp_wins: 7,
         world_titles: 0,
@@ -525,7 +526,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Ferrari",
         livery: "ED1131",
         ranking: 4,
-        points: 138,
+        points: 138.0,
         nationality: "Monaco",
         gp_wins: 9,
         world_titles: 0,
@@ -541,7 +542,7 @@ const DRIVERS: [Driver; 22] = [
         team: "McLaren",
         livery: "F47600",
         ranking: 5,
-        points: 128,
+        points: 128.0,
         nationality: "England",
         gp_wins: 12,
         world_titles: 1,
@@ -557,7 +558,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Red Bull Racing",
         livery: "0600EF",
         ranking: 6,
-        points: 109,
+        points: 109.0,
         nationality: "Netherlands",
         gp_wins: 71,
         world_titles: 4,
@@ -573,7 +574,7 @@ const DRIVERS: [Driver; 22] = [
         team: "McLaren",
         livery: "F47600",
         ranking: 7,
-        points: 92,
+        points: 92.0,
         nationality: "Australia",
         gp_wins: 9,
         world_titles: 0,
@@ -589,7 +590,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Red Bull Racing",
         livery: "0600EF",
         ranking: 8,
-        points: 68,
+        points: 68.0,
         nationality: "France",
         gp_wins: 0,
         world_titles: 0,
@@ -605,7 +606,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Racing Bulls",
         livery: "2B4562",
         ranking: 9,
-        points: 43,
+        points: 43.0,
         nationality: "New Zealand",
         gp_wins: 0,
         world_titles: 0,
@@ -621,7 +622,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Alpine",
         livery: "0090FF",
         ranking: 10,
-        points: 42,
+        points: 42.0,
         nationality: "France",
         gp_wins: 1,
         world_titles: 0,
@@ -637,7 +638,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Racing Bulls",
         livery: "2B4562",
         ranking: 11,
-        points: 23,
+        points: 23.0,
         nationality: "England",
         gp_wins: 0,
         world_titles: 0,
@@ -653,7 +654,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Alpine",
         livery: "0090FF",
         ranking: 12,
-        points: 19,
+        points: 19.0,
         nationality: "Argentina",
         gp_wins: 0,
         world_titles: 0,
@@ -669,7 +670,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Haas",
         livery: "B6BABD",
         ranking: 13,
-        points: 18,
+        points: 18.0,
         nationality: "England",
         gp_wins: 0,
         world_titles: 0,
@@ -685,7 +686,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Audi",
         livery: "900000",
         ranking: 14,
-        points: 10,
+        points: 10.0,
         nationality: "Brazil",
         gp_wins: 0,
         world_titles: 0,
@@ -701,7 +702,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Williams",
         livery: "005AFF",
         ranking: 15,
-        points: 6,
+        points: 6.0,
         nationality: "Spain",
         gp_wins: 4,
         world_titles: 0,
@@ -717,7 +718,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Williams",
         livery: "005AFF",
         ranking: 16,
-        points: 5,
+        points: 5.0,
         nationality: "Thailand",
         gp_wins: 0,
         world_titles: 0,
@@ -733,7 +734,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Haas",
         livery: "B6BABD",
         ranking: 17,
-        points: 3,
+        points: 3.0,
         nationality: "France",
         gp_wins: 1,
         world_titles: 0,
@@ -749,7 +750,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Audi",
         livery: "900000",
         ranking: 18,
-        points: 2,
+        points: 2.0,
         nationality: "Germany",
         gp_wins: 0,
         world_titles: 0,
@@ -765,7 +766,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Aston Martin",
         livery: "006F62",
         ranking: 19,
-        points: 1,
+        points: 1.0,
         nationality: "Spain",
         gp_wins: 32,
         world_titles: 2,
@@ -781,7 +782,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Aston Martin",
         livery: "006F62",
         ranking: 20,
-        points: 0,
+        points: 0.0,
         nationality: "Canada",
         gp_wins: 0,
         world_titles: 0,
@@ -797,7 +798,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Cadillac",
         livery: "909090",
         ranking: 21,
-        points: 0,
+        points: 0.0,
         nationality: "Finland",
         gp_wins: 10,
         world_titles: 0,
@@ -813,7 +814,7 @@ const DRIVERS: [Driver; 22] = [
         team: "Cadillac",
         livery: "909090",
         ranking: 22,
-        points: 0,
+        points: 0.0,
         nationality: "Mexico",
         gp_wins: 6,
         world_titles: 0,
@@ -845,7 +846,7 @@ pub fn drivers() -> Vec<DriverStats> {
             team: driver.team.to_owned(),
             team_color: team_color(driver.livery),
             ranking: Some(driver.ranking),
-            points: driver.points,
+            points: Some(driver.points),
             nationality: driver.nationality.to_owned(),
             nationality_flag_url: flag_url(driver.nationality),
             gp_wins: Some(driver.gp_wins),

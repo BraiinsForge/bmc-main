@@ -177,7 +177,7 @@ fn live_unranked(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
-/// Rows the payload gave no place, which zero cannot stand in for.
+/// Rows the payload gave no place and no total, which zero cannot stand in for.
 #[scene]
 fn standings_unranked(ctx: &mut SceneCtx, ui: &mut Ui) {
     size_stages(ctx, ui, |bucket| {

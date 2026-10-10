@@ -431,7 +431,7 @@ fn cell(which: Cell, row_data: &TimingRow, bucket: SizeBucket) -> Node {
     match which {
         Cell::Position => match row_data.position {
             Some(place) => plain(fmt!("{}", place), size, identity),
-            None => plain(parts::NO_ORDINAL, size, parts::color::TEXT_MUTED),
+            None => plain(parts::NO_TABLE_VALUE, size, parts::color::TEXT_MUTED),
         },
         Cell::TeamLogo => parts::remote_image(
             ImageKind::TeamLogo,

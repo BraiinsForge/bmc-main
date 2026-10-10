@@ -138,7 +138,7 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
             POSITION,
             match entry.position {
                 Some(place) => plain(fmt!("{}.", place)),
-                None => muted(parts::NO_ORDINAL),
+                None => muted(parts::NO_TABLE_VALUE),
             },
         ),
         cell(cols.name, name(&entry.driver_name)),
@@ -171,12 +171,16 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
         ));
     }
 
+    let (points, points_color) = match entry.points {
+        Some(total) => (parts::points(total), color::TEXT),
+        None => (parts::NO_TABLE_VALUE.to_owned(), color::TEXT_MUTED),
+    };
     // The points take the slack, pinning them to the right edge.
     cells.push(col(
         props!(flex: 1.0, width: cols.points),
         [text(
-            fmt!("{}", entry.points),
-            style!(size: font::ROW, weight: cols.points_weight, color: color::TEXT, align: TextAlign::Right, line_height: 1.0),
+            points,
+            style!(size: font::ROW, weight: cols.points_weight, color: points_color, align: TextAlign::Right, line_height: 1.0),
         )],
     ));
 
@@ -229,7 +233,7 @@ mod tests {
 
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
-    use crate::screens::parts::space;
+    use crate::screens::parts::{NO_TABLE_VALUE, color, space};
 
     /// Every bucket, so a new frame cannot skip these checks.
     const ALL: [SizeBucket; 4] = [
@@ -294,6 +298,30 @@ mod tests {
                 "{bucket:?} points weight"
             );
         }
+    }
+
+    #[test]
+    fn a_missing_total_reads_as_a_muted_dash() {
+        let mut entry = fixtures::standings(SizeBucket::Small).rows.remove(0);
+        entry.points = None;
+
+        let Node::Row(_, cells) = standings_row(&entry, columns(SizeBucket::Small)) else {
+            panic!("BUG: a standings row is a row");
+        };
+        let Some(Node::Column(_, points)) = cells.last() else {
+            panic!("BUG: the points close the row");
+        };
+        let Some(Node::Paragraph {
+            base_style, spans, ..
+        }) = points.first()
+        else {
+            panic!("BUG: the points cell holds its text");
+        };
+        assert_eq!(
+            (spans[0].text.as_str(), base_style.color),
+            (NO_TABLE_VALUE, color::TEXT_MUTED),
+            "a total the payload left out must not read as 0 points",
+        );
     }
 
     /// The mark's placeholder is an empty box,

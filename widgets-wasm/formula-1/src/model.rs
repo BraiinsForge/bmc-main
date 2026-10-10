@@ -275,7 +275,8 @@ pub struct StandingsRow {
     pub team_color: Color,
     pub country_code: String,
     pub country_flag_url: ImageUrl,
-    pub points: u16,
+    /// Absent where the payload named none.
+    pub points: Option<f64>,
     pub headshot_url: ImageUrl,
 }
 
@@ -295,7 +296,8 @@ pub struct DriverStats {
     pub team_color: Color,
     /// Absent where the payload named none.
     pub ranking: Option<u8>,
-    pub points: u16,
+    /// Absent where the payload named none.
+    pub points: Option<f64>,
     pub nationality: String,
     pub nationality_flag_url: ImageUrl,
     pub gp_wins: Option<u8>,
