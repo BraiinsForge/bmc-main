@@ -97,6 +97,7 @@ wasmWidgetPackages // {
   core = import ./pkgs/core {
     inherit bmc armv7Pkgs deps profile openwrtFeatures wasmLauncher;
     wasmHost = host;
+    widgets = wasmWidgetPackages;
   };
   bos-avahi = import ./pkgs/bos-avahi { inherit bmc armv7Pkgs; };
   bmc-nix-cli = {

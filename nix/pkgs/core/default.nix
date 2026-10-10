@@ -23,7 +23,7 @@
 # `profile` and `openwrtFeatures` are supplied by the caller so a debug build
 # can flip on the compositor's `profiling` feature (ii-stopwatch timing + the
 # mesh::profile observability channel) without forking this file.
-{ bmc, armv7Pkgs, deps, profile, wasmLauncher, wasmHost, openwrtFeatures ? [ ] }:
+{ bmc, armv7Pkgs, deps, profile, wasmLauncher, wasmHost, widgets, openwrtFeatures ? [ ] }:
 let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
     mkOpenWrtService mkOpenWrtDaemon;
@@ -89,6 +89,7 @@ let
   selectBmcNixBin = bmc.lib.selectBmcNixBin { pkgs = armv7Pkgs; inherit bmcNix; };
 
   orchestrator = selectBmcNixBin "bmc-nix-service-orchestrator";
+  orchestratorService = "bmc-nix-service-orchestrator";
 
   # Ash wrapper around the orchestrator. procd will run the service in
   # a context where LD_PRELOAD is set; Shebang is pinned to /bin/ash
@@ -235,7 +236,7 @@ let
       #!/bin/sh
       set -euxo pipefail
 
-      service_name="bmc-nix-service-orchestrator"
+      service_name="${orchestratorService}"
       instance_name="main"
       executable="${orchestratorWrapped}/bin/bmc-nix-service-orchestrator"
       current_link="$(dirname "$PROFILE_NEW_GENERATION")/current"
@@ -264,7 +265,7 @@ let
     '';
   };
 
-  package = mkPackage {
+  corePackage = mkPackage {
     name = "bmc-core";
     package = bmc-openwrt;
     hooks = [
@@ -308,6 +309,19 @@ let
       "/etc/nix-upgrade/gc.json"
     ];
   };
+
+  widgetAutoinstall = import ../widget-autoinstall {
+    inherit bmc armv7Pkgs widgets orchestratorService;
+    bmcNixCli = selectBmcNixBin "bmc-nix-cli";
+  };
+  joinWidgetAutoinstall = autoinstall: armv7Pkgs.symlinkJoin {
+    inherit (corePackage) name;
+    paths = [ corePackage autoinstall ];
+  };
+  package =
+    if widgetAutoinstall.pkg == null
+    then corePackage
+    else joinWidgetAutoinstall widgetAutoinstall.pkg;
 
   activationLayoutTest = armv7Pkgs.runCommand "core-activation-layout-test" { } ''
     scripts=${package}/core/activation/scripts
