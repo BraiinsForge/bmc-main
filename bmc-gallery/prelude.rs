@@ -19,7 +19,7 @@
 // the grant above.
 
 //! Re-exports for scene authors: the whole gallery prelude, the Deck kit, and
-//! the SDK a scene builds its tree with.
+//! the UI vocabulary and asset glue a scene builds its tree with.
 //!
 //! ```ignore
 //! use bmc_gallery::prelude::*;
@@ -35,8 +35,11 @@ pub use crate::kit::{
     stage_width, system_settings, titled,
 };
 
-pub use bmc_wasm_sdk::tree::*;
-pub use bmc_wasm_sdk::*;
+pub use bmc_render::assets::*;
+pub use bmc_render::ui::*;
+pub use bmc_render::{
+    include_audio, include_bitmap, include_mesh, include_nine_patch, include_skin, include_svg,
+};
 
 /// Convert a pixel value to `f32`.
 ///

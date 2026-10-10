@@ -52,10 +52,10 @@ const CONFIRM_COLOR: Color = Color::from_hex(0x0F_62_FE);
 // ---------------------------------------------------------------------------
 
 /// Llama skin — bundled 9-patch assets with a classic media player aesthetic.
-pub static LLAMA_SKIN: Skin = bmc_render_macros::include_skin!("assets/skins/llama/");
+pub static LLAMA_SKIN: Skin = bmc_render::include_skin!("assets/skins/llama/");
 
 /// Hyperfuse skin — GMK Hyperfuse-inspired colorway with per-key overrides.
-pub static HYPERFUSE_SKIN: Skin = bmc_render_macros::include_skin!("assets/skins/hyperfuse/");
+pub static HYPERFUSE_SKIN: Skin = bmc_render::include_skin!("assets/skins/hyperfuse/");
 
 // ---------------------------------------------------------------------------
 // KeyStyle

@@ -11,10 +11,8 @@ include = ["assets/**"]
 
 [dependencies]
 bmc-render = { path = ".." }
-bmc-render-macros = { path = "../macros" }
 bmc-render-skin = { path = "../skin" }
 bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
-bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 tracing.workspace = true
 
 [dev-dependencies]

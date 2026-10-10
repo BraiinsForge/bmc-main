@@ -19,6 +19,7 @@ include = [
 
 [dependencies]
 anyhow.workspace = true
+bmc-render-macros = { path = "macros" }
 bmc-render-skin = { path = "skin" }
 bmc-ui = { path = "ui" }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol", features = ["id-pool"] }
@@ -66,6 +67,9 @@ glutin = { workspace = true, optional = true }
 
 [features]
 default = []
+# Forwards `bmc-render-macros/deferred-mesh-errors`, so a mesh `include_mesh!`
+# cannot pack draws its error in the mesh's place instead of failing the build.
+deferred-mesh-errors = ["bmc-render-macros/deferred-mesh-errors"]
 # Populate `FrameTimings`. Its own knob so a consumer can read the numbers
 # without also switching on stopwatch logging across the build.
 frame-timings = []

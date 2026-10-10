@@ -8,7 +8,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-bmc-wasm-sdk = { path = "../../../../bmc-wasm-runtime/sdk" }
+bmc-render-macros = { path = "../../../../bmc-render/macros" }
+bmc-ui = { path = "../../../../bmc-render/ui" }
 
 [lints]
 workspace = true

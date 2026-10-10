@@ -21,6 +21,7 @@
 //! Ticker Single's sparkline and candlestick views at every design size.
 
 use bmc_gallery::prelude::*;
+use bmc_wasm_sdk::{SizeVariant, WidgetSize};
 use prices::candle::{CandleBar, Candles};
 use prices::period::Period;
 use ticker_single::model::Series;

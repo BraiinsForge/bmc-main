@@ -21,11 +21,11 @@
 //! Compiles and registers the embedded tray icons into a renderer and returns
 //! the resulting icon-id handles for use when building the UI tree.
 
+use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render_macros::include_svg;
+use bmc_render::ui::Svg;
 use bmc_system_overlay::register_icon;
 use bmc_wasm_protocol::SvgId;
-use bmc_wasm_sdk::assets::Svg;
 
 use crate::ui::{ControlIcons, WifiIcons};
 

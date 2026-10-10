@@ -28,6 +28,7 @@
 //! - Interaction state (hit testing, touch events)
 //! - UI components (buttons, notifications)
 //! - Animation and transition interpolation
+//! - The `include_*!` asset macros and their registration with a renderer ([`assets`])
 //!
 //! # `glam` is intentionally part of this crate's public surface.
 //!
@@ -45,6 +46,7 @@
 //! by design.
 
 pub mod animation;
+pub mod assets;
 pub mod components;
 mod damage;
 pub mod dense_map;

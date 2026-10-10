@@ -92,10 +92,9 @@ version = "0.1.0"
 name = "bmc-render-macros"
 version = "0.1.0"
 dependencies = [
- "bmc-render-skin",
  "bmc-svg-compiler",
+ "bmc-ui",
  "bmc-wasm-assets",
- "bmc-wasm-protocol",
  "gltf",
  "image",
  "proc-macro2",

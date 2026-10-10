@@ -18,18 +18,20 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::{
-    Audio, Bitmap, Mesh, NinePatchAsset, Skin, Svg, include_audio, include_bitmap, include_mesh,
-    include_nine_patch, include_skin, include_svg,
+use bmc_render_macros::{
+    include_audio, include_bitmap, include_mesh, include_nine_patch, include_skin, include_svg,
 };
+use bmc_ui::{Audio, Bitmap, Mesh, NinePatchAsset, Skin, Svg};
 
-const SVG: Svg = include_svg!("widgets-wasm/lib/remote-image/assets/renew.svg");
-const BITMAP: Bitmap = include_bitmap!("widgets-wasm/spacex-launch/assets/unknown.png");
-static MESH: Mesh = include_mesh!("widgets-wasm-examples/mesh-demo/assets/suzanne.glb");
-const NINE_PATCH: NinePatchAsset = include_nine_patch!("bmc-render/assets/panel.9.png");
-static SKIN: Skin = include_skin!("bmc-render/assets/skins/gallery_slider/");
-const AUDIO: Audio =
-    include_audio!("widgets-wasm-examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav");
+const SVG: Svg = include_svg!(bmc_ui, "widgets-wasm/lib/remote-image/assets/renew.svg");
+const BITMAP: Bitmap = include_bitmap!(bmc_ui, "widgets-wasm/spacex-launch/assets/unknown.png");
+static MESH: Mesh = include_mesh!(bmc_ui, "widgets-wasm-examples/mesh-demo/assets/suzanne.glb");
+const NINE_PATCH: NinePatchAsset = include_nine_patch!(bmc_ui, "bmc-render/assets/panel.9.png");
+static SKIN: Skin = include_skin!(bmc_ui, "bmc-render/assets/skins/gallery_slider/");
+const AUDIO: Audio = include_audio!(
+    bmc_ui,
+    "widgets-wasm-examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav"
+);
 
 #[unsafe(no_mangle)]
 #[cfg(target_arch = "wasm32")]

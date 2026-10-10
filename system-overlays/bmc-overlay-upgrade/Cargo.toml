@@ -24,10 +24,8 @@ path = "src/bin/packages.rs"
 anyhow.workspace = true
 bmc-platform.workspace = true
 bmc-render.workspace = true
-bmc-render-macros = { path = "../../bmc-render/macros" }
 bmc-system-overlay.workspace = true
 bmc-wasm-protocol.workspace = true
-bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 tracing.workspace = true
 
 [dev-dependencies]

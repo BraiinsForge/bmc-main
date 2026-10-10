@@ -24,7 +24,7 @@ the final module; native builds retain embedded payloads for storybook rendering
 **IS its responsibility:**
 
 - Build-time asset processing and validation
-- Emitting `const`-compatible Rust expressions referencing `bmc_wasm_sdk` types
+- Emitting `const`-compatible Rust expressions that name their types through the crate root the caller passes
 - Compile-time error reporting for invalid assets (bad mesh counts, missing normals, non-power-of-2 textures, malformed
   9-patches)
 

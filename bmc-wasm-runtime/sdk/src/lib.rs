@@ -387,7 +387,6 @@ pub mod url;
 pub mod ws;
 pub mod xml;
 
-pub use bmc_render_macros::*;
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;
 pub use calendar::{parse_calendar_date, parse_datetime};
@@ -469,4 +468,78 @@ macro_rules! fmt {
     ($($arg:tt)*) => {
         $crate::fmt_impl!(@ufmt_path = $crate::ufmt; $($arg)*)
     };
+}
+
+#[doc(hidden)]
+pub mod __macros {
+    pub use bmc_render_macros::*;
+}
+
+// The proc macros name the descriptor types through the root they are handed,
+// and `$crate` is this crate whichever path a caller reached the wrapper by.
+
+/// Compile an SVG into compact path data at build time, as a [`Svg`].
+///
+/// ```ignore
+/// const STAR: Svg = include_svg!("assets/star.svg");
+/// ```
+///
+/// The path is resolved relative to the crate's `CARGO_MANIFEST_DIR`,
+/// walking up to parent directories for cross-crate scene files.
+#[macro_export]
+macro_rules! include_svg {
+    ($($t:tt)*) => { $crate::__macros::include_svg!($crate, $($t)*) };
+}
+
+/// Package a raster image at build time, as a [`Bitmap`].
+///
+/// ```ignore
+/// const FALCON_9: Bitmap = include_bitmap!("assets/falcon-9.png");
+/// ```
+#[macro_export]
+macro_rules! include_bitmap {
+    ($($t:tt)*) => { $crate::__macros::include_bitmap!($crate, $($t)*) };
+}
+
+/// Package an audio file (WAV, OGG, MP3) at build time, as an [`Audio`].
+///
+/// ```ignore
+/// const TICK: Audio = include_audio!("assets/sounds/tick.wav");
+/// ```
+#[macro_export]
+macro_rules! include_audio {
+    ($($t:tt)*) => { $crate::__macros::include_audio!($crate, $($t)*) };
+}
+
+/// Pack a glTF 2.0 binary mesh at build time, as a [`Mesh`].
+///
+/// ```ignore
+/// static SUZANNE: Mesh = include_mesh!("assets/suzanne.glb");
+/// ```
+///
+/// With the `deferred-mesh-errors` feature, a mesh that fails validation compiles anyway
+/// and [`DrawAssets::mesh`] draws the error in its place.
+#[macro_export]
+macro_rules! include_mesh {
+    ($($t:tt)*) => { $crate::__macros::include_mesh!($crate, $($t)*) };
+}
+
+/// Package a `.9.png` at build time, as a [`NinePatchAsset`] with its insets decoded.
+///
+/// ```ignore
+/// const BUTTON_BG: NinePatchAsset = include_nine_patch!("assets/button.9.png");
+/// ```
+#[macro_export]
+macro_rules! include_nine_patch {
+    ($($t:tt)*) => { $crate::__macros::include_nine_patch!($crate, $($t)*) };
+}
+
+/// Embed a skin directory or zip at build time, as a [`Skin`] with named assets.
+///
+/// ```ignore
+/// static MY_SKIN: Skin = include_skin!("assets/my-skin/");
+/// ```
+#[macro_export]
+macro_rules! include_skin {
+    ($($t:tt)*) => { $crate::__macros::include_skin!($crate, $($t)*) };
 }

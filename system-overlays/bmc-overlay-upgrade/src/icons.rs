@@ -18,11 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render_macros::include_svg;
+use bmc_render::ui::Svg;
 use bmc_system_overlay::register_icon;
 use bmc_wasm_protocol::SvgId;
-use bmc_wasm_sdk::assets::Svg;
 
 const TOOLS: Svg = include_svg!("assets/tools.svg");
 const CHECKMARK: Svg = include_svg!("assets/checkmark.svg");

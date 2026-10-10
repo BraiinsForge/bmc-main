@@ -1137,10 +1137,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-render",
- "bmc-render-macros",
  "bmc-system-overlay",
  "bmc-wasm-protocol",
- "bmc-wasm-sdk",
  "tracing",
 ]
 
@@ -1150,10 +1148,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-render",
- "bmc-render-macros",
  "bmc-system-overlay",
  "bmc-wasm-protocol",
- "bmc-wasm-sdk",
  "serde",
  "serde_json",
  "tempfile",
@@ -1168,10 +1164,8 @@ dependencies = [
  "anyhow",
  "bmc-net-observe",
  "bmc-render",
- "bmc-render-macros",
  "bmc-system-overlay",
  "bmc-wasm-protocol",
- "bmc-wasm-sdk",
  "tracing",
 ]
 
@@ -1182,10 +1176,8 @@ dependencies = [
  "anyhow",
  "bmc-platform",
  "bmc-render",
- "bmc-render-macros",
  "bmc-system-overlay",
  "bmc-wasm-protocol",
- "bmc-wasm-sdk",
  "tracing",
 ]
 
@@ -1210,6 +1202,7 @@ name = "bmc-render"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-render-macros",
  "bmc-render-skin",
  "bmc-svg-compiler",
  "bmc-ui",
@@ -1240,10 +1233,8 @@ name = "bmc-render-keyboard"
 version = "0.1.0"
 dependencies = [
  "bmc-render",
- "bmc-render-macros",
  "bmc-render-skin",
  "bmc-wasm-protocol",
- "bmc-wasm-sdk",
  "roxmltree 0.20.0",
  "tracing",
 ]
@@ -1252,10 +1243,9 @@ dependencies = [
 name = "bmc-render-macros"
 version = "0.1.0"
 dependencies = [
- "bmc-render-skin",
  "bmc-svg-compiler",
+ "bmc-ui",
  "bmc-wasm-assets",
- "bmc-wasm-protocol",
  "gltf",
  "image",
  "proc-macro2",
@@ -1517,7 +1507,8 @@ dependencies = [
 name = "bmc-wasm-assets-macro-widget"
 version = "0.0.0"
 dependencies = [
- "bmc-wasm-sdk",
+ "bmc-render-macros",
+ "bmc-ui",
 ]
 
 [[package]]

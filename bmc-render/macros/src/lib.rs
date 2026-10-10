@@ -27,16 +27,38 @@
 //!
 //! Provides `include_svg!`, `include_bitmap!`, `include_mesh!`,
 //! `include_nine_patch!`, `include_skin!`, and `include_audio!`.
+//!
+//! Each takes the crate root to name the descriptor types through, then the asset path:
+//! `include_svg!(bmc_ui, "assets/star.svg")`.
+//! The SDK and bmc-render wrap them so their callers write only the path,
+//! with `$crate` supplying a root that resolves through any re-export.
 
 mod etc1;
 mod mesh;
 
 use std::path::{Path, PathBuf};
 
-use bmc_wasm_protocol::PackageAssetKind;
+use bmc_ui::PackageAssetKind;
+use bmc_ui::skin::{parse_hex_color, try_parse_nine_patch_insets};
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{LitStr, parse_macro_input};
+use syn::parse::{Parse, ParseStream};
+use syn::{LitStr, Token, parse_macro_input};
+
+/// The crate root the expansion names its types through, then the asset path.
+struct AssetInput {
+    root: syn::Path,
+    path: LitStr,
+}
+
+impl Parse for AssetInput {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let root = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let path = input.parse()?;
+        Ok(Self { root, path })
+    }
+}
 
 /// Resolve an asset path relative to `CARGO_MANIFEST_DIR`.
 ///
@@ -93,6 +115,7 @@ fn asset_tag(rel_path: &str) -> String {
 }
 
 fn static_asset_source(
+    root: &syn::Path,
     kind: PackageAssetKind,
     logical_name: &str,
     payload: &[u8],
@@ -104,10 +127,10 @@ fn static_asset_source(
     let record_len = record.len();
     let id_bytes = id.as_bytes();
     let package_kind = match kind {
-        PackageAssetKind::Svg => quote!(bmc_wasm_sdk::PackageAssetKind::Svg),
-        PackageAssetKind::Bitmap => quote!(bmc_wasm_sdk::PackageAssetKind::Bitmap),
-        PackageAssetKind::Mesh => quote!(bmc_wasm_sdk::PackageAssetKind::Mesh),
-        PackageAssetKind::Audio => quote!(bmc_wasm_sdk::PackageAssetKind::Audio),
+        PackageAssetKind::Svg => quote!(#root::PackageAssetKind::Svg),
+        PackageAssetKind::Bitmap => quote!(#root::PackageAssetKind::Bitmap),
+        PackageAssetKind::Mesh => quote!(#root::PackageAssetKind::Mesh),
+        PackageAssetKind::Audio => quote!(#root::PackageAssetKind::Audio),
     };
     quote! {
         {
@@ -118,17 +141,17 @@ fn static_asset_source(
                 #[expect(dead_code)]
                 #[unsafe(link_section = "bmc_assets_v1")]
                 static _PACKAGE_ASSET: [u8; #record_len] = [#(#record),*];
-                static _PACKAGE_ASSET_REF: bmc_wasm_sdk::PackageAssetRef =
-                    bmc_wasm_sdk::PackageAssetRef::new(
+                static _PACKAGE_ASSET_REF: #root::PackageAssetRef =
+                    #root::PackageAssetRef::new(
                         #package_kind,
-                        bmc_wasm_sdk::PackageAssetId::from_bytes([#(#id_bytes),*]),
+                        #root::PackageAssetId::from_bytes([#(#id_bytes),*]),
                     );
-                bmc_wasm_sdk::StaticAssetSource::package(
+                #root::StaticAssetSource::package(
                     &_PACKAGE_ASSET_REF
                 )
             }
             #[cfg(not(target_arch = "wasm32"))]
-            bmc_wasm_sdk::StaticAssetSource::embedded(#native_data)
+            #root::StaticAssetSource::embedded(#native_data)
         }
     }
 }
@@ -141,14 +164,17 @@ fn static_asset_source(
 /// # Usage
 ///
 /// ```ignore
-/// const FALCON_9: Bitmap = include_bitmap!("assets/falcon-9.png");
+/// const FALCON_9: Bitmap = include_bitmap!(bmc_ui, "assets/falcon-9.png");
 /// ```
 ///
 /// The path is resolved relative to the crate's `CARGO_MANIFEST_DIR`,
 /// with fallback to parent directories for cross-crate story files.
 #[proc_macro]
 pub fn include_bitmap(input: TokenStream) -> TokenStream {
-    let path_lit = parse_macro_input!(input as LitStr);
+    let AssetInput {
+        root,
+        path: path_lit,
+    } = parse_macro_input!(input as AssetInput);
     let rel_path = path_lit.value();
 
     let full_path = resolve_asset(&rel_path);
@@ -157,6 +183,7 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
     let payload = std::fs::read(&full_path)
         .unwrap_or_else(|error| panic!("failed to read bitmap `{}`: {error}", full_path.display()));
     let source = static_asset_source(
+        &root,
         PackageAssetKind::Bitmap,
         &name,
         &payload,
@@ -166,7 +193,7 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         {
             const _TRACK: &[u8] = include_bytes!(#abs_path);
-            bmc_wasm_sdk::Bitmap {
+            #root::Bitmap {
                 source: #source,
                 name: #name,
             }
@@ -184,14 +211,17 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
 /// # Usage
 ///
 /// ```ignore
-/// const TICK: Audio = include_audio!("assets/sounds/tick.wav");
+/// const TICK: Audio = include_audio!(bmc_ui, "assets/sounds/tick.wav");
 /// ```
 ///
 /// The path is resolved relative to the crate's `CARGO_MANIFEST_DIR`,
 /// with fallback to parent directories for cross-crate story files.
 #[proc_macro]
 pub fn include_audio(input: TokenStream) -> TokenStream {
-    let path_lit = parse_macro_input!(input as LitStr);
+    let AssetInput {
+        root,
+        path: path_lit,
+    } = parse_macro_input!(input as AssetInput);
     let rel_path = path_lit.value();
 
     let full_path = resolve_asset(&rel_path);
@@ -200,6 +230,7 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
     let payload = std::fs::read(&full_path)
         .unwrap_or_else(|error| panic!("failed to read audio `{}`: {error}", full_path.display()));
     let source = static_asset_source(
+        &root,
         PackageAssetKind::Audio,
         &name,
         &payload,
@@ -209,7 +240,7 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         {
             const _TRACK: &[u8] = include_bytes!(#abs_path);
-            bmc_wasm_sdk::Audio {
+            #root::Audio {
                 source: #source,
                 name: #name,
             }
@@ -243,16 +274,19 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
 /// # Usage
 ///
 /// ```ignore
-/// static SUZANNE: Mesh = include_mesh!("assets/suzanne.glb");
+/// static SUZANNE: Mesh = include_mesh!(bmc_ui, "assets/suzanne.glb");
 /// ```
 ///
 /// The path is resolved relative to the crate's `CARGO_MANIFEST_DIR`,
 /// with fallback to parent directories for cross-crate story files.
 #[proc_macro]
 pub fn include_mesh(input: TokenStream) -> TokenStream {
-    let path_lit = parse_macro_input!(input as LitStr);
+    let AssetInput {
+        root,
+        path: path_lit,
+    } = parse_macro_input!(input as AssetInput);
     let packed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        include_mesh_impl(&path_lit)
+        include_mesh_impl(&root, &path_lit)
     }))
     .unwrap_or_else(|panic| {
         let message = panic
@@ -264,7 +298,9 @@ pub fn include_mesh(input: TokenStream) -> TokenStream {
     });
     match packed {
         Ok(stream) => stream.into(),
-        Err(e) if cfg!(feature = "deferred-mesh-errors") => failed_mesh(&path_lit, &e).into(),
+        Err(e) if cfg!(feature = "deferred-mesh-errors") => {
+            failed_mesh(&root, &path_lit, &e).into()
+        }
         Err(e) => e.to_compile_error().into(),
     }
 }
@@ -274,18 +310,22 @@ pub fn include_mesh(input: TokenStream) -> TokenStream {
 /// The call to a deprecated function makes the failure a warning at the call site,
 /// which a lint run that denies warnings still fails on.
 /// It is warned locally, since the workspace and the gallery allow `deprecated`.
-fn failed_mesh(path_lit: &LitStr, error: &syn::Error) -> proc_macro2::TokenStream {
+fn failed_mesh(
+    root: &syn::Path,
+    path_lit: &LitStr,
+    error: &syn::Error,
+) -> proc_macro2::TokenStream {
     let rel_path = path_lit.value();
     let message = format!("include_mesh!({rel_path:?}) failed: {error}");
     let name = asset_tag(&rel_path);
-    let source = static_asset_source(PackageAssetKind::Mesh, &name, &[], &quote! { &[] });
+    let source = static_asset_source(root, PackageAssetKind::Mesh, &name, &[], &quote! { &[] });
     quote_spanned! {path_lit.span()=>
         {
             #[deprecated(note = #message)]
             const fn include_mesh_failed() {}
             #[warn(deprecated)]
             const _: () = include_mesh_failed();
-            bmc_wasm_sdk::Mesh {
+            #root::Mesh {
                 source: #source,
                 face_normals: &[],
                 name: #name,
@@ -295,7 +335,7 @@ fn failed_mesh(path_lit: &LitStr, error: &syn::Error) -> proc_macro2::TokenStrea
     }
 }
 
-fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
+fn include_mesh_impl(root: &syn::Path, path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
     let span = path_lit.span();
     let rel_path = path_lit.value();
     let full_path = resolve_asset(&rel_path);
@@ -311,6 +351,7 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
     let (packed, face_normals, extra_tracked_paths) = mesh::pack_mesh(&full_path, span)?;
     let name = asset_tag(&rel_path);
     let source = static_asset_source(
+        root,
         PackageAssetKind::Mesh,
         &name,
         &packed,
@@ -341,7 +382,7 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
         {
             const _TRACK: &[u8] = include_bytes!(#abs_path);
             #(#extra_tracks)*
-            bmc_wasm_sdk::Mesh {
+            #root::Mesh {
                 source: #source,
                 face_normals: &[#(#normal_arrays),*],
                 name: #name,
@@ -360,7 +401,7 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
 /// # Usage
 ///
 /// ```ignore
-/// const STAR: Svg = include_svg!("assets/star.svg");
+/// const STAR: Svg = include_svg!(bmc_ui, "assets/star.svg");
 /// ```
 ///
 /// The path is resolved relative to the crate's `CARGO_MANIFEST_DIR`,
@@ -368,7 +409,10 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
 /// Cargo tracks the SVG file for recompilation when it changes.
 #[proc_macro]
 pub fn include_svg(input: TokenStream) -> TokenStream {
-    let path_lit = parse_macro_input!(input as LitStr);
+    let AssetInput {
+        root,
+        path: path_lit,
+    } = parse_macro_input!(input as AssetInput);
     let rel_path = path_lit.value();
 
     let full_path = resolve_asset(&rel_path);
@@ -380,6 +424,7 @@ pub fn include_svg(input: TokenStream) -> TokenStream {
     let compiled = bmc_svg_compiler::compile_svg(&svg_data);
     let name = asset_tag(&rel_path);
     let source = static_asset_source(
+        &root,
         PackageAssetKind::Svg,
         &name,
         &compiled,
@@ -406,7 +451,7 @@ pub fn include_svg(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         {
             const _TRACK: &[u8] = include_bytes!(#abs_path);
-            bmc_wasm_sdk::Svg {
+            #root::Svg {
                 source: #source,
                 name: #name,
                 viewbox: (#viewbox_width, #viewbox_height),
@@ -426,7 +471,7 @@ pub fn include_svg(input: TokenStream) -> TokenStream {
 /// # Usage
 ///
 /// ```ignore
-/// const BUTTON_BG: NinePatchAsset = include_nine_patch!("assets/button.9.png");
+/// const BUTTON_BG: NinePatchAsset = include_nine_patch!(bmc_ui, "assets/button.9.png");
 /// ```
 ///
 /// The path is resolved relative to the crate's `CARGO_MANIFEST_DIR`,
@@ -441,7 +486,10 @@ pub fn include_nine_patch(input: TokenStream) -> TokenStream {
 }
 
 fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream> {
-    let path_lit: LitStr = syn::parse(input)?;
+    let AssetInput {
+        root,
+        path: path_lit,
+    } = syn::parse(input)?;
     let rel_path = path_lit.value();
     let span = path_lit.span();
 
@@ -463,9 +511,8 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
     let rgba = img.to_rgba8();
     let (full_w, full_h) = (rgba.width(), rgba.height());
 
-    let insets =
-        bmc_render_skin::try_parse_nine_patch_insets(full_w, full_h, |x, y| rgba.get_pixel(x, y).0)
-            .map_err(|e| syn::Error::new(span, format!(".9.png `{}`: {e}", full_path.display())))?;
+    let insets = try_parse_nine_patch_insets(full_w, full_h, |x, y| rgba.get_pixel(x, y).0)
+        .map_err(|e| syn::Error::new(span, format!(".9.png `{}`: {e}", full_path.display())))?;
     let left = insets.left;
     let right = insets.right;
     let top = insets.top;
@@ -490,6 +537,7 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
     let abs_path = full_path.display().to_string();
     let name = asset_tag(&rel_path);
     let source = static_asset_source(
+        &root,
         PackageAssetKind::Bitmap,
         &name,
         &png_bytes,
@@ -500,7 +548,7 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
         {
             // Track the source file for recompilation
             const _TRACK: &[u8] = include_bytes!(#abs_path);
-            bmc_wasm_sdk::NinePatchAsset {
+            #root::NinePatchAsset {
                 source: #source,
                 name: #name,
                 left: #left,
@@ -522,9 +570,9 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
 /// # Usage
 ///
 /// ```ignore
-/// const MY_SKIN: Skin = include_skin!("assets/my-skin.zip");
+/// const MY_SKIN: Skin = include_skin!(bmc_ui, "assets/my-skin.zip");
 /// // — or for easier development —
-/// const MY_SKIN: Skin = include_skin!("assets/my-skin/");
+/// const MY_SKIN: Skin = include_skin!(bmc_ui, "assets/my-skin/");
 /// // later: MY_SKIN.get("button_normal") → NinePatch
 /// ```
 ///
@@ -538,7 +586,10 @@ pub fn include_skin(input: TokenStream) -> TokenStream {
 }
 
 fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream> {
-    let path_lit: LitStr = syn::parse(input)?;
+    let AssetInput {
+        root,
+        path: path_lit,
+    } = syn::parse(input)?;
     let rel_path = path_lit.value();
     let span = path_lit.span();
 
@@ -586,11 +637,8 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
                 .iter()
                 .filter_map(|(key, value)| {
                     let hex = value.as_str()?;
-                    let color = bmc_render_skin::parse_hex_color(
-                        hex,
-                        &format!("skin.toml [palette].{key}"),
-                    )
-                    .to_u32();
+                    let color =
+                        parse_hex_color(hex, &format!("skin.toml [palette].{key}")).to_u32();
                     Some((key.clone(), color))
                 })
                 .collect()
@@ -601,7 +649,7 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
         .iter()
         .map(|(key, color)| {
             quote! {
-                (#key, bmc_wasm_sdk::colors::Color::from_raw(#color))
+                (#key, #root::Color::from_raw(#color))
             }
         })
         .collect();
@@ -616,13 +664,14 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
                 let data_slice = data.as_slice();
                 let logical_name = format!("{base_name}::{name}");
                 let source = static_asset_source(
+                    &root,
                     PackageAssetKind::Bitmap,
                     &logical_name,
                     data,
                     &quote! { &[#(#data_slice),*] },
                 );
                 quote! {
-                    bmc_wasm_sdk::SkinAsset {
+                    #root::SkinAsset {
                         name: #name,
                         source: #source,
                         left: #left,
@@ -631,7 +680,7 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
                         bottom: #bottom,
                         width: #width,
                         height: #height,
-                        color: bmc_wasm_sdk::colors::Color::from_raw(#color),
+                        color: #root::Color::from_raw(#color),
                     }
                 }
             },
@@ -660,7 +709,7 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
         quote! {
             {
                 #(#track_tokens)*
-                bmc_wasm_sdk::Skin {
+                #root::Skin {
                     name: #skin_name,
                     description: #skin_description,
                     palette: &[#(#palette_tokens),*],
@@ -672,7 +721,7 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
         quote! {
             {
                 const _TRACK: &[u8] = include_bytes!(#abs_path);
-                bmc_wasm_sdk::Skin {
+                #root::Skin {
                     name: #skin_name,
                     description: #skin_description,
                     palette: &[#(#palette_tokens),*],
@@ -800,7 +849,7 @@ fn process_skin_files(
             .and_then(|t| t.get("color"))
             .and_then(|v| v.as_str())
             .map_or(0, |hex| {
-                bmc_render_skin::parse_hex_color(hex, &format!("skin.toml [{asset_name}]")).to_u32()
+                parse_hex_color(hex, &format!("skin.toml [{asset_name}]")).to_u32()
             });
 
         if is_nine_patch {
@@ -810,10 +859,8 @@ fn process_skin_files(
             let rgba = img.to_rgba8();
             let (full_w, full_h) = (rgba.width(), rgba.height());
 
-            let insets = bmc_render_skin::try_parse_nine_patch_insets(full_w, full_h, |x, y| {
-                rgba.get_pixel(x, y).0
-            })
-            .map_err(|e| syn::Error::new(span, format!("`{entry_name}`: {e}")))?;
+            let insets = try_parse_nine_patch_insets(full_w, full_h, |x, y| rgba.get_pixel(x, y).0)
+                .map_err(|e| syn::Error::new(span, format!("`{entry_name}`: {e}")))?;
 
             // try_parse_nine_patch_insets enforces full_w >= 3 && full_h >= 3,
             // so these subtractions cannot underflow.

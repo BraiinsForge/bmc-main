@@ -23,11 +23,11 @@
 //! The SVGs are the stable-26.02 `init_setup` set,
 //! carried over so the screens keep the legacy design.
 
+use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render_macros::include_svg;
+use bmc_render::ui::Svg;
 use bmc_system_overlay::register_icon;
 use bmc_wasm_protocol::SvgId;
-use bmc_wasm_sdk::assets::Svg;
 
 const WIFI: Svg = include_svg!("assets/wifi.svg");
 const WIFI_CONNECT: Svg = include_svg!("assets/wifi_connect.svg");

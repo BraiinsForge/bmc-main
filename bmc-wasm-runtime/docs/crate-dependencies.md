@@ -55,6 +55,8 @@
 ## Leaf crates
 
 `bmc-ui` and `bmc-icon-compiler` are the two true leaves — no path dependencies of their own. `bmc-wasm-protocol`
-depends only on `bmc-ui`; `bmc-render` and `bmc-wasm-sdk` take `bmc-ui` directly as well, for the tree and its builders.
-The protocol and icon-compiler crates live under `bmc-wasm-runtime/` for historical reasons; the paths work and there's
-no benefit to moving them.
+depends only on `bmc-ui`; `bmc-render`, `bmc-wasm-sdk` and `bmc-render-macros` take `bmc-ui` directly as well, for the
+tree and its builders and for the descriptor types the asset macros expand to. The proc macros name those types through
+a crate root passed as their first argument, which the SDK's and bmc-render's `include_*!` wrappers supply as `$crate`,
+so the overlays, the keyboard and the macro fixture build without the SDK. The protocol and icon-compiler crates live
+under `bmc-wasm-runtime/` for historical reasons; the paths work and there's no benefit to moving them.

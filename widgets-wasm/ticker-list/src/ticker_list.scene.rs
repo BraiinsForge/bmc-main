@@ -22,6 +22,7 @@
 //! on each device frame the manifest admits.
 
 use bmc_gallery::prelude::*;
+use bmc_wasm_sdk::WidgetSize;
 use ticker_list::fixtures::{self, List};
 use ticker_list::render;
 

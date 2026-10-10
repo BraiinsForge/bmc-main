@@ -51,9 +51,9 @@ use std::path::{Path, PathBuf};
 
 use proc_macro2::Span;
 
-use bmc_wasm_protocol::mesh::{
+use bmc_ui::mesh::{
     FLAG_HAS_NORMAL_MAP, FLAG_HAS_TANGENTS, FLAG_HAS_TEXTURE, FLAG_HAS_UVS, HEADER_SIZE,
-    MAX_TEXTURE_SIZE, MAX_TRIANGLES, MAX_VERTICES, MESH_MAGIC,
+    MAX_TEXTURE_SIZE, MAX_TRIANGLES, MAX_VERTICES, MESH_MAGIC, TextureFormat,
 };
 
 /// The smallest side an ETC1 texture can have: the codec packs whole 4×4 blocks.
@@ -187,7 +187,7 @@ pub fn pack_mesh(
                     height: bundle.height,
                 }),
                 None,
-                bmc_wasm_protocol::mesh::TextureFormat::Msdf,
+                TextureFormat::Msdf,
                 bundle.body_color,
                 bundle.label_color,
                 false,
@@ -196,7 +196,7 @@ pub fn pack_mesh(
             (
                 extract_texture(&primitive, &images, glb_path, span)?,
                 extract_normal_map(&primitive, &images, glb_path, span)?,
-                bmc_wasm_protocol::mesh::TextureFormat::Etc1,
+                TextureFormat::Etc1,
                 [0_u8; 4],
                 [0_u8; 4],
                 true,

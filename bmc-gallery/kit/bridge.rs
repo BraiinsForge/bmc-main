@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Renders SDK trees through bmc-render's femtovg pipeline onto a gallery stage.
+//! Renders UI trees through bmc-render's femtovg pipeline onto a gallery stage.
 //!
 //! gallery owns the framebuffer and its chrome; this module draws into a femtovg
 //! image of its own and copies that across.
@@ -29,16 +29,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
 
+use bmc_render::assets::{AssetHost, install_asset_host};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::{ActionEvent, InteractionState, TouchEvent};
 use bmc_render::renderer::prelude::*;
-use bmc_render::tree::{NodeContext, TouchHit};
+use bmc_render::tree::{Node, NodeContext, TouchHit};
+use bmc_render::ui::{BitmapId, MeshId, SvgId};
 use bmc_render::{
-    AnimationState, ModalState, ProcessContext, ScrollState, TransitionState, TransitionStateKey,
+    AnimationState, FrameTimings, ModalState, ProcessContext, ScrollState, TransitionState,
+    TransitionStateKey,
 };
-use bmc_wasm_sdk::assets::AssetHost;
-use bmc_wasm_sdk::tree::Node;
-use bmc_wasm_sdk::{BitmapId, MeshId, SvgId};
 // eframe's glow, not the one femtovg links: only raw GL names cross between the
 // two, so the versions never have to agree.
 use gallery::eframe::egui::{Id, Ui};
@@ -100,18 +100,37 @@ impl Image {
 // Registration fires while a scene builds its nodes and re-entrantly
 // from canvas draw closures, so the host holds a pointer rather than borrowing RENDERER.
 
-/// The boxed renderer in this thread's RENDERER, registering the SDK's assets.
+/// The boxed renderer in this thread's RENDERER, registering assets for bmc-render
+/// and for the SDK, whose asset host the widget scenes still build through.
 struct DeckAssetHost(*mut FemtoVgRenderer);
 
 impl DeckAssetHost {
     fn with_renderer<R>(&self, register: impl FnOnce(&mut FemtoVgRenderer) -> R) -> R {
         // SAFETY: RENDERER keeps the box alive for every scene call,
-        // and the SDK holds its asset host per thread, so this runs on the thread that owns it.
+        // and each asset host is held per thread, so this runs on the thread that owns it.
         register(unsafe { &mut *self.0 })
     }
 }
 
 impl AssetHost for DeckAssetHost {
+    fn register_svg(&self, tag: &str, data: &[u8]) -> Option<SvgId> {
+        self.with_renderer(|renderer| renderer.register_svg(tag, data))
+    }
+
+    fn register_bitmap(&self, tag: &str, data: &[u8]) -> Option<BitmapId> {
+        self.with_renderer(|renderer| renderer.register_bitmap(tag, data))
+    }
+
+    fn register_bitmap_nearest(&self, tag: &str, data: &[u8]) -> Option<BitmapId> {
+        self.with_renderer(|renderer| renderer.register_bitmap_nearest(tag, data))
+    }
+
+    fn register_mesh(&self, tag: &str, data: &[u8]) -> Option<MeshId> {
+        self.with_renderer(|renderer| renderer.register_mesh(tag, data))
+    }
+}
+
+impl bmc_wasm_sdk::assets::AssetHost for DeckAssetHost {
     fn register_svg(&self, tag: &str, data: &[u8]) -> Option<SvgId> {
         self.with_renderer(|renderer| renderer.register_svg(tag, data))
     }
@@ -186,7 +205,7 @@ impl Default for FrameState {
     }
 }
 
-/// Build the renderer and wire the SDK registrars to it, once per session.
+/// Build the renderer and wire both asset hosts to it, once per session.
 ///
 /// The FBO handed to `FemtoVgRenderer::new` is never rendered into: femtovg 0.20.4
 /// pins its "screen" target at construction and `Canvas` owns the renderer privately,
@@ -209,6 +228,7 @@ fn init_renderer_with(loader: &gallery::GlLoader, [width, height]: [u32; 2], fbo
             .expect("BUG: failed to create the FemtoVG renderer")
         },
     );
+    install_asset_host(DeckAssetHost(&raw mut *renderer));
     bmc_wasm_sdk::assets::install_asset_host(DeckAssetHost(&raw mut *renderer));
     RENDERER.set(Some(renderer));
     // SAFETY: same loader, same context femtovg just bound itself to.
@@ -430,7 +450,7 @@ fn staged_tree(
         size,
         input,
         |renderer, state, delta_ms, now_unix_secs| {
-            let bytes = bmc_wasm_sdk::tree::serialize_node_to_bytes(&build());
+            let tree = build();
             let mut ctx = ProcessContext {
                 interaction: &mut state.interaction,
                 modal_states: &mut state.modal_states,
@@ -448,19 +468,21 @@ fn staged_tree(
                 stroke_outlines: false,
                 damage_rects: &[],
             };
-            match bmc_render::process_tree(
-                &bytes,
+            let mut timings = FrameTimings::default();
+            match bmc_render::layout_and_render(
+                &tree,
                 size.layout_width(),
                 size.layout_height(),
                 renderer,
+                &mut timings,
                 &mut ctx,
             ) {
-                Ok((_tree, result, has_active, _timings)) => {
+                Ok((result, has_active)) => {
                     state.drags = result.drags;
                     (result.content_size, has_active)
                 }
                 Err(e) => {
-                    tracing::error!("process_tree failed: {e}");
+                    tracing::error!("layout_and_render failed: {e}");
                     ((size.layout_width(), size.layout_height()), false)
                 }
             }

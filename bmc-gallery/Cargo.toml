@@ -97,11 +97,12 @@ bmc-overlay-settings-tray = { path = "../system-overlays/bmc-overlay-settings-tr
 bmc-overlay-upgrade = { path = "../system-overlays/bmc-overlay-upgrade" }
 # The per-product display geometry the overlay scenes stage at.
 bmc-platform = { path = "../bmc-platform" }
-bmc-render = { path = "../bmc-render" }
+bmc-render = { path = "../bmc-render", features = ["deferred-mesh-errors"] }
 bmc-render-keyboard = { path = "../bmc-render/keyboard" }
 # The upgrade scene's view types, which the overlay crate takes but does not re-export.
 bmc-system-overlay = { path = "../system-overlays/bmc-system-overlay" }
-bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk", features = ["deferred-mesh-errors"] }
+# The kit's settings and image helpers, and the widget scenes until they run as wasm.
+bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk" }
 braiins-pool = { path = "../widgets-wasm/braiins-pool" }
 clock = { path = "../widgets-wasm/clock" }
 fleet-management = { path = "../widgets-wasm/fleet-management" }

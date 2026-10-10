@@ -22,6 +22,7 @@
 //! and on the two panels that have no bucket of their own.
 
 use bmc_gallery::prelude::*;
+use bmc_wasm_sdk::WidgetViewport;
 use halving_countdown::model::SizeBucket;
 use halving_countdown::screens::{ViewData, fixtures, halving_view};
 use halving_countdown::{NumbersFontStyle, Params};

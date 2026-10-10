@@ -36,14 +36,14 @@ mod poller;
 use std::time::{Duration, Instant};
 
 use bmc_render::colors::{Color, RED_60, VIOLET_60};
+use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{FontFamily, FontWeight, TextAlign, TextStyle, VerticalAlign};
-use bmc_render_macros::include_svg;
+use bmc_render::ui::Svg;
 use bmc_system_overlay::{
     FrameKind, LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome, SnapshotVersion,
     SystemOverlay, TickOutcome, VersionedSnapshot, register_icon,
 };
-use bmc_wasm_sdk::assets::Svg;
 
 use crate::bos::BosClient;
 pub use crate::mining::Status;

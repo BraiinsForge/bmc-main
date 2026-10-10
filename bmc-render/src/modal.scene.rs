@@ -47,7 +47,7 @@ fn examples(ctx: &mut SceneCtx, ui: &mut Ui) {
         for round in 0..3 {
             for (i, para) in [para_a, para_b, para_c].into_iter().enumerate() {
                 prose.push(text(
-                    &fmt!("§{}.{}  {}", round + 1, i + 1, para),
+                    format!("§{}.{}  {}", round + 1, i + 1, para),
                     style!(size: 14, color: GRAY_10, line_height: 1.4),
                 ));
             }

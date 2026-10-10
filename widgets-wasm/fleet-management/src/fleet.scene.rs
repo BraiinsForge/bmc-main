@@ -23,6 +23,7 @@
 //! so a review is one scroll, not a knob hunt.
 
 use bmc_gallery::prelude::*;
+use bmc_wasm_sdk::types;
 use fleet_management::screens::table::TableViewData;
 use fleet_management::screens::{self, Layout, bmm101::Bmm101};
 
