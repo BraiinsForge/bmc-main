@@ -32,9 +32,10 @@ use std::f32::consts::PI;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::prelude::*;
-use bmc_ui::Color;
+use bmc_ui::{
+    AnimProperty, ArcCap, ArcSegments, Color, Draw, Easing, LoopMode, PropsData, canvas, encode,
+};
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
-use bmc_wasm_sdk::{AnimProperty, ArcCap, ArcSegments, Draw, Easing, LoopMode, PropsData};
 use glow::HasContext as _;
 
 #[path = "common/asset_fixtures.rs"]
@@ -366,7 +367,7 @@ fn tree(draws: Vec<Draw>) -> Vec<u8> {
     };
     let mut all = vec![Draw::rect(0.0, 0.0, f32::from(W), f32::from(H), BACKGROUND)];
     all.extend(draws);
-    bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(props, all))
+    encode(&canvas(props, all))
 }
 
 /// Hands pointing apart, rotating about the canvas centre, under a static disc.

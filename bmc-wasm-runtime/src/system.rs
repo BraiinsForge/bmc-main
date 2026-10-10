@@ -50,12 +50,14 @@
 //!
 //! Per-field kind-tagging keeps wire layout extensible:
 //! a future field gets a new `SystemFieldKind` variant without renumbering
-//! and without bumping a version. The SDK decoder dispatches on the byte
-//! and silently skips unknown kinds — widgets compiled against an older
-//! SDK degrade to default field values rather than refusing the snapshot.
+//! and without bumping a version. The reader stops at the first kind
+//! it does not know, so new kinds are appended: a widget built against an older SDK
+//! still sees every field that precedes them and falls back to defaults for the rest
+//! rather than refusing the snapshot.
 
 use bmc_wasm_protocol::system::{
-    DateFormat, NumberFormat, SystemFieldKind, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
+    DateFormat, NumberFormat, Snapshot, SystemFieldKind, TemperatureUnit, TimeFormat, UnitSystem,
+    Weekday,
 };
 use bmc_wasm_protocol::versioned_snapshot::WireEncode;
 
@@ -123,7 +125,7 @@ pub struct NextAlarm {
     pub name: String,
 }
 
-/// Encode a [`SystemSnapshot`] into the wasmi-wire bytes the SDK decoder parses.
+/// Encode a [`SystemSnapshot`] into the wasmi-wire bytes [`Snapshot`] reads.
 ///
 /// See the module-level rustdoc for the byte layout.
 #[must_use]
@@ -185,6 +187,29 @@ pub fn encode(snapshot: &SystemSnapshot) -> Vec<u8> {
 impl WireEncode for SystemSnapshot {
     fn encode(&self) -> Vec<u8> {
         encode(self)
+    }
+}
+
+/// Missing or malformed entries fall back to the field's default,
+/// the same choice widgets make when an accessor answers `None`.
+impl From<&Snapshot> for SystemSnapshot {
+    fn from(snapshot: &Snapshot) -> Self {
+        Self {
+            settings: SystemSettings {
+                timezone: snapshot.timezone().unwrap_or_default().to_owned(),
+                time_format: snapshot.time_format().unwrap_or_default(),
+                date_format: snapshot.date_format().unwrap_or_default(),
+                number_format: snapshot.number_format().unwrap_or_default(),
+                first_day_of_week: snapshot.first_day_of_week().unwrap_or_default(),
+                temperature_unit: snapshot.temperature_unit().unwrap_or_default(),
+                unit_system: snapshot.unit_system().unwrap_or_default(),
+            },
+            next_alarm: snapshot.next_alarm().map(|next| NextAlarm {
+                fire_at_utc_ms: next.fire_at_utc_ms,
+                name: next.name.to_owned(),
+            }),
+            night_mode: snapshot.night_mode().unwrap_or_default(),
+        }
     }
 }
 
@@ -265,9 +290,8 @@ mod tests {
 
     #[test]
     fn encode_round_trips_through_decode_path() {
-        // The decoder lives SDK-side; here we sanity-check the layout
-        // by walking the kind-tagged stream and confirming every field
-        // serialises to its documented form.
+        // Walk the kind-tagged stream by hand, independent of the reader,
+        // and confirm every field serialises to its documented form.
         let snap = sample();
         let bytes = encode(&snap);
         let count = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
@@ -505,7 +529,7 @@ mod tests {
         assert_eq!(direct, via_trait);
     }
 
-    /// Cross-validate the host encoder against the SDK decoder end-to-end.
+    /// Cross-validate the host encoder against the protocol reader end-to-end.
     ///
     /// The two sides share `bmc_wasm_protocol::system::*` for kind tags
     /// and enum wire values, so constant drift is impossible at compile time.
@@ -514,42 +538,100 @@ mod tests {
     /// per-entry payload framing (u16 strings, u8 enum tags, i64 LE
     /// for the alarm fire time), and end-to-end variant fidelity.
     ///
-    /// Companion to `params::tests::host_encoder_round_trips_through_sdk_parser`.
+    /// Companion to `params::tests::host_encoder_round_trips_through_the_protocol_reader`.
     #[test]
-    fn host_encoder_round_trips_through_sdk_decoder() {
-        use bmc_wasm_sdk::system::Snapshot;
-
-        let snap = sample();
-        let bytes = encode(&snap);
-        let decoded = Snapshot::from_bytes(bytes);
-
-        assert_eq!(decoded.timezone(), Some("Europe/Bratislava"));
-        assert_eq!(decoded.time_format(), Some(TimeFormat::Hour12));
-        assert_eq!(decoded.date_format(), Some(DateFormat::YyyyMmDdDot));
-        assert_eq!(
-            decoded.number_format(),
-            Some(NumberFormat::CommaGroupDotDecimal)
-        );
-        assert_eq!(decoded.first_day_of_week(), Some(Weekday::Sunday));
-        assert_eq!(
-            decoded.temperature_unit(),
-            Some(TemperatureUnit::Fahrenheit)
-        );
-        assert_eq!(decoded.unit_system(), Some(UnitSystem::Imperial));
-        let next = decoded
-            .next_alarm()
-            .expect("BUG: sample() encodes next_alarm = Some(...)");
-        assert_eq!(next.fire_at_utc_ms, 1_700_000_000_000);
-        assert_eq!(next.name, "Wake up");
-        assert_eq!(decoded.night_mode(), Some(true));
+    fn host_encoder_round_trips_through_the_protocol_reader() {
+        let snapshot = |timezone: &str,
+                        (time_format, date_format, number_format, first_day_of_week),
+                        (temperature_unit, unit_system),
+                        (fire_at_utc_ms, name): (i64, &str),
+                        night_mode| SystemSnapshot {
+            settings: SystemSettings {
+                timezone: timezone.into(),
+                time_format,
+                date_format,
+                number_format,
+                first_day_of_week,
+                temperature_unit,
+                unit_system,
+            },
+            next_alarm: Some(NextAlarm {
+                fire_at_utc_ms,
+                name: name.into(),
+            }),
+            night_mode,
+        };
+        // The two-valued fields take the patterns 001, 010, 100 and 011 across the three,
+        // apart from each other and from the nonzero bytes `night_mode` would misread as true.
+        // The other fields change too, so a reader that ignores its entry fails.
+        let snapshots = [
+            snapshot(
+                "Europe/Bratislava",
+                (
+                    TimeFormat::Hour12,
+                    DateFormat::YyyyMmDdDot,
+                    NumberFormat::SpaceGroupDotDecimal,
+                    Weekday::Sunday,
+                ),
+                (TemperatureUnit::Celsius, UnitSystem::Imperial),
+                (1_700_000_000_000, "Wake up"),
+                false,
+            ),
+            snapshot(
+                "America/New_York",
+                (
+                    TimeFormat::Hour12,
+                    DateFormat::DdMmYyyyDash,
+                    NumberFormat::DotGroupCommaDecimal,
+                    Weekday::Friday,
+                ),
+                (TemperatureUnit::Fahrenheit, UnitSystem::Metric),
+                (1_800_000_000_000, "Stand-up"),
+                true,
+            ),
+            snapshot(
+                "Asia/Tokyo",
+                (
+                    TimeFormat::Hour24,
+                    DateFormat::YyyyMDSlash,
+                    NumberFormat::SpaceGroupDotDecimal,
+                    Weekday::Saturday,
+                ),
+                (TemperatureUnit::Celsius, UnitSystem::Metric),
+                (1_900_000_000_000, "Lunch"),
+                true,
+            ),
+        ];
+        for snap in snapshots {
+            let decoded = Snapshot::from_bytes(encode(&snap));
+            let settings = &snap.settings;
+            assert_eq!(decoded.timezone(), Some(settings.timezone.as_str()));
+            assert_eq!(decoded.time_format(), Some(settings.time_format));
+            assert_eq!(decoded.date_format(), Some(settings.date_format));
+            assert_eq!(decoded.number_format(), Some(settings.number_format));
+            assert_eq!(
+                decoded.first_day_of_week(),
+                Some(settings.first_day_of_week)
+            );
+            assert_eq!(decoded.temperature_unit(), Some(settings.temperature_unit));
+            assert_eq!(decoded.unit_system(), Some(settings.unit_system));
+            let alarm = snap
+                .next_alarm
+                .as_ref()
+                .expect("BUG: every snapshot here has an alarm");
+            let next = decoded.next_alarm().expect("BUG: an encoded alarm decodes");
+            assert_eq!(
+                (next.fire_at_utc_ms, next.name),
+                (alarm.fire_at_utc_ms, alarm.name.as_str())
+            );
+            assert_eq!(decoded.night_mode(), Some(snap.night_mode));
+        }
     }
 
     /// Cross-validate the `next_alarm: None` path — host encoder writes
-    /// the `present=0` discriminator, SDK decoder must reflect it as `None`.
+    /// the `present=0` discriminator, the reader must reflect it as `None`.
     #[test]
-    fn host_encoder_next_alarm_none_round_trips_through_sdk_decoder() {
-        use bmc_wasm_sdk::system::Snapshot;
-
+    fn host_encoder_next_alarm_none_round_trips_through_the_protocol_reader() {
         let snap = SystemSnapshot {
             settings: SystemSettings::default(),
             next_alarm: None,
@@ -561,14 +643,29 @@ mod tests {
         assert_eq!(decoded.next_alarm(), None);
     }
 
+    #[test]
+    fn decoded_snapshot_converts_back_to_the_encoded_one() {
+        let snap = sample();
+        assert_eq!(
+            SystemSnapshot::from(&Snapshot::from_bytes(encode(&snap))),
+            snap
+        );
+    }
+
+    #[test]
+    fn an_empty_snapshot_converts_to_the_defaults() {
+        assert_eq!(
+            SystemSnapshot::from(&Snapshot::empty()),
+            SystemSnapshot::default()
+        );
+    }
+
     /// A `next_alarm.name` whose byte length straddles `u16::MAX` after
     /// the last multi-byte codepoint must truncate on a char boundary
-    /// so the SDK's `core::str::from_utf8` accepts the field; without that,
+    /// so the reader's `core::str::from_utf8` accepts the field; without that,
     /// the whole `next_alarm` falls back to `None`.
     #[test]
     fn host_encoder_truncates_over_long_alarm_name_on_char_boundary() {
-        use bmc_wasm_sdk::system::Snapshot;
-
         // 65 534 ASCII bytes + one 2-byte 'é' = 65 536-byte string;
         // a naive byte-cut at u16::MAX (= 65 535) would slice the 'é' in half.
         let mut name = "a".repeat(65_534);

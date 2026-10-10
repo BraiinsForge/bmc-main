@@ -42,8 +42,8 @@
 //! Returning `0` for this case (the prior behaviour) collided with the genuinely-empty snapshot
 //! that surfaces as the `u32` count header, and silently masked guest ABI bugs.
 //!
-//! The packed wire format is documented in `bmc_wasm_sdk::params`; the host-side serialiser
-//! here is the inverse of the SDK's parser.
+//! The packed wire format is documented in `bmc_wasm_protocol::params`,
+//! next to the reader that is this serialiser's inverse.
 
 use anyhow::Result;
 use bmc_wasm_protocol::params::kind;
@@ -243,9 +243,7 @@ mod tests {
         // Count = 5
         assert_eq!(&bytes[0..4], &5_u32.to_le_bytes());
 
-        // Round-trip via the SDK parser to confirm byte-format compatibility
-        // (parser lives in `bmc_wasm_sdk::params` and is exercised end-to-end via the SDK's
-        // own unit tests on hand-rolled buffers; here we just sanity-check the leading layout).
+        // The reader's own tests cover decoding; here only the leading layout is walked by hand.
         let mut offset = 4;
         // Entries should be alphabetical by key (BTreeMap order).
         let expected_keys = ["a_str", "b_int", "c_dbl", "d_bool", "e_null"];
@@ -303,18 +301,18 @@ mod tests {
         assert_eq!(keys, vec!["apple", "mango", "zebra"]);
     }
 
-    /// Cross-validate the host encoder against the SDK parser end-to-end.
+    /// Cross-validate the host encoder against the protocol reader end-to-end.
     ///
     /// The two sides share `bmc_wasm_protocol::params::kind::*` for the kind discriminators,
     /// so constant drift is impossible at compile time. This test pins the rest of the wire
     /// contract: length-width (u16 key, u32 string), byte ordering (little-endian), per-entry
     /// payload shape (i32, f64, bool, null), and alphabetical-by-key iteration order.
     ///
-    /// If the encoder and parser ever diverge on layout, this test fails before the wasm32
+    /// If the encoder and reader ever diverge on layout, this test fails before the wasm32
     /// lifecycle tests get a chance to catch it.
     #[test]
-    fn host_encoder_round_trips_through_sdk_parser() {
-        use bmc_wasm_sdk::params::Params;
+    fn host_encoder_round_trips_through_the_protocol_reader() {
+        use bmc_wasm_protocol::params::Params;
 
         let mut params = BTreeMap::new();
         params.insert(key("a_str"), ParamValue::String("hello".into()));
@@ -348,8 +346,8 @@ mod tests {
     }
 
     #[test]
-    fn lists_and_objects_round_trip_through_sdk_parser() {
-        use bmc_wasm_sdk::params::Params;
+    fn lists_and_objects_round_trip_through_the_protocol_reader() {
+        use bmc_wasm_protocol::params::Params;
 
         let link = |label: &str, url: &str| {
             ParamValue::Object(BTreeMap::from([

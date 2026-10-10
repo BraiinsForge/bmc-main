@@ -121,8 +121,8 @@ platform's runtimes tick on the UI thread, which a fan will tell you about.
 ## Working on it
 
 **`just`, never raw `cargo`.** The dev shell ships its own rustc, a bare `cargo` uses rustup's, and both write the same
-`target/`. Interleaving them surfaces much later as `can't find crate for bmc_render_macros` while building the
-`bmc-wasm-sdk` dev-dependency. Repair: `cargo clean -p bmc-wasm-sdk -p bmc-render-macros`.
+`target/`. Interleaving them surfaces much later as `can't find crate for bmc_render_macros` while building a crate that
+depends on it. Repair: `cargo clean -p bmc-wasm-sdk -p bmc-render-macros`.
 
 **`just validate` does not run this binary's tests** — they are behind the `testbed` feature, so clippy compiles them
 and nothing executes them. Finish with `just check nextest` and confirm the test name is in its output.
