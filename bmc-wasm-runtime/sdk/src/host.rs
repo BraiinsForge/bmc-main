@@ -38,7 +38,7 @@ mod audio;
 pub use audio::{Volume, audio_play, audio_stop};
 
 mod clock;
-pub use clock::SystemTime;
+pub use clock::{HostClock, SystemTime};
 
 mod random;
 pub use random::random_u32;

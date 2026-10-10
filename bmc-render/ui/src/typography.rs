@@ -49,9 +49,11 @@ mod tests {
 
     #[test]
     fn every_space_becomes_a_non_breaking_one() {
-        assert_eq!(
-            unbroken("Prev Adjust 8"),
-            format!("Prev{NBSP}Adjust{NBSP}8")
-        );
+        let mut expected = String::from("Prev");
+        expected.push_str(NBSP);
+        expected.push_str("Adjust");
+        expected.push_str(NBSP);
+        expected.push('8');
+        assert_eq!(unbroken("Prev Adjust 8"), expected);
     }
 }

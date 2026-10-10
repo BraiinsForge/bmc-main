@@ -1285,16 +1285,6 @@ pub fn center(props: PropsData, children: impl IntoIterator<Item = Node>) -> Nod
     Node::Center(props, children.into_iter().collect())
 }
 
-/// Single-span paragraph.
-#[must_use]
-pub fn text(content: impl Into<String>, style: impl Into<TextStyle>) -> Node {
-    Node::Paragraph {
-        props: PropsData::default(),
-        base_style: style.into(),
-        spans: vec![Span::plain(content)],
-    }
-}
-
 /// Create a button node.
 #[must_use]
 pub fn make_button(
@@ -1399,8 +1389,8 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
         Node::Canvas {
             touch_key: Some(key),
             ..
-        } => keys.push(key.clone()),
-        Node::ProgressBar {
+        }
+        | Node::ProgressBar {
             touch_key: Some(key),
             ..
         } if !key.is_empty() => keys.push(key.clone()),
@@ -1461,5 +1451,203 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
         | Node::Switcher { .. }
         | Node::Skeleton(_)
         | Node::ProgressBar { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::arc::{ArcCap, ArcFill, ArcSegments};
+    use crate::nodes::DROP_SHADOW_BLUR_MAX;
+
+    fn rect() -> Draw {
+        Draw::rect(0.0, 0.0, 10.0, 10.0, Color::from_rgb(0xFF, 0xFF, 0xFF))
+    }
+
+    #[test]
+    fn the_guest_polls_exactly_the_keys_the_host_decodes() {
+        let bar = |touch_key| {
+            crate::progress_bar(
+                touch_key,
+                2.0,
+                ProgressMode::Slider(0.5),
+                false,
+                Color::from_rgb(1, 1, 1),
+                Color::from_rgb(2, 2, 2),
+                Color::from_rgb(3, 3, 3),
+                None,
+            )
+        };
+        let nodes = [
+            bar(Some("")),
+            bar(Some("volume")),
+            bar(None),
+            touchable("", PropsData::default(), [rect()]),
+            touchable("seek", PropsData::default(), [rect()]),
+            canvas(PropsData::default(), [rect()]),
+        ];
+
+        for node in nodes {
+            let decoded =
+                crate::decode(&crate::encode(&node)).expect("BUG: an encoded tree decodes");
+            assert_eq!(
+                interaction_keys(&node),
+                interaction_keys(&decoded.root),
+                "{node:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn with_drop_shadow_wraps_the_draw() {
+        let shadowed = rect().with_drop_shadow(DropShadow {
+            dx: 1.0,
+            dy: 2.0,
+            blur: 4.0,
+            color: Color::from_rgba(0, 0, 0, 0x80),
+        });
+        let Draw::Shadow {
+            dx,
+            dy,
+            blur,
+            inner,
+            ..
+        } = shadowed
+        else {
+            panic!("with_drop_shadow should produce Draw::Shadow");
+        };
+        assert_eq!((dx, dy, blur), (1.0, 2.0, 4.0));
+        assert!(matches!(*inner, Draw::Rect { .. }));
+    }
+
+    #[test]
+    fn with_drop_shadow_does_not_stack() {
+        let restacked = rect()
+            .with_drop_shadow(DropShadow {
+                dx: 1.0,
+                dy: 1.0,
+                blur: 4.0,
+                color: Color::from_rgba(0, 0, 0, 0x80),
+            })
+            .with_drop_shadow(DropShadow {
+                dx: 9.0,
+                dy: 9.0,
+                blur: 8.0,
+                color: Color::from_rgba(0, 0, 0, 0xC0),
+            });
+        let Draw::Shadow {
+            dx, blur, inner, ..
+        } = restacked
+        else {
+            panic!("expected Draw::Shadow");
+        };
+        assert_eq!((dx, blur), (9.0, 8.0), "the latest call's params win");
+        assert!(matches!(*inner, Draw::Rect { .. }), "shadows must not nest");
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "clamp output is an exact bound")]
+    fn with_drop_shadow_clamps_blur_to_range() {
+        // Negative blur clamps to 0 without tripping the debug assertion
+        // (the assertion only fires for values *above* the cap).
+        let shadowed = rect().with_drop_shadow(DropShadow {
+            dx: 0.0,
+            dy: 0.0,
+            blur: -5.0,
+            color: Color::from_rgb(0, 0, 0),
+        });
+        let Draw::Shadow { blur, .. } = shadowed else {
+            panic!("expected Draw::Shadow");
+        };
+        assert_eq!(blur, 0.0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "drop-shadow blur")]
+    fn with_drop_shadow_asserts_on_over_cap_blur() {
+        let _ = rect().with_drop_shadow(DropShadow {
+            dx: 0.0,
+            dy: 0.0,
+            blur: DROP_SHADOW_BLUR_MAX + 50.0,
+            color: Color::from_rgb(0, 0, 0),
+        });
+    }
+
+    #[test]
+    fn arc_constructor_builds_variant() {
+        let fill = ArcFill::gradient(Color::from_rgb(1, 2, 3), Color::from_rgb(4, 5, 6));
+        let segments = ArcSegments::Explicit(vec![(0.0, 0.25), (0.5, 1.0)]);
+        let draw = Draw::arc(
+            1.0,
+            2.0,
+            3.0,
+            0.25,
+            1.5,
+            4.0,
+            fill,
+            segments.clone(),
+            ArcCap::Butt,
+        );
+        let Draw::Arc {
+            cx,
+            cy,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            fill: got_fill,
+            segments: got_segments,
+            cap,
+        } = draw
+        else {
+            panic!("BUG: Draw::arc must build Draw::Arc");
+        };
+        assert_eq!(
+            (cx, cy, radius, start_angle, end_angle, width),
+            (1.0, 2.0, 3.0, 0.25, 1.5, 4.0)
+        );
+        assert_eq!(got_fill, fill);
+        assert_eq!(got_segments, segments);
+        assert_eq!(cap, ArcCap::Butt);
+    }
+
+    #[test]
+    fn qr_constructor_keeps_text_and_style() {
+        let draw = Draw::qr(1.0, 2.0, 40.0, "hi", QrStyle::default());
+        let Draw::Qr {
+            x,
+            y,
+            size,
+            style,
+            text,
+        } = draw
+        else {
+            panic!("BUG: Draw::qr must build Draw::Qr");
+        };
+        assert_eq!((x, y, size), (1.0, 2.0, 40.0));
+        assert_eq!(style.quiet_zone, 2);
+        assert_eq!(text, "hi");
+    }
+
+    #[test]
+    fn rect_solid_call_site_still_compiles() {
+        let _ = Draw::rect(0.0, 0.0, 1.0, 1.0, Color::from_rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn autofit_text_defaults_to_shrink() {
+        let draw = Draw::autofit_text(0.0, 0.0, 10.0, 10.0, "x", TextStyle::default());
+        let Draw::AutofitText {
+            mode,
+            min_size,
+            max_size,
+            ..
+        } = draw
+        else {
+            panic!("BUG: expected AutofitText");
+        };
+        assert_eq!(mode, AutoFit::Shrink);
+        assert_eq!((min_size, max_size), (0, 0));
     }
 }

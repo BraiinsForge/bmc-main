@@ -156,6 +156,47 @@ impl StaticAssetSource {
     }
 }
 
+/// Compiled icon descriptor (output of `include_svg!`).
+///
+/// WASM builds keep the processed paths in the widget package; native builds
+/// retain embedded bytes for storybook rendering.
+#[derive(Debug)]
+pub struct Svg {
+    pub source: StaticAssetSource,
+    pub name: &'static str,
+    pub viewbox: (f32, f32),
+}
+
+impl Svg {
+    /// The compiled-SVG viewBox `(width, height)`.
+    /// The host scales X and Y independently, so a non-square glyph must be
+    /// fitted by the caller or it comes out stretched.
+    #[must_use]
+    pub fn viewbox(&self) -> (f32, f32) {
+        self.viewbox
+    }
+}
+
+/// Static raster image descriptor (output of `include_bitmap!`).
+///
+/// WASM builds load the encoded image from the widget package; native builds
+/// retain embedded bytes for storybook rendering.
+#[derive(Debug)]
+pub struct Bitmap {
+    pub source: StaticAssetSource,
+    pub name: &'static str,
+}
+
+/// Static audio descriptor (output of `include_audio!`).
+///
+/// WASM builds load the sample from the widget package.
+/// `name` remains the stable host registration tag.
+#[derive(Debug)]
+pub struct Audio {
+    pub source: StaticAssetSource,
+    pub name: &'static str,
+}
+
 impl fmt::Display for PackageAssetId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&hex::encode(self.0))

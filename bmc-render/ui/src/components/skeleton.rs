@@ -26,9 +26,9 @@
 //! centering); these name the role and the metrics of the text the slot
 //! would have held.
 
-use bmc_wasm_protocol::{Color, GRAY_90, SkeletonKind};
-
-use crate::tree::Node;
+use crate::colors::{Color, GRAY_90};
+use crate::skeleton::SkeletonKind;
+use crate::tree::{Node, SkeletonData};
 
 /// Carbon's `$skeleton-background` tone for the dark themes: the static
 /// bar reads as a reserved slot, not as content. (Carbon's brighter
@@ -73,12 +73,12 @@ fn bar(
         clippy::cast_precision_loss,
         reason = "a font size is small and exact in f32"
     )]
-    Node::Skeleton {
+    Node::Skeleton(SkeletonData {
         kind,
         chars,
         font_size: font_size as f32,
         width,
         height,
         color,
-    }
+    })
 }

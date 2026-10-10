@@ -18,30 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-/// Touch interaction result (click or drag position + element dimensions).
-#[derive(Debug, Clone, Copy)]
-pub struct TouchHit {
-    /// Local x position (relative to element left edge)
-    pub x: f32,
-    /// Local y position (relative to element top edge)
-    pub y: f32,
-    /// Element layout width
-    pub width: f32,
-    /// Element layout height
-    pub height: f32,
-}
-
-impl TouchHit {
-    /// Horizontal fraction (0.0 = left edge, 1.0 = right edge), clamped.
-    #[must_use]
-    pub fn frac_x(&self) -> f32 {
-        if self.width > 0.0 {
-            (self.x / self.width).clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
-    }
-}
+pub use bmc_ui::tree::TouchHit;
 
 /// Get the click position for an interactive canvas (one-shot, on finger-up).
 ///
@@ -74,14 +51,12 @@ mod wasm {
         fn host_get_touch_drag(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
     }
 
-    impl TouchHit {
-        fn from_buf(buf: &[u8; 16]) -> Self {
-            Self {
-                x: f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
-                y: f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
-                width: f32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
-                height: f32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
-            }
+    fn from_buf(buf: &[u8; 16]) -> TouchHit {
+        TouchHit {
+            x: f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            y: f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+            width: f32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
+            height: f32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
         }
     }
 
@@ -93,7 +68,7 @@ mod wasm {
             let clicked =
                 unsafe { host_get_touch_click(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
             if clicked != 0 {
-                Some(TouchHit::from_buf(&buf))
+                Some(from_buf(&buf))
             } else {
                 None
             }
@@ -104,7 +79,7 @@ mod wasm {
             let dragging =
                 unsafe { host_get_touch_drag(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
             if dragging != 0 {
-                Some(TouchHit::from_buf(&buf))
+                Some(from_buf(&buf))
             } else {
                 None
             }

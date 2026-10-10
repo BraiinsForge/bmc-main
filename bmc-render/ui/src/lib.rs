@@ -20,9 +20,10 @@
 
 //! Design-system vocabulary and tree-wire primitives shared by the native renderer
 //! and the widget SDK: colours, text styles, fills, arcs, node and draw tags,
+//! the component builders and keyword macros over the tree,
 //! renderer resource ids and the asset descriptors the `include_*!` macros emit.
 //!
-//! Pure data on every target: no host calls and no `target_arch` gates,
+//! Pure on every target: no host calls and no `target_arch` gates,
 //! so the renderer and a wasm widget compile the very same crate.
 
 pub mod animation;
@@ -30,9 +31,11 @@ pub mod arc;
 pub mod assets;
 pub mod codec;
 pub mod colors;
+pub mod components;
 pub mod display;
 pub mod fill;
 pub mod ids;
+pub mod macros;
 pub mod mesh;
 pub mod nodes;
 pub mod orientation;
@@ -43,7 +46,9 @@ pub mod skeleton;
 pub mod skin;
 pub mod svg;
 pub mod text;
+pub mod time;
 pub mod tree;
+pub mod typography;
 pub(crate) mod wire;
 
 pub use animation::*;
@@ -51,9 +56,14 @@ pub use arc::*;
 pub use assets::*;
 pub use codec::{DecodeError, Decoded, decode, encode, encode_into};
 pub use colors::*;
+pub use components::{
+    modal::*, notification::*, number_input::*, progress_bar::*, relative_time::*,
+    status_overlay::*, switcher::*, tag::*, text::*,
+};
 pub use display::{DisplayShape, ViewportShape};
 pub use fill::*;
 pub use ids::*;
+pub use macros::__macro_string_from;
 pub use mesh::*;
 pub use nodes::*;
 pub use orientation::*;
@@ -63,4 +73,5 @@ pub use skeleton::*;
 pub use skin::*;
 pub use svg::*;
 pub use text::*;
+pub use time::*;
 pub use tree::*;

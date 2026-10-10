@@ -18,31 +18,39 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+//! The host's clock, on the shared [`SystemTime`].
+
+pub use bmc_ui::time::SystemTime;
 use bmc_wasm_protocol::time::LocalDateTime;
 
-/// UTC instant. Wire format is the 8-byte LE `i64` of `unix_secs`.
-#[derive(Debug, Clone, Copy)]
-pub struct SystemTime {
-    pub unix_secs: i64,
+/// What only a host can do with a [`SystemTime`]: read
+/// the clock and project the instant into a time zone.
+/// An extension trait, since the type is `bmc-ui`'s and calls no host.
+pub trait HostClock: Sized {
+    #[must_use]
+    fn now() -> Self;
+
+    /// Project into local wall-clock fields for `tz`.
+    /// Returns `None` when the host doesn't recognise the tz name.
+    #[must_use]
+    fn local(&self, tz: &crate::Tz) -> Option<LocalDateTime>;
+
+    #[must_use]
+    fn utc(&self) -> LocalDateTime;
 }
 
-impl SystemTime {
-    #[must_use]
-    pub fn now() -> Self {
+impl HostClock for SystemTime {
+    fn now() -> Self {
         Self {
             unix_secs: Platform::unix_secs(),
         }
     }
 
-    /// Project into local wall-clock fields for `tz`.
-    /// Returns `None` when the host doesn't recognise the tz name.
-    #[must_use]
-    pub fn local(&self, tz: &crate::Tz) -> Option<LocalDateTime> {
+    fn local(&self, tz: &crate::Tz) -> Option<LocalDateTime> {
         crate::calendar::tz_convert(self.unix_secs, tz.iana())
     }
 
-    #[must_use]
-    pub fn utc(&self) -> LocalDateTime {
+    fn utc(&self) -> LocalDateTime {
         decompose(self.unix_secs)
     }
 }

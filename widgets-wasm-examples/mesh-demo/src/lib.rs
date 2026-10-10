@@ -554,8 +554,8 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
     let mut add_buttons: Vec<Node> = Vec::with_capacity(ALL_DIE_TYPES.len());
     for dt in ALL_DIE_TYPES {
         add_buttons.push(make_button(
-            dt.button_key().into(),
-            dt.label().into(),
+            dt.button_key(),
+            dt.label(),
             ButtonStyle::Secondary,
             ButtonSize::Small,
             None,
@@ -583,8 +583,8 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
             ),
             [
                 make_button(
-                    "roll_all".into(),
-                    "Roll".into(),
+                    "roll_all",
+                    "Roll",
                     ButtonStyle::Primary,
                     ButtonSize::Small,
                     None,
@@ -671,15 +671,7 @@ fn mode_tabs_overlay(active: Mode) -> Node {
         } else {
             ButtonStyle::Tertiary
         };
-        make_button(
-            id.into(),
-            label.into(),
-            style,
-            ButtonSize::Small,
-            None,
-            false,
-            None,
-        )
+        make_button(id, label, style, ButtonSize::Small, None, false, None)
     };
 
     row(

@@ -20,9 +20,7 @@
 
 //! Modal dialog builder.
 
-use bmc_wasm_protocol::Color;
-
-use crate::fmt;
+use crate::colors::Color;
 use crate::tree::Node;
 
 /// A labeled button action for modal footers.
@@ -91,6 +89,13 @@ impl ModalProps {
     pub const DEFAULT_BACKDROP_ALPHA: u8 = 128;
 }
 
+/// The key the host reports a modal's footer or close button under.
+fn modal_sub_key(modal_key: &str, suffix: &str) -> String {
+    let mut key = String::from(modal_key);
+    key.push_str(suffix);
+    key
+}
+
 /// Create a modal dialog overlay.
 ///
 /// # Arguments
@@ -111,7 +116,7 @@ impl ModalProps {
 ///     Some(ModalProps {
 ///         height: 200.0,
 ///         footer: Some(ModalFooter {
-///             primary: ModalAction { key: "save", label: "Save" },
+///             primary: ModalAction { label: "Save" },
 ///             secondary: None,
 ///             danger: false,
 ///         }),
@@ -137,11 +142,11 @@ pub fn modal(
     let (pk, pl, sk, sl, danger) = match &props.footer {
         Some(f) => {
             let (sk, sl) = match &f.secondary {
-                Some(s) => (fmt!("{modal_key}::secondary"), s.label.to_owned()),
+                Some(s) => (modal_sub_key(&modal_key, "::secondary"), s.label.to_owned()),
                 None => (String::new(), String::new()),
             };
             (
-                fmt!("{modal_key}::primary"),
+                modal_sub_key(&modal_key, "::primary"),
                 f.primary.label.to_owned(),
                 sk,
                 sl,

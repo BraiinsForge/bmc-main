@@ -28,6 +28,7 @@
 //! cache; every call routes through the host, which returns the same ID for the
 //! same `name`.
 
+pub use bmc_ui::assets::{Audio, Bitmap, Svg};
 use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
 use crate::cache::CacheSource;
@@ -56,28 +57,6 @@ use wasm::Host as Platform;
 
 // ── Svg ─────────────────────────────────────────────────────────────
 
-/// Compiled icon descriptor (output of `include_svg!`).
-///
-/// WASM builds keep the processed paths in the widget package; native builds
-/// retain embedded bytes for storybook rendering.
-#[derive(Debug)]
-pub struct Svg {
-    pub source: StaticAssetSource,
-    pub name: &'static str,
-    pub viewbox: (f32, f32),
-}
-
-impl Svg {
-    /// The compiled-SVG viewBox `(width, height)`.
-    /// The host scales X and Y independently, so a non-square glyph must be
-    /// fitted by the caller (see [`crate::Draw::svg_contain`]) or it comes out
-    /// stretched.
-    #[must_use]
-    pub fn viewbox(&self) -> (f32, f32) {
-        self.viewbox
-    }
-}
-
 /// Register an icon (host-side dedup by `icon.name`) and return its ID.
 #[must_use]
 pub fn ensure_registered(icon: &Svg) -> Option<SvgId> {
@@ -85,16 +64,6 @@ pub fn ensure_registered(icon: &Svg) -> Option<SvgId> {
 }
 
 // ── Bitmap ───────────────────────────────────────────────────────────
-
-/// Static raster image descriptor (output of `include_bitmap!`).
-///
-/// WASM builds load the encoded image from the widget package; native builds
-/// retain embedded bytes for storybook rendering.
-#[derive(Debug)]
-pub struct Bitmap {
-    pub source: StaticAssetSource,
-    pub name: &'static str,
-}
 
 /// Register a bitmap (host-side dedup by `bmp.name`) and return its ID.
 #[must_use]
@@ -118,16 +87,6 @@ pub fn register_image(source: CacheSource<'_>) -> Option<BitmapId> {
 }
 
 // ── Audio ────────────────────────────────────────────────────────────
-
-/// Static audio descriptor (output of `include_audio!`).
-///
-/// WASM builds load the sample from the widget package.
-/// `name` remains the stable host registration tag.
-#[derive(Debug)]
-pub struct Audio {
-    pub source: StaticAssetSource,
-    pub name: &'static str,
-}
 
 /// Register an audio asset (host-side dedup by `audio.name`) and return its ID.
 ///

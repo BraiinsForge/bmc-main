@@ -26,8 +26,8 @@ use std::time::Duration;
 use bmc_wasm_sdk::profile;
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
-    FetchRequest, FetchRequestId, SystemTime, credentials, fmt, format_number, log_debug, log_info,
-    log_warn,
+    FetchRequest, FetchRequestId, HostClock as _, SystemTime, credentials, fmt, format_number,
+    log_debug, log_info, log_warn,
 };
 
 use super::{

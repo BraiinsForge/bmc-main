@@ -20,23 +20,9 @@
 
 //! Progress bar / slider builder.
 
-use bmc_render_skin::SliderSkin;
-use bmc_wasm_protocol::Color;
-
-use crate::tree::Node;
-
-/// Progress bar mode.
-#[derive(Clone, Copy, Debug)]
-pub enum ProgressMode {
-    /// A draggable slider at a fraction (0.0–1.0): fill plus drag thumb,
-    /// the HTML `<input type=range>` of the family.
-    Slider(f32),
-    /// Unknown duration — animated indicator across full width.
-    Indeterminate,
-    /// A passive meter at a fraction (0.0–1.0): plain bar,
-    /// no drag thumb or squiggle — the HTML `<progress>` of the family.
-    Meter(f32),
-}
+use crate::colors::Color;
+use crate::skin::SliderSkin;
+use crate::tree::{Node, ProgressMode};
 
 /// Create a progress bar node.
 ///
@@ -50,7 +36,7 @@ pub enum ProgressMode {
 #[expect(clippy::too_many_arguments)]
 #[must_use]
 pub fn progress_bar(
-    touch_key: &str,
+    touch_key: Option<&str>,
     track_h: f32,
     mode: ProgressMode,
     active: bool,
@@ -60,7 +46,7 @@ pub fn progress_bar(
     skin: Option<SliderSkin>,
 ) -> Node {
     Node::ProgressBar {
-        touch_key: String::from(touch_key),
+        touch_key: touch_key.map(String::from),
         track_h,
         mode,
         active,

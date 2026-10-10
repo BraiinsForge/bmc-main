@@ -18,103 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Text primitives: spans, styles, and text/paragraph builders.
+//! Text builders: spans, styled paragraphs and tappable labels.
 
-use bmc_wasm_protocol::{
-    AnimProperty, Color, CrossAlign, Easing, FontWeight, GRAY_10, LoopMode, PropsData, SpanFlags,
-    TextStyle,
-};
-
+use crate::colors::GRAY_10;
 use crate::props;
-use crate::tree::{Draw, Node, row, touchable};
+use crate::text::{CrossAlign, FontWeight, PropsData, TextStyle};
+use crate::tree::{Draw, Node, Span, row, touchable};
 
-/// Definition of a single animation (serialized to host).
-#[derive(Clone, Debug)]
-pub struct AnimationDef {
-    pub property: AnimProperty,
-    pub from: f32,
-    pub to: f32,
-    pub duration_ms: u32,
-    pub delay_ms: u16,
-    pub easing: Easing,
-    pub loop_mode: LoopMode,
-}
-
-/// Definition of a transition (serialized to host).
-///
-/// The host keys transition state on `(canvas_index, id_hash)`
-/// so the interpolation follows the *logical* draw across tree-shape
-/// changes (e.g. an optional sibling appearing or disappearing).
-///
-/// Without an id the host would key on draw position, which silently
-/// swaps state between draws when their relative order shifts.
-#[derive(Clone, Debug)]
-pub struct TransitionDef {
-    pub id_hash: u32,
-    pub duration_ms: u32,
-    pub easing: Easing,
-}
-
-/// FNV1a-32 hash of `s`. Used by to derive a stable per-draw key
-/// from the widget-supplied id string at call time.
-///
-/// Const so `Draw::transition("hour-hand", …)` const-folds
-/// the hash at compile time for `&'static str` ids.
-#[must_use]
-pub const fn fnv1a_32(s: &str) -> u32 {
-    let bytes = s.as_bytes();
-    let mut hash: u32 = 0x811c_9dc5;
-    let mut i = 0;
-    while i < bytes.len() {
-        hash ^= bytes[i] as u32;
-        hash = hash.wrapping_mul(0x0100_0193);
-        i += 1;
-    }
-    hash
-}
-
-/// Path interpolation mode.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Interpolation {
-    /// Straight line segments between points.
-    #[default]
-    Linear = 0,
-    /// Smooth Catmull-Rom spline through all points (host converts to cubic Bézier).
-    CatmullRom = 1,
-}
-
-/// A text span with optional style overrides
-#[derive(Clone, Debug)]
-pub struct Span {
-    pub text: String,
-    pub weight: Option<FontWeight>,
-    pub color: Option<Color>,
-    /// Font size for this span alone; it keeps the paragraph's baseline.
-    pub size: Option<u32>,
-    pub italic: bool,
-    pub underline: bool,
-    pub strikethrough: bool,
-}
-
-impl Span {
-    /// This span's two wire flag words, packed by [`SpanFlags`]
-    /// — the one place the bit positions are defined, host side included.
-    #[must_use]
-    pub fn wire_flags(&self) -> (u16, u8) {
-        SpanFlags {
-            weight: self.weight,
-            has_color: self.color.is_some(),
-            has_size: self.size.is_some(),
-            italic: self.italic,
-            underline: self.underline,
-            strikethrough: self.strikethrough,
-        }
-        .pack()
-    }
-}
-
-/// Trait for optional style argument in span()
+/// Trait for optional style argument in [`span`].
 pub trait IntoSpanStyle {
     fn apply(self, span: &mut Span);
 }
@@ -148,20 +59,12 @@ impl IntoSpanStyle for StyleResult {
 /// span("colored", style!(color: RED_50))
 /// ```
 pub fn span(text: impl Into<String>, style: impl IntoSpanStyle) -> Span {
-    let mut s = Span {
-        text: text.into(),
-        weight: None,
-        color: None,
-        size: None,
-        italic: false,
-        underline: false,
-        strikethrough: false,
-    };
+    let mut s = Span::plain(text);
     style.apply(&mut s);
     s
 }
 
-/// Combined text style and layout props for the style!() macro,
+/// Combined text style and layout props for the `style!` macro,
 /// plus the size the caller wrote — `None` when none was, which the style
 /// itself cannot say, since it carries a size either way.
 #[derive(Clone, Copy, Debug)]
@@ -179,8 +82,16 @@ impl From<StyleResult> for PropsData {
     }
 }
 
+impl From<TextStyle> for StyleResult {
+    /// A bare text style: default layout props, no size of its own asked for.
+    fn from(style: TextStyle) -> Self {
+        Self(style, PropsData::default(), None)
+    }
+}
+
 /// Simple text node with unified styling
-pub fn text(content: impl Into<String>, style: StyleResult) -> Node {
+pub fn text(content: impl Into<String>, style: impl Into<StyleResult>) -> Node {
+    let style = style.into();
     Node::Paragraph {
         props: style.1,
         base_style: style.0,
@@ -243,5 +154,14 @@ mod tests {
             None,
             "styling something else must not pin a size"
         );
+    }
+
+    #[test]
+    fn a_bare_text_style_keeps_default_layout_props() {
+        let node = text("x", TextStyle::default());
+        let Node::Paragraph { props, .. } = node else {
+            panic!("text builds a paragraph");
+        };
+        assert_eq!(props.to_bytes(), PropsData::default().to_bytes());
     }
 }

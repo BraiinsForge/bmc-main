@@ -525,6 +525,7 @@ pub(crate) enum ReplyAction {
 
 #[cfg(any(target_arch = "wasm32", not(test)))]
 mod backend {
+    use crate::host::HostClock as _;
     use crate::net::{self, FetchRequest};
 
     use super::{FetchBackend, FetchBodyDelivery, FetchSpec, Method};

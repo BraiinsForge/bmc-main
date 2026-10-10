@@ -362,24 +362,14 @@ pub mod log;
 #[cfg(feature = "math-3d")]
 pub mod math;
 pub mod mdns;
-pub mod mesh;
-pub mod modal;
 pub mod net;
 pub mod network;
-pub mod notification;
-pub mod number_input;
-pub mod orientation;
 pub mod params;
 pub mod poll;
 pub mod profile;
-pub mod progress_bar;
-pub mod relative_time;
-pub mod skeleton;
 pub mod slot;
-pub mod status_overlay;
 pub mod switcher;
 pub mod system;
-pub mod tag;
 // Snapshot-cache machinery is wasm32-only (consumed by the wasm-target public API)
 // plus pulled in under `cfg(test)` for the unit tests that exercise the generic with a mock host.
 // Native non-test builds don't use it — gate it so the dead-code lint stays happy.
@@ -387,12 +377,10 @@ pub mod tag;
 pub(crate) mod snapshot_cache;
 pub mod socket;
 pub mod ssdp;
-pub mod text;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod timer;
 pub mod tree;
 pub mod types;
-pub mod typography;
 pub mod tz;
 pub mod udp_broadcast;
 pub mod url;
@@ -411,312 +399,38 @@ pub use host::*;
 pub use json::{JsonDoc, JsonKind};
 pub use json_str::JsonStr;
 pub use led::LedEffect;
-pub use mesh::*;
 pub use net::*;
 pub use network::NetworkInfo;
-pub use number_input::*;
-pub use orientation::Orientation;
 pub use poll::{
     Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod,
     register as register_poll,
 };
 pub use slot::*;
-pub use tree::*;
 pub use tz::Tz;
 pub use ufmt;
 pub use ws::{Ws, WsEvent, ws_connect};
 pub use xml::XmlDoc;
 
-/// Helper for `button!` macro — converts label to String.
-#[doc(hidden)]
-pub fn __macro_string_from(s: impl Into<String>) -> String {
-    s.into()
-}
+// The tree, its component builders and the keyword macros are `bmc-ui`'s.
+// The modules keep their SDK paths; the macros expand against `bmc_ui`.
+pub use bmc_ui::components::{
+    modal, notification, number_input, progress_bar, relative_time, skeleton, status_overlay, tag,
+    text,
+};
+pub use bmc_ui::{button, fill, number_input, path, progress_bar, props, style};
+pub use bmc_ui::{mesh, orientation, typography};
 
-// ── Props field coercion ─────────────────────────────────────────────
-
-/// Trait that allows integer literals to be used for `f32` fields in `props!`.
-///
-/// Identity impl covers all types (f32→f32, bool→bool, Color→Color, etc.).
-/// Additional impls convert integer types to f32 so you can write
-/// `props!(gap: 12, padding: 16)` instead of `props!(gap: 12.0, padding: 16.0)`.
-#[doc(hidden)]
-pub trait PropsFieldValue<T> {
-    fn into_field(self) -> T;
-}
-
-impl<T> PropsFieldValue<T> for T {
-    fn into_field(self) -> T {
-        self
-    }
-}
-
-macro_rules! impl_int_to_f32_lossless {
-    ($($t:ty),*) => {
-        $(impl PropsFieldValue<f32> for $t {
-            fn into_field(self) -> f32 { f32::from(self) }
-        })*
-    };
-}
-
-macro_rules! impl_int_to_f32_lossy {
-    ($($t:ty),*) => {
-        $(impl PropsFieldValue<f32> for $t {
-            #[expect(clippy::cast_precision_loss)]
-            fn into_field(self) -> f32 { self as f32 }
-        })*
-    };
-}
-
-impl_int_to_f32_lossless!(i8, i16, u8, u16);
-impl_int_to_f32_lossy!(i32, i64, u32, u64, isize, usize);
-
-/// Shorthand for PropsData: `props!()` or `props!(gap: 16, background: 0xFF)`
-///
-/// Integer literals are automatically converted to `f32` for layout fields
-/// (padding, margin, gap, width, height, etc.).
-///
-/// Supports a special `bg_nine_patch: <NinePatch>` field that expands a
-/// `NinePatch` into the underlying `bg_np_*` fields on `PropsData`.
-#[macro_export]
-macro_rules! props {
-    () => { $crate::tree::PropsData::default() };
-    ($($field:ident: $value:expr),* $(,)?) => {{
-        let mut p = $crate::tree::PropsData::default();
-        $(props!(@set p, $field: $value);)*
-        p
-    }};
-    (@set $p:ident, bg_nine_patch: $v:expr) => {{
-        let np = $v;
-        $p.bg_np_id = np.bitmap_id;
-        $p.bg_np_left = np.left;
-        $p.bg_np_top = np.top;
-        $p.bg_np_right = np.right;
-        $p.bg_np_bottom = np.bottom;
-    }};
-    (@set $p:ident, $field:ident: $v:expr) => {
-        $p.$field = $crate::PropsFieldValue::into_field($v);
-    };
-}
-
-/// Button node with keyword-style options and sensible defaults.
-///
-/// First positional arg is the click ID (string), second is the label.
-/// Style and size accept bare variant names resolved through the SDK.
-///
-/// # Examples
-/// ```ignore
-/// button!("ok", "OK")                                        // Primary, Normal, no icon
-/// button!("delete", "Delete", style: Danger)                 // Danger, Normal
-/// button!("reset", "Reset", style: Secondary, size: Small)   // Secondary, Small
-/// button!("search", "", icon: gear_id)                       // icon-only, Primary, Normal
-/// ```
-#[macro_export]
-macro_rules! button {
-    // Accumulator pattern: parse fields one at a time, then emit.
-    // Entry point: id, label, then optional keyword args.
-    ($id:expr, $label:expr $(, $($rest:tt)*)?) => {
-        button!(@acc
-            [$id]
-            [$label]
-            [style: $crate::ButtonStyle::Primary]
-            [size: $crate::ButtonSize::Normal]
-            [icon: None]
-            [disabled: false]
-            [skin: None]
-            $($($rest)*)?
-        )
-    };
-
-    // Terminal — all fields consumed, build the node.
-    // `icon:` accepts either `SvgId` or `Option<SvgId>` (std provides
-    // `From<T> for Option<T>`, so `.into()` covers both).
-    (@acc [$id:expr] [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $sk:expr] $(,)?) => {
-        $crate::make_button($crate::__macro_string_from($id), $crate::__macro_string_from($label), $s, $sz, $i.into(), $d, $sk)
-    };
-
-    // style: Variant
-    (@acc [$id:expr] [$label:expr] [style: $_s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $sk:expr]
-     style: $v:ident $(, $($rest:tt)*)?) => {
-        button!(@acc
-            [$id]
-            [$label]
-            [style: $crate::ButtonStyle::$v]
-            [size: $sz]
-            [icon: $i]
-            [disabled: $d]
-            [skin: $sk]
-            $($($rest)*)?
-        )
-    };
-
-    // size: Variant
-    (@acc [$id:expr] [$label:expr] [style: $s:expr] [size: $_sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $sk:expr]
-     size: $v:ident $(, $($rest:tt)*)?) => {
-        button!(@acc
-            [$id]
-            [$label]
-            [style: $s]
-            [size: $crate::ButtonSize::$v]
-            [icon: $i]
-            [disabled: $d]
-            [skin: $sk]
-            $($($rest)*)?
-        )
-    };
-
-    // icon: expr
-    (@acc [$id:expr] [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $_i:expr] [disabled: $d:expr] [skin: $sk:expr]
-     icon: $v:expr $(, $($rest:tt)*)?) => {
-        button!(@acc
-            [$id]
-            [$label]
-            [style: $s]
-            [size: $sz]
-            [icon: $v]
-            [disabled: $d]
-            [skin: $sk]
-            $($($rest)*)?
-        )
-    };
-
-    // disabled: expr
-    (@acc [$id:expr] [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $_d:expr] [skin: $sk:expr]
-     disabled: $v:expr $(, $($rest:tt)*)?) => {
-        button!(@acc
-            [$id]
-            [$label]
-            [style: $s]
-            [size: $sz]
-            [icon: $i]
-            [disabled: $v]
-            [skin: $sk]
-            $($($rest)*)?
-        )
-    };
-
-    // skin: expr
-    (@acc [$id:expr] [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $_sk:expr]
-     skin: $v:expr $(, $($rest:tt)*)?) => {
-        button!(@acc
-            [$id]
-            [$label]
-            [style: $s]
-            [size: $sz]
-            [icon: $i]
-            [disabled: $d]
-            [skin: $v]
-            $($($rest)*)?
-        )
-    };
-}
-
-/// Progress bar node with keyword-style options and sensible defaults.
-///
-/// The first positional argument is the progress mode (required).
-///
-/// # Examples
-/// ```ignore
-/// progress_bar!(ProgressMode::Slider(0.5))
-/// progress_bar!(ProgressMode::Indeterminate, active: true)
-/// progress_bar!(ProgressMode::Slider(vol), touch_key: "volume", skin: slider_skin)
-/// ```
-#[macro_export]
-macro_rules! progress_bar {
-    // Entry point:
-    ($mode:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc
-            [$mode]
-            [touch_key: ""]
-            [track_h: 2.0]
-            [active: false]
-            [fill_color: $crate::WHITE]
-            [track_color: $crate::GRAY_60.with_alpha(0.44)]
-            [bg_color: $crate::TRANSPARENT]
-            [skin: None]
-            $($($rest)*)?
-        )
-    };
-
-    // Terminal — all fields consumed, build the node.
-    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
-     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr] $(,)?) => {
-        $crate::progress_bar($tk, $th, $mode, $a, $fc, $tc, $bg, $sk)
-    };
-
-    // touch_key: expr
-    (@acc [$mode:expr] [touch_key: $_tk:expr] [track_h: $th:expr] [active: $a:expr]
-     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
-     touch_key: $v:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc [$mode] [touch_key: $v] [track_h: $th] [active: $a]
-            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
-    };
-
-    // track_h: expr
-    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $_th:expr] [active: $a:expr]
-     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
-     track_h: $v:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $v] [active: $a]
-            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
-    };
-
-    // active: expr
-    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $_a:expr]
-     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
-     active: $v:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $v]
-            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
-    };
-
-    // fill_color: expr
-    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
-     [fill_color: $_fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
-     fill_color: $v:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
-            [fill_color: $v] [track_color: $tc] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
-    };
-
-    // track_color: expr
-    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
-     [fill_color: $fc:expr] [track_color: $_tc:expr] [bg_color: $bg:expr] [skin: $sk:expr]
-     track_color: $v:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
-            [fill_color: $fc] [track_color: $v] [bg_color: $bg] [skin: $sk] $($($rest)*)?)
-    };
-
-    // bg_color: expr
-    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
-     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $_bg:expr] [skin: $sk:expr]
-     bg_color: $v:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
-            [fill_color: $fc] [track_color: $tc] [bg_color: $v] [skin: $sk] $($($rest)*)?)
-    };
-
-    // skin: expr
-    (@acc [$mode:expr] [touch_key: $tk:expr] [track_h: $th:expr] [active: $a:expr]
-     [fill_color: $fc:expr] [track_color: $tc:expr] [bg_color: $bg:expr] [skin: $_sk:expr]
-     skin: $v:expr $(, $($rest:tt)*)?) => {
-        progress_bar!(@acc [$mode] [touch_key: $tk] [track_h: $th] [active: $a]
-            [fill_color: $fc] [track_color: $tc] [bg_color: $bg] [skin: $v] $($($rest)*)?)
-    };
-}
-
-/// Number input — key + value are required, rest via `NumberInputProps` struct.
-///
-/// # Examples
-/// ```ignore
-/// number_input!("work", 25, label: "Work", suffix: "min", min: 1, max: 60)
-/// number_input!("count", n)  // minimal, all defaults
-/// ```
-#[macro_export]
-macro_rules! number_input {
-    ($key:expr, $value:expr $(, $($field:ident: $val:expr),* $(,)?)?) => {{
-        #[allow(unused_mut)]
-        let mut p = $crate::number_input::NumberInputProps::default();
-        $($(p.$field = $val;)*)?
-        $crate::number_input::number_input($key, ::core::convert::Into::into($value), &p)
-    }};
-}
+pub use mesh::*;
+pub use modal::*;
+pub use notification::*;
+pub use number_input::*;
+pub use orientation::Orientation;
+pub use relative_time::*;
+pub use status_overlay::*;
+pub use switcher::*;
+pub use tag::*;
+pub use text::*;
+pub use tree::*;
 
 /// Connect to a WebSocket with optional headers, as `ws_connect` does.
 ///
@@ -755,87 +469,4 @@ macro_rules! fmt {
     ($($arg:tt)*) => {
         $crate::fmt_impl!(@ufmt_path = $crate::ufmt; $($arg)*)
     };
-}
-
-/// Unified style macro for text styling and layout.
-///
-/// Text style fields:
-///  - size
-///  - weight
-///  - italic
-///  - underline
-///  - strikethrough
-///  - line_height
-///  - align
-///  - max_width
-///  - text_overflow: `TextOverflow::Clip` or `TextOverflow::Ellipsis`
-///    cut a line instead of wrapping it; see [`TextOverflow`](crate::TextOverflow)
-///  - outline_color, outline_width
-///
-/// Layout fields: padding, margin, gap, flex, width, height, background
-/// Shared field: color (applies to both)
-///
-/// # Examples
-/// ```ignore
-/// text("Hello", style!(size: 24, color: WHITE, padding: 8.0))
-/// paragraph(style!(size: 16, line_height: 1.3), [
-///     span("Click ", ()),
-///     span("Save", style!(weight: FontWeight::BOLD)),
-///     span(" to confirm.", ()),
-/// ])
-/// ```
-#[macro_export]
-macro_rules! style {
-    () => {
-        $crate::tree::StyleResult(
-            $crate::tree::TextStyle::default(),
-            $crate::tree::PropsData::default(),
-            ::core::option::Option::None,
-        )
-    };
-    ($($field:ident: $value:expr),* $(,)?) => {{
-        let mut ts = $crate::tree::TextStyle::default();
-        let mut p = $crate::tree::PropsData::default();
-        // A span has to tell a size it was given from one it inherits, and the
-        // style cannot say which — so the `size:` arm hands the value out here.
-        // Threaded through shadowed bindings rather than assigned: an arm that
-        // never runs leaves nothing for `unused_assignments` to flag.
-        let span_size: ::core::option::Option<u32> = ::core::option::Option::None;
-        $(let span_size = style!(@route ts, p, span_size, $field: $value);)*
-        // `unused_mut` fires on whichever of the two a call leaves alone,
-        // and `#[expect]` would fire on the one it touches — neither attribute
-        // survives every expansion, so the borrow settles the lint instead.
-        let _ = (&mut ts, &mut p);
-        $crate::tree::StyleResult(ts, p, span_size)
-    }};
-    // Every arm yields the running span size, so the `size:` arm can replace it
-    // and every other arm passes it along. Each reads it, the replacing arm
-    // included, so no field order leaves a binding for `unused_variables`.
-    (@route $ts:expr, $p:expr, $s:expr, size: $v:expr) => {{
-        let _superseded: ::core::option::Option<u32> = $s;
-        let size = $v;
-        $ts.size = size;
-        ::core::option::Option::Some(size)
-    }};
-    (@route $ts:expr, $p:expr, $s:expr, weight: $v:expr) => {{ $ts.weight = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, family: $v:expr) => {{ $ts.family = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, italic: $v:expr) => {{ $ts.italic = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, underline: $v:expr) => {{ $ts.underline = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, strikethrough: $v:expr) => {{ $ts.strikethrough = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, line_height: $v:expr) => {{ $ts.line_height = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, align: $v:expr) => {{ $ts.align = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, valign: $v:expr) => {{ $ts.vertical_align = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, text_overflow: $v:expr) => {{ $ts.text_overflow = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, max_width: $v:expr) => {{ $ts.max_width = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, outline_color: $v:expr) => {{ $ts.outline_color = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, outline_width: $v:expr) => {{ $ts.outline_width = $v; $s }};
-    // Layout fields (use coercion so integer literals work for f32 fields)
-    (@route $ts:expr, $p:expr, $s:expr, padding: $v:expr) => {{ $p.padding = $crate::PropsFieldValue::into_field($v); $s }};
-    (@route $ts:expr, $p:expr, $s:expr, margin: $v:expr) => {{ $p.margin = $crate::PropsFieldValue::into_field($v); $s }};
-    (@route $ts:expr, $p:expr, $s:expr, gap: $v:expr) => {{ $p.gap = $crate::PropsFieldValue::into_field($v); $s }};
-    (@route $ts:expr, $p:expr, $s:expr, flex: $v:expr) => {{ $p.flex = $crate::PropsFieldValue::into_field($v); $s }};
-    (@route $ts:expr, $p:expr, $s:expr, width: $v:expr) => {{ $p.width = $crate::PropsFieldValue::into_field($v); $s }};
-    (@route $ts:expr, $p:expr, $s:expr, height: $v:expr) => {{ $p.height = $crate::PropsFieldValue::into_field($v); $s }};
-    (@route $ts:expr, $p:expr, $s:expr, background: $v:expr) => {{ $p.background = $v; $s }};
-    (@route $ts:expr, $p:expr, $s:expr, color: $v:expr) => {{ $ts.color = $v; $s }};
 }

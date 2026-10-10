@@ -20,17 +20,7 @@
 
 //! Notification banner builder.
 
-use crate::tree::Node;
-
-/// Inline notification severity kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum NotificationKind {
-    Error = 0,
-    Warning = 1,
-    Success = 2,
-    Info = 3,
-}
+use crate::tree::{Node, NotificationKind};
 
 /// Inline notification banner
 pub fn notification(

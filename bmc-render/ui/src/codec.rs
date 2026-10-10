@@ -1760,11 +1760,12 @@ mod tests {
     use super::*;
     use crate::arc::ArcFill;
     use crate::colors::{BLACK, WHITE};
+    use crate::components::text::text;
     use crate::fill::FILL_LINEAR;
     use crate::nodes::{BUTTON_SIZE_NORMAL, DROP_SHADOW_BLUR_MAX, TagKind};
     use crate::relative_time::{RelTimeLength, RelTimeSegments};
     use crate::text::FontWeight;
-    use crate::tree::{DropShadow, canvas, col, dimmed, make_button, row, spacer, text};
+    use crate::tree::{DropShadow, canvas, col, dimmed, make_button, row, spacer};
 
     fn draw_only(bytes: &[u8]) -> Result<Draw, DecodeError> {
         Reader::new(bytes).draw()
@@ -2271,6 +2272,30 @@ mod tests {
     }
 
     #[test]
+    fn each_tag_icon_encodes_its_mode() {
+        let encoded = |icon: TagIcon| {
+            encode(&Node::Tag {
+                kind: TagKind::Warning,
+                icon,
+                content: Box::new(Node::Spacer { flex: 1.0 }),
+            })
+        };
+        let icon = SvgId::from_wire(7).expect("BUG: nonzero");
+        assert_eq!(
+            encoded(TagIcon::Default),
+            tag_wire(TagKind::Warning, TagIconMode::Default as u8, 0)
+        );
+        assert_eq!(
+            encoded(TagIcon::Hidden),
+            tag_wire(TagKind::Warning, TagIconMode::Hidden as u8, 0)
+        );
+        assert_eq!(
+            encoded(TagIcon::Custom(icon)),
+            tag_wire(TagKind::Warning, TagIconMode::Custom as u8, 7)
+        );
+    }
+
+    #[test]
     fn unknown_icon_mode_is_rejected() {
         // Strict: an unknown mode fails decoding, never silently defaults.
         let err = decode(&tag_wire(TagKind::Info, 99, 0)).expect_err("unknown mode");
@@ -2743,6 +2768,23 @@ mod tests {
             bytes[17], FILL_LINEAR,
             "fill block must follow 16 bytes of geometry"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: Draw::CurvedText text exceeds u16::MAX bytes")]
+    fn curved_text_past_the_wire_length_is_a_bug() {
+        let text = "x".repeat(usize::from(u16::MAX) + 1);
+        let draw = Draw::curved_text(
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            ArcAnchor::Center,
+            ArcTextFacing::Outward,
+            text,
+            TextStyle::default(),
+        );
+        Writer(&mut Vec::new()).draw(&draw);
     }
 
     #[test]

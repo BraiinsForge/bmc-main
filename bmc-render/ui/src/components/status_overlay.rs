@@ -22,16 +22,17 @@
 //! `stale` (data age) and `error` (reason) variants; `with_overlay` places any
 //! `Tag` for a bespoke one.
 
-use bmc_wasm_protocol::{
-    Color, CrossAlign, ORANGE_40, RED_50, RelTimeClamp, RelTimeFormat, RelTimeLength,
-    RelTimeSegments, TagKind,
-};
-
-use crate::host::{SystemTime, ViewportShape};
+use crate::colors::{Color, ORANGE_40, RED_50};
+use crate::components::relative_time::relative_time_live;
+use crate::components::tag::tag;
+use crate::components::text::{StyleResult, text};
+use crate::display::ViewportShape;
+use crate::nodes::TagKind;
 use crate::props;
-use crate::relative_time::relative_time_live;
-use crate::tag::{TagIcon, tag};
-use crate::tree::{Node, PropsData, StyleResult, TextStyle, row, spacer, text};
+use crate::relative_time::{RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments};
+use crate::text::{CrossAlign, PropsData, TextStyle};
+use crate::time::SystemTime;
+use crate::tree::{Node, TagIcon, row, spacer};
 
 const LABEL_PX: u32 = 12; // Carbon label-01
 const INSET: f32 = 8.0; // Carbon $spacing-03

@@ -21,7 +21,9 @@
 //! The entry points the host calls: one render a second,
 //! plus an immediate one after every params or system delivery.
 
-use bmc_wasm_sdk::{SystemTime, render_ui, request_frame, request_frame_after, widget_viewport};
+use bmc_wasm_sdk::{
+    HostClock as _, SystemTime, render_ui, request_frame, request_frame_after, widget_viewport,
+};
 
 use crate::manifest_params::Params;
 use crate::model::ClockHandTransition;

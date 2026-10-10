@@ -24,17 +24,15 @@
 //! helper text, warning and error states. Built entirely from existing tree
 //! primitives — no custom host-side rendering needed.
 
-use crate::host::{ButtonSize, ButtonStyle};
-use crate::props;
+use ufmt::uwrite;
 
-use crate::tree::{
-    Draw, Node, PropsData, StyleResult, TextStyle, TreeRenderResult, canvas, col, make_button, row,
-    spacer, text,
-};
-use bmc_wasm_protocol::{
-    CrossAlign, GRAY_40, GRAY_50, GRAY_60, GRAY_80, GRAY_90, ICON_MINUS, ICON_PLUS, ICON_WARN_ALT,
-    ICON_WARN_FILLED, RED_50, WHITE, YELLOW_30,
-};
+use crate::colors::{GRAY_40, GRAY_50, GRAY_60, GRAY_80, GRAY_90, RED_50, WHITE, YELLOW_30};
+use crate::components::text::{StyleResult, text};
+use crate::nodes::{ButtonSize, ButtonStyle};
+use crate::props;
+use crate::svg::{ICON_MINUS, ICON_PLUS, ICON_WARN_ALT, ICON_WARN_FILLED};
+use crate::text::{CrossAlign, PropsData, TextStyle};
+use crate::tree::{Draw, Node, TreeRenderResult, canvas, col, make_button, row, spacer};
 
 /// Configuration for a number input.
 #[derive(Clone, Debug, Default)]
@@ -48,6 +46,13 @@ pub struct NumberInputProps {
     pub warning: &'static str,
     pub error: &'static str,
     pub disabled: bool,
+}
+
+/// The click key of one stepper button of the input keyed `key`.
+fn stepper_key(key: &str, suffix: &str) -> String {
+    let mut stepper = String::from(key);
+    stepper.push_str(suffix);
+    stepper
 }
 
 /// Build a number input from key, value, and props.
@@ -86,15 +91,15 @@ pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
     }
 
     // Value text
-    let value_text = if p.suffix.is_empty() {
-        crate::fmt!("{value}")
-    } else {
-        let suffix = p.suffix;
-        crate::fmt!("{value} {suffix}")
-    };
+    let mut value_text = String::new();
+    let Ok(()) = uwrite!(value_text, "{}", value);
+    if !p.suffix.is_empty() {
+        value_text.push(' ');
+        value_text.push_str(p.suffix);
+    }
 
-    let minus_key = crate::fmt!("{key}_minus");
-    let plus_key = crate::fmt!("{key}_plus");
+    let minus_key = stepper_key(key, "_minus");
+    let plus_key = stepper_key(key, "_plus");
 
     // 1px vertical divider — 60% of button height, dimmer color
     let divider = || col(props!(width: 1.0, height: 20.0, background: GRAY_80), []);
@@ -203,8 +208,8 @@ pub fn number_input_handle(
     props: &NumberInputProps,
     result: &TreeRenderResult,
 ) -> Option<i32> {
-    let minus_key = crate::fmt!("{key}_minus");
-    let plus_key = crate::fmt!("{key}_plus");
+    let minus_key = stepper_key(key, "_minus");
+    let plus_key = stepper_key(key, "_plus");
     let step = if props.step == 0 { 1 } else { props.step };
 
     if result.clicks.contains_key(&minus_key) {

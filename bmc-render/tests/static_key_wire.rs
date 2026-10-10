@@ -18,23 +18,18 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The static-half key the decoder derives from SDK-serialized trees.
+//! The static-half key the decoder derives from encoded trees.
 
 use bmc_render::tree::deserialize_tree_keyed;
-use bmc_wasm_protocol::{
-    AnimProperty, Color, Easing, LoopMode, PropsData, RelTimeClamp, RelTimeFormat, TextStyle,
+use bmc_ui::{
+    AnimProperty, Color, Draw, Easing, LoopMode, Node, ProgressMode, PropsData, RelTimeClamp,
+    RelTimeFormat, SystemTime, TextStyle, canvas, col, encode, modal, progress_bar,
+    relative_time_live, text,
 };
-use bmc_wasm_sdk::host::SystemTime;
-use bmc_wasm_sdk::modal::modal;
-use bmc_wasm_sdk::progress_bar::{ProgressMode, progress_bar};
-use bmc_wasm_sdk::relative_time::relative_time_live;
-use bmc_wasm_sdk::text::{StyleResult, text};
-use bmc_wasm_sdk::tree::serialize_node_to_bytes;
-use bmc_wasm_sdk::{Draw, Node, canvas, col};
 
 fn key(node: &Node) -> u64 {
-    deserialize_tree_keyed(&serialize_node_to_bytes(node))
-        .expect("BUG: the SDK must serialize a tree the host decodes")
+    deserialize_tree_keyed(&encode(node))
+        .expect("BUG: the host decodes every tree the codec encodes")
         .1
 }
 
@@ -54,15 +49,12 @@ fn spinning(draw: Draw) -> Draw {
 }
 
 fn label(content: &str) -> Node {
-    text(
-        content,
-        StyleResult(TextStyle::default(), PropsData::default(), None),
-    )
+    text(content, TextStyle::default())
 }
 
 fn meter(fraction: f32) -> Node {
     progress_bar(
-        "",
+        None,
         6.0,
         ProgressMode::Meter(fraction),
         false,

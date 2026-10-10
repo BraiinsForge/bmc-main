@@ -573,7 +573,7 @@ pub fn meter_row(fraction: f32) -> Node {
     row(
         props!(height: METER_ROW_H, cross_align: CrossAlign::Center),
         [progress_bar(
-            "next-payout",
+            Some("next-payout"),
             METER_TRACK_H,
             ProgressMode::Meter(fraction),
             false,

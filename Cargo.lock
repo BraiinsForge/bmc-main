@@ -1383,6 +1383,7 @@ dependencies = [
  "glam",
  "hex",
  "palette",
+ "ufmt",
 ]
 
 [[package]]
@@ -1650,6 +1651,7 @@ dependencies = [
  "bmc-render-macros",
  "bmc-render-skin",
  "bmc-shared-utils",
+ "bmc-ui",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
  "glam",
