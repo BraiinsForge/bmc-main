@@ -28,9 +28,9 @@
 //!
 //! ```ignore
 //! let doc = JsonDoc::parse(body);
-//! let name = doc.str("/results/0/name").unwrap_or_default();
-//! let count = doc.i64("/results/0/count").unwrap_or(0);
-//! let ratio = doc.f64("/ratio").unwrap_or(1.0);
+//! let name = doc.str("/results/0/name"); // `None` unless a string
+//! let count = doc.i64("/results/0/count"); // `None` unless an integer
+//! let ratio = doc.f64("/ratio").unwrap_or(1.0); // a neutral fallback, where one exists
 //! let active = doc.bool("/active").unwrap_or(false);
 //! // doc is freed automatically on Drop
 //! ```
@@ -124,7 +124,9 @@ impl JsonDoc {
 
     /// Get an i64 value at the given JSON Pointer path.
     ///
-    /// Returns `None` if the path doesn't exist. Returns 0 for non-numeric values.
+    /// Returns `None` if the path doesn't exist or holds no integer in `i64::MIN + 1..=i64::MAX`,
+    /// since the host spells absence as `i64::MIN`.
+    /// A decimal such as `325.0` is `None` too; read it with [`Self::f64`].
     #[must_use]
     pub fn i64(&self, path: &str) -> Option<i64> {
         let id = self.0?.to_wire();
@@ -135,7 +137,7 @@ impl JsonDoc {
 
     /// Get an f64 value at the given JSON Pointer path.
     ///
-    /// Returns `None` if the path doesn't exist.
+    /// Returns `None` if the path doesn't exist or holds no number.
     #[must_use]
     pub fn f64(&self, path: &str) -> Option<f64> {
         let id = self.0?.to_wire();
