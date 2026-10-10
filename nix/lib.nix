@@ -34,7 +34,7 @@ let
   # every bin compiles once. Asserts the binary exists first, otherwise a wrong
   # or removed name would yield a dangling link that only fails when
   # dereferenced (packaging / device boot).
-  selectBmcNixBin = { pkgs, bmcNix }: name: pkgs.runCommand name { } ''
+  selectBmcNixBin = { pkgs, bmcNix }: name: pkgs.runCommand name { meta.mainProgram = name; } ''
     test -e ${bmcNix}/bin/${name}
     mkdir -p $out/bin
     ln -s ${bmcNix}/bin/${name} $out/bin/${name}
