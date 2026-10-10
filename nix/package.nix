@@ -180,9 +180,22 @@ in
       '';
 
       paths = lib.optional (package != null) package ++ [ extras ];
+
+      # Keyed by program name. Only derivations naming their main program
+      # are listed: other derivations link whatever their bin/ holds,
+      # and a path entry's script name carries its store hash.
+      activationScripts = lib.listToAttrs (lib.concatMap
+        (a:
+          let
+            program = if lib.isDerivation a.bin then a.bin.meta.mainProgram or null else null;
+          in
+          lib.optional (program != null)
+            (lib.nameValuePair program "core/activation/scripts/${a.prefix}-${program}"))
+        activation);
     in
     pkgs.symlinkJoin {
       name = "bmc-${name}";
       inherit paths;
+      passthru = { inherit activationScripts; };
     };
 }
