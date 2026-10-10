@@ -246,6 +246,13 @@ test-armv7:
   script:
     - nix build .#nextest-armv7 --no-link
 
+widget-autoinstall:
+  stage: check
+  needs:
+    - workspace-deps-armv7
+  script:
+    - nix build -L .#checks.x86_64-linux.widget-autoinstall
+
 test-wasm-widgets:
   stage: check
   needs:

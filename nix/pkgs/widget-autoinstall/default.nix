@@ -140,8 +140,67 @@ let
   };
 
   autoInstall = resolve names;
+
+  testBusybox = armv7Pkgs.buildPackages.busybox;
+
+  scriptsTest =
+    let
+      testOrchestrator = "orchestrator-under-test";
+      stubCli = armv7Pkgs.buildPackages.writeTextFile {
+        name = "bmc-nix-cli-stub";
+        executable = true;
+        destination = "/bin/bmc-nix-cli";
+        text = ''
+          #!${lib.getExe' testBusybox "ash"}
+          printf '%s\n' "$@" >> "$CLI_ARGS"
+          printf '%s\n' "$PATH" > "$CLI_PATH"
+          exit "$CLI_EXIT"
+        '';
+      };
+      underTest = mkScripts {
+        bmcNixCli = stubCli;
+        orchestratorService = testOrchestrator;
+        packages = [{
+          name = "widget-a";
+          version = "1.0.0";
+          storePath = "/nix/store/00000000000000000000000000000000-widget-a";
+        }];
+      };
+    in
+    armv7Pkgs.runCommand "widget-autoinstall-test" { } ''
+      PATH=${testBusybox}/bin \
+        ${lib.getExe' testBusybox "ash"} \
+          ${./tests/widget-autoinstall.sh} \
+          ${lib.getExe underTest.step} \
+          ${lib.getExe underTest.worker} \
+          ${testOrchestrator}
+      touch $out
+    '';
+
+  # The real list may be empty, so the layout is checked on a package
+  # built for a probe widget.
+  probeWidget = armv7Pkgs.writeTextDir "share/widget-probe" "";
+  probe = mkAutoinstallPackage [{
+    name = "widget-probe";
+    version = "0.0.0";
+    storePath = "${probeWidget}";
+  }];
+  activationScript = probe.activationScripts.${stepName};
+  layoutTest =
+    let
+      probeClosure = armv7Pkgs.buildPackages.closureInfo { rootPaths = [ probe ]; };
+    in
+    armv7Pkgs.runCommand "widget-autoinstall-layout-test" { } ''
+      test -x ${probe}/${activationScript}
+      grep -Fx ${probeWidget} ${probeClosure}/store-paths
+      touch $out
+    '';
 in
 {
   pkg = if autoInstall == [ ] then null else mkAutoinstallPackage autoInstall;
-  inherit autoInstall resolve;
+  inherit autoInstall resolve probe activationScript;
+  tests = {
+    scripts = scriptsTest;
+    layout = layoutTest;
+  };
 }

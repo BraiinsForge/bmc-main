@@ -323,6 +323,22 @@ let
     then corePackage
     else joinWidgetAutoinstall widgetAutoinstall.pkg;
 
+  widgetAutoinstallJoinTest =
+    let
+      probeCore = joinWidgetAutoinstall widgetAutoinstall.probe;
+      step = widgetAutoinstall.activationScript;
+    in
+    armv7Pkgs.runCommand "widget-autoinstall-join-test" { listed = widgetAutoinstall.pkg != null; } ''
+      test -x ${probeCore}/${step}
+      test -x ${probeCore}/core/activation/scripts/999-signal-widget-reload
+      if [ -n "$listed" ]; then
+        test -x ${package}/${step}
+      else
+        test ! -e ${package}/${step}
+      fi
+      touch $out
+    '';
+
   activationLayoutTest = armv7Pkgs.runCommand "core-activation-layout-test" { } ''
     scripts=${package}/core/activation/scripts
     signal="$scripts/999-signal-widget-reload"
@@ -349,13 +365,14 @@ let
 
   packageWithTests = package.overrideAttrs (old: {
     passthru = (old.passthru or { }) // {
-      inherit bmcSystemConfig wasmHost wasmLauncher;
+      inherit bmcSystemConfig wasmHost wasmLauncher widgetAutoinstall;
       tests.activation = nixConfActivationTest;
       tests.activator = nixActivatorTest;
       tests.compositor-service = bmcCompositorServiceTest;
       tests.firmware-init-services = firmwareInitServicesTest;
       tests.signal-widget-reload = signalWidgetReloadTest;
       tests.activation-layout = activationLayoutTest;
+      tests.widget-autoinstall-join = widgetAutoinstallJoinTest;
     };
   });
 in

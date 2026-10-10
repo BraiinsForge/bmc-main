@@ -408,4 +408,24 @@ in
     ty check --python ${python-lint-venv} --error deprecated
     touch $out
   '';
+
+  # Resolved entries must match what the index publishes;
+  # widget-hello-widget stands in while the shipped list is empty.
+  widget-autoinstall =
+    let
+      autoinstall = deckPackages.core.pkg.widgetAutoinstall;
+      fromEntry = p: p.version == deckPackages.${p.name}.version
+        && p.storePath == "${deckPackages.${p.name}.pkg}"
+        && builtins.hasContext p.storePath;
+    in
+    assert rejects (autoinstall.resolve [ "widget-does-not-exist" ]);
+    assert rejects (autoinstall.resolve [ "core" ]);
+    assert lib.all fromEntry (autoinstall.resolve [ "widget-hello-widget" ]);
+    assert lib.all fromEntry autoinstall.autoInstall;
+    pkgs.runCommand "widget-autoinstall" { } ''
+      test -e ${autoinstall.tests.scripts}
+      test -e ${autoinstall.tests.layout}
+      test -e ${deckPackages.core.pkg.tests.widget-autoinstall-join}
+      touch $out
+    '';
 }
