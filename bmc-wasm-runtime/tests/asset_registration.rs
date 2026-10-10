@@ -25,9 +25,7 @@ use std::time::{Duration, Instant};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::AssetTagState;
 use bmc_render::renderer::prelude::*;
-use bmc_wasm_protocol::{
-    BitmapId, MeshId, PackageAssetId, PackageAssetKind, PackageAssetRef, SvgId,
-};
+use bmc_ui::{BitmapId, MeshId, PackageAssetId, PackageAssetKind, PackageAssetRef, SvgId};
 use bmc_wasm_runtime::{
     DiskCache, PackageAssetStore, RenderStatus, RendererAssetSuspensionObservation, RuntimeConfig,
     TargetContents, WasmWidgetRuntime,
@@ -146,7 +144,7 @@ impl AssetKind {
                 64.0,
                 64.0,
                 Some(SvgId::from_ffi(raw_id).expect("BUG: fixture SVG ID must be valid")),
-                bmc_wasm_protocol::colors::WHITE,
+                bmc_ui::WHITE,
             ),
             Self::Bitmap | Self::BitmapNearest => bmc_ui::Draw::bitmap_id(
                 0.0,
@@ -283,7 +281,7 @@ fn shadowed_cache_bitmap_demand_wat() -> String {
                 dx: 1.0,
                 dy: 1.0,
                 blur: 2.0,
-                color: bmc_wasm_protocol::colors::BLACK.with_alpha(0.5),
+                color: bmc_ui::BLACK.with_alpha(0.5),
             },
         ),
     )
@@ -348,7 +346,7 @@ fn cache_bitmap_can_be_restored_inside_a_shadow_pass() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -404,7 +402,7 @@ fn coalesced_sleep_cache_reregistration_restores_on_first_draw() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -687,9 +685,9 @@ fn package_asset_path(
 }
 
 fn minimal_empty_mesh() -> Vec<u8> {
-    let body_offset = bmc_wasm_protocol::mesh::HEADER_SIZE + std::mem::size_of::<[f32; 6]>();
+    let body_offset = bmc_ui::mesh::HEADER_SIZE + std::mem::size_of::<[f32; 6]>();
     let mut data = vec![0_u8; body_offset];
-    data[0..4].copy_from_slice(&bmc_wasm_protocol::mesh::MESH_MAGIC.to_le_bytes());
+    data[0..4].copy_from_slice(&bmc_ui::mesh::MESH_MAGIC.to_le_bytes());
     let body_offset = u32::try_from(body_offset)
         .expect("BUG: minimal mesh offset must fit u32")
         .to_le_bytes();
@@ -705,20 +703,20 @@ fn compiled_line_svg() -> Vec<u8> {
     data.extend_from_slice(&1_u16.to_le_bytes());
     data.push(0);
     data.extend_from_slice(&2_u16.to_le_bytes());
-    data.push(bmc_wasm_protocol::svg::SVG_OP_MOVE_TO);
+    data.push(bmc_ui::svg::SVG_OP_MOVE_TO);
     data.extend_from_slice(&0.0_f32.to_le_bytes());
     data.extend_from_slice(&0.0_f32.to_le_bytes());
-    data.push(bmc_wasm_protocol::svg::SVG_OP_LINE_TO);
+    data.push(bmc_ui::svg::SVG_OP_LINE_TO);
     data.extend_from_slice(&1.0_f32.to_le_bytes());
     data.extend_from_slice(&1.0_f32.to_le_bytes());
     data
 }
 
 fn minimal_triangle_mesh() -> Vec<u8> {
-    let vertex_offset = bmc_wasm_protocol::mesh::HEADER_SIZE + std::mem::size_of::<[f32; 6]>();
-    let index_offset = vertex_offset + 3 * bmc_wasm_protocol::mesh::VERTEX_SIZE_NO_UV;
+    let vertex_offset = bmc_ui::mesh::HEADER_SIZE + std::mem::size_of::<[f32; 6]>();
+    let index_offset = vertex_offset + 3 * bmc_ui::mesh::VERTEX_SIZE_NO_UV;
     let mut data = vec![0_u8; index_offset + 3 * std::mem::size_of::<u16>()];
-    data[0..4].copy_from_slice(&bmc_wasm_protocol::mesh::MESH_MAGIC.to_le_bytes());
+    data[0..4].copy_from_slice(&bmc_ui::mesh::MESH_MAGIC.to_le_bytes());
     data[4..8].copy_from_slice(&3_u32.to_le_bytes());
     data[8..12].copy_from_slice(&3_u32.to_le_bytes());
     data[12..16].copy_from_slice(
@@ -969,7 +967,7 @@ fn package_runtime(kind: AssetKind, id: &[u8; 32], config: RuntimeConfig) -> Was
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         config,
@@ -988,7 +986,7 @@ fn package_demand_runtime(
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         config,
@@ -1092,7 +1090,7 @@ fn run_registration_contract(kind: AssetKind) {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
@@ -1155,7 +1153,7 @@ fn initially_dormant_runtime_keeps_pointer_asset_registration_usable() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
@@ -1189,7 +1187,7 @@ fn legacy_0_2_widget_keeps_the_pointer_asset_abi() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
@@ -1232,7 +1230,7 @@ fn dormant_package_reservations_survive_coalesced_edges_without_loading() {
             &wasm,
             64,
             64,
-            bmc_wasm_protocol::ViewportShape::Rectangular,
+            bmc_ui::ViewportShape::Rectangular,
             common::test_display(64, 64),
             chrono::Local::now().fixed_offset(),
             config,
@@ -1307,7 +1305,7 @@ fn stale_ledger_id_still_acquires_gpu_access_before_tag_suspension() {
             &wasm,
             64,
             64,
-            bmc_wasm_protocol::ViewportShape::Rectangular,
+            bmc_ui::ViewportShape::Rectangular,
             common::test_display(64, 64),
             chrono::Local::now().fixed_offset(),
             RuntimeConfig {
@@ -1484,7 +1482,7 @@ fn demand_restored_package_assets_report_suspension_once() {
             &wasm,
             64,
             64,
-            bmc_wasm_protocol::ViewportShape::Rectangular,
+            bmc_ui::ViewportShape::Rectangular,
             common::test_display(64, 64),
             chrono::Local::now().fixed_offset(),
             RuntimeConfig {
@@ -1557,7 +1555,7 @@ fn wake_leaves_package_restoration_to_the_first_frame_that_draws() {
             &wasm,
             64,
             64,
-            bmc_wasm_protocol::ViewportShape::Rectangular,
+            bmc_ui::ViewportShape::Rectangular,
             common::test_display(64, 64),
             chrono::Local::now().fixed_offset(),
             RuntimeConfig {
@@ -1678,7 +1676,7 @@ fn package_audio_loads_from_the_store_and_deduplicates_by_tag() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         config,
@@ -1811,7 +1809,7 @@ fn missing_package_audio_traps_instead_of_returning_zero() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
@@ -1838,7 +1836,7 @@ fn failed_demand_restore_marks_the_widget_dead_after_on_wake() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -1908,7 +1906,7 @@ fn bitmap_fit_cannot_replace_package_backing() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -1961,7 +1959,7 @@ fn resident_cache_backed_decode_survives_cache_eviction_without_restoration() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -2050,7 +2048,7 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         config,
@@ -2267,7 +2265,7 @@ fn render_restores_only_the_cache_bitmap_used_by_a_draw() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -2400,7 +2398,7 @@ fn missing_cache_payload_is_reported_as_skipped_when_rendered() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {

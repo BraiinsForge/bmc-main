@@ -21,10 +21,6 @@ default = []
 id-pool = []
 # Off by default so the SDK build path doesn't pick up serde
 serde = ["dep:serde"]
-# Colour conversions for egui consumers; off so the wasm SDK never sees egui.
-egui = ["bmc-ui/egui"]
-# Off by default so the wasm SDK build path stays free of Wayland-protocol types.
-widget-protocol = ["bmc-ui/widget-protocol"]
 # What the host computes for a guest, shared with native SDK builds.
 # Off by default so the wasm SDK build path stays free of the formatting core (formato),
 # the calendar (chrono-tz, rrule) and the JSON and XML readers (serde_json, roxmltree).

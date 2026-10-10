@@ -32,7 +32,7 @@ use crate::interaction::Rect;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use crate::tree::stroke_inside;
-use bmc_wasm_protocol::colors::WHITE;
+use bmc_ui::colors::WHITE;
 
 const W: u32 = 128;
 const H: u32 = 128;

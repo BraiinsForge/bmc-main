@@ -21,8 +21,9 @@ bmc-platform.workspace = true
 bmc-render = { path = "../bmc-render" }
 bmc-shared-time = { path = "../bmc-shared/time" }
 bmc-shared-utils = { workspace = true }
+bmc-ui = { path = "../bmc-render/ui", features = ["widget-protocol"] }
 bmc-wasm-assets = { path = "../bmc-wasm-assets", optional = true }
-bmc-wasm-protocol = { path = "protocol", features = ["host", "id-pool", "serde", "widget-protocol"] }
+bmc-wasm-protocol = { path = "protocol", features = ["host", "id-pool", "serde"] }
 bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
 chrono.workspace = true
@@ -107,7 +108,7 @@ profiling = ["ii-stopwatch/enabled", "bmc-render/profiling", "frame-timings"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "bmc-wasm-assets", "flate2", "owo-colors", "tempfile", "toml", "toml_edit"]
-testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "binpack2d", "egui", "egui_autocomplete", "egui_glow", "egui_sgr", "resvg", "clap", "bmc-led/apa102_spi", "bmc-wasm-protocol/egui"]
+testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "binpack2d", "egui", "egui_autocomplete", "egui_glow", "egui_sgr", "resvg", "clap", "bmc-led/apa102_spi", "bmc-ui/egui"]
 capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder"]
 
 [[bin]]
@@ -121,7 +122,6 @@ path = "src/bin/capture/main.rs"
 required-features = ["capture"]
 
 [dev-dependencies]
-bmc-ui = { path = "../bmc-render/ui" }
 bmc-wasm-assets = { path = "../bmc-wasm-assets" }
 # A renderer for unit tests of the host's layer bookkeeping, which needs no GL.
 bmc-render = { path = "../bmc-render", features = ["test-support"] }

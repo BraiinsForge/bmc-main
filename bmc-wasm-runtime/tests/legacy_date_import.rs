@@ -21,7 +21,7 @@
 //! Widgets from SDK 0.5 and earlier import the instant parser as `host_parse_date`
 //! and decode a 20-byte layout from `host_tz_convert`. Both are pinned here.
 
-use bmc_wasm_protocol::{DisplayShape, ViewportShape};
+use bmc_ui::{DisplayShape, ViewportShape};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
 /// The version the fixture widget declares — the last one before the rename.

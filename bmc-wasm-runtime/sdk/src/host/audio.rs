@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_protocol::AudioId;
+use bmc_ui::AudioId;
 
 /// Audio playback volume, in 0–100.
 ///
@@ -68,7 +68,7 @@ trait AudioSink {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use bmc_wasm_protocol::AudioId;
+    use bmc_ui::AudioId;
 
     use super::Volume;
 
@@ -93,7 +93,7 @@ mod wasm {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use bmc_wasm_protocol::AudioId;
+    use bmc_ui::AudioId;
 
     use super::Volume;
 

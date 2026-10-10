@@ -1452,6 +1452,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "bmc-ui",
  "bmc-wasm-protocol",
  "clap",
  "sha2",
@@ -1465,26 +1466,26 @@ dependencies = [
 name = "bmc-wasm-assets-fixture-dep"
 version = "0.1.0"
 dependencies = [
+ "bmc-ui",
  "bmc-wasm-assets",
- "bmc-wasm-protocol",
 ]
 
 [[package]]
 name = "bmc-wasm-assets-fixture-unused-dep"
 version = "0.1.0"
 dependencies = [
+ "bmc-ui",
  "bmc-wasm-assets",
- "bmc-wasm-protocol",
 ]
 
 [[package]]
 name = "bmc-wasm-assets-linker-widget"
 version = "0.1.0"
 dependencies = [
+ "bmc-ui",
  "bmc-wasm-assets",
  "bmc-wasm-assets-fixture-dep",
  "bmc-wasm-assets-fixture-unused-dep",
- "bmc-wasm-protocol",
 ]
 
 [[package]]
@@ -1509,6 +1510,7 @@ dependencies = [
  "bmc-overlay-upgrade",
  "bmc-render",
  "bmc-system-overlay",
+ "bmc-ui",
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
  "bmc-wasm-thin-protocol",

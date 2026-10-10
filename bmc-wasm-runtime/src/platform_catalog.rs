@@ -59,17 +59,17 @@ pub struct Viewport {
 
 impl Viewport {
     #[must_use]
-    pub fn runtime_viewport_shape(&self) -> bmc_wasm_protocol::ViewportShape {
+    pub fn runtime_viewport_shape(&self) -> bmc_ui::ViewportShape {
         runtime_viewport_shape(self.shape)
     }
 }
 
 /// The viewport shape a guest sees through `widget_viewport()`.
 #[must_use]
-pub fn runtime_viewport_shape(shape: DisplayShape) -> bmc_wasm_protocol::ViewportShape {
+pub fn runtime_viewport_shape(shape: DisplayShape) -> bmc_ui::ViewportShape {
     match shape {
-        DisplayShape::Rectangular => bmc_wasm_protocol::ViewportShape::Rectangular,
-        DisplayShape::Round => bmc_wasm_protocol::ViewportShape::Round,
+        DisplayShape::Rectangular => bmc_ui::ViewportShape::Rectangular,
+        DisplayShape::Round => bmc_ui::ViewportShape::Round,
     }
 }
 
@@ -123,8 +123,8 @@ impl Platform {
             width: display.logical_width,
             height: display.logical_height,
             shape: match display.shape {
-                DisplayShape::Rectangular => bmc_wasm_protocol::DisplayShape::Rectangular,
-                DisplayShape::Round => bmc_wasm_protocol::DisplayShape::Round,
+                DisplayShape::Rectangular => bmc_ui::DisplayShape::Rectangular,
+                DisplayShape::Round => bmc_ui::DisplayShape::Round,
             },
             dpi: display.dpi,
         }
@@ -478,10 +478,10 @@ mod tests {
             (display.width, display.height, display.dpi),
             (480, 480, 229)
         );
-        assert_eq!(display.shape, bmc_wasm_protocol::DisplayShape::Round);
+        assert_eq!(display.shape, bmc_ui::DisplayShape::Round);
         assert_eq!(
             bfm.viewports[0].runtime_viewport_shape(),
-            bmc_wasm_protocol::ViewportShape::Round
+            bmc_ui::ViewportShape::Round
         );
     }
 
@@ -493,10 +493,10 @@ mod tests {
             (display.width, display.height, display.dpi),
             (480, 320, 165)
         );
-        assert_eq!(display.shape, bmc_wasm_protocol::DisplayShape::Rectangular);
+        assert_eq!(display.shape, bmc_ui::DisplayShape::Rectangular);
         assert_eq!(
             bmm.viewports[0].runtime_viewport_shape(),
-            bmc_wasm_protocol::ViewportShape::Rectangular
+            bmc_ui::ViewportShape::Rectangular
         );
     }
 

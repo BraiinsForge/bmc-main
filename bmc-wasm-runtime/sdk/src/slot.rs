@@ -50,7 +50,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, SvgId};
+use bmc_ui::{AudioId, BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::ImageJobId;
 
 use crate::host;
 use crate::net::FetchBodyRef;
@@ -198,7 +199,8 @@ pub fn image_decode_is_pending(job_id: ImageJobId) -> bool {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use bmc_wasm_protocol::{BitmapId, ImageJobId};
+    use bmc_ui::BitmapId;
+    use bmc_wasm_protocol::ImageJobId;
 
     use super::{IMAGE_CALLBACKS, IMAGE_PENDING};
 

@@ -21,7 +21,7 @@
 //! Audio sample registration and playback guest imports.
 
 use anyhow::Result;
-use bmc_wasm_protocol::{AudioId, PackageAssetKind};
+use bmc_ui::{AudioId, PackageAssetKind};
 use wasmi::{Caller, Linker};
 
 use crate::host_api::{FixtureEvent, FixtureEventKind, HostState};

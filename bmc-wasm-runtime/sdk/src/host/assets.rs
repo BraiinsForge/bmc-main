@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
+use bmc_ui::{AudioId, BitmapId, MeshId, PackageAssetRef, SvgId};
+use bmc_wasm_protocol::ImageJobId;
 
 use crate::net::FetchBodyRef;
 
@@ -226,7 +227,8 @@ trait ImageDecodeProvider {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
+    use bmc_ui::{AudioId, BitmapId, MeshId, PackageAssetRef, SvgId};
+    use bmc_wasm_protocol::ImageJobId;
 
     use super::RetainedImageDimensions;
     use crate::net::FetchBodyRef;
@@ -563,7 +565,8 @@ mod wasm {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
+    use bmc_ui::{AudioId, BitmapId, MeshId, PackageAssetRef, SvgId};
+    use bmc_wasm_protocol::ImageJobId;
 
     use super::RetainedImageDimensions;
     use crate::net::FetchBodyRef;

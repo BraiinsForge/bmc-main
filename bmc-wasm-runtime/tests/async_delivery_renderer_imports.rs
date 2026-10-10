@@ -242,7 +242,7 @@ fn fetch_response_callback_can_register_renderer_asset() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -286,7 +286,7 @@ fn fetch_response_callback_without_renderer_import_needs_no_gpu_fence() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -325,7 +325,7 @@ fn fetch_response_callback_querying_a_resident_asset_needs_no_gpu_fence() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -372,7 +372,7 @@ fn fetch_response_callback_drawing_text_acquires_gpu_access() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -410,7 +410,7 @@ fn fetch_response_callback_drawing_button_acquires_gpu_access() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {

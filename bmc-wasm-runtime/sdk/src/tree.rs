@@ -285,7 +285,7 @@ pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
 #[cfg(not(target_arch = "wasm32"))]
 mod failed_mesh_tests {
     use super::*;
-    use bmc_wasm_protocol::StaticAssetSource;
+    use bmc_ui::StaticAssetSource;
 
     /// What `include_mesh!` leaves behind in a build that defers its errors.
     static FAILED: Mesh = Mesh {

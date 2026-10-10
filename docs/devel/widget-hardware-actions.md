@@ -49,9 +49,9 @@ the SDK does not hide that.
 scene-specific effect is competing for the strip (e.g. a pomodoro timer's running indicator). See *Scope: local vs
 global* under *Effect lifecycle*.
 
-`Color` comes from `bmc-wasm-protocol`; `LedEffect` is `bmc-led`'s `LedEffectKind`, re-exported by the SDK.
-`LedEffectKind` is `#[repr(u8)]`; an `effect_kind_wire_bytes_are_stable` test pins the discriminant values (kept equal
-to the wire enum by hand).
+`Color` comes from `bmc-ui`; `LedEffect` is `bmc-led`'s `LedEffectKind`, re-exported by the SDK. `LedEffectKind` is
+`#[repr(u8)]`; an `effect_kind_wire_bytes_are_stable` test pins the discriminant values (kept equal to the wire enum by
+hand).
 
 `request_id`s are allocated by the host runtime on behalf of guests; the guest SDK does not expose them today. `stop()`
 always cancels every outstanding LED request from the calling widget, in both tiers. Per-request cancellation is a

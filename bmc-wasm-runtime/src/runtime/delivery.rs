@@ -23,9 +23,10 @@
 #![expect(clippy::too_many_lines)]
 
 use anyhow::Result;
+use bmc_ui::BitmapId;
 use bmc_wasm_protocol::{
-    BitmapId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId,
-    ON_TIMER_EXPORT, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId,
+    FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, ON_TIMER_EXPORT,
+    SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId,
 };
 use std::ptr::NonNull;
 use std::time::Duration;

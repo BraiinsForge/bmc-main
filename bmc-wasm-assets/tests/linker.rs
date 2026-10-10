@@ -10,8 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use bmc_ui::{PackageAssetId, PackageAssetKind};
 use bmc_wasm_assets::{extract_package_assets, package_asset_id, rewrite_package_asset_sections};
-use bmc_wasm_protocol::{PackageAssetId, PackageAssetKind};
 use wasmparser::{DataKind, Parser, Payload};
 
 const TARGET: &str = "wasm32-unknown-unknown";

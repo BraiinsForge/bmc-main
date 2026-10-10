@@ -24,10 +24,11 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
-use bmc_wasm_protocol::{
-    PACKAGE_ASSET_RECORD_MAGIC, PACKAGE_ASSET_REF_LEN, PACKAGE_ASSET_REF_MAGIC, PackageAssetId,
-    PackageAssetKind, PackageAssetRef,
+use bmc_ui::{
+    PACKAGE_ASSET_REF_LEN, PACKAGE_ASSET_REF_MAGIC, PackageAssetId, PackageAssetKind,
+    PackageAssetRef,
 };
+use bmc_wasm_protocol::PACKAGE_ASSET_RECORD_MAGIC;
 use tempfile::{Builder, NamedTempFile};
 use walkdir::WalkDir;
 use wasmparser::{Parser, Payload};

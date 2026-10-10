@@ -411,12 +411,10 @@ pub use ufmt;
 pub use ws::{Ws, WsEvent, ws_connect};
 pub use xml::XmlDoc;
 
-// `bmc_ui` and the protocol both have `ids`, `text` and `time` modules, so the root
-// picks: the protocol's ids and time are the host contract, the text types are `bmc_ui`'s.
-// `skeleton` is the builders' module rather than the kind enum's, as widgets write
-// `skeleton::text(…)`.
+// `bmc_ui` and the protocol both have `ids` and `time` modules; the root presents
+// the protocol's, which are the host contract. `skeleton` is the builders' module
+// rather than the kind enum's, as widgets write `skeleton::text(…)`.
 pub use bmc_ui::components::skeleton;
-pub use bmc_ui::text;
 pub use bmc_wasm_protocol::{ids, time};
 
 pub use assets::*;

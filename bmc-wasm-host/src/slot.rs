@@ -314,7 +314,7 @@ fn instantiate_cached_runtime(
     lease: ModuleLease,
     width: u32,
     height: u32,
-    viewport_shape: bmc_wasm_protocol::ViewportShape,
+    viewport_shape: bmc_ui::ViewportShape,
     display: bmc_wasm_runtime::RuntimeDisplayInfo,
     initial_system_time: chrono::DateTime<chrono::FixedOffset>,
     config: RuntimeConfig,
@@ -385,7 +385,7 @@ impl WidgetSlot {
         }
         let credentials = bmc_wasm_runtime::parse_credentials_json(&initial.credentials);
         let credential_secrets = initial.credential_secrets.clone();
-        let viewport_shape = bmc_wasm_protocol::ViewportShape::from(initial.viewport_shape);
+        let viewport_shape = bmc_ui::ViewportShape::from(initial.viewport_shape);
         let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
         let token = initial.token.clone();
         let cache_dir = PathBuf::from(WIDGET_CACHE_DIR).join(&token);
@@ -1805,11 +1805,11 @@ mod tests {
             loaded.lease,
             320,
             240,
-            bmc_wasm_protocol::ViewportShape::Rectangular,
+            bmc_ui::ViewportShape::Rectangular,
             RuntimeDisplayInfo {
                 width: 320,
                 height: 240,
-                shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+                shape: bmc_ui::DisplayShape::Rectangular,
                 dpi: 1,
             },
             chrono::Local::now().fixed_offset(),

@@ -158,7 +158,7 @@ fn unstarted_runtime(wat: &str, config: RuntimeConfig) -> WasmWidgetRuntime {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         Local::now().fixed_offset(),
         config,

@@ -28,7 +28,7 @@
 //! Off-target there is no host to drive the LEDs, so the calls panic.
 
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope};
-pub use bmc_wasm_protocol::Color;
+pub use bmc_ui::Color;
 
 /// Set an LED effect.
 ///

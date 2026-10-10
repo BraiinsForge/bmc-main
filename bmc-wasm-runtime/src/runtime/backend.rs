@@ -27,11 +27,8 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{
-    BLACK, BitmapId, ICON_METER, MeshId, ON_TIMER_EXPORT, RED_60, SDK_INIT_EXPORT, SDK_VERSION,
-    SVG_RESERVED_MIN, SvgId, version_unpack,
-};
+use bmc_ui::{BLACK, BitmapId, Color, ICON_METER, MeshId, RED_60, SVG_RESERVED_MIN, SvgId};
+use bmc_wasm_protocol::{ON_TIMER_EXPORT, SDK_INIT_EXPORT, SDK_VERSION, version_unpack};
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
@@ -60,7 +57,7 @@ use super::{CredentialView, FetchAgent, ParamsSnapshot};
 pub struct DisplayInfo {
     pub width: u32,
     pub height: u32,
-    pub shape: bmc_wasm_protocol::DisplayShape,
+    pub shape: bmc_ui::DisplayShape,
     pub dpi: u32,
 }
 
@@ -443,7 +440,7 @@ fn suspend_svg_profiled(
     instance_id: &str,
     raw_tag: &str,
     observation: &mut RendererAssetSuspensionObservation,
-) -> AssetSuspendResult<bmc_wasm_protocol::SvgId> {
+) -> AssetSuspendResult<bmc_ui::SvgId> {
     let deallocation_probe = bmc_render::profile::DeallocationProbe::start();
     let result = renderer.suspend_svg(tag);
     if let Some(probe) = deallocation_probe {
@@ -736,7 +733,7 @@ fn restore_package_asset(
     raw_tag: &str,
     tag: &str,
     record: &RendererAssetRecord,
-    id: bmc_wasm_protocol::PackageAssetId,
+    id: bmc_ui::PackageAssetId,
 ) -> Result<Option<RendererAssetId>, String> {
     let Some(store) = package_assets else {
         return Err(format!(
@@ -744,9 +741,9 @@ fn restore_package_asset(
         ));
     };
     let kind = match record.kind {
-        RendererAssetKind::Svg => bmc_wasm_protocol::PackageAssetKind::Svg,
-        RendererAssetKind::Bitmap(_) => bmc_wasm_protocol::PackageAssetKind::Bitmap,
-        RendererAssetKind::Mesh => bmc_wasm_protocol::PackageAssetKind::Mesh,
+        RendererAssetKind::Svg => bmc_ui::PackageAssetKind::Svg,
+        RendererAssetKind::Bitmap(_) => bmc_ui::PackageAssetKind::Bitmap,
+        RendererAssetKind::Mesh => bmc_ui::PackageAssetKind::Mesh,
     };
     let payload = store
         .load(kind, id)
@@ -899,7 +896,7 @@ impl WasmWidgetRuntime {
         wasm_bytes: &[u8],
         width: u32,
         height: u32,
-        viewport_shape: bmc_wasm_protocol::ViewportShape,
+        viewport_shape: bmc_ui::ViewportShape,
         display: DisplayInfo,
         initial_system_time: DateTime<FixedOffset>,
         config: RuntimeConfig,
@@ -929,7 +926,7 @@ impl WasmWidgetRuntime {
         module: &WasmWidgetModule,
         width: u32,
         height: u32,
-        viewport_shape: bmc_wasm_protocol::ViewportShape,
+        viewport_shape: bmc_ui::ViewportShape,
         display: DisplayInfo,
         initial_system_time: DateTime<FixedOffset>,
         config: RuntimeConfig,
@@ -968,7 +965,7 @@ impl WasmWidgetRuntime {
         module: &WasmWidgetModule,
         width: u32,
         height: u32,
-        viewport_shape: bmc_wasm_protocol::ViewportShape,
+        viewport_shape: bmc_ui::ViewportShape,
         display: DisplayInfo,
         initial_system_time: DateTime<FixedOffset>,
         config: RuntimeConfig,
@@ -2411,15 +2408,7 @@ impl WasmWidgetRuntime {
 
     #[cfg(test)]
     #[must_use]
-    pub fn test_geometry(
-        &self,
-    ) -> (
-        bmc_wasm_protocol::ViewportShape,
-        u32,
-        u32,
-        bmc_wasm_protocol::DisplayShape,
-        u32,
-    ) {
+    pub fn test_geometry(&self) -> (bmc_ui::ViewportShape, u32, u32, bmc_ui::DisplayShape, u32) {
         let s = self.store.data();
         (
             s.viewport_shape,
@@ -2593,7 +2582,7 @@ mod tests {
     };
     use crate::renderer_assets::RendererAssetId;
     use bmc_render::interaction::Rect;
-    use bmc_wasm_protocol::{DisplayShape, SVG_RESERVED_MIN, SvgId, ViewportShape};
+    use bmc_ui::{DisplayShape, SVG_RESERVED_MIN, SvgId, ViewportShape};
 
     /// Minimal SDK-version-shaped widget so `WasmWidgetRuntime::new` finishes
     /// instantiation without needing a renderer or GL context.

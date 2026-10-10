@@ -78,7 +78,7 @@ fn loop_of_ten_frames_succeeds() {
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),

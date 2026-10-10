@@ -34,7 +34,7 @@ mod timer;
 
 use anyhow::Result;
 use bmc_render::renderer::Renderer;
-use bmc_wasm_protocol::{PACKAGE_ASSET_REF_LEN, PackageAssetId, PackageAssetKind, PackageAssetRef};
+use bmc_ui::{PACKAGE_ASSET_REF_LEN, PackageAssetId, PackageAssetKind, PackageAssetRef};
 use wasmi::{Caller, Linker};
 
 use crate::host_api::HostState;

@@ -18,8 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-pub use bmc_ui::assets::*;
-
 pub const PACKAGE_ASSET_SECTION_NAME: &str = "bmc_assets_v1";
 pub const PACKAGE_ASSET_RECORD_MAGIC: [u8; 8] = *b"BMCASSET";
 pub const PACKAGE_ASSET_FORMAT_VERSION: u16 = 1;

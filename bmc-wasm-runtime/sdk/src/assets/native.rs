@@ -20,7 +20,7 @@
 
 use std::cell::RefCell;
 
-use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
+use bmc_ui::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
 use super::{AssetIdProvider, Audio, Bitmap, Mesh, Svg};
 use crate::cache::CacheSource;

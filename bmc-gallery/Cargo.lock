@@ -949,6 +949,7 @@ dependencies = [
 name = "bmc-wasm-assets"
 version = "0.1.0"
 dependencies = [
+ "bmc-ui",
  "bmc-wasm-protocol",
  "sha2",
  "thiserror 1.0.69",

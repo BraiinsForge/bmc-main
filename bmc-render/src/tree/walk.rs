@@ -185,7 +185,7 @@ pub(crate) fn outline_box(
     result: &mut TreeResult,
     anim_ctx: &AnimationContext<'_>,
     rect: Rect,
-    color: bmc_wasm_protocol::Color,
+    color: bmc_ui::Color,
 ) {
     if anim_ctx.emit == EmitMode::StaticOnly {
         return;
@@ -255,7 +255,7 @@ pub struct TreeResult {
 #[derive(Debug, Clone, Copy)]
 pub struct LayoutOutline {
     pub rect: Rect,
-    pub color: bmc_wasm_protocol::Color,
+    pub color: bmc_ui::Color,
     /// The scroll viewport the box is seen through, which the frame scissors it to;
     /// `None` outside any.
     pub clip: Option<Rect>,

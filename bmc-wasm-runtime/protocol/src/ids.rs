@@ -37,7 +37,8 @@
 use std::fmt;
 
 use bmc_ui::define_id;
-pub use bmc_ui::ids::*;
+#[cfg(any(feature = "id-pool", test))]
+use bmc_ui::{AudioId, BitmapId, SvgId};
 
 #[cfg(any(feature = "id-pool", test))]
 mod reusable_id {

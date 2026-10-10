@@ -292,11 +292,11 @@ fn test_slot_with_factory(
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         RuntimeDisplayInfo {
             width: 320,
             height: 240,
-            shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            shape: bmc_ui::DisplayShape::Rectangular,
             dpi: 1,
         },
         chrono::Local::now().fixed_offset(),

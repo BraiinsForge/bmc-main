@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_protocol::ButtonStyle;
+use bmc_ui::ButtonStyle;
 
 /// Fill a rectangle with a solid color.
 pub fn fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32) {
@@ -72,7 +72,7 @@ trait RenderSink {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use bmc_wasm_protocol::ButtonStyle;
+    use bmc_ui::ButtonStyle;
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -152,7 +152,7 @@ mod wasm {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use bmc_wasm_protocol::ButtonStyle;
+    use bmc_ui::ButtonStyle;
 
     pub(super) struct Host;
 

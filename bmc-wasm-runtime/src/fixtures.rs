@@ -474,8 +474,9 @@ pub fn seed_kv_from_widget_root(widget_root: &Path, kv_dir: &Path) {
 mod tests {
     use std::fs;
 
+    use bmc_ui::{PackageAssetKind, PackageAssetRef};
     use bmc_wasm_assets::{Records, contains_package_asset_section, encode_record};
-    use bmc_wasm_protocol::{PACKAGE_ASSET_SECTION_NAME, PackageAssetKind, PackageAssetRef};
+    use bmc_wasm_protocol::PACKAGE_ASSET_SECTION_NAME;
 
     use super::*;
     use crate::platform_catalog::Target;

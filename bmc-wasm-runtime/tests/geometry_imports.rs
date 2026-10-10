@@ -23,7 +23,7 @@
 //! runtime was constructed with. Wayland initial-state event coverage is Stage
 //! 3's (verified in Task 1); this is the host-import boundary only.
 
-use bmc_wasm_protocol::{DisplayShape, ViewportShape};
+use bmc_ui::{DisplayShape, ViewportShape};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
 /// Minimal widget that re-exports the geometry imports.

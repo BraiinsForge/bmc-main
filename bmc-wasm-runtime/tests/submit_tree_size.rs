@@ -28,7 +28,7 @@
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
-use bmc_wasm_protocol::colors::Color;
+use bmc_ui::Color;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
 
 #[path = "common/asset_fixtures.rs"]
@@ -99,7 +99,7 @@ fn probe_pixel_per_frame(gl: &headless_egl::HeadlessGl, width: u16, height: u16)
         &wasm,
         SURFACE_WIDTH,
         SURFACE_HEIGHT,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(SURFACE_WIDTH, SURFACE_HEIGHT),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),

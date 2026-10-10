@@ -22,7 +22,8 @@ use std::fs::{self, File};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use bmc_wasm_protocol::{PACKAGE_ASSET_SECTION_NAME, PackageAssetId, PackageAssetKind};
+use bmc_ui::{PackageAssetId, PackageAssetKind};
+use bmc_wasm_protocol::PACKAGE_ASSET_SECTION_NAME;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use wasmparser::{Parser, Payload};
@@ -254,11 +255,11 @@ mod tests {
             &wasm,
             1,
             1,
-            bmc_wasm_protocol::ViewportShape::Rectangular,
+            bmc_ui::ViewportShape::Rectangular,
             crate::RuntimeDisplayInfo {
                 width: 1,
                 height: 1,
-                shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+                shape: bmc_ui::DisplayShape::Rectangular,
                 dpi: 1,
             },
             chrono::Local::now().fixed_offset(),

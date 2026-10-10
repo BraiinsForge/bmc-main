@@ -22,8 +22,7 @@
 //!
 //! Off-target, where there is no host to call, the bindings panic.
 
-// Re-export from protocol — single source of truth for wire-format enums
-pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
+pub use bmc_ui::{ButtonSize, ButtonStyle};
 
 mod assets;
 pub use assets::{

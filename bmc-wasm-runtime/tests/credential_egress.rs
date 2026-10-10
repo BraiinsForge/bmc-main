@@ -225,7 +225,7 @@ fn runtime_for(
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         config,

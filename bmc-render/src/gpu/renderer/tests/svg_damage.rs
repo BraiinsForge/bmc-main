@@ -40,8 +40,8 @@ use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use crate::tree::{AnimationContext, AnimationDef, Draw, DynamicHalf, EmitMode};
-use bmc_wasm_protocol::colors::WHITE;
-use bmc_wasm_protocol::{AnimProperty, ColorSpace, Easing, LoopMode};
+use bmc_ui::colors::WHITE;
+use bmc_ui::{AnimProperty, ColorSpace, Easing, LoopMode};
 
 const W: u32 = 384;
 const H: u32 = 384;

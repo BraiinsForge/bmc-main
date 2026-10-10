@@ -19,7 +19,7 @@
 // the grant above.
 
 // Re-export the shared wire enums so widgets match on the SDK's own path.
-pub use bmc_wasm_protocol::{DisplayShape, ViewportShape};
+pub use bmc_ui::{DisplayShape, ViewportShape};
 
 /// The drawable rectangle assigned to this widget, in logical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

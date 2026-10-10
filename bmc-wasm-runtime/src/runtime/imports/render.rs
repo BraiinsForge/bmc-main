@@ -28,7 +28,7 @@ mod assets;
 use std::time::Instant;
 
 use anyhow::Result;
-use bmc_wasm_protocol::colors::Color;
+use bmc_ui::Color;
 use wasmi::{Caller, Linker};
 
 use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};

@@ -24,8 +24,7 @@
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
-use bmc_ui::{AnimProperty, Draw, Easing, LoopMode, Node, PropsData, canvas, col, encode};
-use bmc_wasm_protocol::colors::Color;
+use bmc_ui::{AnimProperty, Color, Draw, Easing, LoopMode, Node, PropsData, canvas, col, encode};
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
 
 #[path = "common/asset_fixtures.rs"]
@@ -143,7 +142,7 @@ fn probe(gl: &headless_egl::HeadlessGl, trees: &[Vec<u8>]) -> (WasmWidgetRuntime
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),

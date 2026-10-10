@@ -98,7 +98,7 @@ fn delayed_fetch_fires_only_after_host_advances_monotonic_time() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {

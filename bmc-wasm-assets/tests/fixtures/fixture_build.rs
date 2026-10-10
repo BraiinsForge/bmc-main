@@ -23,8 +23,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
+use bmc_ui::{PACKAGE_ASSET_REF_MAGIC, PackageAssetKind};
 use bmc_wasm_assets::{Records, encode_record};
-use bmc_wasm_protocol::{PACKAGE_ASSET_REF_MAGIC, PackageAssetKind};
 
 pub fn emit_record(kind: PackageAssetKind, logical_name: &str, payload_path: &str) {
     println!("cargo::rerun-if-changed={payload_path}");

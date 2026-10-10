@@ -37,7 +37,7 @@ use bmc_render::FrameTimings;
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::colors::*;
 
-use bmc_wasm_protocol::colors::Color;
+use bmc_ui::Color;
 
 // Component colors for timing breakdown
 const COL_WASM: Color = Color::from_hex(0x6A_9F_D8); // blue — wasmi interpreter

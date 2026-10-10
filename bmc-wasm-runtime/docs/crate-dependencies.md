@@ -5,11 +5,11 @@ Path dependencies among the wasm-side crates, dependant → dependencies. Shared
 
 ```text
 bmc-gallery         → bmc-render, bmc-wasm-sdk, bmc-render-keyboard, the overlays and widgets it stages
-bmc-wasm-runtime    → bmc-render, bmc-wasm-assets, bmc-wasm-protocol
+bmc-wasm-runtime    → bmc-render, bmc-ui, bmc-wasm-assets, bmc-wasm-protocol
 bmc-render          → bmc-ui, bmc-render-macros, bmc-wasm-protocol; at build time bmc-svg-compiler
 bmc-wasm-sdk        → bmc-ui, bmc-render-macros, bmc-wasm-sdk-macros, bmc-wasm-protocol
 bmc-render-macros   → bmc-ui, bmc-wasm-assets, bmc-svg-compiler
-bmc-wasm-assets     → bmc-wasm-protocol
+bmc-wasm-assets     → bmc-ui, bmc-wasm-protocol
 bmc-wasm-protocol   → bmc-ui
 bmc-wasm-sdk-macros → (none)
 bmc-svg-compiler    → (none)
@@ -21,7 +21,7 @@ bmc-ui              → (none)
 | Crate                 | Role                                                     | Location                         |
 | --------------------- | -------------------------------------------------------- | -------------------------------- |
 | `bmc-ui`              | Tree, components, macros, codec, design vocabulary       | `bmc-render/ui/`                 |
-| `bmc-wasm-protocol`   | Guest↔host contract beyond the tree; re-exports `bmc-ui` | `bmc-wasm-runtime/protocol/`     |
+| `bmc-wasm-protocol`   | Guest↔host contract beyond the tree: ids, params, I/O    | `bmc-wasm-runtime/protocol/`     |
 | `bmc-svg-compiler`    | SVG → compact binary path compilation                    | `bmc-wasm-runtime/svg-compiler/` |
 | `bmc-wasm-assets`     | Package asset records: digest, record format, extraction | `bmc-wasm-assets/`               |
 | `bmc-render-macros`   | `include_*!` asset proc macros (svg, bitmap, mesh, …)    | `bmc-render/macros/`             |
@@ -34,9 +34,10 @@ bmc-ui              → (none)
 ## Leaf crates
 
 `bmc-ui`, `bmc-svg-compiler` and `bmc-wasm-sdk-macros` are the leaves — no path dependencies of their own.
-`bmc-wasm-protocol` depends only on `bmc-ui`; `bmc-render`, `bmc-wasm-sdk` and `bmc-render-macros` take `bmc-ui`
-directly as well, for the tree and its builders and for the descriptor types the asset macros expand to. The proc macros
-name those types through a crate root passed as their first argument, which the SDK's and bmc-render's `include_*!`
-wrappers supply as `$crate`, so the overlays, the keyboard and the macro fixture build without the SDK. The protocol and
-SVG-compiler crates live under `bmc-wasm-runtime/` for historical reasons; the paths work and there's no benefit to
-moving them.
+`bmc-wasm-protocol` depends only on `bmc-ui`, for the `define_id!` macro its handles are declared with and the resource
+ids its `IdPool` hands out. `bmc-render`, `bmc-wasm-sdk`, `bmc-render-macros`, `bmc-wasm-runtime` and `bmc-wasm-assets`
+take `bmc-ui` directly, for the tree and its builders, the ids and the descriptor types the asset macros expand to. The
+proc macros name those types through a crate root passed as their first argument, which the SDK's and bmc-render's
+`include_*!` wrappers supply as `$crate`, so the overlays, the keyboard and the macro fixture build without the SDK. The
+protocol and SVG-compiler crates live under `bmc-wasm-runtime/` for historical reasons; the paths work and there's no
+benefit to moving them.

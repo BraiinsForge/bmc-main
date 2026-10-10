@@ -21,11 +21,12 @@
 use std::fs;
 
 use assert_matches::assert_matches;
+use bmc_ui::{PackageAssetKind, PackageAssetRef};
 use bmc_wasm_assets::{
     MAX_PACKAGE_ASSET_PAYLOAD_LEN, RecordError, Records, contains_package_asset_section,
     encode_record, extract_package_assets, rewrite_package_asset_sections,
 };
-use bmc_wasm_protocol::{PACKAGE_ASSET_SECTION_NAME, PackageAssetKind, PackageAssetRef};
+use bmc_wasm_protocol::PACKAGE_ASSET_SECTION_NAME;
 use tempfile::tempdir;
 use wasmparser::{Parser, Payload};
 

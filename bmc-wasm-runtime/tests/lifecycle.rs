@@ -53,10 +53,10 @@ use std::time::{Duration, Instant};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::AssetTagState;
 use bmc_render::renderer::prelude::*;
+use bmc_ui::{PackageAssetId, PackageAssetKind, PackageAssetRef, SvgId};
 use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };
-use bmc_wasm_protocol::{PackageAssetId, PackageAssetKind, PackageAssetRef, SvgId};
 use bmc_wasm_runtime::{
     CredentialView, DiskCache, NextAlarm, PackageAssetStore, RenderStatus, RuntimeConfig,
     SystemSettings, SystemSnapshot, TargetContents, WasmWidgetRuntime,
@@ -632,7 +632,7 @@ fn active_asset_tree_bytes() -> Vec<u8> {
         32.0,
         32.0,
         Some(svg_id),
-        bmc_wasm_protocol::colors::Color::from_rgba(0xFF, 0xFF, 0xFF, 0xFF),
+        bmc_ui::Color::from_rgba(0xFF, 0xFF, 0xFF, 0xFF),
     )
     .animate(
         bmc_ui::AnimProperty::Alpha,
@@ -735,7 +735,7 @@ fn submit_then_burn_wat() -> String {
             104.0,
             32.0,
             32.0,
-            bmc_wasm_protocol::colors::Color::from_rgba(0xFF, 0xFF, 0xFF, 0x80),
+            bmc_ui::Color::from_rgba(0xFF, 0xFF, 0xFF, 0x80),
         )
         .animate(
             bmc_ui::AnimProperty::Alpha,
@@ -864,7 +864,7 @@ fn build_runtime_without_renderer(wat: impl AsRef<str>) -> WasmWidgetRuntime {
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
@@ -915,7 +915,7 @@ fn build_runtime_with_system(
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         config,
@@ -938,7 +938,7 @@ fn build_runtime_with_config(
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         config,
@@ -1032,7 +1032,7 @@ fn a_widget_a_major_ahead_of_the_host_is_refused() {
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
@@ -1153,7 +1153,7 @@ fn poll_deliveries_rejects_a_runtime_after_a_lifecycle_hook_trap() {
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         config,
@@ -1179,7 +1179,7 @@ fn capture_observes_fuel_exhaustion_from_lifecycle_hook() {
         &wasm,
         320,
         240,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(320, 240),
         chrono::Local::now().fixed_offset(),
         config,
@@ -1882,7 +1882,7 @@ fn sleep_eviction_and_wake_cache_registration_reuse_the_released_bitmap_id() {
             .expect("BUG: cache probe must export initial_bitmap_id"),
     )
     .expect("BUG: bitmap ID must fit u32");
-    let first_id = bmc_wasm_protocol::BitmapId::from_ffi(first_raw)
+    let first_id = bmc_ui::BitmapId::from_ffi(first_raw)
         .expect("BUG: initial cache restore must return an ID");
     assert_eq!(
         renderer.bitmap_tag_state(&renderer_tag),
@@ -1905,7 +1905,7 @@ fn sleep_eviction_and_wake_cache_registration_reuse_the_released_bitmap_id() {
             .expect("BUG: cache probe must export wake_bitmap_id"),
     )
     .expect("BUG: bitmap ID must fit u32");
-    let wake_id = bmc_wasm_protocol::BitmapId::from_ffi(wake_raw)
+    let wake_id = bmc_ui::BitmapId::from_ffi(wake_raw)
         .expect("BUG: wake cache restore must return a nonzero ID");
     assert_eq!(
         wake_id, first_id,

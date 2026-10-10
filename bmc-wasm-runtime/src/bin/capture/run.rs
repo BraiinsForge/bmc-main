@@ -2120,17 +2120,17 @@ mod tests {
         let round: Target = "bfm100:full".parse().expect("BUG: target must parse");
         assert_eq!(
             round.viewport.runtime_viewport_shape(),
-            bmc_wasm_protocol::ViewportShape::Round
+            bmc_ui::ViewportShape::Round
         );
         assert_eq!(
             round.platform.runtime_display_info().shape,
-            bmc_wasm_protocol::DisplayShape::Round
+            bmc_ui::DisplayShape::Round
         );
 
         let slot: Target = "bmc100:small".parse().expect("BUG: target must parse");
         assert_eq!(
             slot.viewport.runtime_viewport_shape(),
-            bmc_wasm_protocol::ViewportShape::Rectangular
+            bmc_ui::ViewportShape::Rectangular
         );
     }
 

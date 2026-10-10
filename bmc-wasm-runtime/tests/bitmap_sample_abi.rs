@@ -23,7 +23,7 @@
 //! The runtime keeps an inert function under that name so those binaries load;
 //! this test pins both halves of the contract.
 
-use bmc_wasm_protocol::{DisplayShape, ViewportShape};
+use bmc_ui::{DisplayShape, ViewportShape};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
 /// Pinned rather than read from `SDK_VERSION`: the fixture is a widget built

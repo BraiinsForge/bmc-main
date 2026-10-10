@@ -24,6 +24,7 @@ extractor = ["dep:anyhow", "dep:tempfile", "dep:walkdir", "dep:wasmparser"]
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
+bmc-ui.workspace = true
 bmc-wasm-protocol.workspace = true
 clap = { workspace = true, optional = true }
 sha2.workspace = true

@@ -107,11 +107,11 @@ fn runtime(wat: &str, config: RuntimeConfig) -> WasmWidgetRuntime {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         RuntimeDisplayInfo {
             width: 64,
             height: 64,
-            shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            shape: bmc_ui::DisplayShape::Rectangular,
             dpi: 1,
         },
         Local::now().fixed_offset(),

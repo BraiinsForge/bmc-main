@@ -33,7 +33,7 @@ pub fn test_display(width: u32, height: u32) -> bmc_wasm_runtime::RuntimeDisplay
     bmc_wasm_runtime::RuntimeDisplayInfo {
         width,
         height,
-        shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+        shape: bmc_ui::DisplayShape::Rectangular,
         dpi: 1,
     }
 }

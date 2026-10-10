@@ -20,9 +20,9 @@
 
 use core::str;
 
+use bmc_ui::{PACKAGE_ASSET_ID_LEN, PackageAssetId, PackageAssetKind};
 use bmc_wasm_protocol::{
-    PACKAGE_ASSET_FORMAT_FLAGS, PACKAGE_ASSET_FORMAT_VERSION, PACKAGE_ASSET_ID_LEN,
-    PACKAGE_ASSET_RECORD_MAGIC, PackageAssetId, PackageAssetKind,
+    PACKAGE_ASSET_FORMAT_FLAGS, PACKAGE_ASSET_FORMAT_VERSION, PACKAGE_ASSET_RECORD_MAGIC,
 };
 use thiserror::Error;
 

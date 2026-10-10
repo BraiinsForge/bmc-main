@@ -134,7 +134,7 @@ fn cancel_removes_a_queued_delayed_fetch_entirely() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
@@ -186,7 +186,7 @@ fn cancel_rewrites_the_settlement_of_a_fetch_already_away() {
         &wasm,
         64,
         64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_ui::ViewportShape::Rectangular,
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {

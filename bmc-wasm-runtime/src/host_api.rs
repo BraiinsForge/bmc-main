@@ -49,9 +49,10 @@ use bmc_render::{
     interaction::{CoalesceIterExt, Rect},
 };
 
+use bmc_ui::AudioId;
 use bmc_wasm_protocol::{
-    AudioId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId,
-    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
+    FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId, MdnsBrowseId,
+    MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
 };
 
 use crate::audio_registry::AudioRegistry;
@@ -1324,10 +1325,10 @@ pub(crate) struct HostState {
     /// (SDK `widget_size()` free function).
     pub widget_width: u32,
     pub widget_height: u32,
-    pub viewport_shape: bmc_wasm_protocol::ViewportShape,
+    pub viewport_shape: bmc_ui::ViewportShape,
     pub display_width: u32,
     pub display_height: u32,
-    pub display_shape: bmc_wasm_protocol::DisplayShape,
+    pub display_shape: bmc_ui::DisplayShape,
     pub display_dpi: u32,
 }
 
@@ -1590,10 +1591,10 @@ impl HostState {
             },
             widget_width: 0,
             widget_height: 0,
-            viewport_shape: bmc_wasm_protocol::ViewportShape::Rectangular,
+            viewport_shape: bmc_ui::ViewportShape::Rectangular,
             display_width: 0,
             display_height: 0,
-            display_shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            display_shape: bmc_ui::DisplayShape::Rectangular,
             display_dpi: 0,
         }
     }

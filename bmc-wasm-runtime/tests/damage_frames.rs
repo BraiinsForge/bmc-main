@@ -32,7 +32,7 @@ use std::f32::consts::PI;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::prelude::*;
-use bmc_wasm_protocol::colors::Color;
+use bmc_ui::Color;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
 use bmc_wasm_sdk::{AnimProperty, ArcCap, ArcSegments, Draw, Easing, LoopMode, PropsData};
 use glow::HasContext as _;
@@ -239,7 +239,7 @@ impl Painter {
             wasm,
             u32::from(W),
             u32::from(H),
-            bmc_wasm_protocol::ViewportShape::Rectangular,
+            bmc_ui::ViewportShape::Rectangular,
             common::test_display(u32::from(W), u32::from(H)),
             chrono::Local::now().fixed_offset(),
             RuntimeConfig::default(),

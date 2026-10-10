@@ -34,7 +34,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use bmc_wasm_protocol::{AudioId, IdPool};
+use bmc_ui::AudioId;
+use bmc_wasm_protocol::IdPool;
 
 use crate::host_api::AudioSample;
 

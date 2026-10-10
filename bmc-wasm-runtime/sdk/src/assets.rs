@@ -29,8 +29,10 @@
 //! same `name`.
 
 pub use bmc_ui::assets::{Audio, Bitmap, Svg};
-use bmc_ui::{Mesh, NinePatch, NinePatchAsset, Skin, SkinEntry};
-use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
+use bmc_ui::{
+    AudioId, BitmapId, Mesh, MeshId, NinePatch, NinePatchAsset, Skin, SkinEntry, StaticAssetSource,
+    SvgId,
+};
 
 use crate::cache::CacheSource;
 

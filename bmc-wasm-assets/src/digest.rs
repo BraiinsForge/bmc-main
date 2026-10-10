@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_protocol::{PackageAssetId, PackageAssetKind};
+use bmc_ui::{PackageAssetId, PackageAssetKind};
 use sha2::{Digest, Sha256};
 
 const PACKAGE_ASSET_DIGEST_DOMAIN: &[u8] = b"bmc-package-asset-v1\0";

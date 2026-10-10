@@ -115,7 +115,7 @@ impl PlacedTile {
 
 #[derive(Clone, Copy)]
 struct RuntimeTileGeometry {
-    viewport_shape: bmc_wasm_protocol::ViewportShape,
+    viewport_shape: bmc_ui::ViewportShape,
     display: bmc_wasm_runtime::RuntimeDisplayInfo,
 }
 
@@ -3178,14 +3178,8 @@ mod app_tests {
         let p = platform("bfm100");
 
         let geometry = RuntimeTileGeometry::for_viewport_shape(p, p.viewports[0].shape);
-        assert_eq!(
-            geometry.viewport_shape,
-            bmc_wasm_protocol::ViewportShape::Round
-        );
-        assert_eq!(
-            geometry.display.shape,
-            bmc_wasm_protocol::DisplayShape::Round
-        );
+        assert_eq!(geometry.viewport_shape, bmc_ui::ViewportShape::Round);
+        assert_eq!(geometry.display.shape, bmc_ui::DisplayShape::Round);
         assert_eq!(
             (geometry.display.width, geometry.display.height),
             (480, 480)
@@ -3198,14 +3192,8 @@ mod app_tests {
         let p = platform("bmm101");
 
         let geometry = RuntimeTileGeometry::for_viewport_shape(p, p.viewports[0].shape);
-        assert_eq!(
-            geometry.viewport_shape,
-            bmc_wasm_protocol::ViewportShape::Rectangular
-        );
-        assert_eq!(
-            geometry.display.shape,
-            bmc_wasm_protocol::DisplayShape::Rectangular
-        );
+        assert_eq!(geometry.viewport_shape, bmc_ui::ViewportShape::Rectangular);
+        assert_eq!(geometry.display.shape, bmc_ui::DisplayShape::Rectangular);
         assert_eq!(
             (geometry.display.width, geometry.display.height),
             (480, 320)
@@ -3223,14 +3211,8 @@ mod app_tests {
 
         let geometry = RuntimeTileGeometry::for_viewport_shape(p, medium.shape);
 
-        assert_eq!(
-            geometry.viewport_shape,
-            bmc_wasm_protocol::ViewportShape::Rectangular
-        );
-        assert_eq!(
-            geometry.display.shape,
-            bmc_wasm_protocol::DisplayShape::Rectangular
-        );
+        assert_eq!(geometry.viewport_shape, bmc_ui::ViewportShape::Rectangular);
+        assert_eq!(geometry.display.shape, bmc_ui::DisplayShape::Rectangular);
         assert_eq!(
             (geometry.display.width, geometry.display.height),
             (1280, 480)

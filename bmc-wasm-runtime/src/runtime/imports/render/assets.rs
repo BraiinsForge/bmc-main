@@ -28,9 +28,8 @@ use bmc_render::{
     decode_scaled_to_cover, decode_scaled_to_fit,
     renderer::{AssetSuspendResult, AssetTagState},
 };
-use bmc_wasm_protocol::{
-    BitmapSampling, FetchRequestId, ImageJobId, PackageAssetId, PackageAssetKind, encode_image_meta,
-};
+use bmc_ui::{PackageAssetId, PackageAssetKind};
+use bmc_wasm_protocol::{BitmapSampling, FetchRequestId, ImageJobId, encode_image_meta};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::{CacheWriteOutcome, CompletedImageDecode, DecodedImage, HostState};

@@ -28,7 +28,7 @@
 //! outside the testbed's control, and everything drawn around it — enclosure,
 //! LED strip, the slab standing in for a view — is chrome.
 
-use bmc_wasm_protocol::colors as swatch;
+use bmc_ui::colors as swatch;
 use egui::Color32;
 
 /// Every colour the testbed paints outside of widget textures.
