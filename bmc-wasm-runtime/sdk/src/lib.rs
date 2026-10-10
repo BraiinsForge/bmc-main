@@ -126,7 +126,8 @@
 //! *after* the initial values staged for `init`. Inside the hook,
 //! [`params::previous`] holds the just-replaced snapshot — diff against
 //! [`params::current`] to react only to keys whose value actually
-//! changed. See [`params`] for the byte-level protocol and caching.
+//! changed. See [`params`] for the caching and `bmc_wasm_protocol::params`
+//! for the byte-level protocol.
 //!
 //! Channel isolation: this hook fires only on params deliveries.
 //! The deck-wide [`system`] channel has its own [`on_system_update`](#on_system_update)
