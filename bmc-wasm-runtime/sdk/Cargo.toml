@@ -19,7 +19,6 @@ deferred-mesh-errors = ["bmc-render-macros/deferred-mesh-errors"]
 [dependencies]
 bmc-led = { path = "../../bmc-led", default-features = false }
 bmc-render-macros = { path = "../../bmc-render/macros" }
-bmc-render-skin = { path = "../../bmc-render/skin" }
 bmc-ui = { path = "../../bmc-render/ui" }
 bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }

@@ -25,10 +25,7 @@
 
 use std::cell::RefCell;
 
-pub use bmc_render_skin::{
-    ButtonSkin, NinePatch, NinePatchAsset, Skin, SkinAsset, SkinEntry, SkinRegistry, SliderSkin,
-    ensure_nine_patch_registered,
-};
+pub use bmc_ui::skin::*;
 pub use bmc_ui::tree::*;
 use bmc_ui::{
     Color, Mesh, MeshView, RED_50, TextAlign, TextStyle, VerticalAlign, encode, encode_into,
@@ -241,10 +238,6 @@ thread_local! {
 
 /// Begin building a tree (clears buffer)
 pub fn begin_tree() {
-    use std::sync::Once;
-    static SKIN_INIT: Once = Once::new();
-    SKIN_INIT.call_once(|| bmc_render_skin::init(crate::assets::register_skin_bitmap));
-
     TREE_BUFFER.with(|buf| buf.borrow_mut().clear());
 }
 

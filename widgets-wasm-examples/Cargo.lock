@@ -106,13 +106,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc-render-skin"
-version = "0.1.0"
-dependencies = [
- "bmc-ui",
-]
-
-[[package]]
 name = "bmc-shared-time"
 version = "0.1.0"
 dependencies = [
@@ -183,7 +176,6 @@ version = "0.1.0"
 dependencies = [
  "bmc-led",
  "bmc-render-macros",
- "bmc-render-skin",
  "bmc-shared-utils",
  "bmc-ui",
  "bmc-wasm-protocol",

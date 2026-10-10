@@ -46,10 +46,9 @@ thread_local! {
     static ASSET_HOST: RefCell<Option<Box<dyn AssetHost>>> = const { RefCell::new(None) };
 }
 
-/// Install this thread's asset host, which the skin registers through too.
+/// Install this thread's asset host.
 pub fn install_asset_host(host: impl AssetHost + 'static) {
     ASSET_HOST.with(|slot| *slot.borrow_mut() = Some(Box::new(host)));
-    bmc_render_skin::init(super::register_skin_bitmap);
 }
 
 /// Install a host handing out dummy ids for widget unit tests,

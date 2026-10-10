@@ -92,8 +92,8 @@ Squash the lock-file change into the same commit that introduced the dep so veri
 ## Don't add nested cargo workspaces
 
 Hard no-go. The project is actively paying down the *existing* nested workspaces (`widgets-wasm-examples/`,
-`sdk-macros/`, `sdk/`, `skin/`, `skin/tools/`) — the desired end-state is a single root cargo workspace. Adding another
-nested `[workspace]` runs counter to that direction.
+`sdk-macros/`, `sdk/`, `skin/tools/`) — the desired end-state is a single root cargo workspace. Adding another nested
+`[workspace]` runs counter to that direction.
 
 If nix's `mkWorkspaceConfig` / `workspacePath` machinery doesn't fit because a target crate is a path-dep within the
 root workspace (no own `Cargo.lock`), the answer is **not** to give that crate its own `[workspace]`. Use

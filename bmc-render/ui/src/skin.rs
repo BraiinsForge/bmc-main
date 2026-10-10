@@ -58,7 +58,8 @@
 //! - **Keyboard** reads `key`, `key_pressed`, `popup_bg`, `input_fg`, etc.
 //!
 //! Widgets read palette colors via [`Skin::color_or`];
-//! image assets register with the host through `bmc-render-skin`, which owns the registrar.
+//! image assets register with the host through the `assets` module of `bmc-render` or the SDK,
+//! whichever side owns the registrar.
 //! Missing entries return `None` / the provided fallback — the consumer falls back to its built-in defaults.
 //!
 //! Pure data: image decoding happens in proc macros (build-time only),

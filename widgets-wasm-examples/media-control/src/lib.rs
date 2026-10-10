@@ -79,9 +79,7 @@ enum SkinPreview {
 
 // ── Active skin ─────────────────────────────────────────────────
 
-/// Resolved skin with pre-registered bitmaps, ready for use by components.
-/// Resolved lazily on first access (after `begin_tree()` initializes the
-/// bitmap registrar).
+/// Resolved skin with pre-registered bitmaps, resolved lazily on first access.
 struct ActiveSkin {
     /// Source skin to resolve from. `None` = baseline (no skinning).
     source: Option<&'static Skin>,
@@ -980,11 +978,6 @@ pub extern "C" fn on_touch() {
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     tick_protocol(delta_ms);
-
-    // Ensure the skin bitmap registrar is initialized before building the tree,
-    // since skin resolution (active_background, active_button_skin) registers
-    // bitmaps during tree construction — before render_ui() calls begin_tree().
-    begin_tree();
 
     let size = widget_size();
 

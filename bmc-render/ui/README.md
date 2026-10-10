@@ -35,5 +35,5 @@ id; one that needs the time takes a `SystemTime`. The SDK supplies both from the
 
 - The guest↔host contract beyond the tree: params, system snapshots, fetch, versioning (`bmc-wasm-protocol`)
 - Host-side id pools and the package record format (`bmc-wasm-protocol`)
-- Registering assets with a host, reading its clock or its touch input (`bmc-render-skin`, `bmc-wasm-sdk`)
+- Registering assets with a host, reading its clock or its touch input (`bmc-render`, `bmc-wasm-sdk`)
 - Keying the static half for a cached layer, layout and drawing (`bmc-render`)

@@ -29,6 +29,7 @@
 //! same `name`.
 
 pub use bmc_ui::assets::{Audio, Bitmap, Svg};
+use bmc_ui::{NinePatch, NinePatchAsset, Skin, SkinEntry};
 use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
 use crate::cache::CacheSource;
@@ -72,8 +73,59 @@ pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
 }
 
 /// A skin bitmap, registered with nearest-neighbour filtering.
-pub(crate) fn register_skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+fn register_skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
     Platform::skin_bitmap(tag, source)
+}
+
+/// Register a 9-patch asset with the host and return a [`NinePatch`].
+///
+/// Idempotent: the host dedups by `asset.name`, so a second call returns the
+/// cached `BitmapId` without re-decoding/re-uploading.
+#[must_use]
+pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
+    NinePatch {
+        bitmap_id: register_skin_bitmap(asset.name, asset.source),
+        left: asset.left,
+        top: asset.top,
+        right: asset.right,
+        bottom: asset.bottom,
+    }
+}
+
+/// A [`Skin`]'s image assets, registered with the host on lookup.
+pub trait SkinRegistry {
+    /// Look up a 9-patch asset by name and register it with the host if needed.
+    ///
+    /// Registration is idempotent host-side: the tag combines the skin name and
+    /// the asset name so two skins with the same asset name don't alias.
+    fn get_nine_patch(&self, name: &str) -> Option<SkinEntry>;
+
+    /// Get the preview thumbnail asset, if this skin includes a `preview.png`.
+    fn preview(&self) -> Option<SkinEntry> {
+        self.get_nine_patch("preview")
+    }
+}
+
+impl SkinRegistry for Skin {
+    fn get_nine_patch(&self, name: &str) -> Option<SkinEntry> {
+        let asset = self.asset(name)?;
+        let mut tag = String::from("skin::");
+        tag.push_str(self.name);
+        tag.push_str("::");
+        tag.push_str(asset.name);
+        Some(SkinEntry {
+            nine_patch: NinePatch {
+                bitmap_id: register_skin_bitmap(&tag, asset.source),
+                left: asset.left,
+                top: asset.top,
+                right: asset.right,
+                bottom: asset.bottom,
+            },
+            width: asset.width,
+            height: asset.height,
+            color: asset.color,
+        })
+    }
 }
 
 /// Restore a bitmap from a cache source (e.g. `cache::lazy_get(tag)`).

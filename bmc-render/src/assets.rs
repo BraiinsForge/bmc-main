@@ -22,15 +22,15 @@
 //! and their registration with the renderer an embedder installs.
 //!
 //! Registration goes through one [`AssetHost`] per thread, installed with
-//! [`install_asset_host`], which wires the skin registrar to it as well.
+//! [`install_asset_host`]; skins and nine-patches register through it too.
 
 use std::cell::RefCell;
 
-pub use bmc_render_skin::{NinePatchAsset, SkinRegistry, ensure_nine_patch_registered};
 use bmc_ui::components::switcher::switcher_with_ids;
 use bmc_ui::{
-    Bitmap, BitmapId, Color, Draw, Mesh, MeshId, MeshView, Node, PropsFieldValue, RED_50,
-    StaticAssetSource, Svg, SvgId, SwitcherTab, TextAlign, TextStyle, VerticalAlign,
+    Bitmap, BitmapId, Color, Draw, Mesh, MeshId, MeshView, NinePatch, NinePatchAsset, Node,
+    PropsFieldValue, RED_50, Skin, SkinEntry, StaticAssetSource, Svg, SvgId, SwitcherTab,
+    TextAlign, TextStyle, VerticalAlign,
 };
 
 #[doc(hidden)]
@@ -119,10 +119,9 @@ thread_local! {
     static ASSET_HOST: RefCell<Option<Box<dyn AssetHost>>> = const { RefCell::new(None) };
 }
 
-/// Install this thread's asset host, which the skin registers through too.
+/// Install this thread's asset host.
 pub fn install_asset_host(host: impl AssetHost + 'static) {
     ASSET_HOST.with(|slot| *slot.borrow_mut() = Some(Box::new(host)));
-    bmc_render_skin::init(register_skin_bitmap);
 }
 
 fn with_host<R>(register: impl FnOnce(&dyn AssetHost) -> R) -> R {
@@ -156,6 +155,54 @@ pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
 /// A skin bitmap, registered with nearest-neighbour filtering.
 fn register_skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
     with_host(|host| host.register_bitmap_nearest(tag, source.data()))
+}
+
+/// Register a 9-patch asset with the host and return a [`NinePatch`].
+///
+/// Idempotent: the host dedups by `asset.name`, so a second call returns the
+/// cached `BitmapId` without re-decoding/re-uploading.
+#[must_use]
+pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
+    NinePatch {
+        bitmap_id: register_skin_bitmap(asset.name, asset.source),
+        left: asset.left,
+        top: asset.top,
+        right: asset.right,
+        bottom: asset.bottom,
+    }
+}
+
+/// A [`Skin`]'s image assets, registered with the host on lookup.
+pub trait SkinRegistry {
+    /// Look up a 9-patch asset by name and register it with the host if needed.
+    ///
+    /// Registration is idempotent host-side: the tag combines the skin name and
+    /// the asset name so two skins with the same asset name don't alias.
+    fn get_nine_patch(&self, name: &str) -> Option<SkinEntry>;
+
+    /// Get the preview thumbnail asset, if this skin includes a `preview.png`.
+    fn preview(&self) -> Option<SkinEntry> {
+        self.get_nine_patch("preview")
+    }
+}
+
+impl SkinRegistry for Skin {
+    fn get_nine_patch(&self, name: &str) -> Option<SkinEntry> {
+        let asset = self.asset(name)?;
+        let tag = format!("skin::{}::{}", self.name, asset.name);
+        Some(SkinEntry {
+            nine_patch: NinePatch {
+                bitmap_id: register_skin_bitmap(&tag, asset.source),
+                left: asset.left,
+                top: asset.top,
+                right: asset.right,
+                bottom: asset.bottom,
+            },
+            width: asset.width,
+            height: asset.height,
+            color: asset.color,
+        })
+    }
 }
 
 /// The draws that take an asset: each registers it with the installed host

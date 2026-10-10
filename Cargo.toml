@@ -28,7 +28,6 @@ members = [
     "bmc-render",
     "bmc-render/keyboard",
     "bmc-render/macros",
-    "bmc-render/skin",
     "bmc-render/ui",
     "bmc-scheduler",
     "bmc-shared/*",

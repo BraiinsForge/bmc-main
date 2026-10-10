@@ -12,7 +12,7 @@ multiple crates into a single ergonomic surface:
 - Asset macros wrapping `bmc-render-macros`: `include_svg!`, `include_bitmap!`, `include_mesh!`, `include_nine_patch!`,
   `include_skin!`, `include_audio!`
 - String formatting: `fmt!`, `json!` (from `bmc-wasm-sdk-macros`)
-- Skin types (from `bmc-ui`, registered through `bmc-render-skin`): `NinePatch`, `Skin`, `ButtonSkin`
+- Skin types (from `bmc-ui`, registered through `assets`): `NinePatch`, `Skin`, `ButtonSkin`
 - Host services (wasm32 only): WebSocket, HTTP listener, mDNS, SSDP, KV store, LED control, calendar, UDP broadcast
 
 When compiled for native targets (non-wasm32), FFI-dependent modules are gated out. The tree-building API and pure types

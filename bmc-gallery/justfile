@@ -90,6 +90,7 @@ lints:
 # Lint the scenes under the same set the workspace holds its own code to.
 clippy:
     cargo clippy --profile fast --locked --manifest-path bmc-gallery/Cargo.toml --all-targets -- -D warnings
+    @echo "gallery::clippy: OK"
 
 # Build the same gallery outputs and checks as CI.
 ci:

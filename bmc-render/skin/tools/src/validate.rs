@@ -277,9 +277,7 @@ fn validate_nine_patch_bytes(data: &[u8], name: &str, errors: &mut Vec<String>) 
     };
     let rgba = img.to_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
-    if let Err(e) =
-        bmc_render_skin::try_parse_nine_patch_insets(w, h, |x, y| rgba.get_pixel(x, y).0)
-    {
+    if let Err(e) = bmc_ui::skin::try_parse_nine_patch_insets(w, h, |x, y| rgba.get_pixel(x, y).0) {
         errors.push(format!("{name}: {e}"));
     }
 }

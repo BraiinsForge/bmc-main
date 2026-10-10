@@ -838,7 +838,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-render-macros",
- "bmc-render-skin",
  "bmc-svg-compiler",
  "bmc-ui",
  "bmc-wasm-protocol",
@@ -866,7 +865,6 @@ name = "bmc-render-keyboard"
 version = "0.1.0"
 dependencies = [
  "bmc-render",
- "bmc-render-skin",
  "bmc-wasm-protocol",
  "roxmltree 0.20.0",
  "tracing",
@@ -887,13 +885,6 @@ dependencies = [
  "syn 2.0.119",
  "toml 0.8.23",
  "zip",
-]
-
-[[package]]
-name = "bmc-render-skin"
-version = "0.1.0"
-dependencies = [
- "bmc-ui",
 ]
 
 [[package]]
@@ -989,7 +980,6 @@ version = "0.1.0"
 dependencies = [
  "bmc-led",
  "bmc-render-macros",
- "bmc-render-skin",
  "bmc-shared-utils",
  "bmc-ui",
  "bmc-wasm-protocol",

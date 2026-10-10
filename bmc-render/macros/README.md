@@ -31,5 +31,5 @@ the final module; native builds retain embedded payloads for storybook rendering
 **IS NOT its responsibility:**
 
 - Runtime rendering (that is `bmc-render`)
-- Runtime bitmap registration (that is `bmc-render-skin`)
+- Runtime bitmap registration (that is `bmc_render::assets` natively and the SDK's `assets` on wasm)
 - SDK-specific macros like `json!` or `fmt_impl!` (that is `bmc-wasm-sdk-macros`)
