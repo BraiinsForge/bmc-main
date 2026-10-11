@@ -131,6 +131,8 @@ pub use package_assets::{PackageAssetError, PackageAssetStore};
 pub mod capture_config;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
+#[cfg(feature = "prepared-widget")]
+pub mod prepared_widget;
 #[cfg(feature = "capture")]
 pub mod stack_profile;
 #[cfg(feature = "fixtures")]

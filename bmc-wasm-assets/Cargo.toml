@@ -39,6 +39,7 @@ required-features = ["cli"]
 
 [dev-dependencies]
 assert_matches.workspace = true
+wasm-encoder.workspace = true
 
 [lints]
 workspace = true

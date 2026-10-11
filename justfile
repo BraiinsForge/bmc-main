@@ -54,6 +54,8 @@ validate: format clippy python
     # Wasm lint; production widgets are gated, examples only have to build.
     cargo clippy --profile fast -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
     cargo clippy --profile fast -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
+    # Both runs above enable `host`; this one builds `prepared-widget` without it.
+    cargo clippy --profile fast -p bmc-wasm-runtime --all-targets --features prepared-widget -- -D warnings
     (cd widgets-wasm && cargo clippy --profile fast --target wasm32-unknown-unknown --workspace -- -D warnings)
 
     # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.

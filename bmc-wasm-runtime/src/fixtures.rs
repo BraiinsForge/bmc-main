@@ -25,87 +25,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use anyhow::{Context as _, Result, ensure};
+use anyhow::{Context as _, Result};
 
 use crate::{FixtureEvent, FixtureEventKind, RuntimeConfig};
-
-#[derive(Debug)]
-pub struct PreparedWidget {
-    wasm_path: PathBuf,
-    asset_root: PathBuf,
-    /// Shared, so an extraction outlives this handle — a hot reload replaces
-    /// it while runtimes that read from it by path are still installed.
-    temporary_directory: Option<Arc<tempfile::TempDir>>,
-}
-
-impl PreparedWidget {
-    pub fn new(source_wasm: &Path, asset_root: Option<&Path>) -> Result<Self> {
-        if let Some(asset_root) = asset_root {
-            ensure!(
-                asset_root.is_dir(),
-                "package asset root is not a directory: {}",
-                asset_root.display()
-            );
-            return Ok(Self {
-                wasm_path: source_wasm.to_owned(),
-                asset_root: asset_root.to_owned(),
-                temporary_directory: None,
-            });
-        }
-
-        let temporary_directory = tempfile::Builder::new()
-            .prefix("bmc-widget-")
-            .tempdir()
-            .context("create temporary prepared widget directory")?;
-        let wasm_path = temporary_directory.path().join("widget.wasm");
-        let asset_root = temporary_directory.path().join("assets");
-        let artifact_root = source_wasm
-            .parent()
-            .map(|directory| {
-                if directory.file_name().is_some_and(|name| name == "deps") {
-                    directory.to_owned()
-                } else {
-                    directory.join("deps")
-                }
-            })
-            .filter(|directory| directory.is_dir());
-        bmc_wasm_assets::extract_package_assets(
-            source_wasm,
-            artifact_root.as_deref(),
-            &wasm_path,
-            &asset_root,
-        )
-        .with_context(|| format!("prepare package assets from {}", source_wasm.display()))?;
-
-        Ok(Self {
-            wasm_path,
-            asset_root,
-            temporary_directory: Some(Arc::new(temporary_directory)),
-        })
-    }
-
-    #[must_use]
-    pub fn wasm_path(&self) -> &Path {
-        &self.wasm_path
-    }
-
-    #[must_use]
-    pub fn asset_root(&self) -> &Path {
-        &self.asset_root
-    }
-
-    /// A store on the asset root, holding whatever keeps it on disk.
-    #[must_use]
-    pub fn asset_store(&self) -> crate::package_assets::PackageAssetStore {
-        let store = crate::package_assets::PackageAssetStore::new(&self.asset_root);
-        match &self.temporary_directory {
-            Some(keeper) => store.kept_alive_by(Arc::clone(keeper) as Arc<_>),
-            None => store,
-        }
-    }
-}
 
 // ── Unified recording config ─────────────────────────────────────────
 
@@ -472,90 +395,8 @@ pub fn seed_kv_from_widget_root(widget_root: &Path, kv_dir: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use bmc_ui::{PackageAssetKind, PackageAssetRef};
-    use bmc_wasm_assets::{Records, contains_package_asset_section, encode_record};
-    use bmc_wasm_protocol::PACKAGE_ASSET_SECTION_NAME;
-
     use super::*;
     use crate::platform_catalog::Target;
-
-    #[test]
-    fn prepared_widget_extracts_assets_before_runtime_load() {
-        let record = encode_record(PackageAssetKind::Bitmap, "cover", b"encoded-image")
-            .expect("encode package asset fixture");
-        let id = Records::new(&record)
-            .next()
-            .expect("one package asset record")
-            .expect("parse package asset fixture")
-            .id;
-        let mut compiler_wasm = module_with_custom_section(PACKAGE_ASSET_SECTION_NAME, &record);
-        append_passive_data_segment(
-            &mut compiler_wasm,
-            PackageAssetRef::new(PackageAssetKind::Bitmap, id).as_bytes(),
-        );
-        let directory = tempfile::tempdir().expect("create compiler output directory");
-        let input = directory.path().join("widget.wasm");
-        fs::write(&input, compiler_wasm).expect("write compiler output");
-
-        let prepared = PreparedWidget::new(&input, None).expect("prepare widget package");
-
-        let runtime_wasm = fs::read(prepared.wasm_path()).expect("read runtime module");
-        assert!(
-            !contains_package_asset_section(&runtime_wasm).expect("inspect runtime module"),
-            "runtime module must not retain package asset records"
-        );
-        assert_eq!(
-            fs::read(
-                prepared
-                    .asset_root()
-                    .join("v1/bitmap")
-                    .join(format!("{id}.asset"))
-            )
-            .expect("read extracted package asset"),
-            b"encoded-image"
-        );
-    }
-
-    fn module_with_custom_section(name: &str, data: &[u8]) -> Vec<u8> {
-        let mut module = b"\0asm\x01\0\0\0".to_vec();
-        let mut payload = Vec::new();
-        encode_u32_leb(&mut payload, name.len());
-        payload.extend_from_slice(name.as_bytes());
-        payload.extend_from_slice(data);
-        module.push(0);
-        encode_u32_leb(&mut module, payload.len());
-        module.extend_from_slice(&payload);
-        module
-    }
-
-    fn append_passive_data_segment(module: &mut Vec<u8>, data: &[u8]) {
-        let mut payload = Vec::new();
-        encode_u32_leb(&mut payload, 1);
-        encode_u32_leb(&mut payload, 1);
-        encode_u32_leb(&mut payload, data.len());
-        payload.extend_from_slice(data);
-        module.push(11);
-        encode_u32_leb(module, payload.len());
-        module.extend_from_slice(&payload);
-    }
-
-    fn encode_u32_leb(output: &mut Vec<u8>, value: usize) {
-        let mut remaining = u32::try_from(value).expect("fixture length fits in u32");
-        loop {
-            let mut byte =
-                u8::try_from(remaining & 0x7f).expect("BUG: seven bits always fit in a byte");
-            remaining >>= 7;
-            if remaining != 0 {
-                byte |= 0x80;
-            }
-            output.push(byte);
-            if remaining == 0 {
-                break;
-            }
-        }
-    }
 
     fn target(spec: &str) -> Target {
         spec.parse().expect("BUG: test target must parse")

@@ -1459,6 +1459,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "walkdir",
+ "wasm-encoder",
  "wasmparser 0.244.0",
 ]
 

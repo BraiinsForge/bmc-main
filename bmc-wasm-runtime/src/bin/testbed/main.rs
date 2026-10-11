@@ -68,11 +68,12 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use bmc_render::interaction::TouchEvent;
 use bmc_wasm_runtime::fixtures::{
-    self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
+    self, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
 use bmc_wasm_runtime::platform_catalog::{
     self, DisplayShape, Platform, Viewport, manifest_viewport_shape,
 };
+use bmc_wasm_runtime::prepared_widget::PreparedWidget;
 use bmc_wasm_runtime::{DiskCache, RuntimeConfig, SystemSnapshot};
 use clap::Parser;
 

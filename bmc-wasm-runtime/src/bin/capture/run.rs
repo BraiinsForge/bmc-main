@@ -170,7 +170,7 @@ impl CaptureCtx {
     )]
     fn new(
         wasm_path: PathBuf,
-        prepared: &bmc_wasm_runtime::fixtures::PreparedWidget,
+        prepared: &bmc_wasm_runtime::prepared_widget::PreparedWidget,
         target: Target,
         dataset: String,
         output_dir: PathBuf,
@@ -202,7 +202,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         None => CaptureConfig::default(),
     };
 
-    let prepared = bmc_wasm_runtime::fixtures::PreparedWidget::new(
+    let prepared = bmc_wasm_runtime::prepared_widget::PreparedWidget::new(
         &args.wasm_path,
         args.asset_root.as_deref(),
     )?;
@@ -388,7 +388,7 @@ fn load_widget_manifest(
 fn run_all_supported_targets(
     args: &RunArgs,
     config: &CaptureConfig,
-    prepared: &bmc_wasm_runtime::fixtures::PreparedWidget,
+    prepared: &bmc_wasm_runtime::prepared_widget::PreparedWidget,
 ) -> Result<()> {
     let output_base = args
         .output_dir

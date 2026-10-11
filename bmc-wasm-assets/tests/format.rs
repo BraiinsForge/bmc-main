@@ -28,6 +28,7 @@ use bmc_wasm_assets::{
 };
 use bmc_wasm_protocol::PACKAGE_ASSET_SECTION_NAME;
 use tempfile::tempdir;
+use wasm_encoder::{CustomSection, DataSection, Module};
 use wasmparser::{Parser, Payload};
 
 const ID_OFFSET: usize = 12;
@@ -167,7 +168,8 @@ fn rewrite_removes_only_asset_sections_and_preserves_other_section_payloads() {
         (PACKAGE_ASSET_SECTION_NAME, &first),
         ("after", b"ordinary-after"),
         (PACKAGE_ASSET_SECTION_NAME, &second),
-    ]);
+    ])
+    .finish();
 
     let rewritten = rewrite_package_asset_sections(&input).expect("rewrite fixture module");
     assert_eq!(rewritten.records.len(), 2);
@@ -199,7 +201,7 @@ fn extractor_writes_content_addressed_assets_and_a_stripped_module() {
     let input = temporary.path().join("compiler.wasm");
     let output = temporary.path().join("packaged.wasm");
     let assets = temporary.path().join("assets");
-    fs::write(&input, module).expect("write compiler fixture");
+    fs::write(&input, module.finish()).expect("write compiler fixture");
 
     extract_package_assets(&input, None, &output, &assets).expect("extract fixture assets");
 
@@ -222,7 +224,7 @@ fn extractor_rejects_a_reachable_reference_without_a_payload_record() {
     );
     let temporary = tempdir().expect("create fixture directory");
     let input = temporary.path().join("compiler.wasm");
-    fs::write(&input, module).expect("write compiler fixture");
+    fs::write(&input, module.finish()).expect("write compiler fixture");
 
     let error = extract_package_assets(
         &input,
@@ -256,7 +258,7 @@ fn extractor_rejects_a_package_payload_duplicated_into_linear_memory() {
     append_passive_data_segment(&mut module, &linear_data);
     let temporary = tempdir().expect("create fixture directory");
     let input = temporary.path().join("compiler.wasm");
-    fs::write(&input, module).expect("write compiler fixture");
+    fs::write(&input, module.finish()).expect("write compiler fixture");
 
     let error = extract_package_assets(
         &input,
@@ -273,44 +275,21 @@ fn extractor_rejects_a_package_payload_duplicated_into_linear_memory() {
     );
 }
 
-fn module_with_custom_sections(sections: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut module = b"\0asm\x01\0\0\0".to_vec();
-    for (name, data) in sections {
-        let mut payload = Vec::new();
-        encode_u32_leb(&mut payload, name.len());
-        payload.extend_from_slice(name.as_bytes());
-        payload.extend_from_slice(data);
-        module.push(0);
-        encode_u32_leb(&mut module, payload.len());
-        module.extend_from_slice(&payload);
+fn module_with_custom_sections(sections: &[(&str, &[u8])]) -> Module {
+    let mut module = Module::new();
+    for &(name, data) in sections {
+        module.section(&CustomSection {
+            name: name.into(),
+            data: data.into(),
+        });
     }
     module
 }
 
-fn append_passive_data_segment(module: &mut Vec<u8>, data: &[u8]) {
-    let mut payload = Vec::new();
-    encode_u32_leb(&mut payload, 1);
-    encode_u32_leb(&mut payload, 1);
-    encode_u32_leb(&mut payload, data.len());
-    payload.extend_from_slice(data);
-    module.push(11);
-    encode_u32_leb(module, payload.len());
-    module.extend_from_slice(&payload);
-}
-
-fn encode_u32_leb(output: &mut Vec<u8>, value: usize) {
-    let mut remaining = u32::try_from(value).expect("fixture length fits in u32");
-    loop {
-        let mut byte = u8::try_from(remaining & 0x7f).expect("BUG: seven bits always fit in u8");
-        remaining >>= 7;
-        if remaining != 0 {
-            byte |= 0x80;
-        }
-        output.push(byte);
-        if remaining == 0 {
-            break;
-        }
-    }
+fn append_passive_data_segment(module: &mut Module, data: &[u8]) {
+    let mut segments = DataSection::new();
+    segments.passive(data.iter().copied());
+    module.section(&segments);
 }
 
 #[expect(
