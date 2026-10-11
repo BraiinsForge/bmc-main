@@ -18,8 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use std::convert::Infallible;
+
+use bmc_ui::MeshId;
+
 use super::{
-    MeshRenderer, MeshReservations, UploadedMesh, ZERO_MESH_ARGS, atlas, release_mesh_index,
+    MESH_ID_EXCLUSIVE_CAP, MeshRenderer, PendingMeshReservations, UploadedMesh, ZERO_MESH_ARGS,
+    atlas, reserve_mesh,
 };
 use crate::renderer::{AssetSuspendResult, AssetTagState};
 use crate::test_harness::{GlHarness, create_real_buffer, create_real_texture};
@@ -38,54 +43,18 @@ fn minimal_mesh() -> Vec<u8> {
 }
 
 #[test]
-fn pending_reservations_reuse_evicted_slots() {
-    let mut reservations = MeshReservations::default();
-    let first = reservations
-        .reserve("widget-a:mesh")
-        .expect("BUG: first reservation must fit");
-    let second = reservations
-        .reserve("widget-b:mesh")
-        .expect("BUG: second reservation must fit");
-
-    assert_eq!(reservations.evict_prefix("widget-a"), 1);
-    assert_eq!(
-        reservations.reserve("widget-c:mesh"),
-        Some(first),
-        "an evicted slot must be reused before allocating past the live second slot"
-    );
-    assert_ne!(first, second);
-}
-
-#[test]
-#[should_panic(expected = "BUG: released mesh index must not already be free")]
-fn releasing_a_mesh_index_twice_fails_loudly() {
-    let mut free_indices = Vec::new();
-
-    release_mesh_index(&mut free_indices, 0, 1);
-    release_mesh_index(&mut free_indices, 0, 1);
-}
-
-#[test]
-#[should_panic(expected = "BUG: released mesh index must have been issued")]
-fn releasing_an_unissued_mesh_index_fails_loudly() {
-    release_mesh_index(&mut Vec::new(), 1, 1);
-}
-
-#[test]
-fn pending_free_indices_survive_renderer_initialization() {
-    let mut reservations = MeshReservations::default();
-    let first = reservations
-        .reserve("first")
-        .expect("BUG: first reservation must succeed");
-    let second = reservations
-        .reserve("second")
-        .expect("BUG: second reservation must succeed");
-    assert_eq!(reservations.evict_prefix("first"), 1);
+fn pending_released_ids_survive_renderer_initialization() {
+    let mut reservations = PendingMeshReservations::new(MESH_ID_EXCLUSIVE_CAP);
+    let first =
+        reserve_mesh(&mut reservations, "first").expect("BUG: first reservation must succeed");
+    let second =
+        reserve_mesh(&mut reservations, "second").expect("BUG: second reservation must succeed");
+    assert_eq!(reservations.evict_prefix("first").len(), 1);
 
     let harness = GlHarness::new().expect("BUG: headless GL setup failed");
     let gl = &harness.gl;
     let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
-    let mut renderer = MeshRenderer::new_with_reservations(gl, &mut canvas, 0, reservations)
+    let mut renderer = MeshRenderer::new_with_reservations(gl, &mut canvas, 0, &mut reservations)
         .expect("BUG: mesh renderer init must succeed");
 
     assert_eq!(
@@ -158,13 +127,15 @@ fn resident_bytes_sum_only_live_mesh_payloads() {
     let gl = &harness.gl;
     let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
     let mut renderer = MeshRenderer::new(gl, &mut canvas, 0).expect("BUG: mesh renderer init");
-    renderer
-        .meshes
-        .push(Some(build_test_mesh(gl, false, false)));
-    renderer.meshes.push(None);
-    renderer
-        .meshes
-        .push(Some(build_test_mesh(gl, false, false)));
+    for tag in ["first", "last"] {
+        renderer
+            .reservations
+            .register_with(tag, (), |()| {
+                Ok::<_, Infallible>(build_test_mesh(gl, false, false))
+            })
+            .expect("BUG: an infallible load registers");
+    }
+    renderer.reserve("reserved");
 
     assert_eq!(renderer.resident_bytes(), 84);
     renderer.destroy(gl, &mut canvas);
@@ -179,7 +150,7 @@ fn failed_initial_registration_does_not_leave_a_reservation() {
 
     assert_eq!(renderer.register_mesh(gl, "broken", &[]), None);
     assert_eq!(renderer.tag_state("broken"), AssetTagState::Unknown);
-    assert!(renderer.meshes.is_empty());
+    assert_eq!(renderer.reserve("next").map(MeshId::to_wire), Some(1));
 
     renderer.destroy(gl, &mut canvas);
 }
@@ -201,7 +172,7 @@ fn failed_registration_keeps_recycled_non_tail_index_reusable() {
         .register_mesh(gl, "last", &mesh)
         .expect("BUG: last registration must succeed");
 
-    assert!(renderer.evict(gl, "middle"));
+    assert_eq!(renderer.evict_prefix(gl, "middle"), 1);
     assert_eq!(renderer.register_mesh(gl, "broken", &[]), None);
     assert_eq!(
         renderer.register_mesh(gl, "replacement", &mesh),
@@ -227,7 +198,7 @@ fn evicting_mesh_invalidates_atlas_slot_before_id_reuse() {
     assert!(renderer.slots[0].check_and_update(id, &args));
     assert!(!renderer.slots[0].check_and_update(id, &args));
 
-    assert!(renderer.evict(gl, "old"));
+    assert_eq!(renderer.evict_prefix(gl, "old"), 1);
     let replacement = renderer
         .register_mesh(gl, "new", &mesh)
         .expect("BUG: replacement registration must succeed");
@@ -281,15 +252,11 @@ fn suspending_meshes_retains_slots_and_ids_until_destructive_eviction() {
         renderer.tag_state("widget-10:mesh"),
         AssetTagState::Resident(id_10)
     );
-    let registered_slots = renderer.meshes.len();
-    let vbo = renderer.meshes[0]
-        .as_ref()
-        .expect("BUG: registered mesh must occupy its slot")
-        .vbo;
-    let ibo = renderer.meshes[0]
-        .as_ref()
-        .expect("BUG: registered mesh must occupy its slot")
-        .ibo;
+    let registered = renderer
+        .reservations
+        .payload(id_1)
+        .expect("BUG: a registered mesh is resident");
+    let (vbo, ibo) = (registered.vbo, registered.ibo);
 
     assert_eq!(
         renderer.suspend_exact(gl, "widget-1:mesh"),
@@ -322,7 +289,6 @@ fn suspending_meshes_retains_slots_and_ids_until_destructive_eviction() {
         renderer.register_mesh(gl, "widget-1:mesh", &mesh),
         Some(id_1)
     );
-    assert_eq!(renderer.meshes.len(), registered_slots);
 
     assert_eq!(
         renderer.suspend_exact(gl, "widget-1:mesh"),
@@ -332,7 +298,6 @@ fn suspending_meshes_retains_slots_and_ids_until_destructive_eviction() {
         renderer.register_mesh(gl, "widget-1:mesh", &mesh),
         Some(id_1)
     );
-    assert_eq!(renderer.meshes.len(), registered_slots);
 
     assert_eq!(
         renderer.suspend_exact(gl, "widget-1:mesh"),
@@ -343,8 +308,7 @@ fn suspending_meshes_retains_slots_and_ids_until_destructive_eviction() {
         renderer.tag_state("widget-1:mesh"),
         AssetTagState::Suspended(id_1)
     );
-    assert_eq!(renderer.meshes.len(), registered_slots);
-    assert!(renderer.evict(gl, "widget-1:mesh"));
+    assert_eq!(renderer.evict_prefix(gl, "widget-1:mesh"), 1);
     assert_eq!(renderer.tag_state("widget-1:mesh"), AssetTagState::Unknown);
     assert_eq!(
         renderer.suspend_exact(gl, "widget-1:mesh"),
@@ -355,7 +319,6 @@ fn suspending_meshes_retains_slots_and_ids_until_destructive_eviction() {
         .register_mesh(gl, "widget-1:mesh", &mesh)
         .expect("BUG: re-registration after eviction should succeed");
     assert_eq!(replacement, id_1);
-    assert_eq!(renderer.meshes.len(), registered_slots);
 
     renderer.destroy(gl, &mut canvas);
 }

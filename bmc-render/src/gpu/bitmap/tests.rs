@@ -133,10 +133,10 @@ fn evict_removes_tag_id_and_image() {
         .expect("BUG: register should succeed");
     assert!(reg.get(id).is_some());
 
-    assert!(reg.evict("crate::bmp", &mut canvas));
+    assert_eq!(reg.evict_prefix("crate::bmp", &mut canvas), 1);
     assert!(reg.get(id).is_none());
     // Idempotent: a second evict on the same tag is a no-op.
-    assert!(!reg.evict("crate::bmp", &mut canvas));
+    assert_eq!(reg.evict_prefix("crate::bmp", &mut canvas), 0);
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn register_after_evict_reuses_released_id() {
     let id1 = reg
         .register("ephemeral", &png, &mut canvas, ImageFlags::empty())
         .expect("BUG: first register");
-    assert!(reg.evict("ephemeral", &mut canvas));
+    assert_eq!(reg.evict_prefix("ephemeral", &mut canvas), 1);
     let id2 = reg
         .register("ephemeral", &png, &mut canvas, ImageFlags::empty())
         .expect("BUG: re-register");
@@ -210,7 +210,7 @@ fn clear_restarts_bitmap_id_allocation() {
         .reserve("second", ImageFlags::empty())
         .expect("BUG: second reservation should succeed");
 
-    registry.clear_reservations();
+    registry.reservations.clear();
 
     assert_eq!(
         registry.reserve("replacement", ImageFlags::empty()),
@@ -388,7 +388,7 @@ fn evict_removes_suspended_bitmap_reservation() {
         AssetSuspendResult::Suspended(id)
     );
 
-    assert!(reg.evict("widget:bitmap", &mut canvas));
+    assert_eq!(reg.evict_prefix("widget:bitmap", &mut canvas), 1);
     assert_eq!(reg.tag_state("widget:bitmap"), AssetTagState::Unknown);
 
     let next = reg

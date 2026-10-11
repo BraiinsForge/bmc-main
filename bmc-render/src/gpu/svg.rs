@@ -30,11 +30,11 @@ use bmc_ui::{
     Color, SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_ID, SVG_FLAG_HAS_STROKE, SVG_OP_CLOSE,
     SVG_OP_CUBIC_TO, SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO, SVG_RESERVED_MIN, SvgId,
 };
-use bmc_wasm_protocol::IdPool;
 use femtovg::{FillRule, Paint, Path};
 
 use super::text::to_femtovg_color;
 use crate::interaction::Rect;
+use crate::renderer::reservations::{RegisterError, TagReservations};
 use crate::renderer::{AssetSuspendResult, AssetTagState, StrokeReach, SvgContent};
 
 /// A single parsed path from an SVG icon.
@@ -68,87 +68,62 @@ pub struct RegisteredSvg {
 
 /// Registry mapping tag reservations and opaque IDs to parsed FemtoVG icon data.
 ///
-/// Resident registrations return their ID without parsing.
-/// Suspended reservations restore their payload under the same ID.
-/// Only destructive eviction removes a reservation.
+/// Built-in icons sit beside the reservations under fixed IDs
+/// from the host-reserved range, which the reservations never issue.
 pub struct SvgRegistry {
-    icons: HashMap<SvgId, RegisteredSvg>,
-    by_tag: HashMap<String, SvgId>,
-    ids: IdPool<SvgId>,
+    reservations: TagReservations<SvgId, RegisteredSvg>,
+    builtins: HashMap<SvgId, RegisteredSvg>,
 }
 
 impl fmt::Debug for SvgRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SvgRegistry")
-            .field("count", &self.icons.len())
-            .field("ids", &self.ids)
-            .finish_non_exhaustive()
+            .field("reservations", &self.reservations)
+            .field("builtins", &self.builtins.len())
+            .finish()
     }
+}
+
+fn report_exhausted() {
+    tracing::error!(
+        "user icon registry exhausted (reserved range starts at 0x{SVG_RESERVED_MIN:04X})",
+    );
 }
 
 impl SvgRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            icons: HashMap::new(),
-            by_tag: HashMap::new(),
-            ids: IdPool::new(SVG_RESERVED_MIN),
+            reservations: TagReservations::new(SVG_RESERVED_MIN),
+            builtins: HashMap::new(),
         }
     }
 
     pub fn reserve(&mut self, tag: &str) -> Option<SvgId> {
-        match self.tag_state(tag) {
-            AssetTagState::Resident(id) | AssetTagState::Suspended(id) => Some(id),
-            AssetTagState::Unknown => {
-                let Some(id) = self.ids.alloc() else {
-                    tracing::error!(
-                        "user icon registry exhausted (reserved range starts at 0x{SVG_RESERVED_MIN:04X})",
-                    );
-                    return None;
-                };
-                self.by_tag.insert(tag.to_owned(), id);
-                Some(id)
-            }
+        let id = self.reservations.reserve(tag, ());
+        if id.is_none() {
+            report_exhausted();
         }
+        id
     }
 
     /// Register binary icon data under `tag`.
     ///
-    /// A resident tag returns its ID without parsing.
-    /// A suspended tag reparses `data` and restores its payload under the reserved ID.
-    /// Only destructive eviction removes the reservation.
-    ///
-    /// The counter advances only when a new tag parses successfully.
-    /// Failed registrations do not burn an ID.
-    ///
     /// Returns `None` once user-icon allocation reaches `SVG_RESERVED_MIN`,
-    /// to avoid colliding with builtin/dev icon IDs that share this map.
+    /// to avoid colliding with builtin/dev icon IDs.
     pub fn register(&mut self, tag: &str, data: &[u8]) -> Option<SvgId> {
-        match self.tag_state(tag) {
-            AssetTagState::Resident(id) => Some(id),
-            AssetTagState::Suspended(id) => {
-                let icon = match parse_svg(data) {
-                    Ok(icon) => icon,
-                    Err(e) => {
-                        tracing::error!("failed to parse icon data ({tag}): {e}");
-                        return None;
-                    }
-                };
-                self.icons.insert(id, icon);
-                Some(id)
+        match self
+            .reservations
+            .register_with(tag, (), |()| parse_svg(data))
+        {
+            Ok(id) => Some(id),
+            Err(RegisterError::Exhausted) => {
+                report_exhausted();
+                None
             }
-            AssetTagState::Unknown => {
-                let icon = match parse_svg(data) {
-                    Ok(icon) => icon,
-                    Err(e) => {
-                        tracing::error!("failed to parse icon data ({tag}): {e}");
-                        return None;
-                    }
-                };
-
-                let id = self.reserve(tag)?;
-                self.icons.insert(id, icon);
-                Some(id)
+            Err(RegisterError::Load(e)) => {
+                tracing::error!("failed to parse icon data ({tag}): {e}");
+                None
             }
         }
     }
@@ -161,7 +136,7 @@ impl SvgRegistry {
         );
         match parse_svg(data) {
             Ok(icon) => {
-                self.icons.insert(id, icon);
+                self.builtins.insert(id, icon);
             }
             Err(e) => {
                 tracing::error!(
@@ -181,70 +156,35 @@ impl SvgRegistry {
 
     #[must_use]
     pub fn get(&self, id: SvgId) -> Option<&RegisteredSvg> {
-        self.icons.get(&id)
+        self.reservations
+            .payload(id)
+            .or_else(|| self.builtins.get(&id))
     }
 
     #[must_use]
     pub fn tag_state(&self, tag: &str) -> AssetTagState<SvgId> {
-        let Some(&id) = self.by_tag.get(tag) else {
-            return AssetTagState::Unknown;
-        };
-        if self.icons.contains_key(&id) {
-            AssetTagState::Resident(id)
-        } else {
-            AssetTagState::Suspended(id)
-        }
+        self.reservations.tag_state(tag)
     }
 
     pub fn suspend_exact(&mut self, tag: &str) -> AssetSuspendResult<SvgId> {
-        let Some(&id) = self.by_tag.get(tag) else {
-            return AssetSuspendResult::Unknown;
-        };
-        if self.icons.remove(&id).is_some() {
-            AssetSuspendResult::Suspended(id)
-        } else {
-            AssetSuspendResult::AlreadySuspended(id)
-        }
+        self.reservations.suspend(tag).result()
     }
 
     #[must_use]
     pub fn resident_path_bytes(&self) -> u64 {
-        self.icons
-            .values()
+        self.reservations
+            .payloads()
+            .chain(self.builtins.values())
             .flat_map(|icon| &icon.paths)
             .map(|path| u64::try_from(path.path.size()).unwrap_or(u64::MAX))
             .sum()
-    }
-
-    /// Evict a tag-registered icon. Returns `true` if a tag was found
-    /// and removed. Built-in icons (registered via `register_with_id`,
-    /// no tag) are unaffected.
-    pub fn evict(&mut self, tag: &str) -> bool {
-        let Some(id) = self.by_tag.remove(tag) else {
-            return false;
-        };
-        self.icons.remove(&id);
-        self.ids.release(id);
-        true
     }
 
     /// Evict every tag matching `prefix` at segment boundaries.
     /// The tag is either exactly `prefix` or a descendant under it.
     /// Returns the number of tags removed.
     pub fn evict_prefix(&mut self, prefix: &str) -> usize {
-        let tags: Vec<String> = self
-            .by_tag
-            .keys()
-            .filter(|k| bmc_wasm_protocol::tag_matches_prefix(k, prefix))
-            .cloned()
-            .collect();
-        let mut n = 0;
-        for tag in tags {
-            if self.evict(&tag) {
-                n += 1;
-            }
-        }
-        n
+        self.reservations.evict_prefix(prefix).len()
     }
 }
 
@@ -729,7 +669,7 @@ mod tests {
             AssetSuspendResult::Suspended(id)
         );
 
-        assert!(reg.evict("widget:icon"));
+        assert_eq!(reg.evict_prefix("widget:icon"), 1);
         assert_eq!(reg.tag_state("widget:icon"), AssetTagState::Unknown);
 
         let new_id = reg
@@ -742,7 +682,7 @@ mod tests {
     fn recycled_svg_ids_stay_below_the_reserved_range() {
         let mut registry = SvgRegistry::new();
         let reserved_min = 3;
-        registry.ids = IdPool::new(reserved_min);
+        registry.reservations = TagReservations::new(reserved_min);
         let data = minimal_icon();
         let first = registry
             .register("first", &data)
@@ -752,7 +692,7 @@ mod tests {
             .expect("BUG: second registration should succeed");
 
         assert_eq!(registry.register("exhausted", &data), None);
-        assert!(registry.evict("first"));
+        assert_eq!(registry.evict_prefix("first"), 1);
         assert_eq!(registry.register("replacement", &data), Some(first));
         assert!(first.to_wire() < reserved_min);
         assert!(second.to_wire() < reserved_min);
@@ -768,10 +708,10 @@ mod tests {
             .expect("BUG: register should succeed");
         assert!(reg.get(id).is_some());
 
-        assert!(reg.evict("crate::icon"));
+        assert_eq!(reg.evict_prefix("crate::icon"), 1);
         assert!(reg.get(id).is_none());
         // Idempotent: second evict is a no-op.
-        assert!(!reg.evict("crate::icon"));
+        assert_eq!(reg.evict_prefix("crate::icon"), 0);
     }
 
     #[test]
@@ -821,7 +761,7 @@ mod tests {
         assert!(reg.get(builtin).is_some());
         assert!(reg.get(user).is_some());
 
-        assert!(reg.evict("user::foo"));
+        assert_eq!(reg.evict_prefix("user::foo"), 1);
         assert!(reg.get(user).is_none());
         // Built-in icons have no `by_tag` entry, so prefix sweeps don't reach them.
         assert!(reg.get(builtin).is_some());

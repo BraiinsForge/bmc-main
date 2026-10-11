@@ -32,6 +32,7 @@ use bmc_ui::{
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::Rect;
 
+pub(crate) mod reservations;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 

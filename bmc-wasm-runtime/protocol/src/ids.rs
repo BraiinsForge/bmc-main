@@ -38,7 +38,7 @@ use std::fmt;
 
 use bmc_ui::define_id;
 #[cfg(any(feature = "id-pool", test))]
-use bmc_ui::{AudioId, BitmapId, SvgId};
+use bmc_ui::{AudioId, BitmapId, MeshId, SvgId};
 
 #[cfg(any(feature = "id-pool", test))]
 mod reusable_id {
@@ -47,7 +47,10 @@ mod reusable_id {
 
 #[cfg(any(feature = "id-pool", test))]
 #[doc(hidden)]
-pub trait ReusableId: reusable_id::Sealed {}
+pub trait ReusableId: reusable_id::Sealed + Copy {
+    fn from_wire(raw: u16) -> Option<Self>;
+    fn to_wire(self) -> u16;
+}
 
 /// Host-side pool that reuses released IDs before extending the high-water mark.
 #[cfg(any(feature = "id-pool", test))]
@@ -67,6 +70,31 @@ impl<I: ReusableId> IdPool<I> {
             exclusive_cap,
         }
     }
+
+    pub fn alloc(&mut self) -> Option<I> {
+        if let Some(id) = self.free.pop() {
+            return Some(id);
+        }
+        if self.next >= self.exclusive_cap {
+            return None;
+        }
+        let id = I::from_wire(self.next).expect("BUG: reusable ID pool issued zero");
+        self.next += 1;
+        Some(id)
+    }
+
+    pub fn release(&mut self, id: I) {
+        let raw = id.to_wire();
+        assert!(
+            raw < self.next,
+            "BUG: released ID must have been issued by this pool"
+        );
+        debug_assert!(
+            self.free.iter().all(|free| free.to_wire() != raw),
+            "BUG: released ID must not already be free"
+        );
+        self.free.push(id);
+    }
 }
 
 #[cfg(any(feature = "id-pool", test))]
@@ -75,33 +103,13 @@ macro_rules! reusable_id {
         $(
             impl reusable_id::Sealed for $id {}
 
-            impl ReusableId for $id {}
-
-            impl IdPool<$id> {
-                pub fn alloc(&mut self) -> Option<$id> {
-                    if let Some(id) = self.free.pop() {
-                        return Some(id);
-                    }
-                    if self.next >= self.exclusive_cap {
-                        return None;
-                    }
-                    let id = <$id>::from_wire(self.next)
-                        .expect("BUG: reusable ID pool issued zero");
-                    self.next += 1;
-                    Some(id)
+            impl ReusableId for $id {
+                fn from_wire(raw: u16) -> Option<Self> {
+                    <$id>::from_wire(raw)
                 }
 
-                pub fn release(&mut self, id: $id) {
-                    let raw = id.to_wire();
-                    assert!(
-                        raw < self.next,
-                        "BUG: released ID must have been issued by this pool"
-                    );
-                    debug_assert!(
-                        self.free.iter().all(|free| free.to_wire() != raw),
-                        "BUG: released ID must not already be free"
-                    );
-                    self.free.push(id);
+                fn to_wire(self) -> u16 {
+                    <$id>::to_wire(self)
                 }
             }
         )+
@@ -109,7 +117,7 @@ macro_rules! reusable_id {
 }
 
 #[cfg(any(feature = "id-pool", test))]
-reusable_id!(AudioId, BitmapId, SvgId);
+reusable_id!(AudioId, BitmapId, MeshId, SvgId);
 
 #[cfg(any(feature = "id-pool", test))]
 impl<I: ReusableId> fmt::Debug for IdPool<I> {

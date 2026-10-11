@@ -110,28 +110,12 @@ pub(super) fn warn_slot_overflow_once(slot_index: u32) {
     }
 }
 
-pub(super) fn mesh_id_from_storage_index(index: usize) -> Option<MeshId> {
-    let one_based = u16::try_from(index.checked_add(1)?).ok()?;
-    MeshId::from_wire(one_based)
-}
-
-pub(super) fn mesh_id_to_storage_index(mesh_id: MeshId) -> usize {
-    usize::from(mesh_id.to_wire() - 1)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        DIRTY_EPSILON, SlotState, is_dirty, mesh_id_from_storage_index, mesh_id_to_storage_index,
-    };
-    use crate::gpu::mesh::ZERO_MESH_ARGS;
+    use bmc_ui::MeshId;
 
-    #[test]
-    fn mesh_ids_are_one_based() {
-        let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must round-trip");
-        assert_eq!(id.to_wire(), 1);
-        assert_eq!(mesh_id_to_storage_index(id), 0);
-    }
+    use super::{DIRTY_EPSILON, SlotState, is_dirty};
+    use crate::gpu::mesh::ZERO_MESH_ARGS;
 
     #[test]
     fn is_dirty_treats_either_nan_operand_as_dirty() {
@@ -153,7 +137,7 @@ mod tests {
 
     #[test]
     fn invalidating_matching_mesh_keeps_args_and_forces_redraw() {
-        let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must produce an ID");
+        let id = MeshId::from_wire(1).expect("BUG: a nonzero mesh ID is valid");
         let args = ZERO_MESH_ARGS;
         let mut slot = SlotState::new();
         assert!(slot.check_and_update(id, &args));
@@ -168,8 +152,8 @@ mod tests {
 
     #[test]
     fn invalidating_nonmatching_mesh_leaves_slot_unchanged() {
-        let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must produce an ID");
-        let other = mesh_id_from_storage_index(1).expect("BUG: index 1 must produce an ID");
+        let id = MeshId::from_wire(1).expect("BUG: a nonzero mesh ID is valid");
+        let other = MeshId::from_wire(2).expect("BUG: a nonzero mesh ID is valid");
         let args = ZERO_MESH_ARGS;
         let mut slot = SlotState::new();
         assert!(slot.check_and_update(id, &args));

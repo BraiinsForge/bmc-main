@@ -23,17 +23,16 @@
 //! Tags reserve opaque `u16` bitmap IDs until eviction.
 //! GPU textures exist only while their reservations are resident.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::io::Cursor;
 use std::panic;
 
 use bmc_ui::BitmapId;
-use bmc_wasm_protocol::IdPool;
 use femtovg::{ImageFlags, ImageId, ImageSource, Paint, Path};
 use imgref::ImgRef;
 use rgb::{FromSlice as _, RGBA8};
 
+use crate::renderer::reservations::{RegisterError, Suspension, TagReservations};
 use crate::renderer::{AssetSuspendResult, AssetTagState};
 
 const BITMAP_ID_EXCLUSIVE_CAP: u16 = u16::MAX;
@@ -45,55 +44,48 @@ struct StoredBitmap {
     height: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct BitmapReservation {
-    id: BitmapId,
-    flags: ImageFlags,
-}
-
 /// Registry for tagged bitmap reservations and their resident GPU textures.
 ///
 /// A tag reservation retains its ID and sampling flags across suspension.
 pub struct BitmapRegistry {
-    bitmaps: HashMap<BitmapId, StoredBitmap>,
-    by_tag: HashMap<String, BitmapReservation>,
-    ids: IdPool<BitmapId>,
+    reservations: TagReservations<BitmapId, StoredBitmap, ImageFlags>,
 }
 
 impl fmt::Debug for BitmapRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BitmapRegistry")
-            .field("count", &self.bitmaps.len())
-            .field("ids", &self.ids)
-            .finish_non_exhaustive()
+            .field("reservations", &self.reservations)
+            .finish()
     }
+}
+
+fn delete_texture(bitmap: &StoredBitmap, canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>) {
+    crate::gpu_access::assert_gpu_access_authorized();
+    canvas.delete_image(bitmap.image_id);
 }
 
 impl BitmapRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            bitmaps: HashMap::new(),
-            by_tag: HashMap::new(),
-            ids: IdPool::new(BITMAP_ID_EXCLUSIVE_CAP),
+            reservations: TagReservations::new(BITMAP_ID_EXCLUSIVE_CAP),
         }
     }
 
     pub fn reserve(&mut self, tag: &str, flags: ImageFlags) -> Option<BitmapId> {
-        if let Some(reservation) = self.by_tag.get(tag) {
-            if reservation.flags != flags {
-                tracing::error!("bitmap reservation sampling mismatch ({tag})");
-                return None;
-            }
-            return Some(reservation.id);
-        }
-        let Some(id) = self.ids.alloc() else {
-            tracing::error!("bitmap registry exhausted ({tag})");
+        if self
+            .reservations
+            .meta(tag)
+            .is_some_and(|reserved| reserved != flags)
+        {
+            tracing::error!("bitmap reservation sampling mismatch ({tag})");
             return None;
-        };
-        self.by_tag
-            .insert(tag.to_owned(), BitmapReservation { id, flags });
-        Some(id)
+        }
+        let id = self.reservations.reserve(tag, flags);
+        if id.is_none() {
+            tracing::error!("bitmap registry exhausted ({tag})");
+        }
+        id
     }
 
     /// Decode image bytes (PNG, JPEG, etc.) and upload a GPU texture under `tag`.
@@ -111,54 +103,22 @@ impl BitmapRegistry {
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
         flags: ImageFlags,
     ) -> Option<BitmapId> {
-        match self.tag_state(tag) {
-            AssetTagState::Resident(id) => Some(id),
-            AssetTagState::Suspended(id) => {
-                let reservation = self
-                    .by_tag
-                    .get(tag)
-                    .copied()
-                    .expect("BUG: suspended bitmap reservation must exist");
-                let (image_id, width, height) =
-                    match decode_and_upload(data, canvas, reservation.flags) {
-                        Ok(bitmap) => bitmap,
-                        Err(e) => {
-                            tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
-                            return None;
-                        }
-                    };
-                self.bitmaps.insert(
-                    id,
-                    StoredBitmap {
-                        image_id,
-                        width,
-                        height,
-                    },
-                );
-                Some(id)
+        let registered = self.reservations.register_with(tag, flags, |flags| {
+            decode_and_upload(data, canvas, flags).map(|(image_id, width, height)| StoredBitmap {
+                image_id,
+                width,
+                height,
+            })
+        });
+        match registered {
+            Ok(id) => Some(id),
+            Err(RegisterError::Exhausted) => {
+                tracing::error!("bitmap registry exhausted ({tag})");
+                None
             }
-            AssetTagState::Unknown => {
-                let (image_id, width, height) = match decode_and_upload(data, canvas, flags) {
-                    Ok(bitmap) => bitmap,
-                    Err(e) => {
-                        tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
-                        return None;
-                    }
-                };
-
-                let Some(id) = self.reserve(tag, flags) else {
-                    canvas.delete_image(image_id);
-                    return None;
-                };
-                self.bitmaps.insert(
-                    id,
-                    StoredBitmap {
-                        image_id,
-                        width,
-                        height,
-                    },
-                );
-                Some(id)
+            Err(RegisterError::Load(e)) => {
+                tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
+                None
             }
         }
     }
@@ -194,50 +154,30 @@ impl BitmapRegistry {
                 return None;
             }
         };
-        if let Some(reservation) = self.by_tag.get_mut(tag) {
-            let id = reservation.id;
-            if let Some(old) = self.bitmaps.insert(
-                id,
-                StoredBitmap {
-                    image_id,
-                    width,
-                    height,
-                },
-            ) {
-                canvas.delete_image(old.image_id);
-            }
-            reservation.flags = flags;
-            return Some(id);
-        }
-        let Some(id) = self.ids.alloc() else {
-            canvas.delete_image(image_id);
-            tracing::error!("bitmap registry exhausted ({tag})");
-            return None;
+        let stored = StoredBitmap {
+            image_id,
+            width,
+            height,
         };
-        self.bitmaps.insert(
-            id,
-            StoredBitmap {
-                image_id,
-                width,
-                height,
-            },
-        );
-        self.by_tag
-            .insert(tag.to_owned(), BitmapReservation { id, flags });
-        Some(id)
+        match self.reservations.replace(tag, flags, stored) {
+            Ok((id, displaced)) => {
+                if let Some(old) = displaced {
+                    canvas.delete_image(old.image_id);
+                }
+                Some(id)
+            }
+            Err(unplaced) => {
+                canvas.delete_image(unplaced.image_id);
+                tracing::error!("bitmap registry exhausted ({tag})");
+                None
+            }
+        }
     }
 
     /// Return the reservation state for `tag`.
     #[must_use]
     pub fn tag_state(&self, tag: &str) -> AssetTagState<BitmapId> {
-        let Some(reservation) = self.by_tag.get(tag) else {
-            return AssetTagState::Unknown;
-        };
-        if self.bitmaps.contains_key(&reservation.id) {
-            AssetTagState::Resident(reservation.id)
-        } else {
-            AssetTagState::Suspended(reservation.id)
-        }
+        self.reservations.tag_state(tag)
     }
 
     pub fn suspend_exact(
@@ -245,47 +185,42 @@ impl BitmapRegistry {
         tag: &str,
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
     ) -> AssetSuspendResult<BitmapId> {
-        let Some(reservation) = self.by_tag.get(tag) else {
-            return AssetSuspendResult::Unknown;
-        };
-        let id = reservation.id;
-        if let Some(bitmap) = self.bitmaps.remove(&id) {
-            crate::gpu_access::assert_gpu_access_authorized();
-            canvas.delete_image(bitmap.image_id);
-            AssetSuspendResult::Suspended(id)
-        } else {
-            AssetSuspendResult::AlreadySuspended(id)
+        let suspension = self.reservations.suspend(tag);
+        let result = suspension.result();
+        if let Suspension::Suspended {
+            payload: bitmap, ..
+        } = suspension
+        {
+            delete_texture(&bitmap, canvas);
         }
+        result
     }
 
     /// Get the FemtoVG `ImageId` for a registered bitmap.
     #[must_use]
     pub fn get(&self, id: BitmapId) -> Option<ImageId> {
-        self.bitmaps.get(&id).map(|b| b.image_id)
+        self.reservations.payload(id).map(|b| b.image_id)
     }
 
     /// Total resident texture bytes across registered bitmaps (`w·h·4` each).
     #[must_use]
     pub fn resident_bytes(&self) -> u64 {
-        self.bitmaps
-            .values()
+        self.reservations
+            .payloads()
             .map(|b| u64::from(b.width) * u64::from(b.height) * 4)
             .sum()
     }
 
     #[must_use]
     pub fn has_resident_prefix(&self, prefix: &str) -> bool {
-        self.by_tag.iter().any(|(tag, reservation)| {
-            bmc_wasm_protocol::tag_matches_prefix(tag, prefix)
-                && self.bitmaps.contains_key(&reservation.id)
-        })
+        self.reservations.has_resident_prefix(prefix)
     }
 
     /// Get the FemtoVG `ImageId` and source dimensions for a registered bitmap.
     #[must_use]
     pub fn get_with_size(&self, id: BitmapId) -> Option<(ImageId, u32, u32)> {
-        self.bitmaps
-            .get(&id)
+        self.reservations
+            .payload(id)
             .map(|b| (b.image_id, b.width, b.height))
     }
 
@@ -293,36 +228,9 @@ impl BitmapRegistry {
     ///
     /// The caller must also invalidate renderer state that caches bitmap IDs.
     pub(super) fn clear(&mut self, canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>) {
-        if !self.bitmaps.is_empty() {
-            crate::gpu_access::assert_gpu_access_authorized();
+        for bitmap in self.reservations.clear() {
+            delete_texture(&bitmap, canvas);
         }
-        for bitmap in self.bitmaps.drain().map(|(_, bitmap)| bitmap) {
-            canvas.delete_image(bitmap.image_id);
-        }
-        self.clear_reservations();
-    }
-
-    fn clear_reservations(&mut self) {
-        self.by_tag.clear();
-        self.ids = IdPool::new(BITMAP_ID_EXCLUSIVE_CAP);
-    }
-
-    /// Evict a tag's bitmap reservation and any resident payload.
-    /// Returns `true` when a tag was found and removed.
-    fn evict(
-        &mut self,
-        tag: &str,
-        canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
-    ) -> bool {
-        let Some(reservation) = self.by_tag.remove(tag) else {
-            return false;
-        };
-        if let Some(stored) = self.bitmaps.remove(&reservation.id) {
-            crate::gpu_access::assert_gpu_access_authorized();
-            canvas.delete_image(stored.image_id);
-        }
-        self.ids.release(reservation.id);
-        true
     }
 
     /// Evict every tag matching `prefix` at segment boundaries (the tag is
@@ -334,19 +242,11 @@ impl BitmapRegistry {
         prefix: &str,
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
     ) -> usize {
-        let tags: Vec<String> = self
-            .by_tag
-            .keys()
-            .filter(|k| bmc_wasm_protocol::tag_matches_prefix(k, prefix))
-            .cloned()
-            .collect();
-        let mut n = 0;
-        for tag in tags {
-            if self.evict(&tag, canvas) {
-                n += 1;
-            }
+        let evicted = self.reservations.evict_prefix(prefix);
+        for bitmap in evicted.iter().filter_map(|(_, bitmap)| bitmap.as_ref()) {
+            delete_texture(bitmap, canvas);
         }
-        n
+        evicted.len()
     }
 }
 

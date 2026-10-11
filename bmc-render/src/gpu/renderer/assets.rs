@@ -23,9 +23,8 @@
 #![expect(clippy::cast_precision_loss)]
 
 use super::FemtoVgRenderer;
-use super::MeshReservations;
 use super::SphereRendererState;
-use crate::gpu::mesh::{MeshDrawArgs, MeshRenderer};
+use crate::gpu::mesh::{MeshDrawArgs, MeshRenderer, reserve_mesh};
 use crate::gpu::sphere::SphereRenderer;
 use crate::renderer::SvgContent;
 use crate::renderer::prelude::*;
@@ -217,7 +216,7 @@ impl RenderAssets for FemtoVgRenderer {
         if let Some(renderer) = self.mesh_renderer.as_mut() {
             renderer.reserve(tag)
         } else {
-            self.pending_mesh_reservations.reserve(tag)
+            reserve_mesh(&mut self.pending_mesh_reservations, tag)
         }
     }
 
@@ -228,7 +227,7 @@ impl RenderAssets for FemtoVgRenderer {
         if let Some(renderer) = self.mesh_renderer.as_mut() {
             renderer.suspend_exact(&self.gl, tag)
         } else {
-            self.pending_mesh_reservations.suspend_exact(tag)
+            self.pending_mesh_reservations.suspend(tag).result()
         }
     }
 
@@ -376,7 +375,7 @@ impl RenderAssets for FemtoVgRenderer {
         if let Some(mesh) = self.mesh_renderer.as_mut() {
             n += mesh.evict_prefix(&self.gl, prefix);
         } else {
-            n += self.pending_mesh_reservations.evict_prefix(prefix);
+            n += self.pending_mesh_reservations.evict_prefix(prefix).len();
         }
         if self
             .sphere_bitmap_id
@@ -444,12 +443,9 @@ impl FemtoVgRenderer {
             &self.gl,
             &mut self.canvas,
             self.mesh_msaa_samples,
-            self.pending_mesh_reservations.clone(),
+            &mut self.pending_mesh_reservations,
         ) {
-            Ok(r) => {
-                self.pending_mesh_reservations = MeshReservations::default();
-                self.mesh_renderer = Some(r);
-            }
+            Ok(r) => self.mesh_renderer = Some(r),
             Err(e) => tracing::error!("mesh renderer init failed: {e}"),
         }
     }

@@ -36,7 +36,7 @@ use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
 use super::glyph_cache::GlyphCache;
-use super::mesh::{MeshRenderer, MeshReservations};
+use super::mesh::{MESH_ID_EXCLUSIVE_CAP, MeshRenderer, PendingMeshReservations};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{FontTable, ParagraphLayoutCache, build_font_table, to_femtovg_color};
@@ -97,7 +97,7 @@ pub struct FemtoVgRenderer {
     /// the native texture so we never sample a deleted GL name.
     sphere_bitmap_id: Option<BitmapId>,
     mesh_renderer: Option<MeshRenderer>,
-    pending_mesh_reservations: MeshReservations,
+    pending_mesh_reservations: PendingMeshReservations,
     mesh_msaa_samples: u32,
     width: f32,
     height: f32,
@@ -407,7 +407,7 @@ impl FemtoVgRenderer {
             sphere: SphereRendererState::Uninitialized,
             sphere_bitmap_id: None,
             mesh_renderer: None,
-            pending_mesh_reservations: MeshReservations::default(),
+            pending_mesh_reservations: PendingMeshReservations::new(MESH_ID_EXCLUSIVE_CAP),
             mesh_msaa_samples,
             width: width as f32,
             height: height as f32,
@@ -440,7 +440,7 @@ impl FemtoVgRenderer {
     /// are preserved.
     pub fn drop_all(&mut self) {
         self.release_gpu_assets();
-        self.pending_mesh_reservations = MeshReservations::default();
+        self.pending_mesh_reservations.clear();
         self.icon_registry = SvgRegistry::new();
         self.icon_registry.register_builtins();
     }

@@ -28,8 +28,6 @@
 
 #![expect(clippy::cast_precision_loss, clippy::cast_possible_wrap)]
 
-use std::collections::HashMap;
-
 use anyhow::{Result, bail};
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, ImageFlags, ImageId, ImageInfo, PixelFormat};
@@ -42,11 +40,12 @@ mod raii;
 
 use bmc_ui::MeshId;
 
+use crate::renderer::reservations::{RegisterError, Suspension, TagReservations};
 use crate::renderer::{AssetSuspendResult, AssetTagState};
 
 use atlas::{
     ATLAS_COLS, ATLAS_H, ATLAS_ROWS, ATLAS_W, MAX_SLOTS, SLOT_SIZE, SlotState, is_dirty,
-    mesh_id_from_storage_index, mesh_id_to_storage_index, warn_slot_overflow_once,
+    warn_slot_overflow_once,
 };
 use decoder::parse_and_upload;
 use math::{compute_mvp, flatten_mat3, quat_to_mat3};
@@ -284,82 +283,26 @@ impl UploadedMesh {
 
 // ── MeshRenderer ────────────────────────────────────────────────────
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct MeshReservations {
-    by_tag: HashMap<String, MeshId>,
-    slot_count: usize,
-    free_indices: Vec<usize>,
+pub(crate) type MeshReservations = TagReservations<MeshId, UploadedMesh>;
+
+/// The reservations made before GL is up, which can hold no uploaded mesh.
+pub(crate) type PendingMeshReservations = TagReservations<MeshId, ()>;
+
+pub(crate) const MESH_ID_EXCLUSIVE_CAP: u16 = u16::MAX;
+
+pub(crate) fn reserve_mesh<P>(
+    reservations: &mut TagReservations<MeshId, P>,
+    tag: &str,
+) -> Option<MeshId> {
+    let id = reservations.reserve(tag, ());
+    if id.is_none() {
+        report_exhausted(tag);
+    }
+    id
 }
 
-fn release_mesh_index(free_indices: &mut Vec<usize>, index: usize, slot_count: usize) {
-    assert!(
-        index < slot_count,
-        "BUG: released mesh index must have been issued"
-    );
-    debug_assert!(
-        !free_indices.contains(&index),
-        "BUG: released mesh index must not already be free"
-    );
-    free_indices.push(index);
-}
-
-impl MeshReservations {
-    pub(crate) fn reserve(&mut self, tag: &str) -> Option<MeshId> {
-        if let Some(&id) = self.by_tag.get(tag) {
-            return Some(id);
-        }
-        let index = if let Some(index) = self.free_indices.pop() {
-            index
-        } else if mesh_id_from_storage_index(self.slot_count).is_some() {
-            let index = self.slot_count;
-            self.slot_count += 1;
-            index
-        } else {
-            tracing::error!("mesh reservation failed: id space exhausted ({tag})");
-            return None;
-        };
-        let id = mesh_id_from_storage_index(index)
-            .expect("BUG: reusable mesh storage index must have a wire ID");
-        self.by_tag.insert(tag.to_owned(), id);
-        Some(id)
-    }
-
-    pub(crate) fn tag_state(&self, tag: &str) -> AssetTagState<MeshId> {
-        self.by_tag
-            .get(tag)
-            .copied()
-            .map_or(AssetTagState::Unknown, AssetTagState::Suspended)
-    }
-
-    pub(crate) fn suspend_exact(&self, tag: &str) -> AssetSuspendResult<MeshId> {
-        self.by_tag.get(tag).copied().map_or(
-            AssetSuspendResult::Unknown,
-            AssetSuspendResult::AlreadySuspended,
-        )
-    }
-
-    pub(crate) fn evict_prefix(&mut self, prefix: &str) -> usize {
-        let ids: Vec<MeshId> = self
-            .by_tag
-            .iter()
-            .filter(|(tag, _)| bmc_wasm_protocol::tag_matches_prefix(tag, prefix))
-            .map(|(_, id)| *id)
-            .collect();
-        self.by_tag
-            .retain(|tag, _| !bmc_wasm_protocol::tag_matches_prefix(tag, prefix));
-        for id in ids.iter().copied() {
-            release_mesh_index(
-                &mut self.free_indices,
-                mesh_id_to_storage_index(id),
-                self.slot_count,
-            );
-        }
-        ids.len()
-    }
-
-    fn into_parts(self) -> (HashMap<String, MeshId>, usize, Vec<usize>) {
-        (self.by_tag, self.slot_count, self.free_indices)
-    }
+fn report_exhausted(tag: &str) {
+    tracing::error!("mesh reservation failed: id space exhausted ({tag})");
 }
 
 /// Offscreen GL renderer for 3D meshes using a single atlas FBO.
@@ -405,11 +348,7 @@ pub struct MeshRenderer {
     u_specular: glow::UniformLocation,
     u_highlight_rect: glow::UniformLocation,
     u_highlight_color: glow::UniformLocation,
-    // Registered meshes
-    meshes: Vec<Option<UploadedMesh>>,
-    // Tag → MeshId for idempotent registration.
-    by_tag: std::collections::HashMap<String, MeshId>,
-    free_indices: Vec<usize>,
+    reservations: MeshReservations,
     // Per-slot dirty tracking
     slots: Vec<SlotState>,
     #[cfg(feature = "profiling")]
@@ -427,18 +366,21 @@ impl MeshRenderer {
     ///
     /// `msaa_samples`: 0 = disabled, 4 = 4× MSAA. Only effective on desktop GL.
     pub fn new(gl: &glow::Context, canvas: &mut Canvas<OpenGl>, msaa_samples: u32) -> Result<Self> {
-        Self::new_with_reservations(gl, canvas, msaa_samples, MeshReservations::default())
+        Self::new_with_reservations(
+            gl,
+            canvas,
+            msaa_samples,
+            &mut PendingMeshReservations::new(MESH_ID_EXCLUSIVE_CAP),
+        )
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "mesh GPU initialization keeps cleanup-sensitive GL setup in one scope"
-    )]
+    /// Takes over `reservations` only once GL setup has succeeded,
+    /// so a failed init leaves them with the caller.
     pub(crate) fn new_with_reservations(
         gl: &glow::Context,
         canvas: &mut Canvas<OpenGl>,
         msaa_samples: u32,
-        reservations: MeshReservations,
+        reservations: &mut PendingMeshReservations,
     ) -> Result<Self> {
         unsafe {
             let program = compile_program(gl)?;
@@ -519,8 +461,8 @@ impl MeshRenderer {
             );
 
             let slots = (0..MAX_SLOTS).map(|_| SlotState::new()).collect();
-            let (by_tag, slot_count, free_indices) = reservations.into_parts();
-            let meshes = std::iter::repeat_with(|| None).take(slot_count).collect();
+            let fresh = PendingMeshReservations::new(MESH_ID_EXCLUSIVE_CAP);
+            let reservations = std::mem::replace(reservations, fresh);
 
             Ok(Self {
                 program,
@@ -546,9 +488,7 @@ impl MeshRenderer {
                 u_specular,
                 u_highlight_rect,
                 u_highlight_color,
-                meshes,
-                by_tag,
-                free_indices,
+                reservations: reservations.into_payloads(),
                 slots,
                 #[cfg(feature = "profiling")]
                 setup_w: ii_stopwatch::StopWatch::default(),
@@ -563,120 +503,43 @@ impl MeshRenderer {
     }
 
     /// Upload mesh binary data to GPU (VBO + IBO + optional texture) under `tag`.
-    /// Existing resident tags return their cached ID; suspended tags
-    /// restore their reserved slot without allocating a new ID.
     pub fn register_mesh(&mut self, gl: &glow::Context, tag: &str, data: &[u8]) -> Option<MeshId> {
-        match self.tag_state(tag) {
-            AssetTagState::Resident(id) => Some(id),
-            AssetTagState::Suspended(id) => {
-                #[cfg(feature = "profiling")]
-                let profile_before = profile::RegisterMeshProbe::start();
+        // Keeps resident hits out of the upload probe.
+        if let AssetTagState::Resident(id) = self.tag_state(tag) {
+            return Some(id);
+        }
+        #[cfg(feature = "profiling")]
+        let profile_before = profile::RegisterMeshProbe::start();
 
-                let index = mesh_id_to_storage_index(id);
-                assert!(
-                    self.meshes
-                        .get(index)
-                        .expect("BUG: mesh tag ID must point into mesh storage")
-                        .is_none(),
-                    "BUG: suspended mesh slot must be empty"
-                );
-                let mesh = match parse_and_upload(gl, data) {
-                    Ok(mesh) => mesh,
-                    Err(error) => {
-                        tracing::error!("mesh upload failed ({tag}): {error}");
-                        return None;
-                    }
-                };
-                let slot = self
-                    .meshes
-                    .get_mut(index)
-                    .expect("BUG: mesh tag ID must point into mesh storage");
-                *slot = Some(mesh);
-
+        match self
+            .reservations
+            .register_with(tag, (), |()| parse_and_upload(gl, data))
+        {
+            Ok(id) => {
                 #[cfg(feature = "profiling")]
                 profile_before.finish(id.to_wire(), data.len());
 
                 Some(id)
             }
-            AssetTagState::Unknown => {
-                #[cfg(feature = "profiling")]
-                let profile_before = profile::RegisterMeshProbe::start();
-
-                let id = self.reserve(tag)?;
-                let mesh = match parse_and_upload(gl, data) {
-                    Ok(mesh) => mesh,
-                    Err(error) => {
-                        assert_eq!(
-                            self.by_tag.remove(tag),
-                            Some(id),
-                            "BUG: failed upload must roll back its own tag reservation"
-                        );
-                        let index = mesh_id_to_storage_index(id);
-                        if index + 1 == self.meshes.len() {
-                            assert!(
-                                matches!(self.meshes.pop(), Some(None)),
-                                "BUG: failed upload must remove its empty tail storage slot"
-                            );
-                        } else {
-                            release_mesh_index(&mut self.free_indices, index, self.meshes.len());
-                        }
-                        tracing::error!("mesh upload failed ({tag}): {error}");
-                        return None;
-                    }
-                };
-
-                let index = mesh_id_to_storage_index(id);
-                *self
-                    .meshes
-                    .get_mut(index)
-                    .expect("BUG: fresh mesh reservation must have a storage slot") = Some(mesh);
-
-                #[cfg(feature = "profiling")]
-                profile_before.finish(id.to_wire(), data.len());
-
-                Some(id)
+            Err(RegisterError::Exhausted) => {
+                report_exhausted(tag);
+                None
+            }
+            Err(RegisterError::Load(error)) => {
+                tracing::error!("mesh upload failed ({tag}): {error}");
+                None
             }
         }
     }
 
     pub fn reserve(&mut self, tag: &str) -> Option<MeshId> {
-        match self.tag_state(tag) {
-            AssetTagState::Resident(id) | AssetTagState::Suspended(id) => Some(id),
-            AssetTagState::Unknown => {
-                let index = if let Some(index) = self.free_indices.pop() {
-                    index
-                } else if mesh_id_from_storage_index(self.meshes.len()).is_some() {
-                    let index = self.meshes.len();
-                    self.meshes.push(None);
-                    index
-                } else {
-                    tracing::error!("mesh reservation failed: id space exhausted ({tag})");
-                    return None;
-                };
-                let id = mesh_id_from_storage_index(index)
-                    .expect("BUG: reusable mesh storage index must have a wire ID");
-                self.by_tag.insert(tag.to_owned(), id);
-                Some(id)
-            }
-        }
+        reserve_mesh(&mut self.reservations, tag)
     }
 
     /// Return the reservation state for `tag`.
     #[must_use]
     pub fn tag_state(&self, tag: &str) -> AssetTagState<MeshId> {
-        let Some(&id) = self.by_tag.get(tag) else {
-            return AssetTagState::Unknown;
-        };
-        let index = mesh_id_to_storage_index(id);
-        let slot = self
-            .meshes
-            .get(index)
-            .expect("BUG: mesh tag ID must point into mesh storage");
-        if slot.is_some() {
-            AssetTagState::Resident(id)
-        } else {
-            AssetTagState::Suspended(id)
-        }
+        self.reservations.tag_state(tag)
     }
 
     /// Render a mesh into an atlas slot. Returns the atlas image ID and sub-rect
@@ -711,8 +574,7 @@ impl MeshRenderer {
             SLOT_SIZE as f32,
         );
 
-        let mesh_idx = mesh_id_to_storage_index(mesh_id);
-        let mesh = self.meshes.get(mesh_idx)?.as_ref()?;
+        let mesh = self.reservations.payload(mesh_id)?;
 
         // Slot still holds the previously-rendered content of the same mesh.
         if !self.slots[si as usize].check_and_update(mesh_id, args) {
@@ -989,94 +851,57 @@ impl MeshRenderer {
                 gl.delete_renderbuffer(depth_rb);
             }
             gl.delete_program(self.program);
-            for m in self.meshes.iter().flatten() {
+            for m in self.reservations.payloads() {
                 m.drop_gl(gl);
             }
         }
     }
 
     pub fn suspend_exact(&mut self, gl: &glow::Context, tag: &str) -> AssetSuspendResult<MeshId> {
-        let Some(&id) = self.by_tag.get(tag) else {
-            return AssetSuspendResult::Unknown;
-        };
-        let index = mesh_id_to_storage_index(id);
-        let slot = self
-            .meshes
-            .get_mut(index)
-            .expect("BUG: mesh tag ID must point into mesh storage");
-        let Some(mesh) = slot.take() else {
-            return AssetSuspendResult::AlreadySuspended(id);
-        };
-        unsafe { mesh.drop_gl(gl) };
-        for slot in &mut self.slots {
-            slot.invalidate_mesh(id);
+        let suspension = self.reservations.suspend(tag);
+        let result = suspension.result();
+        if let Suspension::Suspended { id, payload: mesh } = suspension {
+            unsafe { mesh.drop_gl(gl) };
+            for slot in &mut self.slots {
+                slot.invalidate_mesh(id);
+            }
         }
-        AssetSuspendResult::Suspended(id)
+        result
     }
 
     #[must_use]
     pub fn resident_bytes(&self) -> u64 {
-        self.meshes
-            .iter()
-            .flatten()
+        self.reservations
+            .payloads()
             .map(|mesh| mesh.resident_bytes)
             .sum()
     }
 
     #[must_use]
     pub fn has_resident_prefix(&self, prefix: &str) -> bool {
-        self.by_tag.iter().any(|(tag, id)| {
-            bmc_wasm_protocol::tag_matches_prefix(tag, prefix)
-                && self
-                    .meshes
-                    .get(mesh_id_to_storage_index(*id))
-                    .is_some_and(Option::is_some)
-        })
-    }
-
-    /// Evict a single tag's mesh, release its ID, and invalidate renderer slots.
-    /// Widgets must not draw the released ID after eviction because a later
-    /// registration may reuse it.
-    ///
-    /// Returns `true` if a tag was found and evicted, `false` otherwise.
-    pub fn evict(&mut self, gl: &glow::Context, tag: &str) -> bool {
-        let Some(id) = self.by_tag.remove(tag) else {
-            return false;
-        };
-        let index = mesh_id_to_storage_index(id);
-        let slot = self
-            .meshes
-            .get_mut(index)
-            .expect("BUG: mesh tag ID must point into mesh storage");
-        if let Some(mesh) = slot.take() {
-            crate::gpu_access::assert_gpu_access_authorized();
-            unsafe { mesh.drop_gl(gl) };
-        }
-        for slot in &mut self.slots {
-            slot.invalidate_mesh(id);
-        }
-        release_mesh_index(&mut self.free_indices, index, self.meshes.len());
-        true
+        self.reservations.has_resident_prefix(prefix)
     }
 
     /// Evict every tag matching `prefix` at segment boundaries (the tag is
     /// either exactly `prefix` or a descendant under it).
     /// Returns the number of tags removed.
     pub fn evict_prefix(&mut self, gl: &glow::Context, prefix: &str) -> usize {
-        // Collect first; can't mutate `by_tag` while iterating it.
-        let tags: Vec<String> = self
-            .by_tag
-            .keys()
-            .filter(|k| bmc_wasm_protocol::tag_matches_prefix(k, prefix))
-            .cloned()
-            .collect();
-        let mut n = 0;
-        for tag in tags {
-            if self.evict(gl, &tag) {
-                n += 1;
-            }
+        let evicted = self.reservations.evict_prefix(prefix);
+        let count = evicted.len();
+        for (id, mesh) in evicted {
+            self.release_evicted(gl, id, mesh);
         }
-        n
+        count
+    }
+
+    fn release_evicted(&mut self, gl: &glow::Context, id: MeshId, mesh: Option<UploadedMesh>) {
+        if let Some(mesh) = mesh {
+            crate::gpu_access::assert_gpu_access_authorized();
+            unsafe { mesh.drop_gl(gl) };
+        }
+        for slot in &mut self.slots {
+            slot.invalidate_mesh(id);
+        }
     }
 }
 
