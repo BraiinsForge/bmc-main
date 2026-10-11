@@ -233,6 +233,38 @@ pub enum TargetContents {
 /// `Send` for the same reason as [`FetchInterceptor`].
 pub type FetchObserver = Box<dyn Fn(&str, u32, &[(String, String)], &[u8]) + Send>;
 
+/// Takes each `host_log` line in place of `tracing`.
+pub type GuestLogSink = Box<dyn FnMut(tracing::Level, &str) + Send>;
+
+/// How [`WasmWidgetRuntime::from_module_with_entry`] enters a module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryPolicy {
+    /// A widget: `render` is required, and `init` runs before the first frame.
+    Widget,
+    /// A test binary: `render` is optional, `init` does not run,
+    /// and the test-only imports `host_test_panic` and `host_test_install_system` are offered.
+    TestModule,
+}
+
+/// A panic the guest reported through `host_test_panic` before it aborted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestPanic {
+    pub message: String,
+    pub file: String,
+    pub line: u32,
+}
+
+/// Why [`WasmWidgetRuntime::call_test_export`] did not return normally.
+#[derive(Debug, thiserror::Error)]
+pub enum TestExportError {
+    #[error("the module has no `{0}` export of type `() -> ()`")]
+    Missing(String),
+    #[error("the test ran out of fuel after {0} units")]
+    OutOfFuel(u64),
+    #[error("the test trapped")]
+    Trap(#[source] wasmi::Error),
+}
+
 /// Host-side limits for resources spawned on behalf of a widget.
 pub use crate::runtime_limits::RuntimeResourceLimits;
 
@@ -268,6 +300,8 @@ pub struct RuntimeConfig {
     pub hermetic: bool,
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<FetchObserver>,
+    /// Takes the guest's `host_log` lines; `None` sends them to `tracing`.
+    pub guest_log_sink: Option<GuestLogSink>,
     /// HTTP agent cloned into this runtime's fetch threads.
     ///
     /// The default creates an isolated pool.
@@ -338,6 +372,7 @@ impl Default for RuntimeConfig {
             url_rewrites: Vec::new(),
             hermetic: false,
             fetch_observer: None,
+            guest_log_sink: None,
             fetch_agent: FetchAgent::default(),
             record_events: false,
             event_fixtures: Vec::new(),
@@ -823,7 +858,7 @@ impl WasmWidgetModule {
 pub struct WasmWidgetRuntime {
     pub(super) store: wasmi::Store<HostState>,
     pub(super) instance: wasmi::Instance,
-    render_func: wasmi::TypedFunc<u32, ()>,
+    render_func: Option<wasmi::TypedFunc<u32, ()>>,
     /// Optional guest export called best-effort during teardown.
     /// Symmetric counterpart to `init`; gives a widget a chance to release
     /// its own ephemeral state before the host-side safety sweep runs.
@@ -931,6 +966,33 @@ impl WasmWidgetRuntime {
         initial_system_time: DateTime<FixedOffset>,
         config: RuntimeConfig,
     ) -> Result<Self> {
+        Self::from_module_with_entry(
+            module,
+            width,
+            height,
+            viewport_shape,
+            display,
+            initial_system_time,
+            config,
+            EntryPolicy::Widget,
+        )
+    }
+
+    /// [`Self::from_module`], entering the module as `entry` says.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "`from_module`'s arguments plus the entry policy"
+    )]
+    pub fn from_module_with_entry(
+        module: &WasmWidgetModule,
+        width: u32,
+        height: u32,
+        viewport_shape: bmc_ui::ViewportShape,
+        display: DisplayInfo,
+        initial_system_time: DateTime<FixedOffset>,
+        config: RuntimeConfig,
+        entry: EntryPolicy,
+    ) -> Result<Self> {
         let started = Instant::now();
         let span = tracing::trace_span!("wasm_runtime_instantiate", width, height);
         let _entered = span.enter();
@@ -942,6 +1004,7 @@ impl WasmWidgetRuntime {
             display,
             initial_system_time,
             config,
+            entry,
         );
         match &result {
             Ok(_) => tracing::trace!(
@@ -961,6 +1024,10 @@ impl WasmWidgetRuntime {
                   all RuntimeConfig fields before init() runs — splitting helpers \
                   would scatter the ordering contract"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "`from_module`'s arguments plus the entry policy"
+    )]
     fn from_module_inner(
         module: &WasmWidgetModule,
         width: u32,
@@ -969,6 +1036,7 @@ impl WasmWidgetRuntime {
         display: DisplayInfo,
         initial_system_time: DateTime<FixedOffset>,
         config: RuntimeConfig,
+        entry: EntryPolicy,
     ) -> Result<Self> {
         // `mesh_msaa_samples` belongs to the caller-owned `FemtoVgRenderer` and is
         // dropped here via `..`. The field stays on `RuntimeConfig` so the capture
@@ -981,6 +1049,7 @@ impl WasmWidgetRuntime {
             url_rewrites,
             hermetic,
             fetch_observer,
+            guest_log_sink,
             fetch_agent,
             record_events,
             event_fixtures,
@@ -1006,7 +1075,7 @@ impl WasmWidgetRuntime {
         store.set_fuel(fuel_per_frame)?;
 
         let mut linker = Linker::new(engine);
-        Self::register_host_functions(&mut linker)?;
+        super::imports::register_host_functions(&mut linker, entry)?;
 
         // Stage geometry + all RuntimeConfig before instantiation. wasmi runs
         // the module's `start` section eagerly inside `instantiate_and_start`,
@@ -1031,6 +1100,7 @@ impl WasmWidgetRuntime {
         state.url_rewrites = url_rewrites;
         state.hermetic = hermetic.then(HermeticRun::default);
         state.fetch_observer = fetch_observer;
+        state.guest_log_sink = guest_log_sink;
         state.record_events = record_events;
         state.rng_state = rng_seed;
         state.led_request_sender = led_request_sender;
@@ -1065,7 +1135,10 @@ impl WasmWidgetRuntime {
         // State is staged; instantiate (running `start`, if any) and resolve exports.
         let instance = linker.instantiate_and_start(&mut store, &module.module)?;
         let sdk_version = check_sdk_version(instance, &mut store)?;
-        let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
+        let render_func = match entry {
+            EntryPolicy::Widget => Some(instance.get_typed_func::<u32, ()>(&store, "render")?),
+            EntryPolicy::TestModule => instance.get_typed_func::<u32, ()>(&store, "render").ok(),
+        };
         let unload_func = instance.get_typed_func::<(), ()>(&store, "unload").ok();
         let on_params_update_func = instance
             .get_typed_func::<(), ()>(&store, "on_params_update")
@@ -1105,7 +1178,9 @@ impl WasmWidgetRuntime {
         // Call init — all host config (including widget dimensions) is in place.
         // The guest reads its viewport via `widget_size()` / `host_widget_size`
         // rather than init arguments, so the typed func is `() -> ()`.
-        if let Ok(init_func) = instance.get_typed_func::<(), ()>(&store, "init") {
+        if entry == EntryPolicy::Widget
+            && let Ok(init_func) = instance.get_typed_func::<(), ()>(&store, "init")
+        {
             tracing::trace!(instance_id = %instance_id, "calling widget init");
             in_lifecycle(&mut store, Lifecycle::Init, |s| init_func.call(s, ()))?;
             tracing::trace!(instance_id = %instance_id, "widget init completed");
@@ -1141,10 +1216,6 @@ impl WasmWidgetRuntime {
         })
     }
 
-    fn register_host_functions(linker: &mut Linker<HostState>) -> Result<()> {
-        super::imports::register_host_functions(linker)
-    }
-
     /// Render a frame. Caller calls `begin_frame` on its renderer before and
     /// `flush` after, with this call bracketed by [`Self::with_renderer`].
     ///
@@ -1160,6 +1231,9 @@ impl WasmWidgetRuntime {
         reason = "carries trace-level instrumentation for BDK-293 hot-reload freeze investigation; remove the expect when the tracing comes back out"
     )]
     pub fn render(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
+        let Some(render_func) = self.render_func else {
+            bail!("the module was entered as a test module and exports no `render`");
+        };
         let state = self.store.data_mut();
         state.last_asset_restoration = None;
         state.last_repaint = FrameRepaint::NoTree;
@@ -1231,7 +1305,6 @@ impl WasmWidgetRuntime {
         self.store.set_fuel(self.fuel_per_frame)?;
         let wasm_t0 = Instant::now();
         ii_stopwatch::stopwatch_start!(self.wasm_w);
-        let render_func = self.render_func;
         tracing::trace!(
             instance_id = %self.store.data().instance_id,
             wasm_delta,
@@ -2328,6 +2401,32 @@ impl WasmWidgetRuntime {
         })
     }
 
+    /// Run a test module's `() -> ()` export under [`Lifecycle::Test`] on a fresh fuel budget.
+    ///
+    /// A trap leaves the guest's stack pointer wherever the trap fired,
+    /// so each test gets its own instance.
+    pub fn call_test_export(&mut self, export: &str) -> Result<(), TestExportError> {
+        let func = self
+            .instance
+            .get_typed_func::<(), ()>(&self.store, export)
+            .map_err(|_| TestExportError::Missing(export.to_owned()))?;
+        self.store
+            .set_fuel(self.fuel_per_frame)
+            .expect("BUG: every widget engine meters fuel");
+        in_lifecycle(&mut self.store, Lifecycle::Test, |s| func.call(s, ())).map_err(|error| {
+            if error.as_trap_code() == Some(wasmi::TrapCode::OutOfFuel) {
+                TestExportError::OutOfFuel(self.fuel_per_frame)
+            } else {
+                TestExportError::Trap(error)
+            }
+        })
+    }
+
+    /// The panic the guest reported through `host_test_panic`, if any, since the last take.
+    pub fn take_guest_panic(&mut self) -> Option<GuestPanic> {
+        self.store.data_mut().guest_panic.take()
+    }
+
     /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.
     ///
     /// Reads counters out of hand-rolled WAT probe widgets without exposing the
@@ -2575,12 +2674,15 @@ impl Drop for WasmWidgetRuntime {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fmt::Write as _;
+    use std::sync::{Arc, Mutex};
 
     use super::{
-        DeadOverlayBackground, DisplayInfo, RuntimeConfig, WasmWidgetModule, WasmWidgetRuntime,
-        is_host_renderer_asset,
+        DeadOverlayBackground, DisplayInfo, EntryPolicy, GuestPanic, RuntimeConfig, TargetContents,
+        TestExportError, WasmWidgetModule, WasmWidgetRuntime, is_host_renderer_asset,
     };
     use crate::renderer_assets::RendererAssetId;
+    use crate::system::{SystemSettings, SystemSnapshot};
     use bmc_render::interaction::Rect;
     use bmc_ui::{DisplayShape, SVG_RESERVED_MIN, SvgId, ViewportShape};
 
@@ -3049,5 +3151,198 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(outlines, [(0.0, 0.0, 100.0, 100.0)]);
         assert!(switched.layout_outlines().is_none());
+    }
+
+    fn installed_system() -> SystemSnapshot {
+        SystemSnapshot {
+            settings: SystemSettings {
+                timezone: "Europe/Bratislava".into(),
+                ..SystemSettings::default()
+            },
+            ..SystemSnapshot::default()
+        }
+    }
+
+    /// A test binary in miniature: no `render`, an `init` that traps if it runs,
+    /// and one export per behaviour of the test entry.
+    fn test_module_wat() -> String {
+        let system = crate::system::encode(&installed_system());
+        let system_data = system.iter().fold(String::new(), |mut data, byte| {
+            write!(data, "\\{byte:02x}").expect("BUG: writing to a String cannot fail");
+            data
+        });
+        format!(
+            r#"
+        (module
+          (import "env" "host_test_panic" (func $panic (param i32 i32 i32 i32 i32)))
+          (import "env" "host_test_install_system" (func $install (param i32 i32)))
+          (import "env" "host_log" (func $log (param i32 i32 i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 16) "boom")
+          (data (i32.const 32) "src/lib.rs")
+          (data (i32.const 64) "careful")
+          (data (i32.const 1024) "{system_data}")
+          (func (export "__bmc_sdk_init") (result i64)
+            i64.const {version})
+          (func (export "init")
+            unreachable)
+          (func (export "passes"))
+          (func (export "panics")
+            i32.const 16
+            i32.const 4
+            i32.const 32
+            i32.const 10
+            i32.const 7
+            call $panic
+            unreachable)
+          (func (export "loops")
+            (loop $forever
+              br $forever))
+          (func (export "logs")
+            i32.const 64
+            i32.const 7
+            i32.const 2
+            call $log)
+          (func (export "installs_system")
+            i32.const 1024
+            i32.const {system_len}
+            call $install))
+        "#,
+            version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+            system_len = system.len(),
+        )
+    }
+
+    fn enter_test_module(
+        entry: EntryPolicy,
+        config: RuntimeConfig,
+    ) -> anyhow::Result<WasmWidgetRuntime> {
+        let wasm = wat::parse_str(test_module_wat()).expect("BUG: the test-module WAT must parse");
+        let module =
+            WasmWidgetModule::compile(&wasm).expect("BUG: the test-module WAT must compile");
+        WasmWidgetRuntime::from_module_with_entry(
+            &module,
+            320,
+            240,
+            ViewportShape::Rectangular,
+            DisplayInfo {
+                width: 320,
+                height: 240,
+                shape: DisplayShape::Rectangular,
+                dpi: 1,
+            },
+            chrono::Local::now().fixed_offset(),
+            config,
+            entry,
+        )
+    }
+
+    fn test_module(config: RuntimeConfig) -> WasmWidgetRuntime {
+        enter_test_module(EntryPolicy::TestModule, config)
+            .expect("BUG: a test module enters without `render` and without running `init`")
+    }
+
+    #[test]
+    fn a_widget_is_not_offered_the_test_imports() {
+        let Err(error) = enter_test_module(EntryPolicy::Widget, RuntimeConfig::default()) else {
+            panic!("BUG: a widget entry must refuse a module importing the test imports");
+        };
+
+        assert!(
+            format!("{error:#}").contains("host_test_panic"),
+            "the refusal must name the test import: {error:#}"
+        );
+    }
+
+    #[test]
+    fn a_passing_test_returns_normally() {
+        let outcome = test_module(RuntimeConfig::default()).call_test_export("passes");
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+    }
+
+    #[test]
+    fn a_missing_test_export_is_named() {
+        let outcome = test_module(RuntimeConfig::default()).call_test_export("absent");
+
+        assert!(
+            matches!(&outcome, Err(TestExportError::Missing(name)) if name == "absent"),
+            "{outcome:?}"
+        );
+    }
+
+    #[test]
+    fn a_panicking_test_leaves_its_message_and_location() {
+        let mut runtime = test_module(RuntimeConfig::default());
+        let outcome = runtime.call_test_export("panics");
+        assert!(
+            matches!(outcome, Err(TestExportError::Trap(_))),
+            "{outcome:?}"
+        );
+
+        assert_eq!(
+            runtime.take_guest_panic(),
+            Some(GuestPanic {
+                message: "boom".into(),
+                file: "src/lib.rs".into(),
+                line: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn a_looping_test_runs_out_of_its_fuel() {
+        let outcome = test_module(RuntimeConfig {
+            fuel_per_frame: 10_000,
+            ..RuntimeConfig::default()
+        })
+        .call_test_export("loops");
+
+        assert!(
+            matches!(outcome, Err(TestExportError::OutOfFuel(10_000))),
+            "{outcome:?}"
+        );
+    }
+
+    #[test]
+    fn guest_log_lines_reach_the_sink() {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let sink_lines = Arc::clone(&lines);
+        let mut runtime = test_module(RuntimeConfig {
+            guest_log_sink: Some(Box::new(move |level, message: &str| {
+                sink_lines
+                    .lock()
+                    .expect("BUG: the log lines lock is never poisoned")
+                    .push((level, message.to_owned()));
+            })),
+            ..RuntimeConfig::default()
+        });
+        runtime
+            .call_test_export("logs")
+            .expect("BUG: logging returns normally");
+
+        assert_eq!(
+            *lines
+                .lock()
+                .expect("BUG: the log lines lock is never poisoned"),
+            [(tracing::Level::WARN, "careful".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_test_replaces_the_system_snapshot() {
+        let mut runtime = test_module(RuntimeConfig::default());
+        runtime
+            .call_test_export("installs_system")
+            .expect("BUG: installing a snapshot returns normally");
+
+        assert_eq!(runtime.store.data().system.snapshot(), &installed_system());
+    }
+
+    #[test]
+    fn a_test_module_without_render_refuses_to_render() {
+        let mut runtime = test_module(RuntimeConfig::default());
+
+        assert!(runtime.render(16, TargetContents::Cleared).is_err());
     }
 }

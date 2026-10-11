@@ -563,6 +563,9 @@ pub(crate) enum Lifecycle {
     Wake,
     /// `unload` is on the stack. Synchronous cleanup only; frame requests no-op.
     Unload,
+    /// A test export is on the stack.
+    /// Render-only imports refuse it as they refuse every phase but `render`.
+    Test,
 }
 
 /// Fallback id when no compositor token is supplied (testbed/capture harness).
@@ -1210,6 +1213,9 @@ pub(crate) struct HostState {
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<crate::runtime::FetchObserver>,
 
+    pub(crate) guest_log_sink: Option<crate::runtime::GuestLogSink>,
+    pub(crate) guest_panic: Option<crate::runtime::GuestPanic>,
+
     pub(crate) fetch_log_limiter: FetchLogLimiter,
 
     pub(crate) logged_sites: LoggedSites,
@@ -1546,6 +1552,8 @@ impl HostState {
             url_rewrites: Vec::new(),
             hermetic: None,
             fetch_observer: None,
+            guest_log_sink: None,
+            guest_panic: None,
             fetch_log_limiter: FetchLogLimiter::default(),
             logged_sites: LoggedSites::default(),
             delivering_fetch_headers: None,

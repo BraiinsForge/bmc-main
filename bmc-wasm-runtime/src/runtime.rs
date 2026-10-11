@@ -45,7 +45,8 @@ pub(crate) use timers::{DueTick, PeriodChangeRefusal, TimerRefusal, TimerTable};
 
 pub use backend::DisplayInfo as RuntimeDisplayInfo;
 pub use backend::{
-    FetchInterceptor, FetchObserver, InterceptedReply, RenderStatus,
-    RendererAssetRestorationObservation, RendererAssetSuspensionObservation, RuntimeConfig,
-    RuntimeResourceLimits, TargetContents, WasmWidgetModule, WasmWidgetRuntime,
+    EntryPolicy, FetchInterceptor, FetchObserver, GuestLogSink, GuestPanic, InterceptedReply,
+    RenderStatus, RendererAssetRestorationObservation, RendererAssetSuspensionObservation,
+    RuntimeConfig, RuntimeResourceLimits, TargetContents, TestExportError, WasmWidgetModule,
+    WasmWidgetRuntime,
 };

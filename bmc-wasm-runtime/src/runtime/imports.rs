@@ -30,6 +30,7 @@ mod network;
 pub(crate) mod params;
 mod render;
 mod system;
+mod test_support;
 mod timer;
 
 use anyhow::Result;
@@ -39,9 +40,13 @@ use wasmi::{Caller, Linker};
 
 use crate::host_api::HostState;
 
+use super::EntryPolicy;
 use super::memory::read_bytes;
 
-pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<()> {
+pub(super) fn register_host_functions(
+    linker: &mut Linker<HostState>,
+    entry: EntryPolicy,
+) -> Result<()> {
     render::register(linker)?;
     network::register(linker)?;
     data::register(linker)?;
@@ -52,6 +57,9 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     params::register(linker)?;
     credentials::register(linker)?;
     timer::register(linker)?;
+    if entry == EntryPolicy::TestModule {
+        test_support::register(linker)?;
+    }
     Ok(())
 }
 

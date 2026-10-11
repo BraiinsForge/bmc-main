@@ -382,14 +382,24 @@ fn register_log_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_log",
-        |caller: Caller<'_, HostState>, ptr: u32, len: u32, level: u32| {
+        |mut caller: Caller<'_, HostState>, ptr: u32, len: u32, level: u32| {
             let Some(msg) = read_string(&caller, ptr, len) else {
                 return;
             };
+            let level = match level {
+                0 => tracing::Level::DEBUG,
+                1 => tracing::Level::INFO,
+                2 => tracing::Level::WARN,
+                _ => tracing::Level::ERROR,
+            };
+            if let Some(sink) = caller.data_mut().guest_log_sink.as_mut() {
+                sink(level, &msg);
+                return;
+            }
             match level {
-                0 => tracing::debug!("{msg}"),
-                1 => tracing::info!("{msg}"),
-                2 => tracing::warn!("{msg}"),
+                tracing::Level::DEBUG => tracing::debug!("{msg}"),
+                tracing::Level::INFO => tracing::info!("{msg}"),
+                tracing::Level::WARN => tracing::warn!("{msg}"),
                 _ => tracing::error!("{msg}"),
             }
         },
