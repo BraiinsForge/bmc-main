@@ -25,17 +25,29 @@
 //! a canned width keeps every geometry assertion passing across a shaper swap,
 //! which is what these tests exist to catch. Draws are recorded or discarded;
 //! no GL context is involved.
+//!
+//! Asset tags go through the GPU registries' own reservation table,
+//! so a host that resolves a reservation before drawing gets back the id it reserved.
+//! No payload is decoded, validated or kept.
+
+use std::convert::Infallible;
+use std::hash::Hash;
 
 use bmc_ui::colors::Color;
 use bmc_ui::{
-    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Fill, MeshId, Span,
-    SvgId, TextStyle,
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Fill, MeshId,
+    SVG_RESERVED_MIN, Span, SvgId, TextStyle,
 };
+use bmc_wasm_protocol::ReusableId;
+use femtovg::ImageFlags;
 
-use crate::gpu::mesh::MeshDrawArgs;
+use crate::gpu::bitmap::{BITMAP_ID_EXCLUSIVE_CAP, reserve_sampled};
+use crate::gpu::mesh::{MESH_ID_EXCLUSIVE_CAP, MeshDrawArgs};
 use crate::gpu::renderer::{Fonts, build_font_system, sans_line_style};
 use crate::gpu::text::ParagraphLayoutCache;
 use crate::renderer::prelude::*;
+use crate::renderer::reservations::TagReservations;
+use crate::renderer::{AssetSuspendResult, AssetTagState};
 
 /// One recorded [`RenderText::draw_text`] call.
 #[derive(Clone, Debug, PartialEq)]
@@ -67,6 +79,17 @@ pub struct DrawnRect {
     pub h: f32,
 }
 
+/// Stands in for a successful load: the tag turns resident without a payload.
+fn register<Id, M>(reservations: &mut TagReservations<Id, (), M>, tag: &str, meta: M) -> Option<Id>
+where
+    Id: ReusableId + Eq + Hash,
+    M: Copy,
+{
+    reservations
+        .register_with(tag, meta, |_| Ok::<(), Infallible>(()))
+        .ok()
+}
+
 /// Records draw calls while measuring text through the production shaper.
 pub struct ShapingRecorder {
     pub texts: Vec<DrawnText>,
@@ -76,6 +99,9 @@ pub struct ShapingRecorder {
     pub strokes: Vec<DrawnRect>,
     font_system: cosmic_text::FontSystem,
     layouts: ParagraphLayoutCache,
+    svgs: TagReservations<SvgId, ()>,
+    bitmaps: TagReservations<BitmapId, (), ImageFlags>,
+    meshes: TagReservations<MeshId, ()>,
     width: f32,
     height: f32,
     /// Keys of the static layers captured so far, once [`Self::with_static_layers`]
@@ -102,6 +128,9 @@ impl ShapingRecorder {
             strokes: Vec::new(),
             font_system: build_font_system(Fonts::shared()),
             layouts: ParagraphLayoutCache::new(),
+            svgs: TagReservations::new(SVG_RESERVED_MIN),
+            bitmaps: TagReservations::new(BITMAP_ID_EXCLUSIVE_CAP),
+            meshes: TagReservations::new(MESH_ID_EXCLUSIVE_CAP),
             width,
             height,
             static_layers: None,
@@ -327,8 +356,20 @@ impl RenderText for ShapingRecorder {
 }
 
 impl RenderAssets for ShapingRecorder {
-    fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {
-        None
+    fn register_svg(&mut self, tag: &str, _data: &[u8]) -> Option<SvgId> {
+        register(&mut self.svgs, tag, ())
+    }
+
+    fn reserve_svg(&mut self, tag: &str) -> Option<SvgId> {
+        self.svgs.reserve(tag, ())
+    }
+
+    fn suspend_svg(&mut self, tag: &str) -> AssetSuspendResult<SvgId> {
+        self.svgs.suspend(tag).result()
+    }
+
+    fn svg_tag_state(&self, tag: &str) -> AssetTagState<SvgId> {
+        self.svgs.tag_state(tag)
     }
 
     fn draw_svg(
@@ -344,32 +385,50 @@ impl RenderAssets for ShapingRecorder {
     ) {
     }
 
-    fn register_bitmap(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
-        None
+    fn register_bitmap(&mut self, tag: &str, _data: &[u8]) -> Option<BitmapId> {
+        register(&mut self.bitmaps, tag, ImageFlags::empty())
     }
 
-    fn register_bitmap_nearest(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
-        None
+    fn register_bitmap_nearest(&mut self, tag: &str, _data: &[u8]) -> Option<BitmapId> {
+        register(&mut self.bitmaps, tag, ImageFlags::NEAREST)
+    }
+
+    fn reserve_bitmap(&mut self, tag: &str) -> Option<BitmapId> {
+        reserve_sampled(&mut self.bitmaps, tag, ImageFlags::empty())
+    }
+
+    fn reserve_bitmap_nearest(&mut self, tag: &str) -> Option<BitmapId> {
+        reserve_sampled(&mut self.bitmaps, tag, ImageFlags::NEAREST)
+    }
+
+    fn suspend_bitmap(&mut self, tag: &str) -> AssetSuspendResult<BitmapId> {
+        self.bitmaps.suspend(tag).result()
     }
 
     fn register_bitmap_rgba(
         &mut self,
-        _tag: &str,
+        tag: &str,
         _rgba: &[u8],
         _width: u32,
         _height: u32,
     ) -> Option<BitmapId> {
-        None
+        let (id, _displaced) = self.bitmaps.replace(tag, ImageFlags::empty(), ()).ok()?;
+        Some(id)
     }
 
     fn register_bitmap_rgba_nearest(
         &mut self,
-        _tag: &str,
+        tag: &str,
         _rgba: &[u8],
         _width: u32,
         _height: u32,
     ) -> Option<BitmapId> {
-        None
+        let (id, _displaced) = self.bitmaps.replace(tag, ImageFlags::NEAREST, ()).ok()?;
+        Some(id)
+    }
+
+    fn bitmap_tag_state(&self, tag: &str) -> AssetTagState<BitmapId> {
+        self.bitmaps.tag_state(tag)
     }
 
     fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bitmap_id: BitmapId) {}
@@ -388,8 +447,20 @@ impl RenderAssets for ShapingRecorder {
     ) {
     }
 
-    fn register_mesh(&mut self, _tag: &str, _data: &[u8]) -> Option<MeshId> {
-        None
+    fn register_mesh(&mut self, tag: &str, _data: &[u8]) -> Option<MeshId> {
+        register(&mut self.meshes, tag, ())
+    }
+
+    fn reserve_mesh(&mut self, tag: &str) -> Option<MeshId> {
+        self.meshes.reserve(tag, ())
+    }
+
+    fn suspend_mesh(&mut self, tag: &str) -> AssetSuspendResult<MeshId> {
+        self.meshes.suspend(tag).result()
+    }
+
+    fn mesh_tag_state(&self, tag: &str) -> AssetTagState<MeshId> {
+        self.meshes.tag_state(tag)
     }
 
     fn draw_mesh(
@@ -420,8 +491,10 @@ impl RenderAssets for ShapingRecorder {
     ) {
     }
 
-    fn evict_prefix(&mut self, _prefix: &str) -> usize {
-        0
+    fn evict_prefix(&mut self, prefix: &str) -> usize {
+        self.svgs.evict_prefix(prefix).len()
+            + self.bitmaps.evict_prefix(prefix).len()
+            + self.meshes.evict_prefix(prefix).len()
     }
 
     fn bitmap_resident_bytes(&self) -> u64 {
@@ -465,5 +538,54 @@ impl RenderOffscreen for ShapingRecorder {
         if let Some(layers) = &mut self.static_layers {
             layers.retain(|captured| captured != key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reserved_package_asset_registers_resident_under_its_id() {
+        let mut recorder = ShapingRecorder::default();
+        let reserved = recorder
+            .reserve_svg("w:icon")
+            .expect("BUG: the first reservation fits");
+        recorder.register_svg("w:icon", b"");
+
+        assert_eq!(
+            recorder.svg_tag_state("w:icon"),
+            AssetTagState::Resident(reserved)
+        );
+    }
+
+    #[test]
+    fn a_bitmap_reservation_keeps_its_sampling() {
+        let mut recorder = ShapingRecorder::default();
+        recorder.reserve_bitmap("w:photo");
+
+        assert_eq!(recorder.reserve_bitmap_nearest("w:photo"), None);
+    }
+
+    #[test]
+    fn evicting_a_prefix_counts_every_asset_kind() {
+        let mut recorder = ShapingRecorder::default();
+        recorder.register_svg("w1:icon", b"");
+        recorder.reserve_bitmap("w1:photo");
+        recorder.register_mesh("w1:model", b"");
+        recorder.register_mesh("w10:model", b"");
+
+        assert_eq!(recorder.evict_prefix("w1"), 3);
+    }
+
+    #[test]
+    fn svg_reservations_stop_below_the_host_reserved_range() {
+        let mut recorder = ShapingRecorder::default();
+        let last = (1..)
+            .map_while(|n| recorder.reserve_svg(&format!("w:{n}")))
+            .last()
+            .expect("BUG: the first reservation fits");
+
+        assert_eq!(last.to_wire(), SVG_RESERVED_MIN - 1);
     }
 }

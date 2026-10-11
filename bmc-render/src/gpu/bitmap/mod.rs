@@ -35,7 +35,7 @@ use rgb::{FromSlice as _, RGBA8};
 use crate::renderer::reservations::{RegisterError, Suspension, TagReservations};
 use crate::renderer::{AssetSuspendResult, AssetTagState};
 
-const BITMAP_ID_EXCLUSIVE_CAP: u16 = u16::MAX;
+pub(crate) const BITMAP_ID_EXCLUSIVE_CAP: u16 = u16::MAX;
 
 /// GPU texture handle and source dimensions for a registered bitmap.
 struct StoredBitmap {
@@ -64,6 +64,26 @@ fn delete_texture(bitmap: &StoredBitmap, canvas: &mut femtovg::Canvas<femtovg::r
     canvas.delete_image(bitmap.image_id);
 }
 
+/// Reserve `tag` under `flags`, refusing a tag already reserved with other sampling.
+pub(crate) fn reserve_sampled<P>(
+    reservations: &mut TagReservations<BitmapId, P, ImageFlags>,
+    tag: &str,
+    flags: ImageFlags,
+) -> Option<BitmapId> {
+    if reservations
+        .meta(tag)
+        .is_some_and(|reserved| reserved != flags)
+    {
+        tracing::error!("bitmap reservation sampling mismatch ({tag})");
+        return None;
+    }
+    let id = reservations.reserve(tag, flags);
+    if id.is_none() {
+        tracing::error!("bitmap registry exhausted ({tag})");
+    }
+    id
+}
+
 impl BitmapRegistry {
     #[must_use]
     pub fn new() -> Self {
@@ -73,19 +93,7 @@ impl BitmapRegistry {
     }
 
     pub fn reserve(&mut self, tag: &str, flags: ImageFlags) -> Option<BitmapId> {
-        if self
-            .reservations
-            .meta(tag)
-            .is_some_and(|reserved| reserved != flags)
-        {
-            tracing::error!("bitmap reservation sampling mismatch ({tag})");
-            return None;
-        }
-        let id = self.reservations.reserve(tag, flags);
-        if id.is_none() {
-            tracing::error!("bitmap registry exhausted ({tag})");
-        }
-        id
+        reserve_sampled(&mut self.reservations, tag, flags)
     }
 
     /// Decode image bytes (PNG, JPEG, etc.) and upload a GPU texture under `tag`.
