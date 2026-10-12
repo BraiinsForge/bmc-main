@@ -1,5 +1,5 @@
 ---
-name: jira-ticket-writing
+name: bmc-jira-ticket-writing
 description: Use when creating or editing BDK Jira tickets, choosing their type or parent, or writing their descriptions. Triggers on requests to create a Jira ticket, file follow-up tickets, update a ticket description, or use `acli jira workitem`.
 ---
 
