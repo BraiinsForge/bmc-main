@@ -87,26 +87,22 @@ mod wasm {
             unsafe {
                 host_kv_set(
                     key.as_ptr(),
-                    key.len() as u32,
+                    crate::ffi_u32(key.len()),
                     value.as_ptr(),
-                    value.len() as u32,
+                    crate::ffi_u32(value.len()),
                 );
             }
         }
 
         fn get(key: &str) -> Option<Vec<u8>> {
-            let len =
-                unsafe { host_kv_get(key.as_ptr(), key.len() as u32, core::ptr::null_mut(), 0) };
-            if len < 0 {
-                return None;
-            }
+            let key_len = crate::ffi_u32(key.len());
+            let needed = unsafe { host_kv_get(key.as_ptr(), key_len, core::ptr::null_mut(), 0) };
+            let len = u32::try_from(needed).ok()?;
             if len == 0 {
                 return Some(Vec::new());
             }
-            let mut buf = vec![0u8; len as usize];
-            let len2 = unsafe {
-                host_kv_get(key.as_ptr(), key.len() as u32, buf.as_mut_ptr(), len as u32)
-            };
+            let mut buf = vec![0_u8; len as usize];
+            let len2 = unsafe { host_kv_get(key.as_ptr(), key_len, buf.as_mut_ptr(), len) };
             if len2 < 0 {
                 return None;
             }
@@ -115,7 +111,7 @@ mod wasm {
 
         fn delete(key: &str) {
             unsafe {
-                host_kv_delete(key.as_ptr(), key.len() as u32);
+                host_kv_delete(key.as_ptr(), crate::ffi_u32(key.len()));
             }
         }
     }

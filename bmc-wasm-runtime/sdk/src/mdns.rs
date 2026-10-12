@@ -218,7 +218,7 @@ mod wasm {
     impl super::MdnsDaemon for Host {
         fn browse(service_types: &str) -> Option<MdnsBrowseId> {
             MdnsBrowseId::from_wire(unsafe {
-                host_mdns_browse(service_types.as_ptr(), service_types.len() as u32)
+                host_mdns_browse(service_types.as_ptr(), crate::ffi_u32(service_types.len()))
             })
         }
 
@@ -230,12 +230,12 @@ mod wasm {
             MdnsRegId::from_wire(unsafe {
                 host_mdns_register(
                     service_type.as_ptr(),
-                    service_type.len() as u32,
+                    crate::ffi_u32(service_type.len()),
                     name.as_ptr(),
-                    name.len() as u32,
+                    crate::ffi_u32(name.len()),
                     u32::from(port),
                     txt.as_ptr(),
-                    txt.len() as u32,
+                    crate::ffi_u32(txt.len()),
                 )
             })
         }

@@ -42,24 +42,21 @@ impl CacheStoreProvider for Host {
         unsafe {
             host_cache_put(
                 tag.as_ptr(),
-                tag.len() as u32,
+                crate::ffi_u32(tag.len()),
                 metadata.as_ptr(),
-                metadata.len() as u32,
+                crate::ffi_u32(metadata.len()),
                 bytes.as_ptr(),
-                bytes.len() as u32,
+                crate::ffi_u32(bytes.len()),
             );
         }
     }
 
     fn read_bytes(tag: &str) -> Option<CachedEntry> {
-        let len =
-            unsafe { host_cache_get(tag.as_ptr(), tag.len() as u32, core::ptr::null_mut(), 0) };
-        if len <= 0 {
-            return None;
-        }
-        let mut buf = vec![0u8; len as usize];
-        let written =
-            unsafe { host_cache_get(tag.as_ptr(), tag.len() as u32, buf.as_mut_ptr(), len as u32) };
+        let tag_len = crate::ffi_u32(tag.len());
+        let needed = unsafe { host_cache_get(tag.as_ptr(), tag_len, core::ptr::null_mut(), 0) };
+        let len = u32::try_from(needed).ok().filter(|&len| len > 0)?;
+        let mut buf = vec![0_u8; len as usize];
+        let written = unsafe { host_cache_get(tag.as_ptr(), tag_len, buf.as_mut_ptr(), len) };
         if written < 0 {
             return None;
         }
@@ -68,20 +65,16 @@ impl CacheStoreProvider for Host {
 
     fn evict(tag: &str) {
         unsafe {
-            host_cache_evict(tag.as_ptr(), tag.len() as u32);
+            host_cache_evict(tag.as_ptr(), crate::ffi_u32(tag.len()));
         }
     }
 
     fn stat(tag: &str) -> Option<Stat> {
-        let len =
-            unsafe { host_cache_stat(tag.as_ptr(), tag.len() as u32, core::ptr::null_mut(), 0) };
-        if len <= 0 {
-            return None;
-        }
-        let mut buf = vec![0u8; len as usize];
-        let written = unsafe {
-            host_cache_stat(tag.as_ptr(), tag.len() as u32, buf.as_mut_ptr(), len as u32)
-        };
+        let tag_len = crate::ffi_u32(tag.len());
+        let needed = unsafe { host_cache_stat(tag.as_ptr(), tag_len, core::ptr::null_mut(), 0) };
+        let len = u32::try_from(needed).ok().filter(|&len| len > 0)?;
+        let mut buf = vec![0_u8; len as usize];
+        let written = unsafe { host_cache_stat(tag.as_ptr(), tag_len, buf.as_mut_ptr(), len) };
         if written < 0 {
             return None;
         }

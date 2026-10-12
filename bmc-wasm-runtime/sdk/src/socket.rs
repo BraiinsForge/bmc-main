@@ -230,25 +230,33 @@ mod wasm {
     impl super::SocketTransport for Host {
         fn tls_connect(host: &str, port: u16) -> Option<SocketId> {
             SocketId::from_wire(unsafe {
-                host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port))
+                host_tls_connect(host.as_ptr(), crate::ffi_u32(host.len()), u32::from(port))
             })
         }
 
         fn tls_connect_insecure(host: &str, port: u16) -> Option<SocketId> {
             SocketId::from_wire(unsafe {
-                host_tls_connect_insecure(host.as_ptr(), host.len() as u32, u32::from(port))
+                host_tls_connect_insecure(
+                    host.as_ptr(),
+                    crate::ffi_u32(host.len()),
+                    u32::from(port),
+                )
             })
         }
 
         fn tcp_connect(host: &str, port: u16) -> Option<SocketId> {
             SocketId::from_wire(unsafe {
-                host_tcp_connect(host.as_ptr(), host.len() as u32, u32::from(port))
+                host_tcp_connect(host.as_ptr(), crate::ffi_u32(host.len()), u32::from(port))
             })
         }
 
         fn write(socket_id: SocketId, data: &[u8]) {
             unsafe {
-                host_socket_write(socket_id.to_wire(), data.as_ptr(), data.len() as u32);
+                host_socket_write(
+                    socket_id.to_wire(),
+                    data.as_ptr(),
+                    crate::ffi_u32(data.len()),
+                );
             }
         }
 

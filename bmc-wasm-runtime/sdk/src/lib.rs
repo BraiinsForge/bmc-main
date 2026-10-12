@@ -305,8 +305,11 @@
 //! ² Dropped, with a warning once per widget. Honouring the request
 //!   would queue work on a runtime that's about to be dropped.
 
-// cast_sign_loss only fires on wasm32 (gated FFI code).
-#![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
+/// A length or address for a host import, which takes them as `u32`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn ffi_u32(value: usize) -> u32 {
+    u32::try_from(value).expect("BUG: wasm32 addresses and lengths fit in u32")
+}
 
 // `#[wasm_test]` names the SDK as `::bmc_wasm_sdk`, which the SDK's own tests reach through this.
 #[cfg(all(test, target_arch = "wasm32"))]

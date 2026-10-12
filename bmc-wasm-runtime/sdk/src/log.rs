@@ -100,7 +100,7 @@ mod wasm {
 
     impl super::LogSink for Host {
         fn write(level: u32, msg: &str) {
-            unsafe { host_log(msg.as_ptr(), msg.len() as u32, level) }
+            unsafe { host_log(msg.as_ptr(), crate::ffi_u32(msg.len()), level) }
         }
     }
 }

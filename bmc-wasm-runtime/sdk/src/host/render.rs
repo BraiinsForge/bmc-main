@@ -109,7 +109,7 @@ mod wasm {
         }
 
         fn draw_text(text: &[u8], x: i32, y: i32, size: u32, color: u32) {
-            unsafe { host_draw_text(text.as_ptr(), text.len() as u32, x, y, size, color) }
+            unsafe { host_draw_text(text.as_ptr(), crate::ffi_u32(text.len()), x, y, size, color) }
         }
 
         fn request_frame() {
@@ -132,9 +132,9 @@ mod wasm {
             unsafe {
                 host_button(
                     key.as_ptr(),
-                    key.len() as u32,
+                    crate::ffi_u32(key.len()),
                     label.as_ptr(),
-                    label.len() as u32,
+                    crate::ffi_u32(label.len()),
                     x,
                     y,
                     w,
@@ -145,7 +145,7 @@ mod wasm {
         }
 
         fn submit_tree(data: &[u8], width: u32, height: u32) {
-            unsafe { host_submit_tree(data.as_ptr(), data.len() as u32, width, height) }
+            unsafe { host_submit_tree(data.as_ptr(), crate::ffi_u32(data.len()), width, height) }
         }
     }
 }

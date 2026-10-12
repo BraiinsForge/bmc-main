@@ -57,11 +57,10 @@ const TZ_UNKNOWN: i32 = i32::MIN;
 
 /// Read a host formatting result from a 64-byte stack buffer.
 fn read_host_buf(buf: &[u8; 64], len: i32) -> String {
-    if len <= 0 {
+    let Some(len) = usize::try_from(len).ok().filter(|&len| len > 0) else {
         return String::new();
-    }
-    let len = (len as usize).min(buf.len());
-    String::from_utf8_lossy(&buf[..len]).into_owned()
+    };
+    String::from_utf8_lossy(&buf[..len.min(buf.len())]).into_owned()
 }
 
 pub(super) struct Host;
@@ -69,8 +68,9 @@ pub(super) struct Host;
 impl FormatTextProvider for Host {
     fn number(value: f64, decimals: u32) -> String {
         let mut buf = [0_u8; 64];
-        let len =
-            unsafe { host_format_number(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
+        let len = unsafe {
+            host_format_number(value, decimals, buf.as_mut_ptr(), crate::ffi_u32(buf.len()))
+        };
         read_host_buf(&buf, len)
     }
 
@@ -82,7 +82,7 @@ impl FormatTextProvider for Host {
                 decimals,
                 metric_unit,
                 buf.as_mut_ptr(),
-                buf.len() as u32,
+                crate::ffi_u32(buf.len()),
             )
         };
         read_host_buf(&buf, len)
@@ -90,8 +90,9 @@ impl FormatTextProvider for Host {
 
     fn distance(value: f64, decimals: u32) -> String {
         let mut buf = [0_u8; 64];
-        let len =
-            unsafe { host_format_distance(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
+        let len = unsafe {
+            host_format_distance(value, decimals, buf.as_mut_ptr(), crate::ffi_u32(buf.len()))
+        };
         read_host_buf(&buf, len)
     }
 
@@ -103,7 +104,7 @@ impl FormatTextProvider for Host {
                 decimals,
                 show_unit,
                 buf.as_mut_ptr(),
-                buf.len() as u32,
+                crate::ffi_u32(buf.len()),
             )
         };
         read_host_buf(&buf, len)
@@ -115,9 +116,9 @@ impl FormatTextProvider for Host {
             host_format_date(
                 timestamp,
                 format.as_ptr(),
-                format.len() as u32,
+                crate::ffi_u32(format.len()),
                 buf.as_mut_ptr(),
-                buf.len() as u32,
+                crate::ffi_u32(buf.len()),
             )
         };
         read_host_buf(&buf, len)
@@ -127,11 +128,8 @@ impl FormatTextProvider for Host {
 impl FormatZoneOffsetProvider for Host {
     fn zone_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
         let name = tz.iana().as_bytes();
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "IANA names ship well under u32 bytes; truncation would be a programmer bug"
-        )]
-        let offset = unsafe { host_resolve_tz(name.as_ptr(), name.len() as u32, unix_secs) };
+        let offset =
+            unsafe { host_resolve_tz(name.as_ptr(), crate::ffi_u32(name.len()), unix_secs) };
         if offset == TZ_UNKNOWN {
             None
         } else {

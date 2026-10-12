@@ -175,7 +175,7 @@ mod wasm {
             SsdpSearchId::from_wire(unsafe {
                 host_ssdp_search(
                     search_target.as_ptr(),
-                    search_target.len() as u32,
+                    crate::ffi_u32(search_target.len()),
                     timeout_secs,
                 )
             })

@@ -87,9 +87,7 @@ impl TestRecord {
     }
 }
 
-fn wasm32_u32(value: usize) -> u32 {
-    u32::try_from(value).expect("BUG: wasm32 addresses and lengths fit in u32")
-}
+use crate::ffi_u32;
 
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
@@ -116,9 +114,9 @@ pub fn run(test: fn()) {
         unsafe {
             host_test_panic(
                 message.as_ptr(),
-                wasm32_u32(message.len()),
+                ffi_u32(message.len()),
                 file.as_ptr(),
-                wasm32_u32(file.len()),
+                ffi_u32(file.len()),
                 line,
             );
         }

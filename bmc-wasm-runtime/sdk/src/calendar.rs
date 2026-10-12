@@ -148,7 +148,7 @@ mod wasm {
                 host_tz_wall_clock(
                     unix_secs,
                     timezone.as_ptr(),
-                    timezone.len() as u32,
+                    crate::ffi_u32(timezone.len()),
                     buf.as_mut_ptr(),
                 )
             };
@@ -161,16 +161,15 @@ mod wasm {
 
     impl super::CalendarParsingProvider for Host {
         fn parse_datetime(s: &str) -> Option<i64> {
-            #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
-            let val = unsafe { host_parse_datetime(s.as_ptr(), s.len() as u32) };
+            let val = unsafe { host_parse_datetime(s.as_ptr(), crate::ffi_u32(s.len())) };
             if val == i64::MIN { None } else { Some(val) }
         }
 
         fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
             let mut buf = [0_u8; CalendarDate::WIRE_LEN];
-            #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
-            let rc =
-                unsafe { host_parse_calendar_date(s.as_ptr(), s.len() as u32, buf.as_mut_ptr()) };
+            let rc = unsafe {
+                host_parse_calendar_date(s.as_ptr(), crate::ffi_u32(s.len()), buf.as_mut_ptr())
+            };
             if rc < 0 {
                 return None;
             }
@@ -212,25 +211,19 @@ mod wasm {
             push_str(&mut buf, rrule);
 
             // Two-call pattern: first get required output size
-            let needed = unsafe {
-                host_expand_rrule(buf.as_ptr(), buf.len() as u32, core::ptr::null_mut(), 0)
-            };
-            if needed <= 0 {
+            let buf_len = crate::ffi_u32(buf.len());
+            let needed =
+                unsafe { host_expand_rrule(buf.as_ptr(), buf_len, core::ptr::null_mut(), 0) };
+            let Some(needed) = u32::try_from(needed).ok().filter(|&needed| needed > 0) else {
                 return Vec::new();
-            }
+            };
 
-            let mut out = vec![0u8; needed as usize];
-            let written = unsafe {
-                host_expand_rrule(
-                    buf.as_ptr(),
-                    buf.len() as u32,
-                    out.as_mut_ptr(),
-                    needed as u32,
-                )
-            };
-            if written <= 0 {
+            let mut out = vec![0_u8; needed as usize];
+            let written =
+                unsafe { host_expand_rrule(buf.as_ptr(), buf_len, out.as_mut_ptr(), needed) };
+            let Some(written) = u32::try_from(written).ok().filter(|&written| written > 0) else {
                 return Vec::new();
-            }
+            };
 
             // Decode packed i64[] little-endian
             out.truncate(written as usize);
@@ -242,9 +235,9 @@ mod wasm {
 
     /// Push a length-prefixed string into a binary buffer (u16 LE length + bytes).
     fn push_str(buf: &mut Vec<u8>, s: &str) {
-        let len = s.len().min(u16::MAX as usize) as u16;
+        let len = u16::try_from(s.len()).unwrap_or(u16::MAX);
         buf.extend_from_slice(&len.to_le_bytes());
-        buf.extend_from_slice(&s.as_bytes()[..len as usize]);
+        buf.extend_from_slice(&s.as_bytes()[..usize::from(len)]);
     }
 }
 

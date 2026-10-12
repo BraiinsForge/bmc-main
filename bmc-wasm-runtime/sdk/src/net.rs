@@ -483,7 +483,10 @@ mod wasm {
 
     impl super::Fetcher for Host {
         fn fetch(request: &FetchRequest<'_>, callback: Callback) -> Option<FetchRequestId> {
-            let (m_ptr, m_len) = (request.method.as_ptr(), request.method.len() as u32);
+            let (m_ptr, m_len) = (
+                request.method.as_ptr(),
+                crate::ffi_u32(request.method.len()),
+            );
             let (h_ptr, h_len) = optional_raw(request.headers);
             let (b_ptr, b_len) = optional_bytes_raw(request.body);
             let request_id = FetchRequestId::from_wire(unsafe {
@@ -492,7 +495,7 @@ mod wasm {
                     m_ptr,
                     m_len,
                     request.url.as_ptr(),
-                    request.url.len() as u32,
+                    crate::ffi_u32(request.url.len()),
                     h_ptr,
                     h_len,
                     b_ptr,
@@ -508,7 +511,10 @@ mod wasm {
             request: &FetchRequest<'_>,
             callback: Callback,
         ) -> Option<FetchRequestId> {
-            let (m_ptr, m_len) = (request.method.as_ptr(), request.method.len() as u32);
+            let (m_ptr, m_len) = (
+                request.method.as_ptr(),
+                crate::ffi_u32(request.method.len()),
+            );
             let (h_ptr, h_len) = optional_raw(request.headers);
             let (b_ptr, b_len) = optional_bytes_raw(request.body);
             let request_id = FetchRequestId::from_wire(unsafe {
@@ -518,7 +524,7 @@ mod wasm {
                     m_ptr,
                     m_len,
                     request.url.as_ptr(),
-                    request.url.len() as u32,
+                    crate::ffi_u32(request.url.len()),
                     h_ptr,
                     h_len,
                     b_ptr,
@@ -542,7 +548,7 @@ mod wasm {
                 host_fetch_header(
                     request_id.to_wire(),
                     name.as_ptr(),
-                    buffer_len(name.len()),
+                    crate::ffi_u32(name.len()),
                     ptr,
                     cap,
                 )
@@ -562,24 +568,16 @@ mod wasm {
 
     fn optional_raw(s: Option<&str>) -> (*const u8, u32) {
         match s {
-            Some(s) => (s.as_ptr(), s.len() as u32),
+            Some(s) => (s.as_ptr(), crate::ffi_u32(s.len())),
             None => (core::ptr::null(), 0),
         }
     }
 
     fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
         match b {
-            Some(b) => (b.as_ptr(), b.len() as u32),
+            Some(b) => (b.as_ptr(), crate::ffi_u32(b.len())),
             None => (core::ptr::null(), 0),
         }
-    }
-
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "buffer lengths fit u32 on wasm32"
-    )]
-    fn buffer_len(len: usize) -> u32 {
-        len as u32
     }
 
     /// Guessing wrong costs one extra host call;
@@ -592,10 +590,10 @@ mod wasm {
     /// A value that changed length between the calls is dropped, not truncated.
     fn read_host_string(mut call: impl FnMut(*mut u8, u32) -> i32) -> Option<String> {
         let mut buf = vec![0_u8; HEADER_READ_HINT];
-        let actual = usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()?;
+        let actual = usize::try_from(call(buf.as_mut_ptr(), crate::ffi_u32(buf.len()))).ok()?;
         if actual > buf.len() {
             buf = vec![0_u8; actual];
-            if usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()? != actual {
+            if usize::try_from(call(buf.as_mut_ptr(), crate::ffi_u32(buf.len()))).ok()? != actual {
                 return None;
             }
         }

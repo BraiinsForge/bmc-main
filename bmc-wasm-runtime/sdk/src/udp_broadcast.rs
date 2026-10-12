@@ -174,7 +174,12 @@ mod wasm {
     impl super::Broadcaster for Host {
         fn start(port: u32, message: &str, timeout_secs: u32) -> Option<UdpBroadcastId> {
             UdpBroadcastId::from_wire(unsafe {
-                host_udp_broadcast(port, message.as_ptr(), message.len() as u32, timeout_secs)
+                host_udp_broadcast(
+                    port,
+                    message.as_ptr(),
+                    crate::ffi_u32(message.len()),
+                    timeout_secs,
+                )
             })
         }
 

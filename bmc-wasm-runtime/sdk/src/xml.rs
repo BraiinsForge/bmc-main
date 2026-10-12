@@ -123,51 +123,47 @@ mod wasm {
         type Doc = XmlId;
 
         fn parse(data: &[u8]) -> Option<XmlId> {
-            XmlId::from_wire(unsafe { host_xml_parse(data.as_ptr(), data.len() as u32) })
+            XmlId::from_wire(unsafe { host_xml_parse(data.as_ptr(), crate::ffi_u32(data.len())) })
         }
 
         fn str(doc: &XmlId, path: &str) -> Option<String> {
             let id = doc.to_wire();
             // First call with a reasonable buffer
-            let mut buf = vec![0u8; 256];
+            let mut buf = vec![0_u8; 256];
             let actual = unsafe {
                 host_xml_get_str(
                     id,
                     path.as_ptr(),
-                    path.len() as u32,
+                    crate::ffi_u32(path.len()),
                     buf.as_mut_ptr(),
-                    buf.len() as u32,
+                    crate::ffi_u32(buf.len()),
                 )
             };
-            if actual < 0 {
-                return None;
-            }
-            let actual = actual as usize;
+            let actual = usize::try_from(actual).ok()?;
             if actual <= buf.len() {
                 buf.truncate(actual);
                 String::from_utf8(buf).ok()
             } else {
                 // Retry with exact size
-                let mut buf = vec![0u8; actual];
+                let mut buf = vec![0_u8; actual];
                 let len = unsafe {
                     host_xml_get_str(
                         id,
                         path.as_ptr(),
-                        path.len() as u32,
+                        crate::ffi_u32(path.len()),
                         buf.as_mut_ptr(),
-                        buf.len() as u32,
+                        crate::ffi_u32(buf.len()),
                     )
                 };
-                if len < 0 {
-                    return None;
-                }
-                buf.truncate(len as usize);
+                buf.truncate(usize::try_from(len).ok()?);
                 String::from_utf8(buf).ok()
             }
         }
 
         fn f64(doc: &XmlId, path: &str) -> Option<f64> {
-            let val = unsafe { host_xml_get_f64(doc.to_wire(), path.as_ptr(), path.len() as u32) };
+            let val = unsafe {
+                host_xml_get_f64(doc.to_wire(), path.as_ptr(), crate::ffi_u32(path.len()))
+            };
             if val.is_nan() { None } else { Some(val) }
         }
 

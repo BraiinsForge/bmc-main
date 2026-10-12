@@ -167,7 +167,7 @@ mod wasm {
         type Doc = JsonId;
 
         fn parse(data: &[u8]) -> Option<JsonId> {
-            JsonId::from_wire(unsafe { host_json_parse(data.as_ptr(), data.len() as u32) })
+            JsonId::from_wire(unsafe { host_json_parse(data.as_ptr(), crate::ffi_u32(data.len())) })
         }
 
         fn str(doc: &JsonId, path: &str) -> Option<String> {
@@ -178,52 +178,53 @@ mod wasm {
                 host_json_get_str(
                     id,
                     path.as_ptr(),
-                    path.len() as u32,
+                    crate::ffi_u32(path.len()),
                     buf.as_mut_ptr(),
-                    buf.len() as u32,
+                    crate::ffi_u32(buf.len()),
                 )
             };
-            if actual < 0 {
-                return None; // not found or wrong type
-            }
-            let actual = actual as usize;
+            // Negative: not found, or the wrong type.
+            let actual = usize::try_from(actual).ok()?;
             if actual <= buf.len() {
                 buf.truncate(actual);
                 String::from_utf8(buf).ok()
             } else {
                 // Retry with exact size
-                let mut buf = vec![0u8; actual];
+                let mut buf = vec![0_u8; actual];
                 let len = unsafe {
                     host_json_get_str(
                         id,
                         path.as_ptr(),
-                        path.len() as u32,
+                        crate::ffi_u32(path.len()),
                         buf.as_mut_ptr(),
-                        buf.len() as u32,
+                        crate::ffi_u32(buf.len()),
                     )
                 };
-                if len < 0 {
-                    return None;
-                }
-                buf.truncate(len as usize);
+                buf.truncate(usize::try_from(len).ok()?);
                 String::from_utf8(buf).ok()
             }
         }
 
         fn i64(doc: &JsonId, path: &str) -> Option<i64> {
-            let val = unsafe { host_json_get_i64(doc.to_wire(), path.as_ptr(), path.len() as u32) };
+            let val = unsafe {
+                host_json_get_i64(doc.to_wire(), path.as_ptr(), crate::ffi_u32(path.len()))
+            };
             // The host answers `i64::MIN` for "not found",
             // so a literal `i64::MIN` reads as `None` here, unlike off the device.
             if val == i64::MIN { None } else { Some(val) }
         }
 
         fn f64(doc: &JsonId, path: &str) -> Option<f64> {
-            let val = unsafe { host_json_get_f64(doc.to_wire(), path.as_ptr(), path.len() as u32) };
+            let val = unsafe {
+                host_json_get_f64(doc.to_wire(), path.as_ptr(), crate::ffi_u32(path.len()))
+            };
             if val.is_nan() { None } else { Some(val) }
         }
 
         fn bool(doc: &JsonId, path: &str) -> Option<bool> {
-            match unsafe { host_json_get_bool(doc.to_wire(), path.as_ptr(), path.len() as u32) } {
+            match unsafe {
+                host_json_get_bool(doc.to_wire(), path.as_ptr(), crate::ffi_u32(path.len()))
+            } {
                 0 => Some(false),
                 1 => Some(true),
                 _ => None, // -1 = missing
@@ -232,13 +233,13 @@ mod wasm {
 
         fn kind(doc: &JsonId, path: &str) -> Option<JsonKind> {
             JsonKind::from_wire(unsafe {
-                host_json_kind(doc.to_wire(), path.as_ptr(), path.len() as u32)
+                host_json_kind(doc.to_wire(), path.as_ptr(), crate::ffi_u32(path.len()))
             })
         }
 
         fn len(doc: &JsonId, path: &str) -> Option<usize> {
             usize::try_from(unsafe {
-                host_json_len(doc.to_wire(), path.as_ptr(), path.len() as u32)
+                host_json_len(doc.to_wire(), path.as_ptr(), crate::ffi_u32(path.len()))
             })
             .ok()
         }

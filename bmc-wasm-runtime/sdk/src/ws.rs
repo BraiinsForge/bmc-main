@@ -207,17 +207,21 @@ mod wasm {
     impl super::WebsocketClient for Host {
         fn connect(url: &str, headers: Option<&str>) -> Option<WebsocketId> {
             let (h_ptr, h_len) = match headers {
-                Some(h) => (h.as_ptr(), h.len() as u32),
+                Some(h) => (h.as_ptr(), crate::ffi_u32(h.len())),
                 None => (core::ptr::null(), 0),
             };
             WebsocketId::from_wire(unsafe {
-                host_ws_connect(url.as_ptr(), url.len() as u32, h_ptr, h_len)
+                host_ws_connect(url.as_ptr(), crate::ffi_u32(url.len()), h_ptr, h_len)
             })
         }
 
         fn send(ws_id: WebsocketId, message: &str) {
             unsafe {
-                host_ws_send(ws_id.to_wire(), message.as_ptr(), message.len() as u32);
+                host_ws_send(
+                    ws_id.to_wire(),
+                    message.as_ptr(),
+                    crate::ffi_u32(message.len()),
+                );
             }
         }
 

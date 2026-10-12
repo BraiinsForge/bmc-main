@@ -56,6 +56,8 @@ validate: format clippy python
     cargo clippy --profile fast -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
     # Both runs above enable `host`; this one builds `hermetic-host` without it.
     cargo clippy --profile fast -p bmc-wasm-runtime --all-targets --features hermetic-host -- -D warnings
+    # The SDK's wasm32 side: the widget run below lints its own members, not the SDK they depend on.
+    cargo clippy --profile fast -p bmc-wasm-sdk --target wasm32-unknown-unknown --all-targets --all-features -- -D warnings
     (cd widgets-wasm && cargo clippy --profile fast --target wasm32-unknown-unknown --workspace -- -D warnings)
 
     # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.

@@ -207,7 +207,8 @@ mod wasm {
         }
 
         fn port(listener_id: HttpListenerId) -> u16 {
-            unsafe { host_http_get_port(listener_id.to_wire()) as u16 }
+            let port = unsafe { host_http_get_port(listener_id.to_wire()) };
+            u16::try_from(port).expect("BUG: the host reports a TCP port, which fits u16")
         }
 
         fn close(listener_id: HttpListenerId) {
@@ -220,9 +221,9 @@ mod wasm {
                     request_id.to_wire(),
                     u32::from(status),
                     headers.as_ptr(),
-                    headers.len() as u32,
+                    crate::ffi_u32(headers.len()),
                     body.as_ptr(),
-                    body.len() as u32,
+                    crate::ffi_u32(body.len()),
                 );
             }
         }

@@ -46,7 +46,9 @@ mod imp {
             let used = self
                 .start_fuel
                 .saturating_sub(unsafe { host_fuel_remaining() });
-            unsafe { host_profile_section(self.name.as_ptr(), self.name.len() as u32, used) };
+            unsafe {
+                host_profile_section(self.name.as_ptr(), crate::ffi_u32(self.name.len()), used);
+            }
         }
     }
 

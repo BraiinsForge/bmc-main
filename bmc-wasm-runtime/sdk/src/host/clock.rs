@@ -96,7 +96,7 @@ mod wasm {
 
     impl super::ClockProvider for Host {
         fn unix_secs() -> i64 {
-            let mut buf = [0u8; 8];
+            let mut buf = [0_u8; 8];
             unsafe { host_get_system_time(buf.as_mut_ptr()) }
             i64::from_le_bytes(buf)
         }

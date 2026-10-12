@@ -64,9 +64,10 @@ mod wasm {
 
     impl super::TouchInputProvider for Host {
         fn click(key: &str) -> Option<TouchHit> {
-            let mut buf = [0u8; 16];
-            let clicked =
-                unsafe { host_get_touch_click(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
+            let mut buf = [0_u8; 16];
+            let clicked = unsafe {
+                host_get_touch_click(key.as_ptr(), crate::ffi_u32(key.len()), buf.as_mut_ptr())
+            };
             if clicked != 0 {
                 Some(from_buf(&buf))
             } else {
@@ -75,9 +76,10 @@ mod wasm {
         }
 
         fn drag(key: &str) -> Option<TouchHit> {
-            let mut buf = [0u8; 16];
-            let dragging =
-                unsafe { host_get_touch_drag(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
+            let mut buf = [0_u8; 16];
+            let dragging = unsafe {
+                host_get_touch_drag(key.as_ptr(), crate::ffi_u32(key.len()), buf.as_mut_ptr())
+            };
             if dragging != 0 {
                 Some(from_buf(&buf))
             } else {

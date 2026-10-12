@@ -331,14 +331,13 @@ mod wasm {
     pub(super) struct Host;
 
     impl super::AssetRegistry for Host {
-        #[expect(clippy::cast_possible_truncation)]
         fn register_svg(tag: &str, data: &[u8]) -> Option<SvgId> {
             SvgId::from_ffi(unsafe {
                 host_register_svg(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     data.as_ptr(),
-                    data.len() as u32,
+                    crate::ffi_u32(data.len()),
                 )
             })
         }
@@ -347,20 +346,19 @@ mod wasm {
             SvgId::from_ffi(unsafe {
                 host_register_svg_package(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     package_ref.as_bytes().as_ptr(),
                 )
             })
         }
 
-        #[expect(clippy::cast_possible_truncation)]
         fn register_mesh(tag: &str, data: &[u8]) -> Option<MeshId> {
             MeshId::from_ffi(unsafe {
                 host_register_mesh(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     data.as_ptr(),
-                    data.len() as u32,
+                    crate::ffi_u32(data.len()),
                 )
             })
         }
@@ -369,20 +367,19 @@ mod wasm {
             MeshId::from_ffi(unsafe {
                 host_register_mesh_package(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     package_ref.as_bytes().as_ptr(),
                 )
             })
         }
 
-        #[expect(clippy::cast_possible_truncation)]
         fn register_audio(data: &[u8], name: &str) -> Option<AudioId> {
             AudioId::from_ffi(unsafe {
                 host_register_audio(
                     data.as_ptr(),
-                    data.len() as u32,
+                    crate::ffi_u32(data.len()),
                     name.as_ptr(),
-                    name.len() as u32,
+                    crate::ffi_u32(name.len()),
                 )
             })
         }
@@ -391,20 +388,19 @@ mod wasm {
             AudioId::from_ffi(unsafe {
                 host_register_audio_package(
                     name.as_ptr(),
-                    name.len() as u32,
+                    crate::ffi_u32(name.len()),
                     package_ref.as_bytes().as_ptr(),
                 )
             })
         }
 
-        #[expect(clippy::cast_possible_truncation)]
         fn register_bitmap(tag: &str, data: &[u8]) -> Option<BitmapId> {
             BitmapId::from_ffi(unsafe {
                 host_register_bitmap(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     data.as_ptr(),
-                    data.len() as u32,
+                    crate::ffi_u32(data.len()),
                 )
             })
         }
@@ -413,20 +409,19 @@ mod wasm {
             BitmapId::from_ffi(unsafe {
                 host_register_bitmap_package(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     package_ref.as_bytes().as_ptr(),
                 )
             })
         }
 
-        #[expect(clippy::cast_possible_truncation)]
         fn register_bitmap_nearest(tag: &str, data: &[u8]) -> Option<BitmapId> {
             BitmapId::from_ffi(unsafe {
                 host_register_bitmap_nearest(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     data.as_ptr(),
-                    data.len() as u32,
+                    crate::ffi_u32(data.len()),
                 )
             })
         }
@@ -438,13 +433,12 @@ mod wasm {
             BitmapId::from_ffi(unsafe {
                 host_register_bitmap_nearest_package(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     package_ref.as_bytes().as_ptr(),
                 )
             })
         }
 
-        #[expect(clippy::cast_possible_truncation)]
         fn register_bitmap_fit(
             tag: &str,
             data: &[u8],
@@ -456,21 +450,21 @@ mod wasm {
             ImageJobId::from_wire(unsafe {
                 host_register_bitmap_fit(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     data.as_ptr(),
-                    data.len() as u32,
+                    crate::ffi_u32(data.len()),
                     max_w,
                     max_h,
                     u32::from(cover),
                     identity.as_ptr(),
-                    identity.len() as u32,
+                    crate::ffi_u32(identity.len()),
                 )
             })
         }
 
         fn register_bitmap_from_cache(tag: &str) -> Option<BitmapId> {
             BitmapId::from_ffi(unsafe {
-                host_register_bitmap_from_cache(tag.as_ptr(), tag.len() as u32)
+                host_register_bitmap_from_cache(tag.as_ptr(), crate::ffi_u32(tag.len()))
             })
         }
 
@@ -485,21 +479,20 @@ mod wasm {
             let job_id = ImageJobId::from_wire(unsafe {
                 host_register_bitmap_fit_ref(
                     tag.as_ptr(),
-                    tag.len() as u32,
+                    crate::ffi_u32(tag.len()),
                     body.request_id_wire(),
                     max_w,
                     max_h,
                     u32::from(cover),
                     identity.as_ptr(),
-                    identity.len() as u32,
+                    crate::ffi_u32(identity.len()),
                 )
             });
             job_id.ok_or(body)
         }
 
-        #[expect(clippy::cast_possible_truncation)]
         fn evict_prefix(prefix: &str) -> u32 {
-            unsafe { host_evict_prefix(prefix.as_ptr(), prefix.len() as u32) }
+            unsafe { host_evict_prefix(prefix.as_ptr(), crate::ffi_u32(prefix.len())) }
         }
 
         fn evict_all() -> u32 {
@@ -507,20 +500,31 @@ mod wasm {
         }
     }
 
+    /// The `width << 32 | height` a host packs image dimensions as;
+    /// `None` when the host refused, or either side is zero.
+    fn unpack_dimensions(packed: i64) -> Option<(u32, u32)> {
+        if packed < 0 {
+            return None;
+        }
+        let [h0, h1, h2, h3, w0, w1, w2, w3] = packed.to_le_bytes();
+        let (width, height) = (
+            u32::from_le_bytes([w0, w1, w2, w3]),
+            u32::from_le_bytes([h0, h1, h2, h3]),
+        );
+        (width != 0 && height != 0).then_some((width, height))
+    }
+
     impl super::ImageDecodeProvider for Host {
         fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
             let packed = unsafe {
-                host_decode_image(data.as_ptr(), data.len() as u32, core::ptr::null_mut(), 0)
+                host_decode_image(
+                    data.as_ptr(),
+                    crate::ffi_u32(data.len()),
+                    core::ptr::null_mut(),
+                    0,
+                )
             };
-            if packed < 0 {
-                return None;
-            }
-            let w = (packed >> 32) as u32;
-            let h = (packed & 0xFFFF_FFFF) as u32;
-            if w == 0 || h == 0 {
-                return None;
-            }
-            Some((w, h))
+            unpack_dimensions(packed)
         }
 
         fn image_dimensions_ref(body: &FetchBodyRef<'_>) -> Option<RetainedImageDimensions> {
@@ -528,14 +532,7 @@ mod wasm {
             let packed = unsafe {
                 host_image_dimensions_ref(body.request_id_wire(), &raw mut max_source_pixels)
             };
-            if packed < 0 {
-                return None;
-            }
-            let width = (packed >> 32) as u32;
-            let height = (packed & 0xFFFF_FFFF) as u32;
-            if width == 0 || height == 0 {
-                return None;
-            }
+            let (width, height) = unpack_dimensions(packed)?;
             Some(RetainedImageDimensions {
                 width,
                 height,
@@ -547,9 +544,14 @@ mod wasm {
             let (w, h) = Self::image_dimensions(data)?;
             let needed = w * h * 4;
 
-            let mut buf = vec![0u8; needed as usize];
+            let mut buf = vec![0_u8; needed as usize];
             let packed2 = unsafe {
-                host_decode_image(data.as_ptr(), data.len() as u32, buf.as_mut_ptr(), needed)
+                host_decode_image(
+                    data.as_ptr(),
+                    crate::ffi_u32(data.len()),
+                    buf.as_mut_ptr(),
+                    needed,
+                )
             };
             if packed2 < 0 {
                 return None;
