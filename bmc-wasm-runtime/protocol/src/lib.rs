@@ -30,6 +30,7 @@ pub mod json;
 pub mod params;
 pub mod system;
 pub mod tags;
+pub mod test_descriptor;
 pub mod time;
 pub mod timer;
 pub mod version;

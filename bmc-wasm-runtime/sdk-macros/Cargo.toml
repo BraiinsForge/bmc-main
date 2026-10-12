@@ -17,6 +17,8 @@ syn = { workspace = true }
 # IANA names against the deck's supported list (single source of truth,
 # sourced from openwrt/LuCI's `zoneinfo.uc`).
 bmc-shared-time = { path = "../../bmc-shared/time" }
+# Same reasoning: `#[wasm_test]` names its exports with the protocol's prefixes.
+bmc-wasm-protocol = { path = "../protocol" }
 
 [lints.rust]
 unused_must_use = "deny"

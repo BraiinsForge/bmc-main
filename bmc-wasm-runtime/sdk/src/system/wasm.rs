@@ -26,6 +26,25 @@ unsafe extern "C" {
     fn host_system_version() -> u64;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[link(wasm_import_module = "env")]
+unsafe extern "C" {
+    fn host_test_install_system(ptr: *const u8, len: u32);
+}
+
+/// Install the snapshot [`current`](super::current) returns, through the test host.
+#[cfg(any(test, feature = "test-support"))]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "matches the native `set_current`, which keeps the snapshot"
+)]
+pub fn set_current(snapshot: Snapshot) {
+    let bytes = snapshot.as_bytes();
+    let len = u32::try_from(bytes.len()).expect("BUG: a system snapshot fits in u32");
+    // SAFETY: `bytes` stays borrowed for the call, which only reads `len` bytes from it.
+    unsafe { host_test_install_system(bytes.as_ptr(), len) }
+}
+
 pub(super) struct Host;
 
 impl crate::snapshot_cache::HostSnapshotProvider for Host {

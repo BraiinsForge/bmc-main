@@ -347,6 +347,10 @@ fn install_panic_hook() {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub mod __test_support;
+
+#[cfg(target_arch = "wasm32")]
 pub mod alloc;
 pub mod assets;
 pub mod cache;
@@ -507,9 +511,6 @@ macro_rules! include_audio {
 /// ```ignore
 /// static SUZANNE: Mesh = include_mesh!("assets/suzanne.glb");
 /// ```
-///
-/// With the `deferred-mesh-errors` feature, a mesh that fails validation compiles anyway
-/// and [`DrawAssets::mesh`] draws the error in its place.
 #[macro_export]
 macro_rules! include_mesh {
     ($($t:tt)*) => { $crate::__macros::include_mesh!($crate, $($t)*) };

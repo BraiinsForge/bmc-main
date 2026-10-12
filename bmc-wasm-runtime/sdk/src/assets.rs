@@ -56,6 +56,8 @@ use native::Host as Platform;
 pub use native::{AssetHost, init_test_registrars, install_asset_host};
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
+#[cfg(target_arch = "wasm32")]
+pub use wasm::init_test_registrars;
 
 // ── Svg ─────────────────────────────────────────────────────────────
 

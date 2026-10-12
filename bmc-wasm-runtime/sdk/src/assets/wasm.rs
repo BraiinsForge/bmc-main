@@ -24,6 +24,9 @@ use super::{AssetIdProvider, Audio, Bitmap, Mesh, Svg};
 use crate::cache::CacheSource;
 use crate::host;
 
+/// Nothing to install: on wasm the host registers assets, the test host included.
+pub fn init_test_registrars() {}
+
 pub(super) struct Host;
 
 impl AssetIdProvider for Host {

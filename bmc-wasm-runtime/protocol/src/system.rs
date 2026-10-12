@@ -355,6 +355,12 @@ impl Snapshot {
         Self { bytes }
     }
 
+    /// The packed bytes [`Self::from_bytes`] reads.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     /// A snapshot carrying nothing, in a `const` context.
     #[must_use]
     pub const fn empty() -> Self {

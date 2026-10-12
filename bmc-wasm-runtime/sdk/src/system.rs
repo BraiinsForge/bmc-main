@@ -96,6 +96,8 @@ use native::Host as Platform;
 pub use native::set_current;
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
+#[cfg(all(target_arch = "wasm32", any(test, feature = "test-support")))]
+pub use wasm::set_current;
 
 #[cfg(test)]
 mod tests {

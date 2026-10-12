@@ -29,6 +29,7 @@
 mod fmt_capture;
 mod json;
 mod tz;
+mod wasm_test;
 
 use proc_macro::TokenStream;
 
@@ -82,4 +83,29 @@ pub fn fmt_impl(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn tz(input: TokenStream) -> TokenStream {
     tz::expand(input.into()).into()
+}
+
+/// A test that runs natively under libtest and on wasm32 under the wasm test runner.
+///
+/// Write `#[should_panic]` and `#[ignore]` after it, as with `#[test]`.
+///
+/// ```ignore
+/// use bmc_wasm_sdk::wasm_test;
+///
+/// #[wasm_test]
+/// #[should_panic(expected = "month must be 1..=12")]
+/// fn month_abbr_asserts_on_zero() {
+///     month_abbr(0);
+/// }
+/// ```
+///
+/// A test heavier than the runner's per-test fuel names its own budget, and says why:
+///
+/// ```ignore
+/// #[wasm_test(fuel = 250e6, reason = "parses 2,048 candles")]
+/// fn full_history_parses() { … }
+/// ```
+#[proc_macro_attribute]
+pub fn wasm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
+    wasm_test::expand(attr.into(), item.into()).into()
 }
