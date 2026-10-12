@@ -96,19 +96,8 @@ fn color(json: &JsonDoc, path: &str) -> bmc_wasm_sdk::Color {
     team_color(&text(json, path))
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "positions and counts are small non-negative wire integers"
-)]
-fn small(json: &JsonDoc, path: &str) -> u8 {
-    json.i64(path)
-        .unwrap_or_default()
-        .clamp(0, i64::from(u8::MAX)) as u8
-}
-
-/// A count the payload may not name, where zero would read as a real one:
-/// there is no zeroth place and no zeroth lap.
+/// A wire integer the payload may not name, kept absent
+/// rather than read as a zero that passes for a real place, lap, change or tyre age.
 fn counted<T: TryFrom<i64>>(json: &JsonDoc, path: &str) -> Option<T> {
     T::try_from(json.i64(path)?).ok()
 }
@@ -321,20 +310,13 @@ pub fn live_board(json: &JsonDoc) -> Result<LiveBoard, Malformed> {
         if json.str(&entry("driver_code")).is_none() {
             break;
         }
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "a position change is a small signed wire integer"
-        )]
         rows.push(TimingRow {
             position: counted(json, &entry("position")),
             driver_code: text(json, &entry("driver_code")),
             driver_name: text(json, &entry("driver_name")),
             team_logo_url: image(json, &entry("team_logo_url")),
             team_color: color(json, &entry("team_color")),
-            position_change: json
-                .i64(&entry("position_change"))
-                .unwrap_or_default()
-                .clamp(i64::from(i8::MIN), i64::from(i8::MAX)) as i8,
+            position_change: counted(json, &entry("position_change")),
             gap_to_leader: timing(json, &entry("gap_to_leader")),
             interval: timing(json, &entry("interval")),
             last_lap_time: timing(json, &entry("last_lap_time")),
@@ -344,7 +326,7 @@ pub fn live_board(json: &JsonDoc) -> Result<LiveBoard, Malformed> {
                 .str(&entry("tire_compound"))
                 .as_deref()
                 .and_then(TireCompound::from_wire),
-            tire_age: small(json, &entry("tire_age")),
+            tire_age: counted(json, &entry("tire_age")),
             sectors: [
                 sector(json, index, 1),
                 sector(json, index, 2),

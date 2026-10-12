@@ -315,7 +315,11 @@ fn chevron(change: i8, tone: Color) -> Node {
 /// The places a driver has gained or lost: a chevron in its own colour,
 /// and the count in the row's. A driver holding station shows a bar
 /// and a zero rather than an empty cell, as the port does.
-fn change_cell(change: i8, size: u32) -> Node {
+/// A change the payload left out gets no chevron, which would claim a direction.
+fn change_cell(change: Option<i8>, size: u32) -> Node {
+    let Some(change) = change else {
+        return plain(parts::NO_TABLE_VALUE, size, color::TEXT_MUTED);
+    };
     let tone = match change {
         1.. => live_color::GAINED,
         ..=-1 => live_color::LOST,
@@ -377,7 +381,9 @@ fn compound_badge(compound: Option<TireCompound>) -> Node {
 /// Compound, a wear bar filling with the stint, and the lap count.
 fn tire_cell(row_data: &TimingRow) -> Node {
     let tone = compound_color(row_data.tire_compound);
-    let worn = (f32::from(row_data.tire_age) / WEAR_FULL_LAPS).clamp(0.0, 1.0);
+    let worn = row_data
+        .tire_age
+        .map_or(0.0, |age| (f32::from(age) / WEAR_FULL_LAPS).clamp(0.0, 1.0));
     let bar = canvas(
         props!(width: WEAR_WIDTH, height: WEAR_HEIGHT),
         [
@@ -391,7 +397,9 @@ fn tire_cell(row_data: &TimingRow) -> Node {
             compound_badge(row_data.tire_compound),
             bar,
             badge(
-                fmt!("{}", row_data.tire_age),
+                row_data
+                    .tire_age
+                    .map_or_else(|| "?".to_owned(), |age| fmt!("{}", age)),
                 None,
                 Some(live_color::AGE),
                 live_color::AGE_TEXT,
@@ -670,8 +678,12 @@ pub fn practice_view(view: &LiveViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{Board, Cell, Seats, columns, sector_time};
+    use bmc_wasm_sdk::{Draw, Node};
+
+    use super::{Board, Cell, Seats, change_cell, columns, sector_time, tire_cell};
     use crate::model::SizeBucket;
+    use crate::screens::fixtures;
+    use crate::screens::parts::{NO_TABLE_VALUE, color};
 
     const ALL: [SizeBucket; 4] = [
         SizeBucket::Full,
@@ -686,6 +698,50 @@ mod tests {
         assert_eq!(sector_time(23.4), "23.400");
         assert_eq!(sector_time(23.04), "23.040");
         assert_eq!(sector_time(23.004), "23.004");
+    }
+
+    #[test]
+    fn a_missing_position_change_claims_no_direction() {
+        let Node::Paragraph {
+            base_style, spans, ..
+        } = change_cell(None, 20)
+        else {
+            panic!("a change the payload left out must draw no chevron beside its text");
+        };
+        assert_eq!(
+            (spans[0].text.as_str(), base_style.color),
+            (NO_TABLE_VALUE, color::TEXT_MUTED),
+            "an unknown change must not read as holding station",
+        );
+    }
+
+    #[test]
+    fn a_missing_tire_age_reads_as_unknown() {
+        let mut row = fixtures::timing_board("Race").rows.remove(0);
+        row.tire_age = None;
+
+        let Node::Row(_, parts) = tire_cell(&row) else {
+            panic!("BUG: the tire cell sets its parts in a row");
+        };
+        let [
+            _,
+            Node::Canvas { draws: bar, .. },
+            Node::Canvas { draws: age, .. },
+        ] = parts.as_slice()
+        else {
+            panic!("BUG: the tire cell holds a compound badge, a wear bar and an age badge");
+        };
+        let Some(Draw::Rect { w: worn, .. }) = bar.last() else {
+            panic!("BUG: the wear fill tops the bar");
+        };
+        let Some(Draw::Text { text: label, .. }) = age.last() else {
+            panic!("BUG: the age label tops its badge");
+        };
+        assert_eq!(
+            (*worn, label.as_str()),
+            (0.0, "?"),
+            "an unknown age must not read as a fresh set",
+        );
     }
 
     /// The per-frame rules the port keeps.

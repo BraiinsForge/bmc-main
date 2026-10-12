@@ -1030,9 +1030,9 @@ fn timing_row(index: usize, behind: f64) -> TimingRow {
         team_color: team_color(entry.livery),
         // The leaders climb, the midfield holds, the tail slips back.
         position_change: match index {
-            0..=2 => i8::try_from(3 - index).unwrap_or(0),
-            3..=6 => 0,
-            _ => -i8::try_from(index - 6).unwrap_or(0),
+            0..=2 => i8::try_from(3 - index).ok(),
+            3..=6 => Some(0),
+            _ => i8::try_from(index - 6).ok().map(|lost| -lost),
         },
         gap_to_leader: if index == 0 {
             TimingText::from("LEADER".to_owned())
@@ -1052,7 +1052,7 @@ fn timing_row(index: usize, behind: f64) -> TimingRow {
             Some(TireCompound::Medium),
             Some(TireCompound::Hard),
         ][index % 3],
-        tire_age: u8::try_from(index * 4 % 31).unwrap_or(0),
+        tire_age: u8::try_from(index * 4 % 31).ok(),
         sectors: [
             sector(0.31, SectorColor::Normal),
             sector(0.36, SectorColor::PersonalBest),
@@ -1124,6 +1124,8 @@ pub fn live_unranked(bucket: SizeBucket) -> LiveViewData {
     board.total_laps = None;
     for row in &mut board.rows {
         row.position = None;
+        row.position_change = None;
+        row.tire_age = None;
     }
     LiveViewData {
         bucket,

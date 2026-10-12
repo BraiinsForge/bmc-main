@@ -57,8 +57,7 @@ pub mod color {
 /// painted as though it held something.
 const UNKNOWN: &str = "N/A";
 
-/// What a table's position column reads as where a row has no place,
-/// and its points column where a row has no total.
+/// What a table cell reads as where the payload left its number out.
 /// The position column is sized for the two digits a place takes,
 /// and `N/A` overruns it at the widest frame's row font.
 pub const NO_TABLE_VALUE: &str = "—";

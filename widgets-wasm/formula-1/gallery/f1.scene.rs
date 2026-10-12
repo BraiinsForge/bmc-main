@@ -169,7 +169,7 @@ fn live_lapped(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
-/// A race whose payload named no places and no lap count.
+/// A race whose payload named no places, lap count, position changes or tyre ages.
 #[scene]
 fn live_unranked(ctx: &mut SceneCtx, ui: &mut Ui) {
     size_stages(ctx, ui, |bucket| {

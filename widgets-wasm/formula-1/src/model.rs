@@ -350,14 +350,16 @@ pub struct TimingRow {
     pub driver_name: String,
     pub team_logo_url: ImageUrl,
     pub team_color: Color,
-    pub position_change: i8,
+    /// Absent where the payload named none.
+    pub position_change: Option<i8>,
     pub gap_to_leader: TimingText,
     pub interval: TimingText,
     pub last_lap_time: TimingText,
     pub best_lap_time: TimingText,
     pub total_time: TimingText,
     pub tire_compound: Option<TireCompound>,
-    pub tire_age: u8,
+    /// Absent where the payload named none.
+    pub tire_age: Option<u8>,
     pub sectors: [Option<Sector>; 3],
     pub in_pit: bool,
     pub is_out_lap: bool,
