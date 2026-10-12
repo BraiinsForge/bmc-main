@@ -565,6 +565,7 @@ pub(crate) enum Lifecycle {
     Unload,
     /// A test export is on the stack.
     /// Render-only imports refuse it as they refuse every phase but `render`.
+    #[cfg(any(test, feature = "hermetic-host"))]
     Test,
 }
 
@@ -1214,6 +1215,7 @@ pub(crate) struct HostState {
     pub fetch_observer: Option<crate::runtime::FetchObserver>,
 
     pub(crate) guest_log_sink: Option<crate::runtime::GuestLogSink>,
+    #[cfg(any(test, feature = "hermetic-host"))]
     pub(crate) guest_panic: Option<crate::runtime::GuestPanic>,
 
     pub(crate) fetch_log_limiter: FetchLogLimiter,
@@ -1553,6 +1555,7 @@ impl HostState {
             hermetic: None,
             fetch_observer: None,
             guest_log_sink: None,
+            #[cfg(any(test, feature = "hermetic-host"))]
             guest_panic: None,
             fetch_log_limiter: FetchLogLimiter::default(),
             logged_sites: LoggedSites::default(),

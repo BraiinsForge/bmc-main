@@ -83,6 +83,9 @@ resvg = { workspace = true, optional = true }
 bmc-wasm-assets = { path = "../bmc-wasm-assets", optional = true }
 tempfile = { workspace = true, optional = true }
 
+# Hermetic host
+bmc-wasm-thin-protocol = { path = "../bmc-wasm-thin-protocol", optional = true }
+
 # Fixtures (shared between capture and testbed)
 base64 = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
@@ -112,6 +115,7 @@ profiling = ["ii-stopwatch/enabled", "bmc-render/profiling", "frame-timings"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 prepared-widget = ["bmc-wasm-assets", "tempfile"]
+hermetic-host = ["prepared-widget", "bmc-wasm-thin-protocol"]
 fixtures = ["host", "prepared-widget", "base64", "flate2", "owo-colors", "toml", "toml_edit"]
 testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "binpack2d", "egui", "egui_autocomplete", "egui_glow", "egui_sgr", "resvg", "clap", "bmc-led/apa102_spi", "bmc-ui/egui"]
 capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder"]

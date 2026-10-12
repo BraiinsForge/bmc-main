@@ -45,8 +45,9 @@ pub(crate) use timers::{DueTick, PeriodChangeRefusal, TimerRefusal, TimerTable};
 
 pub use backend::DisplayInfo as RuntimeDisplayInfo;
 pub use backend::{
-    EntryPolicy, FetchInterceptor, FetchObserver, GuestLogSink, GuestPanic, InterceptedReply,
-    RenderStatus, RendererAssetRestorationObservation, RendererAssetSuspensionObservation,
-    RuntimeConfig, RuntimeResourceLimits, TargetContents, TestExportError, WasmWidgetModule,
-    WasmWidgetRuntime,
+    EntryPolicy, FetchInterceptor, FetchObserver, GuestLogSink, InterceptedReply, RenderStatus,
+    RendererAssetRestorationObservation, RendererAssetSuspensionObservation, RuntimeConfig,
+    RuntimeResourceLimits, TargetContents, WasmWidgetModule, WasmWidgetRuntime,
 };
+#[cfg(any(test, feature = "hermetic-host"))]
+pub use backend::{GuestPanic, TestExportError};

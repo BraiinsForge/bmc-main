@@ -237,16 +237,31 @@ pub type FetchObserver = Box<dyn Fn(&str, u32, &[(String, String)], &[u8]) + Sen
 pub type GuestLogSink = Box<dyn FnMut(tracing::Level, &str) + Send>;
 
 /// How [`WasmWidgetRuntime::from_module_with_entry`] enters a module.
+///
+/// A shipped host has only `Widget`: the test entry, its imports and its readers
+/// come with `hermetic-host`, so production code cannot enter a module as a test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryPolicy {
     /// A widget: `render` is required, and `init` runs before the first frame.
     Widget,
-    /// A test binary: `render` is optional, `init` does not run,
+    /// A test binary: `init` does not run, nothing renders,
     /// and the test-only imports `host_test_panic` and `host_test_install_system` are offered.
+    #[cfg(any(test, feature = "hermetic-host"))]
+    TestModule,
+}
+
+/// How a runtime was entered, with the `render` export each entry guarantees.
+#[derive(Clone, Copy)]
+enum Entry {
+    Widget {
+        render: wasmi::TypedFunc<u32, ()>,
+    },
+    #[cfg(any(test, feature = "hermetic-host"))]
     TestModule,
 }
 
 /// A panic the guest reported through `host_test_panic` before it aborted.
+#[cfg(any(test, feature = "hermetic-host"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuestPanic {
     pub message: String,
@@ -255,6 +270,7 @@ pub struct GuestPanic {
 }
 
 /// Why [`WasmWidgetRuntime::call_test_export`] did not return normally.
+#[cfg(any(test, feature = "hermetic-host"))]
 #[derive(Debug, thiserror::Error)]
 pub enum TestExportError {
     #[error("the module has no `{0}` export of type `() -> ()`")]
@@ -858,7 +874,7 @@ impl WasmWidgetModule {
 pub struct WasmWidgetRuntime {
     pub(super) store: wasmi::Store<HostState>,
     pub(super) instance: wasmi::Instance,
-    render_func: Option<wasmi::TypedFunc<u32, ()>>,
+    entry: Entry,
     /// Optional guest export called best-effort during teardown.
     /// Symmetric counterpart to `init`; gives a widget a chance to release
     /// its own ephemeral state before the host-side safety sweep runs.
@@ -1135,9 +1151,12 @@ impl WasmWidgetRuntime {
         // State is staged; instantiate (running `start`, if any) and resolve exports.
         let instance = linker.instantiate_and_start(&mut store, &module.module)?;
         let sdk_version = check_sdk_version(instance, &mut store)?;
-        let render_func = match entry {
-            EntryPolicy::Widget => Some(instance.get_typed_func::<u32, ()>(&store, "render")?),
-            EntryPolicy::TestModule => instance.get_typed_func::<u32, ()>(&store, "render").ok(),
+        let entered = match entry {
+            EntryPolicy::Widget => Entry::Widget {
+                render: instance.get_typed_func::<u32, ()>(&store, "render")?,
+            },
+            #[cfg(any(test, feature = "hermetic-host"))]
+            EntryPolicy::TestModule => Entry::TestModule,
         };
         let unload_func = instance.get_typed_func::<(), ()>(&store, "unload").ok();
         let on_params_update_func = instance
@@ -1189,7 +1208,7 @@ impl WasmWidgetRuntime {
         Ok(Self {
             store,
             instance,
-            render_func,
+            entry: entered,
             unload_func,
             on_params_update_func,
             on_system_update_func,
@@ -1231,8 +1250,10 @@ impl WasmWidgetRuntime {
         reason = "carries trace-level instrumentation for BDK-293 hot-reload freeze investigation; remove the expect when the tracing comes back out"
     )]
     pub fn render(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
-        let Some(render_func) = self.render_func else {
-            bail!("the module was entered as a test module and exports no `render`");
+        let render_func = match self.entry {
+            Entry::Widget { render } => render,
+            #[cfg(any(test, feature = "hermetic-host"))]
+            Entry::TestModule => bail!("a test module does not render"),
         };
         let state = self.store.data_mut();
         state.last_asset_restoration = None;
@@ -2405,6 +2426,7 @@ impl WasmWidgetRuntime {
     ///
     /// A trap leaves the guest's stack pointer wherever the trap fired,
     /// so each test gets its own instance.
+    #[cfg(any(test, feature = "hermetic-host"))]
     pub fn call_test_export(&mut self, export: &str) -> Result<(), TestExportError> {
         let func = self
             .instance
@@ -2423,6 +2445,7 @@ impl WasmWidgetRuntime {
     }
 
     /// The panic the guest reported through `host_test_panic`, if any, since the last take.
+    #[cfg(any(test, feature = "hermetic-host"))]
     pub fn take_guest_panic(&mut self) -> Option<GuestPanic> {
         self.store.data_mut().guest_panic.take()
     }
@@ -3340,7 +3363,7 @@ mod tests {
     }
 
     #[test]
-    fn a_test_module_without_render_refuses_to_render() {
+    fn a_test_module_refuses_to_render() {
         let mut runtime = test_module(RuntimeConfig::default());
 
         assert!(runtime.render(16, TargetContents::Cleared).is_err());

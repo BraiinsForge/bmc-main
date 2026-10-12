@@ -1565,6 +1565,7 @@ dependencies = [
  "bmc-ui",
  "bmc-wasm-assets",
  "bmc-wasm-protocol",
+ "bmc-wasm-thin-protocol",
  "bmc-widget-manifest",
  "bmc-widget-protocol",
  "chrono",

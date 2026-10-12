@@ -131,6 +131,8 @@ pub use package_assets::{PackageAssetError, PackageAssetStore};
 pub mod capture_config;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
+#[cfg(feature = "hermetic-host")]
+pub mod hermetic_host;
 #[cfg(feature = "prepared-widget")]
 pub mod prepared_widget;
 #[cfg(feature = "capture")]
@@ -145,11 +147,13 @@ pub use host_api::{
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use network::NetworkInfo;
 pub use runtime::{
-    BoundCredential, CredentialView, EntryPolicy, FetchAgent, GuestLogSink, GuestPanic,
-    InterceptedReply, RenderStatus, RendererAssetRestorationObservation,
-    RendererAssetSuspensionObservation, RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits,
-    TargetContents, TestExportError, WasmWidgetModule, WasmWidgetRuntime,
+    BoundCredential, CredentialView, EntryPolicy, FetchAgent, GuestLogSink, InterceptedReply,
+    RenderStatus, RendererAssetRestorationObservation, RendererAssetSuspensionObservation,
+    RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, TargetContents, WasmWidgetModule,
+    WasmWidgetRuntime,
 };
+#[cfg(any(test, feature = "hermetic-host"))]
+pub use runtime::{GuestPanic, TestExportError};
 pub use system::{NextAlarm, SystemSettings, SystemSnapshot};
 
 /// Errors produced by [`parse_params_json`] when an entry violates the wire-format contract.

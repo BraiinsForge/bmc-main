@@ -30,6 +30,7 @@ mod network;
 pub(crate) mod params;
 mod render;
 mod system;
+#[cfg(any(test, feature = "hermetic-host"))]
 mod test_support;
 mod timer;
 
@@ -45,6 +46,13 @@ use super::memory::read_bytes;
 
 pub(super) fn register_host_functions(
     linker: &mut Linker<HostState>,
+    #[cfg_attr(
+        not(any(test, feature = "hermetic-host")),
+        expect(
+            unused_variables,
+            reason = "only a test entry adds imports, and a shipped host has none"
+        )
+    )]
     entry: EntryPolicy,
 ) -> Result<()> {
     render::register(linker)?;
@@ -57,6 +65,7 @@ pub(super) fn register_host_functions(
     params::register(linker)?;
     credentials::register(linker)?;
     timer::register(linker)?;
+    #[cfg(any(test, feature = "hermetic-host"))]
     if entry == EntryPolicy::TestModule {
         test_support::register(linker)?;
     }
