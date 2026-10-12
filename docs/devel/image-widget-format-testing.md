@@ -5,7 +5,7 @@ rather than by any code path — so the failure mode is silent and only visible 
 every format through a real Deck and reports which ones decoded.
 
 Run it when touching the `image` feature list in the workspace `Cargo.toml`, the decode paths in
-`bmc-wasm-runtime/src/runtime/imports/render/assets.rs` or `bmc-render/src/gpu/bitmap.rs`, or the widget's own
+`bmc-wasm-runtime/src/runtime/imports/render/assets.rs` or `bmc-render/src/gpu/bitmap/mod.rs`, or the widget's own
 `max_source_pixels` sniff.
 
 ```sh

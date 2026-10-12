@@ -285,7 +285,7 @@ pub(crate) fn render_modal(
 
     // Body: wrap children in a Scroll node and let the existing scroll system handle everything.
     // The Scroll renderer auto-adds `scrollbar_clearance` on top of `padding.right`
-    // (see `bmc-render/src/tree.rs` Scroll branch), so a uniform `padding` here is
+    // (see `bmc-render/src/tree/layout.rs` Scroll branch), so a uniform `padding` here is
     // the right shape; the right gap stays small.
     let body_scroll_key = format!("{}::body", modal.modal_id);
     let body_scroll = TreeNode::Scroll {

@@ -367,7 +367,7 @@ fn quantity_line(
         // One paragraph, so the unit sits on the number's own baseline.
         // Two nodes could not: `CrossAlign` offers no baseline option,
         // and `VerticalAlign::Baseline` is accepted but drawn as `Center`
-        // (`bmc-render/src/gpu/renderer.rs`).
+        // (`bmc-render/src/gpu/renderer/mod.rs`).
         spans.push(span(
             fmt!(" {unit}"),
             style!(size: label_size, color: color::TEXT_MUTED),

@@ -20,7 +20,7 @@
 
 //! Matrix and quaternion helpers used by the mesh renderer.
 //!
-//! Pure math; no GL or wasm context. Kept separate from `gpu/mesh.rs` so the
+//! Pure math; no GL or wasm context. Kept separate from `gpu/mesh/mod.rs` so the
 //! main file can focus on the GL state machine and renderer lifecycle.
 
 pub(super) fn quat_to_mat3(q: [f32; 4]) -> [[f32; 3]; 3] {

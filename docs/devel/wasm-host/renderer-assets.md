@@ -156,5 +156,5 @@ correctly becomes non-resident.
 | package installation     | `nix/wasm-widgets.nix`                                                        |
 | runtime backing ledger   | `bmc-wasm-runtime/src/renderer_assets.rs`                                     |
 | registration/restoration | `bmc-wasm-runtime/src/runtime/imports/render/assets.rs`, `runtime/backend.rs` |
-| renderer reservations    | `bmc-render/src/gpu/svg.rs`, `bitmap.rs`, `mesh.rs`                           |
+| renderer reservations    | `bmc-render/src/gpu/svg.rs`, `bitmap/mod.rs`, `mesh/`                         |
 | lifecycle/GPU delivery   | `bmc-wasm-host/src/main_loop.rs`, `bmc-wasm-runtime/src/runtime/delivery.rs`  |

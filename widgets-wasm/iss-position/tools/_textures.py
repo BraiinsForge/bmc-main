@@ -69,7 +69,7 @@ BASE_TARGET_W = BASE_TARGET_H * 2
 # so the baked-in country labels soften.
 # Decoded cost grows with the pixel count and then doubles,
 # because registering an encoded bitmap keeps a CPU sampling copy
-# beside the GL texture (bmc-render/src/gpu/bitmap.rs).
+# beside the GL texture (bmc-render/src/gpu/bitmap/mod.rs).
 QUALITY_SCALE = 1.3
 
 # Width is derived, never scaled independently:
