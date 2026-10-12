@@ -154,6 +154,11 @@ src/
 └── main.rs
 ```
 
+The exception is `bmc-render` and the crates nested under it (such as `bmc-render/keyboard`), whose long modules are
+split into self-contained directories: `name/mod.rs` is the production entry point, with tests in `name/tests.rs`, or in
+topic files under `name/tests/` declared by `name/tests/mod.rs` once a suite is large. Keep that layout there rather
+than converting it back.
+
 Always run the Nix formatter (treefmt) after changing any file — don't assume a file type is exempt; the one exclusion
 is `frontend/`, which formats itself with Biome:
 
