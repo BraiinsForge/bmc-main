@@ -18,10 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 const HEADER_COLOR: Color = GRAY_60;

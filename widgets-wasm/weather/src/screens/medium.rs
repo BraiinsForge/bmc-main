@@ -24,10 +24,6 @@ use crate::{
     weather_code,
 };
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 const HOUR_STYLE: HourStyle = HourStyle {
@@ -118,6 +114,7 @@ pub fn medium(
 #[cfg(test)]
 mod tests {
     use bmc_wasm_sdk::system::{self, SnapshotBuilder, TemperatureUnit};
+    use bmc_wasm_sdk::wasm_test;
 
     use super::{HOUR_STYLE, hour_style};
 
@@ -125,7 +122,7 @@ mod tests {
         system::set_current(SnapshotBuilder::new().temperature_unit(unit).build());
     }
 
-    #[test]
+    #[wasm_test]
     fn fahrenheit_shrinks_the_hourly_temperatures_to_seven_eighths() {
         install(TemperatureUnit::Fahrenheit);
         assert_eq!(hour_style().temperature_size, 28);

@@ -23,13 +23,6 @@
 //! Kept here so the grid (dashboard) and list (per-model table) views render identically.
 
 use bmc_wasm_sdk::types::Hashrate;
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::history::{ChartPoint, ChartWindow};
@@ -884,9 +877,11 @@ fn idx_f32(i: usize) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn a_crumb_reaches_the_renderer_whole_capped_to_its_width() {
         const LABEL: &str = "Braiins Mini Miner BMM 101 in the office, by the window";
         let crumb = Crumb {
@@ -907,7 +902,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn no_scale_spans_a_figure_the_axis_cannot_hold() {
         // Infinity reached these through a `<= 0.0` guard and hung the search
         // for a power of ten; a device reporting an absurd hashrate is enough.
@@ -917,7 +912,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_real_peak_scales_to_a_step_the_gridlines_can_climb() {
         for (ceiling, step) in [
             nice_scale(37.0).expect("BUG: 37 is spannable"),
@@ -928,7 +923,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_peak_too_small_to_halve_leaves_no_step_to_climb_by() {
         // `raw / 3.0` underflows to zero here, and zero has no power of ten.
         let smallest = f32::from_bits(1);
@@ -936,13 +931,13 @@ mod tests {
         assert_eq!(nice_scale(smallest), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_peak_near_the_f32_ceiling_leaves_no_finite_step() {
         // Snapping the magnitude up to the next power of ten runs past f32::MAX.
         assert_eq!(nice_step(f32::MAX), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_curve_never_runs_back_on_a_point_close_to_the_one_before() {
         let curve = smooth_curve(&[(0.0, 50.0), (15.0, 40.0), (30.0, 60.0), (31.0, 10.0)]);
         assert!(
@@ -977,7 +972,7 @@ mod tests {
         (1.0 - value / ceiling) * (h - BASELINE_INSET)
     }
 
-    #[test]
+    #[wasm_test]
     fn a_lone_point_draws_on_a_data_fit_axis() {
         let draws = scaled_area_chart(&[vec![POINT]], WINDOW, 200.0, 100.0, 0.0, None, false);
         assert!(
@@ -992,7 +987,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_axis_fits_the_newest_point_too() {
         let newest = ChartPoint {
             at: 750,

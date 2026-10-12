@@ -27,8 +27,7 @@ one line per test binary naming every passing test by module, failures printed i
 commands, the test lines, and whatever failed. A failure ends with `error: recipe validate failed on line N` — that line
 of the root `justfile` is the step; the diagnostic sits just above it. To see one test run by name, use
 `just test CRATE`, or `just test-widget WIDGET FILTER` for a widget's `#[wasm_test]`s on `wasm32` (a shared lib under
-`widgets-wasm/lib/` works too). A widget's plain `#[test]`s run natively, under
-`cargo nextest run --manifest-path widgets-wasm/Cargo.toml -p WIDGET FILTER`.
+`widgets-wasm/lib/` works too).
 
 The frontend is not part of `just validate`: on a branch that changes `frontend/`, run `just fe::validate` separately.
 

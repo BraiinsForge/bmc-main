@@ -24,13 +24,6 @@
 //! BMM101's sits inside the padding.
 
 use bmc_wasm_sdk::types::SiPrefix;
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::{PayoutKind, PoolData, SizeBucket};
@@ -461,14 +454,14 @@ fn hero_prefix(data: &PoolData) -> Option<SiPrefix> {
 #[cfg(test)]
 mod tests {
     use bmc_wasm_sdk::typography::NBSP;
+    use bmc_wasm_sdk::wasm_test;
 
     use super::*;
     use crate::screens::fixtures;
     use crate::screens::tree::texts;
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_frame_reads_top_down_as_designed() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let view = fixtures::sample_big_chart(SizeBucket::Bmm101, true, 5.0);
         assert_eq!(
             texts(&big_chart_view(&view)),
@@ -494,9 +487,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_chart_keeps_its_height_whatever_the_hero_line_holds() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         for worker_states in [true, false] {
             for spread in [0.0, 9.0] {
                 let view = fixtures::sample_big_chart(SizeBucket::Bmm101, worker_states, spread);
@@ -509,9 +501,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_frame_drops_the_workers_with_worker_states_off() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let view = fixtures::sample_big_chart(SizeBucket::Bmm101, false, 5.0);
         let texts = texts(&big_chart_view(&view));
         assert_eq!(
@@ -520,7 +511,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_ticks_count_in_the_unit_the_hero_names() {
         assert_eq!(
             hero_prefix(&fixtures::sample_data(5.0)),

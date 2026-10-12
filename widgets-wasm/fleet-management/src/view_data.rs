@@ -210,6 +210,8 @@ impl DeviceDetailData {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
     use crate::history::{ChartSpan, ChartWindow, HashrateHistory};
@@ -233,14 +235,14 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn degraded_is_the_reachable_not_ok_remainder() {
         assert_eq!(degraded(&grp("m", 10, 6, 2)), 2);
         assert_eq!(degraded(&grp("m", 5, 5, 0)), 0);
         assert_eq!(degraded(&grp("m", 3, 0, 3)), 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn table_row_folds_auth_into_off_so_counts_sum_to_the_total() {
         let mut g = grp("m", 10, 5, 2);
         g.auth_error_count = 3;
@@ -256,7 +258,7 @@ mod tests {
         assert_eq!(row.ok + row.degraded + row.off, 10, "counts add up again");
     }
 
-    #[test]
+    #[wasm_test]
     fn table_paginates_and_clamps_the_page() {
         let groups: Vec<GroupSummary> = (0..9_u64)
             .map(|i| {
@@ -279,7 +281,7 @@ mod tests {
         assert_eq!(last.rows.len(), 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_paginates_devices_and_maps_the_click_id() {
         let rows: Vec<(DeviceId, GroupSummary, DeviceStatus)> = (0..6_u64)
             .map(|i| {
@@ -326,7 +328,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn device_detail_maps_the_group_and_the_raw_reading() {
         let reading = TelemetryReading {
             current_hashrate_ths: Some(15.0),
@@ -370,7 +372,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn device_detail_falls_back_to_catalog_nominal_and_marks_unreachable() {
         let model = crate::model::MinerModel {
             id: "id".to_owned(),

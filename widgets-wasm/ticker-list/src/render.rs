@@ -25,13 +25,6 @@
 
 mod bmm101;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render uses many SDK exports and macros"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::layout::{Band, SizeBucket, band_for, size_bucket};
@@ -650,6 +643,8 @@ fn message_view(message: &str, ws: WidgetSize) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::fixtures;
 
@@ -702,7 +697,7 @@ mod tests {
         WidgetSize::from_dimensions(480, 320)
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_frame_reads_top_down_as_designed() {
         let texts = texts(&view_of(&fixtures::mixed(), bmm101()));
         assert_eq!(
@@ -727,7 +722,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_long_symbol_and_name_are_cut_rather_than_wrapped() {
         let list = fixtures::extremes(fixtures::Extremes {
             long_strings: true,
@@ -756,7 +751,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_stale_row_shows_its_age_in_place_of_the_company_name() {
         for size in [bmm101(), WidgetSize::from_dimensions(638, 480)] {
             let view = view_of(&fixtures::stale(), size);
@@ -769,7 +764,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_empty_list_reads_as_a_message_not_blank_rows() {
         let size = WidgetSize::from_dimensions(638, 480);
         assert_eq!(
@@ -778,7 +773,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_list_whose_rows_all_failed_keeps_each_placeholder() {
         let size = WidgetSize::from_dimensions(638, 480);
         let texts = texts(&view_of(&fixtures::failed(), size));
@@ -789,7 +784,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn full_fills_left_to_right_so_the_first_two_symbols_share_the_top_row() {
         let size = WidgetSize::from_dimensions(1_280, 480);
         let Node::Column(_, body) = view_of(&fixtures::healthy(), size) else {
@@ -803,7 +798,7 @@ mod tests {
         assert_eq!(lead(&halves[2]).as_deref(), Some("AAPL"));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_chartless_list_keeps_each_price_in_its_own_row() {
         let size = WidgetSize::from_dimensions(317, 238);
         let Node::Column(_, body) = view_of(&fixtures::healthy(), size) else {
@@ -838,7 +833,7 @@ mod tests {
             .expect("BUG: the sparkline must contain a stroked path")
     }
 
-    #[test]
+    #[wasm_test]
     fn a_closed_sparkline_uses_the_grey_deck_alpha() {
         let deck = Deck(band_for(SizeVariant::Full));
         let series = [1.0, 2.0];
@@ -853,7 +848,7 @@ mod tests {
         assert_eq!(stroke(true), SECONDARY.with_alpha(CLOSED_CHART_ALPHA));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_company_name_reaches_the_renderer_whole_to_be_ellipsized() {
         use prices::candle::{CandleBar, Candles};
 

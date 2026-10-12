@@ -21,13 +21,6 @@
 //! Fragments every screen shares, and the design tokens behind them.
 //! Each takes its geometry from parameters; the screen decides which.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use bmc_wasm_sdk::system::{self, DateFormat, TimeFormat};
@@ -531,9 +524,14 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
     use bmc_wasm_sdk::system::NumberFormat;
-    use bmc_wasm_sdk::{Node, TextOverflow, assets, cache, encode_image_meta};
+    use bmc_wasm_sdk::wasm_test;
+    use bmc_wasm_sdk::{Node, TextOverflow, cache, encode_image_meta};
 
     use super::{
         CalendarDate, DateFormat, ENDASH, LabelWeight, Yields, clock, contained, date_range, flag,
@@ -546,7 +544,8 @@ mod tests {
     /// Put a decoded flag of `width`×`height` behind `url`.
     fn seed_flag(url: &ImageUrl, width: u32, height: u32) {
         let meta = encode_image_meta(width, height, url.as_str().as_bytes());
-        cache::put(&tag_for(ImageKind::Flag, url), &meta, &[0_u8; 16]);
+        let rgba = vec![0_u8; 4 * width as usize * height as usize];
+        cache::put(&tag_for(ImageKind::Flag, url), &meta, &rgba);
     }
 
     /// The width of the box the bitmap is actually drawn into, rather than
@@ -565,9 +564,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_flag_takes_one_width_whatever_shape_its_country_chose() {
-        assets::init_test_registrars();
         crate::images::invalidate_all();
         let wide = ImageUrl::from("https://flags.test/wide.png".to_owned());
         let square = ImageUrl::from("https://flags.test/square.png".to_owned());
@@ -583,7 +581,7 @@ mod tests {
     /// Every image but a flag draws through this, so a box that stretched
     /// its contents would distort the whole widget at once — which is how
     /// the flags, the marks and the headshots each went out squashed.
-    #[test]
+    #[wasm_test]
     fn a_box_pads_around_its_image_rather_than_stretching_it() {
         // Wider than its box: bars above and below, full width.
         assert_eq!(contained((100, 50), 40.0, 40.0), (0.0, 10.0, 40.0, 20.0));
@@ -614,7 +612,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_total_reads_as_a_whole_number() {
         system::set_current(
             system::SnapshotBuilder::new()
@@ -633,21 +631,21 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_weekend_spanning_days_names_its_month_once() {
         dates(DateFormat::DdMmYyyyDot);
         let range = date_range(weekend_day(21), Some(weekend_day(23)));
         assert_eq!(range, format!("21 {ENDASH} 23 Aug"));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_weekend_of_one_day_reads_as_that_day() {
         dates(DateFormat::DdMmYyyyDot);
         assert_eq!(date_range(weekend_day(23), None), "23 Aug");
         assert_eq!(date_range(weekend_day(23), Some(weekend_day(23))), "23 Aug",);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_weekend_crossing_a_month_names_both_of_them() {
         let across = (day_of(10, 30), Some(day_of(11, 1)));
 
@@ -670,7 +668,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_clock_keeps_the_leading_zero_of_a_minute() {
         assert_eq!(clock(weekend_time(23, 13, 0)), "13:00");
         assert_eq!(clock(weekend_time(21, 9, 5)), "9:05");
@@ -678,7 +676,7 @@ mod tests {
 
     /// The half that holds can't wrap, so it keeps its whole width
     /// and the row takes its overrun out of the other half alone.
-    #[test]
+    #[wasm_test]
     fn a_stat_row_cuts_only_the_half_that_yields() {
         let halves = |node: Node| -> Vec<(String, TextOverflow)> {
             let Node::Row(_, children) = node else {

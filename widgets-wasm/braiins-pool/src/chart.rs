@@ -157,6 +157,8 @@ pub fn decimate(points: Vec<(f32, f32)>, max_points: usize) -> Vec<(f32, f32)> {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::model::Sample;
 
@@ -171,7 +173,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn points_span_the_window_not_the_samples() {
         let points = series_points(&series(&[(0, 0.0), (50, 5.0)]), 10.0, 200.0, 100.0, 0.0);
         assert_eq!(points.len(), 2);
@@ -182,20 +184,20 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn y_maps_zero_to_bottom_and_axis_max_to_top() {
         let points = series_points(&series(&[(0, 0.0), (100, 10.0)]), 10.0, 100.0, 50.0, 2.0);
         assert!((points[0].1 - 48.0).abs() < 1e-6);
         assert!((points[1].1 - 2.0).abs() < 1e-6);
     }
 
-    #[test]
+    #[wasm_test]
     fn values_above_the_axis_clamp_to_the_top() {
         let points = series_points(&series(&[(0, 99.0), (100, 0.0)]), 10.0, 100.0, 50.0, 0.0);
         assert!((points[0].1).abs() < 1e-6);
     }
 
-    #[test]
+    #[wasm_test]
     fn degenerate_series_yield_no_points() {
         assert!(series_points(&series(&[(0, 1.0)]), 10.0, 100.0, 50.0, 0.0).is_empty());
         let mut no_window = series(&[(0, 1.0), (50, 2.0)]);
@@ -203,7 +205,7 @@ mod tests {
         assert!(series_points(&no_window, 10.0, 100.0, 50.0, 0.0).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn y_axis_max_rounds_to_thirds_friendly_top() {
         assert!((y_axis_max(0.0, false) - 3.0).abs() < f64::EPSILON);
         // 349.8 → exponent 1 → divisor 30 → ceil(11.66) = 12 → 360
@@ -214,7 +216,7 @@ mod tests {
 
     /// Every top the axis yields becomes a `clamp` bound, and a reply's number
     /// reaches it unchecked.
-    #[test]
+    #[wasm_test]
     fn y_axis_max_survives_the_extremes_of_f64() {
         for (value, integer_round) in [
             // The divisor's decade underflows to zero.
@@ -232,14 +234,14 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_non_finite_axis_yields_no_points() {
         let samples = series(&[(0, 1.0), (50, 2.0)]);
         assert!(series_points(&samples, f64::NAN, 100.0, 50.0, 0.0).is_empty());
         assert!(series_points(&samples, f64::INFINITY, 100.0, 50.0, 0.0).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn axis_labels_divide_into_thirds() {
         let labels = axis_thirds(360.0);
         assert!((labels[1] - 240.0).abs() < 1e-9);
@@ -247,7 +249,7 @@ mod tests {
         assert!((labels[3]).abs() < f64::EPSILON);
     }
 
-    #[test]
+    #[wasm_test]
     fn x_axis_marks_span_endpoints_evenly() {
         let marks = x_axis_marks(0, 600, 5);
         assert_eq!(marks.len(), 5);
@@ -258,7 +260,7 @@ mod tests {
         assert!(x_axis_marks(0, 600, 1).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn time_fraction_clamps_to_the_span() {
         assert_eq!(time_fraction(150, 100, 200), Some(0.5));
         assert_eq!(time_fraction(99, 100, 200), None);
@@ -266,7 +268,7 @@ mod tests {
         assert_eq!(time_fraction(100, 100, 100), None);
     }
 
-    #[test]
+    #[wasm_test]
     #[expect(
         clippy::cast_precision_loss,
         reason = "indices up to 2016 are exact in f32"

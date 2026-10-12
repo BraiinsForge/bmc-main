@@ -589,13 +589,15 @@ impl Data {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{
         CarNumber, Color, Data, DriverCard, DriverStats, DriverStatus, DriverTeam,
         FALLBACK_TEAM_COLOR, ImageUrl, LiveBoard, SectorColor, SizeBucket, Team, TimingBoard,
         TimingText, TireCompound, size_bucket, team_color,
     };
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
         assert_ne!(
@@ -611,7 +613,7 @@ mod tests {
         assert_ne!(size_bucket(320, 480), SizeBucket::Bmm101, "portrait");
     }
 
-    #[test]
+    #[wasm_test]
     fn each_panel_lands_in_its_layout() {
         let panels = [
             ("BMM101", (480, 320), SizeBucket::Bmm101),
@@ -642,14 +644,14 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_livery_colour_reads_with_or_without_its_hash() {
         let expected = Color::from_hex(0x00_D7_B6);
         assert_eq!(team_color("00D7B6"), expected);
         assert_eq!(team_color("#00D7B6"), expected);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unusable_livery_colour_falls_back_rather_than_dropping_the_row() {
         for hex in ["", "00D7B", "00D7B6AA", "ZZZZZZ", "#"] {
             assert_eq!(
@@ -660,14 +662,14 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_absent_image_is_distinguishable_from_one_we_have() {
         assert!(!ImageUrl::default().is_present());
         assert!(ImageUrl::from("https://example.test/a.png".to_owned()).is_present());
     }
 
     /// A country the upstream holds no flag image of arrives as the emoji.
-    #[test]
+    #[wasm_test]
     fn a_flag_emoji_is_not_something_to_fetch() {
         assert!(!ImageUrl::from("🇮🇹".to_owned()).is_present());
     }
@@ -675,7 +677,7 @@ mod tests {
     /// A driver's own payload names a team without identifying it, so
     /// the mark takes two hops — and matching on the name instead went
     /// unnoticed here for as long as both sides spelled it alike.
-    #[test]
+    #[wasm_test]
     fn a_drivers_mark_comes_from_the_team_its_index_row_names() {
         let data = Data {
             teams: vec![Team {
@@ -700,7 +702,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_servers_dash_placeholder_counts_as_nothing_to_print() {
         assert!(TimingText::default().is_blank());
         assert!(TimingText::from("-".to_owned()).is_blank());
@@ -708,7 +710,7 @@ mod tests {
         assert!(!TimingText::from("+1.204".to_owned()).is_blank());
     }
 
-    #[test]
+    #[wasm_test]
     fn tire_compounds_round_trip_their_wire_letters() {
         for compound in [
             TireCompound::Soft,
@@ -722,7 +724,7 @@ mod tests {
         assert_eq!(TireCompound::from_wire("X"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unrecognised_sector_colour_reads_as_normal() {
         assert_eq!(SectorColor::from_wire("purple"), SectorColor::OverallBest);
         assert_eq!(SectorColor::from_wire("green"), SectorColor::PersonalBest);
@@ -730,13 +732,13 @@ mod tests {
         assert_eq!(SectorColor::from_wire("chartreuse"), SectorColor::Normal);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unknown_driver_status_is_absent_rather_than_wrong() {
         assert_eq!(DriverStatus::from_wire("RET"), Some(DriverStatus::Retired));
         assert_eq!(DriverStatus::from_wire("BOX"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn only_the_non_finishing_statuses_read_as_out() {
         assert!(DriverStatus::Retired.is_out());
         assert!(DriverStatus::Disqualified.is_out());
@@ -745,7 +747,7 @@ mod tests {
         assert!(!DriverStatus::Finished.is_out());
     }
 
-    #[test]
+    #[wasm_test]
     fn the_race_outranks_qualifying_which_outranks_practice() {
         let mut data = Data {
             live_practice: board("practice"),
@@ -767,7 +769,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_board_without_rows_is_not_a_session_in_progress() {
         // The server empties the entry list around a session's edges;
         // an empty board must not outrank the next-race screen.
@@ -784,7 +786,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_idle_board_is_not_a_running_session() {
         let data = Data {
             live_race: LiveBoard::Idle,
@@ -797,7 +799,7 @@ mod tests {
 
     /// A switch to another driver shows the card loading, not missing,
     /// until the fetch for that driver settles.
-    #[test]
+    #[wasm_test]
     fn a_card_reads_unavailable_only_once_its_fetch_settles_without_one() {
         let mut data = Data::default();
         assert!(matches!(data.selected_driver_card(), DriverCard::Loading));
@@ -808,7 +810,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_failed_refresh_keeps_the_card_already_held() {
         let mut card = DriverCard::Ready(driver("hamilton", 44, "Lewis Hamilton"));
         card.settle_without_card();
@@ -818,7 +820,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_selected_driver_joins_the_stats_table_by_its_key() {
         let data = Data {
             driver: DriverCard::Ready(driver("hamilton", 44, "Lewis Hamilton")),
@@ -837,7 +839,7 @@ mod tests {
 
     /// Car numbers are unique within a season but not across the sources
     /// the two resources derive from, which is why the join left them.
-    #[test]
+    #[wasm_test]
     fn a_number_shared_with_another_driver_joins_neither_to_the_other() {
         let data = Data {
             driver: DriverCard::Ready(driver("hamilton", 44, "Lewis Hamilton")),
@@ -855,7 +857,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_driver_missing_from_the_stats_table_still_renders_what_we_have() {
         // The tables come from different upstreams, so a driver can
         // appear in one before the other. The thinner row beats nothing.
@@ -870,7 +872,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn nothing_is_selected_before_the_driver_resource_answers() {
         let data = Data {
             driver_stats: vec![driver("max_verstappen", 1, "Max Verstappen")],

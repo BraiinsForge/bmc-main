@@ -25,10 +25,6 @@ use crate::{
 };
 use units::units::DegreeCelsius;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 // Dark-theme design tokens, mirrored from the deckfeeder weather widget:

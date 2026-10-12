@@ -92,6 +92,8 @@ pub fn sum_chips<J: JsonLookup + ?Sized>(json: &J) -> ChipSummary {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use std::collections::BTreeMap;
 
@@ -120,12 +122,12 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn empty_document_yields_no_chips() {
         assert_eq!(sum_chips(&MapJson::default()), ChipSummary::default());
     }
 
-    #[test]
+    #[wasm_test]
     fn single_board_reports_model_and_count() {
         let mut j = MapJson::default();
         j.strings.insert("/hashboards/0/chip_type", "BM1370");
@@ -135,7 +137,7 @@ mod tests {
         assert_eq!(s.count, Some(108));
     }
 
-    #[test]
+    #[wasm_test]
     fn sums_count_and_takes_first_model_across_boards() {
         let mut j = MapJson::default();
         j.strings.insert("/hashboards/0/chip_type", "BM1370");
@@ -148,7 +150,7 @@ mod tests {
         assert_eq!(s.count, Some(324));
     }
 
-    #[test]
+    #[wasm_test]
     fn skips_gaps_and_takes_first_present_board() {
         // Board 0 absent; boards past the gap still count, and the model comes
         // from the first present board rather than the literal first slot.

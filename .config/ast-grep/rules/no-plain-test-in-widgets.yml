@@ -1,0 +1,18 @@
+# A widget's tests run on wasm32 under the wasm test runner, which only sees `#[wasm_test]`.
+# A plain `#[test]` still compiles there and never runs, so a passing run says nothing about it.
+
+id: no-plain-test-in-widgets
+language: rust
+severity: error
+
+message: Plain `#[test]` in widget code — the wasm run never sees it; mark it `#[wasm_test]`, imported with `use bmc_wasm_sdk::wasm_test;`.
+
+files:
+  - "widgets-wasm/**/*.rs"
+  - "widgets-wasm-examples/**/*.rs"
+
+rule:
+  kind: attribute_item
+  regex: ^#\[test\]$
+
+fix: "#[wasm_test]"

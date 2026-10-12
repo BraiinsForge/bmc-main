@@ -42,10 +42,6 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::time::Duration;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget code uses many SDK types, macros, and helpers"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::images::{self, ImageKind, tag_for};

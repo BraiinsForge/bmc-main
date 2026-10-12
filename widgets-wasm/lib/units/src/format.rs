@@ -140,40 +140,42 @@ pub fn fixed_strip_zero_fraction<Q: Quantity>(value: Availability<Q>, decimals: 
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::units::{Percent, Watt};
 
-    #[test]
+    #[wasm_test]
     fn temperature_appends_the_celsius_scale() {
         assert_eq!(temperature(DegreeCelsius(20.0), 0), "20 °C");
         assert_eq!(temperature(DegreeCelsius(-3.4), 0), "-3 °C");
     }
 
-    #[test]
+    #[wasm_test]
     fn temperature_bare_drops_the_scale_letter() {
         assert_eq!(temperature_bare(DegreeCelsius(26.0), 0), "26°");
     }
 
-    #[test]
+    #[wasm_test]
     fn speed_converts_kilometers_per_hour_to_meters_per_second() {
         assert_eq!(speed(KilometerPerHour(12.6), 1), "3,5 m/s");
     }
 
-    #[test]
+    #[wasm_test]
     fn fixed_sources_unit_from_the_quantity_type() {
         let rendered = fixed(Availability::Available(Watt(120.0)), 0);
         assert_eq!(rendered.value, "120");
         assert_eq!(rendered.unit, Some("W"));
     }
 
-    #[test]
+    #[wasm_test]
     fn unavailable_quantity_has_no_unit() {
         let rendered = fixed(Availability::<Watt>::Unavailable, 0);
         assert_eq!(rendered.value, "N/A");
         assert_eq!(rendered.unit, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn strips_zero_fraction_from_fixed_value() {
         assert_eq!(
             fixed_strip_zero_fraction(Availability::Available(Percent(50.0)), 2).value,

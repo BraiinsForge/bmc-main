@@ -501,6 +501,8 @@ impl DeviceList {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::telemetry::TelemetryReading;
 
@@ -514,7 +516,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn upsert_inserts_a_new_device() {
         let mut list = DeviceList::new();
         assert!(list.is_empty());
@@ -524,7 +526,7 @@ mod tests {
         assert!(!list.is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn upsert_updates_existing_device_with_same_id() {
         let mut list = DeviceList::new();
         assert!(list.upsert(identity("a._http._tcp.local.", "10.0.0.1")));
@@ -538,7 +540,7 @@ mod tests {
         assert_eq!(dev.identity.host, "10.0.0.9");
     }
 
-    #[test]
+    #[wasm_test]
     fn upsert_does_not_mark_a_device_reachable() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -549,7 +551,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn for_family_namespaces_the_id_by_family() {
         let bos = DeviceId::for_family(DeviceFamily::Bos, "x._http._tcp.local.");
         let axe = DeviceId::for_family(DeviceFamily::Bitaxe, "x._http._tcp.local.");
@@ -561,7 +563,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn remove_drops_device_by_id() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -569,7 +571,7 @@ mod tests {
         assert!(list.is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn an_mdns_removal_drops_a_miner_that_never_answered() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
@@ -585,7 +587,7 @@ mod tests {
         assert!(list.is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn an_mdns_removal_keeps_a_confirmed_miner() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
@@ -596,7 +598,7 @@ mod tests {
         assert_eq!(list.len(), 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_mdns_removal_keeps_a_miner_waiting_for_its_account() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
@@ -611,7 +613,7 @@ mod tests {
         assert_eq!(list.len(), 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_mdns_removal_of_an_unknown_id_changes_nothing() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -624,7 +626,7 @@ mod tests {
         assert_eq!(list.seq(), before);
     }
 
-    #[test]
+    #[wasm_test]
     fn every_mutation_advances_seq() {
         // The fold keys on seq; a mutation that left it unchanged would never be folded,
         // so a removed miner would linger in the summary.
@@ -648,7 +650,7 @@ mod tests {
         assert!(list.seq() > before, "remove must advance seq");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_call_that_changes_nothing_leaves_seq_alone() {
         // A pass finishing for a device that discovery already dropped
         // mutates nothing, so it must not invalidate the cached summary.
@@ -676,28 +678,28 @@ mod tests {
         assert_eq!(list.seq(), before, "clearing a family with no devices");
     }
 
-    #[test]
+    #[wasm_test]
     fn family_label_covers_all_families() {
         assert_eq!(family_label(DeviceFamily::Bos), "BOS");
         assert_eq!(family_label(DeviceFamily::Ubos), "Forge Firmware");
         assert_eq!(family_label(DeviceFamily::Bitaxe), "Bitaxe");
     }
 
-    #[test]
+    #[wasm_test]
     fn family_all_is_consistent_with_index() {
         for (i, family) in DeviceFamily::ALL.iter().enumerate() {
             assert_eq!(family.index(), i, "ALL order must match index()");
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn family_id_is_a_lowercase_slug_per_family() {
         assert_eq!(family_id(DeviceFamily::Bos), "bos");
         assert_eq!(family_id(DeviceFamily::Ubos), "ubos");
         assert_eq!(family_id(DeviceFamily::Bitaxe), "bitaxe");
     }
 
-    #[test]
+    #[wasm_test]
     fn device_id_exposes_its_string() {
         assert_eq!(
             DeviceId::new("miner-a._http._tcp.local.").as_str(),
@@ -705,7 +707,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn apply_telemetry_stamps_reading_and_reachability() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -720,7 +722,7 @@ mod tests {
         assert_eq!(snap.reading.power_w, Some(3_000.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn apply_telemetry_can_mark_unreachable() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -732,7 +734,7 @@ mod tests {
         assert!(!list.iter().next().expect("BUG: present").reachable);
     }
 
-    #[test]
+    #[wasm_test]
     fn credential_slot_covers_each_family() {
         assert_eq!(credential_slot(DeviceFamily::Bos), Some("bos"));
         assert_eq!(credential_slot(DeviceFamily::Ubos), Some("ubos"));
@@ -760,7 +762,7 @@ mod tests {
         credentials::Snapshot::from_bytes(&bytes)
     }
 
-    #[test]
+    #[wasm_test]
     fn binding_one_slot_restarts_only_its_family() {
         assert_eq!(
             families_on_new_credentials(&snapshot(&[("bos", "Fleet")]), &snapshot(&[])),
@@ -768,7 +770,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn unbinding_a_slot_restarts_only_its_family() {
         assert_eq!(
             families_on_new_credentials(
@@ -779,7 +781,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn swapping_an_account_restarts_its_family() {
         let before = snapshot(&[("bos", "Fleet"), ("ubos", "Old")]);
         let after = snapshot(&[("bos", "Fleet"), ("ubos", "New")]);
@@ -790,7 +792,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unchanged_view_is_a_rotation_that_restarts_every_authenticating_family() {
         let view = snapshot(&[("bos", "Fleet")]);
 
@@ -801,7 +803,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn mark_account_unusable_blanks_the_family_but_keeps_its_model() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
@@ -820,7 +822,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn mark_account_unusable_leaves_other_families_intact() {
         let mut list = DeviceList::new();
         let axe = DeviceIdentity {
@@ -837,7 +839,7 @@ mod tests {
         assert!(axe.reachable && axe.last_failure.is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn unbinding_an_account_keeps_the_family_in_its_model_groups() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
@@ -854,7 +856,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn rebinding_an_account_starts_the_family_over() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
@@ -870,7 +872,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn rebinding_an_account_keeps_the_family_in_its_model_groups() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
@@ -888,7 +890,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn clear_telemetry_for_drops_readings() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -903,7 +905,7 @@ mod tests {
         assert!(!dev.reachable);
     }
 
-    #[test]
+    #[wasm_test]
     fn clear_telemetry_for_leaves_other_families_intact() {
         let mut list = DeviceList::new();
         list.upsert(identity("bos._http._tcp.local.", "10.0.0.1"));
@@ -940,7 +942,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn ids_for_family_filters_to_one_family() {
         let mut list = DeviceList::new();
         list.upsert(identity("bos._http._tcp.local.", "10.0.0.1"));
@@ -955,7 +957,7 @@ mod tests {
         assert!(list.ids_for_family(DeviceFamily::Bitaxe).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn ids_lists_every_device_in_order() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -976,7 +978,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn apply_model_stamps_model_onto_device() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
@@ -985,7 +987,7 @@ mod tests {
         assert_eq!(dev.model.as_ref().map(|m| m.name.as_str()), Some("BMM 101"));
     }
 
-    #[test]
+    #[wasm_test]
     fn upsert_with_model_hint_stamps_model_onto_new_device() {
         let mut list = DeviceList::new();
         let is_new = list.upsert_with_model_hint(
@@ -1003,7 +1005,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn upsert_with_no_model_hint_preserves_existing_model() {
         let mut list = DeviceList::new();
         list.upsert_with_model_hint(
@@ -1032,7 +1034,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn record_pass_returns_the_consecutive_failure_count() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1048,7 +1050,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn record_pass_keeps_last_values_through_two_failures() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1067,7 +1069,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn record_pass_marks_unreachable_on_third_consecutive_failure() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1086,7 +1088,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn record_pass_success_resets_the_failure_streak() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1104,7 +1106,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn record_pass_success_after_red_restores_reachable_with_new_reading() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1135,7 +1137,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn record_pass_never_reached_device_stays_not_reachable_below_threshold() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1151,7 +1153,7 @@ mod tests {
         assert!(dev.telemetry.is_none(), "there are no values to keep");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_discovered_device_is_unconfirmed_until_it_answers() {
         let mut list = DeviceList::new();
         list.upsert(identity("a", "10.0.0.1"));
@@ -1159,7 +1161,7 @@ mod tests {
         assert!(!dev.confirmed, "unconfirmed until it answers");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reachable_pass_confirms_the_device() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1169,7 +1171,7 @@ mod tests {
         assert!(dev.confirmed, "answering a poll proves the miner");
     }
 
-    #[test]
+    #[wasm_test]
     fn census_counts_by_confirmation_and_liveness() {
         let mut list = DeviceList::new();
         let confirmed = DeviceId::new("a");
@@ -1184,7 +1186,7 @@ mod tests {
         assert_eq!(c.reachable, 1, "only the answered device is reachable");
     }
 
-    #[test]
+    #[wasm_test]
     fn confirmation_survives_a_credential_clear() {
         // A confirmed device stays confirmed (and reported) when a credential
         // change clears its telemetry — it must not drop out of the report.
@@ -1200,7 +1202,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_confirmed_device_is_never_demoted_when_red() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1214,7 +1216,7 @@ mod tests {
         assert!(dev.confirmed, "a red miner stays a proven miner");
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unanswering_device_stays_in_the_fleet() {
         // A uBOS whose API 503s, or a miner still booting, must not be dropped.
         let mut list = DeviceList::new();
@@ -1230,7 +1232,7 @@ mod tests {
         assert!(!dev.confirmed, "and stays unconfirmed");
     }
 
-    #[test]
+    #[wasm_test]
     fn set_last_failure_records_the_reason_and_a_reachable_pass_clears_it() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1249,7 +1251,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn clear_telemetry_for_resets_the_failure_streak() {
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");
@@ -1284,7 +1286,7 @@ mod tests {
         id
     }
 
-    #[test]
+    #[wasm_test]
     fn prune_gone_retires_a_device_unreachable_past_the_ttl() {
         let mut list = DeviceList::new();
         let id = make_gone(
@@ -1300,7 +1302,7 @@ mod tests {
         assert!(list.is_empty(), "a long-gone device is dropped");
     }
 
-    #[test]
+    #[wasm_test]
     fn prune_gone_spares_an_api_erroring_device() {
         let mut list = DeviceList::new();
         make_gone(
@@ -1314,7 +1316,7 @@ mod tests {
         assert_eq!(list.len(), 1, "a 503 device stays in the fleet");
     }
 
-    #[test]
+    #[wasm_test]
     fn prune_gone_spares_a_device_without_a_usable_account() {
         let mut list = DeviceList::new();
         make_gone(
@@ -1329,7 +1331,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn prune_gone_timer_resets_when_a_device_recovers() {
         let mut list = DeviceList::new();
         let id = make_gone(

@@ -28,6 +28,7 @@
 , fonts
 , protoPlugins
 , frontendNodeModules
+, wasm-test-runner
 , wasmExamples
 , wasmWidgetsBundle
 , wasmStackSize
@@ -42,6 +43,7 @@ let
   # environment variable replaces its rustflags array rather than merging it.
   wasmStackConfig = ../.cargo/config.toml;
   examplesCargoConfig = ../widgets-wasm-examples + "/.cargo/config.toml";
+  widgetsCargoConfig = ../widgets-wasm + "/.cargo/config.toml";
   configuredStackSize = config:
     let
       sizes = lib.filter (match: match != null)
@@ -319,8 +321,9 @@ in
       (configuredStackSize wasmStackConfig == wasmStackSize)
       "cargo config disagrees with workspace.nix on the wasm stack size (${toString wasmStackSize})";
     assert lib.assertMsg
-      (!(builtins.pathExists (../widgets-wasm + "/.cargo/config.toml")))
-      "widgets-wasm/.cargo/config.toml would override the repository wasm rustflags";
+      (!(builtins.pathExists widgetsCargoConfig)
+        || configuredStackSize widgetsCargoConfig == null)
+      "the widget cargo config must not override the repository wasm rustflags";
     assert lib.assertMsg
       (!(builtins.pathExists examplesCargoConfig)
         || configuredStackSize examplesCargoConfig == null)
@@ -332,18 +335,52 @@ in
       touch $out
     '';
 
-  docs-wasm = profiles.fast.mkCargoDoc {
+  docs-wasm = profiles.wasm-widgets-debug.mkCargoDoc {
     package = "bmc-wasm-sdk";
   };
 
   build-wasm-widgets = profiles.wasm-widgets-debug.build;
 
   clippy-wasm-widgets = profiles.wasm-widgets-debug.clippy.overrideAttrs (old: {
-    buildPhase = builtins.replaceStrings [ " --all-targets" ] [ " --target wasm32-unknown-unknown" ] old.buildPhase;
+    buildPhase = builtins.replaceStrings [ " --all-targets" ] [ " --all-targets --target wasm32-unknown-unknown" ] old.buildPhase;
   });
 
-  # Widget unit tests, compiled and run on the host target.
-  test-wasm-widgets = profiles.wasm-widgets-host.nextest;
+  # The SDK's wasm32 side, linted from the root workspace:
+  # in the widget workspace it is a dependency, which clippy does not lint.
+  clippy-wasm-sdk = profiles.ci.clippy.overrideAttrs (old: {
+    buildPhase =
+      let
+        rewritten = builtins.replaceStrings
+          [ "--workspace --keep-going --all-features --all-targets" ]
+          [ "--package bmc-wasm-sdk --target wasm32-unknown-unknown --keep-going --all-features --all-targets" ]
+          old.buildPhase;
+      in
+      assert lib.assertMsg (rewritten != old.buildPhase)
+        "clippy-wasm-sdk: nix-lib's clippy no longer passes --workspace --keep-going --all-features --all-targets";
+      rewritten;
+  });
+
+  # Widget unit tests, run on wasm32 under the wasm test runner.
+  # The variable outranks the root cargo config's runner, a script the sandbox does not hold.
+  test-wasm-widgets = profiles.wasm-widgets-debug.nextest.overrideAttrs (_: {
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER = "${wasm-test-runner}/bin/wasm-test";
+  });
+
+  # The SDK's `#[wasm_test]`s, built in the widget workspace
+  # that depends on it: the root workspace has no wasm32 profile.
+  test-wasm-sdk = profiles.wasm-widgets-debug.nextest.overrideAttrs (old: {
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER = "${wasm-test-runner}/bin/wasm-test";
+    checkPhase =
+      let
+        rewritten = builtins.replaceStrings
+          [ "--workspace --hide-progress-bar" ]
+          [ "--package bmc-wasm-sdk --hide-progress-bar" ]
+          old.checkPhase;
+      in
+      assert lib.assertMsg (rewritten != old.checkPhase)
+        "test-wasm-sdk: nix-lib's nextest no longer passes --workspace";
+      rewritten;
+  });
 
   # Every first-party source file must carry the GPL license header.
   # The script's exclusion list mirrors docs/devel/license-headers.md.

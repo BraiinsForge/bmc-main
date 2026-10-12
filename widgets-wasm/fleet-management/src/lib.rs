@@ -47,10 +47,6 @@ mod contract;
 mod manifest_params;
 
 #[cfg(target_arch = "wasm32")]
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
-)]
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -679,6 +675,8 @@ fn restart_family(family: DeviceFamily) {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{
         DORMANT_TICK_PERIOD_MS,
         device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceList},
@@ -686,7 +684,7 @@ mod tests {
         record_polled_hashrate,
     };
 
-    #[test]
+    #[wasm_test]
     fn a_poll_landing_after_its_device_left_records_nothing() {
         let mut h = HashrateHistory::default();
         let mut list = DeviceList::new();
@@ -708,7 +706,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_dormant_tick_lands_in_every_slot_of_the_finest_tier() {
         let finest_secs = ChartSpan::ALL
             .iter()

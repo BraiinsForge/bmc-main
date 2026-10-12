@@ -18,10 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "screen fragments use the SDK's tree builders, macros, and tokens throughout"
-)]
 use bmc_wasm_sdk::*;
 
 use bmc_wasm_sdk::typography::unbroken;
@@ -431,7 +427,13 @@ pub fn duration_minutes(seconds: u64) -> String {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     /// The draw kind and colour of each canvas entry, in paint order.
@@ -453,7 +455,7 @@ mod tests {
             .collect()
     }
 
-    #[test]
+    #[wasm_test]
     fn a_sparkline_draws_its_gridlines_under_the_area_and_line() {
         let series = Series {
             values: vec![1.0, 2.0, 3.0],
@@ -480,7 +482,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_corner_label_is_the_last_thing_a_sparkline_draws() {
         let series = Series {
             values: vec![3.0, 2.0, 1.0],
@@ -506,7 +508,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn series_change_uses_first_and_last_samples() {
         let series = Series {
             values: vec![100.0, 110.0, 105.0],
@@ -514,7 +516,7 @@ mod tests {
         assert!((series_change_percent(&series).expect("BUG: change exists") - 5.0).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn one_sample_has_no_trend() {
         assert_eq!(
             series_change_percent(&Series {
@@ -524,7 +526,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn overflowing_change_has_no_trend() {
         assert_eq!(
             series_change_percent(&Series {
@@ -534,7 +536,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn missing_percent_reserves_an_empty_badge_slot() {
         let font_size = 24;
         let expected_size = font_height(font_size) + BADGE_PADDING * 2.0;
@@ -550,12 +552,12 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn previous_adjustment_uses_elapsed_epoch_time() {
         assert_eq!(previous_adjustment_days(1_293, 559), "8 days ago");
     }
 
-    #[test]
+    #[wasm_test]
     fn both_adjustment_rows_round_to_the_nearest_day() {
         let half_day = i64::try_from(HALF_DAY_SECS).expect("BUG: half a day fits i64");
         assert_eq!(relative_days(half_day, 0), "~ in 1 days");
@@ -564,25 +566,25 @@ mod tests {
         assert_eq!(previous_adjustment_days(1, HALF_DAY_SECS - 1), "0 days ago");
     }
 
-    #[test]
+    #[wasm_test]
     fn block_time_pads_both_components() {
         assert_eq!(duration_minutes(9 * 60 + 9), "09:09");
     }
 
-    #[test]
+    #[wasm_test]
     fn difficulty_climbs_through_tera_peta_and_exa() {
         assert_eq!(difficulty_parts(129.7e12).1, "T");
         assert_eq!(difficulty_parts(999.96e12).1, "P");
         assert_eq!(difficulty_parts(2.5e18).1, "E");
     }
 
-    #[test]
+    #[wasm_test]
     fn large_numbers_use_compact_units() {
         assert!(compact_number(49_350_000.0, 2).ends_with('M'));
         assert!(compact_number(9_999_999_999.99, 2).ends_with('B'));
     }
 
-    #[test]
+    #[wasm_test]
     fn rounded_compact_numbers_promote_to_the_next_unit() {
         assert_eq!(
             [
@@ -600,7 +602,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn compact_numbers_below_the_rounding_boundary_keep_their_unit() {
         assert_eq!(compact_number(999.994, 2), format_number!(999.994, 2));
         assert_eq!(
@@ -609,7 +611,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn extreme_percentages_drop_fractional_precision() {
         assert_eq!(percent_label(-99.99), "-100%");
         let positive: String = percent_label(999.99)
@@ -619,7 +621,7 @@ mod tests {
         assert_eq!(positive, "+1000%");
     }
 
-    #[test]
+    #[wasm_test]
     fn percentage_precision_follows_the_numeric_hundredths() {
         assert_eq!(
             [

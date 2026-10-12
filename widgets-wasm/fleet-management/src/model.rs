@@ -67,9 +67,11 @@ impl ModelAccumulator {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn accumulator_missing_id_or_name_yields_no_model() {
         let no_name = ModelAccumulator {
             id: Some("am2-s17".to_owned()),
@@ -86,7 +88,7 @@ mod tests {
         assert_eq!(ModelAccumulator::default().into_model(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn accumulator_with_id_and_name_builds_a_model_carrying_every_field() {
         let acc = ModelAccumulator {
             id: Some("stm32mp157c-ii2-bmm1".to_owned()),
@@ -104,7 +106,7 @@ mod tests {
         assert_eq!(model.nominal_hashrate_ths, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn into_model_stamps_catalog_nominal_for_a_known_ubos_model() {
         let acc = ModelAccumulator {
             id: Some("Braiins Forge Miner x4".to_owned()),
@@ -117,7 +119,7 @@ mod tests {
         assert_eq!(model.nominal_hashrate_ths, Some(4.8));
     }
 
-    #[test]
+    #[wasm_test]
     fn into_model_leaves_an_uncataloged_model_without_a_nominal() {
         let acc = ModelAccumulator {
             id: Some("mystery".to_owned()),

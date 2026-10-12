@@ -100,9 +100,11 @@ impl Candle {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn parse_round_trips_every_window_token() {
         // The manifest wire value is the Nexus window token verbatim, so
         // parse must accept exactly the tokens window() produces.
@@ -112,7 +114,7 @@ mod tests {
         assert_eq!(Period::ALL.len(), 4);
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_rejects_legacy_and_near_miss_tokens() {
         // "30d" was the pre-rename manifest value; Nexus year tokens are
         // uppercase, so lowercase forms must not resolve.
@@ -124,7 +126,7 @@ mod tests {
         assert_eq!(Period::parse("FULL"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn candle_sizes_match_period_sampling() {
         assert_eq!(Period::H1.candle(), Candle::M1);
         assert_eq!(Period::D1.candle(), Candle::M15);
@@ -132,7 +134,7 @@ mod tests {
         assert_eq!(Period::Mo1.candle(), Candle::D1);
     }
 
-    #[test]
+    #[wasm_test]
     fn candle_width_table_is_the_bucket_seconds() {
         assert_eq!(Candle::M1.width_secs(), 60);
         assert_eq!(Candle::M15.width_secs(), 900);
@@ -140,7 +142,7 @@ mod tests {
         assert_eq!(Candle::D1.width_secs(), 86_400);
     }
 
-    #[test]
+    #[wasm_test]
     fn candle_tokens_match_nexus() {
         assert_eq!(Candle::M1.token(), "1m");
         assert_eq!(Candle::M15.token(), "15m");

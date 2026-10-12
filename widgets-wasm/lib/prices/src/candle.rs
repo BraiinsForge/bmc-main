@@ -234,10 +234,12 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::tests_support::MapJson;
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn parses_ascending_bars_and_converts_ms_to_seconds() {
         let mut json = MapJson::default();
         json.strings
@@ -255,7 +257,7 @@ mod tests {
         assert_eq!(candles.bars.last().map(|b| b.close), Some(101.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn an_interior_incomplete_bucket_is_skipped_not_truncated() {
         // A single bad bucket in the middle must not drop the rest of the
         // series.
@@ -271,7 +273,7 @@ mod tests {
         assert_eq!(candles.bars.last().map(|b| b.close), Some(13.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn float_encoded_timestamp_and_timestamp_gap_do_not_truncate_the_tail() {
         let mut json = MapJson::default();
         json.bar(0, 0, 10.0);
@@ -291,7 +293,7 @@ mod tests {
         assert_eq!(candles.bars.last().map(|bar| bar.close), Some(13.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn missing_t_marks_the_end_of_the_array() {
         let mut json = MapJson::default();
         json.bar(0, 0, 10.0);
@@ -301,19 +303,22 @@ mod tests {
         assert_eq!(candles.bars.len(), 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn empty_response_is_none() {
         let json = MapJson::default();
         assert_eq!(parse_candles(&json), None);
     }
 
-    #[test]
+    #[wasm_test(
+        fuel = 250e6,
+        reason = "the cap only shows past 2,048 bars, each five string keys in the MapJson double"
+    )]
     fn cap_keeps_the_newest_candles() {
         // An oversized response must drop the oldest bars, not the live
         // tail: the chart and the current price come from the series end.
         let mut json = MapJson::default();
-        for i in 0..(MAX_CANDLES + 50) {
-            json.bar(i, i as i64 * 1_000, 1.0);
+        for (i, t_ms) in (0..(MAX_CANDLES + 50)).zip((0_i64..).step_by(1_000)) {
+            json.bar(i, t_ms, 1.0);
         }
         let candles = parse_candles(&json).expect("BUG: fixture parses to capped bars");
         assert_eq!(candles.bars.len(), MAX_CANDLES);
@@ -328,22 +333,28 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test(
+        fuel = 500e6,
+        reason = "the guard only trips past 4,096 bars, each five string keys in the MapJson double"
+    )]
     fn payload_beyond_parse_guard_is_rejected() {
         let mut json = MapJson::default();
-        for i in 0..=PARSE_GUARD {
-            json.bar(i, i as i64 * 1_000, 1.0);
+        for (i, t_ms) in (0..=PARSE_GUARD).zip((0_i64..).step_by(1_000)) {
+            json.bar(i, t_ms, 1.0);
         }
         assert_eq!(parse_candles(&json), None);
     }
 
-    #[test]
+    #[wasm_test(
+        fuel = 250e6,
+        reason = "a full history is 2,048 bars, each five string keys in the MapJson double"
+    )]
     fn full_history_preserves_2_048_monthly_candles() {
         const EXPECTED_HISTORY: usize = 2_048;
 
         let mut json = MapJson::default();
-        for i in 0..EXPECTED_HISTORY {
-            json.bar(i, i as i64 * 1_000, 1.0);
+        for (i, t_ms) in (0..EXPECTED_HISTORY).zip((0_i64..).step_by(1_000)) {
+            json.bar(i, t_ms, 1.0);
         }
 
         let candles = parse_candles(&json).expect("BUG: full-history fixture has valid bars");

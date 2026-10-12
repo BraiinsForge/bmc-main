@@ -293,13 +293,15 @@ fn turn_page(page: &mut usize, page_count: usize, turn: PageTurn) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     fn page(scope: PagerScope, turn: PageTurn) -> ClickAction {
         ClickAction::Page { scope, turn }
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_pager_clicks_and_ignores_foreign_ids() {
         assert_eq!(
             parse_click("fleet:page_prev"),
@@ -315,7 +317,7 @@ mod tests {
         assert_eq!(parse_click("volume"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn pager_click_ids_round_trip() {
         for scope in [PagerScope::Fleet, PagerScope::ModelDetail] {
             for turn in [PageTurn::Prev, PageTurn::Next] {
@@ -327,7 +329,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn next_advances_until_the_last_page() {
         let mut state = ViewState::new();
         assert!(apply(
@@ -350,7 +352,7 @@ mod tests {
         assert_eq!(state.fleet_page, 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn prev_goes_back_and_stops_at_the_first_page() {
         let mut state = ViewState::new();
         state.fleet_page = 1;
@@ -368,7 +370,7 @@ mod tests {
         assert_eq!(state.fleet_page, 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_stale_page_normalizes_against_the_current_count() {
         let mut state = ViewState::new();
         state.fleet_page = 9;
@@ -380,7 +382,7 @@ mod tests {
         assert_eq!(state.fleet_page, 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_model_detail_page_click_without_a_selection_is_ignored() {
         // The tap raced a fallback: the selected group vanished and the
         // fleet table took over before the click was consumed. The fleet
@@ -415,7 +417,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_click_id_round_trips() {
         let id = model_detail_click_id(Some(DeviceFamily::Bos), "BMM 101");
         assert_eq!(
@@ -427,7 +429,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_click_id_round_trips_labels_with_colons_and_no_family() {
         let id = model_detail_click_id(None, "Odd: Name");
         assert_eq!(
@@ -439,7 +441,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn open_model_detail_id_with_an_empty_label_is_accepted_and_falls_back_next_frame() {
         assert_eq!(
             parse_click("open_model_detail:x:"),
@@ -450,14 +452,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn malformed_open_model_detail_ids_are_ignored() {
         assert_eq!(parse_click("open_model_detail:9:Foo"), None);
         assert_eq!(parse_click("open_model_detail:Foo"), None);
         assert_eq!(parse_click("open_model_detail:"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn open_model_detail_click_enters_the_group_at_page_zero_keeping_the_fleet_page() {
         let mut state = ViewState::new();
         state.fleet_page = 2;
@@ -478,7 +480,7 @@ mod tests {
         assert_eq!(state.fleet_page, 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn back_returns_to_the_fleet_and_reports_no_change_when_already_there() {
         let mut state = ViewState::new();
         state.fleet_page = 2;
@@ -494,7 +496,7 @@ mod tests {
         assert!(!apply(&mut state, ClickAction::Back, 5));
     }
 
-    #[test]
+    #[wasm_test]
     fn paging_targets_the_model_detail_page_while_drilled_in() {
         let mut state = ViewState::new();
         state.fleet_page = 2;
@@ -520,7 +522,7 @@ mod tests {
         assert_eq!(state.fleet_page, 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn selected_index_requires_family_and_label_match() {
         let groups = vec![
             group(Some(DeviceFamily::Ubos), "BMM 101"),
@@ -543,7 +545,7 @@ mod tests {
         assert_eq!(selected_index(&groups, &gone), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn view_toggle_click_switches_mode_and_is_idempotent() {
         assert_eq!(
             parse_click(view_click_id(ViewMode::List)),
@@ -559,7 +561,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn device_click_id_round_trips_ids_with_colons() {
         let id = device_click_id("bos/host:80");
         assert_eq!(
@@ -570,7 +572,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn opening_a_device_then_back_steps_out_one_level_at_a_time() {
         let mut state = ViewState::new();
         state.model_detail = Some(ModelDetailSelection {
@@ -605,7 +607,7 @@ mod tests {
         assert!(state.model_detail.is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_device_click_without_a_selection_is_ignored() {
         let mut state = ViewState::new();
         assert!(!apply(
@@ -618,7 +620,7 @@ mod tests {
         assert!(state.model_detail.is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn crumb_ids_round_trip_to_jumps() {
         assert_eq!(
             parse_click("crumb:fleet"),
@@ -642,7 +644,7 @@ mod tests {
         state
     }
 
-    #[test]
+    #[wasm_test]
     fn jump_to_fleet_from_a_device_clears_the_whole_selection() {
         let mut state = drilled_into_device();
         assert!(apply(&mut state, ClickAction::Jump(CrumbTarget::Fleet), 1));
@@ -654,7 +656,7 @@ mod tests {
         assert!(!apply(&mut state, ClickAction::Jump(CrumbTarget::Fleet), 1));
     }
 
-    #[test]
+    #[wasm_test]
     fn jump_to_model_from_a_device_drops_only_the_device() {
         let mut state = drilled_into_device();
         assert!(apply(&mut state, ClickAction::Jump(CrumbTarget::Model), 1));

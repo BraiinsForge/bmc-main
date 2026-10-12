@@ -328,11 +328,13 @@ pub(crate) fn uptime(value: Availability<Duration>) -> Rendered {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use bmc_wasm_sdk::types::Temperature;
     use bmc_wasm_sdk::typography::NBSP;
 
-    #[test]
+    #[wasm_test]
     fn formats_temperature_range_like_boser() {
         let range = TemperatureRange {
             board: Temperature::from_celsius(61.2),
@@ -341,7 +343,7 @@ mod tests {
         assert_eq!(temperature(Availability::Available(range)).value, "61-74");
     }
 
-    #[test]
+    #[wasm_test]
     fn formats_chip_temperature_as_single_value() {
         let range = TemperatureRange {
             board: Temperature::from_celsius(61.2),
@@ -351,7 +353,7 @@ mod tests {
         assert_eq!(chip_temperature(Availability::Unavailable).value, "N/A");
     }
 
-    #[test]
+    #[wasm_test]
     fn formats_signed_percent_with_explicit_sign() {
         assert_eq!(
             signed_percent(Availability::Available(Ratio::from_percent(1.82)), 2).value,
@@ -363,7 +365,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn signed_percent_unit_omits_percent_when_unavailable() {
         assert_eq!(
             signed_percent_unit(Availability::Available(Ratio::from_percent(1.82)), 2),
@@ -375,16 +377,19 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn formats_uptime_compactly() {
         assert_eq!(
-            uptime(Availability::Available(Duration::from_secs(187_020))).value,
+            uptime(Availability::Available(
+                Duration::from_hours(51) + Duration::from_mins(57)
+            ))
+            .value,
             "2d 3h 57m"
         );
         assert_eq!(uptime(Availability::Unavailable).value, "N/A");
     }
 
-    #[test]
+    #[wasm_test]
     fn formats_currency_symbol() {
         let usd = Money::new(104_250.4, crate::model::Currency::Usd);
         assert_eq!(
@@ -393,7 +398,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn splits_money_into_symbol_and_amount() {
         let usd = Money::new(104_250.4, crate::model::Currency::Usd);
         assert_eq!(money_symbol(Availability::Available(usd)), Some("$"));
@@ -405,7 +410,7 @@ mod tests {
         assert_eq!(money_amount(Availability::Unavailable, 0), "N/A");
     }
 
-    #[test]
+    #[wasm_test]
     fn formats_approximate_fixed_value_like_boser() {
         assert_eq!(
             approx_fixed(Availability::Available(Ratio::from_percent(0.1234)), 3).value,
@@ -417,7 +422,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn unavailable_public_integer_reads_not_available() {
         assert_eq!(
             public_integer(Availability::Available(870_123)).value,
@@ -426,7 +431,7 @@ mod tests {
         assert_eq!(public_integer(Availability::Unavailable).value, "N/A");
     }
 
-    #[test]
+    #[wasm_test]
     fn temperature_range_unit_is_celsius() {
         let range = TemperatureRange {
             board: Temperature::from_celsius(61.0),

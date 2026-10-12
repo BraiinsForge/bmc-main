@@ -83,7 +83,7 @@ mod tests {
     use bmc_wasm_sdk::assets::ensure_registered;
     use bmc_wasm_sdk::system::{SnapshotBuilder, TimeFormat};
     use bmc_wasm_sdk::wasm_test;
-    use bmc_wasm_sdk::{Draw, SvgId, assets};
+    use bmc_wasm_sdk::{Draw, SvgId};
 
     use super::*;
     use crate::model::SizeBucket;
@@ -95,7 +95,6 @@ mod tests {
     const ALARM_UTC_MS: i64 = 1_789_446_600_000;
 
     fn install_prague(next_alarm: bool) {
-        assets::init_test_registrars();
         let mut snapshot = SnapshotBuilder::new()
             .timezone("Europe/Prague")
             .time_format(TimeFormat::Hour24);
@@ -182,7 +181,7 @@ mod tests {
         assert!(texts.contains(&"Prague (+2)".to_owned()), "{texts:?}");
     }
 
-    #[test]
+    #[wasm_test]
     fn an_override_zone_moves_the_digits_and_the_caption() {
         install_prague(false);
         let params = Params {
@@ -195,7 +194,7 @@ mod tests {
         assert!(texts.contains(&"Helsinki (+3)".to_owned()), "{texts:?}");
     }
 
-    #[test]
+    #[wasm_test]
     fn the_alarm_row_shows_on_the_full_digital_face_only() {
         install_prague(true);
         let full =
@@ -213,7 +212,6 @@ mod tests {
     /// the numeric date below, `AM` beside them — and no weekday, no alarm.
     #[wasm_test]
     fn the_bmm101_face_splits_the_captions_around_the_digits() {
-        assets::init_test_registrars();
         system::set_current(
             SnapshotBuilder::new()
                 .timezone("Europe/Prague")
@@ -244,7 +242,7 @@ mod tests {
     }
 
     /// A hidden readout leaves its slot in place, so the digits do not move.
-    #[test]
+    #[wasm_test]
     fn a_hidden_bmm101_readout_keeps_its_slot() {
         install_prague(false);
         let params = Params {
@@ -265,7 +263,7 @@ mod tests {
     }
 
     /// Without seconds the digits are shorter, so they grow to fill the width.
-    #[test]
+    #[wasm_test]
     fn the_bmm101_digits_grow_when_the_seconds_are_hidden() {
         install_prague(false);
         let digits_size = |show_seconds| {
@@ -324,7 +322,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_round_viewport_draws_the_round_dial_whatever_the_style() {
         install_prague(false);
         let view = fixtures::round(480, SEPTEMBER_NOON, fixtures::default_params());

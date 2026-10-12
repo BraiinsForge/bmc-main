@@ -27,9 +27,11 @@ pub fn effective_page(page: usize, count: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn effective_page_clamps_to_the_last_page() {
         assert_eq!(effective_page(0, 3), 0);
         assert_eq!(effective_page(2, 3), 2);

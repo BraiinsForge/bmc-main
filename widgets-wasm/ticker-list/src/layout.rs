@@ -179,6 +179,8 @@ pub fn capacity(ws: WidgetSize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     fn at(bucket: SizeBucket) -> WidgetSize {
@@ -186,7 +188,7 @@ mod tests {
         WidgetSize::from_dimensions(width, height)
     }
 
-    #[test]
+    #[wasm_test]
     fn capacities_match_size_bands() {
         assert_eq!(capacity(at(SizeBucket::Full)), 8);
         assert_eq!(capacity(at(SizeBucket::Large)), 4);
@@ -195,7 +197,7 @@ mod tests {
         assert_eq!(capacity(at(SizeBucket::Bmm101)), 4);
     }
 
-    #[test]
+    #[wasm_test]
     fn every_design_size_lands_in_its_own_bucket() {
         for bucket in [
             SizeBucket::Full,
@@ -210,7 +212,7 @@ mod tests {
     }
 
     /// A frame that misses the BMM101 rule by a pixel falls to the SDK's closest variant.
-    #[test]
+    #[wasm_test]
     fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
         assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
@@ -218,7 +220,7 @@ mod tests {
         assert_eq!(size_bucket(481, 320), SizeBucket::Large);
     }
 
-    #[test]
+    #[wasm_test]
     fn full_is_two_columns_with_sparkline_small_is_one_without() {
         assert_eq!(band_for(SizeVariant::Full).columns, 2);
         assert!(band_for(SizeVariant::Full).show_sparkline);
@@ -226,7 +228,7 @@ mod tests {
         assert!(!band_for(SizeVariant::Small).show_sparkline);
     }
 
-    #[test]
+    #[wasm_test]
     fn fit_scales_fonts_and_geometry_not_counts() {
         let scaled = band_for(SizeVariant::Large).scaled(0.5);
         assert_eq!(scaled.symbol_font, 16);

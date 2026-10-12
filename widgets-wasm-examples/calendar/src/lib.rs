@@ -30,7 +30,6 @@ mod render;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use calendar::{CalendarSource, CalendarState};

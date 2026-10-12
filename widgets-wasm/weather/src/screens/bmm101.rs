@@ -21,10 +21,6 @@
 //! BMM101's 480×320 frame: today's conditions beside its low, high and sun times,
 //! over the forecast for the next four days.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "screen code uses the SDK's tree builders, macros, and tokens throughout"
-)]
 use bmc_wasm_sdk::*;
 use units::units::DegreeCelsius;
 

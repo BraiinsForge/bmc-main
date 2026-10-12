@@ -22,7 +22,6 @@
 
 use std::collections::VecDeque;
 
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use crate::DAYS_AHEAD;

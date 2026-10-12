@@ -21,10 +21,6 @@
 //! The layouts as views over a [`ViewData`]: size dispatch,
 //! the launch panels, and the loading/error states.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::{Frame, LaunchData, SizeBucket, State};
@@ -260,6 +256,8 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::screens::fixtures::{self, StateFixture};
     use crate::screens::tree::{overflow_of, texts};
@@ -294,9 +292,8 @@ mod tests {
             .to_vec()
     }
 
-    #[test]
+    #[wasm_test]
     fn every_frame_keeps_the_brand_on_one_line() {
-        assets::init_test_registrars();
         let branded = [
             (SizeBucket::Full, fixtures::healthy as StateFixture),
             (SizeBucket::Large, fixtures::healthy),
@@ -313,7 +310,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_small_layout_ends_a_long_mission_in_an_ellipsis() {
         for viewport in [
             fixtures::at_bucket(SizeBucket::Small),
@@ -328,9 +325,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn every_frame_keeps_the_countdown_on_one_line() {
-        assets::init_test_registrars();
         let countdown = typography::unbroken("0d 20h 28m 39s");
         for bucket in [
             SizeBucket::Full,
@@ -344,7 +340,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_launch_a_hundred_days_out_counts_down_without_seconds() {
         let texts = at(SizeBucket::Small, fixtures::widest_values);
         assert!(
@@ -353,7 +349,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_passed_launch_reads_launched_at_t_zero() {
         for bucket in [SizeBucket::Small, SizeBucket::Bmm101] {
             let texts = at(bucket, fixtures::launched);
@@ -364,7 +360,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_frame_reads_top_down_as_designed() {
         let countdown = typography::unbroken("0d 20h 28m 39s");
         let booster = fmt!("3{} flown", typography::TIMES);
@@ -382,7 +378,7 @@ mod tests {
         assert_eq!(at(SizeBucket::Bmm101, fixtures::healthy), expected);
     }
 
-    #[test]
+    #[wasm_test]
     fn every_frame_reads_loading_the_same_way() {
         for bucket in [
             SizeBucket::Full,
@@ -399,7 +395,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_deck_and_bmm101_report_failures_the_same_way() {
         for bucket in [SizeBucket::Large, SizeBucket::Bmm101] {
             assert_eq!(

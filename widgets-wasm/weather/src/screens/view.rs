@@ -24,10 +24,6 @@
 //! so whoever installs the snapshot — the host, the gallery, a test —
 //! sets the units, the clock and the timezone once for every layout.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "screen code uses the SDK's tree builders, macros, and tokens throughout"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::display;
@@ -110,6 +106,7 @@ fn message_view(message: &str) -> Node {
 mod tests {
     use bmc_wasm_sdk::system::{SnapshotBuilder, TimeFormat};
 
+    use bmc_wasm_sdk::wasm_test;
     use units::units::DegreeCelsius;
 
     use super::*;
@@ -117,7 +114,6 @@ mod tests {
     use crate::screens::fixtures;
 
     fn install(timezone: &str) {
-        assets::init_test_registrars();
         system::set_current(
             SnapshotBuilder::new()
                 .timezone(timezone)
@@ -169,7 +165,7 @@ mod tests {
         texts(&weather_view(&state(fixtures::at_bucket(bucket), params)))
     }
 
-    #[test]
+    #[wasm_test]
     fn the_time_zone_param_picks_the_zone_the_sun_is_timed_in() {
         install("Asia/Kolkata");
         let sun = |time_zone| {
@@ -191,7 +187,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn every_size_names_the_location() {
         install("Europe/Prague");
         for bucket in [
@@ -209,7 +205,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_frame_reads_top_down_as_designed() {
         install("Europe/Prague");
         let degrees = |celsius| display::temperature(DegreeCelsius(celsius));
@@ -248,7 +244,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn loading_draws_every_layout_with_each_value_as_a_dash() {
         install("Europe/Prague");
         for bucket in [
@@ -270,7 +266,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_stat_labels_stay_while_their_values_load() {
         install("Europe/Prague");
         let texts = at(
@@ -283,7 +279,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn every_layout_ends_a_long_location_in_an_ellipsis() {
         install("Europe/Prague");
         for bucket in [
@@ -303,7 +299,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_blank_location_asks_for_one() {
         install("Europe/Prague");
         assert_eq!(
@@ -316,7 +312,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_location_miss_says_so() {
         install("Europe/Prague");
         assert_eq!(
@@ -329,7 +325,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_stale_forecast_floats_its_tag_over_the_layout() {
         install("Europe/Prague");
         let children = |state: fixtures::StateFixture| {

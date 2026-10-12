@@ -185,11 +185,13 @@ pub fn push_uint(out: &mut String, mut n: u64) {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     use PricePrecision::{BelowMin, Fraction};
 
-    #[test]
+    #[wasm_test]
     fn large_and_mid_prices_keep_classic_decimals() {
         assert_eq!(price_precision("NVDA", 169_420.0), Fraction(0));
         assert_eq!(price_precision("BTC-USD", 106_234.56), Fraction(0));
@@ -198,7 +200,7 @@ mod tests {
         assert_eq!(price_precision("NVDA", 1.0), Fraction(2));
     }
 
-    #[test]
+    #[wasm_test]
     fn sub_one_prices_widen_by_magnitude_bucket() {
         assert_eq!(price_precision("X", 0.123_456), Fraction(4));
         assert_eq!(price_precision("X", 0.001), Fraction(4));
@@ -208,17 +210,17 @@ mod tests {
         assert_eq!(price_precision("X", 0.000_001_234), Fraction(7));
     }
 
-    #[test]
+    #[wasm_test]
     fn dust_prices_collapse_to_below_min() {
         assert_eq!(price_precision("X", 0.000_000_49), BelowMin);
     }
 
-    #[test]
+    #[wasm_test]
     fn zero_renders_as_plain_zero() {
         assert_eq!(price_precision("X", 0.0), Fraction(0));
     }
 
-    #[test]
+    #[wasm_test]
     fn rounding_into_the_next_bucket_uses_that_buckets_digits() {
         // 0.99995 would render "1.0000" with sub-one digits; carry to "1.00"
         assert_eq!(price_precision("X", 0.999_95), Fraction(2));
@@ -227,7 +229,7 @@ mod tests {
         assert_eq!(price_precision("X", 999.99), Fraction(2));
     }
 
-    #[test]
+    #[wasm_test]
     fn fiat_pairs_use_fx_quote_precision() {
         assert_eq!(price_precision("EUR-USD", 1.164_27), Fraction(5));
         assert_eq!(price_precision("eur-usd", 1.164_27), Fraction(5));
@@ -238,7 +240,7 @@ mod tests {
         assert_eq!(price_precision("EURUSD=X", 0.0), Fraction(0));
     }
 
-    #[test]
+    #[wasm_test]
     fn fx_override_skips_non_fiat_and_wide_rates() {
         // crypto/base or class shares are not FX pairs
         assert_eq!(price_precision("BTC-USD", 1.16), Fraction(2));
@@ -251,7 +253,7 @@ mod tests {
         assert_eq!(price_precision("USD-JPY", 999.99), Fraction(3));
     }
 
-    #[test]
+    #[wasm_test]
     fn change_text_is_signed_one_decimal() {
         assert_eq!(change_text(5.31), "+5.3%");
         assert_eq!(change_text(-2.81), "-2.8%");
@@ -260,7 +262,7 @@ mod tests {
         assert_eq!(change_text(-0.04), "+0.0%");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_change_reads_as_a_rise_exactly_when_its_text_is_plus() {
         for change in [5.31, 0.0, -0.04, -0.05, -0.06, -2.81] {
             assert_eq!(
@@ -271,7 +273,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn price_change_handles_zero_and_negative_first() {
         assert!((price_change(100.0, 110.0) - 10.0).abs() < 1e-9);
         assert!((price_change(100.0, 90.0) - (-10.0)).abs() < 1e-9);

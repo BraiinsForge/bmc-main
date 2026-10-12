@@ -31,10 +31,6 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget runtime code uses many SDK exports and macros in one file"
-)]
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -849,9 +845,11 @@ pub fn overlay(view: View, panel: Panel, auth: &AuthState) -> Option<mining::ove
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{Panel, Reads, View, login_retry_delay, offline_label, reads};
 
-    #[test]
+    #[wasm_test]
     fn offline_label_names_only_the_failing_groups() {
         assert_eq!(offline_label(false, false), None);
         assert_eq!(offline_label(true, false), Some("Failed to load: Miner"));
@@ -910,7 +908,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn each_face_reads_exactly_its_endpoints() {
         for view in [View::Mining, View::Geek, View::InfoOverload] {
             for panel in [Panel::Small, Panel::Bmm101, Panel::Round] {
@@ -924,7 +922,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn login_retry_delay_doubles_per_failure_then_caps() {
         let base = 10_000;
         let cap = 300_000;

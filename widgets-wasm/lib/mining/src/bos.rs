@@ -254,6 +254,8 @@ pub enum ReplyAction {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{
         AuthMode, AuthState, LOCAL_API, Placeholders, ReplyAction, endpoint, login_body,
         login_refused,
@@ -262,7 +264,7 @@ mod tests {
 
     /// A miner that never answered has rejected no password,
     /// so the login backoff and the auth banner both answer the wrong question.
-    #[test]
+    #[wasm_test]
     fn only_a_miner_that_answered_can_refuse_the_login() {
         assert!(login_refused(Some(FetchOutcome::Http(401))));
         assert!(login_refused(Some(FetchOutcome::Http(403))));
@@ -275,7 +277,7 @@ mod tests {
         assert!(!login_refused(None));
     }
 
-    #[test]
+    #[wasm_test]
     fn joins_base_url_and_path_once() {
         let joined = Some("http://miner/api".to_owned());
         assert_eq!(endpoint("http://miner", "/api"), joined);
@@ -285,13 +287,13 @@ mod tests {
 
     /// A path appended after a query or fragment lands inside it,
     /// so the request would reach somewhere nobody asked for.
-    #[test]
+    #[wasm_test]
     fn refuses_a_base_carrying_a_query_or_fragment() {
         assert_eq!(endpoint("http://miner/api?token=abc", "/stats"), None);
         assert_eq!(endpoint("http://miner/api#frag", "/stats"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn only_an_authenticated_state_carries_a_header() {
         let mut auth = AuthState::default();
         assert_eq!(auth, AuthState::NoToken);
@@ -303,7 +305,7 @@ mod tests {
         assert_eq!(AuthState::NoToken.token(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn login_body_escapes_the_password() {
         assert_eq!(
             login_body("root", r#"a"b"#),
@@ -321,7 +323,7 @@ mod tests {
         AuthMode::derive(local, remote, "http://10.0.0.5/api/v1", PLACEHOLDERS)
     }
 
-    #[test]
+    #[wasm_test]
     fn exactly_one_bound_slot_picks_a_mode_and_anything_else_refuses() {
         assert!(matches!(mode(true, false), AuthMode::Local { .. }));
         assert!(matches!(mode(false, true), AuthMode::Remote { .. }));
@@ -331,7 +333,7 @@ mod tests {
 
     /// The device's own session must never travel to another miner:
     /// local mode dials the fixed local API whatever the URL param says.
-    #[test]
+    #[wasm_test]
     fn local_mode_has_no_login_and_sends_the_token_placeholder_to_localhost_only() {
         let local = mode(true, false);
         assert_eq!(local.login(), None);
@@ -344,7 +346,7 @@ mod tests {
         assert_eq!(local.initial_auth(), AuthState::NoToken);
     }
 
-    #[test]
+    #[wasm_test]
     fn remote_mode_logs_in_with_both_placeholders_and_no_literal_username() {
         let remote = mode(false, true);
         let (url, body) = remote.login().expect("BUG: remote mode logs in");
@@ -357,7 +359,7 @@ mod tests {
         assert_eq!(remote.initial_auth(), AuthState::LoggingIn);
     }
 
-    #[test]
+    #[wasm_test]
     fn remote_mode_sends_the_session_token_to_the_configured_url_once_it_has_one() {
         let remote = mode(false, true);
         assert_eq!(
@@ -371,7 +373,7 @@ mod tests {
         assert_eq!(header, "Authorization: sess");
     }
 
-    #[test]
+    #[wasm_test]
     fn unbound_and_ambiguous_send_nothing() {
         for mode in [mode(false, false), mode(true, true)] {
             assert_eq!(mode.login(), None);
@@ -386,7 +388,7 @@ mod tests {
     /// Local mode has no login poll to re-arm,
     /// so the reply itself raises the auth banner, and only a success lowers it:
     /// a 500 or a refused connection proves nothing about the token.
-    #[test]
+    #[wasm_test]
     fn local_mode_fails_on_401_and_recovers_on_success_only() {
         let local = mode(true, false);
         assert_eq!(
@@ -407,7 +409,7 @@ mod tests {
     /// A remote 401 re-arms the login once;
     /// while the login is already backing off after a refusal,
     /// further 401s must not restart it.
-    #[test]
+    #[wasm_test]
     fn remote_mode_relogs_in_on_401_unless_the_login_already_refused() {
         let remote = mode(false, true);
         let session = AuthState::Authenticated("sess".to_owned());
@@ -420,7 +422,7 @@ mod tests {
         assert_eq!(remote.reply_action(&session, 500), ReplyAction::Keep);
     }
 
-    #[test]
+    #[wasm_test]
     fn unbound_and_ambiguous_ignore_replies() {
         for mode in [mode(false, false), mode(true, true)] {
             assert_eq!(

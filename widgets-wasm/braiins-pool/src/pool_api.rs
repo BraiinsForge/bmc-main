@@ -25,13 +25,6 @@
 //! tests run without the host's date support.
 
 use bmc_wasm_sdk::types::BitcoinAmount;
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "API code uses the SDK's macros and re-exports"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::{NextPayout, Payout, PayoutKind, Rewards, Sample, Series, Source, WorkerCounts};
@@ -323,10 +316,12 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::tests_support::{MapJson, fixture_date};
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn windowed_url_encodes_timestamps_and_cursor() {
         let url = Source::HashrateHistory.windowed_page_url(
             "2026-08-02T09:05:00Z",
@@ -345,7 +340,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn recent_url_is_one_unwindowed_page() {
         assert_eq!(
             Source::PayoutsRecent.recent_page_url(),
@@ -353,7 +348,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_listing_is_complete_without_has_next() {
         let mut json = MapJson::default();
         // A cursor alone says nothing: the reply has to claim another page.
@@ -363,7 +358,7 @@ mod tests {
         assert_eq!(next_page(&json), NextPage::Done);
     }
 
-    #[test]
+    #[wasm_test]
     fn has_next_with_a_cursor_names_the_page_to_ask_for() {
         let mut json = MapJson::default();
         json.bools.insert("/pagination/has_next", true);
@@ -372,7 +367,7 @@ mod tests {
     }
 
     /// Reading this as `Done` would commit a truncated listing as a whole one.
-    #[test]
+    #[wasm_test]
     fn has_next_without_a_usable_cursor_is_malformed() {
         let mut json = MapJson::default();
         json.bools.insert("/pagination/has_next", true);
@@ -381,7 +376,7 @@ mod tests {
         assert_eq!(next_page(&json), NextPage::Malformed);
     }
 
-    #[test]
+    #[wasm_test]
     fn history_page_reads_slots_until_the_first_gap() {
         let mut json = MapJson::default();
         json.strings.insert("/from_timestamp", "@100");
@@ -399,14 +394,14 @@ mod tests {
         assert!((series.samples[1].value - 2.5).abs() < f64::EPSILON);
     }
 
-    #[test]
+    #[wasm_test]
     fn history_page_with_missing_value_is_unusable() {
         let mut json = MapJson::default();
         json.strings.insert("/slots/0/slot_start", "@100");
         assert!(parse_history_page(&json, "hashrate_th_per_sec", &fixture_date).is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn financials_fold_soonest_estimate_and_furthest_progress() {
         let mut json = MapJson::default();
         json.strings
@@ -422,7 +417,7 @@ mod tests {
         assert_eq!(folded.progress_pct, Some(40.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn payouts_keep_only_completed() {
         let mut json = MapJson::default();
         json.strings.insert("/payouts/0/status", "PENDING");
@@ -440,7 +435,7 @@ mod tests {
     }
 
     /// The rail picks a chart marker; the amount and the time are the payout.
-    #[test]
+    #[wasm_test]
     fn an_unnamed_rail_keeps_the_payout_without_claiming_one() {
         let mut json = MapJson::default();
         json.strings.insert("/payouts/0/status", "COMPLETED");
@@ -458,7 +453,7 @@ mod tests {
         assert_eq!(named[0].kind, Some(PayoutKind::Onchain));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_completed_payout_missing_its_amount_voids_the_page() {
         let mut json = MapJson::default();
         json.strings.insert("/payouts/0/status", "COMPLETED");
@@ -468,7 +463,7 @@ mod tests {
         assert!(parse_payouts_page(&json, &fixture_date).is_some());
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unreadable_pending_payout_leaves_the_page_whole() {
         let mut json = MapJson::default();
         json.strings.insert("/payouts/0/status", "PENDING");
@@ -483,7 +478,7 @@ mod tests {
     /// A reply missing the estimate parses to nothing, never to zero: the
     /// source is marked failed and the slot reads *Unavailable*, rather than
     /// telling an earning account it earned nothing.
-    #[test]
+    #[wasm_test]
     fn rewards_without_a_readable_estimate_are_absent_not_zero() {
         let mut json = MapJson::default();
         assert_eq!(parse_rewards(&json), None);
@@ -497,7 +492,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn workers_current_requires_every_count() {
         let mut json = MapJson::default();
         json.ints.insert("/active_workers", 3);

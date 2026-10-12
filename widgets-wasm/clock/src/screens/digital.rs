@@ -24,13 +24,6 @@
 //! and the numeric date alone below, with AM/PM beside them.
 
 use bmc_wasm_sdk::system::TimeFormat;
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render code uses many SDK exports and macros in one file"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;

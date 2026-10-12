@@ -30,7 +30,6 @@
 use std::cell::RefCell;
 
 use bmc_wasm_sdk::socket::{Socket, SocketEvent, tls_connect_insecure};
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 use prost::Message;
 

@@ -21,10 +21,6 @@
 //! BMM101's own frame (480×320): the header, the mission as the hero,
 //! and the launch's details in two ruled columns.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::{LaunchData, SizeBucket};
@@ -160,6 +156,8 @@ fn column(width: f32, rows: [Node; 7]) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::screens::{fixtures, launch_view};
 
@@ -207,7 +205,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_hero_spans_the_frame_and_shrinks_from_40_to_two_lines_at_24() {
         assert_eq!(
             autofits(&healthy()),
@@ -215,12 +213,12 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_grid_splits_the_frame_width_into_the_designed_columns() {
         assert_eq!(sized_columns(&healthy()), [(228.0, 152.0), (196.0, 152.0)]);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_fixed_parts_stack_within_the_frame_height_with_a_gap_over_the_rule() {
         let caption_h = BODY_SIZE as f32 * LINE_HEIGHT;
         let top = HEADER_H + GAP + HERO_H + CAPTION_GAP + caption_h;

@@ -27,10 +27,6 @@ use crate::{
     weather_code, wind,
 };
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 const HOUR_STYLE: HourStyle = HourStyle {

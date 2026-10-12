@@ -87,6 +87,8 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::tests_support::MapJson;
     use super::*;
 
@@ -99,7 +101,7 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn extracts_name_host_and_port() {
         let (name, host, port) = extract_endpoint(&http_sighting()).expect("BUG: endpoint present");
         assert_eq!(name, "miner-a._http._tcp.local.");
@@ -107,35 +109,35 @@ mod tests {
         assert_eq!(port, 80);
     }
 
-    #[test]
+    #[wasm_test]
     fn rejects_event_missing_host() {
         let mut json = http_sighting();
         json.strings.remove("/host");
         assert_eq!(extract_endpoint(&json), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn rejects_event_with_zero_port() {
         let mut json = http_sighting();
         json.ints.insert("/port", 0);
         assert_eq!(extract_endpoint(&json), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn classifies_axeos_by_its_txt() {
         let mut json = http_sighting();
         json.strings.insert("/txt/board", "602");
         assert_eq!(classify_http_found(&json), Some(DeviceFamily::Bitaxe));
     }
 
-    #[test]
+    #[wasm_test]
     fn classifies_bos_by_its_txt() {
         let mut json = http_sighting();
         json.strings.insert("/txt/bos_version", "26.09");
         assert_eq!(classify_http_found(&json), Some(DeviceFamily::Bos));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_plain_http_host_is_no_family() {
         let mut json = http_sighting();
         json.strings.insert("/txt/path", "/");

@@ -148,10 +148,11 @@ impl ClockHandTransition {
 #[cfg(test)]
 mod tests {
     use bmc_wasm_sdk::WHITE;
+    use bmc_wasm_sdk::wasm_test;
 
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn hand_transitions_animate_through_five_second_render_gaps() {
         for delta_ms in [0, 1_000, 4_999, 5_000] {
             assert_eq!(
@@ -161,7 +162,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn hand_transitions_snap_after_longer_render_gaps() {
         for delta_ms in [5_001, 30_000, u32::MAX] {
             assert_eq!(
@@ -171,7 +172,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn snapping_preserves_hand_identity_and_resumes_normal_duration() {
         for (id, duration_ms) in [
             ("hour-hand", 500),
@@ -204,7 +205,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn every_design_size_lands_in_its_own_bucket() {
         for bucket in [
             SizeBucket::Full,
@@ -219,7 +220,7 @@ mod tests {
     }
 
     /// A frame that misses the BMM101 rule by a pixel falls to the SDK's closest variant.
-    #[test]
+    #[wasm_test]
     fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
         assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
@@ -227,12 +228,12 @@ mod tests {
         assert_eq!(size_bucket(481, 320), SizeBucket::Large);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_square_bfm100_stays_large() {
         assert_eq!(size_bucket(480, 480), SizeBucket::Large);
     }
 
-    #[test]
+    #[wasm_test]
     fn round_viewport_forces_round_analog() {
         assert_eq!(
             face(ClockStyle::Digital, ViewportShape::Round),
@@ -244,7 +245,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn rectangular_viewport_honors_configured_style() {
         assert_eq!(
             face(ClockStyle::Digital, ViewportShape::Rectangular),

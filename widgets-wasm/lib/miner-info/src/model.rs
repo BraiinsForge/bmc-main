@@ -124,9 +124,11 @@ pub const CURRENCY: Currency = Currency::Usd;
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn unavailable_is_the_default_state() {
         let data = MinerData::default();
         assert_eq!(data.hashrate, Availability::Unavailable);
@@ -135,7 +137,7 @@ mod tests {
 
     /// An unusable body leaves the reading as it was,
     /// so it goes stale rather than reading as absent.
-    #[test]
+    #[wasm_test]
     fn only_an_answer_is_stored() {
         let mut stored = None;
         let answer = ParseResult {

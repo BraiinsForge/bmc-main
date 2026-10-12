@@ -21,10 +21,6 @@
 //! What every layout is built from: the palette, the type scale,
 //! the countdown row and the info tiles.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "screen fragments use the SDK's tree builders, macros, and tokens throughout"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::NumbersFontStyle;
@@ -251,34 +247,36 @@ pub(super) fn info_tile(
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    fn countdown(days: i64) -> Option<Countdown> {
-        Some(Countdown {
+    fn countdown(days: i64) -> Countdown {
+        Countdown {
             days,
             hours: 23,
             minutes: 59,
-        })
+        }
     }
 
-    #[test]
+    #[wasm_test]
     fn narrow_numerals_drop_the_minutes_from_four_digit_days_on() {
         assert_eq!(
-            Numerals::narrow(countdown(999)).minutes.as_deref(),
+            Numerals::narrow(Some(countdown(999))).minutes.as_deref(),
             Some("59")
         );
-        assert_eq!(Numerals::narrow(countdown(1_000)).minutes, None);
+        assert_eq!(Numerals::narrow(Some(countdown(1_000))).minutes, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn narrow_numerals_keep_the_placeholder_minutes_without_a_prediction() {
         assert_eq!(Numerals::narrow(None).minutes.as_deref(), Some("-"));
     }
 
-    #[test]
+    #[wasm_test]
     fn full_numerals_keep_the_minutes_at_any_day_count() {
         assert_eq!(
-            Numerals::of(countdown(1_458)).minutes.as_deref(),
+            Numerals::of(Some(countdown(1_458))).minutes.as_deref(),
             Some("59")
         );
     }

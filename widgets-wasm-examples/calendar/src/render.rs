@@ -20,7 +20,6 @@
 
 //! Calendar rendering — month grid (Full) and agenda list (Large/Medium/Small).
 
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use crate::calendar::{CalendarEvent, CalendarState, DayGroup};

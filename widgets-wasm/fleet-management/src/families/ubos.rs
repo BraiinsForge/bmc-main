@@ -128,6 +128,8 @@ impl FamilyAdapter for UbosAdapter {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::discovery::tests_support::MapJson;
 
@@ -140,12 +142,12 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn browses_the_full_ubos_service_type() {
         assert_eq!(UbosAdapter.browse_service_types(), &["_ubos._tcp"]);
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_a_ubos_device_and_stamps_family() {
         let found = UbosAdapter
             .parse_found(&ubos_found())
@@ -156,7 +158,7 @@ mod tests {
         assert_eq!(found.identity.family, DeviceFamily::Ubos);
     }
 
-    #[test]
+    #[wasm_test]
     fn rejects_event_missing_port() {
         let mut json = ubos_found();
         json.ints.remove("/port");
@@ -172,7 +174,7 @@ mod tests {
         j
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_info_into_all_four_readings() {
         let mut r = TelemetryReading::default();
         UbosAdapter.parse_telemetry("/info", &info_json(), &mut r);
@@ -186,7 +188,7 @@ mod tests {
         assert_eq!(r.uptime_s, Some(382));
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_clears_owned_field_that_vanished_from_response() {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(99.0),
@@ -199,7 +201,7 @@ mod tests {
         assert_eq!(r, TelemetryReading::default());
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_clears_the_endpoints_fields() {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(1.0),
@@ -217,7 +219,7 @@ mod tests {
         assert_eq!(r.nominal_hashrate_ths, Some(7.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn credential_header_carries_the_basic_placeholder_for_the_host_to_fill() {
         assert_eq!(
             UbosAdapter.credential_header(),
@@ -225,7 +227,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_model_keys_model_by_name_so_it_materializes() {
         let mut j = MapJson::default();
         j.strings.insert("/name", "BMM Adapter W5500");
@@ -246,7 +248,7 @@ mod tests {
         assert_eq!(model.nominal_hashrate_ths, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn recognizes_a_basic_auth_rejection() {
         assert!(UbosAdapter.is_auth_error(401));
         assert!(UbosAdapter.is_auth_error(403));
@@ -254,7 +256,7 @@ mod tests {
         assert!(!UbosAdapter.is_auth_error(503));
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_model_ignores_empty_name() {
         let mut j = MapJson::default();
         j.strings.insert("/name", "");

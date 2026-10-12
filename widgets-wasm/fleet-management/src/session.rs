@@ -201,6 +201,7 @@ pub use driver::{
 #[cfg(test)]
 mod tests {
     use bmc_wasm_sdk::ufmt;
+    use bmc_wasm_sdk::wasm_test;
 
     use super::*;
     use crate::device::credential_slot;
@@ -211,7 +212,7 @@ mod tests {
             .collect()
     }
 
-    #[test]
+    #[wasm_test]
     fn cursor_advances_then_completes() {
         let mut c = PassCursor::new(ids(2));
         assert_eq!(
@@ -229,14 +230,14 @@ mod tests {
         assert_eq!(c.current(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn empty_cursor_is_immediately_done() {
         let c = PassCursor::new(ids(0));
         assert!(c.is_done());
         assert_eq!(c.current(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn cursor_iterates_exactly_its_snapshot_in_order() {
         let mut c = PassCursor::new(ids(3));
         let mut seen = Vec::new();
@@ -255,7 +256,7 @@ mod tests {
         assert!(c.is_done());
     }
 
-    #[test]
+    #[wasm_test]
     fn reachable_only_when_an_endpoint_succeeded() {
         use EndpointOutcome::{AuthFailed, Failed, Ok};
         assert!(!pass_reachable(&[]));
@@ -263,7 +264,7 @@ mod tests {
         assert!(pass_reachable(&[Failed, Ok, Failed]));
     }
 
-    #[test]
+    #[wasm_test]
     fn fail_pending_only_touches_unreported_endpoints() {
         use EndpointOutcome::{AuthFailed, Failed, Ok};
         let mut outcomes = vec![Some(Ok), None, Some(AuthFailed)];
@@ -275,7 +276,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_surviving_ok_keeps_the_pass_reachable_when_a_relogin_fails() {
         use EndpointOutcome::Ok;
         // A reauth's re-login send is rejected after an endpoint already returned
@@ -286,7 +287,7 @@ mod tests {
         assert!(pass_reachable(&resolved));
     }
 
-    #[test]
+    #[wasm_test]
     fn reauth_decision_finalizes_when_no_auth_failure() {
         use EndpointOutcome::{Failed, Ok};
         assert_eq!(
@@ -295,7 +296,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn reauth_decision_refires_only_auth_failed_endpoints() {
         use EndpointOutcome::{AuthFailed, Ok};
         assert_eq!(
@@ -306,7 +307,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn reauth_decision_finalizes_once_already_reauthed() {
         use EndpointOutcome::AuthFailed;
         assert_eq!(
@@ -315,7 +316,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_refused_request_reads_as_an_unusable_account_never_a_rejection() {
         let refused = Some(FetchOutcome::Refused);
 
@@ -327,7 +328,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_login_the_miner_turned_away_is_an_auth_failure() {
         assert_eq!(
             login_failure(Some(FetchOutcome::Http(401)), true),
@@ -340,7 +341,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_login_answered_with_an_error_is_an_api_error_never_unreachable() {
         assert_eq!(
             login_failure(Some(FetchOutcome::Http(400)), false),
@@ -353,7 +354,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_login_without_an_answer_is_unreachable() {
         assert_eq!(
             login_failure(Some(FetchOutcome::Network), false),
@@ -361,7 +362,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn fetch_failure_classifies_each_answer() {
         assert_eq!(
             fetch_failure(Some(FetchOutcome::Network), false),
@@ -377,7 +378,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_telemetry_url_joins_the_device_base_and_the_endpoint() {
         assert_eq!(
             telemetry_url(&BosAdapter, "10.0.0.5", 80, 0).as_deref(),
@@ -385,7 +386,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn telemetry_urls_stop_past_the_last_endpoint() {
         for adapter in [
             &BosAdapter as &dyn FamilyAdapter,
@@ -397,7 +398,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_family_credential_header_wins_over_a_session_token() {
         assert_eq!(
             telemetry_auth_header(&UbosAdapter, Some("token")),
@@ -405,7 +406,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn bos_telemetry_carries_the_session_token_once_there_is_one() {
         assert_eq!(telemetry_auth_header(&BosAdapter, None), None);
         assert_eq!(
@@ -414,7 +415,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn only_bos_logs_in() {
         assert!(login_request(&UbosAdapter, "10.0.0.5", 80).is_none());
         assert!(login_request(&BitaxeAdapter, "10.0.0.5", 80).is_none());
@@ -427,7 +428,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn adapter_for_maps_every_supported_family() {
         assert_eq!(
             adapter_for(DeviceFamily::Bos).map(FamilyAdapter::browse_service_types),
@@ -443,7 +444,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn each_adapter_spends_only_the_slot_its_family_is_gated_on() {
         let slots: Vec<&str> = DeviceFamily::ALL
             .into_iter()
@@ -456,13 +457,13 @@ mod tests {
                 adapter.login_body(),
             ]
             .concat();
-            let spent: Vec<&str> = slots
+            let spent_slots: Vec<&str> = slots
                 .iter()
                 .copied()
                 .filter(|slot| sent.contains(&["{{ credential.", slot, "."].concat()))
                 .collect();
             assert_eq!(
-                spent,
+                spent_slots,
                 Vec::from_iter(credential_slot(family)),
                 "{family:?} must spend the account polling is gated on, and no other"
             );

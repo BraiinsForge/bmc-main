@@ -24,13 +24,6 @@
 pub mod candlestick;
 pub mod sparkline;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render uses many SDK exports and macros"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::display::{SizeBand, band_for};

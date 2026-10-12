@@ -69,9 +69,11 @@ pub fn series_points(series: &[f64], width: f32, height: f32, inset: f32) -> Vec
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn rising_compares_first_and_last_sample() {
         assert!(is_rising(&[1.0, 0.5, 2.0]));
         assert!(!is_rising(&[2.0, 3.0, 1.0]));
@@ -80,12 +82,12 @@ mod tests {
         assert!(!is_rising(&[7.0]));
     }
 
-    #[test]
+    #[wasm_test]
     fn series_needs_at_least_two_points() {
         assert!(series_points(&[1.0], 100.0, 40.0, 2.0).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn series_spans_full_width_and_inverts_price_to_screen_y() {
         let points = series_points(&[10.0, 20.0, 30.0], 100.0, 40.0, 2.0);
         assert_eq!(points.len(), 3);
@@ -95,7 +97,7 @@ mod tests {
         assert!((points[2].1 - 2.0).abs() < 1e-6);
     }
 
-    #[test]
+    #[wasm_test]
     fn flat_series_centers_vertically() {
         for (_, y) in series_points(&[5.0, 5.0, 5.0], 100.0, 40.0, 2.0) {
             assert!((y - 20.0).abs() < 1e-6);

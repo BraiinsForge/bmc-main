@@ -21,13 +21,6 @@
 //! The upcoming race weekend: where it is run, and when.
 
 use bmc_wasm_sdk::types::Length;
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::images::ImageKind;
@@ -371,11 +364,13 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{Schedule, layout};
     use crate::model::SizeBucket;
 
     /// The per-frame rules the port keeps.
-    #[test]
+    #[wasm_test]
     fn every_frame_matches_the_ported_layout() {
         let expected = [
             (SizeBucket::Full, true, true, Schedule::Sessions, true),

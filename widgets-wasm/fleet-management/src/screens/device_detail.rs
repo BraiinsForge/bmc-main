@@ -22,13 +22,6 @@
 //! opened by tapping a device's row.
 
 use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::history::{ChartPoint, ChartWindow};

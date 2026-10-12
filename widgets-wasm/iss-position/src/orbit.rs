@@ -256,6 +256,8 @@ fn normalize_180(lon: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     // A real, checksum-valid ISS TLE (NORAD 25544; epoch 2020-07-12), used to
@@ -272,7 +274,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn gmst_stays_within_one_turn() {
         for secs in [0.0, 1_700_000_000.0, 2_000_000_000.0] {
             let g = gmst_radians(secs);
@@ -280,7 +282,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn zoom_remaps_and_clamps() {
         // Default zoom maps to a mid-range camera distance.
         assert!((globe_zoom_to_camera(1.0) - 1.8).abs() < 1e-6);
@@ -289,7 +291,7 @@ mod tests {
         assert!((1.2..=2.6).contains(&globe_zoom_to_camera(0.01)));
     }
 
-    #[test]
+    #[wasm_test]
     fn eci_to_geodetic_reads_the_equatorial_prime_meridian() {
         // +X with zero GMST is lat 0, lon 0; +Z is the north pole.
         let (lat, lon) = eci_to_geodetic(&[7000.0, 0.0, 0.0], 0.0);
@@ -298,7 +300,7 @@ mod tests {
         assert!((lat - 90.0).abs() < 1e-6);
     }
 
-    #[test]
+    #[wasm_test]
     fn propagation_yields_a_plausible_subpoint() {
         let model = OrbitModel::from_tle(&tle()).expect("BUG: real TLE parses");
         let (lat, lon) = model
@@ -310,7 +312,7 @@ mod tests {
         assert!((-180.0..=180.0).contains(&lon), "lon {lon} not normalized");
     }
 
-    #[test]
+    #[wasm_test]
     fn ground_track_spans_one_orbit_within_the_inclination_band() {
         let model = OrbitModel::from_tle(&tle()).expect("BUG: real TLE parses");
         let track = model.ground_track(NOW_UNIX, None);
@@ -324,7 +326,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn normalize_180_wraps_any_magnitude_into_range() {
         // In-range values pass through unchanged.
         assert!(normalize_180(0.0).abs() < 1e-9);
@@ -341,7 +343,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn project_orbit_culls_the_far_side() {
         // An equatorial ring centered at (0, 0): the near hemisphere projects
         // into one or more segments, the far hemisphere is culled, so the

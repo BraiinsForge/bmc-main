@@ -21,13 +21,6 @@
 //! BMM101's 480×320 frame: the widget's name over four ruled rows,
 //! each a symbol and name, a sparkline, and a price over its change.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render uses many SDK exports and macros"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use super::{
@@ -265,9 +258,11 @@ pub(super) fn view(
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn a_closed_chart_fills_alike_whichever_way_it_moved() {
         let row_style = Bmm101 { row_height: 50.0 };
         assert_eq!(

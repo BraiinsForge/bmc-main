@@ -23,13 +23,6 @@
 //! markers — comes entirely from a per-layout [`ChartSpec`].
 
 use bmc_wasm_sdk::types::{Hashrate, SiPrefix};
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::chart;
@@ -429,6 +422,8 @@ fn trimmed_number(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::model::Sample;
 
@@ -490,9 +485,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn chart_assembles_with_and_without_workers() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let x_labels = [(0.0, "00:00".to_owned()), (1.0, "12:00".to_owned())];
         let markers = [(0.25, PayoutKind::Onchain), (0.8, PayoutKind::Lightning)];
         let _ = line_chart(&series(), None, 620.0, 200.0, &BARE, &[], &[]);
@@ -529,7 +523,7 @@ mod tests {
         HashrateScale::Shared { prefix, lettered }
     }
 
-    #[test]
+    #[wasm_test]
     fn hashrate_ticks_the_hero_names_are_bare_numbers() {
         let peta = shared(SiPrefix::Peta, false);
         assert_eq!(hashrate_tick(900_000.0, peta), "900");
@@ -544,7 +538,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn hashrate_ticks_letter_the_prefix_no_hero_names() {
         let tera = shared(SiPrefix::Tera, true);
         assert_eq!(hashrate_tick(3.0, tera), "3T");
@@ -552,7 +546,7 @@ mod tests {
         assert_eq!(hashrate_tick(390_000.0, HashrateScale::OwnPrefix), "390P");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_top_rounded_into_the_next_prefix_rounds_again_on_a_shared_scale() {
         let top = |max, ticks| hashrate_axis_top(max, ticks);
         let near = |got: f64, want: f64| (got - want).abs() < 1e-6;
@@ -572,7 +566,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_shared_hashrate_scale_reads_in_the_axis_top_prefix() {
         let ticks = |hero_unit| TickSpec {
             hero_unit,
@@ -602,7 +596,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn worker_ticks_on_a_shared_scale_all_take_k_past_a_thousand() {
         let ticks: Vec<String> = [3_000.0, 2_000.0, 1_000.0, 0.0]
             .into_iter()
@@ -614,7 +608,7 @@ mod tests {
         assert_eq!(workers_tick(0.0, 3_000.0, false), "0");
     }
 
-    #[test]
+    #[wasm_test]
     fn worker_counts_label_switches_to_k_above_a_thousand() {
         // The digits come from the host number format (locale-dependent
         // decimal mark); only the scaling and suffix are ours to assert.

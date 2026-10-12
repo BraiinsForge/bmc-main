@@ -71,17 +71,19 @@ impl Money {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     /// The query and the rendered symbol are two views of one value, so they
     /// cannot be changed apart.
-    #[test]
+    #[wasm_test]
     fn a_currency_knows_both_its_query_code_and_its_symbol() {
         assert_eq!(Currency::Usd.code(), "usd");
         assert_eq!(Currency::Usd.symbol(), "$");
     }
 
-    #[test]
+    #[wasm_test]
     fn an_amount_carries_the_currency_it_is_in() {
         let price = Money::new(101_754.0, Currency::Usd);
         assert_eq!(price.currency.symbol(), "$");

@@ -27,10 +27,6 @@ use crate::{
     weather_code,
 };
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 #[derive(Clone, Copy)]
@@ -322,13 +318,18 @@ pub fn large(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{LargeMetrics, large};
     use crate::{
         manifest_params::{Params, TimeZone},
         model::{Current, Daily, DayForecast, Location, Weather},
     };
-    use bmc_wasm_sdk::assets::init_test_registrars;
     use bmc_wasm_sdk::{Node, SystemTime, TextOverflow, WidgetSize};
     use units::{availability::Availability, units::DegreeCelsius};
 
@@ -337,7 +338,7 @@ mod tests {
         WidgetSize::from_dimensions(560, 420)
     }
 
-    #[test]
+    #[wasm_test]
     fn a_smaller_large_frame_scales_its_metrics_by_fit() {
         let metrics = LargeMetrics::for_size(smaller_large());
 
@@ -348,7 +349,7 @@ mod tests {
         assert_eq!(metrics.forecast_bar_width, 122.5);
     }
 
-    #[test]
+    #[wasm_test]
     fn canonical_large_metrics_stay_authored() {
         let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(638, 480));
 
@@ -359,7 +360,7 @@ mod tests {
         assert_eq!(metrics.forecast_bar_width, 140.0);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_smaller_large_frame_scales_its_forecast_rows() {
         let style = LargeMetrics::for_size(smaller_large()).forecast_row_style();
 
@@ -371,7 +372,7 @@ mod tests {
         assert_eq!(style.bar_height, 14.0);
     }
 
-    #[test]
+    #[wasm_test]
     fn canonical_large_keeps_authored_vertical_gaps() {
         let metrics = LargeMetrics::for_size(WidgetSize::from_dimensions(638, 480));
 
@@ -379,10 +380,9 @@ mod tests {
         assert_eq!(metrics.current_gap, 8.0);
     }
 
-    #[test]
+    #[wasm_test]
     fn canonical_large_keeps_current_condition_stacked_below_icon() {
         let size = WidgetSize::from_dimensions(638, 480);
-        init_test_registrars();
         let params = Params {
             location: "Prague".to_string(),
             time_zone: TimeZone::System,
@@ -405,10 +405,9 @@ mod tests {
         assert!(matches!(current_children[2], Node::Paragraph { .. }));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_smaller_large_frame_ellipsizes_the_location_on_one_row() {
         let size = smaller_large();
-        init_test_registrars();
         let metrics = LargeMetrics::for_size(size);
         let params = Params {
             location: "Prague".to_string(),

@@ -58,7 +58,7 @@ validate: format clippy python
     cargo clippy --profile fast -p bmc-wasm-runtime --all-targets --features hermetic-host -- -D warnings
     # The SDK's wasm32 side: the widget run below lints its own members, not the SDK they depend on.
     cargo clippy --profile fast -p bmc-wasm-sdk --target wasm32-unknown-unknown --all-targets --all-features -- -D warnings
-    (cd widgets-wasm && cargo clippy --profile fast --target wasm32-unknown-unknown --workspace -- -D warnings)
+    (cd widgets-wasm && cargo clippy --profile fast --target wasm32-unknown-unknown --workspace --all-targets -- -D warnings)
 
     # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.
     # Left unwrapped like the clippy runs above: `nix develop` swaps the toolchain
@@ -76,8 +76,7 @@ validate: format clippy python
     # The SDK's `#[wasm_test]`s again, on wasm32 under the wasm test runner.
     just test-wasm-sdk
 
-    # Widget logic has native tests; the wasm32 builds below can't run them.
-    just nextest --manifest-path widgets-wasm/Cargo.toml --workspace
+    just test-wasm-widgets
 
     # Slowest last: every widget workspace for wasm32, then the SDK docs.
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
@@ -173,6 +172,11 @@ test-widget WIDGET *ARGS:
 [positional-arguments]
 test-wasm-sdk *ARGS:
     just nextest --manifest-path widgets-wasm/Cargo.toml -p bmc-wasm-sdk --target wasm32-unknown-unknown "$@"
+
+# Run every widget's `#[wasm_test]`s, in both widget workspaces, on wasm32 under the wasm test runner.
+test-wasm-widgets:
+    just nextest --manifest-path widgets-wasm/Cargo.toml --workspace --target wasm32-unknown-unknown
+    just nextest --manifest-path widgets-wasm-examples/Cargo.toml --workspace --target wasm32-unknown-unknown
 
 # Compress images under the given paths (default: cwd).
 fmt-images *PATHS:

@@ -42,9 +42,11 @@ pub fn base_symbol(symbol: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn split_pair_follows_the_currency_tail_rule() {
         assert_eq!(split_pair("BTC-USD"), Some(("BTC", "USD")));
         assert_eq!(split_pair("BTC"), None);
@@ -52,7 +54,7 @@ mod tests {
         assert_eq!(split_pair("^GSPC"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn base_symbol_takes_the_leading_segment_uppercased() {
         assert_eq!(base_symbol("BTC-USD"), "BTC");
         assert_eq!(base_symbol("EURUSD=X"), "EURUSD");

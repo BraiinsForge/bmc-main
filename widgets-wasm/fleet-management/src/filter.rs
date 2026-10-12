@@ -61,9 +61,11 @@ impl Filters {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn only_axeos_carries_an_enable_key() {
         assert_eq!(
             family_enabled_key(DeviceFamily::Bitaxe),
@@ -73,7 +75,7 @@ mod tests {
         assert_eq!(family_enabled_key(DeviceFamily::Ubos), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn axeos_hides_only_when_disabled_others_always_show() {
         let on = Filters::default();
         assert!(on.is_visible(DeviceFamily::Bitaxe));

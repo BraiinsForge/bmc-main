@@ -22,13 +22,6 @@
 //! the list-view twin of the dashboard grid.
 
 use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::device::DeviceFamily;

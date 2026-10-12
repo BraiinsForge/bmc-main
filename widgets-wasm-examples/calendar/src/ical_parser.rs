@@ -285,6 +285,8 @@ fn parse_ics_oneshot(data: &str) -> Vec<RawEvent> {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     /// Helper: run the chunked path and collect all events.
@@ -313,7 +315,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn chunked_matches_oneshot_basic() {
         let ics = "\
 BEGIN:VCALENDAR\r\n\
@@ -337,7 +339,7 @@ END:VCALENDAR\r\n";
         assert_eq!(old.len(), 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn chunked_matches_oneshot_rrule_and_tzid() {
         let ics = "\
 BEGIN:VCALENDAR\r\n\
@@ -356,7 +358,7 @@ END:VCALENDAR\r\n";
         assert_eq!(old[0].tzid.as_deref(), Some("Europe/Prague"));
     }
 
-    #[test]
+    #[wasm_test]
     fn chunked_matches_oneshot_folded_lines() {
         // Note: RFC 5545 folded continuation lines start with a space or tab.
         // Can't use Rust `\` line continuation here — it eats leading whitespace.
@@ -372,7 +374,7 @@ END:VCALENDAR\r\n";
         assert_eq!(old[0].description.as_deref(), Some("Alsofolded"));
     }
 
-    #[test]
+    #[wasm_test]
     fn chunked_matches_oneshot_quoted_tzid() {
         let ics = "\
 BEGIN:VCALENDAR\r\n\
@@ -388,7 +390,7 @@ END:VCALENDAR\r\n";
         assert_eq!(old[0].tzid.as_deref(), Some("US/Eastern"));
     }
 
-    #[test]
+    #[wasm_test]
     fn split_skips_non_vevent_components() {
         let ics = "\
 BEGIN:VCALENDAR\r\n\
@@ -411,7 +413,7 @@ END:VCALENDAR\r\n";
         assert_events_eq(&old, &new);
     }
 
-    #[test]
+    #[wasm_test]
     fn empty_and_no_summary_skipped() {
         let ics = "\
 BEGIN:VCALENDAR\r\n\
@@ -431,7 +433,7 @@ END:VCALENDAR\r\n";
         assert_eq!(old[0].summary, "Valid");
     }
 
-    #[test]
+    #[wasm_test]
     fn chunked_matches_oneshot_real_feed() {
         let ics = include_str!("../testdata/finland.ics");
         let old = parse_ics_oneshot(ics);
@@ -444,7 +446,7 @@ END:VCALENDAR\r\n";
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn unix_line_endings() {
         let ics = "\
 BEGIN:VCALENDAR\n\

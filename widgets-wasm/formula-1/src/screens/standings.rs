@@ -20,13 +20,6 @@
 
 //! Drivers' championship standings.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::{SizeBucket, StandingsRow};
@@ -266,6 +259,7 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
     use bmc_wasm_sdk::{Node, TextOverflow};
 
     use super::{FontWeight, columns, standings_row};
@@ -274,7 +268,7 @@ mod tests {
     use crate::screens::fixtures;
     use crate::screens::parts::{NO_TABLE_VALUE, color, space};
 
-    #[test]
+    #[wasm_test]
     fn the_columns_fit_inside_every_frame() {
         // Guards the regression that shipped a table wider than its frame.
         for bucket in SizeBucket::ALL {
@@ -296,7 +290,7 @@ mod tests {
     }
 
     /// The per-frame rules the port keeps.
-    #[test]
+    #[wasm_test]
     fn every_frame_matches_the_ported_layout() {
         let expected = [
             (SizeBucket::Full, 10, true, true, true, FontWeight::BOLD),
@@ -332,7 +326,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_missing_total_reads_as_a_muted_dash() {
         let mut entry = fixtures::standings(SizeBucket::Small).rows.remove(0);
         entry.points = None;
@@ -358,7 +352,7 @@ mod tests {
 
     /// The mark's placeholder is an empty box,
     /// so it would be the first to shrink beside a name that runs on.
-    #[test]
+    #[wasm_test]
     fn a_long_team_name_gives_way_to_its_mark() {
         const TEAM: &str = "Scuderia Ferrari HP, longer than any team column seats";
         let mut entry = fixtures::standings(SizeBucket::Large).rows.remove(0);

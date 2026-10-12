@@ -19,10 +19,6 @@
 // the grant above.
 
 use bmc_wasm_sdk::types::Ratio;
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::format;

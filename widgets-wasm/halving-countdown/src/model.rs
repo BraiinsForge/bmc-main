@@ -176,9 +176,11 @@ pub enum Status {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn decompose_splits_place_values() {
         // 2 days, 3 hours, 4 minutes, 30 seconds (seconds dropped).
         let total = 2 * 86_400 + 3 * 3_600 + 4 * 60 + 30;
@@ -192,13 +194,13 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn decompose_clamps_negative_to_zero() {
         let cd = decompose(-500);
         assert_eq!((cd.days, cd.hours, cd.minutes), (0, 0, 0));
     }
 
-    #[test]
+    #[wasm_test]
     fn decompose_large_span() {
         // ~631 days out (a fresh halving era), like the live nexus payload.
         let cd = decompose(54_533_098);
@@ -213,17 +215,17 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn blocks_remaining_is_target_minus_tip() {
         assert_eq!(prediction(959_111, 1_050_000).blocks_remaining(), 90_889);
     }
 
-    #[test]
+    #[wasm_test]
     fn blocks_remaining_saturates_past_target() {
         assert_eq!(prediction(1_050_001, 1_050_000).blocks_remaining(), 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn every_design_size_lands_in_its_own_bucket() {
         for bucket in [
             SizeBucket::Full,
@@ -238,7 +240,7 @@ mod tests {
     }
 
     /// A frame that misses the BMM101 rule by a pixel falls to the SDK's closest variant.
-    #[test]
+    #[wasm_test]
     fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
         assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
@@ -246,12 +248,12 @@ mod tests {
         assert_eq!(size_bucket(481, 320), SizeBucket::Large);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_square_bfm100_stays_large() {
         assert_eq!(size_bucket(480, 480), SizeBucket::Large);
     }
 
-    #[test]
+    #[wasm_test]
     fn nexus_payload_becomes_stale_after_two_refresh_intervals_and_a_reply_timeout() {
         let freshness = Freshness {
             payload_unix_secs: Some(870),
@@ -262,7 +264,7 @@ mod tests {
     }
 
     /// Received 57 s old at 1 000; the next reply is due a TTL later and runs 9 s slow.
-    #[test]
+    #[wasm_test]
     fn a_slow_reply_to_a_cache_aged_payload_is_not_stale_before_it_lands() {
         let freshness = Freshness {
             payload_unix_secs: Some(1_000 - 57),

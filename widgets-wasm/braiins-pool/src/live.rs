@@ -26,10 +26,6 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use bmc_wasm_sdk::types::Hashrate;
-#[expect(
-    clippy::wildcard_imports,
-    reason = "runtime code uses many SDK builders, macros, and host shims"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::credentials as slots;

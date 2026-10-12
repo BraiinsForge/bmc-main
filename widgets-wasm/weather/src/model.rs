@@ -282,9 +282,11 @@ impl ForecastRange {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn weekday_name_uses_local_date_not_the_utc_instant() {
         // 2026-06-03 is a Wednesday. A local-midnight stamp at a negative
         // offset is a previous-day instant in UTC; the label must still read
@@ -301,68 +303,71 @@ mod tests {
     const EVENING: i64 = 1_780_509_600;
     const HOUR: i64 = 3_600;
 
-    fn at(unix_secs: i64) -> Option<SystemTime> {
-        Some(SystemTime { unix_secs })
+    fn at(unix_secs: i64) -> SystemTime {
+        SystemTime { unix_secs }
     }
 
     fn hour(unix_secs: i64, is_day: bool) -> HourEntry {
         HourEntry {
-            at: at(unix_secs),
+            at: Some(at(unix_secs)),
             temperature: DegreeCelsius(10.0),
             weather_code: 1,
             is_day,
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn hourly_start_index_finds_first_hour_at_or_after_now() {
         let entries = vec![
             hour(EVENING - 18 * HOUR, true),
             hour(EVENING, true),
             hour(EVENING + HOUR, false),
         ];
-        assert_eq!(hourly_start_index(&entries, at(EVENING + HOUR / 2)), 2);
         assert_eq!(
-            hourly_start_index(&entries, at(EVENING)),
+            hourly_start_index(&entries, Some(at(EVENING + HOUR / 2))),
+            2
+        );
+        assert_eq!(
+            hourly_start_index(&entries, Some(at(EVENING))),
             1,
             "an exact match starts at that hour"
         );
         assert_eq!(
-            hourly_start_index(&entries, at(EVENING + 6 * HOUR)),
+            hourly_start_index(&entries, Some(at(EVENING + 6 * HOUR))),
             0,
             "past the last hour falls back to the first"
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn hourly_start_index_passes_over_an_hour_that_did_not_parse() {
         let unparsed = HourEntry {
             at: None,
             ..hour(EVENING, true)
         };
         let entries = vec![unparsed, hour(EVENING + HOUR, true)];
-        assert_eq!(hourly_start_index(&entries, at(EVENING)), 1);
+        assert_eq!(hourly_start_index(&entries, Some(at(EVENING))), 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn hourly_start_index_starts_at_the_first_hour_without_a_current_time() {
         let entries = vec![hour(EVENING, true), hour(EVENING + HOUR, false)];
         assert_eq!(hourly_start_index(&entries, None), 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn current_is_day_reads_the_hour_the_strip_starts_at() {
         let h = Hourly {
             entries: vec![hour(EVENING, true), hour(EVENING + 3 * HOUR, false)],
             start_index: 0,
         };
-        assert!(!current_is_day(Some(&h), at(EVENING + HOUR)));
-        assert!(current_is_day(Some(&h), at(EVENING - HOUR)));
+        assert!(!current_is_day(Some(&h), Some(at(EVENING + HOUR))));
+        assert!(current_is_day(Some(&h), Some(at(EVENING - HOUR))));
     }
 
-    #[test]
+    #[wasm_test]
     fn current_is_day_defaults_true_without_hourly() {
-        assert!(current_is_day(None, at(EVENING)));
+        assert!(current_is_day(None, Some(at(EVENING))));
     }
 
     fn day(min_c: f64, max_c: f64) -> DayForecast {
@@ -381,7 +386,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn forecast_range_spans_min_and_max_across_days() {
         let days = vec![day(16.2, 21.0), day(10.9, 25.8)];
         let range = ForecastRange::of(&days);
@@ -389,7 +394,7 @@ mod tests {
         assert!((range.max.raw() - 25.8).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn day_fraction_positions_a_value_within_the_global_range() {
         let range = ForecastRange {
             min: DegreeCelsius(10.0),
@@ -400,7 +405,7 @@ mod tests {
         assert!((range.fraction(DegreeCelsius(30.0)) - 1.0).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn forecast_window_starts_at_today_and_caps_length() {
         let daily = Daily {
             days: vec![day(1.0, 2.0), day(3.0, 4.0), day(5.0, 6.0)],
@@ -417,7 +422,7 @@ mod tests {
         assert_eq!(daily.forecast_window(1).len(), 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn missing_current_does_not_imply_missing_daily() {
         let daily = Daily {
             days: vec![day(10.9, 25.8)],
@@ -435,7 +440,7 @@ mod tests {
         assert!(w.daily.is_some());
     }
 
-    #[test]
+    #[wasm_test]
     fn every_design_size_lands_in_its_own_bucket() {
         for bucket in [
             SizeBucket::Full,
@@ -450,7 +455,7 @@ mod tests {
     }
 
     /// A frame that misses the BMM101 rule by a pixel falls to the SDK's closest variant.
-    #[test]
+    #[wasm_test]
     fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
         assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);

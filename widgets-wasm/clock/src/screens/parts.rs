@@ -25,13 +25,6 @@ pub(crate) use bmc_wasm_sdk::format::{
     TzLabel, push_tz_caption, push_utc_offset, resolve_tz_for_label,
 };
 use bmc_wasm_sdk::system::{DateFormat, TimeFormat};
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render code uses many SDK exports and macros in one file"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::NumbersFontStyle;
@@ -178,14 +171,16 @@ pub(crate) const fn alarm_row_font_family() -> FontFamily {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn time_text_uses_deck_sans_family() {
         assert_eq!(time_font_family(), FontFamily::DeckSans);
     }
 
-    #[test]
+    #[wasm_test]
     fn alarm_row_text_uses_deck_sans_family() {
         assert_eq!(alarm_row_font_family(), FontFamily::DeckSans);
     }

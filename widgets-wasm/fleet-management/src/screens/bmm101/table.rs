@@ -21,13 +21,6 @@
 //! List view on BMM101: each model's name, status counts, hashrate and its trend.
 //! Power, efficiency and temperature stay Deck-only; the panel has no room for them.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::screens::bmm101::{

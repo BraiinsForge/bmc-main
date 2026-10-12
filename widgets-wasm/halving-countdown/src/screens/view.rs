@@ -24,10 +24,6 @@
 //! so whoever installs the snapshot — the host, the gallery, a test —
 //! sets the formats and the timezone once for every layout.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "screen code uses the SDK's tree builders, macros, and tokens throughout"
-)]
 use bmc_wasm_sdk::*;
 use units::availability::Availability;
 
@@ -473,13 +469,13 @@ fn bmm101(weight: FontWeight, data: Option<&DisplayData>) -> Node {
 #[cfg(test)]
 mod tests {
     use bmc_wasm_sdk::system::{NumberFormat, SnapshotBuilder, TimeFormat};
+    use bmc_wasm_sdk::wasm_test;
 
     use super::*;
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
 
     fn install_prague(time_format: TimeFormat) {
-        assets::init_test_registrars();
         system::set_current(
             SnapshotBuilder::new()
                 .timezone("Europe/Prague")
@@ -515,7 +511,7 @@ mod tests {
         texts(&halving_view(&view))
     }
 
-    #[test]
+    #[wasm_test]
     fn the_countdown_counts_from_the_render_moment() {
         install_prague(TimeFormat::Hour24);
         let texts = healthy_at(SizeBucket::Small);
@@ -524,7 +520,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_tiled_sizes_add_the_predicted_moment_and_the_blocks_left() {
         install_prague(TimeFormat::Hour24);
         for bucket in [SizeBucket::Full, SizeBucket::Large] {
@@ -545,7 +541,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_twelve_hour_clock_marks_the_predicted_time() {
         install_prague(TimeFormat::Hour12);
         assert!(
@@ -554,7 +550,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_compact_sizes_draw_the_countdown_alone() {
         install_prague(TimeFormat::Hour24);
         for bucket in [SizeBucket::Medium, SizeBucket::Small] {
@@ -564,7 +560,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_round_face_draws_the_countdown_alone() {
         install_prague(TimeFormat::Hour24);
         let view = fixtures::healthy(fixtures::round(480), fixtures::default_params());
@@ -573,7 +569,7 @@ mod tests {
         assert!(!texts.contains(&"Predicted Date".to_owned()));
     }
 
-    #[test]
+    #[wasm_test]
     fn only_the_narrow_layouts_drop_the_minutes_from_four_digit_days() {
         install_prague(TimeFormat::Hour24);
         let era_start = |viewport| {
@@ -604,7 +600,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_frame_reads_top_down_as_designed() {
         install_prague(TimeFormat::Hour24);
         assert_eq!(
@@ -629,7 +625,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn without_a_prediction_every_value_reads_as_a_dash() {
         install_prague(TimeFormat::Hour24);
         for bucket in [SizeBucket::Full, SizeBucket::Bmm101] {
@@ -643,7 +639,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn each_status_but_ready_floats_its_tag_over_the_layout() {
         install_prague(TimeFormat::Hour24);
         let params = fixtures::default_params();

@@ -22,10 +22,6 @@ use crate::manifest_params::Country;
 
 use crate::icons;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 const HEADER_COLOR: Color = GRAY_60;

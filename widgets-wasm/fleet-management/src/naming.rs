@@ -33,9 +33,11 @@ pub fn display_name(identity_name: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn strips_the_mdns_service_suffix_at_the_first_separator() {
         assert_eq!(display_name("miner-a._http._tcp.local."), "miner-a");
         assert_eq!(display_name("bmm-01._ubos._tcp.local."), "bmm-01");
@@ -45,7 +47,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn manual_names_pass_through() {
         assert_eq!(display_name("10.0.0.5"), "10.0.0.5");
         assert_eq!(display_name("miner.local"), "miner.local");

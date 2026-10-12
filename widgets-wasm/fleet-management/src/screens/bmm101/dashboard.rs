@@ -22,13 +22,6 @@
 //! Power and temperatures stay Deck-only; the panel has no room for them.
 
 use bmc_wasm_sdk::types::MiningEfficiency;
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::screens::bmm101::{

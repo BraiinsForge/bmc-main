@@ -113,10 +113,12 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::tests_support::MapJson;
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn parses_stats_hashrate_and_power() {
         let mut json = MapJson::default();
         json.floats.insert(
@@ -131,7 +133,7 @@ mod tests {
         assert_eq!(data.power_w, Some(41.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_reports_no_stored_field_on_shapeless_reply() {
         let empty = MapJson::default();
         let mut data = MinerData::default();
@@ -162,7 +164,7 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_tuner_constraints_for_hashrate_and_power() {
         let mut data = MinerData::default();
         parse_constraints(&full_constraints_json(), &mut data);
@@ -184,7 +186,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn constraint_target_is_absent_when_a_leaf_is_missing() {
         let mut json = full_constraints_json();
         json.floats

@@ -250,35 +250,37 @@ mod payload {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn spaces_become_percent_twenty() {
         let url = weather_url("https://example/api/weather/", "New York");
         assert_eq!(url, "https://example/api/weather/New%20York");
     }
 
-    #[test]
+    #[wasm_test]
     fn unreserved_ascii_passes_through() {
         assert_eq!(weather_url("b/", "Prague"), "b/Prague");
     }
 
-    #[test]
+    #[wasm_test]
     fn multibyte_umlaut_is_encoded_per_utf8_byte() {
         assert_eq!(weather_url("b/", "Zürich"), "b/Z%C3%BCrich");
     }
 
-    #[test]
+    #[wasm_test]
     fn multibyte_and_space_are_both_encoded() {
         assert_eq!(weather_url("b/", "São Paulo"), "b/S%C3%A3o%20Paulo");
     }
 
-    #[test]
+    #[wasm_test]
     fn location_miss_disables_weather_poll_until_params_change() {
         assert_eq!(weather_fetch_action(404), WeatherFetchAction::BadLocation);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_404_is_a_bad_location_regardless_of_held_data() {
         assert_eq!(
             fetch_outcome(WeatherFetchAction::BadLocation, false, false),
@@ -290,7 +292,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_parsed_payload_replaces_the_data() {
         assert_eq!(
             fetch_outcome(WeatherFetchAction::ReadPayload, true, false),
@@ -302,7 +304,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_failure_keeps_data_when_present_else_errors() {
         // Held data survives a failed refresh (and goes stale); with nothing
         // loaded yet the same failure is a hard error.

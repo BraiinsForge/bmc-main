@@ -21,7 +21,6 @@
 #![allow(clippy::cast_precision_loss)]
 #![cfg(target_arch = "wasm32")]
 
-#[cfg_attr(not(test), expect(clippy::wildcard_imports))]
 use bmc_wasm_sdk::*;
 
 use std::cell::{Cell, RefCell};

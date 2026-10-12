@@ -21,13 +21,6 @@
 //! Rectangular analog dial — per-resolution dial SVGs stretched to fill
 //! the widget viewport, with numerals and timezone label overlaid.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render code uses many SDK exports and macros in one file"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;

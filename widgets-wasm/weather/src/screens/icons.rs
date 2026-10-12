@@ -20,10 +20,6 @@
 
 use crate::weather_code::IconId;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 pub const TEMP_HIGH: Svg = include_svg!("assets/temp-high.svg");

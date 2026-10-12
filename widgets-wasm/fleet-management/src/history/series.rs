@@ -230,6 +230,7 @@ fn slot_of(at: i64, interval_secs: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
     use std::collections::BTreeMap;
 
     use super::*;
@@ -251,7 +252,7 @@ mod tests {
         )
     }
 
-    #[test]
+    #[wasm_test]
     fn a_sample_in_the_open_slot_refreshes_its_bucket_with_its_value_and_time() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(4.0));
@@ -259,7 +260,7 @@ mod tests {
         assert_eq!(s.samples(), vec![datum(56, Some(9.0))]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_cut_drops_a_bucket_whose_value_was_read_after_it() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(1.0));
@@ -274,7 +275,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_sample_older_than_the_newest_bucket_is_dropped() {
         let mut s = Series::new(SPAN);
         s.record(80, Some(1.0));
@@ -282,7 +283,7 @@ mod tests {
         assert_eq!(s.samples(), vec![datum(80, Some(1.0))]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_sample_in_a_later_slot_opens_a_bucket() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(4.0));
@@ -290,7 +291,7 @@ mod tests {
         assert_eq!(s.samples(), vec![datum(0, Some(4.0)), datum(60, Some(9.0))]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_live_sample_never_changes_a_restored_bucket() {
         let mut s = holding(&[(0, Some(4.0))]);
         s.record(20, None);
@@ -307,7 +308,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn dropping_the_buckets_after_a_time_keeps_the_newest_slot_sampled() {
         let mut s = holding(&[(0, Some(1.0)), (60, Some(2.0)), (120, Some(3.0))]);
         s.drop_after(80);
@@ -318,7 +319,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_older_blob_goes_before_the_buckets_after_the_cut() {
         let mut s = Series::new(SPAN);
         s.record(200, Some(1.0));
@@ -344,7 +345,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_live_bucket_in_the_slot_of_the_cut_is_dropped() {
         let mut s = Series::new(SPAN);
         s.record(3_640, Some(1.0));
@@ -366,7 +367,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restored_break_is_never_refreshed() {
         let mut s = holding(&[(0, Some(4.0)), (60, None)]);
         s.record(80, Some(9.0));
@@ -377,7 +378,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn of_two_restored_buckets_in_one_slot_the_newer_is_kept() {
         assert_eq!(
             holding(&[(0, Some(1.0)), (20, Some(2.0)), (60, Some(3.0))]).samples(),
@@ -386,7 +387,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restored_restart_break_in_its_last_value_slot_does_not_hide_the_value() {
         assert_eq!(
             holding(&[(0, Some(1.0)), (20, None), (60, Some(3.0))]).samples(),
@@ -395,7 +396,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_oldest_bucket_is_evicted_at_capacity() {
         let mut s = Series::new(SPAN);
         for i in 0..=POINTS {
@@ -407,7 +408,7 @@ mod tests {
         assert_eq!(samples[0].at, 60, "the bucket at 0 was evicted");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_cut_closes_the_newest_bucket() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(1.0));
@@ -428,7 +429,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restored_series_out_of_time_order_is_sorted() {
         let s = holding(&[(120, Some(3.0)), (0, Some(1.0)), (60, Some(2.0))]);
         assert_eq!(
@@ -446,7 +447,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restored_series_longer_than_capacity_is_cut_to_the_newest() {
         let over: Vec<HistoryDatum> = (0..POINTS + 10)
             .map(|i| {
@@ -464,7 +465,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_slot_counts_as_sampled_only_once_a_sample_lands_in_it() {
         let mut s = Series::new(SPAN);
         assert!(!s.has_sampled_slot_of(0), "nothing recorded yet");
@@ -520,7 +521,7 @@ mod tests {
         all.into_iter().skip(excess).collect()
     }
 
-    #[test]
+    #[wasm_test(fuel = 1e9, reason = "records up to 300 samples in 2,000 cases")]
     fn record_matches_a_slot_map_over_generated_sequences() {
         let mut rng = Lcg(0x5EED);
         for case in 0..2_000 {
@@ -601,24 +602,24 @@ mod tests {
         span_secs: 3_600,
     };
 
-    #[test]
+    #[wasm_test]
     fn polls_up_to_two_intervals_apart_plot_one_run() {
         // A device polled every 100 s leaves one empty 60 s slot between some of its buckets.
         let s = present(&[0, 100, 200, 300, 400, 500, 600, 700]);
         assert_eq!(breaks(&s.plot(WINDOW)), 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn one_empty_slot_between_buckets_joins_the_line() {
         assert_eq!(breaks(&present(&[0, 120]).plot(WINDOW)), 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn two_empty_slots_between_buckets_break_the_line() {
         assert_eq!(breaks(&present(&[0, 180]).plot(WINDOW)), 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_jump_over_two_intervals_breaks_the_plot() {
         let s = present(&[0, 60, 120, 180, 240, 720, 780, 840]);
         assert_eq!(
@@ -628,7 +629,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn samples_sparser_than_the_chart_break_between_most_buckets() {
         // A device polled every 160 s leaves two empty 60 s slots
         // between most of its buckets, and the chart shows them as missing.
@@ -636,7 +637,7 @@ mod tests {
         assert_eq!(breaks(&s.plot(WINDOW)), 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bucket_without_a_value_breaks_the_plot() {
         let s = holding(&[(0, Some(1.0)), (60, None), (120, Some(2.0))]);
         assert_eq!(
@@ -651,7 +652,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_empty_bucket_and_the_downtime_after_it_leave_no_empty_run() {
         let s = holding(&[
             (0, Some(1.0)),
@@ -667,7 +668,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bucket_without_a_value_before_the_first_point_leaves_no_empty_run() {
         let one = |at| vec![vec![ChartPoint { at, value: 1.0 }]];
         assert_eq!(
@@ -682,7 +683,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_newest_bucket_before_the_window_draws_the_line_in_from_the_edge() {
         let s = present(&[3_480, 3_540, 3_600, 3_660]);
         assert_eq!(
@@ -692,7 +693,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_open_bucket_is_not_drawn_while_its_slot_runs() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(1.0));
@@ -711,7 +712,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_closed_newest_bucket_is_drawn_in_its_slot() {
         let s = present(&[0, 60]);
         let window = ChartWindow {
@@ -725,7 +726,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn buckets_stamped_after_the_window_end_are_not_drawn() {
         let s = present(&[0, 60, 120, 180]);
         let window = ChartWindow {
@@ -739,7 +740,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_full_history_draws_its_line_in_from_the_left_edge() {
         for into_slot in 0..60 {
             let now = 7_200 + into_slot;
@@ -759,7 +760,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bucket_before_the_window_cut_off_by_a_gap_is_not_plotted() {
         let s = present(&[2_400, 3_840, 3_900]);
         assert_eq!(s.plot(LATER_WINDOW), {
@@ -768,12 +769,12 @@ mod tests {
         });
     }
 
-    #[test]
+    #[wasm_test]
     fn a_series_that_ended_before_the_window_plots_nothing() {
         assert!(present(&[2_400, 2_460]).plot(LATER_WINDOW).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bucket_before_the_window_followed_by_a_break_is_not_plotted() {
         let s = holding(&[(3_540, Some(1.0)), (3_600, None), (3_660, Some(1.0))]);
         assert_eq!(
@@ -785,7 +786,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test(fuel = 200e6, reason = "plots 2,000 generated series")]
     fn plot_keeps_its_invariants_over_generated_series() {
         let mut rng = Lcg(0x917);
         for case in 0..2_000 {

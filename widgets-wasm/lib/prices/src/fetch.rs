@@ -98,9 +98,11 @@ pub fn classify(status: u32) -> FetchClass {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn prices_url_joins_base_and_keeps_pair_slash() {
         assert_eq!(
             prices_url(
@@ -117,7 +119,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn prices_url_percent_encodes_index_and_fx_specials() {
         assert_eq!(
             prices_url("b/", "^GSPC", Period::D7, Period::D7.candle()),
@@ -129,7 +131,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn prices_url_keeps_a_configured_symbol_in_one_path_segment() {
         assert_eq!(
             prices_url("b/", "../../foo", Period::D7, Period::D7.candle()),
@@ -137,7 +139,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn classify_maps_each_status_band() {
         assert_eq!(classify(200), FetchClass::Ok);
         assert_eq!(classify(204), FetchClass::Ok);
@@ -148,7 +150,7 @@ mod tests {
         assert_eq!(classify(0), FetchClass::Transient);
     }
 
-    #[test]
+    #[wasm_test]
     fn only_a_missing_resource_leaves_a_question_the_reference_can_answer() {
         // A refused request says nothing about the instrument, so no later
         // reference reply may reinterpret it as a closed market.
@@ -156,14 +158,14 @@ mod tests {
         assert_eq!(PriceMiss::of(classify(400)), Some(PriceMiss::Rejected));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reply_that_carries_data_or_may_yet_is_not_a_miss() {
         for status in [200, 503, 500, 0] {
             assert_eq!(PriceMiss::of(classify(status)), None);
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn input_errors_and_backoff_responses_use_the_poll_interval() {
         assert!(FetchClass::InputError.uses_poll_interval());
         assert!(FetchClass::NotFound.uses_poll_interval());

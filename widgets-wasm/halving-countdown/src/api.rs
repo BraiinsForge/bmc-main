@@ -89,6 +89,7 @@ pub fn parse(
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
     use std::collections::BTreeMap;
 
     use super::*;
@@ -143,7 +144,7 @@ mod tests {
         (value == NEXT_TIMESTAMP).then_some(NEXT_UNIX)
     }
 
-    #[test]
+    #[wasm_test]
     fn the_recorded_payload_reads_as_its_prediction_and_age() {
         let (prediction, freshness) = parse(&recorded(), &parse_recorded_date, RECEIVED_AT)
             .expect("BUG: the recorded payload is complete");
@@ -164,14 +165,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unreadable_timestamp_falls_back_to_the_delta() {
         let (prediction, _) = parse(&recorded(), &|_| None, RECEIVED_AT)
             .expect("BUG: the delta stands in for the timestamp");
         assert_eq!(prediction.predicted_unix, RECEIVED_AT + 54_521_099);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_missing_field_rejects_the_payload() {
         for missing in [
             "/ttl_secs",
@@ -189,7 +190,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn implausible_values_reject_the_payload() {
         for (path, value) in [
             ("/ttl_secs", 0),
@@ -207,7 +208,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_prediction_before_genesis_is_rejected() {
         let mut json = recorded();
         json.strings.remove("/data/next/timestamp");

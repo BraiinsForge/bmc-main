@@ -25,10 +25,6 @@
 mod manifest_params;
 
 #[cfg(target_arch = "wasm32")]
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
-)]
 use bmc_wasm_sdk::*;
 #[cfg(target_arch = "wasm32")]
 use manifest_params::credentials as slots;

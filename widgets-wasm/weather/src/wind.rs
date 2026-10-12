@@ -47,9 +47,11 @@ pub fn cardinal(degrees: Degree) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn maps_degrees_to_eight_point_compass() {
         assert_eq!(cardinal(Degree(0.0)), "North");
         assert_eq!(cardinal(Degree(45.0)), "Northeast");

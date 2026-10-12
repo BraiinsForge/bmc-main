@@ -95,9 +95,11 @@ pub fn should_retry(class: FetchClass) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn a_parsed_payload_stores_the_series() {
         assert_eq!(
             from_reply(FetchClass::Ok, true, false, ReferenceOutcome::Unknown),
@@ -109,7 +111,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn input_error_replaces_held_data() {
         for has_data in [false, true] {
             assert_eq!(
@@ -124,7 +126,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_resolved_reference_turns_a_price_404_into_no_data() {
         // A closed market serves no candles for the window
         // while the instrument itself still resolves — the view
@@ -142,7 +144,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_price_404_stays_not_found_until_the_reference_resolves() {
         for reference in [ReferenceOutcome::Unknown, ReferenceOutcome::NotFound] {
             assert_eq!(
@@ -152,7 +154,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_reference_path_reaches_the_same_verdict_as_the_price_path() {
         // A reference reply can land after the view already chose a message
         // from a price 404. Both paths read the same mapping, so a reference
@@ -174,7 +176,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_refused_request_is_never_reinterpreted_by_the_reference() {
         // A resolved instrument explains an empty window. It does not explain
         // a request Nexus refused, which no amount of instrument metadata
@@ -191,7 +193,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn any_failure_keeps_held_data_else_fails() {
         // Surface a 503 with nothing loaded as unavailable; it can also mean
         // no symbol data.
@@ -207,7 +209,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn should_retry_only_on_ok() {
         assert!(should_retry(FetchClass::Ok));
         assert!(!should_retry(FetchClass::Transient));

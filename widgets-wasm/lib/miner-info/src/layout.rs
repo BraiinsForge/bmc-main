@@ -209,6 +209,8 @@ pub(crate) fn info_overload_fields(panel: Panel) -> InfoOverloadFields {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     fn rectangular(width: u32, height: u32) -> WidgetViewport {
@@ -219,7 +221,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn classifies_each_shipped_geometry() {
         for (viewport, panel, screen) in [
             (rectangular(317, 238), Panel::Small, "BMC100 small slot"),
@@ -241,7 +243,7 @@ mod tests {
 
     /// An admitted size short of the frame on either side takes the small
     /// faces, which flex, rather than a grid that would clip.
-    #[test]
+    #[wasm_test]
     fn a_rectangle_is_small_until_the_bmm101_frame_fits() {
         assert_eq!(classify(rectangular(479, 320)), Panel::Small);
         assert_eq!(classify(rectangular(480, 319)), Panel::Small);
@@ -249,7 +251,7 @@ mod tests {
         assert_eq!(classify(rectangular(480, 320)), Panel::Bmm101);
     }
 
-    #[test]
+    #[wasm_test]
     fn hides_info_overload_secondary_fields_on_small_viewport() {
         let fields = info_overload_fields(Panel::Small);
         assert!(!fields.show_price_graph);
@@ -258,7 +260,7 @@ mod tests {
         assert!(!fields.show_difficulty_row);
     }
 
-    #[test]
+    #[wasm_test]
     fn mining_layout_matches_boser_theme_for_bmm100() {
         assert_eq!(
             mining_layout(),
@@ -275,7 +277,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn info_overload_layout_keeps_boser_grid_on_the_round_panel() {
         assert_eq!(
             info_overload_layout(Panel::Round),
@@ -296,7 +298,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn each_grid_fits_the_narrowest_screen_it_serves() {
         for (panel, width, screen) in [
             (Panel::Bmm101, 480.0, "BMM101"),

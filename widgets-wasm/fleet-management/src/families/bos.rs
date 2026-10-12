@@ -231,6 +231,8 @@ impl FamilyAdapter for BosAdapter {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::discovery::tests_support::MapJson;
     use crate::telemetry::TelemetryReading;
@@ -245,7 +247,7 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn browses_the_bos_subtype() {
         assert_eq!(BosAdapter.browse_service_types(), &["_bos._sub._http._tcp"]);
     }
@@ -256,33 +258,33 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bos_version_identifies_bos() {
         assert!(is_bos_txt(&with_txt("/txt/bos_version", "26.09")));
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bos_flag_identifies_bos_without_a_version() {
         assert!(is_bos_txt(&with_txt("/txt/bos", "1")));
     }
 
-    #[test]
+    #[wasm_test]
     fn an_empty_bos_version_does_not_identify_bos() {
         assert!(!is_bos_txt(&with_txt("/txt/bos_version", "")));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bos_flag_other_than_one_does_not_identify_bos() {
         assert!(!is_bos_txt(&with_txt("/txt/bos", "0")));
         assert!(!is_bos_txt(&with_txt("/txt/bos", "")));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_sighting_without_bos_txt_is_not_bos() {
         assert!(!is_bos_txt(&bos_shaped()));
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_a_bos_device_from_a_found_event() {
         let found = BosAdapter
             .parse_found(&bos_shaped())
@@ -292,7 +294,7 @@ mod tests {
         assert_eq!(found.identity.port, 80);
     }
 
-    #[test]
+    #[wasm_test]
     fn stamps_family_from_adapter_not_service_type() {
         let found = BosAdapter
             .parse_found(&bos_shaped())
@@ -300,7 +302,7 @@ mod tests {
         assert_eq!(found.identity.family, DeviceFamily::Bos);
     }
 
-    #[test]
+    #[wasm_test]
     fn rejects_event_missing_host() {
         let mut json = bos_shaped();
         json.strings.remove("/host");
@@ -318,7 +320,7 @@ mod tests {
         j
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_stats_into_hashrate_and_power() {
         let mut r = TelemetryReading::default();
         BosAdapter.parse_telemetry("/miner/stats", &stats_json(), &mut r);
@@ -326,7 +328,7 @@ mod tests {
         assert_eq!(r.power_w, Some(3_250.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_hashboards_temperature_as_a_spread_across_boards() {
         let mut j = MapJson::default();
         j.floats
@@ -345,7 +347,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn hashboard_temperature_scans_past_a_missing_board() {
         // Board 0 failed (absent); boards 1 and 2 report. The spread must
         // come from the present boards, not stop at the gap on board 0.
@@ -366,7 +368,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_details_uptime_and_sticker_nominal() {
         let mut j = MapJson::default();
         j.ints.insert("/bosminer_uptime_s", 187_020);
@@ -378,7 +380,7 @@ mod tests {
         assert_eq!(r.nominal_hashrate_ths, Some(100.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn details_reset_clears_uptime_and_nominal() {
         let mut r = TelemetryReading {
             uptime_s: Some(100),
@@ -390,7 +392,7 @@ mod tests {
         assert_eq!(r.nominal_hashrate_ths, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_clears_owned_field_that_vanished_from_response() {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(99.0),
@@ -402,7 +404,7 @@ mod tests {
         assert_eq!(r.power_w, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_clears_only_the_endpoints_own_fields() {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(50.0),
@@ -421,19 +423,19 @@ mod tests {
         assert_eq!(r.uptime_s, Some(100));
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_login_token() {
         let mut j = MapJson::default();
         j.strings.insert("/token", "abc123");
         assert_eq!(BosAdapter.parse_login(&j), Some("abc123".to_owned()));
     }
 
-    #[test]
+    #[wasm_test]
     fn login_without_token_is_none() {
         assert_eq!(BosAdapter.parse_login(&MapJson::default()), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn flags_401_and_403_as_auth_errors() {
         assert!(BosAdapter.is_auth_error(401));
         assert!(BosAdapter.is_auth_error(403));
@@ -441,17 +443,17 @@ mod tests {
         assert!(!BosAdapter.is_auth_error(500));
     }
 
-    #[test]
+    #[wasm_test]
     fn bos_advertises_a_login_endpoint() {
         assert_eq!(BosAdapter.auth_endpoint(), Some("/auth/login"));
     }
 
-    #[test]
+    #[wasm_test]
     fn bos_has_no_proactive_credential_header() {
         assert_eq!(BosAdapter.credential_header(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn login_body_carries_the_bos_placeholders_for_the_host_to_fill() {
         assert_eq!(
             BosAdapter.login_body(),
@@ -459,7 +461,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn platform_slug_maps_every_known_platform() {
         assert_eq!(platform_slug(1), Some("am1-s9"));
         assert_eq!(platform_slug(2), Some("am2-s17"));
@@ -471,13 +473,13 @@ mod tests {
         assert_eq!(platform_slug(8), Some("stm32mp157c-ii2-bmm1"));
     }
 
-    #[test]
+    #[wasm_test]
     fn platform_slug_rejects_unspecified_and_unknown() {
         assert_eq!(platform_slug(0), None);
         assert_eq!(platform_slug(99), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_details_into_id_and_name() {
         let mut j = MapJson::default();
         j.ints.insert("/platform", 8);
@@ -488,7 +490,7 @@ mod tests {
         assert_eq!(acc.name.as_deref(), Some("BMM 101"));
     }
 
-    #[test]
+    #[wasm_test]
     fn details_without_miner_model_leaves_name_none() {
         let mut j = MapJson::default();
         j.ints.insert("/platform", 2);
@@ -498,7 +500,7 @@ mod tests {
         assert_eq!(acc.name, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_hashboards_into_chip_type_and_summed_count() {
         let mut j = MapJson::default();
         j.strings.insert("/hashboards/0/chip_type", "BM1370");
@@ -511,7 +513,7 @@ mod tests {
         assert_eq!(acc.chip_count, Some(146));
     }
 
-    #[test]
+    #[wasm_test]
     fn chip_count_sums_boards_past_a_missing_one() {
         // Board 0 omitted (failed/disabled), boards 1 and 2 present. The total
         // must include both present boards rather than stopping at the gap.

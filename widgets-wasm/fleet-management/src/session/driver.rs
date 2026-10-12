@@ -745,9 +745,11 @@ fn advance() {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn escalate_failure_prefers_the_most_actionable_reason() {
         use PollFailure::{AccountUnusable, ApiError, AuthError, Unreachable};
         assert_eq!(escalate_failure(None, Unreachable), Unreachable);

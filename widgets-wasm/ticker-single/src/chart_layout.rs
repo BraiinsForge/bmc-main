@@ -394,6 +394,10 @@ pub fn label_text(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
     use bmc_wasm_sdk::LocalDateTime;
     use bmc_wasm_sdk::system::TimeFormat;
@@ -445,7 +449,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn merge_keeps_short_series_and_composes_ohlcv_exactly() {
         let bars = vec![
             bar(0, 10.0, 12.0, 9.0, 11.0, Some(1.0)),
@@ -459,7 +463,7 @@ mod tests {
         assert_eq!(merged[1], bar(120, 14.0, 14.5, 8.0, 9.0, Some(2.0)));
     }
 
-    #[test]
+    #[wasm_test]
     fn merge_with_no_volume_anywhere_stays_none() {
         let bars = vec![
             bar(0, 1.0, 1.0, 1.0, 1.0, None),
@@ -468,7 +472,7 @@ mod tests {
         assert_eq!(merge_bars(&bars, 1)[0].volume, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn price_range_spans_extremes_and_current() {
         let bars = vec![bar(0, 10.0, 12.0, 9.0, 11.0, None)];
         assert_eq!(price_range(&bars, 11.0), Some((9.0, 12.0)));
@@ -476,20 +480,20 @@ mod tests {
         assert_eq!(price_range(&[], 5.0), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn price_to_y_inverts_prices_into_screen_coords() {
         assert!((price_to_y(9.0, 9.0, 12.0, 10.0, 30.0) - 40.0).abs() < 1e-6);
         assert!((price_to_y(12.0, 9.0, 12.0, 10.0, 30.0) - 10.0).abs() < 1e-6);
     }
 
-    #[test]
+    #[wasm_test]
     fn label_centres_stay_inside_the_plot_at_price_extremes() {
         assert_eq!(clamp_center_y(0.0, 100.0, 28.0), 14.0);
         assert_eq!(clamp_center_y(100.0, 100.0, 28.0), 86.0);
         assert_eq!(clamp_center_y(50.0, 100.0, 28.0), 50.0);
     }
 
-    #[test]
+    #[wasm_test]
     fn candle_slots_spread_across_the_width_with_70pct_bodies() {
         let bars = vec![
             bar(0, 10.0, 12.0, 9.0, 11.0, None),
@@ -504,7 +508,7 @@ mod tests {
         assert!(!shapes[1].up);
     }
 
-    #[test]
+    #[wasm_test]
     fn ticks_land_on_round_steps_inside_the_range() {
         assert_eq!(
             nice_ticks(0.0, 10.0, 5),
@@ -518,19 +522,19 @@ mod tests {
         assert!(nice_ticks(5.0, 5.0, 4).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn ticks_terminate_on_a_near_flat_range() {
         assert!(nice_ticks(1.0, 1.0 + f64::EPSILON, 4).len() <= 6);
     }
 
-    #[test]
+    #[wasm_test]
     fn subnormal_range_yields_no_ticks_instead_of_panicking() {
         // A step this small underflows the magnitude to 0.0; candle values
         // come from the network, so the degenerate range must not panic.
         assert!(nice_ticks(0.0, f64::from_bits(4), 4).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn volume_heights_normalize_to_the_max_and_skip_missing() {
         let bars = vec![
             bar(0, 1.0, 1.0, 1.0, 1.0, Some(2.0)),
@@ -548,7 +552,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn label_indices_relocate_edge_clipped_years_within_their_runs() {
         // BTC full period at full size: 142 monthly bars starting Sep 2014
         // (4 bars of 2014, 12 each of 2015–2025, 6 of 2026) on 1144px.
@@ -579,7 +583,7 @@ mod tests {
         assert!(kept[1..].windows(2).all(|w| w[1] - w[0] == 12));
     }
 
-    #[test]
+    #[wasm_test]
     fn label_indices_relocate_the_leading_day_of_an_hourly_week() {
         // 7d period: 168 hourly bars (7 days × 24) starting at midnight
         // 06 Jun on 1144px → slot ≈ 6.81px. The 06 Jun boundary (index 0,
@@ -603,7 +607,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn label_indices_with_unique_texts_degenerate_to_a_stride() {
         // 100 unique texts on 700px → 7px slots; every bar is a boundary.
         // First centre past 40px is i=6 (45.5px); 70px min gap → every 10th.
@@ -620,7 +624,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn label_indices_yield_the_edge_label_to_a_close_true_boundary() {
         assert!(label_indices(&[], 700.0, 70.0).is_empty());
         let empties = vec![String::new(); 5];
@@ -644,7 +648,7 @@ mod tests {
         assert_eq!(label_indices(&texts, 240.0, 70.0), vec![1]);
     }
 
-    #[test]
+    #[wasm_test]
     fn label_min_px_widens_for_wide_labels_and_floors_narrow_ones() {
         // "Sep 2021" (8 chars) at axis_font 20 must demand more than the 70px
         // floor so adjacent centre-aligned labels do not overlap.
@@ -657,7 +661,7 @@ mod tests {
         assert!(label_min_px(8, 10, 70.0) < wide);
     }
 
-    #[test]
+    #[wasm_test]
     fn label_kinds_follow_the_period_tiers() {
         assert_eq!(label_kind(Period::H1), LabelKind::Time);
         assert_eq!(label_kind(Period::D1), LabelKind::Time);
@@ -665,7 +669,7 @@ mod tests {
         assert_eq!(label_kind(Period::Mo1), LabelKind::DayMonth);
     }
 
-    #[test]
+    #[wasm_test]
     fn label_text_per_kind_and_clock_format() {
         assert_eq!(
             label_text(LabelKind::Time, &ldt(14, 5), TimeFormat::Hour24, false),
@@ -693,7 +697,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn month_first_formats_flip_only_the_day_month_label() {
         // An `M/D/YYYY` (or year-first) operator reads "Jun 05", not "05 Jun";
         // the month-year and year labels have no day to reorder.

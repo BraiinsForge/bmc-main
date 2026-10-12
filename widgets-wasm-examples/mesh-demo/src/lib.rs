@@ -22,9 +22,7 @@
 
 use std::cell::{Cell, RefCell};
 
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::math::*;
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 static SUZANNE: Mesh = include_mesh!("assets/suzanne.glb");

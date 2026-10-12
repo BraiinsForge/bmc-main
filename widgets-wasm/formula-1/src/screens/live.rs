@@ -25,13 +25,6 @@
 //! the cell vocabulary and the idle state, and each contributes only
 //! its own per-frame column list.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::images::ImageKind;
@@ -741,6 +734,7 @@ pub fn practice_view(view: &LiveViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
     use bmc_wasm_sdk::{Draw, Node};
 
     use super::{Board, Cell, Seats, change_cell, columns, sector_time, tire_cell};
@@ -748,7 +742,7 @@ mod tests {
     use crate::screens::fixtures;
     use crate::screens::parts::{NO_TABLE_VALUE, color};
 
-    #[test]
+    #[wasm_test]
     fn a_sector_time_keeps_its_thousandths() {
         assert_eq!(sector_time(23.456), "23.456");
         assert_eq!(sector_time(23.4), "23.400");
@@ -756,7 +750,7 @@ mod tests {
         assert_eq!(sector_time(23.004), "23.004");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_missing_position_change_claims_no_direction() {
         let Node::Paragraph {
             base_style, spans, ..
@@ -771,7 +765,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_missing_tire_age_reads_as_unknown() {
         let mut row = fixtures::timing_board("Race").rows.remove(0);
         row.tire_age = None;
@@ -801,7 +795,7 @@ mod tests {
     }
 
     /// The per-frame rules the port keeps.
-    #[test]
+    #[wasm_test]
     fn every_frame_matches_the_ported_columns() {
         let expected = [
             (Board::Race, SizeBucket::Full, Seats::Top(10), 11),
@@ -827,7 +821,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn only_the_widest_qualifying_frame_splits_its_field() {
         for board in [Board::Race, Board::Quali, Board::Practice] {
             for bucket in SizeBucket::ALL {
@@ -838,7 +832,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_smallest_frame_never_seats_a_sector() {
         for board in [Board::Race, Board::Quali, Board::Practice] {
             let cols = columns(board, SizeBucket::Small);

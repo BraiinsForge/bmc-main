@@ -270,12 +270,14 @@ impl PoolData {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     /// 2026-08-08T09:33:13Z — the second a replayed poll missed.
     const REPLAYED_MISS: i64 = 1_786_181_593;
 
-    #[test]
+    #[wasm_test]
     fn polls_within_one_quantum_share_a_window_end() {
         let start = quantize_window_end(REPLAYED_MISS);
         for offset in 0..WINDOW_QUANTUM_SECS {
@@ -288,7 +290,7 @@ mod tests {
         assert_ne!(quantize_window_end(start + WINDOW_QUANTUM_SECS), start);
     }
 
-    #[test]
+    #[wasm_test]
     fn window_end_snaps_down_to_the_quantum() {
         assert_eq!(
             quantize_window_end(REPLAYED_MISS).rem_euclid(WINDOW_QUANTUM_SECS),
@@ -297,7 +299,7 @@ mod tests {
         assert!(quantize_window_end(REPLAYED_MISS) <= REPLAYED_MISS);
     }
 
-    #[test]
+    #[wasm_test]
     fn buckets_snap_to_design_sizes() {
         assert_eq!(size_bucket(306, 220), SizeBucket::Small);
         assert_eq!(size_bucket(620, 220), SizeBucket::Medium);
@@ -306,7 +308,7 @@ mod tests {
         assert_eq!(size_bucket(480, 320), SizeBucket::Bmm101);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
         assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
@@ -322,7 +324,7 @@ mod tests {
         SizeBucket::Bmm101,
     ];
 
-    #[test]
+    #[wasm_test]
     fn hashrate_is_always_needed() {
         for style in [Style::Overview, Style::BigChart] {
             for bucket in EVERY_BUCKET {
@@ -331,7 +333,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn big_chart_fetches_history_at_every_size() {
         for bucket in EVERY_BUCKET {
             assert!(source_needed(
@@ -343,7 +345,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn worker_states_toggle_gates_worker_sources_only() {
         assert!(!source_needed(
             Source::WorkersCurrent,
@@ -365,7 +367,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn overview_small_reads_hashrate_only() {
         let needed: Vec<Source> = Source::ALL
             .into_iter()
@@ -381,7 +383,7 @@ mod tests {
             .collect()
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_overview_reads_hashrate_only() {
         assert_eq!(
             needed_at(Style::Overview, SizeBucket::Bmm101, true),
@@ -389,7 +391,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_big_chart_reads_the_hashrate_and_workers_it_charts() {
         assert_eq!(
             needed_at(Style::BigChart, SizeBucket::Bmm101, true),
@@ -406,7 +408,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn series_merge_orders_samples_and_spans_windows() {
         let mut series = Series {
             from: Some(200),

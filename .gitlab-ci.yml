@@ -282,6 +282,13 @@ test-wasm-widgets:
   script:
     - nix build -L .#checks.x86_64-linux.test-wasm-widgets
 
+test-wasm-sdk:
+  stage: check
+  needs:
+    - workspace-deps-wasm-widgets
+  script:
+    - nix build -L .#checks.x86_64-linux.test-wasm-sdk
+
 clippy:
   stage: check
   needs:
@@ -295,6 +302,13 @@ clippy-wasm-widgets:
     - workspace-deps-wasm-widgets
   script:
     - nix build -L .#checks.x86_64-linux.clippy-wasm-widgets
+
+clippy-wasm-sdk:
+  stage: check
+  needs:
+    - workspace-deps
+  script:
+    - nix build -L .#checks.x86_64-linux.clippy-wasm-sdk
 
 frontend-test:
   stage: check

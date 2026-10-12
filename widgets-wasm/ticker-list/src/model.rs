@@ -102,16 +102,17 @@ impl TickerRow {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use prices::candle::CandleBar;
 
     fn candles(closes: &[f64], step: i64) -> Candles {
         Candles {
-            bars: closes
-                .iter()
-                .enumerate()
+            bars: (0_i64..)
+                .zip(closes)
                 .map(|(i, &c)| CandleBar {
-                    t_secs: i as i64 * step,
+                    t_secs: i * step,
                     open: c,
                     high: c,
                     low: c,
@@ -123,7 +124,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn row_change_is_first_to_last_and_sign_drives_positive() {
         let up = TickerRow::from_candles("AAPL", &candles(&[100.0, 110.0], 3_600))
             .expect("BUG: candles build a row");
@@ -134,7 +135,7 @@ mod tests {
         assert!(!down.is_positive());
     }
 
-    #[test]
+    #[wasm_test]
     fn change_anchors_on_first_open_not_first_close() {
         // The first candle opens at 100 and closes at 120; the period change
         // measures from the open (the window's start price), so 100 -> 150
@@ -165,7 +166,7 @@ mod tests {
         assert!((row.price - 150.0).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn series_leads_with_the_window_open() {
         // The sparkline must start at the first candle's open (the change
         // anchor), then follow each candle's close.
@@ -194,7 +195,7 @@ mod tests {
         assert_eq!(row.series, vec![90.0, 100.0, 110.0]);
     }
 
-    #[test]
+    #[wasm_test]
     fn zero_first_close_keeps_the_row_with_zero_change() {
         let row = TickerRow::from_candles("AAPL", &candles(&[0.0, 5.0], 3_600))
             .expect("BUG: candles build a row");
@@ -202,12 +203,12 @@ mod tests {
         assert!((row.price - 5.0).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn no_candles_is_none() {
         assert!(TickerRow::from_candles("AAPL", &candles(&[], 3_600)).is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn negative_first_close_keeps_row_with_finite_change() {
         let row = TickerRow::from_candles("AAPL", &candles(&[-1.0, 5.0], 3_600))
             .expect("BUG: candles build a row");
@@ -215,7 +216,7 @@ mod tests {
         assert!((row.price - 5.0).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn only_an_explicit_false_reads_as_closed_and_indices_are_exempt() {
         // Per the Nexus contract an omitted flag counts as open — a provider
         // that cannot report market state must never dim the row.

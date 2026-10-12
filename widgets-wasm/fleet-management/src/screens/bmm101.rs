@@ -21,13 +21,6 @@
 //! BMM101's own frame (480×320), measured off the Figma "Braiins DECK" BMM101 frames.
 //! BMM100 has no design of its own and gets this frame shrunk to fit.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::history::{ChartPoint, ChartWindow};
@@ -328,9 +321,11 @@ pub fn searching(m: Bmm101) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn bmm100_fills_its_whole_panel_though_its_type_shrinks() {
         let m = Bmm101::fit(320, 240);
         assert!(m.scale() < 1.0, "BMM100 is narrower than the design");
@@ -341,7 +336,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_native_frame_is_bmm101s_panel() {
         assert_eq!(
             (Bmm101::NATIVE.width(), Bmm101::NATIVE.height()),

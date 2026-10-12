@@ -83,15 +83,17 @@ pub fn hashrate(rate: Hashrate) -> Option<f32> {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn measurement_keeps_a_figure_that_survives_narrowing() {
         assert_eq!(measurement(4.5), Some(4.5));
         assert_eq!(measurement(0.0), Some(0.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn measurement_drops_what_is_not_a_reading() {
         // 1e300 is finite as f64 and only saturates once narrowed, which is why
         // the check has to come after the cast rather than on the wire figure.
@@ -100,7 +102,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn default_reading_keeps_all_fields_none() {
         let r = TelemetryReading::default();
         assert_eq!(r.current_hashrate_ths, None);

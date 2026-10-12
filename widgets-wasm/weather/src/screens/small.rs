@@ -24,10 +24,6 @@ use crate::{
     weather_code,
 };
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 /// The centred stack sizes to its content, so the location's bound comes

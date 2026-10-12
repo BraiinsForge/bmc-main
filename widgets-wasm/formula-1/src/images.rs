@@ -29,13 +29,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget code uses many SDK types, macros, and helpers"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::ImageUrl;
@@ -206,7 +199,8 @@ pub fn wanted(data: &crate::model::Data) -> Vec<Wanted<'_>> {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_sdk::{assets, cache, encode_image_meta};
+    use bmc_wasm_sdk::wasm_test;
+    use bmc_wasm_sdk::{cache, encode_image_meta};
 
     use super::{ImageKind, invalidate_all, resolve, tag_for, wanted};
     use crate::model::ImageUrl;
@@ -220,26 +214,23 @@ mod tests {
         cache::put(&tag_for(kind, url), &meta, &[0_u8; 16]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_seeded_url_resolves() {
-        assets::init_test_registrars();
         invalidate_all();
         let flag = url("https://cdn.example.test/flag/nl.png");
         seed(ImageKind::Flag, &flag);
         assert!(resolve(ImageKind::Flag, &flag).is_some());
     }
 
-    #[test]
+    #[wasm_test]
     fn an_absent_url_resolves_to_nothing() {
-        assets::init_test_registrars();
         invalidate_all();
         assert!(resolve(ImageKind::Flag, &ImageUrl::default()).is_none());
         assert!(resolve(ImageKind::Flag, &url("https://x.test/missing.png")).is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn anothers_entry_under_the_tag_is_not_this_image() {
-        assets::init_test_registrars();
         invalidate_all();
         let wanted = url("https://x.test/new.png");
         let meta = encode_image_meta(2, 2, b"https://x.test/old.png");
@@ -249,7 +240,7 @@ mod tests {
 
     /// Both directions: a field left out never arrives on the screen showing it,
     /// and one swept needlessly evicts artwork that is drawn.
-    #[test]
+    #[wasm_test]
     fn the_sweep_covers_every_drawn_image_and_nothing_else() {
         use crate::model::{
             Data, DriverCard, DriverStats, LiveBoard, NextRace, StandingsRow, TimingBoard,
@@ -332,7 +323,7 @@ mod tests {
     /// nothing else asks for a constructor's logo. The statistics screen
     /// has to fetch its own mark, or it draws the livery square in the one
     /// state where no other view can have cached it first.
-    #[test]
+    #[wasm_test]
     fn the_statistics_screen_fetches_its_own_constructors_mark() {
         use crate::model::{Data, DriverCard, DriverStats, DriverTeam, Team};
 
@@ -361,7 +352,7 @@ mod tests {
         assert_eq!(marks, ["https://cdn.test/red-bull.png"]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_headshot_and_a_flag_of_one_driver_are_told_apart() {
         use crate::model::{Data, DriverCard, DriverStats};
 
@@ -377,7 +368,7 @@ mod tests {
         assert!(kinds.contains(&ImageKind::Headshot) && kinds.contains(&ImageKind::Flag));
     }
 
-    #[test]
+    #[wasm_test]
     fn kinds_of_one_url_cache_apart() {
         let shared = url("https://x.test/img.png");
         assert_ne!(

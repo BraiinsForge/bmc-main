@@ -578,6 +578,8 @@ impl FleetTier {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::device::DeviceList;
     use crate::summary::FleetSummary;
@@ -608,7 +610,7 @@ mod tests {
             .map_or_else(Vec::new, |tiers| tiers[span.tier()].samples())
     }
 
-    #[test]
+    #[wasm_test]
     fn each_span_reads_the_tier_built_for_it() {
         for (i, span) in ChartSpan::ALL.iter().enumerate() {
             assert_eq!(
@@ -644,7 +646,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn records_one_bucket_per_tier_interval() {
         // The 1-h tier holds one bucket per 60 s.
         // A second reading in the bucket's interval refreshes it in place,
@@ -663,7 +665,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_open_bucket_takes_the_time_of_its_newest_reading() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -677,7 +679,7 @@ mod tests {
         assert_eq!(series[0].value, Some(99.0), "value is the latest reading");
     }
 
-    #[test]
+    #[wasm_test]
     fn samples_carry_their_timestamp() {
         let mut h = HashrateHistory::default();
         h.record_fleet(400, &summary(10.0, 4.0).hashrate());
@@ -686,7 +688,7 @@ mod tests {
         assert_eq!(ats, vec![400, 460]);
     }
 
-    #[test]
+    #[wasm_test]
     fn each_tier_samples_at_its_own_rate() {
         // Over 6 min the 1-h tier (60 s) takes 7 points; the 6-h tier (6 min) 2.
         let mut h = HashrateHistory::default();
@@ -699,7 +701,7 @@ mod tests {
         assert_eq!(total(&h, ChartSpan::SixHours).len(), 2); // 0, 360
     }
 
-    #[test]
+    #[wasm_test]
     fn empty_fleet_is_not_recorded() {
         let mut h = HashrateHistory::default();
         let empty = FleetSummary {
@@ -711,7 +713,7 @@ mod tests {
         assert!(h.take_snapshot(0).is_none(), "nothing to save");
     }
 
-    #[test]
+    #[wasm_test]
     fn the_window_keeps_only_the_most_recent_samples() {
         let mut h = HashrateHistory::default();
         let mut now = 0_i64;
@@ -726,7 +728,7 @@ mod tests {
         assert_eq!(series[0].value, Some(5.0), "the oldest five were dropped");
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unknown_model_has_an_empty_series() {
         let h = HashrateHistory::default();
         assert!(model(&h, ChartSpan::OneHour, "nope").is_empty());
@@ -768,7 +770,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn records_a_per_device_series() {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
@@ -780,7 +782,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_second_poll_in_the_same_slot_refreshes_the_device_point() {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
@@ -795,7 +797,7 @@ mod tests {
         assert_eq!(series[0].at, 40, "the bucket takes the second poll's time");
     }
 
-    #[test]
+    #[wasm_test]
     fn each_tier_samples_a_device_at_its_own_rate() {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
@@ -815,7 +817,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_none_total_samples_a_gap_not_zero() {
         let mut h = HashrateHistory::default();
         let mut s = summary(10.0, 4.0);
@@ -830,7 +832,7 @@ mod tests {
         assert_eq!(vals(&model(&h, ChartSpan::OneHour, "BOS BMM")), vec![None]);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unreachable_device_samples_a_gap_not_zero() {
         let mut h = HashrateHistory::default();
         let down = DeviceId::new("bos/b");
@@ -846,13 +848,13 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unknown_device_has_an_empty_series() {
         let h = HashrateHistory::default();
         assert!(device(&h, ChartSpan::OneHour, &DeviceId::new("bos/nope")).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_device_listed_again_under_its_id_starts_a_fresh_series() {
         let mut h = HashrateHistory::default();
         let reused = DeviceId::new("bos/a");
@@ -869,7 +871,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_fleet_sample_is_due_once_per_slot() {
         let mut h = HashrateHistory::default();
         assert!(h.fleet_sample_due(0), "nothing sampled yet");
@@ -878,7 +880,7 @@ mod tests {
         assert!(h.fleet_sample_due(60), "the 1-h tier opened a new slot");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_fleet_sample_is_due_once_a_restored_tier_enters_a_new_slot() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -924,7 +926,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_model_returning_inside_an_open_slot_opens_its_own_bucket() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &bmm_and_bfm(4.0, 7.0).hashrate());
@@ -938,7 +940,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restored_model_rediscovered_after_another_opens_its_own_bucket() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &bmm_and_bfm(4.0, 7.0).hashrate());
@@ -955,7 +957,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_vanished_model_group_is_kept_until_it_leaves_the_range() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate()); // group "BOS BMM"
@@ -981,7 +983,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_unknown_group_is_dropped_once_absent_while_a_model_is_kept() {
         let mut h = HashrateHistory::default();
         let unknown = crate::summary::GroupSummary {
@@ -1016,7 +1018,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restored_model_series_waits_for_its_model_to_be_rediscovered() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -1076,7 +1078,7 @@ mod tests {
 
     // ── Persistence ──────────────────────────────────────────────────
 
-    #[test]
+    #[wasm_test]
     fn snapshot_round_trips_total_and_model_series() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -1101,7 +1103,7 @@ mod tests {
         assert!(device(&restored, ChartSpan::OneHour, &DeviceId::new("bos/a")).is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_stale_tier_is_dropped_on_restore() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -1123,7 +1125,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reading_in_the_restored_slot_leaves_the_saved_point_alone() {
         let mut h = HashrateHistory::default();
         h.record_fleet(2_900, &summary(120.0, 4.0).hashrate());
@@ -1162,7 +1164,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restart_plots_as_a_break_by_time_alone() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -1195,7 +1197,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_break_saved_by_an_earlier_build_still_plots() {
         // Earlier builds ended every restored series with an explicit `None`,
         // so snapshots on devices carry them.
@@ -1244,7 +1246,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_corrupt_blob_is_rejected() {
         let mut h = HashrateHistory::default();
         assert!(!h.restore(b"", 0, 0), "empty blob");
@@ -1259,7 +1261,7 @@ mod tests {
         assert!(total(&h, ChartSpan::OneHour).is_empty(), "nothing restored");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_blob_with_another_number_of_tiers_is_rejected() {
         let tiers: Vec<FleetTierSnapshot> = (0..=ChartSpan::ALL.len())
             .map(|_| FleetTierSnapshot {
@@ -1283,7 +1285,7 @@ mod tests {
         assert!(total(&h, ChartSpan::OneHour).is_empty(), "nothing restored");
     }
 
-    #[test]
+    #[wasm_test]
     fn snapshot_is_rate_limited() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -1299,7 +1301,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_history_unchanged_since_the_last_snapshot_is_not_written_again() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
@@ -1310,7 +1312,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_series_an_empty_reading_prunes_leaves_flash_too() {
         let mut h = HashrateHistory::default();
         let unknown = crate::summary::GroupSummary {
@@ -1360,7 +1362,7 @@ mod tests {
             .expect("BUG: the first snapshot fires")
     }
 
-    #[test]
+    #[wasm_test]
     fn a_clock_set_back_drops_what_was_stamped_after_it() {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
@@ -1388,7 +1390,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_clock_set_back_rewrites_flash_at_once() {
         let mut h = HashrateHistory::default();
         for now in [0, 60, 120, 180] {
@@ -1404,7 +1406,7 @@ mod tests {
         assert_eq!(stamps(&total(&restored, ChartSpan::OneHour)), vec![0, 60]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_clock_set_back_on_an_empty_fleet_still_rewrites_flash() {
         let mut h = HashrateHistory::default();
         for now in [0, 60, 120, 180] {
@@ -1424,7 +1426,7 @@ mod tests {
         assert_eq!(stamps(&total(&restored, ChartSpan::OneHour)), vec![0, 60]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_clock_set_back_first_seen_by_a_device_poll_cuts_every_series() {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
@@ -1446,7 +1448,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_blob_newer_than_the_clock_waits_out_of_the_tiers() {
         let mut h = HashrateHistory::default();
         assert!(
@@ -1468,7 +1470,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_waiting_blob_merges_once_the_clock_reaches_it() {
         let mut h = HashrateHistory::default();
         assert!(
@@ -1493,7 +1495,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_waiting_blob_skips_the_tiers_its_downtime_left_behind() {
         let mut h = HashrateHistory::default();
         assert!(
@@ -1514,7 +1516,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_clock_set_back_cuts_a_waiting_blob() {
         let mut h = HashrateHistory::default();
         assert!(
@@ -1534,7 +1536,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_clock_set_back_into_a_waiting_blob_keeps_one_bucket_per_slot() {
         let mut h = HashrateHistory::default();
         assert!(
@@ -1551,7 +1553,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_clock_set_back_before_a_waiting_blob_drops_it() {
         let mut h = HashrateHistory::default();
         assert!(

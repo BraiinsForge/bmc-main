@@ -193,6 +193,8 @@ pub const TICK_SPANS: [(f32, f32); TICK_COUNT] = {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     fn assert_frac(actual: f32, expected: f32) {
@@ -208,7 +210,7 @@ mod tests {
         max: 40.0,
     };
 
-    #[test]
+    #[wasm_test]
     fn target_fraction_lands_on_each_anchor() {
         assert_frac(target_fraction(0.0, &RANGE), 0.0);
         assert_frac(target_fraction(10.0, &RANGE), MIN_ANCHOR);
@@ -216,7 +218,7 @@ mod tests {
         assert_frac(target_fraction(40.0, &RANGE), MAX_ANCHOR);
     }
 
-    #[test]
+    #[wasm_test]
     fn target_fraction_interpolates_linearly_between_anchors() {
         // Halfway 0->min, min->default, default->max respectively.
         assert_frac(target_fraction(5.0, &RANGE), 0.125);
@@ -224,13 +226,13 @@ mod tests {
         assert_frac(target_fraction(35.0, &RANGE), 0.875);
     }
 
-    #[test]
+    #[wasm_test]
     fn target_fraction_clamps_below_zero_and_above_max() {
         assert_frac(target_fraction(-5.0, &RANGE), 0.0);
         assert_frac(target_fraction(100.0, &RANGE), MAX_ANCHOR);
     }
 
-    #[test]
+    #[wasm_test]
     fn target_fraction_never_produces_nan_on_degenerate_ranges() {
         let degenerate = [
             TargetRange {
@@ -261,24 +263,24 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn state_not_available_when_hashrate_missing() {
         assert_eq!(gauge_state(None, Some(&RANGE)), GaugeState::NotAvailable);
     }
 
-    #[test]
+    #[wasm_test]
     fn state_not_available_when_hashing_but_target_missing() {
         assert_eq!(gauge_state(Some(30.0), None), GaugeState::NotAvailable);
     }
 
-    #[test]
+    #[wasm_test]
     fn state_off_takes_precedence_over_missing_target() {
         for hr in [0.0, 0.005, 0.01] {
             assert_eq!(gauge_state(Some(hr), None), GaugeState::Off, "@ {hr}");
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn state_good_within_band_over_and_under_outside() {
         let target = TargetRange {
             min: 50.0,
@@ -308,7 +310,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn gauge_lit_count_tracks_target_fraction() {
         // default sits at 3/4 -> round(0.75 * 28) = 21; min at 1/4 -> 7; max -> 28.
         assert_eq!(gauge(Some(10.0), Some(&RANGE)).lit_count, 7);
@@ -316,14 +318,14 @@ mod tests {
         assert_eq!(gauge(Some(40.0), Some(&RANGE)).lit_count, 28);
     }
 
-    #[test]
+    #[wasm_test]
     fn gauge_lit_count_for_off_and_not_available() {
         assert_eq!(gauge(Some(0.0), Some(&RANGE)).lit_count, 1);
         assert_eq!(gauge(Some(30.0), None).lit_count, 0);
         assert_eq!(gauge(None, Some(&RANGE)).lit_count, 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn lit_sweep_end_spans_full_circle_at_max_and_clamps() {
         use std::f32::consts::{PI, TAU};
         assert!(lit_sweep_end(0).abs() < 1e-6);
@@ -332,7 +334,7 @@ mod tests {
         assert!((lit_sweep_end(TICK_COUNT + 5) - TAU).abs() < 1e-6);
     }
 
-    #[test]
+    #[wasm_test]
     fn lit_prefix_spans_fall_within_their_sweep_end() {
         let spans = TICK_SPANS;
         for lit_count in [1, 7, 14, 28] {
@@ -345,7 +347,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn tick_spans_are_28_ordered_non_overlapping() {
         let spans = TICK_SPANS;
         assert_eq!(spans.len(), TICK_COUNT);

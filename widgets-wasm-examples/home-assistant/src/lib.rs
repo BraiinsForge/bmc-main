@@ -27,7 +27,6 @@
 
 use std::cell::{Cell, RefCell};
 
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 // ── Configuration ─────────────────────────────────────────────────
 // Configure via KV store: ha_url, ha_token

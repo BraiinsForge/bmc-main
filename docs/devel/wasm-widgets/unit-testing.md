@@ -28,8 +28,15 @@ mod tests {
 ```
 
 `#[should_panic]` and `#[ignore]` go after the attribute, as they would after `#[test]`. Off `wasm32` the attribute
-becomes a plain `#[test]`, so a native `cargo test` still runs the same test. A plain `#[test]` runs natively only; the
-runner never sees it.
+becomes a plain `#[test]`, so a native `cargo test` still runs the same test.
+
+A plain `#[test]` never reaches the runner, so the `no-plain-test-in-widgets` ast-grep rule refuses one in
+`widgets-wasm/` and `widgets-wasm-examples/`. Its fix swaps in `#[wasm_test]`, which is how the widgets were ported; the
+module then needs `use bmc_wasm_sdk::wasm_test;`:
+
+```sh
+nix run .#ast-grep -- --filter no-plain-test-in-widgets --update-all
+```
 
 A test that installs a system snapshot with `system::set_current` needs the SDK's `test-support` feature:
 
@@ -43,11 +50,13 @@ bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk", features = ["test-support"
 ```sh
 just test-widget clock
 just test-widget clock screens
+just test-wasm-widgets
 just test-wasm-sdk
 ```
 
 `test-widget` takes a widget's directory name, or a shared library's under `lib/`. Whatever follows the name reaches
-nextest, so a substring of the test names narrows the run. `test-wasm-sdk` runs the SDK's own tests.
+nextest, so a substring of the test names narrows the run. `test-wasm-widgets` runs every widget's tests in both widget
+workspaces, as `just validate` does, and `test-wasm-sdk` runs the SDK's own tests.
 
 Plain cargo works as well. `.cargo/config.toml` names `scripts/wasm_test_runner.sh` as the runner for `wasm32` binaries,
 so any test command with `--target wasm32-unknown-unknown` goes through it:
@@ -57,8 +66,19 @@ cargo nextest run --manifest-path widgets-wasm/Cargo.toml -p clock --target wasm
 cargo test --manifest-path widgets-wasm/Cargo.toml -p clock --target wasm32-unknown-unknown
 ```
 
+Inside `widgets-wasm/` and `widgets-wasm-examples/`, their own `.cargo/config.toml` makes `wasm32` the build target, so
+a bare `cargo test` there, or rust-analyzer's Run Test, goes through the runner too.
+
+Runnable doctests don't run on `wasm32`: a doctest binary holds no `#[wasm_test]`s, so the runner reports `0 passed`.
+Run them natively, with `--target` set to the host. `compile_fail` doctests are the exception: rustdoc only compiles
+them, so check them on `wasm32`, where every item they name exists.
+
 The script builds the runner on first use, into `.tmp/wasm-test-runner/target`. Point `BMC_WASM_TEST_RUNNER` at a runner
 binary to skip that build.
+
+nextest warns that it `saw package ID … which wasn't produced by cargo metadata` for crates a build script or proc macro
+pulls in on the host only, such as `libc`. Its package graph for `wasm32` leaves them out, and since they hold no tests,
+the warning is harmless.
 
 ## What A Test Runs Against
 
@@ -74,8 +94,17 @@ hermetic:
 
 ## Budgets And Output
 
-Each test runs on the fuel budget of one device frame, and running out fails it with the budget in the message. A
-wall-clock watchdog ends the process when a test runs past a minute. Both can be raised:
+Each test runs on the fuel budget of one device frame, and running out fails it with the budget in the message. A test
+that needs more names its own budget, and the attribute takes one only with a reason:
+
+```rust
+#[wasm_test(fuel = 250e6, reason = "parses 2,048 candles")]
+```
+
+Fuel is a whole number of units, written out or in exponent form, here and in the flag and environment below.
+
+A wall-clock watchdog ends the process when a test runs past a minute. Both limits can be raised for a whole run, the
+fuel one over every test's own budget:
 
 | Limit   | Flag                  | Environment             |
 | ------- | --------------------- | ----------------------- |

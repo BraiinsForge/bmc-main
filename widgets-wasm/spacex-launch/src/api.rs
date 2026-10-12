@@ -138,21 +138,23 @@ mod payload {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn launch_reply_is_stored() {
         assert_eq!(outcome(Reply::Data(7), false), Outcome::Store(7));
         assert_eq!(outcome(Reply::Data(7), true), Outcome::Store(7));
     }
 
-    #[test]
+    #[wasm_test]
     fn empty_reply_clears_regardless_of_prior_data() {
         assert_eq!(outcome::<i32>(Reply::Empty, false), Outcome::NoLaunch);
         assert_eq!(outcome::<i32>(Reply::Empty, true), Outcome::NoLaunch);
     }
 
-    #[test]
+    #[wasm_test]
     fn failure_keeps_data_when_present_else_errors() {
         assert_eq!(outcome::<i32>(Reply::Error, true), Outcome::Keep);
         assert_eq!(outcome::<i32>(Reply::Error, false), Outcome::Fail);

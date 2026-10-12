@@ -128,9 +128,11 @@ fn apply_reference(state: &mut State, settled: ReferenceOutcome, is_market_open:
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn effective_pair_ignores_surrounding_whitespace_and_missing_values() {
         let mut params = manifest_params::Params {
             pair: Some("  BTC-USD  ".to_owned()),
@@ -155,7 +157,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn changing_the_window_or_the_view_keeps_the_instrument() {
         // The reference resource describes the instrument, not the window.
         // A period switch that dropped it would leave the next price 404
@@ -175,7 +177,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn changing_the_symbol_voids_what_was_learned_about_the_old_one() {
         use manifest_params::{Period, View};
         let before = params("AAPL", Period::_7d, View::Sparkline);
@@ -193,7 +195,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_first_update_has_nothing_to_carry_over() {
         use manifest_params::{Period, View};
         assert_eq!(
@@ -202,7 +204,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unchanged_update_reloads_nothing() {
         use manifest_params::{Period, View};
         let before = params("AAPL", Period::_7d, View::Sparkline);
@@ -212,7 +214,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reference_that_resolves_late_retracts_not_found() {
         let mut state = State::InputError {
             miss: PriceMiss::NotFound,
@@ -221,7 +223,7 @@ mod tests {
         assert!(matches!(state, State::NoData));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reference_that_stops_resolving_retracts_no_data() {
         let mut state = State::NoData;
         apply_reference(&mut state, ReferenceOutcome::NotFound, None);
@@ -233,7 +235,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_late_reference_never_reinterprets_a_refused_request() {
         // The reference explains an empty window; it cannot explain a request
         // Nexus refused, so resolving must not repaint "not found" as closed.
@@ -249,7 +251,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_tile_still_waiting_for_its_price_ignores_reference_verdicts() {
         // Before the first price reply there is nothing to reinterpret:
         // the price path picks the message once its own reply lands.
@@ -262,7 +264,7 @@ mod tests {
         assert!(matches!(error, State::Error));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reference_reply_refreshes_the_held_series_market_state() {
         use prices::candle::{CandleBar, Candles};
         let candles = Candles {
@@ -286,7 +288,7 @@ mod tests {
         assert!(!series.market_open);
     }
 
-    #[test]
+    #[wasm_test]
     fn number_format_change_renders_in_both_views() {
         for view in [
             manifest_params::View::Sparkline,
@@ -296,7 +298,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn every_manifest_period_token_is_a_nexus_window() {
         // `period_of` maps the generated manifest enum onto `prices::period`
         // with an expect; this locks the two hand-maintained token tables
@@ -317,7 +319,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn tz_or_datetime_change_renders_only_in_candlestick() {
         assert!(system_affects_render(
             false,
@@ -331,7 +333,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn no_relevant_change_requests_no_frame() {
         for view in [
             manifest_params::View::Sparkline,
@@ -351,7 +353,6 @@ mod wasm_glue {
     use std::cell::{Cell, RefCell};
 
     use bmc_wasm_sdk::typography::EMDASH;
-    #[expect(clippy::wildcard_imports, reason = "widget glue uses many SDK exports")]
     use bmc_wasm_sdk::*;
     use prices::candle;
     use prices::fetch::{self, FetchClass};

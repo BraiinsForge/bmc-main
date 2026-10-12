@@ -29,13 +29,6 @@
 //! frame gets is the layouts' decision.
 
 use bmc_wasm_sdk::typography::{LDQUO, NBSP, RDQUO};
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 use units::availability::Availability;
 
@@ -960,10 +953,11 @@ pub fn denied_body(bucket: SizeBucket) -> Node {
 #[cfg(test)]
 mod tests {
     use bmc_wasm_sdk::typography::NBSP;
+    use bmc_wasm_sdk::wasm_test;
 
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn a_count_the_column_seats_keeps_every_digit() {
         assert_eq!(worker_count(0), "0");
         assert_eq!(worker_count(1_628), format!("1{NBSP}628"));
@@ -973,17 +967,16 @@ mod tests {
     /// Past the column's widest whole number the count takes `k` form,
     /// which holds the same five glyphs through the highest count
     /// the design's Medium column is sized for.
-    #[test]
+    #[wasm_test]
     fn a_count_past_the_column_condenses() {
         assert_eq!(worker_count(10_000), "10,0k");
         assert_eq!(worker_count(10_345), "10,3k");
         assert_eq!(worker_count(99_949), "99,9k");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bound_account_gives_way_inside_its_parentheses() {
         const ACCOUNT: &str = "an-account-name-no-header-seats-whole";
-        bmc_wasm_sdk::assets::init_test_registrars();
 
         let Node::Row(_, children) = header_left(Some(ACCOUNT), TitleSize::DECK) else {
             panic!("BUG: the header-left run is a row");
@@ -1021,9 +1014,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn workers_panel_assembles_in_both_rhythms() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let counts = Availability::Available(WorkerCounts {
             active: 1_628,
             low: 758,

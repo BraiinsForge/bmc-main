@@ -151,15 +151,16 @@ pub fn icon_for(symbol: &str) -> Option<IconStyle> {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use prices::candle::CandleBar;
 
     fn bars(closes: &[f64], step: i64) -> Candles {
-        let bars = closes
-            .iter()
-            .enumerate()
+        let bars = (0_i64..)
+            .zip(closes)
             .map(|(i, &c)| CandleBar {
-                t_secs: i as i64 * step,
+                t_secs: i * step,
                 open: c,
                 high: c,
                 low: c,
@@ -173,7 +174,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn series_current_is_last_close_and_change_is_first_to_last() {
         let s = Series::from_candles(bars(&[100.0, 110.0], 3_600))
             .expect("BUG: two bars build a series");
@@ -185,7 +186,7 @@ mod tests {
         assert_eq!(s.sparkline_series(), vec![100.0, 100.0, 110.0]);
     }
 
-    #[test]
+    #[wasm_test]
     fn series_reuses_the_parsed_bar_allocation() {
         let candles = bars(&[100.0, 110.0], 3_600);
         let parsed_bars = candles.bars.as_ptr();
@@ -194,7 +195,7 @@ mod tests {
         assert_eq!(s.bars.as_ptr(), parsed_bars);
     }
 
-    #[test]
+    #[wasm_test]
     fn sparkline_series_leads_with_the_window_open() {
         // The line must start at the first candle's open (the same anchor as
         // the change badge), then follow each candle's close.
@@ -223,7 +224,7 @@ mod tests {
         assert_eq!(s.sparkline_series(), vec![90.0, 100.0, 110.0]);
     }
 
-    #[test]
+    #[wasm_test]
     fn change_anchors_on_first_open_not_first_close() {
         // The first candle opens at 100 and closes at 120; the period change
         // must measure from the open (the window's start price), so the badge
@@ -254,7 +255,7 @@ mod tests {
         assert!((s.current - 150.0).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn falling_series_is_not_positive() {
         let s = Series::from_candles(bars(&[100.0, 90.0], 3_600))
             .expect("BUG: two bars build a series");
@@ -262,7 +263,7 @@ mod tests {
         assert!(!s.is_positive());
     }
 
-    #[test]
+    #[wasm_test]
     fn flat_series_is_zero_change_and_positive() {
         let s = Series::from_candles(bars(&[100.0, 100.0], 3_600))
             .expect("BUG: two bars build a series");
@@ -270,7 +271,7 @@ mod tests {
         assert!(s.is_positive());
     }
 
-    #[test]
+    #[wasm_test]
     fn non_positive_first_close_keeps_the_row() {
         let zero =
             Series::from_candles(bars(&[0.0, 5.0], 3_600)).expect("BUG: bars build a series");
@@ -281,7 +282,7 @@ mod tests {
         assert!(neg.change_pct.is_finite());
     }
 
-    #[test]
+    #[wasm_test]
     fn only_an_explicit_false_reads_as_closed() {
         // Per the Nexus contract an omitted flag must count as open — a
         // provider that cannot report market state must never dim the tile.
@@ -295,7 +296,7 @@ mod tests {
         assert!(!closed.market_open);
     }
 
-    #[test]
+    #[wasm_test]
     fn header_symbol_names_the_quote_for_pairs_and_bare_codes_alike() {
         // The pricing currency must read the same whether the user typed the
         // pair or a bare code: a pair supplies its own quote tag, a bare code
@@ -313,7 +314,7 @@ mod tests {
         assert_eq!(bare.header_symbol("ETH-EUR"), ("ETH", Some("EUR")));
     }
 
-    #[test]
+    #[wasm_test]
     fn closed_marked_excludes_indices() {
         let mut s =
             Series::from_candles(bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
@@ -322,7 +323,7 @@ mod tests {
         assert!(!s.is_closed_marked("^GSPC"));
     }
 
-    #[test]
+    #[wasm_test]
     fn icon_known_base_unknown_base_and_index() {
         let btc = icon_for("BTC-USD").expect("BUG: BTC-USD has a known icon");
         assert_eq!(btc.glyph, "\u{20bf}");

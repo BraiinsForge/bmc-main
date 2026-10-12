@@ -66,6 +66,8 @@ pub fn apply_overlay(root: Node, kind: Option<OverlayKind>, shape: ViewportShape
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{AMBIGUOUS_TEXT, OverlayKind, UNBOUND_TEXT, binding_overlay};
     use crate::bos::{AuthMode, Placeholders};
 
@@ -75,7 +77,7 @@ mod tests {
         password: "p",
     };
 
-    #[test]
+    #[wasm_test]
     fn only_a_missing_or_double_binding_yields_an_overlay() {
         let derive =
             |local, remote| AuthMode::derive(local, remote, "http://m/api/v1", PLACEHOLDERS);

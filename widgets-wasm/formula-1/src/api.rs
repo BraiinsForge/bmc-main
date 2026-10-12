@@ -21,13 +21,6 @@
 //! The Nexus Formula 1 resources this widget reads, and the JSON keys
 //! their payloads use.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "API code uses the SDK's macros and re-exports"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::View;
@@ -201,13 +194,6 @@ pub mod wire {
 
     // `fmt!` expands against the SDK's re-exports, which a nested
     // module does not inherit from the file above it.
-    #[cfg_attr(
-        not(test),
-        expect(
-            clippy::wildcard_imports,
-            reason = "API code uses the SDK's macros and re-exports"
-        )
-    )]
     use super::*;
 
     /// Field of the `data` object at `index`, for the array payloads.
@@ -251,6 +237,8 @@ pub mod wire {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{
         BASE_URL, Resource, Screen, View, media_type_names_json, resource_needed, select_screen,
         wire,
@@ -258,7 +246,7 @@ mod tests {
     use crate::model::{Data, LiveBoard};
     use crate::screens::fixtures;
 
-    #[test]
+    #[wasm_test]
     fn an_explicit_view_wins_over_whatever_data_holds() {
         let empty = Data::default();
         assert_eq!(select_screen(View::Driver, &empty), Screen::Driver);
@@ -266,7 +254,7 @@ mod tests {
         assert_eq!(select_screen(View::Standings, &empty), Screen::Standings);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_automatic_view_shows_the_race_while_one_is_announced() {
         let data = Data {
             next_race: Some(fixtures::next_race_weekend()),
@@ -277,7 +265,7 @@ mod tests {
 
     /// The chain the port keeps: a running session outranks
     /// the weekend it belongs to, and the race outranks the rest.
-    #[test]
+    #[wasm_test]
     fn a_running_session_outranks_the_weekend_it_belongs_to() {
         let announced = || Some(fixtures::next_race_weekend());
         let running = || LiveBoard::from_board(fixtures::timing_board("Race"));
@@ -300,7 +288,7 @@ mod tests {
         assert_eq!(select_screen(View::Standings, &race), Screen::Standings);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_automatic_view_falls_to_the_standings_between_seasons() {
         assert_eq!(
             select_screen(View::Auto, &Data::default()),
@@ -308,7 +296,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn every_resource_is_addressable_and_named_once() {
         let mut names: Vec<&str> = Resource::ALL.iter().map(|r| r.name()).collect();
         names.sort_unstable();
@@ -317,7 +305,7 @@ mod tests {
         assert_eq!(names.len(), total, "two resources share a name");
     }
 
-    #[test]
+    #[wasm_test]
     fn the_per_driver_url_carries_the_slug_and_the_rest_do_not() {
         assert_eq!(
             Resource::Driver.url("hamilton"),
@@ -332,7 +320,7 @@ mod tests {
     /// The parser compiles for wasm alone, so nothing else catches a field
     /// renamed under it. The names come from Nexus's payload types in
     /// `nexus-data/formula1`, which is where to check them against.
-    #[test]
+    #[wasm_test]
     fn the_payload_pointers_name_the_fields_the_deployment_publishes() {
         // A session's start is an instant under the key the weekend uses
         // for a calendar date.
@@ -352,7 +340,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_explicit_view_opens_only_what_it_renders() {
         for view in [View::NextRace, View::Standings, View::Driver] {
             let open: Vec<&str> = Resource::ALL
@@ -368,7 +356,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_automatic_view_opens_its_whole_fallback_chain() {
         // Live session, else next race, else standings —
         // it has to watch all three to know which to show.
@@ -391,7 +379,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn the_driver_view_reads_both_halves_of_the_statistics() {
         // The per-driver resource carries the slug, the table the full
         // figures; the screen needs the join of the two.
@@ -399,7 +387,7 @@ mod tests {
         assert!(resource_needed(Resource::DriverStats, View::Driver));
     }
 
-    #[test]
+    #[wasm_test]
     fn only_the_session_boards_follow_the_live_cadence() {
         for resource in Resource::ALL {
             let live = matches!(
@@ -417,7 +405,7 @@ mod tests {
 
     /// Pieces as the host hands them over: `application/json` is the `json`
     /// subtype unsuffixed, `application/vnd.api+json` is `vnd.api` plus `json`.
-    #[test]
+    #[wasm_test]
     fn the_json_subtype_and_the_json_suffix_both_name_json() {
         assert!(media_type_names_json(Some("json"), None));
         assert!(media_type_names_json(Some("vnd.api"), Some("json")));
@@ -427,7 +415,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_subtype_merely_containing_json_does_not() {
         assert!(
             !media_type_names_json(Some("json-seq"), None),
@@ -445,7 +433,7 @@ mod tests {
 
     /// A header the host could not parse arrives as no pieces at all, and must
     /// read as "not JSON" rather than as "no opinion".
-    #[test]
+    #[wasm_test]
     fn an_unparsable_media_type_names_nothing() {
         assert!(!media_type_names_json(None, None));
         assert!(

@@ -80,9 +80,11 @@ pub fn description(code: i64) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn clear_picks_day_or_night_icon() {
         assert_eq!(icon_id(0, true), IconId::ClearDay);
         assert_eq!(icon_id(0, false), IconId::ClearNight);
@@ -90,7 +92,7 @@ mod tests {
         assert_eq!(icon_id(2, false), IconId::PartlyCloudyNight);
     }
 
-    #[test]
+    #[wasm_test]
     fn ranges_map_to_expected_icons() {
         assert_eq!(icon_id(2, true), IconId::PartlyCloudyDay);
         assert_eq!(icon_id(3, true), IconId::Cloudy);
@@ -106,14 +108,14 @@ mod tests {
         assert_eq!(icon_id(99, true), IconId::ThunderstormHail);
     }
 
-    #[test]
+    #[wasm_test]
     fn unmatched_codes_are_unknown_not_hail() {
         assert_eq!(icon_id(10, true), IconId::Unknown);
         assert_eq!(icon_id(50, true), IconId::Unknown);
         assert_eq!(description(10), "Unknown");
     }
 
-    #[test]
+    #[wasm_test]
     fn descriptions_match_deckfeeder() {
         assert_eq!(description(2), "Partly Cloudy");
         assert_eq!(description(3), "Overcast");

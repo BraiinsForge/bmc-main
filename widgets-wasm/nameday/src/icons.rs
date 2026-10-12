@@ -20,10 +20,6 @@
 
 use crate::manifest_params::Country;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 const FLAG_AT: Svg = include_svg!("assets/flags/at.svg");

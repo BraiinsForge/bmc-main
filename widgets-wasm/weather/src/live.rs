@@ -22,10 +22,6 @@
 
 use std::cell::RefCell;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "runtime code uses the SDK's builders, host shims, and macros throughout"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::api::{self, FetchOutcome, WeatherFetchAction};

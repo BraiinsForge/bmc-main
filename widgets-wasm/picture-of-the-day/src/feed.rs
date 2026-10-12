@@ -201,11 +201,13 @@ pub fn one_line(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     const NASA: Source = Source::NasaApod;
 
-    #[test]
+    #[wasm_test]
     fn is_from_reads_the_feed_out_of_an_identity() {
         assert!(is_from(NASA, &picture_url(NASA, "2026-08-27", 638, 480)));
         assert!(is_from(NASA, &metadata_url(NASA)));
@@ -216,7 +218,7 @@ mod tests {
         assert!(!is_from(NASA, ""));
     }
 
-    #[test]
+    #[wasm_test]
     fn picture_url_carries_date_and_pixel_size() {
         assert_eq!(
             picture_url(NASA, "2026-08-27", 638, 480),
@@ -224,13 +226,13 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn metadata_url_is_date_free() {
         let url = metadata_url(NASA);
         assert!(url.ends_with("/latest_full.json"), "{url}");
     }
 
-    #[test]
+    #[wasm_test]
     fn every_source_serves_its_pictures_and_its_metadata_from_one_prefix() {
         for source in Source::ALL {
             let base = prefix(*source);
@@ -240,7 +242,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_cache_identity_changes_with_date_and_size() {
         let base = picture_url(NASA, "2026-08-27", 638, 480);
         assert_ne!(base, picture_url(NASA, "2026-08-28", 638, 480));
@@ -248,7 +250,7 @@ mod tests {
         assert_eq!(base, picture_url(NASA, "2026-08-27", 638, 480));
     }
 
-    #[test]
+    #[wasm_test]
     fn meta_round_trips_through_the_cache_encoding() {
         let meta = Meta {
             date: "2026-08-27".to_owned(),
@@ -258,14 +260,14 @@ mod tests {
         assert_eq!(Meta::decode(&meta.encode()).as_ref(), Some(&meta));
     }
 
-    #[test]
+    #[wasm_test]
     fn meta_decode_rejects_junk_and_empty_dates() {
         assert_eq!(Meta::decode(""), None);
         assert_eq!(Meta::decode("2026-08-27"), None);
         assert_eq!(Meta::decode("\u{1f}title\u{1f}credit"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_published_date_is_ten_characters_of_digits_and_two_dashes() {
         assert!(is_published_date("2026-08-27"));
         assert!(
@@ -274,7 +276,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_date_that_could_reshape_a_url_or_the_cache_record_is_rejected() {
         for date in [
             "",
@@ -291,13 +293,13 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn meta_decode_rejects_a_flash_record_whose_date_is_not_a_date() {
         // A corrupted record must not seed a fetch.
         assert_eq!(Meta::decode("../../x\u{1f}Title\u{1f}Credit"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn meta_decode_rejects_a_record_carrying_a_fourth_field() {
         assert_eq!(
             Meta::decode("2026-08-27\u{1f}A\u{1f}B\u{1f}C"),
@@ -306,7 +308,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_title_carrying_a_separator_round_trips_whole() {
         let meta = Meta {
             date: "2026-08-27".to_owned(),
@@ -321,7 +323,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn caption_is_withheld_when_the_stored_picture_is_a_different_one() {
         let meta = Meta {
             date: "2026-08-27".to_owned(),
@@ -336,13 +338,13 @@ mod tests {
         assert!(!meta.describes(NASA, &stored, 317, 238));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dateless_meta_never_describes_anything() {
         let meta = Meta::default();
         assert!(!meta.describes(NASA, &picture_url(NASA, "", 638, 480), 638, 480));
     }
 
-    #[test]
+    #[wasm_test]
     fn one_line_flattens_upstream_credit_formatting() {
         assert_eq!(
             one_line("First Author\n Text: \nSecond Author \n(MOCK\nORG, \nDEPT)"),
@@ -352,7 +354,7 @@ mod tests {
         assert_eq!(one_line("Solo"), "Solo");
     }
 
-    #[test]
+    #[wasm_test]
     fn one_line_drops_control_characters_without_welding_words_together() {
         assert_eq!(one_line("A\u{1f}B"), "AB");
         assert_eq!(one_line("A\u{7}"), "A");

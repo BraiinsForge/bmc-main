@@ -195,9 +195,11 @@ pub fn abbreviate_spacecraft(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn every_design_size_lands_in_its_own_bucket() {
         for bucket in [
             SizeBucket::Full,
@@ -211,7 +213,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
         assert_eq!(size_bucket(320, 240), SizeBucket::Small, "BMM100");
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
@@ -219,7 +221,7 @@ mod tests {
         assert_eq!(size_bucket(481, 320), SizeBucket::Large);
     }
 
-    #[test]
+    #[wasm_test]
     fn abbreviates_known_sites_and_pads() {
         assert_eq!(
             abbreviate_place("Cape Canaveral SFS, FL, USA", "Space Launch Complex 40"),
@@ -263,14 +265,14 @@ mod tests {
         ("Mission Extension", "Extension"),
     ];
 
-    #[test]
+    #[wasm_test]
     fn only_the_ll2_mission_types_too_wide_for_their_column_are_shortened() {
         for (ll2, reads) in LL2_MISSION_TYPES {
             assert_eq!(abbreviate_mission_type(ll2), reads, "{ll2}");
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reworded_mission_type_still_finds_its_short_form() {
         assert_eq!(
             abbreviate_mission_type("Government / Top Secret"),
@@ -280,7 +282,7 @@ mod tests {
         assert_eq!(abbreviate_mission_type("Human Spaceflight"), "Crewed");
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dragon_reads_as_its_crew_capsule_name_or_its_serial() {
         assert_eq!(abbreviate_spacecraft("Crew Dragon Endeavour"), "Endeavour");
         assert_eq!(abbreviate_spacecraft("Crew Dragon C205"), "Dragon C205");
@@ -290,7 +292,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn booster_reads_first_flight_then_flown_count() {
         assert_eq!(format_booster(1), "Flight #1");
         assert_eq!(format_booster(0), "Flight #1");

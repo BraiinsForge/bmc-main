@@ -1,0 +1,4 @@
+# Widgets build and test for wasm32 only:
+# a plain `cargo test` here, like rust-analyzer's Run Test, goes through the wasm test runner.
+[build]
+target = "wasm32-unknown-unknown"

@@ -220,9 +220,11 @@ pub enum Status {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn classifies_design_and_bmm_sizes() {
         assert_eq!(size_bucket(317, 238), SizeBucket::Small);
         assert_eq!(size_bucket(638, 238), SizeBucket::Medium);
@@ -233,14 +235,14 @@ mod tests {
         assert_eq!(size_bucket(1_280, 238), SizeBucket::Medium);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_narrow_buckets_split_at_the_midpoint_of_the_bmm_heights() {
         assert_eq!(size_bucket(480, 279), SizeBucket::Small);
         assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
         assert_eq!(size_bucket(481, 280), SizeBucket::Medium);
     }
 
-    #[test]
+    #[wasm_test]
     fn history_is_skipped_only_for_small() {
         assert!(!resource_needed(Resource::History, SizeBucket::Small));
         for bucket in [
@@ -262,7 +264,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn nexus_payload_becomes_stale_after_two_refresh_intervals() {
         let freshness = Freshness {
             payload_unix_secs: Some(880),

@@ -404,6 +404,8 @@ pub fn model_detail_rows(
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, KnownDevice};
@@ -482,7 +484,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn ok_predicate_without_nominal_uses_the_floor() {
         assert!(
             !is_ok(&reading(Some(0.1)), None),
@@ -499,7 +501,7 @@ mod tests {
         assert!(!is_ok(&reading(Some(0.0)), None), "zero hashrate is not ok");
     }
 
-    #[test]
+    #[wasm_test]
     fn ok_predicate_with_nominal_uses_the_twenty_percent_rule() {
         // Nominal 100 TH/s → ok at or above 20 TH/s, not-ok below.
         assert!(
@@ -520,7 +522,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_sums_hashrate_and_power_and_counts() {
         let a = device(Some("M"), Some(full(1.0, 30.0, 60.0)));
         let b = device(Some("M"), Some(full(2.0, 20.0, 50.0)));
@@ -531,7 +533,7 @@ mod tests {
         assert_eq!(group.ok_count, 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_counts_a_straggler_below_twenty_percent_of_nominal_as_not_ok() {
         // 8 vs 100 TH/s nominal is below the 20% floor → not ok; 100 is ok.
         let straggler = device(
@@ -555,7 +557,7 @@ mod tests {
         assert_eq!(group.ok_count, 1, "only the healthy miner is ok");
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_uses_the_model_catalog_nominal_when_the_reading_lacks_one() {
         // uBOS-style: no reading nominal, but the model carries a catalog one
         // (100 TH/s) → the 20% rule applies via the model (8 straggles, 30 ok).
@@ -578,7 +580,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_efficiency_is_total_power_over_total_hashrate() {
         // Two devices of very different efficiency; the group J/TH must be
         // Σpower / Σhashrate (50/3 ≈ 16.67), not the mean of the per-device
@@ -590,7 +592,7 @@ mod tests {
         assert!((eff - 50.0 / 3.0).abs() < 1e-6, "got {eff}");
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_excludes_missing_power_from_efficiency_but_not_from_display_power() {
         // Device b has hashrate but no power: it must not enter the efficiency
         // hashrate denominator (which would drag J/TH down), yet its absence
@@ -610,7 +612,7 @@ mod tests {
         assert_eq!(raw(group.hashrate), Some(6.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_excludes_idle_device_from_efficiency_but_keeps_its_power() {
         // Idle b (0 TH/s, 17 W): its power stays out of the efficiency (30 J/TH,
         // the active miner alone) but still shows in the group's total (47 W).
@@ -622,7 +624,7 @@ mod tests {
         assert_eq!(raw(group.power), Some(47.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_efficiency_ignores_an_idle_devices_power() {
         // Reported case: idle miner (0 TH/s, 8 W) + active miner (1 TH/s, 32 W).
         // The idle 8 W is excluded, so efficiency is the active miner's 32 J/TH,
@@ -639,7 +641,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_temperature_is_min_mean_max() {
         let a = device(Some("M"), Some(full(1.0, 30.0, 40.0)));
         let b = device(Some("M"), Some(full(1.0, 30.0, 50.0)));
@@ -650,7 +652,7 @@ mod tests {
         assert_eq!(raw(group.max_temperature), Some(60.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn fold_all_missing_is_unavailable() {
         let a = device(Some("M"), None);
         let group = fold_group("M".to_owned(), &[&a]);
@@ -699,7 +701,7 @@ mod tests {
         list
     }
 
-    #[test]
+    #[wasm_test]
     fn groups_split_by_model_name_with_unknown_last() {
         let l = list(&[
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
@@ -728,7 +730,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_identified_but_unanswered_device_is_still_reported() {
         // Shown even before it answers, so an erroring miner surfaces rather than hides.
         let mut list = DeviceList::new();
@@ -745,7 +747,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn device_status_reflects_liveness_and_failure_kind() {
         use crate::device::PollFailure;
         use crate::telemetry::TelemetrySnapshot;
@@ -788,7 +790,7 @@ mod tests {
         assert_eq!(device_status(&base()), DeviceStatus::Unreachable);
     }
 
-    #[test]
+    #[wasm_test]
     fn groups_order_by_family_ubos_then_bos_then_bitaxe() {
         // Alphabetically the labels are BMM, Bitaxe, UMM; ordering by family
         // must override that to uBOS, then BOS, then Bitaxe.
@@ -826,7 +828,7 @@ mod tests {
         assert_eq!(labels, ["UMM 200", "BMM 101", "Bitaxe Gamma 601"]);
     }
 
-    #[test]
+    #[wasm_test]
     fn same_model_name_under_two_families_does_not_merge() {
         // A display name shared across families must yield one group per family,
         // each carrying its own family, not a single silently-merged group.
@@ -873,7 +875,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn unreachable_device_is_counted_but_excluded_from_the_sums() {
         // The unreachable device carries a (stale) reading but contributes to no
         // sum: the group total still counts it, yet hashrate/power/temp reflect
@@ -897,7 +899,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_device_without_a_usable_account_counts_as_not_authenticating() {
         let mut l = list(&[
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
@@ -913,7 +915,7 @@ mod tests {
         assert_eq!(g.off_count, 0, "an unpolled miner is not counted offline");
     }
 
-    #[test]
+    #[wasm_test]
     fn group_of_only_unreachable_devices_reads_unavailable_not_zero() {
         // An all-down group has no reading to fold, so every metric is N/A — a
         // false 0 would read as "mining at zero" rather than "we can't see them".
@@ -931,7 +933,7 @@ mod tests {
         assert_eq!(g.max_temperature, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn reachable_idle_miner_keeps_its_power_and_is_not_ok() {
         // A reachable but idle miner (0 TH/s, real power) must keep its real
         // power: the zeroing keys on `reachable`, never on a zero/absent reading.
@@ -945,7 +947,7 @@ mod tests {
         assert_eq!(raw(g.max_temperature), Some(40.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn total_additive_fields_equal_the_group_sums() {
         let l = list(&[
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
@@ -963,7 +965,7 @@ mod tests {
         assert_eq!(summary.total.ok_count, 2);
     }
 
-    #[test]
+    #[wasm_test]
     fn total_temperature_is_global_min_max_and_mean() {
         // Group A: temps 40, 60 (mean 50). Group B: temp 90.
         // total min=40, max=90, mean=(40+60+90)/3=63.33 — NOT the mean of the
@@ -984,7 +986,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn total_efficiency_is_recomputed_globally_not_averaged() {
         // Group A: 1 TH/s @ 30 W (30 J/TH). Group B: 3 TH/s @ 30 W (10 J/TH).
         // Global Σpower/Σhashrate = 60/4 = 15 J/TH — NOT the mean of the group
@@ -1026,7 +1028,7 @@ mod tests {
         l
     }
 
-    #[test]
+    #[wasm_test]
     fn disabled_family_drops_its_groups_and_total_contribution() {
         // A fleet spanning BOS and Bitaxe; disabling Bitaxe must erase its
         // group from the breakdown and remove its hashrate/power from the total.
@@ -1049,7 +1051,7 @@ mod tests {
         assert_eq!(raw(summary.total.power), Some(30.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_rows_fold_each_device_separately() {
         let l = list(&[
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
@@ -1071,7 +1073,7 @@ mod tests {
         assert_eq!(raw(rows[1].1.hashrate), Some(2.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_rows_sort_by_display_name_case_insensitively() {
         let l = list(&[
             ("x", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
@@ -1094,7 +1096,7 @@ mod tests {
         assert_eq!(labels, ["Alpha", "bravo"]);
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_rows_for_the_unknown_group_take_modelless_devices() {
         let l = list(&[
             ("a", None, Some(full(1.0, 30.0, 60.0)), true),
@@ -1107,7 +1109,7 @@ mod tests {
         assert_eq!(rows[0].1.label, "a");
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_rows_require_the_family_to_match() {
         let l = family_list(&[
             ("a", DeviceFamily::Bos, "BMM 101", full(1.0, 30.0, 60.0)),
@@ -1124,7 +1126,7 @@ mod tests {
         assert_eq!(rows[0].1.label, "a");
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_rows_hide_a_disabled_familys_modelless_devices() {
         // The Unknown partition spans families; disabling AxeOS must hide its
         // model-less device from the drill-in even though the uBOS one keeps
@@ -1154,7 +1156,7 @@ mod tests {
         assert_eq!(labels, ["b"], "the disabled family's device must not leak");
     }
 
-    #[test]
+    #[wasm_test]
     fn model_detail_row_of_an_unreachable_device_reads_unavailable() {
         let l = list(&[("a", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false)]);
         let rows = model_detail_rows(
@@ -1179,7 +1181,7 @@ mod tests {
         fleet
     }
 
-    #[test]
+    #[wasm_test]
     fn the_hashrate_only_pass_matches_summarize() {
         let mut l = family_list(&[
             ("a", DeviceFamily::Bos, "BMM 101", full(1.0, 30.0, 60.0)),

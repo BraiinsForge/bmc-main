@@ -60,9 +60,11 @@ impl Seconds {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn quantity_exposes_unit_and_raw() {
         assert_eq!(Watt::UNIT, "W");
         assert_eq!(Percent::UNIT, "%");

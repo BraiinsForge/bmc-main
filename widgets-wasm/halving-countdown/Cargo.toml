@@ -18,5 +18,8 @@ bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 mining = { path = "../lib/mining" }
 units = { path = "../lib/units" }
 
+[dev-dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk", features = ["test-support"] }
+
 [lints]
 workspace = true

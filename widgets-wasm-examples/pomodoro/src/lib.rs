@@ -32,7 +32,6 @@
 
 use std::cell::Cell;
 
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 // ── Assets ───────────────────────────────────────────────────────────

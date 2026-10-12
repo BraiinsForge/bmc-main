@@ -138,16 +138,18 @@ pub fn band_for(variant: SizeVariant) -> SizeBand {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn small_hides_the_period_label() {
         assert!(!band_for(SizeVariant::Small).show_period);
         assert!(band_for(SizeVariant::Medium).show_period);
         assert!(band_for(SizeVariant::Full).show_period);
     }
 
-    #[test]
+    #[wasm_test]
     fn fit_scales_geometry_and_contained_fonts_but_not_the_price_or_header() {
         let full = band_for(SizeVariant::Full);
         let scaled = full.scaled(0.5);
@@ -167,7 +169,7 @@ mod tests {
         assert!(scaled.show_period);
     }
 
-    #[test]
+    #[wasm_test]
     fn candlestick_chrome_is_fixed_and_fit_scaled() {
         // The axis gutter, volume strip, and time-label strip keep the same
         // canonical dimensions at every size; only fit-scaling shrinks them.
@@ -187,7 +189,7 @@ mod tests {
         assert_eq!(scaled.axis_font, 10);
     }
 
-    #[test]
+    #[wasm_test]
     fn fit_one_is_identity_for_the_canonical_band() {
         let band = band_for(SizeVariant::Medium);
         let scaled = band.scaled(1.0);

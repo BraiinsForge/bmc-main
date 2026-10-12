@@ -23,10 +23,6 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "runtime code uses many SDK builders, macros, and host shims"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::api::{

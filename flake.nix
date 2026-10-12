@@ -100,7 +100,7 @@
           deckPackages = workspace.legacyPackages.deck-packages;
           inherit (workspace.deps) frontend fonts;
           protoPlugins = proto-plugins;
-          inherit (workspace.packages) frontendNodeModules;
+          inherit (workspace.packages) frontendNodeModules wasm-test-runner;
           inherit (workspace.bmc) profiles crates;
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
           inherit (workspace) wasmWrapperTestPackages;

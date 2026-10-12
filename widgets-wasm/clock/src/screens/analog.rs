@@ -25,13 +25,6 @@
 pub(crate) mod rect;
 pub(crate) mod round;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render code uses many SDK exports and macros in one file"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use super::parts::{ClockPalette, local_or_system};

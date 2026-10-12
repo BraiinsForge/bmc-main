@@ -18,10 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "screen code uses the SDK's tree builders, macros, and tokens throughout"
-)]
 use bmc_wasm_sdk::*;
 use units::availability::Availability;
 
@@ -647,16 +643,22 @@ pub fn bitcoin_mining_view(view: &ViewData) -> Node {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::screens::fixtures;
 
-    #[test]
+    #[wasm_test]
     fn loading_value_keeps_muted_presentation() {
         let loading: Availability<()> = Availability::Unavailable;
 
         assert_eq!(
-            availability_value(&loading, |_| None::<String>),
+            availability_value(&loading, |()| None::<String>),
             DisplayValue::Loading
         );
         assert_eq!(
@@ -665,17 +667,17 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn absent_value_uses_not_available_placeholder() {
         let failed: Availability<()> = Availability::Failed;
 
         assert_eq!(
-            availability_value(&failed, |_| None).into_text_and_color(),
+            availability_value(&failed, |()| None).into_text_and_color(),
             (parts::NOT_AVAILABLE.to_owned(), color::ABSENT)
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_primary_value_sets_its_unit_apart_on_the_number_line() {
         let sizes = parts::ValueSizes {
             number: 40,
@@ -712,7 +714,6 @@ mod tests {
 
     /// The top row of the BMM101 layout: the title-and-value column and the chart beside it.
     fn bmm101_top_row(view: &ViewData) -> (Vec<Node>, Node) {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let Node::Column(_, blocks) = bitcoin_mining_view(view) else {
             panic!("BUG: the BMM101 root must be a column");
         };
@@ -725,7 +726,7 @@ mod tests {
         (left.clone(), chart.clone())
     }
 
-    #[test]
+    #[wasm_test]
     fn bmm101_runs_the_chart_beside_the_value_with_its_span_drawn_in_its_corner() {
         let (left, chart) = bmm101_top_row(&fixtures::healthy(SizeBucket::Bmm101));
 
@@ -753,9 +754,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn bmm101_stacks_both_adjustments_then_the_hash_price() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let Node::Column(_, blocks) = bitcoin_mining_view(&fixtures::healthy(SizeBucket::Bmm101))
         else {
             panic!("BUG: the BMM101 root must be a column");
@@ -787,7 +787,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn bmm101_keeps_the_chart_box_while_history_loads() {
         let (_, chart) = bmm101_top_row(&fixtures::loading(SizeBucket::Bmm101));
 
@@ -797,9 +797,8 @@ mod tests {
         assert_eq!((props.width, props.height), (253.0, 78.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn full_insets_the_stats_column_from_the_cards_edges() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let Node::Row(_, columns) = bitcoin_mining_view(&fixtures::healthy(SizeBucket::Full))
         else {
             panic!("BUG: the Full root must be a row of columns");

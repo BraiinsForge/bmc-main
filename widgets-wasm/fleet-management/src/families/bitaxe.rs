@@ -188,6 +188,8 @@ impl FamilyAdapter for BitaxeAdapter {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::discovery::tests_support::MapJson;
 
@@ -205,7 +207,7 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn browses_the_axeos_subtype() {
         assert_eq!(
             BitaxeAdapter.browse_service_types(),
@@ -213,7 +215,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_a_bitaxe_device_and_stamps_family() {
         let found = BitaxeAdapter
             .parse_found(&axeos_found())
@@ -227,21 +229,21 @@ mod tests {
         assert_eq!(found.identity.family, DeviceFamily::Bitaxe);
     }
 
-    #[test]
+    #[wasm_test]
     fn rejects_event_missing_host() {
         let mut json = axeos_found();
         json.strings.remove("/host");
         assert_eq!(BitaxeAdapter.parse_found(&json), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn rejects_event_missing_port() {
         let mut json = axeos_found();
         json.ints.remove("/port");
         assert_eq!(BitaxeAdapter.parse_found(&json), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_txt_model_hint_from_discovery() {
         let found = BitaxeAdapter
             .parse_found(&axeos_found())
@@ -256,7 +258,7 @@ mod tests {
         assert_eq!(model.nominal_hashrate_ths, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn malformed_txt_omits_only_model_hint() {
         let mut json = axeos_found();
         json.strings.remove("/txt/family");
@@ -279,7 +281,7 @@ mod tests {
         j
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_system_info_into_readings() {
         let mut r = TelemetryReading::default();
         BitaxeAdapter.parse_telemetry("/info", &info_json(), &mut r);
@@ -299,7 +301,7 @@ mod tests {
         assert_eq!(r.uptime_s, Some(382));
     }
 
-    #[test]
+    #[wasm_test]
     fn negative_uptime_is_ignored() {
         let mut j = info_json();
         j.ints.insert("/uptimeSeconds", -1);
@@ -308,7 +310,7 @@ mod tests {
         assert_eq!(r.uptime_s, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn negative_sensor_readings_are_ignored() {
         let mut j = info_json();
         j.floats.insert("/hashRate", -1.0);
@@ -324,7 +326,7 @@ mod tests {
         assert_eq!(r.uptime_s, Some(382));
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_clears_owned_fields_that_vanished_from_response() {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(99.0),
@@ -337,7 +339,7 @@ mod tests {
         assert_eq!(r, TelemetryReading::default());
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_clears_the_endpoint_fields() {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(1.0),
@@ -355,7 +357,7 @@ mod tests {
         assert_eq!(r.uptime_s, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_model_prefers_device_model() {
         let mut j = MapJson::default();
         j.strings.insert("/deviceModel", "NerdQAxe+");
@@ -374,7 +376,7 @@ mod tests {
         assert_eq!(model.nominal_hashrate_ths, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn parse_model_falls_back_to_board_version() {
         let mut j = MapJson::default();
         j.strings.insert("/boardVersion", "602");

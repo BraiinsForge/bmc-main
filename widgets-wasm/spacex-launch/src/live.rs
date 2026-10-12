@@ -22,7 +22,6 @@
 
 use std::cell::RefCell;
 
-#[expect(clippy::wildcard_imports, reason = "widget glue uses many SDK exports")]
 use bmc_wasm_sdk::*;
 
 use crate::api::{self, Outcome, Reply};

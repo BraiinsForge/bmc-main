@@ -112,7 +112,6 @@ fn propagation(previous: Option<f64>, wall_unix_secs: i64, delta_ms: u32) -> Pro
 mod wasm_glue {
     use std::cell::{Cell, RefCell};
 
-    #[expect(clippy::wildcard_imports, reason = "widget glue uses many SDK exports")]
     use bmc_wasm_sdk::*;
 
     use crate::model::IssData;
@@ -228,8 +227,13 @@ mod wasm_glue {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
     use bmc_wasm_sdk::types::{Length, Speed};
+    use bmc_wasm_sdk::wasm_test;
 
     use super::*;
     use crate::model::{IssData, Visibility};
@@ -247,7 +251,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn parsed_payload_is_stored() {
         for has_data in [false, true] {
             let Outcome::Store(data) = outcome(Some(sample()), has_data) else {
@@ -257,7 +261,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn failure_keeps_data_when_present_else_errors() {
         // Held data survives a failed refresh (the globe keeps propagating);
         // with nothing loaded yet the same failure is a hard error.
@@ -265,17 +269,17 @@ mod tests {
         assert!(matches!(outcome(None, false), Outcome::Fail));
     }
 
-    #[test]
+    #[wasm_test]
     fn live_globe_recomputes_position_each_second() {
         assert_eq!(next_frame_delay(true), Some(1_000));
     }
 
-    #[test]
+    #[wasm_test]
     fn static_view_waits_for_an_external_update() {
         assert_eq!(next_frame_delay(false), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn invalid_tle_stops_the_live_globe_cadence() {
         let tle = model::Tle {
             line1: "invalid".to_owned(),
@@ -288,27 +292,27 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn propagation_advances_by_elapsed_time_across_wall_clock_quantization() {
         let next = propagation(Some(1_000.0), 1_002, 1_030);
         assert!((next.unix_secs - 1_001.03).abs() < 1.0e-6);
         assert_eq!(next.transition_ms, 1_030);
     }
 
-    #[test]
+    #[wasm_test]
     fn clock_step_snaps_so_the_track_stays_on_the_globe() {
         let next = propagation(Some(1_000.0), 1_605, 1_000);
         assert_eq!(next.unix_secs, 1_605.0);
         assert_eq!(next.transition_ms, 0);
     }
 
-    #[test]
+    #[wasm_test]
     fn ordinary_updates_keep_globe_moving_until_the_next_target() {
         assert_eq!(position_transition_ms(1_030), 1_030);
         assert_eq!(position_transition_ms(300), POSITION_UPDATE_MS);
     }
 
-    #[test]
+    #[wasm_test]
     fn gap_updates_snap_so_the_track_stays_on_the_globe() {
         assert_eq!(position_transition_ms(30_000), 0);
     }

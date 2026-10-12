@@ -233,20 +233,22 @@ pub mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::tests_support::MapJson;
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn parses_miner_details_uptime() {
         let mut json = MapJson::default();
         json.ints.insert("/bosminer_uptime_s", 187_020);
         assert_eq!(
             parse_details(&json).data.uptime,
-            Some(Duration::from_secs(187_020))
+            Some(Duration::from_hours(51) + Duration::from_mins(57))
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_stats_efficiency_when_present() {
         let mut json = MapJson::default();
         json.floats
@@ -257,7 +259,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn leaves_efficiency_absent_when_the_body_omits_it() {
         let json = MapJson::default();
         assert_eq!(parse_stats(&json).data.efficiency, None);
@@ -265,7 +267,7 @@ mod tests {
 
     /// `bosminer_uptime_s` is the one field the BOS+ schema requires of a reply
     /// these parsers read, so it is the one absence that proves a broken body.
-    #[test]
+    #[wasm_test]
     fn only_a_details_body_without_its_uptime_is_unusable() {
         let empty = MapJson::default();
         assert_eq!(parse_details(&empty).verdict, Verdict::Unusable);
@@ -277,7 +279,7 @@ mod tests {
 
     /// Empty arrays and absent optional fields are a healthy miner's silence;
     /// failing the poll over it would stale a live reading.
-    #[test]
+    #[wasm_test]
     fn the_endpoints_whose_fields_are_all_optional_still_answer_when_empty() {
         let mut empty = MapJson::default();
         empty.empty_containers.insert("/hashboards");
@@ -292,7 +294,7 @@ mod tests {
 
     /// A parser hands back its endpoint's whole field set, so a dropped field
     /// reads as absent rather than as a reading from a minute ago.
-    #[test]
+    #[wasm_test]
     fn a_body_that_drops_a_field_reports_it_absent() {
         let mut hashrate_only = MapJson::default();
         hashrate_only.floats.insert(
@@ -305,7 +307,7 @@ mod tests {
         assert_eq!(parsed.data.power, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_chip_model_and_count_for_single_board() {
         let mut json = MapJson::default();
         json.strings.insert("/hashboards/0/chip_type", "BM1370");
@@ -317,7 +319,7 @@ mod tests {
 
     /// The board reading and the hottest chip make one range,
     /// and the real rate over the nominal one is the mining-mode ratio.
-    #[test]
+    #[wasm_test]
     fn reads_the_first_boards_temperatures_and_mining_ratio() {
         let mut json = MapJson::default();
         json.floats
@@ -346,7 +348,7 @@ mod tests {
         assert!((mcr.as_percent() - 98.0).abs() < 1e-9);
     }
 
-    #[test]
+    #[wasm_test]
     fn reads_the_first_networks_address() {
         let mut json = MapJson::default();
         json.strings.insert("/networks/0/address", "192.168.23.1");
@@ -356,7 +358,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn sums_chip_count_across_hashboards() {
         let mut json = MapJson::default();
         json.strings.insert("/hashboards/0/chip_type", "BM1370");
@@ -368,7 +370,7 @@ mod tests {
         assert_eq!(parsed.data.chip_count, Some(324));
     }
 
-    #[test]
+    #[wasm_test]
     fn leaves_chips_absent_when_the_body_omits_them() {
         let mut json = MapJson::default();
         json.empty_containers.insert("/hashboards");
@@ -377,7 +379,7 @@ mod tests {
         assert_eq!(parsed.data.chip_count, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_absent_hashboards_container_is_not_this_reply() {
         assert_eq!(
             parse_hashboards(&MapJson::default()).verdict,
@@ -385,14 +387,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_empty_hashboards_container_is_a_miner_reporting_nothing() {
         let mut json = MapJson::default();
         json.empty_containers.insert("/hashboards");
         assert_eq!(parse_hashboards(&json).verdict, Verdict::Answer);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_absent_fans_container_is_not_this_reply() {
         assert_eq!(
             parse_cooling(&MapJson::default()).verdict,
@@ -400,14 +402,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_empty_fans_container_is_a_miner_reporting_nothing() {
         let mut json = MapJson::default();
         json.empty_containers.insert("/fans");
         assert_eq!(parse_cooling(&json).verdict, Verdict::Answer);
     }
 
-    #[test]
+    #[wasm_test]
     fn an_absent_networks_container_is_not_this_reply() {
         assert_eq!(
             parse_network(&MapJson::default()).verdict,
@@ -415,7 +417,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_empty_networks_container_is_a_miner_reporting_nothing() {
         let mut json = MapJson::default();
         json.empty_containers.insert("/networks");
@@ -423,12 +425,12 @@ mod tests {
     }
 
     // Deliberate: the schema permits this body, so nothing here can fault it.
-    #[test]
+    #[wasm_test]
     fn a_stats_body_carrying_neither_container_still_answers() {
         assert_eq!(parse_stats(&MapJson::default()).verdict, Verdict::Answer);
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_clears_only_its_own_fields() {
         let mut data = MinerData {
             hashrate: Availability::Available(Hashrate::from_terahashes_per_second(4.0)),
@@ -450,7 +452,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_all_clears_stale_miner_values_after_auth_changes() {
         let mut data = MinerData {
             hashrate: Availability::Available(Hashrate::from_terahashes_per_second(4.0)),
@@ -462,7 +464,7 @@ mod tests {
             efficiency: Availability::Available(MiningEfficiency::from_joules_per_terahash(21.5)),
             mcr: Availability::Available(Ratio::from_percent(90.0)),
             fan_speed: Availability::Available(Ratio::from_percent(72.0)),
-            uptime: Availability::Available(Duration::from_secs(187_020)),
+            uptime: Availability::Available(Duration::from_hours(51) + Duration::from_mins(57)),
             ip_address: Availability::Available("192.168.1.42".to_owned()),
             chip_type: Availability::Available("BM1370".into()),
             chip_count: Availability::Available(146),
@@ -495,7 +497,7 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_the_tuner_hashrate_target() {
         assert_eq!(
             parse_constraints(&full_constraints_json()).data.hashrate,
@@ -507,7 +509,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn constraint_target_is_absent_when_a_leaf_is_missing() {
         let mut json = full_constraints_json();
         json.floats
@@ -519,7 +521,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_cooling_ratio_as_percent() {
         let mut json = MapJson::default();
         json.floats.insert("/fans/0/target_speed_ratio", 0.72);

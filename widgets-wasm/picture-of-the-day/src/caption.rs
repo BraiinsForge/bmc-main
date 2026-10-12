@@ -23,10 +23,6 @@
 //! from the 317×238 tile up to the 1280×480 fullscreen.
 
 #[cfg(target_arch = "wasm32")]
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 pub const TITLE_PX: u32 = 16;
@@ -129,15 +125,17 @@ pub fn with_caption(mut root: Node, title: Option<&str>, credit: &str, size: Wid
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn the_credit_band_leaves_most_of_the_picture_clear() {
         assert_eq!(credit_max_width(1280), 768);
         assert!(credit_max_width(317) < 317);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_title_fits_inside_the_narrowest_tile() {
         // bmc100:small is the narrowest rectangular viewport a widget can occupy.
         assert!(

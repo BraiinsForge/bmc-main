@@ -28,10 +28,6 @@ mod wasm_glue {
 
     use std::cell::RefCell;
 
-    #[expect(
-        clippy::wildcard_imports,
-        reason = "widget render code uses many SDK exports and macros in one file"
-    )]
     use bmc_wasm_sdk::*;
 
     use crate::render::{fact_draw, header_draw};

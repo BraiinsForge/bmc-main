@@ -41,10 +41,6 @@ mod parse;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
-    #[expect(
-        clippy::wildcard_imports,
-        reason = "widget render code uses many SDK exports and macros in one file"
-    )]
     use bmc_wasm_sdk::*;
 
     use crate::live;

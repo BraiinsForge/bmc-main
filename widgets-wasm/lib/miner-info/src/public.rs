@@ -198,6 +198,8 @@ pub(crate) fn reset_price_history(data: &mut PublicData) {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::api::tests_support::MapJson;
 
@@ -205,7 +207,7 @@ mod tests {
         (a - b).abs() <= 1e-9 * b.abs().max(1.0)
     }
 
-    #[test]
+    #[wasm_test]
     fn the_query_carries_the_currency_code() {
         for url in [price_stats_url, block_url, difficulty_url, hashrate_url] {
             assert!(url(Currency::Usd).ends_with("currency=usd"));
@@ -213,12 +215,12 @@ mod tests {
     }
 
     /// The sparkline is normalised, so the history has no currency to carry.
-    #[test]
+    #[wasm_test]
     fn the_history_query_names_no_currency() {
         assert!(!price_history_url(Currency::Usd).contains("currency"));
     }
 
-    #[test]
+    #[wasm_test]
     fn parses_block_height() {
         let mut json = MapJson::default();
         json.ints.insert("/0/height", 900_123);
@@ -230,7 +232,7 @@ mod tests {
     /// `Ratio` stores fractions, so only the first is scaled
     /// — mixing the two up is a silent hundredfold error,
     /// and this is what catches it.
-    #[test]
+    #[wasm_test]
     fn percent_and_fraction_fields_land_on_the_same_scale() {
         let mut price = MapJson::default();
         price.floats.insert("/percent_change_24h", 6.25);
@@ -251,7 +253,7 @@ mod tests {
         assert!(approx(est.as_percent(), 10.5));
     }
 
-    #[test]
+    #[wasm_test]
     fn epoch_progress_is_the_block_count_over_the_epoch_length() {
         let mut json = MapJson::default();
         json.floats.insert("/block_epoch", 1008.0);
@@ -261,7 +263,7 @@ mod tests {
         assert!(approx(progress.as_percent(), 50.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn the_last_block_of_the_epoch_is_a_position_in_it() {
         let mut json = MapJson::default();
         json.floats.insert("/block_epoch", 2_016.0);
@@ -273,7 +275,7 @@ mod tests {
 
     /// A count the epoch cannot hold is refused whole, not clamped:
     /// clamping would render it as fresh progress.
-    #[test]
+    #[wasm_test]
     fn a_count_outside_the_epoch_is_refused() {
         for count in [-1.0, 2_100.0, f64::NAN] {
             let mut json = MapJson::default();
@@ -286,7 +288,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn converts_hashvalue_bitcoin_to_satoshis() {
         let mut json = MapJson::default();
         json.floats.insert("/hash_value", 0.000_000_050_2);
@@ -298,7 +300,7 @@ mod tests {
 
     /// A parsed figure carries the currency it was asked for,
     /// so the symbol is read off the value rather than assumed.
-    #[test]
+    #[wasm_test]
     fn fiat_figures_carry_the_currency_they_were_fetched_in() {
         let mut json = MapJson::default();
         json.floats.insert("/price", 101_754.0);
@@ -308,7 +310,7 @@ mod tests {
         assert_eq!(price.currency, Currency::Usd);
     }
 
-    #[test]
+    #[wasm_test]
     fn collects_price_history_in_order_until_first_gap() {
         let mut json = MapJson::default();
         json.floats.insert("/price/0/y", 101_000.0);
@@ -322,7 +324,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_shapeless_body_is_unusable_wherever_the_endpoint_must_report_something() {
         let empty = MapJson::default();
         assert_eq!(
@@ -336,7 +338,7 @@ mod tests {
 
     /// A window with no samples is still an answer: the chart draws nothing,
     /// and the poll neither fails nor lets the figure go stale.
-    #[test]
+    #[wasm_test]
     fn an_empty_price_history_still_answers() {
         let mut json = MapJson::default();
         json.empty_containers.insert("/price");
@@ -345,7 +347,7 @@ mod tests {
         assert!(parsed.data.points.is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_body_without_the_price_series_is_not_this_reply() {
         assert_eq!(
             parse_price_history(&MapJson::default()).verdict,
@@ -353,7 +355,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_block_and_reset_price_history_clear_only_their_own_fields() {
         let mut data = PublicData {
             block_height: Availability::Available(900_123),
@@ -369,7 +371,7 @@ mod tests {
         assert!(matches!(data.hashvalue, Availability::Available(_)));
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_price_stats_clears_only_its_own_fields() {
         let mut data = PublicData {
             btc_price: Availability::Available(Money::new(104_250.0, Currency::Usd)),
@@ -383,7 +385,7 @@ mod tests {
         assert_eq!(data.block_height, Availability::Available(900_123));
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_hashrate_stats_clears_only_its_own_fields() {
         let mut data = PublicData {
             avg_fee_share: Availability::Available(Ratio::from_percent(1.4)),
@@ -397,7 +399,7 @@ mod tests {
         assert!(matches!(data.btc_price, Availability::Available(_)));
     }
 
-    #[test]
+    #[wasm_test]
     fn reset_difficulty_stats_clears_only_its_own_fields() {
         let mut data = PublicData {
             epoch_progress: Availability::Available(Ratio::from_percent(87.0)),

@@ -58,6 +58,8 @@ pub fn collect_symbols(slots: &[&str; MAX_SYMBOLS]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::manifest_params::Period;
 
@@ -76,13 +78,13 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn slots_preserve_row_order() {
         let p = params(["A", "B", "C", "D", "E", "F", "G", "H"]);
         assert_eq!(slots(&p), ["A", "B", "C", "D", "E", "F", "G", "H"]);
     }
 
-    #[test]
+    #[wasm_test]
     fn collect_trims_and_compacts_empty_slots() {
         let p = params(["NVDA", "  AAPL  ", "", "  ", "TSLA", "", "", ""]);
         assert_eq!(
@@ -91,7 +93,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn all_empty_slots_collect_to_an_empty_list() {
         let p = params(["", " ", "", "", "", "", "", ""]);
         assert!(collect_symbols(&slots(&p)).is_empty());

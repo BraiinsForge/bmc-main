@@ -24,10 +24,6 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "runtime code uses the SDK's builders, host shims, and macros throughout"
-)]
 use bmc_wasm_sdk::*;
 use units::availability::Availability;
 

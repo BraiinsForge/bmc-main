@@ -22,13 +22,6 @@
 //! candle plot with a dashed price grid, a right-edge price axis with a
 //! current-price badge, a volume strip, and time labels on the x axis.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "the shared render module's SDK imports and palette"
-    )
-)]
 use super::*;
 
 use bmc_wasm_sdk::calendar::tz_convert;
@@ -231,7 +224,13 @@ pub fn series_view(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use prices::candle::CandleBar;
 
@@ -308,7 +307,7 @@ mod tests {
             .collect()
     }
 
-    #[test]
+    #[wasm_test]
     fn horizontal_lines_are_one_bounded_draw_each() {
         let series = series();
         let narrow = canvas_draws(series_view(
@@ -336,7 +335,7 @@ mod tests {
         assert_eq!(wide_paths.len(), expected_line_count);
     }
 
-    #[test]
+    #[wasm_test]
     #[expect(
         clippy::cast_precision_loss,
         reason = "test viewport dimensions are small integers, exact in f32"
@@ -382,7 +381,7 @@ mod tests {
             .collect()
     }
 
-    #[test]
+    #[wasm_test]
     #[expect(
         clippy::cast_precision_loss,
         reason = "font sizes are small integers, exact in f32"

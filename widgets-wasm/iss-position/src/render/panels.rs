@@ -35,10 +35,6 @@
 
 use bmc_wasm_sdk::types::Speed;
 use bmc_wasm_sdk::typography::DEGREE;
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 use super::{TITLE, globe};

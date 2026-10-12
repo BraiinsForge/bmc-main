@@ -21,10 +21,6 @@
 //! The BMM101 (480×320) faces, laid out from the Figma frames at their
 //! own size rather than scaled from another panel's.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
-)]
 use bmc_wasm_sdk::*;
 
 use super::{
@@ -132,12 +128,14 @@ pub fn mining(miner: &MinerData) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     use crate::face::test_support::texts;
     use crate::fixtures::{PriceMove, Reported, miner, public};
 
-    #[test]
+    #[wasm_test]
     fn an_unknown_price_wears_no_symbol() {
         let unknown = texts(&price(&public(Reported::Nothing, PriceMove::Up)));
         assert_eq!(unknown, [format::NOT_AVAILABLE]);
@@ -145,7 +143,7 @@ mod tests {
 
     /// The rows spread by flex spacers, so the grid takes whatever height
     /// the title row's line box leaves it.
-    #[test]
+    #[wasm_test]
     fn the_grid_spreads_its_three_rows() {
         let Node::Column(props, grid) = info_overload_grid(
             &miner(Reported::All, Some(1.02)),

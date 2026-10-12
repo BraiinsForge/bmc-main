@@ -1155,13 +1155,15 @@ pub fn live_idle(bucket: SizeBucket) -> LiveViewData {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{DRIVERS, GRID, flag_asset, team_logo_key};
 
     /// An unmapped country seeds no flag at all, and a screen missing one
     /// draws the empty state rather than failing — so the two tables here
     /// are the only thing standing between a renamed country and a board
     /// that quietly stops showing flags.
-    #[test]
+    #[wasm_test]
     fn every_country_the_fixtures_name_has_a_flag() {
         for (_, country, ..) in &GRID {
             assert!(flag_asset(country).is_some(), "no flag for `{country}`");
@@ -1172,7 +1174,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_team_is_found_however_its_sponsors_dress_the_name() {
         for name in [
             "Ferrari",
@@ -1188,7 +1190,7 @@ mod tests {
 
     /// Asserted as identities rather than asset names:
     /// the marks are numbered arbitrarily, so only who-matches-whom is meaningful.
-    #[test]
+    #[wasm_test]
     fn an_engine_supplier_in_the_name_does_not_win_over_the_team() {
         assert_eq!(team_logo_key("Haas Ferrari"), team_logo_key("Haas"));
         assert_ne!(team_logo_key("Haas Ferrari"), team_logo_key("Ferrari"));
@@ -1203,7 +1205,7 @@ mod tests {
     }
 
     /// One mark per constructor, or two teams on one screen look alike.
-    #[test]
+    #[wasm_test]
     fn no_two_teams_share_a_mark() {
         let mut seen = std::collections::HashSet::new();
         for (key, asset) in super::LOGO_KEYS {
@@ -1211,7 +1213,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_team_no_scene_has_artwork_for_falls_back() {
         assert!(team_logo_key("Stake F1 Kick Sauber").is_none());
     }

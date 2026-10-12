@@ -23,6 +23,8 @@
 //! `bmc-netsim/src/devices/{bos,ubos,axeos}.rs` — keep them in step; the drift
 //! caught is widget-side (separate workspaces, no shared crate).
 
+use bmc_wasm_sdk::wasm_test;
+
 use crate::adapter::FamilyAdapter;
 use crate::device::DeviceFamily;
 use crate::discovery::classify_http_found;
@@ -34,7 +36,7 @@ use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading};
 use bmc_wasm_sdk::types::Temperature;
 
-#[test]
+#[wasm_test]
 fn bos_sim_response_derives_the_intended_device() {
     // bos.rs default: Braiins Mini Miner BMM 101, 1 TH/s, sticker 1 TH/s, 32 W,
     // 65 °C, uptime 187020, two BM1370 boards (76 chips) spread, MAC on details.
@@ -118,7 +120,7 @@ fn bos_sim_response_derives_the_intended_device() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
     // ubos.rs default: Braiins Forge Miner x4, 4.8 TH/s (4.8e12 H/s),
     // 76 W (76000 mW), 65 °C, uptime 187020, no API nominal.
@@ -168,7 +170,7 @@ fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn axeos_sim_response_derives_the_intended_device() {
     // axeos.rs default: NerdQAxe++, 4.5 TH/s (4500 GH/s), expected 4.5, 76 W,
     // 62 °C, uptime 187020, BM1370 ×4.

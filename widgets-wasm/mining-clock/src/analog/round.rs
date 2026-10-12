@@ -25,10 +25,6 @@
 //! pivot), so each hand image is positioned such that its SVG-coordinate
 //! pivot lands at the canvas centre — see `place_hand_at_pivot`.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render code uses many SDK exports and macros in one file"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::ClockHandTransition;

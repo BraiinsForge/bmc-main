@@ -116,9 +116,11 @@ fn parse_tle(doc: &JsonDoc) -> Option<Tle> {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn visibility_maps_only_eclipsed_to_shadow() {
         assert_eq!(
             Visibility::from_wire(Some("eclipsed")),

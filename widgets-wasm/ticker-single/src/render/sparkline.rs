@@ -21,13 +21,6 @@
 //! The sparkline view: header row on top, a canvas below drawing the
 //! bottom-anchored sparkline with the tile-centered price over it.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "the shared render module's SDK imports and palette"
-    )
-)]
 use super::*;
 use prices::chart;
 
@@ -108,6 +101,8 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use prices::candle::CandleBar;
 
@@ -226,7 +221,7 @@ mod tests {
             .expect("BUG: the sparkline must contain a stroked path")
     }
 
-    #[test]
+    #[wasm_test]
     fn a_closed_instrument_wears_a_pause_marker_instead_of_dimming() {
         let ws = WidgetSize::from_dimensions(1_280, 480);
         let d = band_for(ws.variant).scaled(ws.fit()).icon_diameter;
@@ -250,7 +245,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_closed_instrument_dims_only_the_chart() {
         let ws = WidgetSize::from_dimensions(1_280, 480);
         let open = series();
@@ -274,7 +269,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     #[expect(
         clippy::cast_precision_loss,
         reason = "viewport and font sizes are small integers, exact in f32"

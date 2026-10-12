@@ -104,7 +104,13 @@ fn matching_parity(target: f32, disc: u32) -> u32 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     const SYMBOL: Color = Color::from_rgb(0xc6, 0xc6, 0xc6);
@@ -124,7 +130,7 @@ mod tests {
         })
     }
 
-    #[test]
+    #[wasm_test]
     fn marker_bars_sit_apart_on_whole_pixels_centred_at_every_size() {
         for diameter in 10..=48_u16 {
             let diameter = f32::from(diameter);
@@ -149,14 +155,14 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_deck_sized_marker_keeps_its_three_two_three_bars() {
         let [first, second] = bars(24.0);
         assert_eq!(first, (8.0, 5.0, 3.0, 14.0));
         assert_eq!(second, (13.0, 5.0, 3.0, 14.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn the_disc_is_opaque_in_the_shade_it_showed_over_black() {
         let draws = pause_marker(24.0, SYMBOL, BLACK);
         let Some(Draw::Circle { fill, .. }) = draws.first() else {

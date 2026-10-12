@@ -98,6 +98,8 @@ pub fn parse_reference(json: &impl JsonLookup) -> InstrumentReference {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::candle::JsonLookup;
     use crate::fetch::FetchClass;
@@ -124,7 +126,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn reference_url_uses_the_instrument_mapping() {
         assert_eq!(
             reference_url("https://nexus/api/v1/data/", "BTC-USD"),
@@ -135,7 +137,7 @@ mod tests {
         assert_eq!(reference_url("b/", ".."), "b/reference/%2E%2E");
     }
 
-    #[test]
+    #[wasm_test]
     fn name_is_trimmed_and_empty_becomes_none() {
         let mut json = MapJson::default();
         json.strings
@@ -149,7 +151,7 @@ mod tests {
         assert_eq!(parse_reference(&MapJson::default()).name, None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reply_that_settles_the_question_answers_it_either_way() {
         assert_eq!(reference_outcome(FetchClass::Ok), Some(Outcome::Resolved));
         assert_eq!(
@@ -165,7 +167,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_transient_reply_leaves_the_previous_answer_standing() {
         // Retracting a known instrument because one lookup timed out
         // would make a live tile flap to "not found" on any blip.
@@ -173,7 +175,7 @@ mod tests {
         assert_eq!(reference_outcome(FetchClass::Transient), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_settled_reference_miss_waits_out_the_reference_cadence() {
         // The poll engine reschedules any failed reply after its fast retry_ms
         // unless the handler defers it; a conclusive "no such instrument"
@@ -192,7 +194,7 @@ mod tests {
         assert_eq!(reference_reschedule(FetchClass::Transient), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn market_state_is_read_from_reference_data() {
         let mut json = MapJson::default();
         assert_eq!(parse_reference(&json).is_market_open, None);

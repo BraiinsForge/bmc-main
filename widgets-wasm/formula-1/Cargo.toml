@@ -18,5 +18,8 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 
+[dev-dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk", features = ["test-support"] }
+
 [lints]
 workspace = true

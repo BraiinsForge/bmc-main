@@ -105,19 +105,21 @@ pub fn clock_meridiem(at: Option<SystemTime>, tz: Option<&Tz>) -> Option<String>
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn wind_line_reads_direction_then_speed() {
         assert_eq!(wind_line("South", "3 m/s"), "Wind From The South 3 m/s");
     }
 
-    #[test]
+    #[wasm_test]
     fn placeholder_used_when_value_absent() {
         assert_eq!(temperature_or_placeholder(None, |_| unreachable!()), "--");
     }
 
-    #[test]
+    #[wasm_test]
     fn value_present_runs_the_formatter() {
         assert_eq!(
             temperature_or_placeholder(Some(DegreeCelsius(20.0)), |_| "20".to_string()),

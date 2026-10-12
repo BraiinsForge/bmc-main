@@ -45,7 +45,6 @@
 mod manifest_params;
 
 use bmc_wasm_sdk::system;
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 use manifest_params::Params;
@@ -541,12 +540,14 @@ fn display_text(d: DisplayInfo) -> String {
 
 #[cfg(test)]
 mod geometry_tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{
         DisplayInfo, DisplayShape, ViewportShape, WidgetViewport, display_shape_label,
         display_text, viewport_shape_label, viewport_text,
     };
 
-    #[test]
+    #[wasm_test]
     fn shape_labels_are_stable() {
         assert_eq!(
             viewport_shape_label(ViewportShape::Rectangular),
@@ -560,7 +561,7 @@ mod geometry_tests {
         assert_eq!(display_shape_label(DisplayShape::Round), "round");
     }
 
-    #[test]
+    #[wasm_test]
     fn viewport_text_renders_size_and_shape() {
         let rect = viewport_text(WidgetViewport {
             width: 480,
@@ -577,7 +578,7 @@ mod geometry_tests {
         assert_eq!(round, "480x480 round");
     }
 
-    #[test]
+    #[wasm_test]
     fn display_text_includes_dpi() {
         let round = display_text(DisplayInfo {
             width: 480,

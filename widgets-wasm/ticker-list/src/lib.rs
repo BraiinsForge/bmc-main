@@ -90,9 +90,11 @@ fn changed_symbol_rows(previous: &[String], current: &[String]) -> [bool; symbol
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn every_manifest_period_token_is_a_nexus_window() {
         // `period_of` maps the generated manifest enum onto `prices::period`
         // with an expect; this locks the two hand-maintained token tables
@@ -113,7 +115,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn changing_one_symbol_preserves_every_other_row() {
         let previous = ["A", "B", "C"].map(str::to_owned);
         let current = ["A", "X", "C"].map(str::to_owned);
@@ -123,7 +125,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn full_layout_capacity_matches_the_registered_row_polls() {
         let (width, height) = layout::SizeBucket::Full.design_size();
         assert_eq!(
@@ -132,7 +134,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_row_404_asks_for_the_reference_that_would_explain_it() {
         // The reference poll is off until something asks for it. If a 404
         // did not ask, a row that never once loaded could never learn
@@ -143,7 +145,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_row_404_keeps_asking_until_the_instrument_resolves() {
         // A reference 404 is not the last word — Nexus can start carrying
         // instruments it did not know before, and the row must notice.
@@ -156,13 +158,13 @@ mod tests {
         assert!(!wants_reference(Transition::NoData, true));
     }
 
-    #[test]
+    #[wasm_test]
     fn only_a_stored_row_still_missing_its_name_asks_on_success() {
         assert!(wants_reference(Transition::Store, false));
         assert!(!wants_reference(Transition::Store, true));
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unusable_payload_does_not_chase_the_name_on_the_fast_retry() {
         // A 2xx that fails to parse retries far faster than the metadata
         // cadence. Asking on each of those would either repeat the lookup
@@ -172,7 +174,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_refused_request_never_asks_for_the_reference() {
         // No reference verdict may repaint a rejected request, so a lookup
         // on its behalf would waste the fetch.
@@ -182,7 +184,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reference_that_resolves_late_retracts_a_row_not_found() {
         let mut slot = model::RowState::InputError {
             miss: PriceMiss::NotFound,
@@ -196,7 +198,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reference_that_stops_resolving_retracts_a_row_no_data() {
         let mut slot = model::RowState::NoData {
             market_closed: true,
@@ -210,7 +212,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_late_reference_never_reinterprets_a_refused_row_request() {
         let mut slot = model::RowState::InputError {
             miss: PriceMiss::Rejected,
@@ -224,7 +226,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reference_reply_refreshes_a_no_data_market_flag() {
         // The market can open while the window stays empty; the row
         // must not keep reading "Closed" off a stale flag.
@@ -240,7 +242,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reference_reply_refreshes_a_resolved_row_market_state() {
         let candles = candles_fixture();
         let data = model::TickerRow::from_candles("AAPL", &candles)
@@ -276,7 +278,6 @@ mod wasm_glue {
     };
     use std::cell::{Cell, RefCell};
 
-    #[expect(clippy::wildcard_imports, reason = "widget glue uses many SDK exports")]
     use bmc_wasm_sdk::*;
     use prices::fetch::{self, FetchClass};
     use prices::period::Period;

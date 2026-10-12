@@ -161,6 +161,7 @@ fn parse_history(json: &(impl JsonLookup + ?Sized), data: &mut BitcoinData) -> O
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
     use std::collections::BTreeMap;
 
     use super::*;
@@ -243,7 +244,7 @@ mod tests {
         json
     }
 
-    #[test]
+    #[wasm_test]
     fn urls_address_the_two_nexus_resources() {
         assert_eq!(
             url(Resource::Info),
@@ -255,7 +256,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn complete_info_is_stored_atomically() {
         let mut data = BitcoinData::default();
         let parsed = parse(
@@ -281,7 +282,7 @@ mod tests {
         assert_eq!(data.blocks_24h, Availability::Available(151));
     }
 
-    #[test]
+    #[wasm_test]
     fn incomplete_info_does_not_replace_any_field() {
         let mut json = info_json();
         json.floats.remove("/data/hashprice");
@@ -293,7 +294,7 @@ mod tests {
         assert_eq!(data, BitcoinData::default());
     }
 
-    #[test]
+    #[wasm_test]
     fn missing_freshness_fields_do_not_replace_complete_info() {
         let mut data = BitcoinData::default();
         parse(Resource::Info, &info_json(), &mut data, &|_| Some(0), 1_000)
@@ -312,7 +313,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn non_finite_or_overflowing_info_does_not_replace_complete_info() {
         let mut data = BitcoinData::default();
         parse(Resource::Info, &info_json(), &mut data, &|_| Some(0), 1_000)
@@ -335,7 +336,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn history_requires_all_three_populated_series() {
         let mut json = history_json();
         let mut data = BitcoinData::default();
@@ -357,7 +358,7 @@ mod tests {
         assert_eq!(data, before);
     }
 
-    #[test]
+    #[wasm_test]
     fn invalid_history_values_do_not_replace_complete_history() {
         let mut data = BitcoinData::default();
         parse(

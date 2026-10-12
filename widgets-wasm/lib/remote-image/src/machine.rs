@@ -525,7 +525,13 @@ pub fn ttl_remaining(now_ms: u64, saved_at_ms: u64, interval_ms: u32) -> u32 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the values under test are exact in floating point"
+)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     fn job(n: u32) -> ImageJobId {
@@ -550,7 +556,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn decoded_matching_job_shows_image() {
         let v = View::Loading {
             decode: Some(decode(1, 1.5)),
@@ -568,7 +574,7 @@ mod tests {
         assert!(actions.contains(&Action::RequestFrame));
     }
 
-    #[test]
+    #[wasm_test]
     fn decoded_stale_job_is_ignored() {
         let v = View::Loading {
             decode: Some(decode(2, 1.0)),
@@ -584,7 +590,7 @@ mod tests {
         assert!(actions.is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_target_change_waits_for_the_slot_its_decode_holds() {
         let v = shown(Badge::Fresh, Some(decode(5, 1.0)));
         let (next, actions) = step(v, Event::TargetChanged);
@@ -616,7 +622,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_discarded_decode_failing_frees_the_slot_too() {
         let (next, _) = step(
             shown(Badge::Fresh, Some(decode(5, 1.0))),
@@ -627,7 +633,7 @@ mod tests {
         assert!(actions.contains(&Action::ResumePoll));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_discarded_decode_reclaimed_while_dormant_frees_the_slot_too() {
         let (next, _) = step(
             shown(Badge::Fresh, Some(decode(5, 1.0))),
@@ -642,7 +648,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restored_picture_goes_when_the_decode_it_waits_on_is_discarded() {
         let (changed, _) = step(
             shown(Badge::Fresh, Some(decode(5, 1.0))),
@@ -671,7 +677,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reload_cannot_re_want_a_discarded_decode() {
         let (changed, _) = step(
             shown(Badge::Fresh, Some(decode(5, 1.0))),
@@ -684,7 +690,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn fresh_restore_schedules_at_ttl() {
         let (next, actions) = step(
             View::Loading { decode: None },
@@ -706,7 +712,7 @@ mod tests {
         assert!(actions.contains(&Action::SeedAnchor(900)));
     }
 
-    #[test]
+    #[wasm_test]
     fn stale_restore_refreshes_now() {
         let (next, actions) = step(
             View::Loading { decode: None },
@@ -727,14 +733,14 @@ mod tests {
         assert!(actions.contains(&Action::SeedAnchor(900)));
     }
 
-    #[test]
+    #[wasm_test]
     fn miss_loads_now() {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::RestoreMiss);
         assert!(matches!(next, View::Loading { decode: None }));
         assert!(actions.contains(&Action::ResumePoll));
     }
 
-    #[test]
+    #[wasm_test]
     fn normal_refresh_shows_no_overlay() {
         let (mid, _) = step(
             shown(Badge::Fresh, None),
@@ -753,7 +759,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn failed_refresh_flags_last_good_as_error() {
         let v = shown(Badge::Fresh, Some(decode(1, 1.0)));
         let (next, actions) = step(v, Event::DecodeFailed { job: job(1) });
@@ -771,7 +777,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn broken_body_flags_error_and_defers_not_fast_retries() {
         let (next, actions) = step(
             shown(Badge::Fresh, None),
@@ -794,14 +800,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn target_change_reloads_without_evicting() {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::TargetChanged);
         assert!(matches!(next, View::Loading { decode: None }));
         assert_eq!(actions, vec![Action::ResumePoll, Action::RequestFrame]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_superseded_target_keeps_the_picture_a_changed_one_drops_it() {
         let (superseded, actions) = step(shown(Badge::Fresh, None), Event::TargetSuperseded);
         assert!(
@@ -823,14 +829,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_superseded_target_with_nothing_shown_loads() {
         let (next, actions) = step(View::Loading { decode: None }, Event::TargetSuperseded);
         assert!(matches!(next, View::Loading { decode: None }));
         assert!(actions.contains(&Action::ResumePoll));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_superseded_target_keeps_tracking_its_in_flight_decode() {
         let v = shown(Badge::Fresh, Some(decode(5, 2.0)));
         let (next, _) = step(v, Event::TargetSuperseded);
@@ -850,7 +856,7 @@ mod tests {
         assert!(actions.contains(&Action::RequestFrame));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_reload_during_a_decode_takes_the_completion_and_keeps_updating() {
         let v = shown(Badge::Fresh, Some(decode(5, 2.0)));
         let (next, _) = step(v, Event::Reload);
@@ -873,7 +879,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_superseded_decode_failing_leaves_the_picture_alone() {
         let v = shown(Badge::Fresh, Some(decode(5, 2.0)));
         let (next, _) = step(v, Event::Reload);
@@ -896,7 +902,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn non_transient_fetch_error_without_image_defers_not_fast_retries() {
         let (next, actions) = step(
             View::Loading { decode: None },
@@ -913,7 +919,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn transient_fetch_error_without_image_keeps_fast_retry() {
         let (next, actions) = step(
             View::Loading { decode: None },
@@ -929,7 +935,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn transient_fetch_error_with_image_retries() {
         let (next, actions) = step(
             shown(Badge::Fresh, None),
@@ -948,7 +954,7 @@ mod tests {
         assert!(actions.contains(&Action::Retry));
     }
 
-    #[test]
+    #[wasm_test]
     fn reload_with_image_updates_and_refetches() {
         let (next, actions) = step(shown(Badge::Stale, None), Event::Reload);
         assert!(matches!(
@@ -962,7 +968,7 @@ mod tests {
         assert!(actions.contains(&Action::ResumePoll));
     }
 
-    #[test]
+    #[wasm_test]
     fn dormant_retains_bitmap_id_and_disables_poll() {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::Sleep);
         assert!(matches!(
@@ -976,7 +982,7 @@ mod tests {
         assert_eq!(actions, vec![Action::DisablePoll]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_wake_restore_replaces_what_the_dormant_view_held() {
         let (dormant, _) = step(shown(Badge::Fresh, None), Event::Sleep);
         assert!(matches!(dormant, View::Shown { .. }));
@@ -997,7 +1003,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn sleep_keeps_a_decode_the_host_still_owes() {
         let (dormant, actions) = step(shown(Badge::Fresh, Some(decode(3, 2.0))), Event::Sleep);
         assert!(
@@ -1008,7 +1014,7 @@ mod tests {
         assert_eq!(actions, vec![Action::DisablePoll]);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_wake_restore_keeps_a_decode_the_host_still_owes() {
         let (dormant, _) = step(shown(Badge::Fresh, Some(decode(3, 2.0))), Event::Sleep);
         let (woken, _) = step(
@@ -1045,7 +1051,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_restore_miss_keeps_a_decode_the_host_still_owes() {
         let (next, actions) = step(
             View::Loading {
@@ -1057,7 +1063,7 @@ mod tests {
         assert!(actions.contains(&Action::ResumePoll));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_fetch_failure_waits_for_a_decode_it_is_owed() {
         let (next, actions) = step(
             View::Loading {
@@ -1080,7 +1086,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_broken_body_arriving_over_an_owed_decode_defers_rather_than_retries() {
         let (next, actions) = step(
             View::Loading {
@@ -1096,7 +1102,7 @@ mod tests {
         assert!(!actions.contains(&Action::Retry));
     }
 
-    #[test]
+    #[wasm_test]
     fn an_abandoned_decode_stops_being_waited_for() {
         let (next, actions) = step(
             shown(Badge::Fresh, Some(decode(3, 2.0))),
@@ -1121,7 +1127,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn only_the_poll_enabling_actions_reach_the_network() {
         for action in [Action::EnablePollAfter(0), Action::ResumePoll] {
             assert!(action.starts_fetch(), "{action:?} enables a poll");
@@ -1141,7 +1147,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn expand_url_substitutes_dims() {
         assert_eq!(
             expand_url("http://x/{{width}}x{{height}}", 64, 48).as_deref(),
@@ -1157,7 +1163,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn ttl_remaining_clamps_at_zero() {
         assert_eq!(ttl_remaining(1_000, 0, 5_000), 4_000);
         assert_eq!(ttl_remaining(5_000, 0, 5_000), 0);

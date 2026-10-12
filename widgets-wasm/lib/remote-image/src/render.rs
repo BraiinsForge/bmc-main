@@ -21,10 +21,6 @@
 //! Drawing surface shared by the picture widgets — the fitted picture, status
 //! messages, the background-refresh pill and the tap-to-reveal menu.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::machine::ErrorKind;

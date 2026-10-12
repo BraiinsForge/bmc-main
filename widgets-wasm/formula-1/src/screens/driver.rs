@@ -20,13 +20,6 @@
 
 //! One driver's season and their measurements.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::images::{self, ImageKind};
@@ -406,7 +399,8 @@ pub fn driver_view(view: &DriverViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_sdk::tree::TextStyle;
+    use bmc_wasm_sdk::TextStyle;
+    use bmc_wasm_sdk::wasm_test;
 
     use super::{Portrait, layout, name_line};
     use crate::model::SizeBucket;
@@ -420,7 +414,7 @@ mod tests {
 
     /// There is no zeroth car, so a driver the payload gave no number
     /// keeps their name to themselves rather than trailing a bare `#`.
-    #[test]
+    #[wasm_test]
     fn a_driver_without_a_number_is_named_without_one() {
         let mut driver = fixtures::drivers()
             .into_iter()
@@ -437,7 +431,7 @@ mod tests {
     /// The stats column stretches to the portrait beside it,
     /// so a portrait past the frame puts the last stat outside it —
     /// which is how this frame lost its bottom row once.
-    #[test]
+    #[wasm_test]
     fn the_portrait_leaves_the_stats_inside_the_frame() {
         for bucket in SizeBucket::ALL {
             let layout = layout(bucket);
@@ -464,12 +458,13 @@ mod tests {
     }
 
     /// The per-frame rules the port keeps.
-    #[test]
+    #[wasm_test]
     fn every_frame_matches_the_ported_layout() {
+        type IsPortrait = fn(Portrait) -> bool;
         let named = |portrait| matches!(portrait, Portrait::Named { .. });
         let photo = |portrait| matches!(portrait, Portrait::Photo(_));
         let absent = |portrait| matches!(portrait, Portrait::Absent);
-        let expected: [(SizeBucket, fn(Portrait) -> bool, bool); 5] = [
+        let expected: [(SizeBucket, IsPortrait, bool); 5] = [
             (SizeBucket::Full, named, true),
             (SizeBucket::Large, named, false),
             (SizeBucket::Medium, photo, false),

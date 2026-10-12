@@ -39,13 +39,6 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 #[cfg(any(target_arch = "wasm32", test))]
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "widget render code uses many SDK exports and macros in one file"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -468,6 +461,8 @@ pub extern "C" fn on_credentials_update() {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::{ClockHandTransition, OverlaySelect, miner::MinerData, select_overlay};
     use bmc_wasm_sdk::{Draw, Easing, WHITE};
     use mining::bos::{AuthMode, Placeholders};
@@ -482,7 +477,7 @@ mod tests {
         AuthMode::derive(local, remote, "http://10.0.0.5/api/v1", PLACEHOLDERS)
     }
 
-    #[test]
+    #[wasm_test]
     fn hand_transitions_animate_through_five_second_render_gaps() {
         for delta_ms in [0, 1_000, 4_999, 5_000] {
             assert_eq!(
@@ -492,7 +487,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn hand_transitions_snap_after_longer_render_gaps() {
         for delta_ms in [5_001, 30_000, u32::MAX] {
             assert_eq!(
@@ -502,7 +497,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn snapping_preserves_hand_identity_and_resumes_normal_duration() {
         for (id, duration_ms) in [
             ("hour-hand", 500),
@@ -535,7 +530,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn auth_overlay_takes_precedence_over_stale_data() {
         let miner = MinerData {
             hashrate_ths: Some(122.48),
@@ -548,7 +543,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn stale_overlay_requires_loaded_miner_data() {
         assert_eq!(
             select_overlay(&mode(true, false), false, true, &MinerData::default()),
@@ -568,7 +563,7 @@ mod tests {
 
     /// With no usable slot nothing is fetched, so a stale pill
     /// or an auth banner would describe requests that never happen.
-    #[test]
+    #[wasm_test]
     fn a_binding_prompt_outranks_auth_and_stale() {
         let miner = MinerData {
             hashrate_ths: Some(122.48),

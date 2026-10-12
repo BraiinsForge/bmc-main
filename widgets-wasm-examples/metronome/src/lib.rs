@@ -28,7 +28,6 @@
 
 use std::cell::Cell;
 
-#[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
 const TICK: Audio = include_audio!("assets/sounds/Perc_MetronomeQuartz_lo.wav");

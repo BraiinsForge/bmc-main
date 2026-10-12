@@ -20,13 +20,6 @@
 
 //! Fleet screen modules, the frame they draw in, plus the shared empty state.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 pub mod bmm101;
@@ -141,6 +134,8 @@ pub fn searching() -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
     fn bmm101_scale(width: u32, height: u32) -> f32 {
@@ -150,17 +145,17 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn the_deck_full_band_keeps_the_deck_frame() {
         assert!(matches!(Layout::of(1_280, 480), Layout::Deck));
     }
 
-    #[test]
+    #[wasm_test]
     fn bmm101_draws_its_frame_unscaled() {
         assert!((bmm101_scale(480, 320) - 1.0).abs() < f32::EPSILON);
     }
 
-    #[test]
+    #[wasm_test]
     fn bmm100_shrinks_the_bmm101_frame_by_its_tighter_side() {
         let scale = bmm101_scale(320, 240);
         assert!(

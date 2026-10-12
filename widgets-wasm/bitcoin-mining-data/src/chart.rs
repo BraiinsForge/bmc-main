@@ -68,9 +68,11 @@ pub fn is_rising(values: &[f64]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
 
-    #[test]
+    #[wasm_test]
     fn maps_series_inside_the_requested_box() {
         let points = series_points(&[10.0, 20.0, 15.0], 100.0, 50.0, 2.0);
         assert_eq!(points.first(), Some(&(2.0, 48.0)));
@@ -78,7 +80,7 @@ mod tests {
         assert_eq!(points.last(), Some(&(98.0, 25.0)));
     }
 
-    #[test]
+    #[wasm_test]
     fn maps_one_sample_to_a_visible_flat_line() {
         assert_eq!(
             series_points(&[10.0], 100.0, 50.0, 2.0),
@@ -86,7 +88,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn maps_multi_sample_flat_series_to_the_vertical_midpoint() {
         assert_eq!(
             series_points(&[5.0, 5.0, 5.0], 100.0, 50.0, 2.0),

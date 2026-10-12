@@ -43,10 +43,6 @@ mod wasm_glue {
     use std::cell::{Cell, RefCell};
     use std::time::Duration;
 
-    #[expect(
-        clippy::wildcard_imports,
-        reason = "widget render uses many SDK exports"
-    )]
     use bmc_wasm_sdk::*;
     use remote_image::machine::{self, Action, Badge, Event, Fate, View};
     use remote_image::{Fit, picture, render};

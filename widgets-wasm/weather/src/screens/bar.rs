@@ -22,10 +22,6 @@ use crate::model::ForecastRange;
 use crate::screens::common::TEXT_PRIMARY;
 use units::units::DegreeCelsius;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 const TRACK_H: f32 = 6.0;

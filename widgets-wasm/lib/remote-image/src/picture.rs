@@ -36,10 +36,6 @@
 //! Lifecycle hooks are only delivered with the renderer parked,
 //! so `render` and `on_wake` are legal; `init` and `on_params_update` are not.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "the picture pipeline uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::machine::{Decode, ErrorKind, Event, View};

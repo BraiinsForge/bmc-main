@@ -21,13 +21,6 @@
 //! The Overview (Data) screen: one thin layout per design size, composing
 //! the shared fragments.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "screen code uses many SDK builders, macros, and tokens"
-    )
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::{PoolData, SizeBucket};
@@ -526,15 +519,16 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
     use super::*;
     use crate::screens::fixtures;
     use crate::screens::tree::texts;
 
     const BMM101_HEADER: [&str; 4] = ["Braiins Pool", "(", "user.braiins", ")"];
 
-    #[test]
+    #[wasm_test]
     fn the_bmm101_hero_reads_top_down_under_the_designed_header() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let view = fixtures::sample_overview(SizeBucket::Bmm101, true, 5.0);
         assert_eq!(
             texts(&overview_view(&view)),
@@ -546,9 +540,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_denied_bmm101_key_names_its_account_in_the_designed_header() {
-        bmc_wasm_sdk::assets::init_test_registrars();
         let view = fixtures::sample_overview_denied(SizeBucket::Bmm101);
         assert_eq!(
             texts(&overview_view(&view)),

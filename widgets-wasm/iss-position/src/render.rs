@@ -23,10 +23,6 @@
 pub mod globe;
 pub mod panels;
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports"
-)]
 use bmc_wasm_sdk::*;
 
 use crate::model::IssData;
