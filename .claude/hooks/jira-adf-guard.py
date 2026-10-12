@@ -43,8 +43,8 @@ SUBCOMMANDS = frozenset({'create', 'edit'})
 
 MESSAGE = """jira-adf-guard: {flag} takes plain text, and Jira renders markdown literally — readers see `##` and `**`.
 Convert first, then pass the document:
-  just md-to-adf <ticket.md> --skip-title > .tmp/jira-adf-<key>.json
-  acli jira workitem {subcommand} … --description-file .tmp/jira-adf-<key>.json
+  just md-to-adf .tmp/jira/<key>.md --skip-title > .tmp/jira/<key>.json
+  acli jira workitem {subcommand} … --description-file .tmp/jira/<key>.json
 Only --description-file carries ADF. Plain prose with no markup is still safer sent this way."""
 
 
