@@ -80,11 +80,14 @@ pub fn clock_view(view: &ViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::assets::ensure_registered;
     use bmc_wasm_sdk::system::{SnapshotBuilder, TimeFormat};
-    use bmc_wasm_sdk::{Draw, assets};
+    use bmc_wasm_sdk::wasm_test;
+    use bmc_wasm_sdk::{Draw, SvgId, assets};
 
     use super::*;
     use crate::model::SizeBucket;
+    use crate::screens::analog::{HAND_HOUR, HAND_MINUTE};
     use crate::screens::digital::BMM101_CAPTION_LINE_HEIGHT;
     use crate::screens::fixtures::{self, SEPTEMBER_NOON};
 
@@ -130,7 +133,42 @@ mod tests {
         }
     }
 
-    #[test]
+    /// The id every SVG draw in the tree was registered under, wrapped draws included.
+    fn svg_ids(node: &Node) -> Vec<Option<SvgId>> {
+        let mut out = Vec::new();
+        collect_svg_ids(node, &mut out);
+        out
+    }
+
+    fn collect_svg_ids(node: &Node, out: &mut Vec<Option<SvgId>>) {
+        match node {
+            Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                for child in children {
+                    collect_svg_ids(child, out);
+                }
+            }
+            Node::Canvas { draws, .. } => {
+                for draw in draws {
+                    collect_draw_svg_ids(draw, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_draw_svg_ids(draw: &Draw, out: &mut Vec<Option<SvgId>>) {
+        match draw {
+            Draw::Svg { icon_id, .. } => out.push(*icon_id),
+            Draw::Modified { inner, .. }
+            | Draw::Centered { inner }
+            | Draw::Orbit { inner, .. }
+            | Draw::Rotated { inner, .. }
+            | Draw::Shadow { inner, .. } => collect_draw_svg_ids(inner, out),
+            _ => {}
+        }
+    }
+
+    #[wasm_test]
     fn the_digital_face_reads_the_moment_in_the_system_zone() {
         install_prague(false);
         let view =
@@ -173,7 +211,7 @@ mod tests {
 
     /// The frame BMM101 was designed for: the zone above the digits,
     /// the numeric date below, `AM` beside them — and no weekday, no alarm.
-    #[test]
+    #[wasm_test]
     fn the_bmm101_face_splits_the_captions_around_the_digits() {
         assets::init_test_registrars();
         system::set_current(
@@ -250,7 +288,7 @@ mod tests {
         assert_eq!((digits_size(true), digits_size(false)), (80, 120));
     }
 
-    #[test]
+    #[wasm_test]
     fn the_rectangular_dial_numbers_its_quarters() {
         install_prague(false);
         let params = Params {
@@ -258,11 +296,32 @@ mod tests {
             ..fixtures::default_params()
         };
         let view = fixtures::at_bucket(SizeBucket::Full, SEPTEMBER_NOON, params);
-        let texts = texts(&clock_view(&view));
+        let face = clock_view(&view);
+        let texts = texts(&face);
         for numeral in ["12", "3", "6", "9"] {
             assert!(texts.contains(&numeral.to_owned()), "{texts:?}");
         }
         assert!(texts.contains(&"Mon 14 Sep".to_owned()), "{texts:?}");
+        let Node::Center(_, layers) = &face else {
+            panic!("BUG: an analog face is its dial and hands, centred");
+        };
+        let [dial, hands] = layers.as_slice() else {
+            panic!("BUG: an analog face is two canvases, not {}", layers.len());
+        };
+        let dial_ids = svg_ids(dial);
+        assert!(
+            !dial_ids.is_empty() && dial_ids.iter().all(Option::is_some),
+            "the dial draws registered SVGs: {dial_ids:?}"
+        );
+        let hand_ids = svg_ids(hands);
+        for hand in [&HAND_HOUR, &HAND_MINUTE] {
+            let id = ensure_registered(hand);
+            assert!(
+                id.is_some() && hand_ids.contains(&id),
+                "the hands canvas draws {}: {hand_ids:?}",
+                hand.name
+            );
+        }
     }
 
     #[test]

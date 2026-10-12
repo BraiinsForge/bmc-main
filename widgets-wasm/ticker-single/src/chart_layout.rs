@@ -397,16 +397,17 @@ pub fn label_text(
 mod tests {
     use bmc_wasm_sdk::LocalDateTime;
     use bmc_wasm_sdk::system::TimeFormat;
+    use bmc_wasm_sdk::wasm_test;
     use prices::candle::CandleBar;
     use prices::period::Period;
 
-    #[test]
+    #[wasm_test]
     fn month_abbr_maps_valid_months() {
         assert_eq!(month_abbr(1), "Jan");
         assert_eq!(month_abbr(12), "Dec");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "BUG: month out of 1..=12 range")]
     fn month_abbr_asserts_on_zero() {
         let _ = month_abbr(0);

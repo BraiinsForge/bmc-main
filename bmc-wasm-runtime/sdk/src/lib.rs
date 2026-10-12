@@ -308,6 +308,10 @@
 // cast_sign_loss only fires on wasm32 (gated FFI code).
 #![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
 
+// `#[wasm_test]` names the SDK as `::bmc_wasm_sdk`, which the SDK's own tests reach through this.
+#[cfg(all(test, target_arch = "wasm32"))]
+extern crate self as bmc_wasm_sdk;
+
 // SDK instantiation handshake the host calls once: installs the panic hook,
 // returns the SDK version for the compat check.
 #[cfg(target_arch = "wasm32")]

@@ -123,8 +123,9 @@ pub fn lazy_get(tag: &str) -> CacheSource<'_> {
 #[cfg(test)]
 mod tests {
     use super::{evict, put, read_bytes, stat};
+    use crate::wasm_test;
 
-    #[test]
+    #[wasm_test]
     fn an_entry_round_trips() {
         put("trip", b"meta", b"payload");
         let entry = read_bytes("trip").expect("BUG: just stored");
