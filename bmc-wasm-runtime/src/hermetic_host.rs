@@ -62,6 +62,12 @@ impl HermeticHost {
         })
     }
 
+    /// Names of the module's exports, read without entering it.
+    #[must_use]
+    pub fn export_names(&self) -> Vec<String> {
+        self.module.export_names()
+    }
+
     /// A config for one instance: refused live I/O, a seeded RNG, KV kept in memory,
     /// and an asset cache bucket no other instance sees.
     pub fn config(&self) -> Result<RuntimeConfig> {

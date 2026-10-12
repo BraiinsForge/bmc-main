@@ -84,4 +84,9 @@ wasmWidgetCrates // {
     path = "bmc-wasm-host";
     packageName = "bmc-wasm-host";
   };
+  wasm-test-runner = defineCrate {
+    path = "bmc-wasm-test-runner";
+    packageName = "bmc-wasm-test-runner";
+    binName = "wasm-test";
+  };
 }

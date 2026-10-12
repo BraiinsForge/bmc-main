@@ -136,25 +136,31 @@ nextest *ARGS:
         cargo nextest run "$@" --message-format libtest-json-plus \
         | scripts/nextest_report.py
 
-# Run one widget's (or shared lib's) native tests, FILTER naming a substring of the test names.
-test-widget WIDGET FILTER="":
+# Run one widget's (or shared lib's) `#[wasm_test]`s on wasm32 under the wasm test runner; ARGS reach nextest.
+[positional-arguments]
+test-widget WIDGET *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    widget=$1
+    shift
     # Bare cargo, as `validate` runs the widget workspaces:
     # `nix develop` swaps the toolchain and the sccache wrapper,
     # and one target dir cannot link against two rustc setups.
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do
-        if [ -d "$root/{{ WIDGET }}" ] || [ -d "$root/lib/{{ WIDGET }}" ]; then
-            if [ -n "{{ FILTER }}" ]; then
-                exec just nextest --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} "{{ FILTER }}"
-            fi
-            exec just nextest --manifest-path "$root/Cargo.toml" -p {{ WIDGET }}
+        if [ -d "$root/$widget" ] || [ -d "$root/lib/$widget" ]; then
+            exec just nextest --manifest-path "$root/Cargo.toml" -p "$widget" --target wasm32-unknown-unknown "$@"
         fi
     done
 
-    echo "no widget '{{ WIDGET }}' under any widget workspace" >&2
+    echo "no widget '$widget' under any widget workspace" >&2
     exit 1
+
+# Run the SDK's `#[wasm_test]`s on wasm32 under the wasm test runner; ARGS reach nextest.
+[positional-arguments]
+test-wasm-sdk *ARGS:
+    # Library tests only: `tests/log.rs` reads native `tracing`, which the wasm build lacks.
+    just nextest -p bmc-wasm-sdk --lib --target wasm32-unknown-unknown "$@"
 
 # Compress images under the given paths (default: cwd).
 fmt-images *PATHS:

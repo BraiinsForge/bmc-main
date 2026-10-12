@@ -1,3 +1,4 @@
 # `workspace.nix` supplies the same value to Nix builds; `wasm-stack-size` checks they agree.
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "link-arg=-zstack-size=65536"]
+runner = ["scripts/wasm_test_runner.sh"]

@@ -101,3 +101,5 @@ just wasm::verify-all                 # all widgets
 - `bmc-wasm-sdk-macros` (`sdk-macros/`) — SDK procedural macros
 - `bmc-wasm-protocol` (`protocol/`) — shared types and constants
 - `bmc-svg-compiler` (`svg-compiler/`) — build-time SVG → draw-call compiler
+
+Crates outside this directory, the test runner among them, are in [Crate Dependencies](docs/crate-dependencies.md).

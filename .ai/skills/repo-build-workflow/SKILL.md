@@ -26,7 +26,9 @@ Under a coding agent the tools run in their own quiet modes (`common.justfile` d
 one line per test binary naming every passing test by module, failures printed in full. So the output is the echoed step
 commands, the test lines, and whatever failed. A failure ends with `error: recipe validate failed on line N` — that line
 of the root `justfile` is the step; the diagnostic sits just above it. To see one test run by name, use
-`just test-widget WIDGET FILTER` (a shared lib under `widgets-wasm/lib/` works too) or `just test CRATE`.
+`just test CRATE`, or `just test-widget WIDGET FILTER` for a widget's `#[wasm_test]`s on `wasm32` (a shared lib under
+`widgets-wasm/lib/` works too). A widget's plain `#[test]`s run natively, under
+`cargo nextest run --manifest-path widgets-wasm/Cargo.toml -p WIDGET FILTER`.
 
 The frontend is not part of `just validate`: on a branch that changes `frontend/`, run `just fe::validate` separately.
 

@@ -29,6 +29,12 @@ leaves, and refuses to send a service-pinned credential anywhere else.
 How a widget reads the host-defined deck-wide system snapshot: timezone, formatting settings, next alarm, and night
 mode. Covers the fixed SDK accessors, update hook, and the testbed's System panel.
 
+### [Unit Testing](unit-testing.md)
+
+How a widget marks its tests with `#[wasm_test]` to run them on `wasm32` in the Deck's interpreter, the `just` recipes
+and plain cargo commands that run them, and the hermetic host a test runs against: refused network, in-memory storage, a
+fixed clock and seed, and the fuel and timeout limits.
+
 ### [Regression Testing](regression-testing.md)
 
 How a widget opts into the `wasm-regression` CI gate: the `capture/config.toml` toggle, recording fixtures (with params

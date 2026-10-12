@@ -1651,6 +1651,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-wasm-test-runner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-render",
+ "bmc-wasm-protocol",
+ "bmc-wasm-runtime",
+ "indoc",
+ "libtest-mimic",
+ "tempfile",
+ "tracing",
+ "wasmi",
+ "wat",
+]
+
+[[package]]
 name = "bmc-wasm-thin"
 version = "0.1.0"
 dependencies = [
@@ -3103,6 +3119,12 @@ name = "error-code"
 version = "3.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
+
+[[package]]
+name = "escape8259"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f1f0d310082fd5de539d4f41601182241147498444a7695c520288a0cdbead6"
 
 [[package]]
 name = "etagere"
@@ -5026,6 +5048,18 @@ dependencies = [
  "bitflags 2.11.0",
  "libc",
  "redox_syscall 0.5.11",
+]
+
+[[package]]
+name = "libtest-mimic"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5297962ef19edda4ce33aaa484386e0a5b3d7f2f4e037cbeee00503ef6b29d33"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap",
+ "escape8259",
 ]
 
 [[package]]

@@ -72,6 +72,14 @@ in
       util-linux
     ];
   };
+  # Upstream `pkgs`, so the runner's closure holds no Mesa build of ours;
+  # Cargo's optimising `dev`, since the runner interprets every test.
+  wasm-test-runner = workspaces.full.mkBuildProfile {
+    inherit pkgs;
+    targetDeps = x86NativeTargetDeps;
+    minimalDeps = false;
+    rustProfile = "dev";
+  };
   # Cargo profiles do not cross workspace boundaries; the gallery defines `dev`
   # locally and cannot use the root workspace's `fast` profile.
   #

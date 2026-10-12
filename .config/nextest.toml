@@ -1,5 +1,15 @@
 # Nextest settings for the root workspace.
 
+experimental = ["setup-scripts"]
+
+# Builds the runner once per run, not once per wasm32 test.
+[scripts.setup.wasm-test-runner]
+command = "scripts/wasm_test_runner.sh --nextest-setup"
+
+[[profile.default.scripts]]
+platform = 'cfg(target_arch = "wasm32")'
+setup = "wasm-test-runner"
+
 [profile.default]
 # One line per test, naming it, so a run shows what ran and not only what broke.
 # Replaying every passing test's stdout doubles the log and buries the failure

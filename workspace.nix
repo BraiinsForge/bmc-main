@@ -745,6 +745,9 @@ in
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
+    wasm-test-runner = bmc.profiles.wasm-test-runner.buildCrate bmc.crates.wasm-test-runner {
+      env.BMC_FONTS_DIR = "${fonts}";
+    };
     bmc-nix-cli-armv7-release =
       let package = bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-cli { features = [ "release-log-debug" ]; };
       in package.overrideAttrs (old: {

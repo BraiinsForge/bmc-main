@@ -1,0 +1,26 @@
+[package]
+name = "bmc-wasm-test-runner"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "wasm-test"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bmc-render = { workspace = true, features = ["test-support"] }
+bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
+bmc-wasm-runtime = { path = "../bmc-wasm-runtime", features = ["hermetic-host"] }
+indoc.workspace = true
+libtest-mimic.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wasmi.workspace = true
+wat.workspace = true
+
+[lints]
+workspace = true

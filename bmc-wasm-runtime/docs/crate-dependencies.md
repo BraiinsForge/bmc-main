@@ -4,32 +4,34 @@ Path dependencies among the wasm-side crates, dependant → dependencies. Shared
 `bmc-platform`, `bmc-shared-time`, the widget manifest crates) are omitted.
 
 ```text
-bmc-gallery         → bmc-render, bmc-wasm-sdk, bmc-render-keyboard, the overlays and widgets it stages
-bmc-wasm-runtime    → bmc-render, bmc-ui, bmc-wasm-assets, bmc-wasm-protocol
-bmc-render          → bmc-ui, bmc-render-macros, bmc-wasm-protocol; at build time bmc-svg-compiler
-bmc-wasm-sdk        → bmc-ui, bmc-render-macros, bmc-wasm-sdk-macros, bmc-wasm-protocol
-bmc-render-macros   → bmc-ui, bmc-wasm-assets, bmc-svg-compiler
-bmc-wasm-assets     → bmc-ui, bmc-wasm-protocol
-bmc-wasm-protocol   → bmc-ui
-bmc-wasm-sdk-macros → (none)
-bmc-svg-compiler    → (none)
-bmc-ui              → (none)
+bmc-gallery          → bmc-render, bmc-wasm-sdk, bmc-render-keyboard, the overlays and widgets it stages
+bmc-wasm-test-runner → bmc-render, bmc-wasm-runtime, bmc-wasm-protocol
+bmc-wasm-runtime     → bmc-render, bmc-ui, bmc-wasm-assets, bmc-wasm-protocol
+bmc-render           → bmc-ui, bmc-render-macros, bmc-wasm-protocol; at build time bmc-svg-compiler
+bmc-wasm-sdk         → bmc-ui, bmc-render-macros, bmc-wasm-sdk-macros, bmc-wasm-protocol
+bmc-render-macros    → bmc-ui, bmc-wasm-assets, bmc-svg-compiler
+bmc-wasm-assets      → bmc-ui, bmc-wasm-protocol
+bmc-wasm-protocol    → bmc-ui
+bmc-wasm-sdk-macros  → (none)
+bmc-svg-compiler     → (none)
+bmc-ui               → (none)
 ```
 
 ## Crate roles
 
-| Crate                 | Role                                                     | Location                         |
-| --------------------- | -------------------------------------------------------- | -------------------------------- |
-| `bmc-ui`              | Tree, components, macros, codec, design vocabulary       | `bmc-render/ui/`                 |
-| `bmc-wasm-protocol`   | Guest↔host contract beyond the tree: ids, params, I/O    | `bmc-wasm-runtime/protocol/`     |
-| `bmc-svg-compiler`    | SVG → compact binary path compilation                    | `bmc-wasm-runtime/svg-compiler/` |
-| `bmc-wasm-assets`     | Package asset records: digest, record format, extraction | `bmc-wasm-assets/`               |
-| `bmc-render-macros`   | `include_*!` asset proc macros (svg, bitmap, mesh, …)    | `bmc-render/macros/`             |
-| `bmc-wasm-sdk-macros` | Compile-time `json!` / `fmt!` template proc macros       | `bmc-wasm-runtime/sdk-macros/`   |
-| `bmc-wasm-sdk`        | Widget authoring API: host bindings over `bmc-ui`        | `bmc-wasm-runtime/sdk/`          |
-| `bmc-render`          | Render engine: FemtoVG, layout, interaction, animation   | `bmc-render/`                    |
-| `bmc-wasm-runtime`    | WASM interpreter, host state, network, testbed/capture   | `bmc-wasm-runtime/`              |
-| `bmc-gallery`         | Dev tool — visual catalog of SDK components              | `bmc-gallery/`                   |
+| Crate                  | Role                                                     | Location                         |
+| ---------------------- | -------------------------------------------------------- | -------------------------------- |
+| `bmc-ui`               | Tree, components, macros, codec, design vocabulary       | `bmc-render/ui/`                 |
+| `bmc-wasm-protocol`    | Guest↔host contract beyond the tree: ids, params, I/O    | `bmc-wasm-runtime/protocol/`     |
+| `bmc-svg-compiler`     | SVG → compact binary path compilation                    | `bmc-wasm-runtime/svg-compiler/` |
+| `bmc-wasm-assets`      | Package asset records: digest, record format, extraction | `bmc-wasm-assets/`               |
+| `bmc-render-macros`    | `include_*!` asset proc macros (svg, bitmap, mesh, …)    | `bmc-render/macros/`             |
+| `bmc-wasm-sdk-macros`  | Compile-time `json!` / `fmt!` template proc macros       | `bmc-wasm-runtime/sdk-macros/`   |
+| `bmc-wasm-sdk`         | Widget authoring API: host bindings over `bmc-ui`        | `bmc-wasm-runtime/sdk/`          |
+| `bmc-render`           | Render engine: FemtoVG, layout, interaction, animation   | `bmc-render/`                    |
+| `bmc-wasm-runtime`     | WASM interpreter, host state, network, testbed/capture   | `bmc-wasm-runtime/`              |
+| `bmc-wasm-test-runner` | Runs `#[wasm_test]` binaries under the hermetic host     | `bmc-wasm-test-runner/`          |
+| `bmc-gallery`          | Dev tool — visual catalog of SDK components              | `bmc-gallery/`                   |
 
 ## Leaf crates
 
