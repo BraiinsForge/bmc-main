@@ -335,8 +335,9 @@ fn unpack(packed: u64) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::unpack;
+    use crate::wasm_test;
 
-    #[test]
+    #[wasm_test]
     fn unpack_splits_the_high_half_from_the_low() {
         const WIDTH: u32 = 1_280;
         const HEIGHT: u32 = 480;
@@ -352,12 +353,13 @@ mod tests {
 #[cfg(test)]
 mod size_variant_tests {
     use super::{SizeVariant, WidgetSize};
+    use crate::wasm_test;
 
     fn variant_of(w: u32, h: u32) -> SizeVariant {
         WidgetSize::from_dimensions(w, h).variant
     }
 
-    #[test]
+    #[wasm_test]
     fn exact_bmc100_dimensions_keep_their_variant() {
         assert_eq!(variant_of(1_280, 480), SizeVariant::Full);
         assert_eq!(variant_of(638, 480), SizeVariant::Large);
@@ -365,7 +367,7 @@ mod size_variant_tests {
         assert_eq!(variant_of(317, 238), SizeVariant::Small);
     }
 
-    #[test]
+    #[wasm_test]
     fn non_deck_fullscreen_viewports_map_to_closest_legacy_variant() {
         assert_eq!(variant_of(320, 240), SizeVariant::Small);
         // BMM101 (480x320) lands on Large by a thin margin: normalized
@@ -377,7 +379,7 @@ mod size_variant_tests {
         assert_eq!(variant_of(480, 480), SizeVariant::Large);
     }
 
-    #[test]
+    #[wasm_test]
     fn classification_is_deterministic() {
         // Same input, same output across repeated calls.
         assert_eq!(variant_of(200, 200), variant_of(200, 200));
@@ -385,48 +387,22 @@ mod size_variant_tests {
 }
 
 #[cfg(test)]
-mod off_target_getters {
-    use super::{display_info, widget_size, widget_viewport};
-
-    // Off-target there is no Wayland handshake, so the geometry getters have no
-    // host to read from. They fail loud rather than fabricate a size a caller
-    // could mistake for real geometry.
-
-    #[test]
-    #[should_panic(expected = "no host geometry exists")]
-    fn widget_size_panics() {
-        let _ = widget_size();
-    }
-
-    #[test]
-    #[should_panic(expected = "no host geometry exists")]
-    fn widget_viewport_panics() {
-        let _ = widget_viewport();
-    }
-
-    #[test]
-    #[should_panic(expected = "no host geometry exists")]
-    fn display_info_panics() {
-        let _ = display_info();
-    }
-}
-
-#[cfg(test)]
 mod fit_and_scale_tests {
     use super::{WidgetSize, scale_font};
+    use crate::wasm_test;
 
     fn fit_of(w: u32, h: u32) -> f32 {
         WidgetSize::from_dimensions(w, h).fit()
     }
 
-    #[test]
+    #[wasm_test]
     fn canonical_viewport_fits_at_one() {
         assert!((fit_of(1_280, 480) - 1.0).abs() < 1e-4);
         assert!((fit_of(638, 480) - 1.0).abs() < 1e-4);
         assert!((fit_of(317, 238) - 1.0).abs() < 1e-4);
     }
 
-    #[test]
+    #[wasm_test]
     fn medium_canonical_fits_at_one() {
         // 638x238 is Medium's canonical box, so fit() = 1.0 — a Medium-authored
         // font renders at its authored size there, shrinking only below canonical.
@@ -435,37 +411,37 @@ mod fit_and_scale_tests {
         assert!((fit_of(638, 238) - 1.0).abs() < 1e-4);
     }
 
-    #[test]
+    #[wasm_test]
     fn bmm101_large_downscales_by_binding_axis() {
         // 480x320 classifies to Large (638x480); min(480/638, 320/480) = 0.6667,
         // the height (binding) axis wins so neither dimension overflows.
         assert!((fit_of(480, 320) - 0.666_67).abs() < 1e-3);
     }
 
-    #[test]
+    #[wasm_test]
     fn larger_than_canonical_clamps_to_one() {
         // 1920x720 classifies to Full (1280x480); ratios 1.5/1.5 clamp to 1.0.
         assert!((fit_of(1_920, 720) - 1.0).abs() < 1e-4);
     }
 
-    #[test]
+    #[wasm_test]
     fn scale_font_at_unit_factor_is_identity() {
         assert_eq!(scale_font(24, 1.0), 24);
     }
 
-    #[test]
+    #[wasm_test]
     fn scale_font_halves_and_rounds() {
         assert_eq!(scale_font(24, 0.5), 12);
         assert_eq!(scale_font(16, 0.5), 8);
     }
 
-    #[test]
+    #[wasm_test]
     fn scale_font_floors_at_one_px() {
         // Degenerate factors never yield a 0px (invisible) font.
         assert_eq!(scale_font(16, 0.01), 1);
     }
 
-    #[test]
+    #[wasm_test]
     fn rect_numeral_size_shrinks_on_bmm101() {
         // Pins the size the rect fix must produce: Large numerals (40px authored)
         // on BMM101's 480x320 scale to 27px.

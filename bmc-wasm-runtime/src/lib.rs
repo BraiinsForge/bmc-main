@@ -147,13 +147,12 @@ pub use host_api::{
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use network::NetworkInfo;
 pub use runtime::{
-    BoundCredential, CredentialView, EntryPolicy, FetchAgent, GuestLogSink, InterceptedReply,
-    RenderStatus, RendererAssetRestorationObservation, RendererAssetSuspensionObservation,
-    RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, TargetContents, WasmWidgetModule,
-    WasmWidgetRuntime,
+    BoundCredential, CredentialView, EntryPolicy, FetchAgent, InterceptedReply, RenderStatus,
+    RendererAssetRestorationObservation, RendererAssetSuspensionObservation, RuntimeConfig,
+    RuntimeDisplayInfo, RuntimeResourceLimits, TargetContents, WasmWidgetModule, WasmWidgetRuntime,
 };
 #[cfg(any(test, feature = "hermetic-host"))]
-pub use runtime::{GuestPanic, TestExportError};
+pub use runtime::{GuestLogSink, GuestPanic, TestExportError};
 pub use system::{NextAlarm, SystemSettings, SystemSnapshot};
 
 /// Errors produced by [`parse_params_json`] when an entry violates the wire-format contract.

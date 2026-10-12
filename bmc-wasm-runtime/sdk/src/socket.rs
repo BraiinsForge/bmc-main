@@ -342,6 +342,7 @@ mod tests {
     use bmc_wasm_protocol::SocketId;
 
     use super::{CONNECTIONS, Callback, Socket, SocketEvent, register_callback};
+    use crate::wasm_test;
 
     thread_local! {
         static SEEN: Cell<Option<SocketId>> = const { Cell::new(None) };
@@ -373,7 +374,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_event_reaches_its_callback_with_its_socket() {
         let socket = connect(record);
 
@@ -382,7 +383,17 @@ mod tests {
         assert_eq!(SEEN.get(), Some(socket.0));
     }
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_connect_from_the_host_reaches_its_socket() {
+        let socket = connect(record);
+
+        super::wasm::__on_socket_event(socket.0.to_wire(), 0, 0, 0);
+
+        assert_eq!(SEEN.get(), Some(socket.0));
+    }
+
+    #[wasm_test]
     fn an_event_leaves_its_socket_open() {
         let socket = connect(record);
 
@@ -391,7 +402,7 @@ mod tests {
         assert!(is_registered(socket.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dropped_handle_stops_its_events() {
         let socket = connect(record);
         let id = socket.0;
@@ -402,7 +413,7 @@ mod tests {
         assert_eq!(SEEN.get(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_callback_can_close_its_own_socket_through_the_stored_handle() {
         let socket = connect(close_stored);
         let id = socket.0;

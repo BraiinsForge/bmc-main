@@ -140,6 +140,7 @@ pub fn previous_using<T: FromHostBytes + Clone, H: HostSnapshotProvider>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_test;
 
     /// Test snapshot type — wraps the raw bytes so we can assert what was fetched.
     #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -171,7 +172,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn current_returns_freshly_fetched_snapshot_on_version_bump() {
         let mut host = MockHost {
             version: 1,
@@ -184,7 +185,7 @@ mod tests {
         assert_eq!(current_using(&host, &mut cache), TestSnap(vec![9, 9]));
     }
 
-    #[test]
+    #[wasm_test]
     fn previous_returns_default_before_any_rotation() {
         let host = MockHost {
             version: 1,
@@ -195,7 +196,7 @@ mod tests {
         assert_eq!(previous_using(&host, &mut cache), TestSnap::default());
     }
 
-    #[test]
+    #[wasm_test]
     fn previous_first_after_version_bump_returns_just_replaced_snapshot() {
         // Companion to BDK-432 #1's regression test, now exercised at the generic layer.
         let mut host = MockHost {

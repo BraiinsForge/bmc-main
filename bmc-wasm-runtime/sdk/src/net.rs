@@ -703,6 +703,10 @@ use native::Host as Platform;
 #[cfg(test)]
 impl FetchResponse {
     /// A reply to `request_id` with no body.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the poll glue tests that use it run off-device")
+    )]
     pub(crate) fn empty(request_id: FetchRequestId, status: u32) -> Self {
         Self {
             status,
@@ -717,6 +721,7 @@ mod tests {
     use bmc_wasm_protocol::FetchRequestId;
 
     use super::{FetchRequest, FetchResponse, FetchResponseBody, ResponseBodyDelivery};
+    use crate::wasm_test;
 
     fn response(body: FetchResponseBody) -> FetchResponse {
         FetchResponse {
@@ -726,21 +731,21 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn guest_body_remains_available_as_text() {
         let response = response(FetchResponseBody::Guest(b"hello".to_vec()));
 
         assert_eq!(response.text(), Some("hello"));
     }
 
-    #[test]
+    #[wasm_test]
     fn host_body_request_opts_out_of_guest_delivery() {
         let request = FetchRequest::get("https://example.com").host_body();
 
         assert_eq!(request.body_delivery, ResponseBodyDelivery::Host);
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "BUG: a host-owned fetch body cannot be parsed as guest JSON")]
     fn host_body_is_not_reinterpreted_as_empty_json() {
         let response = response(FetchResponseBody::Host { len: 5 });
@@ -748,7 +753,7 @@ mod tests {
         let _ = response.json_body();
     }
 
-    #[test]
+    #[wasm_test]
     fn host_body_is_not_reinterpreted_as_empty_text() {
         let response = response(FetchResponseBody::Host { len: 5 });
 

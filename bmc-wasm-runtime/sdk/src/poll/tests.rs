@@ -19,6 +19,7 @@
 // the grant above.
 
 use super::*;
+use crate::wasm_test;
 
 #[derive(Default)]
 struct FakeBackend {
@@ -106,14 +107,14 @@ const CFG: Config = Config {
 
 // Poll fetches must inherit the SDK-wide default unless the builder opts
 // into a different per-call timeout, e.g. a short one for LAN devices.
-#[test]
+#[wasm_test]
 fn spec_timeout_defaults_to_sdk_default_until_overridden() {
     assert_eq!(FetchSpec::get("http://x/data").timeout, None);
     let spec = FetchSpec::get("http://x/data").timeout(Duration::from_millis(100));
     assert_eq!(spec.timeout, Some(Duration::from_millis(100)));
 }
 
-#[test]
+#[wasm_test]
 fn start_sends_immediately_when_enabled() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -124,7 +125,7 @@ fn start_sends_immediately_when_enabled() {
     assert_eq!(be.sends[0].0.url, "http://x/data");
 }
 
-#[test]
+#[wasm_test]
 fn start_does_nothing_when_disabled() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -139,7 +140,7 @@ fn start_does_nothing_when_disabled() {
     assert!(be.sends.is_empty());
 }
 
-#[test]
+#[wasm_test]
 fn rejected_send_retries_after_retry_ms() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -151,7 +152,7 @@ fn rejected_send_retries_after_retry_ms() {
     assert_eq!(be.sends[1].1, Some(1_000));
 }
 
-#[test]
+#[wasm_test]
 fn invalidate_with_queued_request_cancels_and_reschedules_after_debounce() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -163,7 +164,7 @@ fn invalidate_with_queued_request_cancels_and_reschedules_after_debounce() {
     assert_eq!(be.sends[1].1, Some(300));
 }
 
-#[test]
+#[wasm_test]
 fn invalidate_with_in_flight_request_marks_pending_and_does_not_send() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -176,7 +177,7 @@ fn invalidate_with_in_flight_request_marks_pending_and_does_not_send() {
     assert!(reg.is_pending(h));
 }
 
-#[test]
+#[wasm_test]
 fn invalidate_when_idle_kicks_after_debounce() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -187,7 +188,7 @@ fn invalidate_when_idle_kicks_after_debounce() {
     assert_eq!(be.sends[0].1, Some(300));
 }
 
-#[test]
+#[wasm_test]
 fn successful_reply_reschedules_after_interval() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -199,7 +200,7 @@ fn successful_reply_reschedules_after_interval() {
     assert_eq!(be.sends[1].1, Some(5_000));
 }
 
-#[test]
+#[wasm_test]
 fn set_interval_retargets_the_reschedule_cadence() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -214,7 +215,7 @@ fn set_interval_retargets_the_reschedule_cadence() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn one_shot_reply_does_not_reschedule() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -230,7 +231,7 @@ fn one_shot_reply_does_not_reschedule() {
     assert_eq!(be.sends.len(), 1);
 }
 
-#[test]
+#[wasm_test]
 fn failed_reply_reschedules_after_retry() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -241,7 +242,7 @@ fn failed_reply_reschedules_after_retry() {
     assert_eq!(be.sends[1].1, Some(1_000));
 }
 
-#[test]
+#[wasm_test]
 fn retry_request_reschedules_after_retry_despite_ok() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -258,7 +259,7 @@ fn retry_request_reschedules_after_retry_despite_ok() {
     assert_eq!(be.sends[1].1, Some(1_000));
 }
 
-#[test]
+#[wasm_test]
 fn retry_after_reschedules_with_the_requested_delay_despite_ok() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -274,7 +275,7 @@ fn retry_after_reschedules_with_the_requested_delay_despite_ok() {
     assert_eq!(be.sends[1].1, Some(42_000));
 }
 
-#[test]
+#[wasm_test]
 fn reply_to_unknown_id_is_ignored() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -282,7 +283,7 @@ fn reply_to_unknown_id_is_ignored() {
     assert_eq!(reg.begin_reply(id, &mut be), ReplyAction::Ignore);
 }
 
-#[test]
+#[wasm_test]
 fn pending_reply_reissues_immediately_and_skips_delivery() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -296,7 +297,7 @@ fn pending_reply_reissues_immediately_and_skips_delivery() {
     assert_eq!(be.sends[1].1, None);
 }
 
-#[test]
+#[wasm_test]
 fn builder_none_sends_nothing_on_start() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -305,7 +306,7 @@ fn builder_none_sends_nothing_on_start() {
     assert!(be.sends.is_empty());
 }
 
-#[test]
+#[wasm_test]
 fn builder_none_on_reschedule_goes_dormant() {
     TOGGLE.with(|t| t.set(true));
     let mut reg = Registry::default();
@@ -317,7 +318,7 @@ fn builder_none_on_reschedule_goes_dormant() {
     assert_eq!(be.sends.len(), 1);
 }
 
-#[test]
+#[wasm_test]
 fn rapid_invalidations_cancel_the_queued_send_and_keep_one() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -330,7 +331,7 @@ fn rapid_invalidations_cancel_the_queued_send_and_keep_one() {
     assert_eq!(be.sends[2].1, Some(300));
 }
 
-#[test]
+#[wasm_test]
 fn enable_from_disabled_kicks_after_debounce() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -346,7 +347,7 @@ fn enable_from_disabled_kicks_after_debounce() {
     assert_eq!(be.sends[0].1, Some(300));
 }
 
-#[test]
+#[wasm_test]
 fn disable_cancels_queued_request() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -357,7 +358,7 @@ fn disable_cancels_queued_request() {
     assert!(!reg.enabled(h));
 }
 
-#[test]
+#[wasm_test]
 fn set_enabled_is_idempotent() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -367,7 +368,7 @@ fn set_enabled_is_idempotent() {
     assert_eq!(be.sends.len(), 1);
 }
 
-#[test]
+#[wasm_test]
 fn enable_after_schedules_at_the_given_delay() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -384,7 +385,7 @@ fn enable_after_schedules_at_the_given_delay() {
     assert_eq!(be.sends[0].1, Some(7_000));
 }
 
-#[test]
+#[wasm_test]
 fn reply_to_disabled_poll_stops_without_reschedule() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -397,7 +398,7 @@ fn reply_to_disabled_poll_stops_without_reschedule() {
     assert_eq!(be.sends.len(), 1);
 }
 
-#[test]
+#[wasm_test]
 fn an_ended_poll_cancels_its_live_fetch() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -409,7 +410,7 @@ fn an_ended_poll_cancels_its_live_fetch() {
     assert_eq!(be.cancels.len(), 1);
 }
 
-#[test]
+#[wasm_test]
 fn a_reply_already_queued_for_an_ended_poll_is_not_delivered() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -423,7 +424,7 @@ fn a_reply_already_queued_for_an_ended_poll_is_not_delivered() {
     assert_eq!(be.sends.len(), 1, "an ended poll never fetches again");
 }
 
-#[test]
+#[wasm_test]
 fn an_ended_poll_ignores_later_calls() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -440,7 +441,7 @@ fn an_ended_poll_ignores_later_calls() {
     assert!(!reg.enabled(h));
 }
 
-#[test]
+#[wasm_test]
 fn a_poll_ended_by_its_reply_handler_is_not_rescheduled() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -455,7 +456,7 @@ fn a_poll_ended_by_its_reply_handler_is_not_rescheduled() {
     assert_eq!(be.sends.len(), 1);
 }
 
-#[test]
+#[wasm_test]
 fn an_ended_polls_index_is_never_reused() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -467,7 +468,7 @@ fn an_ended_polls_index_is_never_reused() {
     assert_ne!(first, second);
 }
 
-#[test]
+#[wasm_test]
 fn not_stale_while_replies_succeed() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -480,7 +481,7 @@ fn not_stale_while_replies_succeed() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn is_stale_once_failure_ages_past_stale_factor() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -492,7 +493,7 @@ fn is_stale_once_failure_ages_past_stale_factor() {
     assert!(reg.is_stale(h, 8), "age 8 s exceeds the 7.5 s threshold");
 }
 
-#[test]
+#[wasm_test]
 fn success_clears_staleness() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -507,7 +508,7 @@ fn success_clears_staleness() {
     assert_eq!(reg.last_success_secs(h), Some(20));
 }
 
-#[test]
+#[wasm_test]
 fn forced_retry_does_not_count_as_a_refresh() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -530,7 +531,7 @@ fn forced_retry_does_not_count_as_a_refresh() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn mark_stale_reverts_the_corrupt_reply_to_the_last_good_anchor() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -552,7 +553,7 @@ fn mark_stale_reverts_the_corrupt_reply_to_the_last_good_anchor() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn restore_anchor_seeds_only_before_the_first_success() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -576,7 +577,7 @@ fn restore_anchor_seeds_only_before_the_first_success() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn reset_staleness_forgets_all_history() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -594,7 +595,7 @@ fn reset_staleness_forgets_all_history() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn is_offline_after_failing_past_grace_without_ever_loading() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -618,7 +619,7 @@ fn is_offline_after_failing_past_grace_without_ever_loading() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn not_stale_without_prior_success_or_interval() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -638,83 +639,89 @@ fn not_stale_without_prior_success_or_interval() {
     assert_eq!(reg.last_success_age(h, 5), None);
 }
 
-thread_local! {
-    static REPLIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static REPLIED_TO: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-    static STORED: std::cell::RefCell<Option<Handle>> = const { std::cell::RefCell::new(None) };
-}
+/// The glue's tests count sends and cancels through the off-target test backend.
+#[cfg(not(target_arch = "wasm32"))]
+mod off_device {
+    use super::*;
 
-fn count_reply(_handle: &Handle, _response: &crate::net::FetchResponse) {
-    REPLIES.set(REPLIES.get() + 1);
-}
-
-fn record_index(handle: &Handle, _response: &crate::net::FetchResponse) {
-    REPLIED_TO.set(Some(handle.index()));
-}
-
-fn stop_stored(_handle: &Handle, _response: &crate::net::FetchResponse) {
-    if let Some(stored) = STORED.take() {
-        stored.stop();
+    thread_local! {
+        static REPLIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        static REPLIED_TO: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+        static STORED: std::cell::RefCell<Option<Handle>> = const { std::cell::RefCell::new(None) };
     }
-}
 
-fn is_registered(index: usize) -> bool {
-    glue::REGISTRY.with_borrow(|registry| registry.is_registered(index))
-}
+    fn count_reply(_handle: &Handle, _response: &crate::net::FetchResponse) {
+        REPLIES.set(REPLIES.get() + 1);
+    }
 
-fn reply_to_first_fetch() {
-    let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
-    glue::trampoline(&crate::net::FetchResponse::empty(id, 200));
-}
+    fn record_index(handle: &Handle, _response: &crate::net::FetchResponse) {
+        REPLIED_TO.set(Some(handle.index()));
+    }
 
-#[test]
-fn a_reply_reaches_its_handler_with_its_handle() {
-    let handle = register(build_url, record_index, CFG);
+    fn stop_stored(_handle: &Handle, _response: &crate::net::FetchResponse) {
+        if let Some(stored) = STORED.take() {
+            stored.stop();
+        }
+    }
 
-    reply_to_first_fetch();
+    fn is_registered(index: usize) -> bool {
+        glue::REGISTRY.with_borrow(|registry| registry.is_registered(index))
+    }
 
-    assert_eq!(REPLIED_TO.get(), Some(handle.index()));
-}
+    fn reply_to_first_fetch() {
+        let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
+        glue::trampoline(&crate::net::FetchResponse::empty(id, 200));
+    }
 
-#[test]
-fn a_dropped_handle_stops_its_replies() {
-    let handle = register(build_url, count_reply, CFG);
+    #[test]
+    fn a_reply_reaches_its_handler_with_its_handle() {
+        let handle = register(build_url, record_index, CFG);
 
-    drop(handle);
-    reply_to_first_fetch();
+        reply_to_first_fetch();
 
-    assert_eq!(REPLIES.get(), 0);
-}
+        assert_eq!(REPLIED_TO.get(), Some(handle.index()));
+    }
 
-#[test]
-fn a_dropped_handle_ends_its_poll() {
-    let handle = register(build_url, count_reply, CFG);
-    let index = handle.index();
+    #[test]
+    fn a_dropped_handle_stops_its_replies() {
+        let handle = register(build_url, count_reply, CFG);
 
-    drop(handle);
+        drop(handle);
+        reply_to_first_fetch();
 
-    assert!(!is_registered(index));
-    assert_eq!(backend::cancels(), 1, "the live fetch is cancelled");
-}
+        assert_eq!(REPLIES.get(), 0);
+    }
 
-#[test]
-fn a_reply_leaves_its_poll_registered() {
-    let handle = register(build_url, count_reply, CFG);
+    #[test]
+    fn a_dropped_handle_ends_its_poll() {
+        let handle = register(build_url, count_reply, CFG);
+        let index = handle.index();
 
-    reply_to_first_fetch();
+        drop(handle);
 
-    assert_eq!(REPLIES.get(), 1);
-    assert!(is_registered(handle.index()));
-}
+        assert!(!is_registered(index));
+        assert_eq!(backend::cancels(), 1, "the live fetch is cancelled");
+    }
 
-#[test]
-fn a_reply_handler_can_stop_its_own_poll_through_the_stored_handle() {
-    let handle = register(build_url, stop_stored, CFG);
-    let index = handle.index();
-    STORED.set(Some(handle));
+    #[test]
+    fn a_reply_leaves_its_poll_registered() {
+        let handle = register(build_url, count_reply, CFG);
 
-    reply_to_first_fetch();
+        reply_to_first_fetch();
 
-    assert!(!is_registered(index));
-    assert_eq!(backend::sends(), 1, "a stopped poll is not rescheduled");
+        assert_eq!(REPLIES.get(), 1);
+        assert!(is_registered(handle.index()));
+    }
+
+    #[test]
+    fn a_reply_handler_can_stop_its_own_poll_through_the_stored_handle() {
+        let handle = register(build_url, stop_stored, CFG);
+        let index = handle.index();
+        STORED.set(Some(handle));
+
+        reply_to_first_fetch();
+
+        assert!(!is_registered(index));
+        assert_eq!(backend::sends(), 1, "a stopped poll is not rescheduled");
+    }
 }

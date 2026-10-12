@@ -182,6 +182,7 @@ const fn pow10(k: u32) -> f64 {
 mod tests {
     use super::{SiPrefix, pow10};
     use crate::fmt;
+    use crate::wasm_test;
 
     fn literal(exponent: i32) -> f64 {
         fmt!("1e{}", exponent)
@@ -189,7 +190,7 @@ mod tests {
             .expect("BUG: an integer exponent parses as a float")
     }
 
-    #[test]
+    #[wasm_test]
     fn every_symbol_reads_back_to_its_prefix() {
         for prefix in SiPrefix::ALL {
             assert_eq!(SiPrefix::from_symbol(prefix.symbol()), Some(prefix));
@@ -197,13 +198,13 @@ mod tests {
         assert_eq!(SiPrefix::from_symbol("x"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn the_bare_unit_has_no_symbol() {
         assert_eq!(SiPrefix::One.symbol(), "");
         assert!((SiPrefix::One.factor() - 1.0).abs() < f64::EPSILON);
     }
 
-    #[test]
+    #[wasm_test]
     fn factors_ascend_with_the_prefixes() {
         for pair in SiPrefix::ALL.windows(2) {
             assert!(pair[0].factor() < pair[1].factor(), "{pair:?}");
@@ -212,7 +213,7 @@ mod tests {
 
     /// A row's factor is the double nearest to ten raised to its exponent,
     /// which is what the literal parses to.
-    #[test]
+    #[wasm_test]
     fn every_factor_is_the_literal_of_its_exponent() {
         for prefix in SiPrefix::ALL {
             let expected = literal(prefix.exponent());
@@ -221,7 +222,7 @@ mod tests {
     }
 
     /// The table reaches the widest gap, and each entry is its own literal.
-    #[test]
+    #[wasm_test]
     fn every_power_of_ten_is_the_double_nearest_to_it() {
         let widest_gap = SiPrefix::Quetta.exponent() - SiPrefix::Quecto.exponent();
         for k in 0..=widest_gap.unsigned_abs() {
@@ -231,7 +232,7 @@ mod tests {
     }
 
     /// Neighbouring prefixes are the case a quotient of factors gets wrong.
-    #[test]
+    #[wasm_test]
     fn adjacent_prefixes_convert_by_the_exact_power_of_ten() {
         assert_eq!(
             SiPrefix::convert(0.1, SiPrefix::Micro, SiPrefix::Milli).to_bits(),
@@ -260,7 +261,7 @@ mod tests {
 
     /// Scaling down divides by the integral ratio rather than multiplying
     /// by its reciprocal, which would drift by an ulp.
-    #[test]
+    #[wasm_test]
     fn convert_is_the_plain_division_or_multiplication() {
         assert_eq!(
             SiPrefix::convert(122_480.0, SiPrefix::Giga, SiPrefix::Tera).to_bits(),
@@ -280,7 +281,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn converting_to_the_same_prefix_is_the_identity() {
         for prefix in SiPrefix::ALL {
             assert_eq!(

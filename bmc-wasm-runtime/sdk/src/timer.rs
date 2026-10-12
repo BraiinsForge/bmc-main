@@ -178,6 +178,7 @@ mod tests {
     use bmc_wasm_protocol::TimerId;
 
     use super::{CALLBACKS, Timer, TimerCallback, dispatch};
+    use crate::wasm_test;
 
     thread_local! {
         static FIRED: Cell<Option<(TimerId, u32)>> = const { Cell::new(None) };
@@ -206,7 +207,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_tick_reaches_its_own_callback_with_the_elapsed_count() {
         register(1, record);
 
@@ -215,7 +216,7 @@ mod tests {
         assert_eq!(FIRED.get(), Some((id(1), 3)));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_tick_leaves_its_timer_running() {
         register(2, record);
 
@@ -224,7 +225,7 @@ mod tests {
         assert!(is_registered(2));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dropped_handle_stops_its_timer() {
         register(3, record);
 
@@ -234,7 +235,7 @@ mod tests {
         assert_eq!(FIRED.get(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_callback_can_stop_its_own_timer_through_the_stored_handle() {
         register(4, stop_stored);
         STORED.set(Some(Timer(id(4))));

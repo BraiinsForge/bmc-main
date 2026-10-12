@@ -84,20 +84,21 @@ impl<T> From<Option<T>> for Availability<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_test;
 
-    #[test]
+    #[wasm_test]
     fn available_values_can_be_borrowed_as_options() {
         let value = Availability::Available(42_u32);
         assert_eq!(value.as_option(), Some(&42));
     }
 
-    #[test]
+    #[wasm_test]
     fn default_is_unavailable() {
         let value = Availability::<u32>::default();
         assert_eq!(value, Availability::Unavailable);
     }
 
-    #[test]
+    #[wasm_test]
     fn failure_does_not_displace_a_value_already_read() {
         let mut value = Availability::Available(42_u32);
         assert!(!value.mark_failed(), "a value already read changed state");
@@ -109,7 +110,7 @@ mod tests {
         assert!(!nothing.mark_failed(), "a repeated failure changed state");
     }
 
-    #[test]
+    #[wasm_test]
     fn option_converts_to_availability() {
         assert_eq!(Availability::from(Some(7_u32)), Availability::Available(7));
         assert_eq!(Availability::from(None::<u32>), Availability::Unavailable);

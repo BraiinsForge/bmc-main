@@ -234,6 +234,7 @@ pub enum TargetContents {
 pub type FetchObserver = Box<dyn Fn(&str, u32, &[(String, String)], &[u8]) + Send>;
 
 /// Takes each `host_log` line in place of `tracing`.
+#[cfg(any(test, feature = "hermetic-host"))]
 pub type GuestLogSink = Box<dyn FnMut(tracing::Level, &str) + Send>;
 
 /// How [`WasmWidgetRuntime::from_module_with_entry`] enters a module.
@@ -317,6 +318,7 @@ pub struct RuntimeConfig {
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<FetchObserver>,
     /// Takes the guest's `host_log` lines; `None` sends them to `tracing`.
+    #[cfg(any(test, feature = "hermetic-host"))]
     pub guest_log_sink: Option<GuestLogSink>,
     /// HTTP agent cloned into this runtime's fetch threads.
     ///
@@ -388,6 +390,7 @@ impl Default for RuntimeConfig {
             url_rewrites: Vec::new(),
             hermetic: false,
             fetch_observer: None,
+            #[cfg(any(test, feature = "hermetic-host"))]
             guest_log_sink: None,
             fetch_agent: FetchAgent::default(),
             record_events: false,
@@ -1074,6 +1077,7 @@ impl WasmWidgetRuntime {
             url_rewrites,
             hermetic,
             fetch_observer,
+            #[cfg(any(test, feature = "hermetic-host"))]
             guest_log_sink,
             fetch_agent,
             record_events,
@@ -1125,7 +1129,10 @@ impl WasmWidgetRuntime {
         state.url_rewrites = url_rewrites;
         state.hermetic = hermetic.then(HermeticRun::default);
         state.fetch_observer = fetch_observer;
-        state.guest_log_sink = guest_log_sink;
+        #[cfg(any(test, feature = "hermetic-host"))]
+        {
+            state.guest_log_sink = guest_log_sink;
+        }
         state.record_events = record_events;
         state.rng_state = rng_seed;
         state.led_request_sender = led_request_sender;

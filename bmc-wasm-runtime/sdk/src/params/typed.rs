@@ -239,6 +239,7 @@ macro_rules! impl_manifest_f64_enum {
 mod tests {
     use super::super::Params;
     use super::*;
+    use crate::wasm_test;
     use bmc_wasm_protocol::params::kind;
 
     /// Build a `Params` from a tiny inline byte buffer for testing.
@@ -310,7 +311,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn required_primitives_round_trip() {
         let p = build(&[
             ("s", Entry::Str("hi")),
@@ -324,28 +325,28 @@ mod tests {
         assert!(<bool as ParamRead>::read_required(&p, "b"));
     }
 
-    #[test]
+    #[wasm_test]
     fn optional_returns_none_for_null_entries() {
         let p = build(&[("s", Entry::Null), ("i", Entry::Null)]);
         assert!(<String as ParamRead>::read_optional(&p, "s").is_none());
         assert!(<i32 as ParamRead>::read_optional(&p, "i").is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn optional_returns_none_for_missing_keys() {
         let p = build(&[]);
         assert!(<bool as ParamRead>::read_optional(&p, "absent").is_none());
         assert!(<f64 as ParamRead>::read_optional(&p, "absent").is_none());
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "required param `missing` missing from the snapshot")]
     fn required_panics_on_missing() {
         let p = build(&[]);
         let _: String = ParamRead::read_required(&p, "missing");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `s` does not match the manifest type: \
                                params stored before the widget changed it keep the old value")]
     fn required_panics_on_a_value_of_another_type() {
@@ -353,7 +354,7 @@ mod tests {
         let _: String = ParamRead::read_required(&p, "s");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `s` does not match the manifest type")]
     fn optional_panics_on_a_value_of_another_type() {
         let p = build(&[("s", Entry::I32(1))]);
@@ -362,7 +363,7 @@ mod tests {
 
     // ── List coverage ───────────────────────────────────────────────
 
-    #[test]
+    #[wasm_test]
     fn list_reads_its_items_in_order() {
         let p = build(&[
             ("s", Entry::List(&[Entry::Str("NVDA"), Entry::Str("AAPL")])),
@@ -377,7 +378,7 @@ mod tests {
         assert!(<Vec<bool> as ParamRead>::read_required(&p, "e").is_empty());
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `l` item 1 does not match the manifest item type: \
                                items stored before the widget changed it keep the old value")]
     fn list_item_of_another_type_panics() {
@@ -385,7 +386,7 @@ mod tests {
         let _ = <Vec<i32> as ParamRead>::read_required(&p, "l");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `l` does not match the manifest type")]
     fn list_param_holding_no_list_panics() {
         let p = build(&[("l", Entry::I32(1))]);
@@ -410,7 +411,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn object_rows_read_their_fields() {
         let p = build(&[(
             "links",
@@ -437,7 +438,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(
         expected = "required field `label` of param `links` item 0 is missing: \
                                rows stored before the widget required it"
@@ -450,7 +451,7 @@ mod tests {
         let _ = <Vec<Link> as ParamRead>::read_required(&p, "links");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "required field `label` of param `links` item 0 is missing")]
     fn object_row_with_a_null_required_field_names_it() {
         let p = build(&[(
@@ -460,7 +461,7 @@ mod tests {
         let _ = <Vec<Link> as ParamRead>::read_required(&p, "links");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `links` item 0 does not match the manifest item type")]
     fn object_row_with_a_required_field_of_another_type_panics() {
         let p = build(&[(
@@ -470,7 +471,7 @@ mod tests {
         let _ = <Vec<Link> as ParamRead>::read_required(&p, "links");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `links` item 0 does not match the manifest item type")]
     fn object_row_with_an_optional_field_of_another_type_panics() {
         let p = build(&[(
@@ -503,33 +504,33 @@ mod tests {
 
     crate::impl_manifest_str_enum!(Color);
 
-    #[test]
+    #[wasm_test]
     fn str_enum_required_reads_match() {
         let p = build(&[("c", Entry::Str("blue"))]);
         assert_eq!(<Color as ParamRead>::read_required(&p, "c"), Color::Blue);
     }
 
-    #[test]
+    #[wasm_test]
     fn str_enum_optional_absent_is_none() {
         let p = build(&[("c", Entry::Null)]);
         assert!(<Color as ParamRead>::read_optional(&p, "c").is_none());
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `c` does not match the manifest type")]
     fn str_enum_panics_on_unknown_value() {
         let p = build(&[("c", Entry::Str("green"))]);
         let _ = <Color as ParamRead>::read_required(&p, "c");
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `c` does not match the manifest type")]
     fn str_enum_optional_panics_on_unknown_value() {
         let p = build(&[("c", Entry::Str("green"))]);
         let _ = <Color as ParamRead>::read_optional(&p, "c");
     }
 
-    #[test]
+    #[wasm_test]
     fn str_enum_list_reads_each_item() {
         let p = build(&[("c", Entry::List(&[Entry::Str("red"), Entry::Str("blue")]))]);
         assert_eq!(
@@ -538,7 +539,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     #[should_panic(expected = "param `c` item 0 does not match the manifest item type")]
     fn str_enum_list_panics_on_an_unknown_item() {
         let p = build(&[("c", Entry::List(&[Entry::Str("green")]))]);
@@ -565,7 +566,7 @@ mod tests {
 
     crate::impl_manifest_i32_enum!(Rank);
 
-    #[test]
+    #[wasm_test]
     fn i32_enum_round_trip() {
         let p = build(&[("r", Entry::I32(2))]);
         assert_eq!(<Rank as ParamRead>::read_required(&p, "r"), Rank::Two);
@@ -593,7 +594,7 @@ mod tests {
 
     crate::impl_manifest_f64_enum!(Gamma);
 
-    #[test]
+    #[wasm_test]
     fn f64_enum_epsilon_match() {
         let p = build(&[("g", Entry::F64(2.2))]);
         assert_eq!(<Gamma as ParamRead>::read_required(&p, "g"), Gamma::Srgb);

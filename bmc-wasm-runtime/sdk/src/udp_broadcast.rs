@@ -257,6 +257,7 @@ mod tests {
     use super::{
         BROADCASTS, BroadcastCallback, UdpBroadcast, UdpBroadcastEvent, register_callback,
     };
+    use crate::wasm_test;
 
     thread_local! {
         static SEEN: Cell<Option<UdpBroadcastId>> = const { Cell::new(None) };
@@ -288,7 +289,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_event_reaches_its_callback_with_its_broadcast() {
         let broadcast = broadcast(record);
 
@@ -297,7 +298,17 @@ mod tests {
         assert_eq!(SEEN.get(), Some(broadcast.0));
     }
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_datagram_from_the_host_reaches_its_broadcast() {
+        let broadcast = broadcast(record);
+
+        super::wasm::__on_udp_broadcast_event(broadcast.0.to_wire(), 0, 0, 0, 0);
+
+        assert_eq!(SEEN.get(), Some(broadcast.0));
+    }
+
+    #[wasm_test]
     fn an_event_leaves_its_broadcast_running() {
         let broadcast = broadcast(record);
 
@@ -306,7 +317,7 @@ mod tests {
         assert!(is_registered(broadcast.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dropped_handle_stops_its_events() {
         let broadcast = broadcast(record);
         let id = broadcast.0;
@@ -317,7 +328,7 @@ mod tests {
         assert_eq!(SEEN.get(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_callback_can_stop_its_own_broadcast_through_the_stored_handle() {
         let broadcast = broadcast(stop_stored);
         let id = broadcast.0;

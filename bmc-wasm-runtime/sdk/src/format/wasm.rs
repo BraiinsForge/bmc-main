@@ -143,22 +143,23 @@ impl FormatZoneOffsetProvider for Host {
 #[cfg(test)]
 mod tests {
     use super::read_host_buf;
+    use crate::wasm_test;
 
-    #[test]
+    #[wasm_test]
     fn read_host_buf_empty() {
         let buf = [0_u8; 64];
         assert_eq!(read_host_buf(&buf, 0), "");
         assert_eq!(read_host_buf(&buf, -1), "");
     }
 
-    #[test]
+    #[wasm_test]
     fn read_host_buf_valid() {
         let mut buf = [0_u8; 64];
         buf[..5].copy_from_slice(b"hello");
         assert_eq!(read_host_buf(&buf, 5), "hello");
     }
 
-    #[test]
+    #[wasm_test]
     fn read_host_buf_clamped() {
         let mut buf = [0_u8; 64];
         buf.fill(b'x');

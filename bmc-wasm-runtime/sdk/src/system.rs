@@ -72,9 +72,10 @@ pub fn current() -> Snapshot {
 /// Inside `on_system_update`, holds the just-replaced snapshot
 /// — diff against [`current`] to react only to fields whose value actually changed.
 ///
-/// Always empty off-device: nothing delivers a second snapshot, so there
-/// is no rotation to remember. Diffing it against [`current`] reports
-/// every field as changed rather than nothing.
+/// Always empty in a native build: nothing delivers a second snapshot,
+/// so diffing it against [`current`] reports every field as changed.
+/// Under the wasm test host, `set_current` stands in for a device update:
+/// the snapshot it replaces moves here on the next read, not at the install.
 #[must_use]
 pub fn previous() -> Snapshot {
     Platform::previous()
@@ -99,7 +100,7 @@ use wasm::Host as Platform;
 #[cfg(all(target_arch = "wasm32", any(test, feature = "test-support")))]
 pub use wasm::set_current;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
@@ -107,5 +108,30 @@ mod tests {
     fn current_and_previous_are_none_on_native() {
         assert_eq!(current().timezone(), None);
         assert_eq!(previous().timezone(), None);
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod test_host {
+    use super::*;
+    use crate::wasm_test;
+
+    #[wasm_test]
+    fn a_second_install_rotates_the_first_into_previous() {
+        set_current(SnapshotBuilder::new().timezone("Europe/Prague").build());
+        assert_eq!(current().timezone(), Some("Europe/Prague"));
+        set_current(SnapshotBuilder::new().timezone("Asia/Tokyo").build());
+
+        assert_eq!(current().timezone(), Some("Asia/Tokyo"));
+        assert_eq!(previous().timezone(), Some("Europe/Prague"));
+    }
+
+    #[wasm_test]
+    fn installs_without_a_read_between_rotate_nothing() {
+        set_current(SnapshotBuilder::new().timezone("Europe/Prague").build());
+        set_current(SnapshotBuilder::new().timezone("Asia/Tokyo").build());
+
+        assert_eq!(previous().timezone(), None);
+        assert_eq!(current().timezone(), Some("Asia/Tokyo"));
     }
 }

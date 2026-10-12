@@ -328,6 +328,7 @@ mod tests {
     use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
     use super::{HttpListener, HttpRequest, LISTENERS, RequestCallback, register_callback};
+    use crate::wasm_test;
 
     thread_local! {
         static SEEN: Cell<Option<HttpListenerId>> = const { Cell::new(None) };
@@ -366,7 +367,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn a_request_reaches_its_callback_with_its_listener() {
         let listener = listen(record);
 
@@ -375,7 +376,17 @@ mod tests {
         assert_eq!(SEEN.get(), Some(listener.0));
     }
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_request_from_the_host_reaches_its_listener() {
+        let listener = listen(record);
+
+        super::wasm::__on_http_request(listener.0.to_wire(), 1, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        assert_eq!(SEEN.get(), Some(listener.0));
+    }
+
+    #[wasm_test]
     fn a_request_leaves_its_listener_open() {
         let listener = listen(record);
 
@@ -384,7 +395,7 @@ mod tests {
         assert!(is_registered(listener.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dropped_handle_stops_its_requests() {
         let listener = listen(record);
         let id = listener.0;
@@ -395,7 +406,7 @@ mod tests {
         assert_eq!(SEEN.get(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_callback_can_close_its_own_listener_through_the_stored_handle() {
         let listener = listen(close_stored);
         let id = listener.0;

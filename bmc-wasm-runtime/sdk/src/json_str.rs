@@ -74,6 +74,7 @@ impl<T: AsRef<str>> uDisplay for JsonStr<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_test;
 
     fn render<T: uDisplay>(v: T) -> String {
         let mut s = String::new();
@@ -81,50 +82,50 @@ mod tests {
         s
     }
 
-    #[test]
+    #[wasm_test]
     fn plain_passes_through() {
         assert_eq!(render(JsonStr("hello world")), "hello world");
     }
 
-    #[test]
+    #[wasm_test]
     fn double_quote_escaped() {
         assert_eq!(render(JsonStr(r#"a"b"#)), r#"a\"b"#);
     }
 
-    #[test]
+    #[wasm_test]
     fn backslash_escaped() {
         assert_eq!(render(JsonStr(r"a\b")), r"a\\b");
     }
 
-    #[test]
+    #[wasm_test]
     fn whitespace_chars() {
         assert_eq!(render(JsonStr("\n\r\t")), r"\n\r\t");
     }
 
-    #[test]
+    #[wasm_test]
     fn backspace_and_form_feed() {
         assert_eq!(render(JsonStr("\u{0008}\u{000C}")), r"\b\f");
     }
 
-    #[test]
+    #[wasm_test]
     fn other_control_chars_unicode_escape() {
         assert_eq!(render(JsonStr("\u{0001}\u{001F}")), r"\u0001\u001f");
     }
 
-    #[test]
+    #[wasm_test]
     fn utf8_passes_through() {
         assert_eq!(render(JsonStr("Příliš")), "Příliš");
         assert_eq!(render(JsonStr("🦀")), "🦀");
     }
 
-    #[test]
+    #[wasm_test]
     fn del_and_above_pass_through() {
         // RFC 8259 only requires escaping U+0000..U+001F plus `"` and `\`.
         // U+007F (DEL) and above pass through.
         assert_eq!(render(JsonStr("\u{007F}")), "\u{007F}");
     }
 
-    #[test]
+    #[wasm_test]
     fn injection_attempt_neutralised() {
         // Reviewer's concern: a value tries to break out of the string and
         // inject a sibling field.

@@ -19,41 +19,42 @@
 // the grant above.
 
 use super::*;
+use crate::wasm_test;
 
-#[test]
+#[wasm_test]
 fn duration_zero_and_negative() {
     assert_eq!(format_duration(0, false), "T-0");
     assert_eq!(format_duration(-1, false), "T-0");
     assert_eq!(format_duration(-100, true), "T-0");
 }
 
-#[test]
+#[wasm_test]
 fn duration_seconds_only() {
     assert_eq!(format_duration(59, false), "0d 00h 00m");
     assert_eq!(format_duration(59, true), "0d 00h 00m 59s");
 }
 
-#[test]
+#[wasm_test]
 fn duration_minutes() {
     assert_eq!(format_duration(60, false), "0d 00h 01m");
     assert_eq!(format_duration(3_599, true), "0d 00h 59m 59s");
 }
 
-#[test]
+#[wasm_test]
 fn duration_hours() {
     assert_eq!(format_duration(3_600, false), "0d 01h 00m");
     assert_eq!(format_duration(3_661, false), "0d 01h 01m");
     assert_eq!(format_duration(3_661, true), "0d 01h 01m 01s");
 }
 
-#[test]
+#[wasm_test]
 fn duration_days() {
     assert_eq!(format_duration(86_400, false), "1d 00h 00m");
     assert_eq!(format_duration(2_598_840, false), "30d 01h 54m");
     assert_eq!(format_duration(2_598_840, true), "30d 01h 54m 00s");
 }
 
-#[test]
+#[wasm_test]
 fn duration_large() {
     // 365 days
     assert_eq!(format_duration(365 * 86_400, false), "365d 00h 00m");
@@ -65,7 +66,7 @@ fn caption(label: &TzLabel) -> String {
     s
 }
 
-#[test]
+#[wasm_test]
 fn tz_caption_resolved_whole_and_half_hour() {
     let whole = TzLabel::Resolved {
         city: "Prague".to_owned(),
@@ -79,7 +80,7 @@ fn tz_caption_resolved_whole_and_half_hour() {
     assert_eq!(caption(&half), "Kolkata (+5:30)");
 }
 
-#[test]
+#[wasm_test]
 fn tz_caption_resolved_negative_offset() {
     let label = TzLabel::Resolved {
         city: "New York".to_owned(),
@@ -88,7 +89,7 @@ fn tz_caption_resolved_negative_offset() {
     assert_eq!(caption(&label), "New York (-5)");
 }
 
-#[test]
+#[wasm_test]
 fn tz_caption_unknown_reads_unknown() {
     let label = TzLabel::Unknown {
         city: "Prague".to_owned(),
@@ -158,7 +159,7 @@ mod off_device {
     }
 }
 
-#[test]
+#[wasm_test]
 fn f64_fixed_positive_with_decimals() {
     assert_eq!(format_f64_fixed(2.5, 2), "2.50");
     assert_eq!(format_f64_fixed(2.55, 2), "2.55");
@@ -167,41 +168,42 @@ fn f64_fixed_positive_with_decimals() {
     assert_eq!(format_f64_fixed(1.0, 3), "1.000");
 }
 
-#[test]
+#[wasm_test]
 fn f64_fixed_zero_and_signed_zero() {
     assert_eq!(format_f64_fixed(0.0, 2), "0.00");
     assert_eq!(format_f64_fixed(-0.0, 2), "0.00");
 }
 
-#[test]
+#[wasm_test]
 fn f64_fixed_negative() {
     assert_eq!(format_f64_fixed(-1.0, 2), "-1.00");
     assert_eq!(format_f64_fixed(-0.05, 2), "-0.05");
     assert_eq!(format_f64_fixed(-123.456, 2), "-123.46");
 }
 
-#[test]
+#[wasm_test]
 fn f64_fixed_zero_decimals() {
     assert_eq!(format_f64_fixed(123.456, 0), "123");
     assert_eq!(format_f64_fixed(-2.5, 0), "-3");
     assert_eq!(format_f64_fixed(0.0, 0), "0");
 }
 
-#[test]
+#[wasm_test]
 fn f64_fixed_clamps_excessive_decimals() {
     assert_eq!(format_f64_fixed(1.0, 10), "1.000000000");
     assert_eq!(format_f64_fixed(1.0, 9), "1.000000000");
 }
 
-#[test]
+#[wasm_test]
 fn f64_fixed_does_not_emit_negative_zero() {
     assert_eq!(format_f64_fixed(-0.001, 2), "0.00");
 }
 
 mod si_carry {
     use super::{_host_format_number, _host_format_si_parts};
+    use crate::wasm_test;
 
-    #[test]
+    #[wasm_test]
     fn a_mantissa_that_rounds_to_a_thousand_takes_the_next_prefix() {
         assert_eq!(
             _host_format_si_parts(999.99e18, 4, "H/s"),
@@ -213,7 +215,7 @@ mod si_carry {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_mantissa_that_rounds_short_of_a_thousand_keeps_its_prefix() {
         assert_eq!(
             _host_format_si_parts(999.94e18, 4, "H/s"),
@@ -224,8 +226,9 @@ mod si_carry {
 
 mod si_decimals {
     use super::si_decimals;
+    use crate::wasm_test;
 
-    #[test]
+    #[wasm_test]
     fn targets_the_requested_significant_figures() {
         assert_eq!(si_decimals(13.2, 3), 1); // 13.2
         assert_eq!(si_decimals(154.0, 3), 0); // 154

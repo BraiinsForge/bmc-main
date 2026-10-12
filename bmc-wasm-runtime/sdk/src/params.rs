@@ -126,6 +126,7 @@ use wasm::Host as Platform;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_test;
     use bmc_wasm_protocol::params::kind;
 
     /// One packed entry mapping `key` to the string `value`, in the host's wire format.
@@ -143,14 +144,19 @@ mod tests {
         out
     }
 
-    #[test]
-    fn current_and_previous_are_default_on_native() {
-        // On `wasm32`, [`current`] and [`previous`] call the host imports.
-        // On native (this test target), those imports don't exist; the native fallback returns
-        // [`Params::default`] so non-wasm consumers of the SDK API compile and behave consistently.
-        // End-to-end coverage of the wasm path lives in `bmc-wasm-runtime` integration tests.
-        assert!(current().is_empty());
-        assert!(previous().is_empty());
+    #[cfg(not(target_arch = "wasm32"))]
+    mod off_device {
+        use super::*;
+
+        #[test]
+        fn current_and_previous_are_default_on_native() {
+            // On `wasm32`, [`current`] and [`previous`] call the host imports.
+            // On native (this test target), those imports don't exist; the native fallback returns
+            // [`Params::default`] so non-wasm consumers of the SDK API compile and behave consistently.
+            // End-to-end coverage of the wasm path lives in `bmc-wasm-runtime` integration tests.
+            assert!(current().is_empty());
+            assert!(previous().is_empty());
+        }
     }
 
     /// Test-side fake of [`crate::snapshot_cache::HostSnapshotProvider`].
@@ -191,7 +197,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn previous_first_after_version_bump_returns_just_replaced_snapshot() {
         // Channel-specific regression test for the BDK-432 #1 bug, exercised end-to-end through
         // the params wire format. The companion test in `snapshot_cache::tests` covers the

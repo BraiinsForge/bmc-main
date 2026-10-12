@@ -317,6 +317,7 @@ mod tests {
     use bmc_wasm_protocol::MdnsBrowseId;
 
     use super::{BROWSES, BrowseCallback, MdnsBrowse, MdnsEvent, register_callback};
+    use crate::wasm_test;
 
     thread_local! {
         static SEEN: Cell<Option<MdnsBrowseId>> = const { Cell::new(None) };
@@ -348,7 +349,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_event_reaches_its_callback_with_its_browse() {
         let browse = browse(record);
 
@@ -357,7 +358,17 @@ mod tests {
         assert_eq!(SEEN.get(), Some(browse.0));
     }
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_find_from_the_host_reaches_its_browse() {
+        let browse = browse(record);
+
+        super::wasm::__on_mdns_event(browse.0.to_wire(), 0, 0, 0);
+
+        assert_eq!(SEEN.get(), Some(browse.0));
+    }
+
+    #[wasm_test]
     fn an_event_leaves_its_browse_running() {
         let browse = browse(record);
 
@@ -366,7 +377,7 @@ mod tests {
         assert!(is_registered(browse.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dropped_handle_stops_its_events() {
         let browse = browse(record);
         let id = browse.0;
@@ -377,7 +388,7 @@ mod tests {
         assert_eq!(SEEN.get(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_callback_can_stop_its_own_browse_through_the_stored_handle() {
         let browse = browse(stop_stored);
         let id = browse.0;

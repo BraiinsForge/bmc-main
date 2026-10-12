@@ -300,12 +300,13 @@ use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {
-    use super::{LocalDateTime, expand_rrule, parse_calendar_date, parse_datetime, tz_convert};
+    use super::{LocalDateTime, tz_convert};
+    use crate::wasm_test;
 
     /// Monday the 14th of September 2026, 10:30 UTC.
     const SEPTEMBER_MORNING: i64 = 1_789_381_800;
 
-    #[test]
+    #[wasm_test]
     fn tz_convert_reads_the_wall_clock_in_the_zone() {
         assert_eq!(
             tz_convert(SEPTEMBER_MORNING, "Europe/Prague"),
@@ -321,31 +322,37 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn tz_convert_refuses_an_unknown_zone() {
         assert_eq!(tz_convert(SEPTEMBER_MORNING, "Not/AZone"), None);
     }
 
-    #[test]
-    fn the_parsers_read_off_the_device() {
-        assert_eq!(
-            parse_datetime("2026-09-14T10:30:00Z"),
-            Some(SEPTEMBER_MORNING)
-        );
-        assert_eq!(
-            parse_calendar_date("2026-09-14").map(|date| date.weekday),
-            Some(0)
-        );
-        assert_eq!(
-            expand_rrule(
-                "FREQ=DAILY;COUNT=1",
-                "20260914T103000Z",
-                None,
-                SEPTEMBER_MORNING - 1,
-                SEPTEMBER_MORNING + 1,
-                10,
-            ),
-            vec![SEPTEMBER_MORNING]
-        );
+    #[cfg(not(target_arch = "wasm32"))]
+    mod off_device {
+        use super::SEPTEMBER_MORNING;
+        use crate::calendar::{expand_rrule, parse_calendar_date, parse_datetime};
+
+        #[test]
+        fn the_parsers_read_off_the_device() {
+            assert_eq!(
+                parse_datetime("2026-09-14T10:30:00Z"),
+                Some(SEPTEMBER_MORNING)
+            );
+            assert_eq!(
+                parse_calendar_date("2026-09-14").map(|date| date.weekday),
+                Some(0)
+            );
+            assert_eq!(
+                expand_rrule(
+                    "FREQ=DAILY;COUNT=1",
+                    "20260914T103000Z",
+                    None,
+                    SEPTEMBER_MORNING - 1,
+                    SEPTEMBER_MORNING + 1,
+                    10,
+                ),
+                vec![SEPTEMBER_MORNING]
+            );
+        }
     }
 }

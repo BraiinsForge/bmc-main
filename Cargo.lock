@@ -1634,7 +1634,6 @@ dependencies = [
  "glam",
  "percent-encoding",
  "tracing",
- "tracing-subscriber",
  "ufmt",
  "unit-prefix",
 ]

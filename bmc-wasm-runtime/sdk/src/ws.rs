@@ -304,6 +304,7 @@ mod tests {
     use bmc_wasm_protocol::WebsocketId;
 
     use super::{CONNECTIONS, Callback, Ws, WsEvent, register_callback};
+    use crate::wasm_test;
 
     thread_local! {
         static SEEN: Cell<Option<WebsocketId>> = const { Cell::new(None) };
@@ -335,7 +336,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_event_reaches_its_callback_with_its_connection() {
         let ws = connect(record);
 
@@ -344,7 +345,17 @@ mod tests {
         assert_eq!(SEEN.get(), Some(ws.0));
     }
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn an_open_from_the_host_reaches_its_connection() {
+        let ws = connect(record);
+
+        super::wasm::__on_ws_event(ws.0.to_wire(), 0, 0, 0);
+
+        assert_eq!(SEEN.get(), Some(ws.0));
+    }
+
+    #[wasm_test]
     fn an_event_leaves_its_connection_open() {
         let ws = connect(record);
 
@@ -353,7 +364,7 @@ mod tests {
         assert!(is_registered(ws.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dropped_handle_stops_its_events() {
         let ws = connect(record);
         let id = ws.0;
@@ -364,7 +375,7 @@ mod tests {
         assert_eq!(SEEN.get(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_callback_can_close_its_own_connection_through_the_stored_handle() {
         let ws = connect(close_stored);
         let id = ws.0;

@@ -247,6 +247,7 @@ use wasm::Host as Platform;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_test;
 
     /// Same packing the host's `encode_view` produces.
     fn encode(slots: &[(&str, &str, &str)]) -> Vec<u8> {
@@ -270,7 +271,7 @@ mod tests {
         out
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unbound_widget_decodes_to_an_empty_snapshot() {
         let snapshot = Snapshot::from_bytes(&encode(&[]));
 
@@ -278,7 +279,7 @@ mod tests {
         assert_eq!(snapshot.get("pool"), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bound_slot_reports_its_type_and_account() {
         let snapshot = Snapshot::from_bytes(&encode(&[("pool", "braiins-pool", "Můj účet")]));
 
@@ -292,14 +293,14 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn an_unlisted_slot_reads_as_unbound() {
         let snapshot = Snapshot::from_bytes(&encode(&[("pool", "braiins-pool", "Mine")]));
 
         assert!(!snapshot.is_bound("spare"));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_truncated_buffer_keeps_the_slots_decoded_so_far() {
         let mut bytes = encode(&[
             ("pool", "braiins-pool", "Mine"),

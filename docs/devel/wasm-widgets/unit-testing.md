@@ -47,7 +47,7 @@ just test-wasm-sdk
 ```
 
 `test-widget` takes a widget's directory name, or a shared library's under `lib/`. Whatever follows the name reaches
-nextest, so a substring of the test names narrows the run. `test-wasm-sdk` runs the SDK's library tests.
+nextest, so a substring of the test names narrows the run. `test-wasm-sdk` runs the SDK's own tests.
 
 Plain cargo works as well. `.cargo/config.toml` names `scripts/wasm_test_runner.sh` as the runner for `wasm32` binaries,
 so any test command with `--target wasm32-unknown-unknown` goes through it:

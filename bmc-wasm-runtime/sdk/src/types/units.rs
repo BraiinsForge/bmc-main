@@ -577,27 +577,28 @@ impl Hashvalue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_test;
 
     fn approx(a: f64, b: f64) -> bool {
         // Relative tolerance — hand-written decimals aren't exact near 1e4.
         (a - b).abs() <= 1e-6 * b.abs().max(1.0)
     }
 
-    #[test]
+    #[wasm_test]
     fn length_round_trips_through_canonical_meters() {
         let l = Length::from_kilometers(420.0);
         assert!(approx(l.as_meters(), 420_000.0));
         assert!(approx(l.as_kilometers(), 420.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn length_round_trips_through_the_scale_a_person_is_measured_at() {
         let l = Length::from_centimeters(180.0);
         assert!(approx(l.as_centimeters(), 180.0));
         assert!(approx(l.as_meters(), 1.8));
     }
 
-    #[test]
+    #[wasm_test]
     fn bitcoin_round_trips_through_satoshis() {
         let amount = BitcoinAmount::from_bitcoin(0.055);
         assert!(approx(amount.as_satoshis(), 5_500_000.0));
@@ -610,7 +611,7 @@ mod tests {
     /// A day's reward at a single miner's hashrate is a small fraction of a bitcoin.
     /// Rendered coarser than a satoshi, the digits carrying it round away
     /// and an earning account reads as zero.
-    #[test]
+    #[wasm_test]
     fn a_bitcoin_amount_below_a_microbitcoin_keeps_its_digits() {
         assert_eq!(
             BitcoinAmount::from_bitcoin(0.000_000_29).format_value(),
@@ -618,7 +619,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_bitcoin_amount_renders_down_to_the_satoshi() {
         assert_eq!(
             BitcoinAmount::from_bitcoin(0.000_17).format_value(),
@@ -626,7 +627,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_test]
     fn a_single_satoshi_survives_rendering() {
         assert_eq!(
             BitcoinAmount::from_satoshis(1.0).format_value(),
@@ -635,14 +636,14 @@ mod tests {
     }
 
     /// A true zero has to stay distinguishable from an amount rounded away.
-    #[test]
+    #[wasm_test]
     fn a_zero_bitcoin_amount_stays_zero() {
         assert_eq!(BitcoinAmount::default().format_value(), "0,00000000");
     }
 
     /// Which decoration an amount wears is the caller's, so both stay
     /// available and neither changes the number between them.
-    #[test]
+    #[wasm_test]
     fn an_amount_wears_either_its_unit_or_its_sign() {
         let amount = BitcoinAmount::from_bitcoin(0.000_17);
         assert_eq!(amount.format(), "0,00017000 BTC");
@@ -650,7 +651,7 @@ mod tests {
     }
 
     /// The minus belongs ahead of the currency sign, as it does on fiat.
-    #[test]
+    #[wasm_test]
     fn a_negative_amount_leads_with_its_minus() {
         assert_eq!(
             BitcoinAmount::from_bitcoin(-0.5).format_with_sign(),
@@ -664,13 +665,13 @@ mod tests {
     }
 
     /// The public API quotes hashvalue in BTC; the faces render satoshis.
-    #[test]
+    #[wasm_test]
     fn hashvalue_converts_a_bitcoin_quote_into_satoshis() {
         let value = Hashvalue::from_bitcoin_per_terahash_day(0.000_000_5);
         assert!(approx(value.as_satoshis_per_terahash_day(), 50.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn ratio_round_trips_through_canonical_fraction() {
         let r = Ratio::from_percent(4.5);
         assert!(approx(r.as_fraction(), 0.045));
@@ -678,7 +679,7 @@ mod tests {
         assert!(approx(Ratio::from_fraction(0.045).as_percent(), 4.5));
     }
 
-    #[test]
+    #[wasm_test]
     fn mass_converts_between_kilograms_and_pounds() {
         let m = Mass::from_kilograms(70.0);
         assert!(approx(m.as_kilograms(), 70.0));
@@ -690,7 +691,7 @@ mod tests {
     }
 
     /// With no snapshot installed the operator's units read as metric.
-    #[test]
+    #[wasm_test]
     fn a_short_length_renders_at_its_own_scale() {
         assert_eq!(Length::from_centimeters(180.0).format_short(0), "180 cm");
         assert_eq!(Mass::from_kilograms(70.0).format(0), "70 kg");
@@ -717,7 +718,7 @@ mod tests {
 
     /// Heights off the 2026 grid, 182 cm being the one that rounds up
     /// into a whole foot.
-    #[test]
+    #[wasm_test]
     fn inches_rounding_into_a_foot_carries_rather_than_reading_twelve() {
         assert_eq!(feet_and_inches(180.0), (5.0, 11.0));
         assert_eq!(feet_and_inches(181.0), (5.0, 11.0));
@@ -725,7 +726,7 @@ mod tests {
         assert_eq!(feet_and_inches(186.0), (6.0, 1.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn speed_converts_between_the_units_it_exposes() {
         // The ISS at ~27 600 km/h is the canonical 7.666… km/s.
         let s = Speed::from_kilometers_per_hour(27_600.0);
@@ -734,7 +735,7 @@ mod tests {
         assert!(approx(s.as_meters_per_second(), 7_666.666_7));
     }
 
-    #[test]
+    #[wasm_test]
     fn temperature_converts_between_celsius_and_fahrenheit() {
         let t = Temperature::from_celsius(20.0);
         assert!(approx(t.as_celsius(), 20.0));
@@ -745,7 +746,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn mining_quantities_round_trip_through_their_canonical_unit() {
         assert!(approx(ElectricPower::from_watts(60.0).as_watts(), 60.0));
         assert!(approx(
@@ -758,7 +759,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[wasm_test]
     fn quantities_read_the_units_miner_firmware_reports() {
         let gigahashes = Hashrate::from_si(122_480.0, SiPrefix::Giga);
         assert!(approx(gigahashes.as_terahashes_per_second(), 122.48));
@@ -773,7 +774,7 @@ mod tests {
         assert!(approx(draw.as_si(SiPrefix::Milli), 35_000.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn the_canonical_prefix_is_the_identity() {
         assert_eq!(
             Hashrate::from_si(17.08, Hashrate::CANONICAL),

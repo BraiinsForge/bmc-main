@@ -1214,6 +1214,7 @@ pub(crate) struct HostState {
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<crate::runtime::FetchObserver>,
 
+    #[cfg(any(test, feature = "hermetic-host"))]
     pub(crate) guest_log_sink: Option<crate::runtime::GuestLogSink>,
     #[cfg(any(test, feature = "hermetic-host"))]
     pub(crate) guest_panic: Option<crate::runtime::GuestPanic>,
@@ -1341,6 +1342,25 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
+    /// Hand a guest's `host_log` line to the log sink, or to `tracing` without one.
+    #[cfg_attr(
+        not(any(test, feature = "hermetic-host")),
+        expect(clippy::unused_self, reason = "only a test host has a log sink")
+    )]
+    pub(crate) fn log_guest_line(&mut self, level: tracing::Level, msg: &str) {
+        #[cfg(any(test, feature = "hermetic-host"))]
+        if let Some(sink) = self.guest_log_sink.as_mut() {
+            sink(level, msg);
+            return;
+        }
+        match level {
+            tracing::Level::DEBUG => tracing::debug!("{msg}"),
+            tracing::Level::INFO => tracing::info!("{msg}"),
+            tracing::Level::WARN => tracing::warn!("{msg}"),
+            _ => tracing::error!("{msg}"),
+        }
+    }
+
     pub(crate) fn renderer_asset_registration_matches(
         &self,
         raw_tag: &str,
@@ -1554,6 +1574,7 @@ impl HostState {
             url_rewrites: Vec::new(),
             hermetic: None,
             fetch_observer: None,
+            #[cfg(any(test, feature = "hermetic-host"))]
             guest_log_sink: None,
             #[cfg(any(test, feature = "hermetic-host"))]
             guest_panic: None,

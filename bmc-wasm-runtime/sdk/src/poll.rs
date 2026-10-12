@@ -510,6 +510,10 @@ impl Registry {
     }
 
     #[cfg(test)]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the glue tests that use it run off-device")
+    )]
     fn is_registered(&self, index: usize) -> bool {
         self.poll(index).is_some()
     }

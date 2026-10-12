@@ -1,0 +1,27 @@
+# The SDK's tests run on wasm32 under the wasm test runner, which only sees `#[wasm_test]`.
+# A plain `#[test]` belongs only to a native-arm test, in a module gated off wasm32
+# (`off_device`, or a whole `cfg(all(test, not(target_arch = "wasm32")))` module);
+# anywhere else it compiles on wasm32 and never runs.
+
+id: no-plain-test-in-sdk
+language: rust
+severity: error
+
+message: Plain `#[test]` outside a native-only module — the wasm run never sees it; mark it `#[wasm_test]`, imported as `crate::wasm_test` in `src/` and `bmc_wasm_sdk::wasm_test` in `tests/`.
+
+files:
+  - "bmc-wasm-runtime/sdk/src/**/*.rs"
+  - "bmc-wasm-runtime/sdk/tests/**/*.rs"
+
+rule:
+  kind: attribute_item
+  regex: ^#\[test\]$
+  not:
+    inside:
+      stopBy: end
+      kind: mod_item
+      follows:
+        kind: attribute_item
+        regex: not\(target_arch = "wasm32"\)
+
+fix: "#[wasm_test]"

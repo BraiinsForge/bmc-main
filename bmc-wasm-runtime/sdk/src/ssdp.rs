@@ -251,6 +251,7 @@ mod tests {
     use bmc_wasm_protocol::SsdpSearchId;
 
     use super::{SEARCHES, SearchCallback, SsdpEvent, SsdpSearch, register_callback};
+    use crate::wasm_test;
 
     thread_local! {
         static SEEN: Cell<Option<SsdpSearchId>> = const { Cell::new(None) };
@@ -282,7 +283,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_test]
     fn an_event_reaches_its_callback_with_its_search() {
         let search = search(record);
 
@@ -291,7 +292,17 @@ mod tests {
         assert_eq!(SEEN.get(), Some(search.0));
     }
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_find_from_the_host_reaches_its_search() {
+        let search = search(record);
+
+        super::wasm::__on_ssdp_event(search.0.to_wire(), 0, 0, 0);
+
+        assert_eq!(SEEN.get(), Some(search.0));
+    }
+
+    #[wasm_test]
     fn an_event_leaves_its_search_running() {
         let search = search(record);
 
@@ -300,7 +311,7 @@ mod tests {
         assert!(is_registered(search.0));
     }
 
-    #[test]
+    #[wasm_test]
     fn a_dropped_handle_stops_its_events() {
         let search = search(record);
         let id = search.0;
@@ -311,7 +322,7 @@ mod tests {
         assert_eq!(SEEN.get(), None);
     }
 
-    #[test]
+    #[wasm_test]
     fn a_callback_can_stop_its_own_search_through_the_stored_handle() {
         let search = search(stop_stored);
         let id = search.0;

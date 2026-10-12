@@ -134,21 +134,21 @@ mod tests {
         assert!(entry.saved_at > 0, "saved_at carries the wall clock");
     }
 
-    #[test]
+    #[wasm_test]
     fn stat_skips_the_payload() {
         put("peek", b"header", b"heavy payload");
         let stat = stat("peek").expect("BUG: just stored");
         assert_eq!(stat.metadata, b"header");
     }
 
-    #[test]
+    #[wasm_test]
     fn put_overwrites() {
         put("twice", b"old", b"old");
         put("twice", b"new", b"new");
         assert_eq!(read_bytes("twice").expect("BUG: just stored").bytes, b"new");
     }
 
-    #[test]
+    #[wasm_test]
     fn evict_removes_and_misses_read_as_none() {
         put("gone", b"", b"x");
         evict("gone");

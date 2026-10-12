@@ -161,26 +161,27 @@ pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
     Platform::mesh(mesh)
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use super::{init_test_registrars, register_image};
     use crate::cache;
+    use crate::wasm_test;
     use bmc_wasm_protocol::encode_image_meta;
 
-    #[test]
+    #[wasm_test]
     fn a_cached_image_restores_through_the_registrar() {
         init_test_registrars();
         cache::put("img", &encode_image_meta(2, 2, b"url"), &[0_u8; 16]);
         assert!(register_image(cache::lazy_get("img")).is_some());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_cache_miss_restores_nothing() {
         init_test_registrars();
         assert!(register_image(cache::lazy_get("absent")).is_none());
     }
 
-    #[test]
+    #[wasm_test]
     fn metadata_without_dims_restores_nothing() {
         init_test_registrars();
         cache::put("undersized", b"meta", b"payload");

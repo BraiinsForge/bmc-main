@@ -378,6 +378,17 @@ fn register_cache_stat_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
+/// The level a guest's `host_log` number names, as the SDK's
+/// `log::level` numbers them; anything past them is an error.
+fn guest_log_level(level: u32) -> tracing::Level {
+    match level {
+        0 => tracing::Level::DEBUG,
+        1 => tracing::Level::INFO,
+        2 => tracing::Level::WARN,
+        _ => tracing::Level::ERROR,
+    }
+}
+
 fn register_log_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -386,22 +397,9 @@ fn register_log_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(msg) = read_string(&caller, ptr, len) else {
                 return;
             };
-            let level = match level {
-                0 => tracing::Level::DEBUG,
-                1 => tracing::Level::INFO,
-                2 => tracing::Level::WARN,
-                _ => tracing::Level::ERROR,
-            };
-            if let Some(sink) = caller.data_mut().guest_log_sink.as_mut() {
-                sink(level, &msg);
-                return;
-            }
-            match level {
-                tracing::Level::DEBUG => tracing::debug!("{msg}"),
-                tracing::Level::INFO => tracing::info!("{msg}"),
-                tracing::Level::WARN => tracing::warn!("{msg}"),
-                _ => tracing::error!("{msg}"),
-            }
+            caller
+                .data_mut()
+                .log_guest_line(guest_log_level(level), &msg);
         },
     )?;
 
@@ -1192,7 +1190,12 @@ mod tests {
     use bmc_wasm_protocol::XmlId;
     use bmc_wasm_protocol::xml::XmlDocumentIndex;
 
-    use super::{json_kind_impl, json_len_impl, kv_disk_path, validate_kv_key, xml_lookup_text};
+    use tracing::Level;
+
+    use super::{
+        guest_log_level, json_kind_impl, json_len_impl, kv_disk_path, validate_kv_key,
+        xml_lookup_text,
+    };
 
     const XML_WIDGET_FEED: &[u8] = br#"
         <rss>
@@ -1206,6 +1209,20 @@ mod tests {
             </channel>
         </rss>
     "#;
+
+    #[test]
+    fn each_guest_log_level_logs_at_its_own_level() {
+        assert_eq!(
+            [0, 1, 2, 3, 7].map(guest_log_level),
+            [
+                Level::DEBUG,
+                Level::INFO,
+                Level::WARN,
+                Level::ERROR,
+                Level::ERROR
+            ]
+        );
+    }
 
     #[test]
     fn json_kind_tells_every_shape_apart_and_absence_from_all_of_them() {

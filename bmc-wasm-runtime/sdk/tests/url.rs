@@ -19,8 +19,9 @@
 // the grant above.
 
 use bmc_wasm_sdk::url::join_path_segments;
+use bmc_wasm_sdk::wasm_test;
 
-#[test]
+#[wasm_test]
 fn joins_and_encodes_path_segments() {
     assert_eq!(
         join_path_segments("https://nexus/api", &["prices", "BTC/USD?x#y"]),
@@ -32,7 +33,7 @@ fn joins_and_encodes_path_segments() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn exact_dot_segments_cannot_become_path_structure() {
     assert_eq!(
         join_path_segments("https://nexus/api/", &[".", "..", "a.b"]),
@@ -40,7 +41,7 @@ fn exact_dot_segments_cannot_become_path_structure() {
     );
 }
 
-#[test]
+#[wasm_test]
 fn empty_segments_keep_their_path_boundary() {
     assert_eq!(
         join_path_segments("https://nexus/api/", &["one", "", "two"]),

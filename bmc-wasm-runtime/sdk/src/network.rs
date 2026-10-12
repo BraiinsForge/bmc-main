@@ -107,7 +107,8 @@ fn read_str(bytes: &[u8], cursor: &mut usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{NetworkInfo, info, parse};
+    use super::{NetworkInfo, parse};
+    use crate::wasm_test;
 
     fn wire(ssid: &str, ip: &str) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -119,7 +120,7 @@ mod tests {
         bytes
     }
 
-    #[test]
+    #[wasm_test]
     fn both_fields_read_back() {
         assert_eq!(
             parse(&wire("home", "192.168.1.20")),
@@ -130,17 +131,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn info_off_target_is_the_empty_default() {
-        assert_eq!(info(), NetworkInfo::default());
+    #[cfg(not(target_arch = "wasm32"))]
+    mod off_device {
+        use crate::network::{NetworkInfo, info};
+
+        #[test]
+        fn info_off_target_is_the_empty_default() {
+            assert_eq!(info(), NetworkInfo::default());
+        }
     }
 
-    #[test]
+    #[wasm_test]
     fn no_bytes_read_as_the_empty_default() {
         assert_eq!(parse(&[]), NetworkInfo::default());
     }
 
-    #[test]
+    #[wasm_test]
     fn a_field_cut_short_keeps_what_arrived() {
         let mut bytes = wire("home", "192.168.1.20");
         bytes.truncate(bytes.len() - 3);

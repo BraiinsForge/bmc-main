@@ -61,7 +61,18 @@ validate: format clippy python
     # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.
     # Left unwrapped like the clippy runs above: `nix develop` swaps the toolchain
     # and the sccache wrapper, and two rustc setups over one target dir do not link.
-    just nextest -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-ui -p bmc-svg-compiler -p bmc-wasm-thin -p bmc-wasm-thin-protocol
+    just nextest \
+        -p bmc-svg-compiler \
+        -p bmc-ui \
+        -p bmc-wasm-protocol \
+        -p bmc-wasm-runtime \
+        -p bmc-wasm-sdk \
+        -p bmc-wasm-sdk-macros \
+        -p bmc-wasm-thin \
+        -p bmc-wasm-thin-protocol
+
+    # The SDK's `#[wasm_test]`s again, on wasm32 under the wasm test runner.
+    just test-wasm-sdk
 
     # Widget logic has native tests; the wasm32 builds below can't run them.
     just nextest --manifest-path widgets-wasm/Cargo.toml --workspace
@@ -156,11 +167,10 @@ test-widget WIDGET *ARGS:
     echo "no widget '$widget' under any widget workspace" >&2
     exit 1
 
-# Run the SDK's `#[wasm_test]`s on wasm32 under the wasm test runner; ARGS reach nextest.
+# Run the SDK's `#[wasm_test]`s on wasm32, built in `widgets-wasm` as CI builds them; ARGS reach nextest.
 [positional-arguments]
 test-wasm-sdk *ARGS:
-    # Library tests only: `tests/log.rs` reads native `tracing`, which the wasm build lacks.
-    just nextest -p bmc-wasm-sdk --lib --target wasm32-unknown-unknown "$@"
+    just nextest --manifest-path widgets-wasm/Cargo.toml -p bmc-wasm-sdk --target wasm32-unknown-unknown "$@"
 
 # Compress images under the given paths (default: cwd).
 fmt-images *PATHS:
