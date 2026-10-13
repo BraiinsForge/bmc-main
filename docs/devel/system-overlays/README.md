@@ -39,7 +39,7 @@ its mining poller on the `mining` bit and never reads the product.
 
 ### Where the numbers come from
 
-Two sources, and they are not interchangeable. `SystemOverlay::render(renderer, viewport)` receives the size the
+Two sources, and they are not interchangeable. `SystemOverlay::render(renderer, viewport, frame)` receives the size the
 compositor configured, which is the authoritative one. `HardwareProfile::for_product(…).display` is what the platform
 *expects* the display to be.
 

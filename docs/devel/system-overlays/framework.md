@@ -16,7 +16,9 @@ required; the rest have defaults so a passive overlay stays small.
 | ---------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `layer_config`                                                                                             | yes      | Static placement and input policy (layer, anchor, size, margins, namespace, input region).                                                                                                                                                             |
 | `tick(now) -> TickOutcome`                                                                                 | yes      | Per-pass background work; reports whether it wants to be on-screen, wants a redraw, and when to wake next. Must not block.                                                                                                                             |
-| `render(renderer, viewport)`                                                                               | yes      | Draw the frame into the configured size, in the shape the viewport carries. The `&mut dyn Renderer` is valid only for this call.                                                                                                                       |
+| `render(renderer, viewport, frame) -> RenderOutcome`                                                       | yes      | Draw the frame into the configured size, in the shape the viewport carries, replaying the last tree on an animation-only `frame`; report what the frame asks for next. The `&mut dyn Renderer` is valid only for this call.                            |
+| `animation_frame_delay_ms()`                                                                               | no       | Least time between frames while the tree animates; the shared widget cadence (33 ms) by default.                                                                                                                                                       |
+| `on_hidden()`                                                                                              | no       | The surface was unmapped; drop what only redraws it, such as the cached tree.                                                                                                                                                                          |
 | `init`                                                                                                     | no       | Called once before the first render.                                                                                                                                                                                                                   |
 | `prewarm(renderer, viewport)`                                                                              | no       | Pay one-time renderer setup (SVG icon decode, glyph atlas) at host startup, not on first reveal.                                                                                                                                                       |
 | `on_touch(event)`                                                                                          | no       | Delivered only when the input region is not `None`.                                                                                                                                                                                                    |
@@ -59,9 +61,37 @@ The trait re-exports the layer-shell `Layer` and `Anchor` enums from the crate r
 Overlays draw with the same `bmc-render` tree pipeline the WASM widgets use — `col`/`row`/`text`/`button`/`canvas`, laid
 out host-side with Taffy and drawn with femtovg — but build the `TreeNode` structs directly in Rust, with no WASM
 serialization step. `TreeUi` (`src/tree.rs`) holds the persistent interaction, animation, and layout caches so an
-overlay can call `TreeUi::render(node, size, delta_ms, renderer)` each frame without threading that state by hand. Touch
-is fed in with `push_touch`; the returned `TreeResult` reports slider drags by `touch_key` and `is_pressed(key)` backs
-the hold-to-confirm buttons (one-frame latency, matching the WASM host).
+overlay can call `TreeUi::render(frame, size, delta_ms, renderer, build)` each frame without threading that state by
+hand. Touch is fed in with `push_touch`; the returned `TreeFrame` carries the `TreeResult`, which reports slider drags
+by `touch_key`, and `is_pressed(key)` backs the hold-to-confirm buttons (one-frame latency, matching the WASM host).
+
+### Animation frames
+
+Each driver keeps a small frame schedule per overlay, so a tree that animates is woken the way a widget's is:
+
+- **Two kinds of frame.** A frame is *fresh* when the overlay's `tick` asked for it, a reveal or configure did, the
+  surface is not mapped yet, or the last render asked for a rebuild; it is *animation-only* when the last render asked
+  for a replay or a time-node boundary came up. The driver decides before rendering and passes the `FrameKind` to
+  `render`.
+- **Replay.** `TreeUi` keeps the last tree it rendered and its size. An animation-only frame replays it without calling
+  `build`; a fresh frame, a size change or pending touches build a new one. Renderer animations, transitions and
+  indeterminate progress bars therefore keep moving while the overlay's state stands still. A replay still lays the tree
+  out and paints it in full.
+- **What a frame asks for.** `render` returns a `RenderOutcome`: a `NextFrame` (`Idle`, `Replay` or `Rebuild`) and the
+  next boundary of a time node. `TreeUi` reports `Replay` while anything in the tree moves and `Idle` otherwise. The
+  clicks and drags a frame hit-tests come back from that same `render`, so an overlay whose handling of them changes
+  what it draws asks for `Rebuild` itself; the tray does for a slider move, a step and a press. Nothing asks for a
+  rebuild just because a finger is down, so a finger resting on a held button leaves the hold replaying. An animation
+  keeps going because `TreeUi` reports `Replay` for as long as it runs, not because the overlay remembers to ask. The
+  schedule stops waking once a render reports `Idle`.
+- **Cadence.** `animation_frame_delay_ms()` sets the overlay's cadence. A `Replay` or `Rebuild` is due one cadence after
+  the start of the frame that asked for it, so a frame slower than the cadence leaves the next one due at once; a frame
+  the loop renders sooner for another reason takes it up early.
+- **Hide and teardown** clear the schedule and call `on_hidden`, where every `TreeUi` overlay drops its cached tree. A
+  failure clears the schedule at once; the teardown that follows it drops the tree.
+
+Motion that a tree cannot express, such as the settings tray's layer-shell slide, stays the overlay's own: it asks for
+its frames from `tick`, at its animation cadence.
 
 The `canvas` immediate-mode element remains the escape hatch for gesture-driven or custom visuals.
 
@@ -100,7 +130,8 @@ available. `overlay_needs_hide` is simply *mapped and not visible*.
 The poll timeout (`overlay_poll_timeout`) must agree with the render gate: while invisible or otherwise non-rendering, a
 latched `wants_render` must **not** request an immediate wake, or the host busy-spins on a frame that never renders. A
 renderable overlay polls immediately (`Duration::ZERO`); a throttled one waits out the frame floor; otherwise the host
-sleeps until the tick-requested `next_wake`.
+sleeps until the earlier of the tick-requested `next_wake` and the frame schedule's deadline. Only a visible overlay's
+schedule counts, in the wake and in the render gate alike.
 
 ## Buffers while hidden
 

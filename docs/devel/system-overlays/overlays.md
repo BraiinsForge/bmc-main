@@ -339,6 +339,10 @@ because a screen-edge overlay is only shown while both revealed *and* `tick`-vis
   stays live. A declined restart shows bmc's own sentence under "Can't restart now"; a pending timeout, where bmc said
   nothing, shows the tray's "Restart failed / Try again". The failure stays for `ERROR_DISPLAY` (3 s). Restart wins if
   both FSMs report at once, which single-touch tracking makes unreachable in practice.
+- **Hold circle** — a held button grows a circle behind it that shrinks onto the button and fades in over the first 35 %
+  of the hold. It is a renderer animation from the hold's current progress over the time it has left, so the frames of a
+  hold replay the cached tree, and a tree rebuilt mid-hold carries on from the same spot. The hold FSMs wake the tray
+  only at their own edges: a hold completing, a request timing out, a failure message clearing.
 - **Reconfigure WiFi** — a hold-to-confirm button (`HOLD` = 5 s) that sends `SettingsRequest::ReconfigureWifi`; the FSM
   advances through holding/pending/active states from the `wifi_ap` event, and reports a failure if setup has not
   started within `RECONFIGURE_TIMEOUT` (30 s). bmc confirms only once the AP is up, and bringing it up takes it tens of
@@ -481,8 +485,9 @@ a terminal view also clears itself when its deadline expires:
 
 - **Running** shows the phase label ("Verifying firmware", "Verifying packages", "Preparing update" before the first
   phase) and a bar whose mode follows the snapshot: determinate when a download reports a total, indeterminate when it
-  reports only bytes downloaded. An animating bar wakes at `ANIMATION_FRAME` (100 ms) — package realization can run for
-  minutes under CPU and flash load, so 10 fps is enough and deliberately cheap.
+  reports only bytes downloaded. The moving bar is a renderer animation: its frames replay the cached tree, and the
+  overlay sets its animation cadence to `ANIMATION_FRAME_MS` (100 ms) — package realization can run for minutes under
+  CPU and flash load, so 10 fps is enough and deliberately cheap.
 - **Terminal** (`Succeeded` / `Failed`) carries a `remaining` interval from bmc; the overlay stores it as a deadline and
   unmaps when `tick` passes it. Repeated terminal snapshots keep the original deadline, so a coalesced re-send does not
   extend the screen. A firmware `Succeeded` is the one snapshot neither surface shows — the device-info overlay opens on
