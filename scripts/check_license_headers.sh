@@ -43,6 +43,9 @@ excludes=(
     "bmc-virt/kernel-patches/*"
     "bmc-render/keyboard/assets/layouts/*"
     "*/src/manifest_params.rs"
+    # Installed verbatim as every profile widget's launcher and compared
+    # byte for byte by bmc-upgrade; a header would ship into each wrapper.
+    "nix/wasm-widget-wrapper.sh"
 )
 
 source_extensions=()

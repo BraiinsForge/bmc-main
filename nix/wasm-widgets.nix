@@ -170,8 +170,10 @@ let
   #   $out/lib/bmc-widgets/<name>/lib/assets/v1/<kind>/<id>.asset
   #   $out/lib/bmc-widgets/<name>/manifest.json
   #
-  # Device-profile wrappers select the active per-major launcher. Other
-  # bundles remain self-contained by baking the thin store path.
+  # Device-profile wrappers select the active per-major launcher
+  # and locate the wasm relative to themselves, so the same bytes work
+  # at any store path (an uploaded widget package is content-addressed).
+  # Other bundles stay self-contained by baking the thin store path.
   mkWasmWidget =
     { name          # e.g. "hello-widget"
     , wasmDir       # derivation with all *.wasm files flat in $out/
@@ -183,17 +185,25 @@ let
     let
       icon = (builtins.fromJSON (builtins.readFile manifest)).icon or null;
       iconSrc = if icon == null then null else mkPublicIcon manifest icon;
-      wrapperExec =
+      # Read from the template the device checks uploaded wrappers against,
+      # so the two cannot drift.
+      profileWrapper = pkgs.writeText "bmc-widget-${name}-wrapper"
+        (builtins.replaceStrings [ "@sdkMajor@" "@name@" ] [ (toString sdkMajor) name ]
+          (builtins.readFile ./wasm-widget-wrapper.sh));
+      installWrapper =
         if wrapperMode == "profile" then ''
-          exec /run/current-profile/bin/${launcherName} \\
-            --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
-            --asset-root $out/lib/bmc-widgets/${name}/lib/assets \\
-            "\$@"
+          install -m755 ${profileWrapper} "$base/bin/${name}"
         '' else ''
+          # Unquoted heredoc expands $out to the packaged wasm path; the
+          # escaped runtime argument vector survives into the script.
+          cat > "$base/bin/${name}" <<EOF
+          #!/bin/sh
           exec ${thin}/bin/bmc-wasm-thin \\
             --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
             --asset-root $out/lib/bmc-widgets/${name}/lib/assets \\
             "\$@"
+          EOF
+          chmod +x "$base/bin/${name}"
         '';
     in
     assert lib.assertMsg (builtins.elem wrapperMode [ "profile" "baked" ])
@@ -209,14 +219,7 @@ let
         mkdir -p "$(dirname "$base/${icon}")"
         cp ${iconSrc} "$base/${icon}"
       ''}
-
-      # Unquoted heredoc expands $out to the packaged wasm path. The escaped
-      # runtime argument vector survives into the generated script.
-      cat > "$base/bin/${name}" <<EOF
-      #!/bin/sh
-      ${wrapperExec}
-      EOF
-      chmod +x "$base/bin/${name}"
+      ${installWrapper}
     '').overrideAttrs (old: {
       passthru = (old.passthru or { }) // {
         inherit name wrapperMode;

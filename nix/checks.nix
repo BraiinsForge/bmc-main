@@ -224,8 +224,9 @@ in
       script=${profileWrapper}/lib/bmc-widgets/${profileWrapper.name}/bin/${profileWrapper.name}
       grep -F '/run/current-profile/bin/${launcher.launcherName}' "$script"
       grep -F '"$@"' "$script"
-      if grep -F '${launcher.thin}' "$script" || grep -F '${wasmHost}' "$script"; then
-        echo "profile wrapper contains a baked runtime path" >&2
+      grep -F -e '--wasm "''${0%/*}/../lib/wasm/${profileWrapper.name}.wasm"' "$script"
+      if grep -F '${launcher.thin}' "$script" || grep -F '${wasmHost}' "$script" || grep -F '${profileWrapper}' "$script"; then
+        echo "profile wrapper contains a baked store path" >&2
         exit 1
       fi
       touch $out
