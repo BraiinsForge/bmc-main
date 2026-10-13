@@ -29,7 +29,8 @@ use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
-    SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
+    RenderOutcome, SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot,
+    UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -37,7 +38,7 @@ pub use crate::ui::Surface;
 
 // Package realization can run for minutes under CPU and flash load, so keep
 // the indeterminate bar at 10 fps.
-const ANIMATION_FRAME: Duration = Duration::from_millis(100);
+const ANIMATION_FRAME_MS: u32 = 100;
 
 /// Package card size on a wide display, rendered by `CARD_LARGE`.
 pub const PACKAGE_CARD_SURFACE_SIZE_LARGE: (u32, u32) = (384, 192);
@@ -196,7 +197,8 @@ pub fn render_upgrade(
     state: &mut UpgradeRenderState,
     view: &UpgradeView,
     now: Instant,
-) {
+    frame: FrameKind,
+) -> RenderOutcome {
     let icons = *state
         .icons
         .get_or_insert_with(|| icons::register_icons(renderer));
@@ -204,13 +206,13 @@ pub fn render_upgrade(
         .unwrap_or(u32::MAX);
     state.last_render = now;
     let size = (surface.width, surface.height);
-    if let Err(err) = state
-        .tree
-        .render(FrameKind::Fresh, size, delta_ms, renderer, || {
-            ui::build_upgrade_tree(view, surface, icons)
-        })
-    {
-        tracing::error!("upgrade tree render failed: {err}");
+    let build = || ui::build_upgrade_tree(view, surface, icons);
+    match state.tree.render(frame, size, delta_ms, renderer, build) {
+        Ok(tree_frame) => tree_frame.outcome,
+        Err(err) => {
+            tracing::error!("upgrade tree render failed: {err}");
+            RenderOutcome::default()
+        }
     }
 }
 
@@ -287,30 +289,37 @@ impl OverlayState {
             visible,
             wants_render: visible && (std::mem::take(&mut self.dirty) || animating),
             next_wake: if animating {
-                Some(now + ANIMATION_FRAME)
+                Some(now + Duration::from_millis(ANIMATION_FRAME_MS.into()))
             } else {
                 self.terminal_deadline
             },
         }
     }
 
-    fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
-        if let Some(view) = self.view {
-            let surface = Surface {
-                width: size.0,
-                height: size.1,
-                tier: self
-                    .fixed_tier
-                    .unwrap_or_else(|| SurfaceTier::fullscreen_for_width(size.0)),
-            };
-            render_upgrade(
-                renderer,
-                surface,
-                &mut self.render_state,
-                &view,
-                Instant::now(),
-            );
-        }
+    fn render(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        size: (u32, u32),
+        frame: FrameKind,
+    ) -> RenderOutcome {
+        let Some(view) = self.view else {
+            return RenderOutcome::default();
+        };
+        let surface = Surface {
+            width: size.0,
+            height: size.1,
+            tier: self
+                .fixed_tier
+                .unwrap_or_else(|| SurfaceTier::fullscreen_for_width(size.0)),
+        };
+        render_upgrade(
+            renderer,
+            surface,
+            &mut self.render_state,
+            &view,
+            Instant::now(),
+            frame,
+        )
     }
 }
 
@@ -400,8 +409,21 @@ impl SystemOverlay for UpgradeOverlay {
         self.state.tick(now)
     }
 
-    fn render(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
-        self.state.render(renderer, viewport.size());
+    fn render(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        viewport: OverlayViewport,
+        frame: FrameKind,
+    ) -> RenderOutcome {
+        self.state.render(renderer, viewport.size(), frame)
+    }
+
+    fn animation_frame_delay_ms(&self) -> u32 {
+        ANIMATION_FRAME_MS
+    }
+
+    fn on_hidden(&mut self) {
+        self.state.render_state.tree.clear();
     }
 }
 

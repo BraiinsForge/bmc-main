@@ -40,8 +40,8 @@ use bmc_render::renderer::Renderer;
 use bmc_render::tree::{FontFamily, FontWeight, TextAlign, TextStyle, VerticalAlign};
 use bmc_render_macros::include_svg;
 use bmc_system_overlay::{
-    LayerConfig, OverlayViewport, PlatformCaps, SnapshotVersion, SystemOverlay, TickOutcome,
-    VersionedSnapshot, register_icon,
+    FrameKind, LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome, SnapshotVersion,
+    SystemOverlay, TickOutcome, VersionedSnapshot, register_icon,
 };
 use bmc_wasm_sdk::assets::Svg;
 
@@ -374,8 +374,14 @@ impl SystemOverlay for OfflineOverlay {
         }
     }
 
-    fn render(&mut self, r: &mut dyn Renderer, viewport: OverlayViewport) {
+    fn render(
+        &mut self,
+        r: &mut dyn Renderer,
+        viewport: OverlayViewport,
+        _frame: FrameKind,
+    ) -> RenderOutcome {
         render_offline(r, viewport.size(), self.view);
+        RenderOutcome::default()
     }
 }
 

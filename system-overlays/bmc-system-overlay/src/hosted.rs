@@ -25,10 +25,11 @@ use bmc_widget::egl::{DmaBufInfo, EglContext};
 
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
-    AlarmEvent, FenceState, HideFenceAction, HideFenceGate, MIN_INTER_FRAME, PollGate, RenderGate,
-    SystemOverlay, deliver_platform_events, deliver_upgrade_update_and_tick, hide_fence_action,
-    hide_fence_after_tick, overlay_needs_hide, overlay_needs_render, overlay_poll_timeout,
-    resize_transition, resolved_configured_size, screen_edge_visible,
+    AlarmEvent, FenceState, FrameKind, HideFenceAction, HideFenceGate, MIN_INTER_FRAME,
+    OverlayFrames, PollGate, RenderGate, RenderOutcome, SystemOverlay, deliver_platform_events,
+    deliver_upgrade_update_and_tick, hide_fence_action, hide_fence_after_tick, overlay_needs_hide,
+    overlay_needs_render, overlay_poll_timeout, resize_transition, resolved_configured_size,
+    screen_edge_visible, whole_millis_up,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -54,7 +55,7 @@ pub struct HostedOverlay {
     size: (u32, u32),
     last_render: Option<Instant>,
     next_wake: Option<Instant>,
-    wants_render: bool,
+    frames: OverlayFrames,
     /// Whether the overlay currently wants to be on-screen (from its `tick`).
     visible: bool,
     /// Whether the surface is currently mapped (has a live buffer attached).
@@ -63,7 +64,7 @@ pub struct HostedOverlay {
     /// when no fence is pending.
     hide_fence: Option<Instant>,
     /// Set after a non-fatal render/export/attach error. A failed overlay is
-    /// dropped from the host's list (terminal) — it must NOT keep `wants_render`
+    /// dropped from the host's list (terminal) — it must NOT keep a frame
     /// latched, or it would busy-retry-and-log every pass.
     failed: bool,
     /// `Some(edge)` for a screen-edge overlay; its map/unmap is driven by
@@ -85,7 +86,10 @@ impl HostedOverlay {
         )?;
         let size = resolved_configured_size(config_size, client.size());
         let target = OverlayRenderTarget::new(egl, size.0, size.1)?;
-        let wants_render = client.take_needs_render();
+        let mut frames = OverlayFrames::new(overlay.animation_frame_delay_ms());
+        if client.take_needs_render() {
+            frames.request_fresh();
+        }
         overlay.init();
         let screen_edge = overlay.screen_edge();
         if let Some(edge) = screen_edge {
@@ -99,7 +103,7 @@ impl HostedOverlay {
             size,
             last_render: None,
             next_wake: None,
-            wants_render,
+            frames,
             visible: false,
             mapped: false,
             hide_fence: None,
@@ -156,7 +160,7 @@ impl HostedOverlay {
             if self.client.take_reveal() {
                 self.revealed = true;
                 self.overlay.on_reveal();
-                self.wants_render = true;
+                self.frames.request_fresh();
             }
             if self.client.take_hidden() {
                 self.revealed = false;
@@ -234,6 +238,7 @@ impl HostedOverlay {
                     self.client.attach_null_buffer()?;
                     self.client.roundtrip_after_resize_unmap(configured_size)?;
                     self.overlay.mark_content_dirty();
+                    self.frames.hide(&mut *self.overlay);
                     self.last_render = None;
                 }
                 self.mapped = transition.mapped_after_resize;
@@ -246,10 +251,10 @@ impl HostedOverlay {
                 )?;
                 self.size = size;
             }
-            self.wants_render = true;
+            self.frames.request_fresh();
         }
         if self.client.take_needs_render() {
-            self.wants_render = true;
+            self.frames.request_fresh();
         }
         Ok(())
     }
@@ -265,8 +270,8 @@ impl HostedOverlay {
             Some(_) => screen_edge_visible(self.revealed, outcome.visible),
             None => outcome.visible,
         };
-        if self.visible {
-            self.wants_render |= outcome.wants_render;
+        if self.visible && outcome.wants_render {
+            self.frames.request_fresh();
         }
         // During a normal dismiss this never fires: the screen edge only
         // re-arms after the unmap, so no re-reveal can arrive mid-fence.
@@ -282,7 +287,7 @@ impl HostedOverlay {
     }
 
     /// Whether a frame should be rendered+submitted this pass. A first show
-    /// (visible but not yet mapped) always renders, even without `wants_render`.
+    /// (visible but not yet mapped) always renders, even without a wanted frame.
     #[must_use]
     pub fn needs_render(&self, now: Instant) -> bool {
         let inter_frame_ok = self
@@ -292,7 +297,7 @@ impl HostedOverlay {
             failed: self.failed,
             visible: self.visible,
             mapped: self.mapped,
-            wants_render: self.wants_render,
+            wants_render: self.frames.wanted(self.visible, now),
             inter_frame_ok,
             client_running: self.client.running(),
             target_available: self.target.available(),
@@ -359,7 +364,7 @@ impl HostedOverlay {
                 self.client.roundtrip_after_hide_unmap()?;
                 free_target(&mut self.target, &mut self.client)?;
                 self.mapped = false;
-                self.wants_render = false;
+                self.frames.hide(&mut *self.overlay);
                 // Clear the frame-floor timestamp so a later re-show renders promptly
                 // and the hosted/standalone loops stay symmetric.
                 self.last_render = None;
@@ -384,13 +389,14 @@ impl HostedOverlay {
     /// Mark a terminal non-fatal failure. Clears the latched render so it cannot retry.
     pub fn mark_failed(&mut self) {
         self.failed = true;
-        self.wants_render = false;
+        self.frames.fail();
     }
 
     /// Release GL/EGL/GBM resources before this overlay is dropped. Must be
     /// called for failed overlays, closed overlays, and at host shutdown —
     /// OverlayRenderTarget/DoubleBufferState do not free on Drop.
     pub fn shutdown(&mut self, egl: &EglContext) {
+        self.frames.hide(&mut *self.overlay);
         self.target.destroy(egl);
     }
 
@@ -404,7 +410,8 @@ impl HostedOverlay {
     /// boundary to run a latched-but-throttled render.
     #[must_use]
     pub fn poll_timeout(&self, now: Instant) -> Option<Duration> {
-        let tick = self.next_wake.map(|t| t.saturating_duration_since(now));
+        let wake = self.frames.wake(self.visible, self.next_wake, now);
+        let tick = wake.next_wake.map(|t| t.saturating_duration_since(now));
         let inter_frame_remaining = self
             .last_render
             .and_then(|t| MIN_INTER_FRAME.checked_sub(now.duration_since(t)))
@@ -413,7 +420,7 @@ impl HostedOverlay {
             PollGate {
                 failed: self.failed,
                 visible: self.visible,
-                wants_render: self.wants_render,
+                wants_render: self.frames.wanted(self.visible, now),
                 client_running: self.client.running(),
                 target_available: self.target.available(),
             },
@@ -426,12 +433,13 @@ impl HostedOverlay {
         let fence_remaining = self
             .hide_fence
             .map(|deadline| deadline.saturating_duration_since(now));
-        match (gated, fence_remaining) {
+        let wait = match (gated, fence_remaining) {
             (Some(g), Some(f)) => Some(g.min(f)),
             (None, Some(f)) => Some(f),
             (Some(g), None) => Some(g),
             (None, None) => None,
-        }
+        };
+        wait.map(whole_millis_up)
     }
 
     #[must_use]
@@ -508,13 +516,37 @@ impl HostedOverlay {
         Ok(())
     }
 
-    /// Mark a render as completed at `now`; the surface is now mapped. Also
-    /// notifies the overlay, so time-anchored animations can anchor at the
+    /// The kind of frame the next render draws: fresh when the overlay's tick,
+    /// a reveal, a configure or a first show asked for it, the schedule's otherwise.
+    #[must_use]
+    pub fn frame_kind(&self) -> FrameKind {
+        self.frames.frame_kind(self.mapped)
+    }
+
+    /// Whether the last render asked for a frame that is due by `now`.
+    /// A slide must paint it rather than only move the surface.
+    #[must_use]
+    pub fn frame_due(&self, now: Instant) -> bool {
+        self.frames.frame_due(now)
+    }
+
+    /// Mark a render started at `started` as submitted at `submitted`; the surface is now
+    /// mapped. Also notifies the overlay, so time-anchored animations can anchor at the
     /// hand-off to the compositor.
-    pub fn mark_rendered(&mut self, now: Instant) {
+    pub fn mark_rendered(&mut self, started: Instant, submitted: Instant, outcome: RenderOutcome) {
+        self.frames.rendered(started, outcome);
+        self.mark_submitted(submitted);
+    }
+
+    /// Mark a slide frame that moved the surface without painting it.
+    pub fn mark_moved(&mut self, now: Instant) {
+        self.frames.moved();
+        self.mark_submitted(now);
+    }
+
+    fn mark_submitted(&mut self, now: Instant) {
         self.overlay.on_frame_submitted(now);
         self.last_render = Some(now);
-        self.wants_render = false;
         self.mapped = true;
     }
 

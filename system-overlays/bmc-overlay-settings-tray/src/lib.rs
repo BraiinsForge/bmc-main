@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport, ScreenEdge,
+    Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport, RenderOutcome, ScreenEdge,
     SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
     VersionedSnapshot,
 };
@@ -384,6 +384,7 @@ pub struct SettingsTrayRenderOutput {
     /// from the one the tree was built with — the overlay must repaint so
     /// press/release inversion shows (no FSM polls the step buttons).
     pub pressed_changed: bool,
+    pub outcome: RenderOutcome,
 }
 
 /// Step size for the ± volume/brightness buttons, matching the stable tray.
@@ -927,14 +928,38 @@ impl SystemOverlay for SettingsTrayOverlay {
             until: Some("06:30".to_owned()),
         });
         view.show_restart = true;
-        let _ = render_settings_tray(renderer, viewport, &mut self.render_state, &view, now);
+        let _ = render_settings_tray(
+            renderer,
+            viewport,
+            &mut self.render_state,
+            &view,
+            now,
+            FrameKind::Fresh,
+        );
     }
 
-    fn render(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
+    fn render(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        viewport: OverlayViewport,
+        frame: FrameKind,
+    ) -> RenderOutcome {
         let now = Instant::now();
         let view = self.view(now);
-        let output = render_settings_tray(renderer, viewport, &mut self.render_state, &view, now);
+        let output = render_settings_tray(
+            renderer,
+            viewport,
+            &mut self.render_state,
+            &view,
+            now,
+            frame,
+        );
         self.apply_render_output(output, now);
+        output.outcome
+    }
+
+    fn on_hidden(&mut self) {
+        self.render_state.tree.clear();
     }
 
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
@@ -1002,6 +1027,7 @@ pub fn render_settings_tray(
     state: &mut SettingsTrayRenderState,
     view: &SettingsTrayView,
     now: Instant,
+    frame: FrameKind,
 ) -> SettingsTrayRenderOutput {
     let icons = *state
         .icons
@@ -1047,17 +1073,17 @@ pub fn render_settings_tray(
         )
     };
 
-    let result =
-        match state
-            .tree
-            .render(FrameKind::Fresh, viewport.size(), delta_ms, renderer, build)
-        {
-            Ok(frame) => frame.result,
-            Err(err) => {
-                tracing::error!("settings-tray tree render failed: {err}");
-                return SettingsTrayRenderOutput::default();
-            }
-        };
+    let tree_frame = match state
+        .tree
+        .render(frame, viewport.size(), delta_ms, renderer, build)
+    {
+        Ok(tree_frame) => tree_frame,
+        Err(err) => {
+            tracing::error!("settings-tray tree render failed: {err}");
+            return SettingsTrayRenderOutput::default();
+        }
+    };
+    let result = &tree_frame.result;
 
     // The render processed this frame's queued touch events, so the pressed
     // key can differ from the pre-render sample; that difference is what
@@ -1089,6 +1115,7 @@ pub fn render_settings_tray(
         night_mode_tapped: result.clicks.contains_key(ui::NIGHT_MODE_KEY),
         close_tapped: result.clicks.contains_key(ui::CLOSE_KEY),
         pressed_changed: pressed_after != pressed_derived,
+        outcome: tree_frame.outcome,
     }
 }
 
@@ -1923,7 +1950,8 @@ mod slider_release_tests {
         now: Instant,
     ) -> (SettingsTrayRenderOutput, ShapingRecorder) {
         let mut recorder = ShapingRecorder::new(480.0, 320.0);
-        let output = render_settings_tray(&mut recorder, bmm101(), state, view, now);
+        let output =
+            render_settings_tray(&mut recorder, bmm101(), state, view, now, FrameKind::Fresh);
         (output, recorder)
     }
 

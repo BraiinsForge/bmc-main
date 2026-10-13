@@ -21,6 +21,7 @@
 use std::time::{Duration, Instant};
 
 use bmc_platform::DisplayShape;
+use bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS;
 use bmc_render::renderer::Renderer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
@@ -434,14 +435,220 @@ pub enum FrameKind {
     AnimationOnly,
 }
 
+/// What a rendered frame asks of the next one at the overlay's animation cadence.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NextFrame {
+    /// Nothing moves: no frame at the cadence.
+    #[default]
+    Idle,
+    /// Animations or transitions still run: replay the tree at the cadence.
+    Replay,
+    /// The frame's input changed what the overlay draws: build a new tree at the cadence.
+    Rebuild,
+}
+
 /// What a rendered frame asks of the driver's frame schedule.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[must_use]
 pub struct RenderOutcome {
-    /// The tree still has running animations or transitions.
-    pub has_active_animations: bool,
-    /// Next boundary of a host-rendered time node.
+    pub next: NextFrame,
+    /// Next boundary of a host-rendered time node, whatever `next` asks for.
     pub host_frame_delay_ms: Option<u32>,
+}
+
+/// The frames an overlay's last render asked for,
+/// on top of the ones its `tick` asks for.
+#[derive(Debug, Clone)]
+pub(crate) struct OverlayFrameSchedule {
+    animation_frame_delay: Duration,
+    /// When the frame the schedule was last fed from started.
+    started: Option<Instant>,
+    last: RenderOutcome,
+}
+
+impl OverlayFrameSchedule {
+    pub fn new(animation_frame_delay_ms: u32) -> Self {
+        Self {
+            animation_frame_delay: Duration::from_millis(animation_frame_delay_ms.into()),
+            started: None,
+            last: RenderOutcome::default(),
+        }
+    }
+
+    /// The kind of the next frame, as far as the last render asked for it:
+    /// a replay or a time-node boundary replays the tree, anything else builds one.
+    /// A driver that owes a fresh frame for its own reasons does not ask.
+    #[must_use]
+    pub fn frame_kind(&self) -> FrameKind {
+        let replay = match self.last.next {
+            NextFrame::Replay => true,
+            NextFrame::Idle => self.last.host_frame_delay_ms.is_some(),
+            NextFrame::Rebuild => false,
+        };
+        if replay {
+            FrameKind::AnimationOnly
+        } else {
+            FrameKind::Fresh
+        }
+    }
+
+    /// Take in what the frame started at `started` asked for.
+    pub fn complete(&mut self, started: Instant, outcome: RenderOutcome) {
+        self.last = outcome;
+        self.started = Some(started);
+    }
+
+    /// When the next frame is due, if the last render asked for one.
+    #[must_use]
+    pub fn deadline(&self) -> Option<Instant> {
+        let started = self.started?;
+        let cadence = (self.last.next != NextFrame::Idle).then_some(self.animation_frame_delay);
+        let boundary = self
+            .last
+            .host_frame_delay_ms
+            .map(|ms| Duration::from_millis(ms.into()));
+        let delay = [cadence, boundary].into_iter().flatten().min()?;
+        Some(started + delay)
+    }
+
+    #[must_use]
+    pub fn is_due(&self, now: Instant) -> bool {
+        self.deadline().is_some_and(|deadline| now >= deadline)
+    }
+
+    /// Fold the schedule into the wake the overlay's tick asked for.
+    /// A hidden overlay renders nothing, so its schedule neither wakes the loop nor is due.
+    ///
+    /// A deadline already passed is `frame_due`, not a wake: an overlay that cannot render
+    /// yet, its buffers still with the compositor, would otherwise poll in a tight loop.
+    /// The buffer's release arrives on the connection the loop already waits on.
+    #[must_use]
+    pub fn wake(&self, visible: bool, tick_wake: Option<Instant>, now: Instant) -> FrameWake {
+        if !visible {
+            return FrameWake {
+                next_wake: tick_wake,
+                frame_due: false,
+            };
+        }
+        let upcoming = self.deadline().filter(|deadline| *deadline > now);
+        FrameWake {
+            next_wake: earliest(tick_wake, upcoming),
+            frame_due: self.is_due(now),
+        }
+    }
+
+    /// Forget every wake, for an overlay that hid, failed or is torn down.
+    pub fn clear(&mut self) {
+        self.started = None;
+        self.last = RenderOutcome::default();
+    }
+}
+
+/// What both drivers decide about an overlay's next frame: the fresh frame they latch for
+/// its tick, a reveal or a configure, and the frames its last render asked for.
+#[derive(Debug, Clone)]
+pub(crate) struct OverlayFrames {
+    fresh_requested: bool,
+    schedule: OverlayFrameSchedule,
+}
+
+impl OverlayFrames {
+    pub fn new(animation_frame_delay_ms: u32) -> Self {
+        Self {
+            fresh_requested: false,
+            schedule: OverlayFrameSchedule::new(animation_frame_delay_ms),
+        }
+    }
+
+    /// The overlay's tick, a reveal or a configure needs a fresh frame.
+    /// It stays latched until a frame renders or a slide frame moves the surface,
+    /// however long the gates hold it back.
+    pub fn request_fresh(&mut self) {
+        self.fresh_requested = true;
+    }
+
+    /// A hidden overlay renders nothing, so a frame latched for it would only wait.
+    pub fn drop_request(&mut self) {
+        self.fresh_requested = false;
+    }
+
+    /// Whether the overlay wants a frame now: a latched fresh one,
+    /// or one its last render asked for that has come due.
+    #[must_use]
+    pub fn wanted(&self, visible: bool, now: Instant) -> bool {
+        self.fresh_requested || self.schedule.wake(visible, None, now).frame_due
+    }
+
+    /// Whether a frame the last render asked for has come due, so a slide must paint it.
+    #[must_use]
+    pub fn frame_due(&self, now: Instant) -> bool {
+        self.schedule.is_due(now)
+    }
+
+    /// The kind of the next frame: fresh when one is latched or the surface is not mapped yet,
+    /// the schedule's otherwise.
+    #[must_use]
+    pub fn frame_kind(&self, mapped: bool) -> FrameKind {
+        if self.fresh_requested || !mapped {
+            FrameKind::Fresh
+        } else {
+            self.schedule.frame_kind()
+        }
+    }
+
+    #[must_use]
+    pub fn wake(&self, visible: bool, tick_wake: Option<Instant>, now: Instant) -> FrameWake {
+        self.schedule.wake(visible, tick_wake, now)
+    }
+
+    /// A frame started at `started` was painted and submitted, asking for `outcome` next.
+    /// The cadence counts from the start, so a frame slower than it leaves the next one due.
+    pub fn rendered(&mut self, started: Instant, outcome: RenderOutcome) {
+        self.fresh_requested = false;
+        self.schedule.complete(started, outcome);
+    }
+
+    /// A slide frame moved the surface without painting it.
+    pub fn moved(&mut self) {
+        self.fresh_requested = false;
+    }
+
+    /// The surface was unmapped or is torn down: no frame is owed, and the overlay drops
+    /// what only redraws it.
+    pub fn hide(&mut self, overlay: &mut dyn SystemOverlay) {
+        self.fail();
+        overlay.on_hidden();
+    }
+
+    /// The overlay failed: nothing of it renders again.
+    pub fn fail(&mut self) {
+        self.fresh_requested = false;
+        self.schedule.clear();
+    }
+}
+
+/// When an overlay wakes next, and whether its schedule wants a frame now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrameWake {
+    pub next_wake: Option<Instant>,
+    pub frame_due: bool,
+}
+
+/// `wait` rounded up to whole milliseconds, the resolution the host polls at.
+/// Rounded down, the host wakes just short of a deadline, finds nothing due,
+/// and polls in a tight loop through the remaining fraction.
+#[must_use]
+pub(crate) fn whole_millis_up(wait: Duration) -> Duration {
+    Duration::from_millis(u64::try_from(wait.as_micros().div_ceil(1_000)).unwrap_or(u64::MAX))
+}
+
+/// The sooner of two optional wakes.
+#[must_use]
+fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// Result of an overlay's per-pass background work.
@@ -478,9 +685,26 @@ pub trait SystemOverlay {
     /// wake next. Must not block.
     fn tick(&mut self, now: Instant) -> TickOutcome;
 
-    /// Draw the overlay into `viewport`.
+    /// Draw the overlay into `viewport`, replaying its last tree on a
+    /// [`FrameKind::AnimationOnly`] frame, and report what the frame asks for next.
+    /// The clicks and drags this frame hit-tests come back from this same call,
+    /// so an overlay whose handling of them changes what it draws asks for
+    /// [`NextFrame::Rebuild`] itself; nothing else rebuilds for them.
     /// The `&mut dyn Renderer` is valid only for this call: do not store it.
-    fn render(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport);
+    fn render(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        viewport: OverlayViewport,
+        frame: FrameKind,
+    ) -> RenderOutcome;
+
+    /// Least time between two frames while the overlay's tree animates.
+    fn animation_frame_delay_ms(&self) -> u32 {
+        DEFAULT_ANIMATION_FRAME_DELAY_MS
+    }
+
+    /// The surface was unmapped. Drop what only redraws it, such as a cached tree.
+    fn on_hidden(&mut self) {}
 
     /// Pay one-time renderer setup costs at host startup instead of on the
     /// first reveal. The host calls this once, before the event loop, with the
@@ -737,7 +961,14 @@ mod tests {
             TickOutcome::default()
         }
 
-        fn render(&mut self, _renderer: &mut dyn Renderer, _viewport: OverlayViewport) {}
+        fn render(
+            &mut self,
+            _renderer: &mut dyn Renderer,
+            _viewport: OverlayViewport,
+            _frame: FrameKind,
+        ) -> RenderOutcome {
+            RenderOutcome::default()
+        }
 
         fn uses_upgrade(&self) -> bool {
             self.enabled
@@ -842,7 +1073,14 @@ mod tests {
             TickOutcome::default()
         }
 
-        fn render(&mut self, _renderer: &mut dyn Renderer, _viewport: OverlayViewport) {}
+        fn render(
+            &mut self,
+            _renderer: &mut dyn Renderer,
+            _viewport: OverlayViewport,
+            _frame: FrameKind,
+        ) -> RenderOutcome {
+            RenderOutcome::default()
+        }
 
         fn uses_platform(&self) -> bool {
             self.enabled
@@ -1085,5 +1323,323 @@ mod tests {
             overlay_poll_timeout(gate, None, Some(Duration::from_millis(5))),
             Some(Duration::from_millis(5))
         );
+    }
+
+    const CADENCE_MS: u32 = 33;
+
+    fn animating() -> RenderOutcome {
+        RenderOutcome {
+            next: NextFrame::Replay,
+            ..RenderOutcome::default()
+        }
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn an_animating_frame_asks_for_the_next_one_at_the_cadence() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(t0, animating());
+        assert_eq!(schedule.deadline(), Some(t0 + ms(33)));
+        assert!(!schedule.is_due(t0 + ms(32)));
+        assert!(schedule.is_due(t0 + ms(33)));
+        assert_eq!(schedule.frame_kind(), FrameKind::AnimationOnly);
+    }
+
+    #[test]
+    fn the_overlay_sets_its_own_cadence() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(100);
+        schedule.complete(t0, animating());
+        assert_eq!(schedule.deadline(), Some(t0 + ms(100)));
+    }
+
+    #[test]
+    fn a_settled_frame_asks_for_nothing() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(t0, animating());
+        schedule.complete(t0 + ms(33), RenderOutcome::default());
+        assert_eq!(schedule.deadline(), None);
+        assert_eq!(schedule.frame_kind(), FrameKind::Fresh);
+    }
+
+    #[test]
+    fn a_requested_rebuild_comes_fresh_at_the_cadence() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(
+            t0,
+            RenderOutcome {
+                next: NextFrame::Rebuild,
+                ..RenderOutcome::default()
+            },
+        );
+        assert_eq!(schedule.deadline(), Some(t0 + ms(33)));
+        assert_eq!(schedule.frame_kind(), FrameKind::Fresh);
+    }
+
+    #[test]
+    fn a_rebuild_wins_over_a_time_node_boundary() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(
+            t0,
+            RenderOutcome {
+                next: NextFrame::Rebuild,
+                host_frame_delay_ms: Some(10),
+            },
+        );
+        assert_eq!(
+            schedule.deadline(),
+            Some(t0 + ms(10)),
+            "the earlier of the two wakes"
+        );
+        assert_eq!(schedule.frame_kind(), FrameKind::Fresh);
+    }
+
+    #[test]
+    fn the_cadence_caps_a_far_time_node_boundary() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(
+            t0,
+            RenderOutcome {
+                next: NextFrame::Replay,
+                host_frame_delay_ms: Some(1_000),
+            },
+        );
+        assert_eq!(schedule.deadline(), Some(t0 + ms(33)));
+    }
+
+    #[test]
+    fn a_time_node_replays_at_its_boundary() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(
+            t0,
+            RenderOutcome {
+                host_frame_delay_ms: Some(1_000),
+                ..RenderOutcome::default()
+            },
+        );
+        assert_eq!(schedule.deadline(), Some(t0 + ms(1_000)));
+        assert_eq!(schedule.frame_kind(), FrameKind::AnimationOnly);
+    }
+
+    #[test]
+    fn a_visible_animating_overlay_wakes_at_the_earlier_of_tick_and_frame() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(t0, animating());
+        let wake = schedule.wake(true, Some(t0 + ms(2_000)), t0 + ms(20));
+        assert_eq!(
+            wake,
+            FrameWake {
+                next_wake: Some(t0 + ms(33)),
+                frame_due: false,
+            }
+        );
+        let wake = schedule.wake(true, Some(t0 + ms(10)), t0);
+        assert_eq!(wake.next_wake, Some(t0 + ms(10)));
+    }
+
+    #[test]
+    fn a_frame_that_cannot_render_yet_does_not_spin_the_loop() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(t0, animating());
+        let now = t0 + ms(40);
+        let wake = schedule.wake(true, Some(t0 + ms(2_000)), now);
+        assert_eq!(
+            wake,
+            FrameWake {
+                next_wake: Some(t0 + ms(2_000)),
+                frame_due: true,
+            },
+            "a passed deadline is due, not a wake"
+        );
+        let both_buffers_held = PollGate {
+            failed: false,
+            visible: true,
+            wants_render: wake.frame_due,
+            client_running: true,
+            target_available: false,
+        };
+        let tick = wake.next_wake.map(|t| t.saturating_duration_since(now));
+        assert_eq!(
+            overlay_poll_timeout(both_buffers_held, tick, None),
+            Some(ms(1_960)),
+            "the loop waits for the buffer release or the tick, not in a tight loop"
+        );
+    }
+
+    #[test]
+    fn a_hidden_overlay_is_woken_only_by_its_tick() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(t0, animating());
+        let wake = schedule.wake(false, None, t0 + ms(40));
+        assert_eq!(
+            wake,
+            FrameWake {
+                next_wake: None,
+                frame_due: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_settled_overlay_is_woken_only_by_its_tick() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(CADENCE_MS);
+        schedule.complete(t0, RenderOutcome::default());
+        let wake = schedule.wake(true, Some(t0 + ms(2_000)), t0 + ms(40));
+        assert_eq!(
+            wake,
+            FrameWake {
+                next_wake: Some(t0 + ms(2_000)),
+                frame_due: false,
+            }
+        );
+    }
+
+    #[test]
+    fn clear_forgets_the_wake_but_keeps_the_cadence() {
+        let t0 = Instant::now();
+        let mut schedule = OverlayFrameSchedule::new(100);
+        schedule.complete(t0, animating());
+        schedule.clear();
+        assert_eq!(schedule.deadline(), None);
+        schedule.complete(t0, animating());
+        assert_eq!(schedule.deadline(), Some(t0 + ms(100)));
+    }
+
+    /// Counts the `on_hidden` calls a driver makes.
+    #[derive(Default)]
+    struct HideCounter {
+        hidden: usize,
+    }
+
+    impl SystemOverlay for HideCounter {
+        fn layer_config(&self) -> LayerConfig {
+            LayerConfig::fullscreen("hide-counter")
+        }
+
+        fn tick(&mut self, _now: Instant) -> TickOutcome {
+            TickOutcome::default()
+        }
+
+        fn render(
+            &mut self,
+            _renderer: &mut dyn Renderer,
+            _viewport: OverlayViewport,
+            _frame: FrameKind,
+        ) -> RenderOutcome {
+            RenderOutcome::default()
+        }
+
+        fn on_hidden(&mut self) {
+            self.hidden += 1;
+        }
+    }
+
+    /// Frames for a visible, mapped overlay whose last render, at `t0`, asked for a replay.
+    fn replaying(t0: Instant) -> OverlayFrames {
+        let mut frames = OverlayFrames::new(CADENCE_MS);
+        frames.rendered(t0, animating());
+        frames
+    }
+
+    #[test]
+    fn a_due_replay_is_wanted_while_the_overlay_is_visible() {
+        let t0 = Instant::now();
+        let frames = replaying(t0);
+        assert!(!frames.wanted(true, t0 + ms(20)), "not due yet");
+        assert!(frames.wanted(true, t0 + ms(33)));
+        assert!(
+            !frames.wanted(false, t0 + ms(33)),
+            "a hidden overlay renders nothing"
+        );
+    }
+
+    #[test]
+    fn a_requested_fresh_frame_stays_wanted_until_one_renders() {
+        let t0 = Instant::now();
+        let mut frames = OverlayFrames::new(CADENCE_MS);
+        assert!(!frames.wanted(true, t0));
+        frames.request_fresh();
+        assert!(frames.wanted(true, t0));
+        assert!(
+            frames.wanted(true, t0 + ms(500)),
+            "held back by the gates, still owed"
+        );
+        frames.rendered(t0 + ms(500), RenderOutcome::default());
+        assert!(!frames.wanted(true, t0 + ms(500)));
+    }
+
+    #[test]
+    fn a_requested_or_first_frame_is_fresh_whatever_the_last_render_asked() {
+        let t0 = Instant::now();
+        let mut frames = replaying(t0);
+        assert_eq!(frames.frame_kind(true), FrameKind::AnimationOnly);
+        assert_eq!(
+            frames.frame_kind(false),
+            FrameKind::Fresh,
+            "a surface not mapped yet has nothing to replay over"
+        );
+        frames.request_fresh();
+        assert_eq!(frames.frame_kind(true), FrameKind::Fresh);
+    }
+
+    #[test]
+    fn a_moved_slide_frame_keeps_the_replay_owed() {
+        let t0 = Instant::now();
+        let mut frames = replaying(t0);
+        frames.request_fresh();
+        frames.moved();
+        assert!(
+            !frames.wanted(true, t0 + ms(10)),
+            "the move answered the request"
+        );
+        assert!(frames.wanted(true, t0 + ms(33)), "the replay still comes");
+        assert_eq!(frames.frame_kind(true), FrameKind::AnimationOnly);
+    }
+
+    #[test]
+    fn hiding_drops_every_frame_and_tells_the_overlay() {
+        let t0 = Instant::now();
+        let mut frames = replaying(t0);
+        frames.request_fresh();
+        let mut overlay = HideCounter::default();
+        frames.hide(&mut overlay);
+        assert_eq!(overlay.hidden, 1, "the overlay drops its cached tree");
+        assert!(!frames.wanted(true, t0 + ms(33)));
+        assert_eq!(frames.wake(true, None, t0).next_wake, None);
+    }
+
+    #[test]
+    fn a_failed_overlay_wants_no_frame() {
+        let t0 = Instant::now();
+        let mut frames = replaying(t0);
+        frames.request_fresh();
+        frames.fail();
+        assert!(!frames.wanted(true, t0 + ms(33)));
+        assert_eq!(frames.wake(true, None, t0).next_wake, None);
+    }
+
+    #[test]
+    fn a_wait_rounds_up_to_the_millisecond_the_host_polls_at() {
+        assert_eq!(
+            whole_millis_up(Duration::from_micros(700)),
+            ms(1),
+            "a deadline 0.7 ms off must not poll at zero"
+        );
+        assert_eq!(whole_millis_up(Duration::from_micros(32_700)), ms(33));
+        assert_eq!(whole_millis_up(ms(33)), ms(33), "whole milliseconds stay");
+        assert_eq!(whole_millis_up(Duration::ZERO), Duration::ZERO);
     }
 }

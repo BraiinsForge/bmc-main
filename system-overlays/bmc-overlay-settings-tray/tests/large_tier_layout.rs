@@ -46,7 +46,7 @@ use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::prelude::*;
 use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
-use bmc_system_overlay::{DisplayShape, OverlayViewport, SettingsCaps};
+use bmc_system_overlay::{DisplayShape, FrameKind, OverlayViewport, SettingsCaps};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
@@ -474,7 +474,14 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);
     let mut renderer = ProbeRenderer::default();
-    render_settings_tray(&mut renderer, DECK, &mut state, &view, now);
+    render_settings_tray(
+        &mut renderer,
+        DECK,
+        &mut state,
+        &view,
+        now,
+        FrameKind::Fresh,
+    );
 
     assert!(
         !renderer.circles.is_empty(),
@@ -524,7 +531,14 @@ fn bmm101_controls_fit_between_the_close_target_and_the_bottom_edge() {
         let now = Instant::now();
         let mut state = SettingsTrayRenderState::new(now);
         let mut renderer = ProbeRenderer::default();
-        render_settings_tray(&mut renderer, BMM101, &mut state, &view, now);
+        render_settings_tray(
+            &mut renderer,
+            BMM101,
+            &mut state,
+            &view,
+            now,
+            FrameKind::Fresh,
+        );
 
         let buttons: Vec<_> = renderer
             .circles
@@ -570,7 +584,14 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);
     let mut renderer = ProbeRenderer::default();
-    render_settings_tray(&mut renderer, DECK, &mut state, &view, now);
+    render_settings_tray(
+        &mut renderer,
+        DECK,
+        &mut state,
+        &view,
+        now,
+        FrameKind::Fresh,
+    );
 
     let &(hold_x, hold_y, _) = renderer
         .circles
@@ -596,7 +617,14 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
     let now = Instant::now();
     let mut state = SettingsTrayRenderState::new(now);
     let mut renderer = ProbeRenderer::default();
-    render_settings_tray(&mut renderer, BMM101, &mut state, &view, now);
+    render_settings_tray(
+        &mut renderer,
+        BMM101,
+        &mut state,
+        &view,
+        now,
+        FrameKind::Fresh,
+    );
 
     for label in ["Hostname", "IP Address", "Connection"] {
         let (_, width) = renderer
@@ -620,7 +648,14 @@ fn the_layout_follows_the_size_the_tray_renders_at() {
         let now = Instant::now();
         let mut state = SettingsTrayRenderState::new(now);
         let mut renderer = ProbeRenderer::default();
-        render_settings_tray(&mut renderer, size, &mut state, &view, now);
+        render_settings_tray(
+            &mut renderer,
+            size,
+            &mut state,
+            &view,
+            now,
+            FrameKind::Fresh,
+        );
         renderer
             .paragraphs
             .into_iter()

@@ -36,7 +36,7 @@ use bmc_render::tree::{
 };
 use bmc_system_overlay::{
     AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
-    SystemOverlay, TickOutcome, TouchEvent, TreeUi,
+    RenderOutcome, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
 };
 use bmc_wasm_protocol::{
     ArcCap, ArcFill, ArcSegments, CrossAlign, Fill, PathPaint, PropsData, TRANSPARENT,
@@ -360,6 +360,7 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
 pub struct RenderAlarmOutput {
     stop: bool,
     snooze: bool,
+    outcome: RenderOutcome,
 }
 
 pub fn render_alarm(
@@ -367,25 +368,29 @@ pub fn render_alarm(
     size: (u32, u32),
     state: &mut AlarmRenderState,
     view: &AlarmView,
+    frame: FrameKind,
 ) -> RenderAlarmOutput {
     let now = Instant::now();
     let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
-    let result = match state.tree.render(FrameKind::Fresh, size, delta_ms, r, || {
-        build_alarm_ui_tree(view, size)
-    }) {
-        Ok(frame) => frame.result,
+    let tree_frame = match state
+        .tree
+        .render(frame, size, delta_ms, r, || build_alarm_ui_tree(view, size))
+    {
+        Ok(tree_frame) => tree_frame,
         Err(err) => {
             tracing::error!("alarm tree render failed: {err}");
             return RenderAlarmOutput::default();
         }
     };
 
+    let clicks = &tree_frame.result.clicks;
     RenderAlarmOutput {
-        stop: result.clicks.contains_key(STOP_ALARM_KEY),
-        snooze: result.clicks.contains_key(SNOOZE_ALARM_KEY),
+        stop: clicks.contains_key(STOP_ALARM_KEY),
+        snooze: clicks.contains_key(SNOOZE_ALARM_KEY),
+        outcome: tree_frame.outcome,
     }
 }
 
@@ -465,9 +470,14 @@ impl SystemOverlay for AlarmOverlay {
         std::mem::take(&mut self.pending)
     }
 
-    fn render(&mut self, r: &mut dyn Renderer, viewport: OverlayViewport) {
+    fn render(
+        &mut self,
+        r: &mut dyn Renderer,
+        viewport: OverlayViewport,
+        frame: FrameKind,
+    ) -> RenderOutcome {
         let Some(ring) = self.ringing.as_ref() else {
-            return;
+            return RenderOutcome::default();
         };
 
         let view: AlarmView = AlarmView {
@@ -477,12 +487,59 @@ impl SystemOverlay for AlarmOverlay {
             snooze_allowed: ring.snooze_allowed,
         };
 
-        let output = render_alarm(r, viewport.size(), &mut self.render_state, &view);
+        let output = render_alarm(r, viewport.size(), &mut self.render_state, &view, frame);
 
         if output.stop {
             self.pending.push(AlarmRequest::Dismiss);
         } else if output.snooze {
             self.pending.push(AlarmRequest::Snooze);
         }
+        output.outcome
+    }
+
+    fn on_hidden(&mut self) {
+        self.render_state.tree.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_render::renderer::test_support::ShapingRecorder;
+
+    use super::*;
+
+    const SIZE: (u32, u32) = (480, 1280);
+
+    fn view() -> AlarmView {
+        AlarmView {
+            time: "7:30".to_owned(),
+            period: "AM".to_owned(),
+            label: "Wake up".to_owned(),
+            snooze_allowed: true,
+        }
+    }
+
+    fn render(state: &mut AlarmRenderState, frame: FrameKind) {
+        let mut recorder = ShapingRecorder::new(480.0, 1280.0);
+        let _ = render_alarm(&mut recorder, SIZE, state, &view(), frame);
+    }
+
+    #[test]
+    fn an_animation_only_frame_replays_the_alarm_tree() {
+        let mut state = AlarmRenderState::new(Instant::now());
+        render(&mut state, FrameKind::Fresh);
+        render(&mut state, FrameKind::AnimationOnly);
+        assert!(state.tree.replayed_last_frame());
+    }
+
+    #[test]
+    fn hiding_drops_the_alarm_tree() {
+        let mut state = AlarmRenderState::new(Instant::now());
+        render(&mut state, FrameKind::Fresh);
+        let mut overlay = AlarmOverlay::new(Instant::now());
+        overlay.render_state = state;
+        overlay.on_hidden();
+        render(&mut overlay.render_state, FrameKind::AnimationOnly);
+        assert!(!overlay.render_state.tree.replayed_last_frame());
     }
 }

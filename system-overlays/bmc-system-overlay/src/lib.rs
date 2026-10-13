@@ -38,7 +38,7 @@ pub use hosted::HostedOverlay;
 pub use icon::register_icon;
 pub use overlay::{
     AccessPoint, AlarmEvent, AlarmRequest, DeviceState, DownloadProgress, FrameKind, InputRegion,
-    LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome, ScreenEdge, SettingsCaps,
+    LayerConfig, NextFrame, OverlayViewport, PlatformCaps, RenderOutcome, ScreenEdge, SettingsCaps,
     SettingsRequest, SetupStep, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase,
     UpgradeSnapshot, UpgradeState, UpgradeUpdate,
 };

@@ -46,8 +46,8 @@ use bmc_platform::{HardwareProfile, Product};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DisplayShape, DownloadProgress, OverlayViewport, SettingsCaps, UpgradeKind,
-    UpgradePhase,
+    AccessPoint, DisplayShape, DownloadProgress, FrameKind, OverlayViewport, SettingsCaps,
+    UpgradeKind, UpgradePhase,
 };
 
 scene_meta! { title: "Overlays" }
@@ -193,13 +193,14 @@ fn device_info_cell(
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
         state_key.with_borrow_mut(|state| {
-            render_device_info(
+            let _ = render_device_info(
                 r,
                 (w as u32, h as u32),
                 state,
                 &view,
                 board.name,
                 board.miner,
+                FrameKind::Fresh,
             );
         });
         // Still, for the same reason as the offline card: a view and nothing else.
@@ -265,7 +266,7 @@ fn alarm_cell(
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
         state_key.with_borrow_mut(|state| {
-            render_alarm(r, (w as u32, h as u32), state, &view);
+            render_alarm(r, (w as u32, h as u32), state, &view, FrameKind::Fresh);
         });
         // The rings run off a clock of their own, so this never comes to rest.
         true
@@ -314,7 +315,7 @@ fn upgrade_cell(
             tier,
         };
         state_key.with_borrow_mut(|state| {
-            render_upgrade(r, surface, state, &view, Instant::now());
+            let _ = render_upgrade(r, surface, state, &view, Instant::now(), FrameKind::Fresh);
         });
         // Handed a clock of its own, so it can animate — the running phases never settle.
         true
@@ -397,7 +398,8 @@ fn settings_tray_cell(
             shape,
         };
         state_key.with_borrow_mut(|state| {
-            let _ = render_settings_tray(r, viewport, state, &view, Instant::now());
+            let _ =
+                render_settings_tray(r, viewport, state, &view, Instant::now(), FrameKind::Fresh);
         });
         // Reveal and press feedback are timed off the clock it is handed, and it
         // reports taps rather than whether either is still running.

@@ -31,7 +31,7 @@ use bmc_render::tree::{
     DrawCommand, FontFamily, FontWeight, TextAlign, TextStyle, TreeNode, col, fixed_height, row,
     text,
 };
-use bmc_system_overlay::{AccessPoint, FrameKind, TreeUi};
+use bmc_system_overlay::{AccessPoint, FrameKind, RenderOutcome, TreeUi};
 use bmc_wasm_protocol::{CrossAlign, Fill, GRAY_60, Justify, PropsData, TRANSPARENT};
 
 use crate::icons::{DeviceInfoIcons, Icon};
@@ -119,7 +119,7 @@ pub enum DeviceInfoView {
 
 /// Persistent render caches for the overlay's tree UI.
 pub struct DeviceInfoRenderState {
-    tree: TreeUi,
+    pub(crate) tree: TreeUi,
     /// Registered lazily on the first render (or eagerly by `prewarm`),
     /// so the gallery needs no separate warm-up path.
     icons: Option<DeviceInfoIcons>,
@@ -1068,30 +1068,40 @@ pub fn render_device_info(
     view: &DeviceInfoView,
     device_name: &str,
     miner: bool,
-) {
+    frame: FrameKind,
+) -> RenderOutcome {
     let icons = state.ensure_icons(r);
     let now = Instant::now();
     let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
-    let Some(tree) = build_device_info_tree(view, icons, tier_for(size), device_name, miner) else {
-        return;
+    if *view == DeviceInfoView::Done {
+        state.tree.clear();
+        return RenderOutcome::default();
+    }
+    let build = || {
+        build_device_info_tree(view, icons, tier_for(size), device_name, miner)
+            .expect("BUG: every view but Done has a tree")
     };
-    if let Err(err) = state
-        .tree
-        .render(FrameKind::Fresh, size, delta_ms, r, || tree)
-    {
-        tracing::error!("device-info tree render failed: {err}");
+    match state.tree.render(frame, size, delta_ms, r, build) {
+        Ok(tree_frame) => tree_frame.outcome,
+        Err(err) => {
+            tracing::error!("device-info tree render failed: {err}");
+            RenderOutcome::default()
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessPoint, DeviceInfoView, Link, SetupApIcon, TIER_WIDE, Tier, Uplinks,
-        build_device_info_tree, dismisses_on_touch, tier_for,
+        AccessPoint, DeviceInfoRenderState, DeviceInfoView, FrameKind, Link, SetupApIcon,
+        TIER_WIDE, Tier, Uplinks, build_device_info_tree, dismisses_on_touch, render_device_info,
+        tier_for,
     };
+    use bmc_render::renderer::test_support::ShapingRecorder;
+    use std::time::Instant;
 
     /// The name and panel the screens were authored against.
     const DEVICE_NAME: &str = "Braiins Deck";
@@ -1787,5 +1797,54 @@ mod tests {
             };
             assert_eq!(dismisses_on_touch(&view), expected, "view {view:?}");
         }
+    }
+
+    fn render_frame(state: &mut DeviceInfoRenderState, view: &DeviceInfoView, frame: FrameKind) {
+        let mut recorder = ShapingRecorder::new(1_280.0, 480.0);
+        let _ = render_device_info(
+            &mut recorder,
+            DECK_PANEL,
+            state,
+            view,
+            DEVICE_NAME,
+            false,
+            frame,
+        );
+    }
+
+    #[test]
+    fn an_animation_only_frame_replays_the_device_info_tree() {
+        let mut state = DeviceInfoRenderState::new(Instant::now());
+        render_frame(
+            &mut state,
+            &DeviceInfoView::UpgradeSuccess,
+            FrameKind::Fresh,
+        );
+        render_frame(
+            &mut state,
+            &DeviceInfoView::UpgradeSuccess,
+            FrameKind::AnimationOnly,
+        );
+        assert!(state.tree.replayed_last_frame());
+    }
+
+    #[test]
+    fn the_done_view_drops_the_device_info_tree() {
+        let mut state = DeviceInfoRenderState::new(Instant::now());
+        render_frame(
+            &mut state,
+            &DeviceInfoView::UpgradeSuccess,
+            FrameKind::Fresh,
+        );
+        render_frame(&mut state, &DeviceInfoView::Done, FrameKind::AnimationOnly);
+        render_frame(
+            &mut state,
+            &DeviceInfoView::UpgradeSuccess,
+            FrameKind::AnimationOnly,
+        );
+        assert!(
+            !state.tree.replayed_last_frame(),
+            "a view shown after Done must not replay the tree from before it"
+        );
     }
 }

@@ -202,12 +202,14 @@ pub fn render_hosted_overlay(
         .map(|y| y.round() as i32);
     if let Some(offset) = layer_offset
         && overlay.overlay_mut().can_reuse_content(now)
+        && !overlay.frame_due(now)
         && overlay.commit_position_if_mapped(offset)?
     {
-        overlay.mark_rendered(Instant::now());
+        overlay.mark_moved(Instant::now());
         return Ok(());
     }
-    crate::slot::stage_frame_under_gpu_lock(
+    let frame = overlay.frame_kind();
+    let outcome = crate::slot::stage_frame_under_gpu_lock(
         shared,
         crate::slot::FrameStaging::Shared,
         "host_system_overlay",
@@ -220,12 +222,12 @@ pub fn render_hosted_overlay(
             let renderer = unsafe { ptr.as_ptr().as_mut() }
                 .expect("BUG: NonNull renderer is non-null by construction");
             renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
-            overlay.overlay_mut().render(renderer, viewport);
+            let outcome = overlay.overlay_mut().render(renderer, viewport, frame);
             renderer.flush();
             let _ = overlay.overlay_mut().take_content_dirty();
             let fbo = overlay.target_mut().current_fbo();
             shared.blit_staging_to(fbo, size.0, size.1);
-            Ok(())
+            Ok(outcome)
         },
         || {},
     )?;
@@ -234,10 +236,11 @@ pub fn render_hosted_overlay(
     }
     let (dmabuf, slot) = overlay.target_mut().export_and_swap()?;
     overlay.submit_exported(&dmabuf, slot)?;
-    // Fresh timestamp: the pass-level `now` predates this pass's widget
-    // renders, and anchoring a ramp that far back would replay the jitter
-    // this frame just paid.
-    overlay.mark_rendered(Instant::now());
+    // The cadence counts from `now`, taken before this overlay's tick and render,
+    // so a frame slower than the cadence leaves the next one due. The ramps anchor
+    // at a fresh timestamp instead: anchoring them before the tick and render
+    // would replay the delay this frame just paid.
+    overlay.mark_rendered(now, Instant::now(), outcome);
     #[cfg(feature = "profiling")]
     if let Some(offset) = layer_offset {
         tracing::info!(target: bmc_render::profile::TARGET, offset_y = offset,

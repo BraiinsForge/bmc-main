@@ -1580,7 +1580,9 @@ mod tests {
             &mut self,
             _renderer: &mut dyn bmc_render::renderer::Renderer,
             _viewport: crate::overlay::OverlayViewport,
-        ) {
+            _frame: crate::overlay::FrameKind,
+        ) -> crate::overlay::RenderOutcome {
+            crate::overlay::RenderOutcome::default()
         }
 
         fn uses_upgrade(&self) -> bool {

@@ -38,9 +38,9 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DeviceState, Layer, LayerConfig, OverlayViewport, PlatformCaps, SetupStep,
-    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot,
-    UpgradeState, VersionedSnapshot,
+    AccessPoint, DeviceState, FrameKind, Layer, LayerConfig, OverlayViewport, PlatformCaps,
+    RenderOutcome, SetupStep, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind,
+    UpgradeSnapshot, UpgradeState, VersionedSnapshot,
 };
 
 /// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
@@ -747,7 +747,12 @@ impl SystemOverlay for DeviceInfoOverlay {
         }
     }
 
-    fn render(&mut self, r: &mut dyn Renderer, viewport: OverlayViewport) {
+    fn render(
+        &mut self,
+        r: &mut dyn Renderer,
+        viewport: OverlayViewport,
+        frame: FrameKind,
+    ) -> RenderOutcome {
         let view = self.view();
         render_device_info(
             r,
@@ -756,7 +761,12 @@ impl SystemOverlay for DeviceInfoOverlay {
             &view,
             &self.device_name,
             self.miner,
-        );
+            frame,
+        )
+    }
+
+    fn on_hidden(&mut self) {
+        self.render_state.tree.clear();
     }
 
     fn on_touch(&mut self, event: TouchEvent) {

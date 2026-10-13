@@ -30,9 +30,9 @@ use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
 use crate::overlay::{
-    AlarmEvent, LayerConfig, MIN_INTER_FRAME, SystemOverlay, deliver_platform_events,
-    deliver_upgrade_update_and_tick, resize_transition, resolved_configured_size,
-    screen_edge_visible,
+    AlarmEvent, FrameKind, LayerConfig, MIN_INTER_FRAME, OverlayFrames, RenderOutcome,
+    SystemOverlay, deliver_platform_events, deliver_upgrade_update_and_tick, resize_transition,
+    resolved_configured_size, screen_edge_visible, whole_millis_up,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -64,12 +64,8 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
     }
     let mut revealed = false;
     let mut last_render: Option<Instant> = None;
-    // A wanted render that can't run yet (no free buffer slot, or inter-frame
-    // throttle) must NOT be lost — it stays pending until a frame actually
-    // renders. take_needs_render()/tick are consumed every pass, so we latch
-    // the request here rather than re-reading it.
-    let mut pending_render = false;
     let mut mapped = false;
+    let mut frames = OverlayFrames::new(overlay.animation_frame_delay_ms());
 
     while client.running() {
         // Drain what the previous poll_dispatch delivered.
@@ -86,13 +82,15 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
                 &mut renderer,
                 &mut target,
                 &mut client,
+                &mut *overlay,
+                &mut frames,
                 config.size,
                 configured_size,
                 &mut size,
                 &mut mapped,
                 &mut last_render,
             )?;
-            pending_render = true;
+            frames.request_fresh();
         }
 
         drain_screen_edge_events(
@@ -100,7 +98,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             &mut *overlay,
             screen_edge.is_some(),
             &mut revealed,
-            &mut pending_render,
+            &mut frames,
         );
 
         deliver_platform_events(&mut *overlay, client.take_platform_events());
@@ -116,16 +114,18 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             None => tick.visible,
         };
         if want_visible {
-            pending_render |= tick.wants_render || !mapped || client.take_needs_render();
+            if tick.wants_render || !mapped || client.take_needs_render() {
+                frames.request_fresh();
+            }
         } else {
             let _ = client.take_needs_render();
-            // Hidden overlays must drop latched render requests before the
-            // later render gate observes them.
-            pending_render = false;
+            frames.drop_request();
             if hide_standalone_if_mapped(
                 &egl,
                 &mut target,
                 &mut client,
+                &mut *overlay,
+                &mut frames,
                 &mut mapped,
                 &mut last_render,
             )? && screen_edge.is_some()
@@ -147,9 +147,10 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             &mut renderer,
             &mut *overlay,
             &mut client,
+            &mut frames,
+            want_visible,
             config.size,
             &mut size,
-            &mut pending_render,
             &mut mapped,
             &mut last_render,
             inter_frame_remaining,
@@ -159,13 +160,22 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         forward_settings_requests(&mut client, &mut *overlay);
         forward_alarm_requests(&mut client, &mut *overlay);
 
+        // A frame's cadence counts from its start, so the wait after it is measured
+        // from now, not from before the render.
+        let after = Instant::now();
+        let floor_left = last_render
+            .and_then(|t| MIN_INTER_FRAME.checked_sub(after.duration_since(t)))
+            .filter(|d| !d.is_zero());
+        let wake = frames.wake(want_visible, tick.next_wake, after);
         client.poll_dispatch(poll_timeout_ms(
-            pending_render,
-            inter_frame_remaining,
-            tick.next_wake,
-            now,
+            frames.wanted(want_visible, after),
+            target.available(),
+            floor_left,
+            wake.next_wake,
+            after,
         ))?;
     }
+    frames.hide(&mut *overlay);
     destroy_standalone_rendering(&egl, scratch, renderer, target);
     Ok(())
 }
@@ -175,7 +185,7 @@ fn drain_screen_edge_events(
     overlay: &mut dyn SystemOverlay,
     has_screen_edge: bool,
     revealed: &mut bool,
-    pending_render: &mut bool,
+    frames: &mut OverlayFrames,
 ) {
     if !has_screen_edge {
         return;
@@ -183,7 +193,7 @@ fn drain_screen_edge_events(
     if client.take_reveal() {
         *revealed = true;
         overlay.on_reveal();
-        *pending_render = true;
+        frames.request_fresh();
     }
     if client.take_hidden() {
         *revealed = false;
@@ -278,20 +288,21 @@ fn forward_alarm_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn Sys
 }
 
 fn poll_timeout_ms(
-    pending_render: bool,
+    frame_wanted: bool,
+    target_available: bool,
     inter_frame_remaining: Option<Duration>,
     next_wake: Option<Instant>,
     now: Instant,
 ) -> i32 {
-    let timeout = if pending_render && inter_frame_remaining.is_some() {
-        inter_frame_remaining
-    } else if pending_render {
-        None
-    } else {
-        next_wake.map(|t| t.saturating_duration_since(now))
+    let timeout = match (frame_wanted, inter_frame_remaining) {
+        (true, Some(floor_left)) => Some(floor_left),
+        (true, None) if target_available => Some(Duration::ZERO),
+        // A wanted frame without a free buffer waits for its release,
+        // which the connection reports; the tick's own wake still holds meanwhile.
+        _ => next_wake.map(|t| t.saturating_duration_since(now)),
     };
     timeout.map_or(-1, |d| {
-        i32::try_from(d.as_millis().max(1)).unwrap_or(i32::MAX)
+        i32::try_from(whole_millis_up(d).as_millis().max(1)).unwrap_or(i32::MAX)
     })
 }
 
@@ -316,6 +327,8 @@ fn resize_standalone_if_needed(
     renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
+    overlay: &mut dyn SystemOverlay,
+    frames: &mut OverlayFrames,
     config_size: (u32, u32),
     configured_size: (u32, u32),
     size: &mut (u32, u32),
@@ -328,7 +341,7 @@ fn resize_standalone_if_needed(
     }
     let transition = resize_transition(*mapped);
     if transition.unmap_before_resize {
-        hide_standalone_if_mapped(egl, target, client, mapped, last_render)?;
+        hide_standalone_if_mapped(egl, target, client, overlay, frames, mapped, last_render)?;
     }
     resize_standalone_rendering(egl, scratch, renderer, target, client, new_size)?;
     *size = new_size;
@@ -339,6 +352,8 @@ fn hide_standalone_if_mapped(
     egl: &EglContext,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
+    overlay: &mut dyn SystemOverlay,
+    frames: &mut OverlayFrames,
     mapped: &mut bool,
     last_render: &mut Option<Instant>,
 ) -> anyhow::Result<bool> {
@@ -350,6 +365,7 @@ fn hide_standalone_if_mapped(
     target.free_for_hide(egl, client)?;
     *mapped = false;
     *last_render = None;
+    frames.hide(overlay);
     Ok(true)
 }
 
@@ -385,23 +401,25 @@ fn render_standalone_if_ready(
     renderer: &mut FemtoVgRenderer,
     overlay: &mut dyn SystemOverlay,
     client: &mut LayerSurfaceClient,
+    frames: &mut OverlayFrames,
+    visible: bool,
     config_size: (u32, u32),
     size: &mut (u32, u32),
-    pending_render: &mut bool,
     mapped: &mut bool,
     last_render: &mut Option<Instant>,
     inter_frame_remaining: Option<Duration>,
     now: Instant,
 ) -> anyhow::Result<()> {
-    if !*pending_render || !target.available() || inter_frame_remaining.is_some() {
+    if !frames.wanted(visible, now) || !target.available() || inter_frame_remaining.is_some() {
         return Ok(());
     }
 
     prepare_standalone_for_render(egl, scratch, renderer, target, client, config_size, size)?;
-    render_frame(
-        egl, scratch, gpu_lock, target, renderer, overlay, client, *size,
+    let frame = frames.frame_kind(*mapped);
+    let outcome = render_frame(
+        egl, scratch, gpu_lock, target, renderer, overlay, client, *size, frame,
     )?;
-    *pending_render = false;
+    frames.rendered(now, outcome);
     *mapped = true;
     *last_render = Some(now);
     Ok(())
@@ -456,14 +474,15 @@ fn render_frame(
     overlay: &mut dyn SystemOverlay,
     client: &mut LayerSurfaceClient,
     size: (u32, u32),
-) -> anyhow::Result<()> {
+    frame: FrameKind,
+) -> anyhow::Result<RenderOutcome> {
     let lock = gpu_lock.lock("system_overlay_standalone")?;
     target.ensure_current(egl)?;
     // begin_frame binds the staging FBO and sets the viewport, returning its id.
     // The renderer was constructed against that id, so the returned value is unused.
     let _staging = scratch.begin_frame(egl, size.0, size.1);
     renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
-    overlay.render(renderer, client.viewport(size));
+    let outcome = overlay.render(renderer, client.viewport(size), frame);
     renderer.flush();
     scratch.blit_to(egl, target.current_fbo(), size.0, size.1);
     wait_for_gpu(egl);
@@ -476,5 +495,55 @@ fn render_frame(
     client.flush()?;
     target.mark_presented(slot);
     overlay.on_frame_submitted(Instant::now());
-    Ok(())
+    Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::poll_timeout_ms;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_due_frame_with_a_free_buffer_renders_on_the_next_pass() {
+        let now = Instant::now();
+        assert_eq!(
+            poll_timeout_ms(true, true, None, Some(now + ms(2_000)), now),
+            1,
+            "a slow frame's successor is due at once, not a cadence later"
+        );
+    }
+
+    #[test]
+    fn a_due_frame_held_by_the_floor_waits_out_the_floor() {
+        let now = Instant::now();
+        assert_eq!(
+            poll_timeout_ms(true, true, Some(ms(5)), Some(now + ms(2_000)), now),
+            5
+        );
+    }
+
+    #[test]
+    fn a_due_frame_without_a_free_buffer_waits_for_the_tick() {
+        let now = Instant::now();
+        assert_eq!(
+            poll_timeout_ms(true, false, None, Some(now + ms(2_000)), now),
+            2_000,
+            "the buffer's release arrives on the connection"
+        );
+    }
+
+    #[test]
+    fn an_idle_overlay_waits_for_its_tick_or_forever() {
+        let now = Instant::now();
+        assert_eq!(
+            poll_timeout_ms(false, true, None, Some(now + ms(2_000)), now),
+            2_000
+        );
+        assert_eq!(poll_timeout_ms(false, true, None, None, now), -1);
+    }
 }

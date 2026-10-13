@@ -36,7 +36,7 @@ use bmc_render::{
 };
 use taffy::prelude::TaffyTree;
 
-use crate::overlay::{FrameKind, RenderOutcome};
+use crate::overlay::{FrameKind, NextFrame, RenderOutcome};
 
 /// Static-layer key for overlays drawn through the host's shared renderer.
 ///
@@ -183,7 +183,11 @@ impl TreeUi {
         let (result, has_active_animations) =
             layout_and_render(node, width, height, renderer, &mut timings, &mut ctx)?;
         let outcome = RenderOutcome {
-            has_active_animations,
+            next: if has_active_animations {
+                NextFrame::Replay
+            } else {
+                NextFrame::Idle
+            },
             host_frame_delay_ms: result.next_frame_delay_ms,
         };
         Ok(TreeFrame { result, outcome })
@@ -228,7 +232,7 @@ impl TreeUi {
 #[cfg(test)]
 mod tests {
     use super::TreeUi;
-    use crate::overlay::{FrameKind, TouchEvent};
+    use crate::overlay::{FrameKind, NextFrame, TouchEvent};
     use crate::test_support::TestRenderer;
     use bmc_render::colors::Color;
     use bmc_render::tree::TreeNode;
@@ -424,7 +428,7 @@ mod tests {
         let mut builds = 0;
         frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
         let replayed = frame(&mut ui, FrameKind::AnimationOnly, (100, 20), &mut builds);
-        assert!(replayed.outcome.has_active_animations);
+        assert_eq!(replayed.outcome.next, NextFrame::Replay);
     }
 
     #[test]
@@ -439,6 +443,6 @@ mod tests {
                 slider_tree,
             )
             .expect("BUG: render must succeed");
-        assert!(!frame.outcome.has_active_animations);
+        assert_eq!(frame.outcome.next, NextFrame::Idle);
     }
 }
