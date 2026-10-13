@@ -41,7 +41,9 @@ use common::headless_egl;
 /// counting ticks per timer and calls to its own sleep and wake hooks.
 ///
 /// `$first` and `$second` hold the ids `init_body` stores there.
-/// With `$stop_second_on_tick` set, the first timer's tick stops the second.
+/// With `$stop_second_on_tick` set, the first timer's tick stops the second;
+/// with `$slow_second_on_tick` set, its next tick moves the second to a 3 s period once.
+/// With `$slow_first_on_wake` set, `on_wake` moves the first to a 5 s period.
 fn timer_wat(init_body: &str, with_on_timer_export: bool) -> String {
     let on_timer = if with_on_timer_export {
         r#"
@@ -51,7 +53,11 @@ fn timer_wat(init_body: &str, with_on_timer_export: bool) -> String {
           (then
             (global.set $first_ticks (i32.add (global.get $first_ticks) (i32.const 1)))
             (if (global.get $stop_second_on_tick)
-              (then (call $stop (global.get $second))))))
+              (then (call $stop (global.get $second))))
+            (if (global.get $slow_second_on_tick)
+              (then
+                (drop (call $set_period (global.get $second) (i32.const 3000)))
+                (global.set $slow_second_on_tick (i32.const 0))))))
         (if (i32.eq (local.get $id) (global.get $second))
           (then
             (global.set $second_ticks (i32.add (global.get $second_ticks) (i32.const 1))))))
@@ -63,6 +69,7 @@ fn timer_wat(init_body: &str, with_on_timer_export: bool) -> String {
         r#"
     (module
       (import "env" "host_timer_start" (func $start (param i32) (result i32)))
+      (import "env" "host_timer_set_period" (func $set_period (param i32 i32) (result i32)))
       (import "env" "host_timer_stop" (func $stop (param i32)))
 
       (memory (export "memory") 1)
@@ -73,6 +80,8 @@ fn timer_wat(init_body: &str, with_on_timer_export: bool) -> String {
       (global $second_ticks (mut i32) (i32.const 0))
       (global $last_elapsed (mut i32) (i32.const 0))
       (global $stop_second_on_tick (mut i32) (i32.const 0))
+      (global $slow_second_on_tick (mut i32) (i32.const 0))
+      (global $slow_first_on_wake (mut i32) (i32.const 0))
       (global $sleeps (mut i32) (i32.const 0))
       (global $wakes (mut i32) (i32.const 0))
 
@@ -92,7 +101,14 @@ fn timer_wat(init_body: &str, with_on_timer_export: bool) -> String {
       (func (export "on_sleep")
         (global.set $sleeps (i32.add (global.get $sleeps) (i32.const 1))))
       (func (export "on_wake")
-        (global.set $wakes (i32.add (global.get $wakes) (i32.const 1))))
+        (global.set $wakes (i32.add (global.get $wakes) (i32.const 1)))
+        (if (global.get $slow_first_on_wake)
+          (then (drop (call $set_period (global.get $first) (i32.const 5000))))))
+
+      (func (export "slow_first_to_3s") (result i32)
+        (call $set_period (global.get $first) (i32.const 3000)))
+      (func (export "speed_first_past_the_minimum") (result i32)
+        (call $set_period (global.get $first) (i32.const 999)))
 
       (func (export "first") (result i32) (global.get $first))
       (func (export "second") (result i32) (global.get $second))
@@ -330,6 +346,87 @@ fn stopping_a_timer_drops_its_tick_already_due_in_the_same_pass() {
 }
 
 #[test]
+fn a_new_period_keeps_the_timer_and_counts_from_the_change() {
+    let mut runtime = runtime(&timer_wat(ONE_SECOND_TIMER, true));
+    advance_to(&mut runtime, 500);
+
+    assert_eq!(runtime.call_export_i32("slow_first_to_3s"), Some(1));
+
+    advance_to(&mut runtime, 3_499);
+    assert_eq!(
+        runtime.call_export_i32("first_ticks"),
+        Some(0),
+        "the old 1 s period no longer applies"
+    );
+    advance_to(&mut runtime, 3_500);
+    assert_eq!(runtime.call_export_i32("first_ticks"), Some(1));
+}
+
+#[test]
+fn a_period_change_drops_the_tick_already_due_in_the_same_pass() {
+    let init = "(global.set $first (call $start (i32.const 1000)))
+        (global.set $second (call $start (i32.const 1000)))
+        (global.set $slow_second_on_tick (i32.const 1))";
+    let mut runtime = runtime(&timer_wat(init, true));
+
+    advance_to(&mut runtime, 1_000);
+    assert_eq!(runtime.call_export_i32("first_ticks"), Some(1));
+    assert_eq!(
+        runtime.call_export_i32("second_ticks"),
+        Some(0),
+        "the tick taken before the change belongs to the old period"
+    );
+
+    advance_to(&mut runtime, 3_999);
+    assert_eq!(runtime.call_export_i32("second_ticks"), Some(0));
+    advance_to(&mut runtime, 4_000);
+    assert_eq!(runtime.call_export_i32("second_ticks"), Some(1));
+}
+
+#[test]
+fn a_period_change_from_on_wake_drops_the_tick_due_at_wake() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer construct");
+    let init = "(global.set $first (call $start (i32.const 1000)))
+        (global.set $slow_first_on_wake (i32.const 1))";
+    let mut runtime = runtime(&timer_wat(init, true));
+    runtime.notify_dormant();
+    advance_with_renderer(&mut runtime, &mut renderer, 500);
+
+    runtime.notify_wake();
+    advance_with_renderer(&mut runtime, &mut renderer, 1_000);
+    assert_eq!(runtime.call_export_i32("wakes"), Some(1));
+    assert_eq!(
+        runtime.call_export_i32("first_ticks"),
+        Some(0),
+        "the tick due at wake belongs to the old period"
+    );
+
+    advance_with_renderer(&mut runtime, &mut renderer, 5_999);
+    assert_eq!(runtime.call_export_i32("first_ticks"), Some(0));
+    advance_with_renderer(&mut runtime, &mut renderer, 6_000);
+    assert_eq!(runtime.call_export_i32("first_ticks"), Some(1));
+}
+
+#[test]
+fn a_refused_period_change_leaves_the_timer_running() {
+    let mut runtime = runtime(&timer_wat(ONE_SECOND_TIMER, true));
+
+    assert_eq!(
+        runtime.call_export_i32("speed_first_past_the_minimum"),
+        Some(0)
+    );
+
+    advance_to(&mut runtime, 1_000);
+    assert_eq!(runtime.call_export_i32("first_ticks"), Some(1));
+}
+
+#[test]
 fn a_timer_past_the_cap_is_refused() {
     let init = "(global.set $first (call $start (i32.const 1000)))
         (global.set $second (call $start (i32.const 1000)))";
@@ -376,9 +473,11 @@ fn a_widget_without_the_on_timer_export_cannot_start_a_timer() {
 fn each_refusal_reason_warns_once_per_widget() {
     let init = "(global.set $first (call $start (i32.const 999)))
         (drop (call $start (i32.const 999)))
+        (global.set $second (call $start (i32.const 1000)))
         (drop (call $start (i32.const 1000)))
         (drop (call $start (i32.const 1000)))
-        (drop (call $start (i32.const 1000)))";
+        (drop (call $set_period (global.get $second) (i32.const 999)))
+        (drop (call $set_period (global.get $second) (i32.const 999)))";
     let wat = timer_wat(init, true);
 
     let logs = capture_logs(|| {
@@ -388,7 +487,11 @@ fn each_refusal_reason_warns_once_per_widget() {
         assert_eq!(second_widget.call_export_i32("first"), Some(0));
     });
 
-    for reason in ["period below the minimum", "runtime timer limit reached"] {
+    for reason in [
+        "host_timer_start refused: period below the minimum",
+        "host_timer_set_period refused: period below the minimum",
+        "runtime timer limit reached",
+    ] {
         assert_eq!(
             count_lines(&logs, "WARN", reason),
             2,

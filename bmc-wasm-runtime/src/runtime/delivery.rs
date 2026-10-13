@@ -1234,16 +1234,18 @@ impl WasmWidgetRuntime {
             return;
         };
 
-        for (timer_id, elapsed_periods) in ticks {
-            // An earlier callback in this pass may have stopped it.
-            if !self.store.data().timers.is_running(timer_id) {
+        for tick in ticks {
+            // A hook or an earlier callback in this pass may have stopped it or changed its period.
+            if !self.store.data().timers.is_current(tick) {
                 continue;
             }
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }
-            if let Err(e) = on_timer.call(&mut self.store, (timer_id.to_wire(), elapsed_periods)) {
+            if let Err(e) =
+                on_timer.call(&mut self.store, (tick.id.to_wire(), tick.elapsed_periods))
+            {
                 self.record_guest_trap(ON_TIMER_EXPORT, &e);
                 break;
             }

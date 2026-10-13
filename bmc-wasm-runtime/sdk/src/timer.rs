@@ -40,6 +40,7 @@
 //!
 //! [`start`] returns a [`Timer`]; dropping it stops the timer.
 //! A refused [`start`] returns `None` and the host logs why.
+//! [`Timer::set_period`] changes the period of a running timer.
 //!
 //! # Example
 //!
@@ -87,6 +88,7 @@ use bmc_wasm_protocol::TimerId;
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_timer_start(period_ms: u32) -> u32;
+    fn host_timer_set_period(timer_id: u32, period_ms: u32) -> u32;
     fn host_timer_stop(timer_id: u32);
 }
 
@@ -112,6 +114,21 @@ pub fn start(period_ms: u32, callback: TimerCallback) -> Option<Timer> {
     let id = TimerId::from_wire(unsafe { host_timer_start(period_ms) })?;
     CALLBACKS.with(|callbacks| callbacks.borrow_mut().insert(id, callback));
     Some(Timer(id))
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Timer {
+    /// Run the timer at `period_ms`, its next tick one new period from now.
+    ///
+    /// The timer keeps its id and callback,
+    /// and a tick of the old period already due in the same delivery pass is dropped.
+    /// Returns `false`, leaving the timer as it was,
+    /// when `period_ms` is below the host's minimum,
+    /// or when called on a callback's argument after the callback stopped the timer.
+    #[must_use]
+    pub fn set_period(&self, period_ms: u32) -> bool {
+        unsafe { host_timer_set_period(self.0.to_wire(), period_ms) != 0 }
+    }
 }
 
 impl Timer {

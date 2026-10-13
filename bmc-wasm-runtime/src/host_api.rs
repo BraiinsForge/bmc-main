@@ -50,7 +50,7 @@ use bmc_render::{
 
 use bmc_wasm_protocol::{
     AudioId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId,
-    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, TimerId, UdpBroadcastId, WebsocketId, XmlId,
+    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
 };
 
 use crate::audio_registry::AudioRegistry;
@@ -58,7 +58,8 @@ use crate::image_decode_lock::ImageDecodePermit;
 use crate::log_once::LoggedSites;
 use crate::network::NetworkInfo;
 use crate::runtime::{
-    CredentialRefusal, CredentialView, FetchAgent, FetchLogLimiter, ParamsSnapshot, TimerTable,
+    CredentialRefusal, CredentialView, DueTick, FetchAgent, FetchLogLimiter, ParamsSnapshot,
+    TimerTable,
 };
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::system::SystemSnapshot;
@@ -929,7 +930,7 @@ pub(crate) struct StagedGuestDeliveries {
     pub udp_events: Vec<(UdpBroadcastId, UdpBroadcastEvent)>,
     pub http_requests: Vec<(HttpListenerId, HttpInboundRequest)>,
     /// Each due timer with the number of periods its tick covers.
-    pub timer_ticks: Vec<(TimerId, u32)>,
+    pub timer_ticks: Vec<DueTick>,
     renderer_activity: RendererDeliveryActivity,
 }
 

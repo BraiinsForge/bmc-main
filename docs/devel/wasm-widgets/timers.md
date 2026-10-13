@@ -52,6 +52,11 @@ tick by itself.
 `start` returns `None` when the host refuses the timer, and the host logs why. Keep the handle, and when there is none,
 make the widget show that the chart has no history instead of leaving it empty.
 
+`Timer::set_period(period_ms)` moves a running timer to a new period. It keeps its id and callback, and its next tick
+arrives one new period after the call; a tick of the old period already due in the same delivery pass is dropped. It
+returns `false`, leaving the timer as it was, when the period is below the minimum, or when a callback calls it on its
+argument after stopping that timer.
+
 `Timer::stop()` ends a timer and consumes the handle; dropping the handle does the same. A tick of that timer already
 due in the same delivery pass is dropped, so no callback arrives after the timer stops.
 
@@ -80,10 +85,10 @@ tears the widget down, so keep the work done per tick small.
 
 ## Limits
 
-| Limit                     | Value                                                 | Past the limit         |
-| ------------------------- | ----------------------------------------------------- | ---------------------- |
-| Shortest period           | 1000 ms by default (the host's `min_timer_period_ms`) | `start` returns `None` |
-| Running timers per widget | 4 by default (the host's `max_timers`)                | `start` returns `None` |
+| Limit                     | Value                                                 | Past the limit                                       |
+| ------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| Shortest period           | 1000 ms by default (the host's `min_timer_period_ms`) | `start` returns `None`, `set_period` returns `false` |
+| Running timers per widget | 4 by default (the host's `max_timers`)                | `start` returns `None`                               |
 
 The host logs why it refused a `start`: a warning the first time per widget and reason, and at debug level after that. A
 stopped timer no longer counts against the limit.

@@ -26,7 +26,7 @@ use wasmi::{Caller, Linker};
 
 use crate::host_api::HostState;
 use crate::log_once::warn_once;
-use crate::runtime::TimerRefusal;
+use crate::runtime::{PeriodChangeRefusal, TimerRefusal};
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
@@ -71,6 +71,31 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
                     );
                     0
                 }
+            }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_timer_set_period",
+        |mut caller: Caller<'_, HostState>, timer_id: u32, period_ms: u32| -> u32 {
+            let Some(id) = TimerId::from_wire(timer_id) else {
+                return 0;
+            };
+            let state = caller.data_mut();
+            match state.timers.set_period(id, period_ms, state.monotonic_ms) {
+                Ok(()) => 1,
+                Err(PeriodChangeRefusal::PeriodTooShort) => {
+                    warn_once!(
+                        state.logged_sites,
+                        instance_id = %state.instance_id,
+                        period_ms,
+                        min_timer_period_ms = state.resource_limits.min_timer_period_ms.get(),
+                        "host_timer_set_period refused: period below the minimum"
+                    );
+                    0
+                }
+                Err(PeriodChangeRefusal::NotRunning) => 0,
             }
         },
     )?;

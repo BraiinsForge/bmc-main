@@ -34,11 +34,20 @@ pub(crate) enum TimerRefusal {
     IdsExhausted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PeriodChangeRefusal {
+    PeriodTooShort,
+    /// The timer was stopped, or never started.
+    NotRunning,
+}
+
 #[derive(Debug)]
 struct Timer {
     id: TimerId,
     period_ms: u64,
     due_at_ms: u64,
+    /// Bumped by every period change, so a tick taken before it goes stale.
+    generation: u32,
 }
 
 impl Timer {
@@ -49,6 +58,14 @@ impl Timer {
     fn due_at(&self, now_ms: u64) -> u64 {
         self.due_at_ms.min(now_ms.saturating_add(self.period_ms))
     }
+}
+
+/// A timer's tick, taken when it fell due and delivered later in the pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DueTick {
+    pub(crate) id: TimerId,
+    pub(crate) elapsed_periods: u32,
+    generation: u32,
 }
 
 /// A widget's running timers.
@@ -117,23 +134,48 @@ impl TimerTable {
             id,
             period_ms,
             due_at_ms: now_ms.saturating_add(period_ms),
+            generation: 0,
         });
         Ok(id)
+    }
+
+    /// Run a timer at a new period, its next tick one period after `now_ms`.
+    pub(crate) fn set_period(
+        &mut self,
+        id: TimerId,
+        period_ms: u32,
+        now_ms: u64,
+    ) -> Result<(), PeriodChangeRefusal> {
+        if period_ms < self.min_period_ms.get() {
+            return Err(PeriodChangeRefusal::PeriodTooShort);
+        }
+        let timer = self
+            .timers
+            .iter_mut()
+            .find(|timer| timer.id == id)
+            .ok_or(PeriodChangeRefusal::NotRunning)?;
+        timer.period_ms = u64::from(period_ms);
+        timer.due_at_ms = now_ms.saturating_add(timer.period_ms);
+        timer.generation = timer.generation.wrapping_add(1);
+        Ok(())
     }
 
     pub(crate) fn stop(&mut self, id: TimerId) {
         self.timers.retain(|timer| timer.id != id);
     }
 
-    pub(crate) fn is_running(&self, id: TimerId) -> bool {
-        self.timers.iter().any(|timer| timer.id == id)
+    /// Whether a tick is still owed: its timer runs and has not changed period since.
+    pub(crate) fn is_current(&self, tick: DueTick) -> bool {
+        self.timers
+            .iter()
+            .any(|timer| timer.id == tick.id && timer.generation == tick.generation)
     }
 
     /// Collect one tick per due timer, with the number of periods it covers.
     ///
     /// Missed periods coalesce into that one tick, and the next tick stays
     /// on the timer's original period boundaries.
-    pub(crate) fn take_due(&mut self, now_ms: u64) -> Vec<(TimerId, u32)> {
+    pub(crate) fn take_due(&mut self, now_ms: u64) -> Vec<DueTick> {
         let mut ticks = Vec::new();
         for timer in &mut self.timers {
             timer.due_at_ms = timer.due_at(now_ms);
@@ -148,7 +190,11 @@ impl TimerTable {
             timer.due_at_ms = timer
                 .due_at_ms
                 .saturating_add(elapsed.saturating_mul(timer.period_ms));
-            ticks.push((timer.id, u32::try_from(elapsed).unwrap_or(u32::MAX)));
+            ticks.push(DueTick {
+                id: timer.id,
+                elapsed_periods: u32::try_from(elapsed).unwrap_or(u32::MAX),
+                generation: timer.generation,
+            });
         }
         ticks
     }
@@ -166,7 +212,9 @@ impl TimerTable {
 mod tests {
     use std::num::NonZeroU32;
 
-    use super::{TimerRefusal, TimerTable};
+    use bmc_wasm_protocol::TimerId;
+
+    use super::{DueTick, PeriodChangeRefusal, TimerRefusal, TimerTable};
 
     const SECOND: u32 = 1_000;
 
@@ -176,6 +224,13 @@ mod tests {
 
     fn table_with_cap(max_timers: usize) -> TimerTable {
         table_with(max_timers, SECOND)
+    }
+
+    fn fired(ticks: Vec<DueTick>) -> Vec<(TimerId, u32)> {
+        ticks
+            .into_iter()
+            .map(|tick| (tick.id, tick.elapsed_periods))
+            .collect()
     }
 
     fn table_with(max_timers: usize, min_period_ms: u32) -> TimerTable {
@@ -199,7 +254,7 @@ mod tests {
         let mut table = table();
         let id = table.start(SECOND, 0).expect("BUG: a valid timer");
 
-        assert_eq!(table.take_due(1_000), vec![(id, 1)]);
+        assert_eq!(fired(table.take_due(1_000)), vec![(id, 1)]);
     }
 
     #[test]
@@ -209,7 +264,7 @@ mod tests {
         table.take_due(1_000);
 
         assert_eq!(
-            table.take_due(4_500),
+            fired(table.take_due(4_500)),
             vec![(id, 3)],
             "ticks were due at 2 s, 3 s and 4 s"
         );
@@ -222,7 +277,7 @@ mod tests {
         table.take_due(1_700);
 
         assert!(table.take_due(1_999).is_empty());
-        assert_eq!(table.take_due(2_000), vec![(id, 1)]);
+        assert_eq!(fired(table.take_due(2_000)), vec![(id, 1)]);
     }
 
     #[test]
@@ -231,7 +286,7 @@ mod tests {
         let id = table.start(SECOND, 50_000).expect("BUG: a valid timer");
 
         assert!(table.take_due(0).is_empty());
-        assert_eq!(table.take_due(1_000), vec![(id, 1)]);
+        assert_eq!(fired(table.take_due(1_000)), vec![(id, 1)]);
     }
 
     #[test]
@@ -250,7 +305,7 @@ mod tests {
         table.observe_clock(600_000);
 
         assert!(table.take_due(600_999).is_empty());
-        assert_eq!(table.take_due(601_000), vec![(id, 1)]);
+        assert_eq!(fired(table.take_due(601_000)), vec![(id, 1)]);
     }
 
     #[test]
@@ -261,7 +316,7 @@ mod tests {
 
         table.observe_clock(500);
 
-        assert_eq!(table.take_due(1_000), vec![(id, 1)]);
+        assert_eq!(fired(table.take_due(1_000)), vec![(id, 1)]);
     }
 
     #[test]
@@ -311,11 +366,82 @@ mod tests {
 
         table.stop(id);
 
-        assert!(!table.is_running(id));
         assert!(table.take_due(5_000).is_empty());
         table
             .start(SECOND, 5_000)
             .expect("BUG: the stopped timer freed its slot");
+    }
+
+    #[test]
+    fn a_new_period_keeps_the_timer_and_counts_from_the_change() {
+        let mut table = table();
+        let id = table.start(SECOND, 0).expect("BUG: a valid timer");
+
+        assert_eq!(table.set_period(id, 3 * SECOND, 500), Ok(()));
+
+        assert!(table.take_due(3_499).is_empty());
+        assert_eq!(fired(table.take_due(3_500)), vec![(id, 1)]);
+    }
+
+    #[test]
+    fn a_refused_period_change_keeps_the_old_period() {
+        let mut table = table();
+        let id = table.start(SECOND, 0).expect("BUG: a valid timer");
+
+        assert_eq!(
+            table.set_period(id, SECOND - 1, 500),
+            Err(PeriodChangeRefusal::PeriodTooShort)
+        );
+
+        assert_eq!(fired(table.take_due(1_000)), vec![(id, 1)]);
+    }
+
+    #[test]
+    fn a_tick_taken_before_a_period_change_is_no_longer_owed() {
+        let mut table = table();
+        let id = table.start(SECOND, 0).expect("BUG: a valid timer");
+        let [tick] = table.take_due(1_000)[..] else {
+            panic!("BUG: one timer fell due");
+        };
+        assert!(
+            table.is_current(tick),
+            "an untouched timer still owes its tick"
+        );
+
+        table
+            .set_period(id, 3 * SECOND, 1_000)
+            .expect("BUG: a valid period");
+
+        assert!(!table.is_current(tick));
+    }
+
+    #[test]
+    fn a_tick_taken_before_stop_is_no_longer_owed() {
+        let mut table = table();
+        let id = table.start(SECOND, 0).expect("BUG: a valid timer");
+        let [tick] = table.take_due(1_000)[..] else {
+            panic!("BUG: one timer fell due");
+        };
+        assert!(
+            table.is_current(tick),
+            "an untouched timer still owes its tick"
+        );
+
+        table.stop(id);
+
+        assert!(!table.is_current(tick));
+    }
+
+    #[test]
+    fn a_stopped_timer_cannot_change_its_period() {
+        let mut table = table();
+        let id = table.start(SECOND, 0).expect("BUG: a valid timer");
+        table.stop(id);
+
+        assert_eq!(
+            table.set_period(id, SECOND, 0),
+            Err(PeriodChangeRefusal::NotRunning)
+        );
     }
 
     #[test]
@@ -326,7 +452,7 @@ mod tests {
 
         table.stop(id);
 
-        assert!(!table.is_running(id));
+        assert!(table.take_due(5_000).is_empty());
     }
 
     #[test]

@@ -41,7 +41,7 @@ pub(crate) use fetch_logging::{FetchLogDecision, FetchLogLimiter};
 pub(crate) use imports::credentials::CredentialRefusal;
 pub use imports::credentials::{BoundCredential, CredentialView};
 pub(crate) use imports::params::ParamsSnapshot;
-pub(crate) use timers::{TimerRefusal, TimerTable};
+pub(crate) use timers::{DueTick, PeriodChangeRefusal, TimerRefusal, TimerTable};
 
 pub use backend::DisplayInfo as RuntimeDisplayInfo;
 pub use backend::{
