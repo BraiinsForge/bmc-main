@@ -812,7 +812,7 @@ impl FrameScheduleState {
             has_active_animations: false,
             interaction_pending: false,
             host_frame_delay_ms: None,
-            animation_frame_delay_ms: crate::RuntimeConfig::DEFAULT_ANIMATION_FRAME_DELAY_MS,
+            animation_frame_delay_ms: bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             deferred_wasm_render_at_ms: None,
             last_wasm_render_at_ms: 0,
         }

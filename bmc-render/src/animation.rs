@@ -28,6 +28,10 @@ use bmc_wasm_protocol::{ColorSpace, Easing, LoopMode};
 use crate::AnimationState;
 use crate::tree::HostAnimationDef;
 
+/// Default frame cadence while a tree animates, shared by widgets and system overlays:
+/// ~30 fps (33 ms). Matches the mesh budget and the observed compositor rate on the Vivante GC400.
+pub const DEFAULT_ANIMATION_FRAME_DELAY_MS: u32 = 33;
+
 /// Apply an easing function to a normalized time value `t` in 0.0..=1.0.
 #[must_use]
 pub fn apply_easing(easing: Easing, t: f32) -> f32 {

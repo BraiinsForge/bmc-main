@@ -996,7 +996,7 @@ mod delivery_tests {
 fn animation_delta_ms(last_render_at: Option<std::time::Instant>, now: std::time::Instant) -> u32 {
     last_render_at
         .map_or(0, |last| now.duration_since(last).as_millis() as u32)
-        .min(bmc_wasm_runtime::RuntimeConfig::DEFAULT_ANIMATION_FRAME_DELAY_MS)
+        .min(bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS)
 }
 
 #[cfg(test)]
@@ -1005,7 +1005,7 @@ mod tests {
 
     use super::animation_delta_ms;
 
-    const CAP: u32 = bmc_wasm_runtime::RuntimeConfig::DEFAULT_ANIMATION_FRAME_DELAY_MS;
+    const CAP: u32 = bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS;
 
     #[test]
     fn idle_view_starts_its_animation_from_zero() {

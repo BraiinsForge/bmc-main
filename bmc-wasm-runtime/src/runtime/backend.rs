@@ -301,7 +301,7 @@ pub struct RuntimeConfig {
     /// Frame poll cadence (ms) capping the effective host wake while host-side
     /// animations are active, so a widget's `request_frame_after(longer)`
     /// (e.g. a 1Hz clock tick) does not starve cached-tree animation replays.
-    /// Defaults to [`Self::DEFAULT_ANIMATION_FRAME_DELAY_MS`] (~30 fps), which
+    /// Defaults to [`bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS`] (~30 fps), which
     /// matches the Deck's hardware ceiling for 3D content. Hosts on faster
     /// targets can lower this toward 16 ms (60 fps) per the BDK-266 NFR.
     pub animation_frame_delay_ms: u32,
@@ -329,12 +329,6 @@ pub struct RuntimeConfig {
     pub instance_token: Option<String>,
 }
 
-impl RuntimeConfig {
-    /// Default animation cadence: ~30 fps (33 ms). Matches the BDK-355 mesh
-    /// budget and the observed compositor rate on the Vivante GC400.
-    pub const DEFAULT_ANIMATION_FRAME_DELAY_MS: u32 = 33;
-}
-
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
@@ -353,7 +347,7 @@ impl Default for RuntimeConfig {
             mesh_msaa_samples: 0,
             rng_seed: None,
             led_request_sender: None,
-            animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
+            animation_frame_delay_ms: bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             params: std::collections::BTreeMap::new(),
             credentials: CredentialView::default(),
             credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
