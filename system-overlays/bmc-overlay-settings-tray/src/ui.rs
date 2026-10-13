@@ -22,6 +22,8 @@
 //! `bmc_render::tree::TreeNode` the GPU renderer lays out and paints. Kept free
 //! of host/GL imports so it compiles and unit-tests on the host.
 
+use std::time::Duration;
+
 use bmc_render::tree::{PropsData, TreeNode, col};
 use bmc_system_overlay::DisplayShape;
 use bmc_wasm_protocol::{Color, SvgId};
@@ -398,11 +400,54 @@ impl Action {
     }
 }
 
+/// How far a hold-to-confirm button is held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hold {
+    held: Duration,
+    length: Duration,
+}
+
+impl Hold {
+    /// A hold of `length` that has been held for `held`, capped at `length`.
+    #[must_use]
+    pub fn new(held: Duration, length: Duration) -> Self {
+        Self {
+            held: held.min(length),
+            length,
+        }
+    }
+
+    #[must_use]
+    pub fn held(self) -> Duration {
+        self.held
+    }
+
+    #[must_use]
+    pub fn length(self) -> Duration {
+        self.length
+    }
+
+    /// The 0..=1 fraction held; a zero-length hold is complete.
+    #[must_use]
+    pub fn progress(self) -> f32 {
+        if self.length.is_zero() {
+            1.0
+        } else {
+            self.held.as_secs_f32() / self.length.as_secs_f32()
+        }
+    }
+
+    #[must_use]
+    pub fn remaining(self) -> Duration {
+        self.length.saturating_sub(self.held)
+    }
+}
+
 /// How far a hold action has come.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Phase {
-    /// The finger is down; `progress` is the 0..=1 hold fraction.
-    Holding { progress: f32 },
+    /// The finger is down.
+    Holding(Hold),
     /// The hold completed and the request is out.
     Pending,
     /// The request was declined or timed out, shown for a moment.
@@ -624,6 +669,28 @@ mod tests {
     use super::*;
     use crate::ui::parts::close_origin;
     use crate::ui::test_support::*;
+
+    #[test]
+    fn a_hold_reads_progress_and_remaining_off_one_clock() {
+        let hold = Hold::new(Duration::from_secs(1), Duration::from_secs(5));
+        assert!((hold.progress() - 0.2).abs() < f32::EPSILON);
+        assert_eq!(hold.remaining(), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn a_hold_held_past_its_length_is_complete() {
+        let hold = Hold::new(Duration::from_secs(9), Duration::from_secs(5));
+        assert_eq!(hold.held(), Duration::from_secs(5));
+        assert!((hold.progress() - 1.0).abs() < f32::EPSILON);
+        assert_eq!(hold.remaining(), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_zero_length_hold_is_complete() {
+        let hold = Hold::new(Duration::ZERO, Duration::ZERO);
+        assert!((hold.progress() - 1.0).abs() < f32::EPSILON);
+        assert_eq!(hold.remaining(), Duration::ZERO);
+    }
 
     /// The track's ends are the floor and full brightness, so a thumb at
     /// either end is at a reachable value and no stretch of track is dead.

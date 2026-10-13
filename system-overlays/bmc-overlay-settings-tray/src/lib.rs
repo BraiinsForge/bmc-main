@@ -37,8 +37,8 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport, RenderOutcome, ScreenEdge,
-    SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
+    Anchor, FrameKind, InputRegion, Layer, LayerConfig, NextFrame, OverlayViewport, RenderOutcome,
+    ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
     VersionedSnapshot,
 };
 
@@ -67,9 +67,10 @@ const STEP_ECHO_SETTLE: Duration = Duration::from_millis(300);
 /// still lands inside its window.
 const BRIGHTNESS_SEND_INTERVAL: Duration = Duration::from_millis(150);
 
-/// Fast wake cadence while a hold FSM is animating, so the hold/timeout edges
-/// fire without a touch/network event to wake the loop.
-const FAST_WAKE: Duration = Duration::from_millis(33);
+/// One frame apart at the animation cadence, for spacing events in tests.
+#[cfg(test)]
+const FRAME: Duration =
+    Duration::from_millis(bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS as u64);
 
 /// Injected connectivity source for testing.
 trait Env {
@@ -753,15 +754,24 @@ impl SettingsTrayOverlay {
         self.render_state.tree.cancel_touch();
         self.touch_track = None;
         self.repaint_queued = false;
+        // The FSMs stop advancing for the slide-out, so a hold can no longer complete.
+        if matches!(self.button, ButtonState::Holding { .. }) {
+            self.button = ButtonState::default();
+            self.content_dirty = true;
+        }
+        if matches!(self.restart, RestartState::Holding { .. }) {
+            self.restart = RestartState::default();
+            self.content_dirty = true;
+        }
     }
 
-    /// Whether a hold FSM is mid-animation or a hold button is pressed this
-    /// frame, so the loop should fast-poll to keep the hold accruing.
-    fn animating(&self) -> bool {
-        self.button.is_animating()
-            || self.restart.is_animating()
-            || self.render_state.tree.is_pressed(ui::WIFI_RECONFIG_KEY)
-            || self.render_state.tree.is_pressed(ui::RESTART_KEY)
+    /// When a hold FSM next changes on its own: a hold completing,
+    /// a request timing out, or a failure message clearing.
+    fn next_fsm_edge(&self) -> Option<Instant> {
+        [self.button.next_edge(), self.restart.next_edge()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 }
 
@@ -883,21 +893,24 @@ impl SystemOverlay for SettingsTrayOverlay {
 
         let sliding = self.slide.animating(now);
         let visible = !(self.dismissing && self.slide.dismiss_done(now));
-        let animating = self.animating() || sliding;
         let wants_render = visible
-            && (was_dirty || self.content_dirty || animating || self.slide.needs_settle_frame());
-        // Fast-poll whenever we render this pass. `render` flips the tree's
-        // `is_pressed` and advances a hold FSM only on the *next* tick, so a
-        // finger-down on a hold-to-confirm button — still unpressed in this
-        // pass's pre-render state — must be re-examined on the next frame, not
-        // deferred to the 2 s network refresh (which would stall the hold).
-        let next_wake = if !visible {
-            None
-        } else if wants_render {
-            Some(now + FAST_WAKE)
-        } else {
-            Some(now + NETWORK_REFRESH)
-        };
+            && (was_dirty || self.content_dirty || sliding || self.slide.needs_settle_frame());
+        // The slide moves the surface rather than the tree,
+        // so it asks for its frames here, at the cadence tree animations run at.
+        let slide_frame =
+            sliding.then(|| now + Duration::from_millis(self.animation_frame_delay_ms().into()));
+        // The FSMs advance only while the panel takes input, so only then are their edges a wake.
+        let fsm_edge = self
+            .slide
+            .accepts_input()
+            .then(|| self.next_fsm_edge())
+            .flatten();
+        let next_wake = visible.then(|| {
+            [slide_frame, fsm_edge]
+                .into_iter()
+                .flatten()
+                .fold(now + NETWORK_REFRESH, Instant::min)
+        });
         // A stop the throttle held back goes out on the tick it comes due,
         // and a still finger raises nothing to bring that tick sooner.
         let next_wake = next_wake.map(|wake| match self.brightness_unsent {
@@ -955,7 +968,14 @@ impl SystemOverlay for SettingsTrayOverlay {
             frame,
         );
         self.apply_render_output(output, now);
-        output.outcome
+        if self.repaint_queued {
+            RenderOutcome {
+                next: NextFrame::Rebuild,
+                ..output.outcome
+            }
+        } else {
+            output.outcome
+        }
     }
 
     fn on_hidden(&mut self) {
@@ -1332,7 +1352,7 @@ mod view_tests {
         overlay.env = Box::new(VersionAssertEnv);
 
         let _ = overlay.tick(now);
-        let _ = overlay.tick(now + FAST_WAKE);
+        let _ = overlay.tick(now + FRAME);
     }
 
     #[test]
@@ -1458,41 +1478,119 @@ mod view_tests {
     }
 }
 
+/// A Deck-sized tray with every control, one frame drawn, and a finger just put down on Restart.
+#[cfg(test)]
+fn deck_tray_pressing_restart() -> (SettingsTrayOverlay, OverlayViewport) {
+    use bmc_render::renderer::test_support::ShapingRecorder;
+
+    let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
+    overlay.env = Box::new(NoNetworkEnv);
+    overlay.caps = Some(bmc_system_overlay::SettingsCaps {
+        brightness: true,
+        sound: true,
+        wifi_setup: true,
+    });
+    let viewport = OverlayViewport::rectangular(1_280, 480);
+    // Hit regions are the previous frame's, so a touch needs one frame drawn before it.
+    let mut warm_up = ShapingRecorder::new(1_280.0, 480.0);
+    let _ = overlay.render(&mut warm_up, viewport, FrameKind::Fresh);
+    let label = warm_up
+        .paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text == "Restart")
+        .expect("BUG: the Deck tray captions its restart button");
+    // The button sits right above its caption.
+    let (x, y) = (label.x + label.max_width / 2.0, label.y - 16.0);
+    overlay.on_touch(TouchEvent::Down {
+        id: 0,
+        x: f64::from(x),
+        y: f64::from(y),
+    });
+    (overlay, viewport)
+}
+
 #[cfg(test)]
 mod wake_tests {
     use super::*;
+    use bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS;
+    use bmc_render::renderer::test_support::ShapingRecorder;
     use std::time::{Duration, Instant};
 
-    // A finger-down on a hold-to-confirm button only becomes `is_pressed` during
-    // the next `render`, so the hold FSM advances a frame later. The tick that
-    // schedules the wake must fast-poll right after a touch-down; otherwise the
-    // just-rendered press state isn't re-examined until the 2 s network refresh
-    // and the hold timer and its progress stall.
-    #[test]
-    fn finger_down_schedules_a_fast_wake() {
-        let t0 = Instant::now();
+    fn idle_overlay(t0: Instant) -> SettingsTrayOverlay {
         let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.env = Box::new(NoNetworkEnv);
         // Drop the construction-time dirty flag the way a first render would.
         let _ = overlay.take_content_dirty();
+        overlay
+    }
 
-        // Idle baseline: nothing pending, so the slow network cadence applies.
+    #[test]
+    fn an_idle_tray_wakes_only_for_the_network() {
+        let t0 = Instant::now();
+        let mut overlay = idle_overlay(t0);
         let t1 = t0 + Duration::from_millis(10);
         assert_eq!(overlay.tick(t1).next_wake, Some(t1 + NETWORK_REFRESH));
+    }
 
-        // Finger-down on the wifi button row; the press lands on the next render.
-        overlay.on_touch(TouchEvent::Down {
-            id: 0,
-            x: 120.0,
-            y: 300.0,
-        });
-        let t2 = t1 + Duration::from_millis(10);
+    #[test]
+    fn a_hold_state_wakes_the_tray_when_it_changes_on_its_own() {
+        let t0 = Instant::now();
+        let mut overlay = idle_overlay(t0);
+        overlay.button = ButtonState::Idle {
+            error_since: Some(t0),
+        };
+        let t1 = t0 + Duration::from_millis(2_500);
+        assert_eq!(
+            overlay.tick(t1).next_wake,
+            Some(t0 + fsm::ERROR_DISPLAY),
+            "the failure message clears before the next network refresh"
+        );
+    }
+
+    #[test]
+    fn a_dismissing_tray_never_wakes_in_the_past() {
+        let t0 = Instant::now();
+        let mut overlay = idle_overlay(t0);
+        overlay.button = ButtonState::Idle {
+            error_since: Some(t0),
+        };
+        overlay.begin_dismiss();
+        let now = t0 + fsm::ERROR_DISPLAY + Duration::from_millis(20);
+        let next_wake = overlay.tick(now).next_wake;
         assert!(
-            overlay
-                .tick(t2)
-                .next_wake
-                .is_some_and(|w| w <= t2 + FAST_WAKE),
-            "a touch-down must fast-poll so the hold FSM picks up the press promptly"
+            next_wake.is_some_and(|wake| wake > now),
+            "the hold FSMs stand still while the panel slides out, so their passed edges must not \
+             wake the loop: {next_wake:?} at {now:?}"
+        );
+    }
+
+    // A press only becomes `is_pressed` during a render, and the hold FSM
+    // reads it on the next tick, so the render must ask for that tick.
+    #[test]
+    fn a_press_read_back_asks_for_a_rebuild() {
+        let (mut overlay, viewport) = deck_tray_pressing_restart();
+        let outcome = overlay.render(
+            &mut ShapingRecorder::new(1_280.0, 480.0),
+            viewport,
+            FrameKind::Fresh,
+        );
+        assert!(
+            overlay.render_state.tree.is_pressed(ui::RESTART_KEY),
+            "the touch must land on the restart button"
+        );
+        assert_eq!(outcome.next, NextFrame::Rebuild);
+    }
+
+    #[test]
+    fn a_slide_wakes_at_the_animation_cadence() {
+        let t0 = Instant::now();
+        let mut overlay = idle_overlay(t0);
+        overlay.on_reveal();
+        let outcome = overlay.tick(t0);
+        assert!(outcome.wants_render);
+        assert_eq!(
+            outcome.next_wake,
+            Some(t0 + Duration::from_millis(DEFAULT_ANIMATION_FRAME_DELAY_MS.into()))
         );
     }
 }
@@ -1596,10 +1694,10 @@ mod step_tests {
         let frames = 30;
         for frame in 0..=frames {
             let fraction = if frame % 2 == 0 { 0.5 } else { 0.45 };
-            overlay.apply_render_output(brightness_drag(fraction), t0 + FAST_WAKE * frame);
+            overlay.apply_render_output(brightness_drag(fraction), t0 + FRAME * frame);
         }
         let sent = overlay.drain_settings_requests().len();
-        let span = FAST_WAKE * frames;
+        let span = FRAME * frames;
         #[expect(
             clippy::integer_division,
             reason = "whole intervals elapsed, plus the send at the first frame"
@@ -1617,13 +1715,13 @@ mod step_tests {
         let mut overlay = SettingsTrayOverlay::new(None, t0);
         overlay.brightness = 50;
         overlay.apply_render_output(brightness_drag(0.5), t0);
-        overlay.apply_render_output(brightness_drag(0.55), t0 + FAST_WAKE);
+        overlay.apply_render_output(brightness_drag(0.55), t0 + FRAME);
         assert_eq!(
             overlay.drain_settings_requests(),
             vec![SettingsRequest::SetBrightness(55)],
             "the second stop is held back by the throttle"
         );
-        overlay.on_touch_at(TouchEvent::Up { id: 0 }, t0 + 2 * FAST_WAKE);
+        overlay.on_touch_at(TouchEvent::Up { id: 0 }, t0 + 2 * FRAME);
         assert_eq!(
             overlay.drain_settings_requests(),
             vec![SettingsRequest::SetBrightness(60)],
@@ -1641,7 +1739,7 @@ mod step_tests {
         overlay.env = Box::new(NoNetworkEnv);
         overlay.brightness = 50;
         overlay.apply_render_output(brightness_drag(0.5), t0);
-        overlay.apply_render_output(brightness_drag(0.55), t0 + FAST_WAKE);
+        overlay.apply_render_output(brightness_drag(0.55), t0 + FRAME);
         let _ = overlay.drain_settings_requests();
 
         let early = t0 + BRIGHTNESS_SEND_INTERVAL / 2;
@@ -1932,6 +2030,133 @@ mod step_tests {
     }
 }
 
+#[cfg(test)]
+mod replay_tests {
+    use bmc_render::renderer::test_support::ShapingRecorder;
+
+    use super::*;
+
+    fn holding_restart() -> SettingsTrayView {
+        SettingsTrayView {
+            status: Some(ui::Status {
+                action: ui::Action::Restart,
+                phase: ui::Phase::Holding(ui::Hold::new(
+                    Duration::from_secs(1),
+                    Duration::from_secs(5),
+                )),
+                reason: None,
+            }),
+            ..SettingsTrayView::resting()
+        }
+    }
+
+    fn frame(
+        state: &mut SettingsTrayRenderState,
+        view: &SettingsTrayView,
+        kind: FrameKind,
+    ) -> RenderOutcome {
+        let mut recorder = ShapingRecorder::new(480.0, 320.0);
+        let viewport = OverlayViewport::rectangular(480, 320);
+        render_settings_tray(&mut recorder, viewport, state, view, Instant::now(), kind).outcome
+    }
+
+    #[test]
+    fn a_held_button_keeps_the_tray_animating() {
+        let mut state = SettingsTrayRenderState::new(Instant::now());
+        let outcome = frame(&mut state, &holding_restart(), FrameKind::Fresh);
+        assert_eq!(
+            outcome.next,
+            NextFrame::Replay,
+            "the hold circle asks for frames at the animation cadence"
+        );
+    }
+
+    /// Frames as the hosted driver drives them: a fresh frame when `tick` or the last render
+    /// asks for one, a replay when the last render reports something still moving,
+    /// and the content-changed flag taken after every paint.
+    #[test]
+    fn a_hold_with_the_finger_resting_replays_the_tray_tree() {
+        const FRAMES: usize = 20;
+        let (mut overlay, viewport) = deck_tray_pressing_restart();
+        let replays = drive_frames(&mut overlay, viewport, FRAMES);
+        assert!(
+            matches!(overlay.restart, RestartState::Holding { .. }),
+            "the finger still holds Restart"
+        );
+        assert_eq!(
+            replays,
+            FRAMES - 2,
+            "only the press and the start of the hold build a tree"
+        );
+    }
+
+    #[test]
+    fn a_dismiss_cancels_a_live_hold() {
+        let (mut overlay, viewport) = deck_tray_pressing_restart();
+        let _ = drive_frames(&mut overlay, viewport, 3);
+        assert!(matches!(overlay.restart, RestartState::Holding { .. }));
+
+        overlay.on_preempted(true);
+        assert_eq!(
+            overlay.restart,
+            RestartState::default(),
+            "the hold can no longer complete, so its circle and notice go"
+        );
+        assert!(
+            overlay.content_dirty(),
+            "the slide reuses a frame drawn without them"
+        );
+    }
+
+    /// Render `frames` frames, returning how many replayed the cached tree.
+    fn drive_frames(
+        overlay: &mut SettingsTrayOverlay,
+        viewport: OverlayViewport,
+        frames: usize,
+    ) -> usize {
+        let mut next = NextFrame::Idle;
+        let mut replays = 0;
+        for _ in 0..frames {
+            let tick = overlay.tick(Instant::now());
+            let kind = if tick.wants_render || next != NextFrame::Replay {
+                FrameKind::Fresh
+            } else {
+                FrameKind::AnimationOnly
+            };
+            next = overlay
+                .render(&mut ShapingRecorder::new(1_280.0, 480.0), viewport, kind)
+                .next;
+            let _ = overlay.take_content_dirty();
+            replays += usize::from(overlay.render_state.tree.replayed_last_frame());
+        }
+        replays
+    }
+
+    #[test]
+    fn a_resting_tray_asks_for_no_animation_frames() {
+        let mut state = SettingsTrayRenderState::new(Instant::now());
+        let outcome = frame(&mut state, &SettingsTrayView::resting(), FrameKind::Fresh);
+        assert_eq!(outcome.next, NextFrame::Idle);
+    }
+
+    #[test]
+    fn hiding_drops_the_tray_tree() {
+        let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
+        let _ = frame(
+            &mut overlay.render_state,
+            &holding_restart(),
+            FrameKind::Fresh,
+        );
+        overlay.on_hidden();
+        let _ = frame(
+            &mut overlay.render_state,
+            &holding_restart(),
+            FrameKind::AnimationOnly,
+        );
+        assert!(!overlay.render_state.tree.replayed_last_frame());
+    }
+}
+
 /// The slider driven through real frames: the touch events queue on the tree,
 /// and the frame that drains them reports what the finger did.
 #[cfg(test)]
@@ -1999,7 +2224,7 @@ mod slider_release_tests {
             y: up_y,
         });
         state.tree.push_touch(TouchEvent::Up { id: 0 });
-        let (output, _) = frame(&mut state, &view, t0 + FAST_WAKE);
+        let (output, _) = frame(&mut state, &view, t0 + FRAME);
         let fraction = output
             .brightness_drag
             .expect("the release reports where the finger came up");
@@ -2016,7 +2241,7 @@ mod slider_release_tests {
         let (x, y) = point(track.x + track.w * 0.3, track.y + track.h / 2.0);
         state.tree.push_touch(TouchEvent::Down { id: 0, x, y });
         state.tree.push_touch(TouchEvent::Up { id: 0 });
-        let (output, _) = frame(&mut state, &view, t0 + FAST_WAKE);
+        let (output, _) = frame(&mut state, &view, t0 + FRAME);
         let fraction = output
             .brightness_drag
             .expect("a tap on the track sets the slider");

@@ -38,9 +38,9 @@
     reason = "test geometry is far below f32 mantissa precision"
 )]
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use bmc_overlay_settings_tray::ui::{Action, Phase, Status};
+use bmc_overlay_settings_tray::ui::{Action, Hold, Phase, Status};
 use bmc_overlay_settings_tray::{SettingsTrayRenderState, SettingsTrayView, render_settings_tray};
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::FrameClear;
@@ -577,7 +577,10 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
     let mut view = SettingsTrayView::resting().with_caps(Some(DECK_CAPS));
     view.status = Some(Status {
         action: Action::Restart,
-        phase: Phase::Holding { progress: 0.5 },
+        phase: Phase::Holding(Hold::new(
+            Duration::from_millis(2_500),
+            Duration::from_secs(5),
+        )),
         reason: None,
     });
 

@@ -37,7 +37,7 @@ use bmc_overlay_device_info::{
     DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info,
 };
 use bmc_overlay_offline::{Connectivity, OfflineView, Status, decide, render_offline};
-use bmc_overlay_settings_tray::ui::{Action, BRIGHTNESS_UP_KEY, Phase, Status as TrayStatus};
+use bmc_overlay_settings_tray::ui::{Action, BRIGHTNESS_UP_KEY, Hold, Phase, Status as TrayStatus};
 use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
 };
@@ -847,11 +847,14 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
             &TRAY_PRESSED,
         ),
         (
-            "Restart holding at 15%",
+            "Restart holding from 15%",
             variant(|view| {
                 view.status = Some(TrayStatus {
                     action: Action::Restart,
-                    phase: Phase::Holding { progress: 0.15 },
+                    phase: Phase::Holding(Hold::new(
+                        std::time::Duration::from_millis(750),
+                        std::time::Duration::from_secs(5),
+                    )),
                     reason: None,
                 });
             }),

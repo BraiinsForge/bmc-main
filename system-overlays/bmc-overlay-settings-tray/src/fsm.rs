@@ -24,7 +24,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::ui::Phase;
+use crate::ui::{Hold, Phase};
 
 /// Hold duration to confirm a WiFi action.
 const HOLD: Duration = Duration::from_secs(5);
@@ -42,9 +42,8 @@ const RESTART_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the transient failure message stays up.
 pub(crate) const ERROR_DISPLAY: Duration = Duration::from_secs(3);
 
-/// Fraction of `hold` elapsed since `since`, clamped to 0..=1.
-fn hold_fraction(since: Instant, now: Instant, hold: Duration) -> f32 {
-    (now.duration_since(since).as_secs_f32() / hold.as_secs_f32()).clamp(0.0, 1.0)
+fn holding(since: Instant, now: Instant, hold: Duration) -> Phase {
+    Phase::Holding(Hold::new(now.saturating_duration_since(since), hold))
 }
 
 /// Hold-to-confirm button state machine for WiFi reconfiguration.
@@ -125,17 +124,17 @@ impl ButtonState {
         };
     }
 
-    /// Keep ticking/repainting (short poll timeout) while time-based.
+    /// When the state next changes on its own, without a touch.
     #[must_use]
-    pub fn is_animating(self) -> bool {
-        matches!(
-            self,
-            ButtonState::Holding { .. }
-                | ButtonState::Pending { .. }
-                | ButtonState::Idle {
-                    error_since: Some(_)
-                }
-        )
+    pub fn next_edge(self) -> Option<Instant> {
+        match self {
+            ButtonState::Idle {
+                error_since: Some(since),
+            } => Some(since + ERROR_DISPLAY),
+            ButtonState::Holding { since } => Some(since + HOLD),
+            ButtonState::Pending { since } => Some(since + RECONFIGURE_TIMEOUT),
+            ButtonState::Idle { error_since: None } | ButtonState::Active => None,
+        }
     }
 
     /// What the notice reports: `None` at rest,
@@ -144,9 +143,7 @@ impl ButtonState {
     pub fn phase(self, now: Instant) -> Option<Phase> {
         match self {
             ButtonState::Idle { error_since: None } | ButtonState::Active => None,
-            ButtonState::Holding { since } => Some(Phase::Holding {
-                progress: hold_fraction(since, now, HOLD),
-            }),
+            ButtonState::Holding { since } => Some(holding(since, now, HOLD)),
             ButtonState::Pending { .. } => Some(Phase::Pending),
             ButtonState::Idle {
                 error_since: Some(_),
@@ -222,11 +219,17 @@ impl RestartState {
                 }
             }
             RestartState::Pending { since } => {
+                // Only a finger still down needs the Cooldown lock-out;
+                // a lifted one goes straight to the message, which clears on its own edge.
                 if now.duration_since(since) >= RESTART_TIMEOUT {
-                    (
-                        RestartState::Cooldown { message_since: now },
-                        RestartAction::None,
-                    )
+                    let next = if pressed {
+                        RestartState::Cooldown { message_since: now }
+                    } else {
+                        RestartState::Idle {
+                            message_since: Some(now),
+                        }
+                    };
+                    (next, RestartAction::None)
                 } else {
                     (RestartState::Pending { since }, RestartAction::None)
                 }
@@ -270,18 +273,21 @@ impl RestartState {
         )
     }
 
-    /// Keep ticking/repainting (short poll timeout) while time-based.
+    /// When the state next changes on its own, without a touch.
+    /// `Cooldown` waits for the finger to lift.
     #[must_use]
-    pub fn is_animating(self) -> bool {
-        matches!(
-            self,
-            RestartState::Holding { .. }
-                | RestartState::Pending { .. }
-                | RestartState::Cooldown { .. }
-                | RestartState::Idle {
-                    message_since: Some(_)
-                }
-        )
+    pub fn next_edge(self) -> Option<Instant> {
+        match self {
+            RestartState::Idle {
+                message_since: Some(since),
+            } => Some(since + ERROR_DISPLAY),
+            RestartState::Holding { since } => Some(since + RESTART_HOLD),
+            RestartState::Pending { since } => Some(since + RESTART_TIMEOUT),
+            RestartState::Idle {
+                message_since: None,
+            }
+            | RestartState::Cooldown { .. } => None,
+        }
     }
 
     /// What the notice reports: `None` at rest.
@@ -291,9 +297,7 @@ impl RestartState {
             RestartState::Idle {
                 message_since: None,
             } => None,
-            RestartState::Holding { since } => Some(Phase::Holding {
-                progress: hold_fraction(since, now, RESTART_HOLD),
-            }),
+            RestartState::Holding { since } => Some(holding(since, now, RESTART_HOLD)),
             RestartState::Pending { .. } => Some(Phase::Pending),
             RestartState::Idle {
                 message_since: Some(_),
@@ -393,7 +397,7 @@ mod tests {
         let mut r = RestartState::default();
         r.tick(true, t0);
         assert!(
-            matches!(r.phase(t0), Some(Phase::Holding { .. })),
+            matches!(r.phase(t0), Some(Phase::Holding(_))),
             "a live hold reports itself"
         );
         r.tick(false, t0 + Duration::from_secs(3));
@@ -486,7 +490,7 @@ mod tests {
 
     fn progress_at(phase: Option<Phase>) -> f32 {
         match phase {
-            Some(Phase::Holding { progress }) => progress,
+            Some(Phase::Holding(hold)) => hold.progress(),
             other => panic!("expected a hold, got {other:?}"),
         }
     }
@@ -522,7 +526,7 @@ mod tests {
         let mut b = ButtonState::default();
         assert_eq!(b.phase(t0), None);
         b.tick(true, t0);
-        assert!(matches!(b.phase(t0), Some(Phase::Holding { .. })));
+        assert!(matches!(b.phase(t0), Some(Phase::Holding(_))));
         let fired = t0 + Duration::from_secs(5);
         b.tick(true, fired);
         assert_eq!(b.phase(fired), Some(Phase::Pending));
@@ -539,7 +543,7 @@ mod tests {
         let mut r = RestartState::default();
         assert_eq!(r.phase(t0), None);
         r.tick(true, t0);
-        assert!(matches!(r.phase(t0), Some(Phase::Holding { .. })));
+        assert!(matches!(r.phase(t0), Some(Phase::Holding(_))));
         let fired = t0 + Duration::from_secs(5);
         r.tick(true, fired);
         assert_eq!(r.phase(fired), Some(Phase::Pending));
@@ -571,5 +575,85 @@ mod tests {
             RestartAction::None,
             "held through a pending timeout must not re-arm and re-fire"
         );
+    }
+
+    #[test]
+    fn each_timed_button_state_names_its_next_edge() {
+        let t0 = Instant::now();
+        assert_eq!(ButtonState::default().next_edge(), None);
+        assert_eq!(
+            ButtonState::Holding { since: t0 }.next_edge(),
+            Some(t0 + HOLD)
+        );
+        assert_eq!(
+            ButtonState::Pending { since: t0 }.next_edge(),
+            Some(t0 + RECONFIGURE_TIMEOUT)
+        );
+        assert_eq!(
+            ButtonState::Idle {
+                error_since: Some(t0)
+            }
+            .next_edge(),
+            Some(t0 + ERROR_DISPLAY)
+        );
+    }
+
+    #[test]
+    fn each_timed_restart_state_names_its_next_edge() {
+        let t0 = Instant::now();
+        assert_eq!(RestartState::default().next_edge(), None);
+        assert_eq!(
+            RestartState::Holding { since: t0 }.next_edge(),
+            Some(t0 + RESTART_HOLD)
+        );
+        assert_eq!(
+            RestartState::Pending { since: t0 }.next_edge(),
+            Some(t0 + RESTART_TIMEOUT)
+        );
+        assert_eq!(
+            RestartState::Cooldown { message_since: t0 }.next_edge(),
+            None,
+            "a cooldown waits for the finger to lift"
+        );
+    }
+
+    #[test]
+    fn a_hold_reports_how_long_it_has_been_held() {
+        let t0 = Instant::now();
+        let phase = RestartState::Holding { since: t0 }.phase(t0 + Duration::from_secs(1));
+        assert_eq!(
+            phase,
+            Some(Phase::Holding(Hold::new(
+                Duration::from_secs(1),
+                RESTART_HOLD
+            )))
+        );
+    }
+
+    #[test]
+    fn a_timeout_with_the_finger_up_shows_the_message_and_its_clearing_edge() {
+        let t0 = Instant::now();
+        let timed_out = t0 + RESTART_TIMEOUT;
+        let mut r = RestartState::Pending { since: t0 };
+        r.tick(false, timed_out);
+        assert_eq!(
+            r,
+            RestartState::Idle {
+                message_since: Some(timed_out)
+            }
+        );
+        assert_eq!(
+            r.next_edge(),
+            Some(timed_out + ERROR_DISPLAY),
+            "the message clears on an edge of its own, not on a later network refresh"
+        );
+    }
+
+    #[test]
+    fn a_timeout_with_the_finger_down_locks_re_arming_until_it_lifts() {
+        let t0 = Instant::now();
+        let mut r = RestartState::Pending { since: t0 };
+        r.tick(true, t0 + RESTART_TIMEOUT);
+        assert!(matches!(r, RestartState::Cooldown { .. }));
     }
 }

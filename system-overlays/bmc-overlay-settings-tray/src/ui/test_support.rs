@@ -22,9 +22,9 @@
 //! a fully populated control set, and readers that pull text, canvases
 //! and widths back out of a built tree.
 
-use bmc_render::tree::{DrawCommand, TextStyle, TreeNode};
+use bmc_render::tree::{DrawCommand, HostAnimationDef, TextStyle, TreeNode};
 use bmc_system_overlay::DisplayShape;
-use bmc_wasm_protocol::{Color, Fill, SvgId};
+use bmc_wasm_protocol::{AnimProperty, Color, Fill, SvgId};
 
 use super::*;
 
@@ -90,9 +90,15 @@ pub(super) fn status_at(action: Action, phase: Phase) -> Status {
     }
 }
 
+/// A five-second hold `progress` of the way through.
+pub(super) fn holding(progress: f32) -> Phase {
+    let length = std::time::Duration::from_secs(5);
+    Phase::Holding(Hold::new(length.mul_f32(progress), length))
+}
+
 /// Restart held halfway.
 pub(super) fn held_status() -> Status {
-    status_at(Action::Restart, Phase::Holding { progress: 0.5 })
+    status_at(Action::Restart, holding(0.5))
 }
 
 pub(super) fn build(panel: Panel, view: WifiView<'_>) -> TreeNode {
@@ -203,6 +209,48 @@ pub(super) fn find_canvas<'t>(node: &'t TreeNode, key: &str) -> Option<&'t Vec<D
     children(node)?.iter().find_map(|k| find_canvas(k, key))
 }
 
+/// A hold circle's radius and colour as `pick` reads its animations:
+/// `|a| a.from` for the first frame, `|a| a.to` for the last.
+fn hold_circle_with(
+    draw: &DrawCommand,
+    pick: impl Fn(&HostAnimationDef) -> f32,
+) -> Option<(f32, Color)> {
+    let DrawCommand::Modified {
+        animations, inner, ..
+    } = draw
+    else {
+        return None;
+    };
+    let DrawCommand::Circle {
+        r,
+        fill: Fill::Solid(color),
+        ..
+    } = inner.as_ref()
+    else {
+        return None;
+    };
+    let factor = |property| {
+        animations
+            .iter()
+            .find(|a| a.property == property)
+            .map_or(1.0, &pick)
+    };
+    Some((
+        r * factor(AnimProperty::Scale),
+        color.scale_alpha(factor(AnimProperty::Alpha)),
+    ))
+}
+
+/// A hold circle as the first frame after a build draws it.
+pub(super) fn hold_circle_at_start(draw: &DrawCommand) -> Option<(f32, Color)> {
+    hold_circle_with(draw, |a| a.from)
+}
+
+/// A hold circle as it ends up once its animations finish.
+pub(super) fn hold_circle_at_end(draw: &DrawCommand) -> Option<(f32, Color)> {
+    hold_circle_with(draw, |a| a.to)
+}
+
 pub(super) fn find_hold_circle_for_key(node: &TreeNode, key: &str) -> Option<(f32, Color)> {
     if let TreeNode::Column(_, children) = node
         && let [
@@ -218,17 +266,7 @@ pub(super) fn find_hold_circle_for_key(node: &TreeNode, key: &str) -> Option<(f3
         ] = children.as_slice()
         && canvas_key == key
     {
-        return draws.iter().find_map(|draw| {
-            let DrawCommand::Circle {
-                r,
-                fill: Fill::Solid(color),
-                ..
-            } = draw
-            else {
-                return None;
-            };
-            Some((*r, *color))
-        });
+        return draws.iter().find_map(hold_circle_at_start);
     }
     children(node)?
         .iter()

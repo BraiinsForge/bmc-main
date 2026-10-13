@@ -23,12 +23,19 @@
 
 use super::{
     CIRCLE_FILL, CIRCLE_PRESSED, CLOSE_GLYPH, CLOSE_KEY, CLOSE_TARGET, HOLD_ALPHA_FULL_AT,
-    HOLD_FILL, ICON_PRESSED_TINT, Panel, Tier, WIDE_QR_QUIET_ZONE, WifiIcons, WifiView,
+    HOLD_FILL, Hold, ICON_PRESSED_TINT, Panel, Tier, WIDE_QR_QUIET_ZONE, WifiIcons, WifiView,
 };
-use bmc_render::tree::{DrawCommand, PropsData, TextStyle, TreeNode, col, row, text};
+use std::time::Duration;
+
+use bmc_render::tree::{
+    DrawCommand, HostAnimationDef, PropsData, TextStyle, TreeNode, col, row, text,
+};
 use bmc_system_overlay::DisplayShape;
 use bmc_wasm_protocol::colors::{BLACK, GREEN_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign, TextOverflow};
+use bmc_wasm_protocol::{
+    AnimProperty, Color, ColorSpace, CrossAlign, Easing, Fill, FontWeight, LoopMode, SvgId,
+    TextAlign, TextOverflow,
+};
 
 pub(super) fn text_style(size: u32, color: Color) -> TextStyle {
     TextStyle {
@@ -191,27 +198,15 @@ pub(super) fn round_button(
     icon_size: f32,
     fill: Color,
     icon_tint: Color,
-    hold_progress: Option<f32>,
+    hold: Option<Hold>,
 ) -> TreeNode {
     let c = diameter / 2.0;
-    debug_assert!(
-        hold_progress.is_none_or(|p| (0.0..=1.0).contains(&p)),
-        "BUG: hold progress must be a 0..=1 fraction, got {hold_progress:?}",
-    );
-    let hold_progress = hold_progress.filter(|p| *p > 0.0);
-    let held = hold_progress.is_some();
+    let held = hold.is_some();
     let canvas_size = if held { diameter * 2.0 } else { diameter };
     let center = canvas_size / 2.0;
     let mut draws = Vec::with_capacity(if held { 3 } else { 2 });
-    if let Some(p) = hold_progress {
-        let hold_radius = c * (2.0 - p);
-        let hold_alpha = (p / HOLD_ALPHA_FULL_AT).min(1.0);
-        draws.push(DrawCommand::Circle {
-            cx: center,
-            cy: center,
-            r: hold_radius,
-            fill: Fill::Solid(HOLD_FILL.scale_alpha(hold_alpha)),
-        });
+    if let Some(hold) = hold {
+        draws.push(hold_circle(center, c, hold));
     }
     draws.push(DrawCommand::Circle {
         cx: center,
@@ -356,6 +351,52 @@ pub(super) fn ip_qr(ip: &str, size: f32) -> TreeNode {
     }
 }
 
+/// The hold circle behind a held button of radius `radius`.
+///
+/// It is drawn at the button radius and animated on from where the hold is now,
+/// so the renderer moves it on frames that replay the tree,
+/// and a tree rebuilt mid-hold carries on from the same spot.
+fn hold_circle(center: f32, radius: f32, hold: Hold) -> DrawCommand {
+    let (progress, remaining) = (hold.progress(), hold.remaining());
+    let mut animations = vec![linear_once(
+        AnimProperty::Scale,
+        2.0 - progress,
+        1.0,
+        remaining,
+    )];
+    let fade_left = hold
+        .length()
+        .mul_f32(HOLD_ALPHA_FULL_AT)
+        .saturating_sub(hold.held());
+    if !fade_left.is_zero() {
+        let alpha = progress / HOLD_ALPHA_FULL_AT;
+        animations.push(linear_once(AnimProperty::Alpha, alpha, 1.0, fade_left));
+    }
+    DrawCommand::Modified {
+        animations,
+        transition: None,
+        color_space: ColorSpace::Oklab,
+        inner: Box::new(DrawCommand::Circle {
+            cx: center,
+            cy: center,
+            r: radius,
+            fill: Fill::Solid(HOLD_FILL),
+        }),
+    }
+}
+
+fn linear_once(property: AnimProperty, from: f32, to: f32, over: Duration) -> HostAnimationDef {
+    HostAnimationDef {
+        property,
+        from,
+        to,
+        duration_ms: u32::try_from(over.as_millis()).unwrap_or(u32::MAX),
+        delay_ms: 0,
+        easing: Easing::Linear,
+        loop_mode: LoopMode::Once,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bmc_render::tree::{DrawCommand, TreeNode};
@@ -366,6 +407,12 @@ mod tests {
     use crate::ui::test_support::*;
     use crate::ui::*;
 
+    /// A five-second hold `progress` of the way through.
+    fn held(progress: f32) -> Hold {
+        let length = Duration::from_secs(5);
+        Hold::new(length.mul_f32(progress), length)
+    }
+
     #[test]
     fn hold_circle_is_drawn_behind_the_button() {
         let btn = round_button(
@@ -375,7 +422,7 @@ mod tests {
             48.0,
             CIRCLE_FILL,
             TRANSPARENT,
-            Some(0.5),
+            Some(held(0.5)),
         );
         let TreeNode::Column(_, children) = btn else {
             panic!("expected layered hold button")
@@ -393,14 +440,8 @@ mod tests {
         };
         assert_eq!(touch_key.as_deref(), Some("k"));
         assert!(touch_draws.is_empty());
-        let DrawCommand::Circle {
-            fill: Fill::Solid(hold_fill),
-            r: hold_radius,
-            ..
-        } = &draws[0]
-        else {
-            panic!("expected hold Circle")
-        };
+        let (hold_radius, hold_fill) = hold_circle_at_start(&draws[0])
+            .expect("BUG: a held button draws its hold circle first");
         let DrawCommand::Circle {
             fill: Fill::Solid(circle),
             r,
@@ -409,8 +450,8 @@ mod tests {
         else {
             panic!("expected button Circle")
         };
-        assert_close(*hold_radius, 84.0, "half hold shrinks the circle halfway");
-        assert_eq!(*hold_fill, HOLD_FILL, "half hold is fully opaque");
+        assert_close(hold_radius, 84.0, "half hold shrinks the circle halfway");
+        assert_eq!(hold_fill, HOLD_FILL, "half hold is fully opaque");
         assert_eq!(
             *circle,
             CIRCLE_FILL.with_alpha(1.0),
@@ -436,7 +477,7 @@ mod tests {
                 48.0,
                 CIRCLE_FILL,
                 TRANSPARENT,
-                Some(progress),
+                Some(held(progress)),
             );
             let TreeNode::Column(_, children) = btn else {
                 panic!("expected layered hold button")
@@ -445,13 +486,12 @@ mod tests {
             else {
                 panic!("expected visual and touch canvases")
             };
-            let DrawCommand::Circle { r: hold, .. } = &draws[0] else {
-                panic!("expected hold Circle")
-            };
+            let (hold, _) = hold_circle_at_start(&draws[0])
+                .expect("BUG: a held button draws its hold circle first");
             let DrawCommand::Circle { r: button, .. } = &draws[1] else {
                 panic!("expected button Circle")
             };
-            (*button, *hold)
+            (*button, hold)
         };
 
         let (button, started) = radii(f32::MIN_POSITIVE);
@@ -503,7 +543,7 @@ mod tests {
             32.0,
             CIRCLE_FILL,
             TRANSPARENT,
-            Some(0.5),
+            Some(held(0.5)),
         );
         let TreeNode::Column(props, children) = btn else {
             panic!("expected a fixed-size layered hold button")
@@ -533,10 +573,8 @@ mod tests {
         assert_close(touch_props.width, 64.0, "touch target width");
         assert_close(touch_props.height, 64.0, "touch target height");
         assert!(touch_draws.is_empty());
-        let DrawCommand::Circle { r, .. } = &draws[0] else {
-            panic!("expected hold circle")
-        };
-        assert_close(*r, 48.0, "half-hold circle radius");
+        let (r, _) = hold_circle_at_start(&draws[0]).expect("BUG: expected hold circle");
+        assert_close(r, 48.0, "half-hold circle radius");
         let DrawCommand::Circle { r, .. } = &draws[1] else {
             panic!("expected full-size button fill")
         };
@@ -550,7 +588,7 @@ mod tests {
                 restart: true,
                 ..Controls::default()
             };
-            let status = status_at(Action::Restart, Phase::Holding { progress });
+            let status = status_at(Action::Restart, holding(progress));
             let tree = build_with_controls(wide_panel(), controls, Some(&status));
             assert!(
                 find_canvas(&tree, RESTART_KEY).is_some(),
@@ -558,8 +596,16 @@ mod tests {
             );
             find_hold_circle_for_key(&tree, RESTART_KEY)
         };
+        let resting = build_with_controls(
+            wide_panel(),
+            Controls {
+                restart: true,
+                ..Controls::default()
+            },
+            None,
+        );
         assert_eq!(
-            hold_circle_of(0.0),
+            find_hold_circle_for_key(&resting, RESTART_KEY),
             None,
             "an unheld button carries no hold circle"
         );
@@ -583,5 +629,57 @@ mod tests {
             Some(HOLD_FILL),
             "the circle stays opaque for the rest of the hold",
         );
+    }
+
+    fn hold_circle_animations(progress: f32) -> Vec<HostAnimationDef> {
+        let DrawCommand::Modified { animations, .. } = hold_circle(64.0, 32.0, held(progress))
+        else {
+            panic!("expected an animated hold circle")
+        };
+        animations
+    }
+
+    #[test]
+    fn hold_circle_animates_onto_the_button_over_the_rest_of_the_hold() {
+        for progress in [0.0, 0.2, 0.5, 1.0] {
+            let circle = hold_circle(64.0, 32.0, held(progress));
+            let (radius, color) =
+                hold_circle_at_end(&circle).expect("BUG: expected an animated hold circle");
+            assert_close(radius, 32.0, "the circle ends on the button");
+            assert_eq!(color, HOLD_FILL, "the circle ends opaque");
+        }
+        let shrink = hold_circle_animations(0.5)
+            .into_iter()
+            .find(|a| a.property == AnimProperty::Scale)
+            .expect("BUG: the circle shrinks");
+        assert_eq!(
+            shrink.duration_ms, 2_500,
+            "it shrinks over the rest of the hold"
+        );
+        assert_eq!(shrink.loop_mode, LoopMode::Once);
+    }
+
+    #[test]
+    fn hold_circle_fade_ends_where_the_hold_turns_it_opaque() {
+        let fade_ms = |progress| {
+            hold_circle_animations(progress)
+                .into_iter()
+                .find(|a| a.property == AnimProperty::Alpha)
+                .map(|a| a.duration_ms)
+        };
+        let about = |actual: Option<u32>, expected: u32, what: &str| {
+            let actual = actual.unwrap_or_else(|| panic!("{what}: expected a fade"));
+            assert!(
+                actual.abs_diff(expected) <= 1,
+                "{what}: expected ~{expected} ms, got {actual}"
+            );
+        };
+        about(
+            fade_ms(0.0),
+            1_750,
+            "fades over the first 35 % of five seconds",
+        );
+        about(fade_ms(0.2), 750, "the 15 % of the hold left to fade");
+        assert_eq!(fade_ms(0.5), None, "already opaque past the fade");
     }
 }

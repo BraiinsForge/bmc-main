@@ -22,7 +22,7 @@
 //! over the section above the buttons says so, and everything
 //! but the action's own button dims and stops taking touches.
 
-use super::{Action, Phase, Status};
+use super::{Action, Hold, Phase, Status};
 use bmc_render::tree::{PropsData, TextStyle, TreeNode, col, dimmed, text};
 use bmc_wasm_protocol::colors::WHITE;
 use bmc_wasm_protocol::{CrossAlign, FontWeight, Justify, TextAlign};
@@ -56,15 +56,13 @@ impl<'a> NoticeText<'a> {
     /// shown as the body under the tray's title. A timeout with no word from bmc is the tray's.
     pub(super) fn for_status(status: &'a Status) -> Self {
         let (title, body) = match (status.action, status.phase) {
-            (Action::Restart, Phase::Holding { .. }) => ("Restart the device?", Some(KEEP_HOLDING)),
+            (Action::Restart, Phase::Holding(_)) => ("Restart the device?", Some(KEEP_HOLDING)),
             (Action::Restart, Phase::Pending) => ("Restarting the device…", None),
             (Action::Restart, Phase::Failed) => match status.reason.as_deref() {
                 Some(reason) => ("Can't restart now", Some(reason)),
                 None => ("Restart failed", Some(TRY_AGAIN)),
             },
-            (Action::WifiReconfig, Phase::Holding { .. }) => {
-                ("Reconfigure Wi-Fi?", Some(KEEP_HOLDING))
-            }
+            (Action::WifiReconfig, Phase::Holding(_)) => ("Reconfigure Wi-Fi?", Some(KEEP_HOLDING)),
             (Action::WifiReconfig, Phase::Pending) => ("Starting Wi-Fi setup…", None),
             (Action::WifiReconfig, Phase::Failed) => {
                 ("Couldn't start Wi-Fi setup", Some(TRY_AGAIN))
@@ -83,15 +81,15 @@ impl<'a> Notice<'a> {
         Self(status)
     }
 
-    /// The hold fraction of `action`'s button: zero unless it is being held.
-    pub(super) fn hold_progress(self, action: Action) -> f32 {
+    /// How far `action`'s button is held, if it is.
+    pub(super) fn hold(self, action: Action) -> Option<Hold> {
         match self.0 {
             Some(Status {
                 action: held,
-                phase: Phase::Holding { progress },
+                phase: Phase::Holding(hold),
                 ..
-            }) if *held == action => *progress,
-            Some(_) | None => 0.0,
+            }) if *held == action => Some(*hold),
+            Some(_) | None => None,
         }
     }
 
@@ -233,12 +231,7 @@ mod tests {
         [Action::Restart, Action::WifiReconfig]
             .into_iter()
             .flat_map(|action| {
-                [
-                    Phase::Holding { progress: 0.5 },
-                    Phase::Pending,
-                    Phase::Failed,
-                ]
-                .map(|phase| status_at(action, phase))
+                [holding(0.5), Phase::Pending, Phase::Failed].map(|phase| status_at(action, phase))
             })
             .collect()
     }
@@ -310,7 +303,7 @@ mod tests {
             let text = NoticeText::for_status(&status);
             (text.title, text.body.map(str::to_owned))
         };
-        let holding = Phase::Holding { progress: 0.5 };
+        let holding = holding(0.5);
         let restart = Action::Restart;
         let wifi = Action::WifiReconfig;
         assert_eq!(

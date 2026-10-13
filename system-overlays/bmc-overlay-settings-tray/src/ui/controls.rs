@@ -23,7 +23,7 @@
 use super::notice::Notice;
 use super::parts::{ButtonIcon, press_fill, press_tint, round_button};
 use super::{
-    Action, BRIGHTNESS_DOWN_KEY, BRIGHTNESS_UP_KEY, CIRCLE_FILL, ControlIcons, Controls,
+    Action, BRIGHTNESS_DOWN_KEY, BRIGHTNESS_UP_KEY, CIRCLE_FILL, ControlIcons, Controls, Hold,
     NIGHT_ACTIVE, NIGHT_MODE_KEY, RESTART_KEY, Tier, VOLUME_DOWN_KEY, VOLUME_UP_KEY,
     WIFI_RECONFIG_KEY, WifiIcons,
 };
@@ -123,11 +123,11 @@ fn single_group(
     icon: ButtonIcon,
     fill: Color,
     tint: Color,
-    hold_progress: Option<f32>,
+    hold: Option<Hold>,
     label: &str,
     sublabel: &str,
 ) -> TreeNode {
-    let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, hold_progress);
+    let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, hold);
     let Some(captions) = tier.captions else {
         return btn;
     };
@@ -149,11 +149,7 @@ fn single_group(
             sublabel,
             TextStyle {
                 size: captions.size,
-                color: if hold_progress.is_some_and(|p| p > 0.0) {
-                    WHITE
-                } else {
-                    GRAY_50
-                },
+                color: if hold.is_some() { WHITE } else { GRAY_50 },
                 align: TextAlign::Center,
                 ..TextStyle::default()
             },
@@ -258,7 +254,7 @@ pub(super) fn control_groups(
                 ButtonIcon::square(icons.restart),
                 press_fill(p),
                 press_tint(p),
-                Some(notice.hold_progress(Action::Restart)),
+                notice.hold(Action::Restart),
                 "Restart",
                 "hold 5 seconds",
             ),
@@ -274,7 +270,7 @@ pub(super) fn control_groups(
                 ButtonIcon::square(wifi_icons.problem),
                 press_fill(p),
                 press_tint(p),
-                Some(notice.hold_progress(Action::WifiReconfig)),
+                notice.hold(Action::WifiReconfig),
                 "Reconfigure Wi-Fi",
                 "hold 5 seconds",
             ),
@@ -563,7 +559,7 @@ mod tests {
             restart: true,
             ..Controls::default()
         };
-        let held = status_at(Action::Restart, Phase::Holding { progress: 0.15 });
+        let held = status_at(Action::Restart, holding(0.15));
         assert_eq!(
             text_color(
                 &build_with_controls(wide_panel(), controls, Some(&held)),
