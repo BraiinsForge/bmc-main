@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, OverlayViewport, SystemOverlay,
-    TickOutcome, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
+    Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
+    SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -204,8 +204,12 @@ pub fn render_upgrade(
         .unwrap_or(u32::MAX);
     state.last_render = now;
     let size = (surface.width, surface.height);
-    let tree = ui::build_upgrade_tree(view, surface, icons);
-    if let Err(err) = state.tree.render(&tree, size, delta_ms, renderer) {
+    if let Err(err) = state
+        .tree
+        .render(FrameKind::Fresh, size, delta_ms, renderer, || {
+            ui::build_upgrade_tree(view, surface, icons)
+        })
+    {
         tracing::error!("upgrade tree render failed: {err}");
     }
 }

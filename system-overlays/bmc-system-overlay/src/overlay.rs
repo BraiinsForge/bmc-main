@@ -424,6 +424,26 @@ pub(crate) fn resolved_configured_size(
     )
 }
 
+/// Why a frame renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// The overlay's state changed, or the frame must reflect it anew:
+    /// build the tree from the current state.
+    Fresh,
+    /// Only animations move: replay the last tree.
+    AnimationOnly,
+}
+
+/// What a rendered frame asks of the driver's frame schedule.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct RenderOutcome {
+    /// The tree still has running animations or transitions.
+    pub has_active_animations: bool,
+    /// Next boundary of a host-rendered time node.
+    pub host_frame_delay_ms: Option<u32>,
+}
+
 /// Result of an overlay's per-pass background work.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TickOutcome {

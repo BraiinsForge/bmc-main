@@ -31,7 +31,7 @@ use bmc_render::tree::{
     DrawCommand, FontFamily, FontWeight, TextAlign, TextStyle, TreeNode, col, fixed_height, row,
     text,
 };
-use bmc_system_overlay::{AccessPoint, TreeUi};
+use bmc_system_overlay::{AccessPoint, FrameKind, TreeUi};
 use bmc_wasm_protocol::{CrossAlign, Fill, GRAY_60, Justify, PropsData, TRANSPARENT};
 
 use crate::icons::{DeviceInfoIcons, Icon};
@@ -1078,7 +1078,10 @@ pub fn render_device_info(
     let Some(tree) = build_device_info_tree(view, icons, tier_for(size), device_name, miner) else {
         return;
     };
-    if let Err(err) = state.tree.render(&tree, size, delta_ms, r) {
+    if let Err(err) = state
+        .tree
+        .render(FrameKind::Fresh, size, delta_ms, r, || tree)
+    {
         tracing::error!("device-info tree render failed: {err}");
     }
 }

@@ -23,6 +23,8 @@
 //! [`TreeUi`] owns the persistent interaction/animation/transition caches that
 //! [`layout_and_render`] reads and updates, so an overlay can draw a declarative
 //! UI tree against a [`Renderer`] without threading that state by hand.
+//! It also keeps the last tree it drew, so a frame where only animations move
+//! replays it instead of building a new one.
 
 use std::collections::HashMap;
 
@@ -34,11 +36,26 @@ use bmc_render::{
 };
 use taffy::prelude::TaffyTree;
 
+use crate::overlay::{FrameKind, RenderOutcome};
+
 /// Static-layer key for overlays drawn through the host's shared renderer.
 ///
 /// Sound only because every overlay renders with [`LayerUse::Ignore`], so no
 /// layer is ever stored under it.
 const STATIC_LAYER_KEY: &str = "bmc-system-overlay";
+
+/// The last successfully rendered tree and the size it was laid out at.
+struct CachedTree {
+    node: TreeNode,
+    size: (u32, u32),
+}
+
+/// A rendered frame: its interaction read-back and what it asks of the schedule.
+#[derive(Debug)]
+pub struct TreeFrame {
+    pub result: TreeResult,
+    pub outcome: RenderOutcome,
+}
 
 /// Holds the layout/animation/interaction context for rendering a `TreeNode`.
 #[expect(missing_debug_implementations)]
@@ -50,6 +67,9 @@ pub struct TreeUi {
     transition_states: HashMap<TransitionStateKey, TransitionState>,
     taffy: TaffyTree<NodeContext>,
     frame_counter: u64,
+    cached: Option<CachedTree>,
+    #[cfg(any(test, feature = "test-support"))]
+    replayed_last_frame: bool,
 }
 
 impl Default for TreeUi {
@@ -62,6 +82,9 @@ impl Default for TreeUi {
             transition_states: HashMap::new(),
             taffy: TaffyTree::new(),
             frame_counter: 0,
+            cached: None,
+            #[cfg(any(test, feature = "test-support"))]
+            replayed_last_frame: false,
         }
     }
 }
@@ -72,14 +95,62 @@ impl TreeUi {
         Self::default()
     }
 
-    /// Lay out and draw `node` at `size` against `renderer`.
+    /// Lay out and draw a frame at `size` against `renderer`.
+    ///
+    /// An [`FrameKind::AnimationOnly`] frame replays the cached tree.
+    /// `build` runs instead when the frame is fresh, nothing is cached,
+    /// the size changed, or touch events are pending, as widgets do.
+    /// A failed render drops the cache, so the next frame builds again.
     pub fn render(
+        &mut self,
+        frame: FrameKind,
+        size: (u32, u32),
+        delta_ms: u32,
+        renderer: &mut dyn Renderer,
+        build: impl FnOnce() -> TreeNode,
+    ) -> anyhow::Result<TreeFrame> {
+        let replay = frame == FrameKind::AnimationOnly
+            && !self.interaction.has_pending_events()
+            && self
+                .cached
+                .as_ref()
+                .is_some_and(|cached| cached.size == size);
+        let node = match self.cached.take() {
+            Some(cached) if replay => cached.node,
+            _ => build(),
+        };
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.replayed_last_frame = false;
+        }
+        let frame = self.render_node(&node, size, delta_ms, renderer)?;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.replayed_last_frame = replay;
+        }
+        self.cached = Some(CachedTree { node, size });
+        Ok(frame)
+    }
+
+    /// Drop the cached tree, so the next frame builds a new one.
+    pub fn clear(&mut self) {
+        self.cached = None;
+    }
+
+    /// Whether the last [`Self::render`] replayed the cached tree and drew it.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn replayed_last_frame(&self) -> bool {
+        self.replayed_last_frame
+    }
+
+    fn render_node(
         &mut self,
         node: &TreeNode,
         size: (u32, u32),
         delta_ms: u32,
         renderer: &mut dyn Renderer,
-    ) -> anyhow::Result<TreeResult> {
+    ) -> anyhow::Result<TreeFrame> {
         self.interaction.begin_frame();
         let frame_counter = self.frame_counter;
         self.frame_counter = self.frame_counter.wrapping_add(1);
@@ -109,9 +180,13 @@ impl TreeUi {
             reason = "display sizes are well below f32 mantissa precision"
         )]
         let (width, height) = (size.0 as f32, size.1 as f32);
-        let (result, _has_active) =
+        let (result, has_active_animations) =
             layout_and_render(node, width, height, renderer, &mut timings, &mut ctx)?;
-        Ok(result)
+        let outcome = RenderOutcome {
+            has_active_animations,
+            host_frame_delay_ms: result.next_frame_delay_ms,
+        };
+        Ok(TreeFrame { result, outcome })
     }
 
     /// Feed a touch event into the interaction state so the next `render`
@@ -153,7 +228,7 @@ impl TreeUi {
 #[cfg(test)]
 mod tests {
     use super::TreeUi;
-    use crate::overlay::TouchEvent;
+    use crate::overlay::{FrameKind, TouchEvent};
     use crate::test_support::TestRenderer;
     use bmc_render::colors::Color;
     use bmc_render::tree::TreeNode;
@@ -173,13 +248,42 @@ mod tests {
         }
     }
 
+    /// An indeterminate bar, which the renderer animates on its own.
+    fn animated_tree() -> TreeNode {
+        TreeNode::ProgressBar {
+            touch_key: None,
+            track_h: 8.0,
+            mode: bmc_wasm_protocol::ProgressKind::Indeterminate,
+            fraction: 0.0,
+            active: true,
+            fill_color: Color::from_rgba(0, 255, 0, 255),
+            track_color: Color::from_rgba(80, 80, 80, 255),
+            bg_color: Color::from_rgba(0, 0, 0, 0),
+            skin: None,
+        }
+    }
+
+    /// Render one frame, counting how often the tree was built.
+    fn frame(
+        ui: &mut TreeUi,
+        kind: FrameKind,
+        size: (u32, u32),
+        builds: &mut usize,
+    ) -> super::TreeFrame {
+        ui.render(kind, size, 16, &mut TestRenderer::default(), || {
+            *builds += 1;
+            animated_tree()
+        })
+        .expect("BUG: render must succeed")
+    }
+
     #[test]
     fn touch_on_slider_reports_drag_fraction() {
         let mut ui = TreeUi::default();
         let mut r = TestRenderer::default();
         // Warm-up frame establishes the slider's hit region (regions are
         // prior-frame state); the touch is hit-tested on the next frame.
-        ui.render(&slider_tree(), (100, 20), 16, &mut r)
+        ui.render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
             .expect("BUG: warm-up render must succeed");
         // A 100px-wide frame; touch down at x≈75 → fraction ≈ 0.75.
         ui.push_touch(TouchEvent::Down {
@@ -188,9 +292,10 @@ mod tests {
             y: 10.0,
         });
         let result = ui
-            .render(&slider_tree(), (100, 20), 16, &mut r)
+            .render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
             .expect("BUG: hit-test render must succeed");
         let hit = result
+            .result
             .drags
             .get("brightness")
             .expect("slider drag should be hit-tested");
@@ -209,9 +314,9 @@ mod tests {
         let mut r = TestRenderer::default();
         // No touch pushed → no drag entry.
         let result = ui
-            .render(&slider_tree(), (100, 20), 16, &mut r)
+            .render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
             .expect("BUG: render must succeed");
-        assert!(!result.drags.contains_key("brightness"));
+        assert!(!result.result.drags.contains_key("brightness"));
     }
 
     #[test]
@@ -219,7 +324,7 @@ mod tests {
         let mut ui = TreeUi::default();
         let mut r = TestRenderer::default();
         // Warm-up frame establishes the slider's hit region.
-        ui.render(&slider_tree(), (100, 20), 16, &mut r)
+        ui.render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
             .expect("BUG: warm-up render must succeed");
         // Down + Up drained into one frame (no render between) — the host's
         // event-coalescing case. The release leaves no `drags` entry, but the
@@ -232,13 +337,14 @@ mod tests {
         });
         ui.push_touch(TouchEvent::Up { id: 0 });
         let result = ui
-            .render(&slider_tree(), (100, 20), 16, &mut r)
+            .render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
             .expect("BUG: hit-test render must succeed");
         assert!(
-            !result.drags.contains_key("brightness"),
+            !result.result.drags.contains_key("brightness"),
             "a released touch must not report an active drag"
         );
         let hit = result
+            .result
             .clicks
             .get("brightness")
             .expect("a coalesced down-up on the slider must report a release click");
@@ -249,5 +355,90 @@ mod tests {
             hit.x,
             hit.width
         );
+    }
+
+    #[test]
+    fn an_animation_only_frame_replays_the_cached_tree() {
+        let mut ui = TreeUi::default();
+        let mut builds = 0;
+        frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
+        frame(&mut ui, FrameKind::AnimationOnly, (100, 20), &mut builds);
+        assert_eq!(builds, 1, "the replayed frame must not build a tree");
+        assert!(ui.replayed_last_frame());
+    }
+
+    #[test]
+    fn a_fresh_frame_builds_a_new_tree() {
+        let mut ui = TreeUi::default();
+        let mut builds = 0;
+        frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
+        frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
+        assert_eq!(builds, 2);
+        assert!(!ui.replayed_last_frame());
+    }
+
+    #[test]
+    fn an_animation_only_frame_builds_without_a_cached_tree() {
+        let mut ui = TreeUi::default();
+        let mut builds = 0;
+        frame(&mut ui, FrameKind::AnimationOnly, (100, 20), &mut builds);
+        assert_eq!(builds, 1);
+    }
+
+    #[test]
+    fn a_size_change_builds_a_new_tree() {
+        let mut ui = TreeUi::default();
+        let mut builds = 0;
+        frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
+        frame(&mut ui, FrameKind::AnimationOnly, (200, 20), &mut builds);
+        assert_eq!(builds, 2, "the cached tree was laid out for another size");
+    }
+
+    #[test]
+    fn a_pending_touch_builds_a_new_tree() {
+        let mut ui = TreeUi::default();
+        let mut builds = 0;
+        frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
+        ui.push_touch(TouchEvent::Down {
+            id: 0,
+            x: 50.0,
+            y: 10.0,
+        });
+        frame(&mut ui, FrameKind::AnimationOnly, (100, 20), &mut builds);
+        assert_eq!(builds, 2);
+    }
+
+    #[test]
+    fn clear_drops_the_cached_tree() {
+        let mut ui = TreeUi::default();
+        let mut builds = 0;
+        frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
+        ui.clear();
+        frame(&mut ui, FrameKind::AnimationOnly, (100, 20), &mut builds);
+        assert_eq!(builds, 2);
+    }
+
+    #[test]
+    fn a_running_animation_is_reported_on_replay() {
+        let mut ui = TreeUi::default();
+        let mut builds = 0;
+        frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
+        let replayed = frame(&mut ui, FrameKind::AnimationOnly, (100, 20), &mut builds);
+        assert!(replayed.outcome.has_active_animations);
+    }
+
+    #[test]
+    fn a_still_tree_reports_no_animation() {
+        let mut ui = TreeUi::default();
+        let frame = ui
+            .render(
+                FrameKind::Fresh,
+                (100, 20),
+                16,
+                &mut TestRenderer::default(),
+                slider_tree,
+            )
+            .expect("BUG: render must succeed");
+        assert!(!frame.outcome.has_active_animations);
     }
 }

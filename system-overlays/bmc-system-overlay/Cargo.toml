@@ -29,6 +29,10 @@ wayland-client.workspace = true
 wayland-protocols.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 
+[features]
+# Exposes test-only `TreeUi` introspection to downstream crates' tests.
+test-support = []
+
 [dev-dependencies]
 bmc-wasm-protocol.workspace = true
 

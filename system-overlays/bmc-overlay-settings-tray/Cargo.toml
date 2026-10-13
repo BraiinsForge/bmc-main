@@ -30,6 +30,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 bmc-render = { workspace = true, features = ["test-support"] }
+bmc-system-overlay = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

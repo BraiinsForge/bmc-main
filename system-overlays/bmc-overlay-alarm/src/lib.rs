@@ -35,8 +35,8 @@ use bmc_render::tree::{
     fixed_height, row, text,
 };
 use bmc_system_overlay::{
-    AlarmRequest, Anchor, InputRegion, Layer, LayerConfig, OverlayViewport, SystemOverlay,
-    TickOutcome, TouchEvent, TreeUi,
+    AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
+    SystemOverlay, TickOutcome, TouchEvent, TreeUi,
 };
 use bmc_wasm_protocol::{
     ArcCap, ArcFill, ArcSegments, CrossAlign, Fill, PathPaint, PropsData, TRANSPARENT,
@@ -373,10 +373,10 @@ pub fn render_alarm(
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
-    let tree = build_alarm_ui_tree(view, size);
-
-    let result = match state.tree.render(&tree, size, delta_ms, r) {
-        Ok(result) => result,
+    let result = match state.tree.render(FrameKind::Fresh, size, delta_ms, r, || {
+        build_alarm_ui_tree(view, size)
+    }) {
+        Ok(frame) => frame.result,
         Err(err) => {
             tracing::error!("alarm tree render failed: {err}");
             return RenderAlarmOutput::default();

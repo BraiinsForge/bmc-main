@@ -37,8 +37,9 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, InputRegion, Layer, LayerConfig, OverlayViewport, ScreenEdge, SettingsRequest,
-    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
+    Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport, ScreenEdge,
+    SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
+    VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -1026,34 +1027,37 @@ pub fn render_settings_tray(
         restart: view.show_restart,
         pressed,
     };
-    let node = ui::build_tree(
-        view.hostname.as_deref(),
-        view.ip.as_deref(),
-        view.wifi_signal,
-        view.ssid.as_deref(),
-        icons.wifi,
-        Panel {
-            shape: viewport.shape,
-            width: viewport.width,
-            height: viewport.height,
-            wifi_button: view.wifi_button,
-        },
-        wifi_view,
-        icons.controls,
-        controls,
-        view.status.as_ref(),
-    );
-
-    let result = match state
-        .tree
-        .render(&node, viewport.size(), delta_ms, renderer)
-    {
-        Ok(result) => result,
-        Err(err) => {
-            tracing::error!("settings-tray tree render failed: {err}");
-            return SettingsTrayRenderOutput::default();
-        }
+    let build = || {
+        ui::build_tree(
+            view.hostname.as_deref(),
+            view.ip.as_deref(),
+            view.wifi_signal,
+            view.ssid.as_deref(),
+            icons.wifi,
+            Panel {
+                shape: viewport.shape,
+                width: viewport.width,
+                height: viewport.height,
+                wifi_button: view.wifi_button,
+            },
+            wifi_view,
+            icons.controls,
+            controls,
+            view.status.as_ref(),
+        )
     };
+
+    let result =
+        match state
+            .tree
+            .render(FrameKind::Fresh, viewport.size(), delta_ms, renderer, build)
+        {
+            Ok(frame) => frame.result,
+            Err(err) => {
+                tracing::error!("settings-tray tree render failed: {err}");
+                return SettingsTrayRenderOutput::default();
+            }
+        };
 
     // The render processed this frame's queued touch events, so the pressed
     // key can differ from the pre-render sample; that difference is what
