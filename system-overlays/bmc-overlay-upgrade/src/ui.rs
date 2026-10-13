@@ -67,23 +67,6 @@ pub fn progress_mode(
     }
 }
 
-#[must_use]
-pub fn has_active_bar(view: UpgradeView) -> bool {
-    let UpgradeView::Running {
-        kind,
-        phase,
-        progress,
-    } = view
-    else {
-        return false;
-    };
-    match progress_mode(phase, progress) {
-        ProgressMode::Indeterminate => true,
-        ProgressMode::None => kind == UpgradeKind::Packages && phase.is_some(),
-        ProgressMode::Determinate(_) => false,
-    }
-}
-
 #[expect(
     clippy::cast_precision_loss,
     reason = "the visual fraction is clamped and only drives a bounded pixel width"

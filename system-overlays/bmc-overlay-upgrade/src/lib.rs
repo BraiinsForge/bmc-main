@@ -23,7 +23,7 @@
 mod icons;
 mod ui;
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
@@ -284,15 +284,10 @@ impl OverlayState {
             self.clear();
         }
         let visible = self.view.is_some();
-        let animating = self.view.is_some_and(ui::has_active_bar);
         TickOutcome {
             visible,
-            wants_render: visible && (std::mem::take(&mut self.dirty) || animating),
-            next_wake: if animating {
-                Some(now + Duration::from_millis(ANIMATION_FRAME_MS.into()))
-            } else {
-                self.terminal_deadline
-            },
+            wants_render: visible && std::mem::take(&mut self.dirty),
+            next_wake: self.terminal_deadline,
         }
     }
 
@@ -432,6 +427,8 @@ mod tests {
     use std::time::Duration;
 
     use bmc_platform::Product;
+    use bmc_render::renderer::test_support::ShapingRecorder;
+    use bmc_system_overlay::NextFrame;
 
     use super::*;
 
@@ -538,24 +535,90 @@ mod tests {
         assert_eq!(state.terminal_deadline, Some(now + Duration::from_secs(4)));
     }
 
+    fn verifying_packages() -> UpgradeSnapshot {
+        UpgradeSnapshot {
+            kind: UpgradeKind::Packages,
+            state: UpgradeState::Running {
+                phase: Some(UpgradePhase::PackageVerifying),
+                progress: None,
+            },
+        }
+    }
+
+    fn render_frame(state: &mut OverlayState, frame: FrameKind) -> RenderOutcome {
+        let (width, height) = PACKAGE_CARD_SURFACE_SIZE_LARGE;
+        #[expect(clippy::cast_precision_loss, reason = "card sizes are small")]
+        let mut recorder = ShapingRecorder::new(width as f32, height as f32);
+        state.render(&mut recorder, PACKAGE_CARD_SURFACE_SIZE_LARGE, frame)
+    }
+
     #[test]
-    fn active_progress_schedules_animation_frames() {
+    fn active_progress_leaves_its_frames_to_the_renderer() {
         let now = Instant::now();
         let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
+        state.receive(verifying_packages(), now);
+
+        assert!(state.tick(now).wants_render, "the new view needs a frame");
+        let outcome = state.tick(now);
+        assert!(!outcome.wants_render, "nothing changed since");
+        assert_eq!(outcome.next_wake, None);
+    }
+
+    #[test]
+    fn an_active_bar_asks_for_animation_frames() {
+        let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
+        state.receive(verifying_packages(), Instant::now());
+        assert_eq!(
+            render_frame(&mut state, FrameKind::Fresh).next,
+            NextFrame::Replay
+        );
+    }
+
+    #[test]
+    fn a_known_download_asks_for_no_animation_frames() {
+        let mut state = OverlayState::new(UpgradeKind::Firmware, None);
         state.receive(
             UpgradeSnapshot {
-                kind: UpgradeKind::Packages,
+                kind: UpgradeKind::Firmware,
                 state: UpgradeState::Running {
-                    phase: Some(UpgradePhase::PackageVerifying),
-                    progress: None,
+                    phase: Some(UpgradePhase::FirmwareDownloading),
+                    progress: Some(DownloadProgress {
+                        downloaded_bytes: 50,
+                        total_bytes: Some(100),
+                    }),
                 },
             },
-            now,
+            Instant::now(),
         );
+        assert_eq!(
+            render_frame(&mut state, FrameKind::Fresh).next,
+            NextFrame::Idle
+        );
+    }
 
-        let outcome = state.tick(now);
-        assert!(outcome.wants_render);
-        assert_eq!(outcome.next_wake, Some(now + Duration::from_millis(100)));
+    #[test]
+    fn an_animation_only_frame_replays_the_upgrade_tree() {
+        let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
+        state.receive(verifying_packages(), Instant::now());
+        let _ = render_frame(&mut state, FrameKind::Fresh);
+        let outcome = render_frame(&mut state, FrameKind::AnimationOnly);
+        assert!(state.render_state.tree.replayed_last_frame());
+        assert_eq!(outcome.next, NextFrame::Replay, "the bar keeps moving");
+    }
+
+    #[test]
+    fn hiding_drops_the_upgrade_tree() {
+        let mut overlay = UpgradeOverlay::packages_for_display(DECK);
+        overlay.state.receive(verifying_packages(), Instant::now());
+        let _ = render_frame(&mut overlay.state, FrameKind::Fresh);
+        overlay.on_hidden();
+        let _ = render_frame(&mut overlay.state, FrameKind::AnimationOnly);
+        assert!(!overlay.state.render_state.tree.replayed_last_frame());
+    }
+
+    #[test]
+    fn the_bar_keeps_its_reviewed_cadence() {
+        assert_eq!(UpgradeOverlay::firmware().animation_frame_delay_ms(), 100);
     }
 
     #[test]
