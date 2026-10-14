@@ -240,3 +240,6 @@ fn status_of(error: &SystemUpgradeError) -> StatusCode {
         | SystemUpgradeError::PackageCheckFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
+
+#[cfg(test)]
+mod tests;
