@@ -121,6 +121,9 @@ deny = [
 
     # ── gRPC / protobuf ────────────────────────────────────────────────
     # Host-only.
+    { name = "connectrpc" },
+    { name = "buffa" },
+    { name = "buffa-types" },
     { name = "tonic" },
     { name = "prost" },
     { name = "prost-types" },

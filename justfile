@@ -169,9 +169,9 @@ check ATTR:
 
 # === Codegen ===
 
-# Regenerate the protobuf bindings: TypeScript under frontend/src/proto/gen.
+# Regenerate the protobuf bindings: Rust under bmc-grpc/src/gen, TypeScript under frontend/src/proto/gen.
 gen:
-    # buf comes from the dev shell; protoc-gen-es is the frontend's.
+    # buf and the Rust plugins come from the dev shell; protoc-gen-es is the frontend's.
     PATH="{{ justfile_directory() }}/frontend/node_modules/.bin:$PATH" {{ NIX_DEV }} buf generate
 
 # === Tooling ===

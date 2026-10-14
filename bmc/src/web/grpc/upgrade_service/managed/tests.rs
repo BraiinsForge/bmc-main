@@ -21,7 +21,11 @@
 use super::*;
 use bmc_grpc::web::UpgradeDisruption;
 use bmc_upgrade_types::{Disruption, PackageChange, PackagesPreview, UpgradeKind as WireKind};
-use tonic::Code;
+use connectrpc::ErrorCode;
+
+fn message(error: &ConnectError) -> &str {
+    error.message.as_deref().unwrap_or_default()
+}
 
 fn firmware(release_date: &str) -> wire::FirmwareUpgrade {
     wire::FirmwareUpgrade {
@@ -72,22 +76,25 @@ fn a_full_offer_translates_field_by_field() {
         translated,
         CheckForUpgradeResponse {
             upgrade_id: Some(id.to_string()),
-            firmware: Some(FirmwareUpgrade {
+            firmware: FirmwareUpgrade {
                 hash: "abc".to_owned(),
                 version: "26.10".to_owned(),
                 // 2026-10-01T00:00:00Z
-                release_date: Some(Timestamp {
+                release_date: Timestamp {
                     seconds: 1_790_812_800,
                     nanos: 0,
-                }),
+                    ..Default::default()
+                }
+                .into(),
                 description: "notes".to_owned(),
                 file_size_bytes: 42,
                 previous_releases: vec![bmc_grpc::web::ReleaseInfo {
                     version: "26.09".to_owned(),
                     description: "older".to_owned(),
                 }],
-            }),
-            packages: Some(bmc_grpc::web::PackageUpgradePlan {
+            }
+            .into(),
+            packages: bmc_grpc::web::PackageUpgradePlan {
                 changes: vec![bmc_grpc::web::PackageChange {
                     name: "widget-clock".to_owned(),
                     version_from: None,
@@ -98,7 +105,8 @@ fn a_full_offer_translates_field_by_field() {
                 download_size_bytes: Some(7),
                 bmc_version: Some("3.0".to_owned()),
                 bmc_changelog: None,
-            }),
+            }
+            .into(),
             disruption: UpgradeDisruption::Reboot.into(),
         }
     );
@@ -115,7 +123,7 @@ fn no_offer_translates_to_an_empty_response() {
     });
 
     assert_eq!(translated, CheckForUpgradeResponse::default());
-    assert_eq!(translated.disruption(), UpgradeDisruption::Unspecified);
+    assert_eq!(translated.disruption, UpgradeDisruption::Unspecified);
 }
 
 /// A date Boser formats differently must not fail the whole check.
@@ -131,7 +139,7 @@ fn an_unparseable_release_date_is_left_unset() {
     let firmware = translated
         .firmware
         .expect("BUG: the firmware is still offered");
-    assert_eq!(firmware.release_date, None);
+    assert!(firmware.release_date.is_unset());
     assert_eq!(firmware.version, "26.10");
 }
 
@@ -144,68 +152,71 @@ fn client_errors_map_to_the_codes_the_local_path_uses() {
         message: "from boser".to_owned(),
     };
     let cases = [
-        (ClientError::Unreachable, Code::Unavailable),
-        (ClientError::NoAnswer, Code::Unavailable),
-        (ClientError::StartUnconfirmed, Code::Unavailable),
-        (ClientError::Unauthenticated, Code::Unauthenticated),
-        (rejected(Rejection::Busy), Code::Unavailable),
-        (rejected(Rejection::Expired), Code::FailedPrecondition),
+        (ClientError::Unreachable, ErrorCode::Unavailable),
+        (ClientError::NoAnswer, ErrorCode::Unavailable),
+        (ClientError::StartUnconfirmed, ErrorCode::Unavailable),
+        (ClientError::Unauthenticated, ErrorCode::Unauthenticated),
+        (rejected(Rejection::Busy), ErrorCode::Unavailable),
+        (rejected(Rejection::Expired), ErrorCode::FailedPrecondition),
         (
             rejected(Rejection::NotEnoughSpace),
-            Code::FailedPrecondition,
+            ErrorCode::FailedPrecondition,
         ),
         (
             rejected(Rejection::PackagesUnavailable),
-            Code::FailedPrecondition,
+            ErrorCode::FailedPrecondition,
         ),
-        (rejected(Rejection::InvalidArgument), Code::InvalidArgument),
-        (rejected(Rejection::Internal), Code::Internal),
+        (
+            rejected(Rejection::InvalidArgument),
+            ErrorCode::InvalidArgument,
+        ),
+        (rejected(Rejection::Internal), ErrorCode::Internal),
         (
             ClientError::Unexpected(reqwest::StatusCode::BAD_GATEWAY),
-            Code::Internal,
+            ErrorCode::Internal,
         ),
     ];
     for (error, code) in cases {
         let described = format!("{error:?}");
-        assert_eq!(Status::from(error).code(), code, "{described}");
+        assert_eq!(ConnectError::from(error).code, code, "{described}");
     }
 }
 
 /// Boser's message is the only explanation the user gets.
 #[test]
 fn a_rejection_keeps_bosers_message() {
-    let status = Status::from(ClientError::Rejected {
+    let status = ConnectError::from(ClientError::Rejected {
         rejection: Rejection::Busy,
         message: "an upgrade is already running".to_owned(),
     });
 
-    assert_eq!(status.message(), "an upgrade is already running");
+    assert_eq!(message(&status), "an upgrade is already running");
 }
 
 /// The browser is told that Boser is unreachable, not where the BMC application looked for it.
 #[test]
 fn an_unreachable_boser_is_reported_without_its_address() {
-    let status = Status::from(ClientError::Unreachable);
+    let status = ConnectError::from(ClientError::Unreachable);
 
-    assert_eq!(status.message(), "Boser is unreachable");
+    assert_eq!(message(&status), "Boser is unreachable");
 }
 
 /// An unexpected answer names the HTTP status, for the log reader.
 #[test]
 fn an_unexpected_answer_names_the_http_status() {
-    let status = Status::from(ClientError::Unexpected(reqwest::StatusCode::BAD_GATEWAY));
+    let status = ConnectError::from(ClientError::Unexpected(reqwest::StatusCode::BAD_GATEWAY));
 
-    assert!(status.message().contains("502"), "{}", status.message());
+    assert!(message(&status).contains("502"), "{}", message(&status));
 }
 
 /// A failed run is a server-side fault; a lost one clears by retrying.
 #[test]
 fn follow_errors_map_to_internal_and_unavailable() {
-    let failed = Status::from(FollowError::Failed("no space left".to_owned()));
-    assert_eq!(failed.code(), Code::Internal);
-    assert_eq!(failed.message(), "no space left");
+    let failed = ConnectError::from(FollowError::Failed("no space left".to_owned()));
+    assert_eq!(failed.code, ErrorCode::Internal);
+    assert_eq!(message(&failed), "no space left");
 
-    let lost = Status::from(FollowError::Lost);
-    assert_eq!(lost.code(), Code::Unavailable);
-    assert!(lost.message().contains("may still be running"));
+    let lost = ConnectError::from(FollowError::Lost);
+    assert_eq!(lost.code, ErrorCode::Unavailable);
+    assert!(message(&lost).contains("may still be running"));
 }

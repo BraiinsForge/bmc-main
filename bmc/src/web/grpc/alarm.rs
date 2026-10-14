@@ -22,18 +22,19 @@
 use std::collections::BTreeSet;
 
 use bmc_grpc::web::{
-    AddAlarmRequest, Alarm as AlarmProto, AlarmInfoResponse, ListAlarmsResponse, Off,
-    SetAlarmEnabledRequest, SetAlarmRequest, SnoozeDuration as SnoozeDurationProto,
-    SnoozeLimit as SnoozeLimitProto, SnoozeOptionsWrapper, Weekday,
-    alarm_service_server::AlarmService as GrpcAlarmService,
+    AddAlarmRequest, Alarm as AlarmProto, AlarmInfoResponse, AlarmService as GrpcAlarmService,
+    ListAlarmsResponse, Off, SetAlarmEnabledRequest, SetAlarmRequest,
+    SnoozeDuration as SnoozeDurationProto, SnoozeLimit as SnoozeLimitProto, SnoozeOptionsWrapper,
+    Weekday,
     snooze_options_wrapper::{self, Kind as SnoozeKind},
 };
 use bmc_shared_time::time::WeekDay;
+use buffa::EnumValue;
+use buffa_types::google::protobuf::{Empty, StringValue};
 use chrono::NaiveTime;
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use std::str::FromStr;
 use tap::tap::TapOptional;
-use tonic::{Request, Response, Status};
-use tonic_types::{ErrorDetails, StatusExt};
 
 use crate::{
     alarm::{
@@ -45,7 +46,7 @@ use crate::{
 
 use super::{
     GrpcError,
-    shared::{FieldViolations, ParseOutput, naive_time_to_hhmm},
+    shared::{FieldViolations, ParseOutput, naive_time_to_hhmm, with_violations},
 };
 
 pub(crate) struct AlarmService {
@@ -58,13 +59,21 @@ impl AlarmService {
     }
 }
 
-#[async_trait::async_trait]
+/// The `InvalidArgument` naming every violated field of an alarm request.
+fn bad_request(violations: FieldViolations) -> ConnectError {
+    with_violations(
+        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
+        violations.into(),
+    )
+}
+
 impl GrpcAlarmService for AlarmService {
     async fn get_alarm_info(
         &self,
-        _request: Request<()>,
-    ) -> Result<tonic::Response<AlarmInfoResponse>, Status> {
-        Ok(tonic::Response::new(AlarmInfoResponse {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<AlarmInfoResponse> {
+        Response::ok(AlarmInfoResponse {
             repeat: vec![
                 Weekday::Monday.into(),
                 Weekday::Tuesday.into(),
@@ -77,19 +86,21 @@ impl GrpcAlarmService for AlarmService {
             name: String::new(),
             time: String::new(),
             sound_id: Sounds::GreenCandleMorning.to_string(),
-            snooze_options: Some(SnoozeOptionsWrapper {
+            snooze_options: SnoozeOptionsWrapper {
                 kind: Some(SnoozeKind::Snooze(bmc_grpc::web::SnoozeOptions {
-                    duration: SnoozeDurationProto::SnoozeDuration5Minutes as i32,
-                    limit: SnoozeLimitProto::SnoozeLimit3 as i32,
+                    duration: SnoozeDurationProto::SnoozeDuration5Minutes.into(),
+                    limit: SnoozeLimitProto::SnoozeLimit3.into(),
                 })),
-            }),
-        }))
+            }
+            .into(),
+        })
     }
 
     async fn list_alarms(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<ListAlarmsResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<ListAlarmsResponse> {
         let alarms = self
             .alarm_controller
             .alarms()
@@ -98,11 +109,15 @@ impl GrpcAlarmService for AlarmService {
             .map(Into::into)
             .collect();
 
-        Ok(Response::new(ListAlarmsResponse { alarms }))
+        Response::ok(ListAlarmsResponse { alarms })
     }
 
-    async fn add_alarm(&self, request: Request<AddAlarmRequest>) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
+    async fn add_alarm(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, AddAlarmRequest>,
+    ) -> ServiceResult<Empty> {
+        let request = request.to_owned_message();
 
         let repeat = map_weekday_vec(request.repeat);
 
@@ -126,15 +141,11 @@ impl GrpcAlarmService for AlarmService {
         all_field_violations.extend(violations);
 
         let (snooze_options, violations) =
-            parse_snooze_options_field("snooze_options", snooze_options);
+            parse_snooze_options_field("snooze_options", snooze_options.into_option());
         all_field_violations.extend(violations);
 
         if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
+            return Err(bad_request(all_field_violations));
         }
 
         let time = time.ok_or_else(unchecked_field_violations_status)?;
@@ -144,13 +155,17 @@ impl GrpcAlarmService for AlarmService {
         self.alarm_controller
             .add_alarm(alarm)
             .await
-            .map_err(Into::<Status>::into)?;
+            .map_err(Into::<ConnectError>::into)?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn set_alarm(&self, request: Request<SetAlarmRequest>) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
+    async fn set_alarm(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetAlarmRequest>,
+    ) -> ServiceResult<Empty> {
+        let request = request.to_owned_message();
 
         let repeat = map_weekday_vec(request.repeat);
 
@@ -178,15 +193,11 @@ impl GrpcAlarmService for AlarmService {
         all_field_violations.extend(violations);
 
         let (snooze_options, violations) =
-            parse_snooze_options_field("snooze_options", snooze_options);
+            parse_snooze_options_field("snooze_options", snooze_options.into_option());
         all_field_violations.extend(violations);
 
         if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
+            return Err(bad_request(all_field_violations));
         }
 
         let id = id.ok_or_else(unchecked_field_violations_status)?;
@@ -197,21 +208,20 @@ impl GrpcAlarmService for AlarmService {
         self.alarm_controller
             .set_alarm(alarm)
             .await
-            .map_err(Into::<Status>::into)?;
+            .map_err(Into::<ConnectError>::into)?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn delete_alarm(&self, request: Request<String>) -> Result<Response<()>, Status> {
-        let id = request.into_inner();
-        let (id, violations) = parse_alarm_id("id", &id);
+    async fn delete_alarm(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, StringValue>,
+    ) -> ServiceResult<Empty> {
+        let (id, violations) = parse_alarm_id("id", request.value);
 
         if !violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(violations),
-            ));
+            return Err(bad_request(violations));
         }
 
         let id = id.ok_or_else(unchecked_field_violations_status)?;
@@ -219,24 +229,20 @@ impl GrpcAlarmService for AlarmService {
         self.alarm_controller
             .remove_alarm(id)
             .await
-            .map_err(Into::<Status>::into)?;
+            .map_err(Into::<ConnectError>::into)?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_alarm_enabled(
         &self,
-        request: Request<SetAlarmEnabledRequest>,
-    ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        let (id, violations) = parse_alarm_id("id", &request.id);
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetAlarmEnabledRequest>,
+    ) -> ServiceResult<Empty> {
+        let (id, violations) = parse_alarm_id("id", request.id);
 
         if !violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(violations),
-            ));
+            return Err(bad_request(violations));
         }
 
         let id = id.ok_or_else(unchecked_field_violations_status)?;
@@ -244,9 +250,9 @@ impl GrpcAlarmService for AlarmService {
         self.alarm_controller
             .set_enabled(id, request.enabled)
             .await
-            .map_err(Into::<Status>::into)?;
+            .map_err(Into::<ConnectError>::into)?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 }
 
@@ -268,10 +274,10 @@ impl From<AlarmData> for AlarmProto {
             time: naive_time_to_hhmm(time),
             repeat: repeat
                 .into_iter()
-                .map(|weekday| map_weekday_to_proto(weekday) as i32)
+                .map(|weekday| map_weekday_to_proto(weekday).into())
                 .collect(),
-            sound: sound.map(Into::into),
-            snooze_options: Some(map_snooze_options(snooze_options)),
+            sound: sound.map(Into::into).into(),
+            snooze_options: map_snooze_options(snooze_options).into(),
         }
     }
 }
@@ -319,11 +325,11 @@ fn parse_snooze_options(value: snooze_options_wrapper::Kind) -> ParseOutput<Snoo
 
     let maybe_snooze_options = match value {
         SnoozeKind::Snooze(snooze_options) => {
-            let limit = map_snooze_limit_proto(snooze_options.limit()).tap_none(|| {
+            let limit = map_snooze_limit_proto(snooze_options.limit).tap_none(|| {
                 field_violations.push("limit", "Unspecified snooze limit!");
             });
 
-            let duration = map_snooze_duration_proto(snooze_options.duration()).tap_none(|| {
+            let duration = map_snooze_duration_proto(snooze_options.duration).tap_none(|| {
                 field_violations.push("duration", "Unspecifield snooze duration!");
             });
 
@@ -376,10 +382,10 @@ fn validate_alarm_name(field: &str, value: &str) -> FieldViolations {
     field_violations
 }
 
-fn map_weekday_vec(value: Vec<i32>) -> BTreeSet<WeekDay> {
+fn map_weekday_vec(value: Vec<EnumValue<Weekday>>) -> BTreeSet<WeekDay> {
     value
         .into_iter()
-        .filter_map(Weekday::from_i32)
+        .filter_map(|day| day.as_known())
         .filter(|day| *day != Weekday::Unspecified)
         .filter_map(map_weekday_from_proto)
         .collect()
@@ -415,27 +421,27 @@ fn map_snooze_options(value: Option<SnoozeOptions>) -> SnoozeOptionsWrapper {
         kind: Some(match value {
             Some(snooze_options) => {
                 snooze_options_wrapper::Kind::Snooze(bmc_grpc::web::SnoozeOptions {
-                    duration: Into::<SnoozeDurationProto>::into(snooze_options.duration) as i32,
-                    limit: Into::<SnoozeLimitProto>::into(snooze_options.limit) as i32,
+                    duration: SnoozeDurationProto::from(snooze_options.duration).into(),
+                    limit: SnoozeLimitProto::from(snooze_options.limit).into(),
                 })
             }
-            None => snooze_options_wrapper::Kind::Off(Off {}),
+            None => snooze_options_wrapper::Kind::Off(Off::default()),
         }),
     }
 }
 
-fn map_snooze_limit_proto(value: SnoozeLimitProto) -> Option<SnoozeLimit> {
-    match value {
-        SnoozeLimitProto::Unspecified => None,
-        SnoozeLimitProto::Forever => Some(SnoozeLimit::Forever),
+fn map_snooze_limit_proto(value: EnumValue<SnoozeLimitProto>) -> Option<SnoozeLimit> {
+    match value.as_known()? {
+        SnoozeLimitProto::SnoozeLimitUnspecified => None,
+        SnoozeLimitProto::SnoozeLimitForever => Some(SnoozeLimit::Forever),
         SnoozeLimitProto::SnoozeLimit3 => Some(SnoozeLimit::Three),
         SnoozeLimitProto::SnoozeLimit5 => Some(SnoozeLimit::Five),
     }
 }
 
-fn map_snooze_duration_proto(value: SnoozeDurationProto) -> Option<SnoozeDuration> {
-    match value {
-        SnoozeDurationProto::Unspecified => None,
+fn map_snooze_duration_proto(value: EnumValue<SnoozeDurationProto>) -> Option<SnoozeDuration> {
+    match value.as_known()? {
+        SnoozeDurationProto::SnoozeDurationUnspecified => None,
         SnoozeDurationProto::SnoozeDuration5Minutes => Some(SnoozeDuration::FiveMinutes),
         SnoozeDurationProto::SnoozeDuration10Minutes => Some(SnoozeDuration::TenMinutes),
         SnoozeDurationProto::SnoozeDuration15Minutes => Some(SnoozeDuration::FifteenMinutes),
@@ -457,31 +463,31 @@ impl From<SnoozeDuration> for SnoozeDurationProto {
 impl From<SnoozeLimit> for SnoozeLimitProto {
     fn from(value: SnoozeLimit) -> Self {
         match value {
-            SnoozeLimit::Forever => Self::Forever,
+            SnoozeLimit::Forever => Self::SnoozeLimitForever,
             SnoozeLimit::Three => Self::SnoozeLimit3,
             SnoozeLimit::Five => Self::SnoozeLimit5,
         }
     }
 }
 
-impl From<AlarmError> for Status {
+impl From<AlarmError> for ConnectError {
     fn from(value: AlarmError) -> Self {
         match value {
-            AlarmError::SyncToStorage => Status::internal("Failed to save configuration"),
-            AlarmError::NotFound => Status::not_found(value.to_string()),
-            AlarmError::RemoveAlarm => Status::internal("Failed to remove alarm"),
-            AlarmError::ScheduleAlarm => Status::internal("Failed to schedule alarm"),
+            AlarmError::SyncToStorage => ConnectError::internal("Failed to save configuration"),
+            AlarmError::NotFound => ConnectError::not_found(value.to_string()),
+            AlarmError::RemoveAlarm => ConnectError::internal("Failed to remove alarm"),
+            AlarmError::ScheduleAlarm => ConnectError::internal("Failed to schedule alarm"),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use bmc_grpc::google::rpc::bad_request::FieldViolation;
     use bmc_grpc::web::{
         Off, SnoozeDuration as SnoozeDurationProto, SnoozeLimit as SnoozeLimitProto,
         SnoozeOptionsWrapper, snooze_options_wrapper::Kind as SnoozeKind,
     };
-    use tonic_types::FieldViolation;
 
     use super::{SnoozeDuration, SnoozeLimit, parse_snooze_options_field};
 
@@ -516,7 +522,7 @@ mod tests {
     #[test]
     fn parse_snooze_options_field_off_yields_no_violations_and_none() {
         let input = Some(SnoozeOptionsWrapper {
-            kind: Some(SnoozeKind::Off(Off {})),
+            kind: Some(SnoozeKind::Off(Off::default())),
         });
 
         let (parsed, violations) = parse_snooze_options_field("snooze_options", input);
@@ -529,8 +535,8 @@ mod tests {
     fn parse_snooze_options_field_valid_snooze_yields_options() {
         let input = Some(SnoozeOptionsWrapper {
             kind: Some(SnoozeKind::Snooze(bmc_grpc::web::SnoozeOptions {
-                duration: SnoozeDurationProto::SnoozeDuration10Minutes as i32,
-                limit: SnoozeLimitProto::SnoozeLimit5 as i32,
+                duration: SnoozeDurationProto::SnoozeDuration10Minutes.into(),
+                limit: SnoozeLimitProto::SnoozeLimit5.into(),
             })),
         });
 

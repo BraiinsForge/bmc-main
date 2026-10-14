@@ -20,7 +20,7 @@
 
 //! The upgrade RPCs of a Boser-managed product, through the production routes.
 
-use super::boser_managed::{authenticated, upgrade_routes};
+use super::boser_managed::{upgrade_client, upgrade_router, with_session};
 use crate::compositor::{UpgradeGeneration, UpgradePhase, UpgradeRunSnapshot, UpgradeRunStatus};
 use crate::system_upgrade::boser::UpgradeRoute;
 use crate::system_upgrade::boser::client::BoserUpgrade;
@@ -29,35 +29,47 @@ use crate::system_upgrade::{RunStatusService, UnseenOutcome};
 use axum::http::StatusCode;
 use bmc_grpc::web::{
     CheckForUpgradeRequest, FirmwareUpgradePhase, PackageUpgradePhase, StartUpgradeRequest,
-    UpgradeProgress, upgrade_progress, upgrade_service_client::UpgradeServiceClient,
+    UpgradeProgress, UpgradeProgressView, upgrade_progress,
 };
 use bmc_platform::Product;
 use bmc_upgrade_types::{Disruption, ExecutionId, InstallablePackage, UpgradeKind, wire};
+use buffa_types::google::protobuf::Empty;
+use connectrpc::client::{ClientTransport, ServerStream, ServiceTransport};
+use connectrpc::{ConnectError, ErrorCode};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::time::Duration;
-use tonic::service::Routes;
-use tonic::{Code, Status, Streaming};
 
 /// `StubSession::id()` in `boser_managed.rs`.
 const CALLER: &str = "Bearer test-session";
 const NEXT_ITEM_WITHIN: Duration = Duration::from_secs(10);
 
+type ProgressStream = ServerStream<
+    <ServiceTransport<axum::Router> as ClientTransport>::ResponseBody,
+    UpgradeProgressView<'static>,
+>;
+
 fn json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).expect("BUG: wire types serialize")
 }
 
-async fn routes(product: Product, boser: Option<SocketAddr>) -> (tempfile::TempDir, Routes) {
-    upgrade_routes(product, boser, None).await
+fn message(error: &ConnectError) -> &str {
+    error.message.as_deref().unwrap_or_default()
+}
+
+async fn routes(product: Product, boser: Option<SocketAddr>) -> (tempfile::TempDir, axum::Router) {
+    let (tempdir, router) = upgrade_router(product, boser, None).await;
+    (tempdir, with_session(router))
 }
 
 /// Managed routes that follow a run on `display`, which the test publishes by hand.
 async fn routes_following(
     boser: SocketAddr,
     display: RunStatusService,
-) -> (tempfile::TempDir, Routes) {
+) -> (tempfile::TempDir, axum::Router) {
     let route = UpgradeRoute::Boser(BoserUpgrade::new(boser, display));
-    upgrade_routes(Product::Bfm100, None, Some(route)).await
+    let (tempdir, router) = upgrade_router(Product::Bfm100, None, Some(route)).await;
+    (tempdir, with_session(router))
 }
 
 fn displayed(offer: ExecutionId, state: UpgradeRunStatus) -> UpgradeRunSnapshot {
@@ -76,34 +88,34 @@ fn running(kind: UpgradeKind, phase: UpgradePhase) -> UpgradeRunStatus {
     }
 }
 
-async fn start(routes: Routes, upgrade_id: String) -> Streaming<UpgradeProgress> {
-    UpgradeServiceClient::new(routes)
-        .start_upgrade(authenticated(StartUpgradeRequest { upgrade_id }))
+async fn start(routes: axum::Router, upgrade_id: String) -> ProgressStream {
+    upgrade_client(&routes)
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
         .expect("BUG: a start reports its failures on the stream")
-        .into_inner()
 }
 
-async fn only_item(mut stream: Streaming<UpgradeProgress>) -> Status {
-    let status = next(&mut stream)
+async fn only_item(mut stream: ProgressStream) -> ConnectError {
+    let error = next(&mut stream)
         .await
         .expect_err("BUG: the stream's only item is the failure");
     assert_eq!(
-        next(&mut stream).await.map_err(|status| status.code()),
-        Ok(None),
-        "the stream ends after its failure"
+        next(&mut stream).await.map_err(|replayed| replayed.code),
+        Err(error.code),
+        "the stream ends at its failure, which a further read replays"
     );
-    status
+    error
 }
 
 /// A stream that stops making progress fails the test rather than hanging it.
-async fn next(stream: &mut Streaming<UpgradeProgress>) -> Result<Option<UpgradeProgress>, Status> {
+async fn next(stream: &mut ProgressStream) -> Result<Option<UpgradeProgress>, ConnectError> {
     tokio::time::timeout(NEXT_ITEM_WITHIN, stream.message())
         .await
         .expect("BUG: the stream yields its next item or ends")
+        .map(|item| item.map(|message| message.to_owned_message()))
 }
 
-async fn event(stream: &mut Streaming<UpgradeProgress>) -> Option<upgrade_progress::Event> {
+async fn event(stream: &mut ProgressStream) -> Option<upgrade_progress::Event> {
     next(stream)
         .await
         .expect("BUG: the run is followed without an error")
@@ -114,21 +126,21 @@ async fn event(stream: &mut Streaming<UpgradeProgress>) -> Option<upgrade_progre
 #[tokio::test]
 async fn a_managed_product_without_a_boser_address_answers_unavailable() {
     let (_tempdir, routes) = routes(Product::Bfm100, None).await;
-    let mut upgrade = UpgradeServiceClient::new(routes.clone());
+    let upgrade = upgrade_client(&routes);
 
     let check = upgrade
-        .check_for_upgrade(authenticated(CheckForUpgradeRequest::default()))
+        .check_for_upgrade(CheckForUpgradeRequest::default())
         .await
         .expect_err("BUG: there is no Boser to ask");
     let installable = upgrade
-        .get_installable_widgets(authenticated(()))
+        .get_installable_widgets(Empty::default())
         .await
         .expect_err("BUG: there is no Boser to ask");
     let started = only_item(start(routes, ExecutionId::new().to_string()).await).await;
 
-    assert_eq!(check.code(), Code::Unavailable);
-    assert_eq!(installable.code(), Code::Unavailable);
-    assert_eq!(started.code(), Code::Unavailable);
+    assert_eq!(check.code, ErrorCode::Unavailable);
+    assert_eq!(installable.code, ErrorCode::Unavailable);
+    assert_eq!(started.code, ErrorCode::Unavailable);
 }
 
 /// Boser's local token cannot POST, so the check has to go out as the caller.
@@ -153,13 +165,13 @@ async fn a_managed_check_reaches_boser_as_the_caller() {
         .await;
     let (_tempdir, routes) = routes(Product::Bfm100, Some(address)).await;
 
-    let response = UpgradeServiceClient::new(routes)
-        .check_for_upgrade(authenticated(CheckForUpgradeRequest {
+    let response = upgrade_client(&routes)
+        .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec!["widget-clock".to_owned()],
-        }))
+        })
         .await
         .expect("BUG: the mock answers the check")
-        .into_inner();
+        .into_owned();
 
     assert_eq!(response.upgrade_id, Some(id.to_string()));
     assert_eq!(
@@ -196,11 +208,11 @@ async fn managed_installable_widgets_come_from_boser() {
         .await;
     let (_tempdir, routes) = routes(Product::Bfm100, Some(address)).await;
 
-    let widgets = UpgradeServiceClient::new(routes)
-        .get_installable_widgets(authenticated(()))
+    let widgets = upgrade_client(&routes)
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: the mock answers the listing")
-        .into_inner()
+        .into_owned()
         .widgets;
 
     assert_eq!(widgets.len(), 1);
@@ -249,7 +261,7 @@ async fn a_managed_package_start_runs_to_finished() {
     ));
     assert_eq!(
         event(&mut stream).await,
-        Some(upgrade_progress::Event::Finished(()))
+        Some(upgrade_progress::Event::Finished(Empty::default()))
     );
     assert_eq!(event(&mut stream).await, None);
 }
@@ -276,7 +288,7 @@ async fn a_run_that_ends_before_boser_answers_is_not_lost() {
 
     assert_eq!(
         event(&mut stream).await,
-        Some(upgrade_progress::Event::Finished(()))
+        Some(upgrade_progress::Event::Finished(Empty::default()))
     );
     assert_eq!(event(&mut stream).await, None);
 }
@@ -364,10 +376,10 @@ async fn a_managed_run_that_fails_reports_the_reason() {
             reason: "build failed".to_owned(),
         },
     ));
-    let status = only_item(stream).await;
+    let error = only_item(stream).await;
 
-    assert_eq!(status.code(), Code::Internal);
-    assert_eq!(status.message(), "build failed");
+    assert_eq!(error.code, ErrorCode::Internal);
+    assert_eq!(message(&error), "build failed");
 }
 
 /// A stale or mangled id is "expired", as on Deck, and Boser is not bothered with it.
@@ -377,9 +389,9 @@ async fn an_unparseable_upgrade_id_is_the_streams_only_item() {
     let address = boser.serve(StatusCode::NO_CONTENT, "").await;
     let (_tempdir, routes) = routes_following(address, RunStatusService::new()).await;
 
-    let status = only_item(start(routes, "not-an-id".to_owned()).await).await;
+    let error = only_item(start(routes, "not-an-id".to_owned()).await).await;
 
-    assert_eq!(status.code(), Code::FailedPrecondition);
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
     assert_eq!(boser.requests(), Vec::new());
 }
 
@@ -399,10 +411,10 @@ async fn a_start_boser_refuses_is_the_streams_only_item() {
     let (_tempdir, routes) = routes(Product::Bfm100, Some(address)).await;
     let offer = ExecutionId::new();
 
-    let status = only_item(start(routes, offer.to_string()).await).await;
+    let error = only_item(start(routes, offer.to_string()).await).await;
 
-    assert_eq!(status.code(), Code::Unavailable);
-    assert_eq!(status.message(), "an upgrade is already running");
+    assert_eq!(error.code, ErrorCode::Unavailable);
+    assert_eq!(message(&error), "an upgrade is already running");
     assert_eq!(
         boser.requests(),
         [Recorded {
@@ -421,11 +433,11 @@ async fn a_self_managed_product_never_calls_boser() {
     let address = boser.serve(StatusCode::NO_CONTENT, "").await;
     let (_tempdir, routes) = routes(Product::Bmc100, Some(address)).await;
 
-    let status = only_item(start(routes, ExecutionId::new().to_string()).await).await;
+    let error = only_item(start(routes, ExecutionId::new().to_string()).await).await;
 
     assert_eq!(
-        status.code(),
-        Code::FailedPrecondition,
+        error.code,
+        ErrorCode::FailedPrecondition,
         "the local offer cache does not know the id"
     );
     assert_eq!(boser.requests(), Vec::new());

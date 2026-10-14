@@ -29,6 +29,7 @@ deprecated = "allow"
 # and rs-gallery's own scaffold writes it elided; spelling out `SceneCtx<'_>`
 # in eighty-odd identical signatures drifts from upstream and says nothing.
 elided_lifetimes_in_paths = "allow"
+refining_impl_trait = { level = "allow", priority = -1 }
 unused_crate_dependencies = "allow"
 
 [workspace.lints.clippy]

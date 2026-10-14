@@ -68,8 +68,9 @@ Do not add Braiins headers to:
 - Files carrying an upstream BOSI header: all of `bmc-net/bmc-net-types/` and the BOSI-headed files in
   `bmc-net/{bmc-net-drv,bmc-net-dns}` and `bmc-shared/stopwatch`. The BOSI notice is GPLv3 boilerplate too and stays
   verbatim.
-- Generated code: `frontend/src/proto/gen/` (protobuf) and `src/manifest_params.rs` in widget crates (written by
-  `bmc-widget-codegen` via `just wasm::gen`) — regeneration would drop any hand-added header.
+- Generated code: the protobuf bindings in `frontend/src/proto/gen/` and `bmc-grpc/src/gen/` (written by `just gen`) and
+  `src/manifest_params.rs` in widget crates (written by `bmc-widget-codegen` via `just wasm::gen`) — regeneration would
+  drop any hand-added header.
 - Anything covered by a colocated `LICENSE-*` or license file, which keeps its upstream terms — e.g. the
   AnySoftKeyboard-derived layouts in `bmc-render/keyboard/assets/layouts/` (`LICENSE-ANYSOFTKEYBOARD`, Apache-2.0),
   fonts under `assets/fonts/` and `frontend/src/styles/fonts/`, `LICENSE-CARBON`, `LICENSE-AOSP`,

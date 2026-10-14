@@ -1,5 +1,5 @@
 # https://buf.build/docs/configuration/v2/buf-gen-yaml
-# Run with `just gen`; buf comes from the nix dev shell.
+# Run with `just gen`; buf and the Rust plugins come from the nix dev shell.
 version: v2
 
 clean: true
@@ -9,6 +9,9 @@ inputs:
   # googleapis has no releases, so this pins its BSR commit of 2026-04-14;
   # the bindings must change only with this line.
   - module: buf.build/googleapis/googleapis:c17df5b2beca46928cc87d5656bd5343
+    # Built alone, so the rest of googleapis cannot reorder the files google.rpc.rs is concatenated from.
+    paths:
+      - "google/rpc"
     types:
       - "google.rpc"
 
@@ -17,3 +20,24 @@ plugins:
   - local: protoc-gen-es
     opt: target=ts,import_extension=none
     out: frontend/src/proto/gen
+
+  # Backend: both plugins write one file per package, which bmc-grpc/src/lib.rs mounts by hand.
+
+  # Message types
+  - local: protoc-gen-buffa
+    strategy: all
+    opt:
+      - file_per_package=true
+      - unbox_oneof=true # Oneof variants are built and matched without a Box; buffa keeps recursive ones boxed.
+      - unknown_fields=false # No hidden member, so a literal naming every field needs no `..Default::default()`.
+    out: bmc-grpc/src/gen/buffa
+
+  # Service traits and clients, over the buffa types
+  - local: protoc-gen-connect-rust
+    strategy: all
+    opt:
+      - file_per_package
+      - no_json
+      - gate_client_feature
+      - buffa_module=crate::proto
+    out: bmc-grpc/src/gen/connect

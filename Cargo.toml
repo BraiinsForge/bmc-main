@@ -150,6 +150,9 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 trivial_numeric_casts = "warn"
 # allow
 deprecated = "allow"
+# connectrpc's generated service traits return `impl Encodable<T>`;
+# a handler returning the concrete `T` refines that, which is the intended way to implement them.
+refining_impl_trait = { level = "allow", priority = -1 }
 unused_crate_dependencies = "allow"
 
 [workspace.lints.clippy]
@@ -191,7 +194,8 @@ assert_matches = "1.5.0"
 async-once-cell = "0.5.4"
 async-stream = "0.3.6"
 async-trait = "0.1.88"
-axum = "0.8.4"
+# http2: cleartext h2c for native gRPC clients (grpcurl, the bmc-mock tests).
+axum = { version = "0.8.4", features = ["http2"] }
 axum-extra = "0.10.1"
 backon = { version = "1.5.2", default-features = false, features = ["std"] }
 base64 = "0.22.1"
@@ -242,6 +246,8 @@ bmc-widget = { path = "bmc-widget" }
 bmc-widget-manifest = { path = "bmc-widget-manifest" }
 bmc-widget-protocol = { path = "bmc-widget-protocol" }
 bstr = "1.11.3"
+buffa = "0.9.2"
+buffa-types = "0.9.2"
 bytemuck = { version = "1.14", features = ["derive"] }
 bytes = { version = "1.6.0", default-features = false }
 bytesize = { version = "2.0.1", features = ["serde"] }
@@ -252,6 +258,7 @@ chrono-tz = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.37", features = ["derive", "std"] }
 codespan-reporting = "0.13.1"
 cognos = "1.0.1"
+connectrpc = { version = "0.9.1", default-features = false }
 console = { version = "0.15.11", default-features = false, features = ["ansi-parsing"] }
 cosmic-text = { version = "0.18", default-features = false, features = ["std", "swash"] }
 croner = "3.0.0"
@@ -386,8 +393,6 @@ pnet = "0.35.0"
 prettyplease = "0.2"
 proc-macro2 = "1.0.94"
 proptest = "1.9.0"
-prost = "0.13.5"
-prost-types = "0.13.5"
 pw_hash = "0.1.1"
 qrcode-generator = { version = "5.0.0", default-features = false }
 qrcodegen = "1.8.0"
@@ -452,11 +457,6 @@ tokio-tungstenite = "0.24.0"
 tokio-util = "0.7"
 toml = "0.8"
 toml_edit = "0.22"
-tonic = "0.13.1"
-tonic-build = "0.13.1"
-tonic-middleware = "0.3.0"
-tonic-types = "0.13.1"
-tonic-web = "0.13.1"
 tower = { version = "0.5.2", default-features = false }
 tower-cookies = "0.11.0"
 tower-http = "0.6.2"

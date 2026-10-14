@@ -1,4 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,16 +19,54 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_grpc::google::rpc::BadRequest;
+use bmc_grpc::google::rpc::bad_request::FieldViolation;
 use bmc_grpc::web::NumberFormat;
+use buffa::{EnumValue, MessageName as _};
 use chrono::NaiveTime;
-use tonic::Status;
-use tonic_types::FieldViolation;
+use connectrpc::{ConnectError, ErrorDetail};
 use tracing::warn;
+
+use super::GrpcError;
 
 pub type ParseOutput<T> = (Option<T>, FieldViolations);
 
-pub fn unchecked_field_violations_status() -> Status {
-    Status::internal("Unchecked field violations")
+pub fn unchecked_field_violations_status() -> ConnectError {
+    ConnectError::internal("Unchecked field violations")
+}
+
+/// A violation of `field`, named by its wire name.
+pub(crate) fn violation(
+    field: impl Into<String>,
+    description: impl Into<String>,
+) -> FieldViolation {
+    FieldViolation {
+        field: field.into(),
+        description: description.into(),
+        ..Default::default()
+    }
+}
+
+/// `error` carrying `violations` as a `google.rpc.BadRequest` detail.
+pub(crate) fn with_violations(
+    error: ConnectError,
+    violations: Vec<FieldViolation>,
+) -> ConnectError {
+    let bad_request = BadRequest {
+        field_violations: violations,
+    };
+    error.with_detail(ErrorDetail::from_message(
+        BadRequest::FULL_NAME,
+        &bad_request,
+    ))
+}
+
+/// The `InvalidArgument` of one wrong field, worded as the generic bad request.
+pub(crate) fn invalid_field(field: &str, description: impl Into<String>) -> ConnectError {
+    with_violations(
+        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
+        vec![violation(field, description)],
+    )
 }
 
 #[derive(Debug)]
@@ -43,7 +82,7 @@ impl FieldViolations {
     }
 
     pub fn push(&mut self, field: impl Into<String>, description: impl Into<String>) {
-        self.0.push(FieldViolation::new(field, description));
+        self.0.push(violation(field, description));
     }
 
     pub fn extend(&mut self, other: Self) {
@@ -61,18 +100,18 @@ pub fn naive_time_to_hhmm(time: NaiveTime) -> String {
     time.format("%H:%M").to_string()
 }
 
-pub fn parse_hhmm_to_naive_time(input: &str) -> Result<NaiveTime, Status> {
+pub fn parse_hhmm_to_naive_time(input: &str) -> Result<NaiveTime, ConnectError> {
     NaiveTime::parse_from_str(input, "%H:%M").map_err(|e| {
         warn!("Failed to parse Time in format HH:MM, error: {}", e);
-        Status::invalid_argument("Invalid time format")
+        ConnectError::invalid_argument("Invalid time format")
     })
 }
 
 pub(crate) fn try_from_number_format(
-    value: NumberFormat,
+    value: EnumValue<NumberFormat>,
 ) -> Result<bmc_shared_utils::number_format::NumberFormat, FieldViolation> {
-    match value {
-        NumberFormat::Unspecified => Err(FieldViolation::new(
+    match value.as_known().unwrap_or(NumberFormat::Unspecified) {
+        NumberFormat::Unspecified => Err(violation(
             "number_format",
             "number_format cannot be unspecified",
         )),

@@ -1,4 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -22,16 +23,15 @@ use std::str::FromStr;
 
 use bmc_grpc::web::{
     ChangePasswordRequest, CreatePasswordRequest, GetTimezoneListResponse, GetTimezoneResponse,
-    RemovePasswordRequest, SetTimezoneRequest,
-    system_service_server::SystemService as GrpcSystemService,
+    RemovePasswordRequest, SetTimezoneRequest, SystemService as GrpcSystemService,
 };
 use bmc_shared_time::time::Timezone;
+use buffa_types::google::protobuf::{BoolValue, Empty};
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use std::sync::Arc;
-use tonic::{Code, Request, Response, Status};
-use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 
-use super::GrpcError;
+use super::shared::invalid_field;
 use crate::{BmcManager, session::Manager as SessionManager, web::session::extract_session};
 
 #[derive(Clone)]
@@ -57,181 +57,184 @@ where
     }
 }
 
-#[async_trait::async_trait]
 impl<T, S> GrpcSystemService for SystemService<T, S>
 where
     T: BmcManager,
     S: SessionManager,
 {
-    async fn has_password(&self, _request: Request<()>) -> Result<Response<bool>, Status> {
+    async fn has_password(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<BoolValue> {
         let has_password = self.manager.has_password().await.map_err(|err| {
             error!(?err, "Failed to check password presence");
-            Status::internal("Failed to check password presence")
+            ConnectError::internal("Failed to check password presence")
         })?;
 
-        Ok(Response::new(has_password))
+        Response::ok(BoolValue {
+            value: has_password,
+            ..Default::default()
+        })
     }
 
     async fn create_password(
         &self,
-        request: Request<CreatePasswordRequest>,
-    ) -> Result<Response<()>, Status> {
-        let session = extract_session::<S>(request.extensions())?.clone();
-        let request = request.into_inner();
+        ctx: RequestContext,
+        request: ServiceRequest<'_, CreatePasswordRequest>,
+    ) -> ServiceResult<Empty> {
+        let session = extract_session::<S>(ctx.extensions())?.clone();
 
         let has_password = self.manager.has_password().await.map_err(|err| {
             error!(?err, "Failed to check password presence");
-            Status::internal("Failed to check password presence")
+            ConnectError::internal("Failed to check password presence")
         })?;
 
         if has_password {
-            return Err(Status::failed_precondition(
+            return Err(ConnectError::failed_precondition(
                 "System already has password. You can change it using `change_password` call",
             ));
         }
 
         self.manager
-            .set_password(Some(request.password))
+            .set_password(Some(request.password.to_owned()))
             .await
             .map_err(|err| {
                 error!(?err, "Failed to set password");
-                Status::internal("Failed to set password")
+                ConnectError::internal("Failed to set password")
             })?;
 
         if let Err(err) = self.session_manager.logout_all_related(session).await {
             warn!("Failed to logout all related sessions: {err}");
         }
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn change_password(
         &self,
-        request: Request<ChangePasswordRequest>,
-    ) -> Result<Response<()>, Status> {
-        let session = extract_session::<S>(request.extensions())?.clone();
-        let request = request.into_inner();
+        ctx: RequestContext,
+        request: ServiceRequest<'_, ChangePasswordRequest>,
+    ) -> ServiceResult<Empty> {
+        let session = extract_session::<S>(ctx.extensions())?.clone();
 
         let is_current_password_correct = self
             .manager
-            .check_password(Some(&request.current_password))
+            .check_password(Some(request.current_password))
             .await
             .map_err(|err| {
                 error!(?err, "Failed to check current password");
-                Status::internal("Failed to check current password")
+                ConnectError::internal("Failed to check current password")
             })?;
 
         if !is_current_password_correct {
-            return Err(Status::with_error_details(
-                Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request_violation(
-                    "current_password",
-                    "Incorrect current password",
-                ),
+            return Err(invalid_field(
+                "current_password",
+                "Incorrect current password",
             ));
         }
 
         self.manager
-            .set_password(Some(request.new_password))
+            .set_password(Some(request.new_password.to_owned()))
             .await
             .map_err(|err| {
                 error!(?err, "Failed to set password");
-                Status::internal("Failed to set password")
+                ConnectError::internal("Failed to set password")
             })?;
 
         if let Err(err) = self.session_manager.logout_all_related(session).await {
             warn!("Failed to logout all related sessions: {err}");
         }
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn remove_password(
         &self,
-        request: Request<RemovePasswordRequest>,
-    ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, RemovePasswordRequest>,
+    ) -> ServiceResult<Empty> {
         let is_current_password_correct = self
             .manager
-            .check_password(Some(&request.password))
+            .check_password(Some(request.password))
             .await
             .map_err(|err| {
                 error!(?err, "Failed to check current password");
-                Status::internal("Failed to check current password")
+                ConnectError::internal("Failed to check current password")
             })?;
 
         if !is_current_password_correct {
-            return Err(Status::with_error_details(
-                Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request_violation("password", "Incorrect current password"),
-            ));
+            return Err(invalid_field("password", "Incorrect current password"));
         }
 
         self.manager.set_password(None).await.map_err(|err| {
             error!(?err, "Failed to set password");
-            Status::internal("Failed to set password")
+            ConnectError::internal("Failed to set password")
         })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn get_timezone(
         &self,
-        _request: Request<()>,
-    ) -> Result<tonic::Response<GetTimezoneResponse>, tonic::Status> {
-        Ok(tonic::Response::new(GetTimezoneResponse {
-            timezone: Some(into_grpc_timezone(&self.manager.timezone())),
-        }))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetTimezoneResponse> {
+        Response::ok(GetTimezoneResponse {
+            timezone: into_grpc_timezone(&self.manager.timezone()).into(),
+        })
     }
+
     async fn get_timezone_list(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<GetTimezoneListResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetTimezoneListResponse> {
         let timezones = Timezone::list().iter().map(into_grpc_timezone).collect();
-        Ok(Response::new(GetTimezoneListResponse { timezones }))
+        Response::ok(GetTimezoneListResponse { timezones })
     }
 
     async fn set_timezone(
         &self,
-        request: Request<SetTimezoneRequest>,
-    ) -> Result<Response<()>, Status> {
-        let value = request.into_inner().id;
-        let timezone = Timezone::from_str(&value).map_err(|_| {
-            Status::with_error_details(
-                Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request_violation("timezone", "invalid timezone variant"),
-            )
-        })?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetTimezoneRequest>,
+    ) -> ServiceResult<Empty> {
+        let timezone = Timezone::from_str(request.id)
+            .map_err(|_| invalid_field("timezone", "invalid timezone variant"))?;
 
         self.manager.set_timezone(timezone).await.map_err(|e| {
             warn!("Failed to set timezone: {}", e);
-            Status::internal("Unexpected error occured when settign timezone")
+            ConnectError::internal("Unexpected error occured when settign timezone")
         })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn factory_reset(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+    async fn factory_reset(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
         // NOTE: this API for now supports only soft-reset
         self.manager.factory_reset(false).await.map_err(|err| {
             warn!(?err, "Failed to apply factory settings");
-            Status::internal("Failed to apply factory settings")
+            ConnectError::internal("Failed to apply factory settings")
         })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn reboot(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+    async fn reboot(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
         self.manager.reboot().await.map_err(|err| {
             warn!(?err, "Failed to reboot device");
-            Status::internal("Failed to reboot device")
+            ConnectError::internal("Failed to reboot device")
         })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 }
 

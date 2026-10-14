@@ -31,26 +31,28 @@ use bmc_grpc::web::{
     SoundInfo, SoundVolume,
 };
 use bmc_grpc::web::{
-    BrightnessInfo, DisplaySettingsResponse, SoundVolumeSettingsResponse, TimeInterval,
-    configuration_service_server::ConfigurationService as GrpcConfigurationService,
+    BrightnessInfo, ConfigurationService as GrpcConfigurationService, DisplaySettingsResponse,
+    SoundVolumeSettingsResponse, TimeInterval,
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
 use bmc_shared_utils::unit_system::UnitSystem;
+use buffa_types::google::protobuf::{BoolValue, Empty, UInt32Value};
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tonic::{Code, Request, Response, Status};
-use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 
-use super::GrpcError;
 use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
 use super::initial_setup::{try_from_date_time, try_from_time_format};
-use super::shared::{naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format};
+use super::network::bad_request;
+use super::shared::{
+    invalid_field, naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format,
+};
 use crate::sound::SoundController;
 
 const API_BRIGHTNESS_MIN: u32 = crate::backlight::MIN_BRIGHTNESS_PCT as u32;
@@ -81,42 +83,53 @@ impl<T: DisplayBacklightDriver> ConfigurationService<T> {
     }
 }
 
-#[async_trait::async_trait]
-
 impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationService<T> {
     async fn get_display_settings(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<DisplaySettingsResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<DisplaySettingsResponse> {
         let display_settings = self.system_manager.display_settings().await;
 
-        Ok(Response::new(DisplaySettingsResponse {
-            brightness: Some(BrightnessInfo {
+        Response::ok(DisplaySettingsResponse {
+            brightness: BrightnessInfo {
                 value: u32::from(display_settings.brightness_pct),
                 min: API_BRIGHTNESS_MIN,
                 max: API_BRIGHTNESS_MAX,
                 step: API_BRIGHTNESS_STEP,
-            }),
+            }
+            .into(),
 
-            brightness_nightmode: Some(BrightnessInfo {
+            brightness_nightmode: BrightnessInfo {
                 value: u32::from(display_settings.night_mode_config.brightness_pct),
                 min: API_BRIGHTNESS_MIN,
                 max: API_BRIGHTNESS_MAX,
                 step: API_BRIGHTNESS_STEP,
-            }),
+            }
+            .into(),
             nightmode_enabled: display_settings.night_mode_config.enabled,
-            nightmode_interval: Some(TimeInterval {
+            nightmode_interval: TimeInterval {
                 from: naive_time_to_hhmm(display_settings.night_mode_config.from),
                 to: naive_time_to_hhmm(display_settings.night_mode_config.to),
-            }),
+            }
+            .into(),
             nightmode_screen_off_timeout_secs: display_settings
                 .night_mode_config
-                .screen_off_timeout_secs,
-        }))
+                .screen_off_timeout_secs
+                .map(|secs| UInt32Value {
+                    value: secs,
+                    ..Default::default()
+                })
+                .into(),
+        })
     }
 
-    async fn set_brightness(&self, request: Request<u32>) -> Result<Response<()>, Status> {
-        let value = clamp_brightness(request.into_inner());
+    async fn set_brightness(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, UInt32Value>,
+    ) -> ServiceResult<Empty> {
+        let value = clamp_brightness(request.value);
 
         #[expect(clippy::cast_possible_truncation)]
         self.system_manager
@@ -124,17 +137,18 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Cannot set display brightness: {}", e);
-                Status::internal("Failed to set display brightness")
+                ConnectError::internal("Failed to set display brightness")
             })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_brightness_nightmode(
         &self,
-        request: Request<u32>,
-    ) -> Result<Response<()>, Status> {
-        let value = clamp_brightness(request.into_inner());
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, UInt32Value>,
+    ) -> ServiceResult<Empty> {
+        let value = clamp_brightness(request.value);
 
         #[expect(clippy::cast_possible_truncation)]
         self.system_manager
@@ -142,69 +156,77 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Cannot set night mode brightness, error: {}", e);
-                Status::internal("Failed to set night mode brightness")
+                ConnectError::internal("Failed to set night mode brightness")
             })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn set_nightmode_enabled(&self, request: Request<bool>) -> Result<Response<()>, Status> {
-        let value = request.into_inner();
-
+    async fn set_nightmode_enabled(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, BoolValue>,
+    ) -> ServiceResult<Empty> {
         self.system_manager
-            .set_night_mode_enabled(value)
+            .set_night_mode_enabled(request.value)
             .await
             .map_err(|e| {
                 error!("Failed to enable/disable night mode, error {}", e);
-                Status::internal("Failed to enable/disable night mode")
+                ConnectError::internal("Failed to enable/disable night mode")
             })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_nightmode_interval(
         &self,
-        request: Request<TimeInterval>,
-    ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-
-        let from = parse_hhmm_to_naive_time(&request.from)?;
-        let to = parse_hhmm_to_naive_time(&request.to)?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, TimeInterval>,
+    ) -> ServiceResult<Empty> {
+        let from = parse_hhmm_to_naive_time(request.from)?;
+        let to = parse_hhmm_to_naive_time(request.to)?;
 
         self.system_manager
             .set_night_mode_interval(from, to)
             .await
             .map_err(|e| {
                 error!("Failed to set night mode interval, error: {}", e);
-                Status::internal("Failed to set night mode interval")
+                ConnectError::internal("Failed to set night mode interval")
             })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn get_sound_volume_settings(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<SoundVolumeSettingsResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<SoundVolumeSettingsResponse> {
         let sound_settings = self.system_manager.sound_settings().await;
-        Ok(Response::new(SoundVolumeSettingsResponse {
-            volume: Some(SoundVolume {
+        Response::ok(SoundVolumeSettingsResponse {
+            volume: SoundVolume {
                 value: u32::from(sound_settings.volume),
                 min: API_SOUND_VOLUME_MIN,
                 max: API_SOUND_VOLUME_MAX,
                 step: API_SOUND_VOLUME_STEP,
-            }),
-            volume_nightmode: Some(SoundVolume {
+            }
+            .into(),
+            volume_nightmode: SoundVolume {
                 value: u32::from(sound_settings.volume_night_mode),
                 min: API_SOUND_VOLUME_MIN,
                 max: API_SOUND_VOLUME_MAX,
                 step: API_SOUND_VOLUME_STEP,
-            }),
-        }))
+            }
+            .into(),
+        })
     }
 
-    async fn set_sound_volume(&self, request: Request<u32>) -> Result<Response<()>, Status> {
-        let value = request.into_inner();
+    async fn set_sound_volume(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, UInt32Value>,
+    ) -> ServiceResult<Empty> {
+        let value = request.value;
 
         validate_sound_volume(value)?;
 
@@ -214,17 +236,18 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Failed to set sound volume, error: {}", e);
-                Status::internal("Failed to set sound volume")
+                ConnectError::internal("Failed to set sound volume")
             })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_sound_volume_nightmode(
         &self,
-        request: Request<u32>,
-    ) -> Result<Response<()>, Status> {
-        let value = request.into_inner();
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, UInt32Value>,
+    ) -> ServiceResult<Empty> {
+        let value = request.value;
 
         validate_sound_volume(value)?;
 
@@ -234,25 +257,30 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Failed to set sound volume for night mode, error: {}", e);
-                Status::internal("Failed to set sound volume for night mode")
+                ConnectError::internal("Failed to set sound volume for night mode")
             })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn list_sounds(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<ListSoundsResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<ListSoundsResponse> {
         let sounds: Vec<SoundInfo> = Sounds::iter().map(Into::into).collect();
 
-        Ok(Response::new(ListSoundsResponse { sounds }))
+        Response::ok(ListSoundsResponse { sounds })
     }
 
-    async fn play_sound(&self, request: Request<PlaySoundRequest>) -> Result<Response<()>, Status> {
-        let sound = Sounds::from_str(&request.into_inner().sound_id).map_err(|e| {
+    async fn play_sound(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, PlaySoundRequest>,
+    ) -> ServiceResult<Empty> {
+        let sound = Sounds::from_str(request.sound_id).map_err(|e| {
             warn!("Failed to parse sound, error {e}");
-            Status::invalid_argument("Invalid sound_id")
+            ConnectError::invalid_argument("Invalid sound_id")
         })?;
 
         let token = CancellationToken::new();
@@ -271,21 +299,22 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
                 .await
                 .map_err(|e| {
                     error!("Failed to play sound, error {e}");
-                    Status::internal("Failed to play sound")
+                    ConnectError::internal("Failed to play sound")
                 })?;
 
-            Ok::<(), Status>(())
+            Ok::<(), ConnectError>(())
         })
         .await
-        .map_err(|_| Status::internal("Failed to play sound"))??;
+        .map_err(|_| ConnectError::internal("Failed to play sound"))??;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn get_general_settings_data(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<GeneralSettingsDataResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GeneralSettingsDataResponse> {
         let (localization, data_collection) = {
             let config = self.config_handle.read().await;
             let localization = config.localization_config();
@@ -294,31 +323,33 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             (localization, data_collection)
         };
 
-        Ok(Response::new(GeneralSettingsDataResponse {
-            data_collection: Some(data_collection),
+        Response::ok(GeneralSettingsDataResponse {
+            data_collection: BoolValue {
+                value: data_collection,
+                ..Default::default()
+            }
+            .into(),
             time_format: map_time_system_to_proto(localization.time_system).into(),
             date_format: map_date_format_to_proto(localization.date_format).into(),
             number_format: map_number_format_to_proto(localization.number_format).into(),
             first_day_of_week: map_weekday_to_proto(localization.first_day_of_week).into(),
             temperature_unit: map_temperature_unit_to_proto(localization.temperature_unit).into(),
             unit_system: map_unit_system_to_proto(localization.unit_system).into(),
-            show_seconds_status_bar: Some(localization.show_seconds_in_status_bar),
-        }))
+            show_seconds_status_bar: BoolValue {
+                value: localization.show_seconds_in_status_bar,
+                ..Default::default()
+            }
+            .into(),
+        })
     }
 
     async fn set_time_format(
         &self,
-        request: Request<SetTimeFormatRequest>,
-    ) -> Result<Response<()>, Status> {
-        let time_system = try_from_time_format(request.into_inner().time_format()).map_err(
-            |field_violation| {
-                Status::with_error_details(
-                    Code::InvalidArgument,
-                    GrpcError::BadRequest.to_string(),
-                    ErrorDetails::with_bad_request([field_violation]),
-                )
-            },
-        )?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetTimeFormatRequest>,
+    ) -> ServiceResult<Empty> {
+        let time_system = try_from_time_format(request.time_format)
+            .map_err(|violation| bad_request(vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
 
@@ -326,248 +357,231 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to save time_system, error {e}");
-            Status::internal("Failed to save time_system")
+            ConnectError::internal("Failed to save time_system")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_number_format(
         &self,
-        request: Request<SetNumberFormatRequest>,
-    ) -> Result<Response<()>, Status> {
-        let number_format = try_from_number_format(request.into_inner().number_format()).map_err(
-            |field_violation| {
-                Status::with_error_details(
-                    Code::InvalidArgument,
-                    GrpcError::BadRequest.to_string(),
-                    ErrorDetails::with_bad_request([field_violation]),
-                )
-            },
-        )?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetNumberFormatRequest>,
+    ) -> ServiceResult<Empty> {
+        let number_format = try_from_number_format(request.number_format)
+            .map_err(|violation| bad_request(vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
         config.set_number_format(number_format);
 
         config.save().await.map_err(|e| {
             error!("Failed to save number_format, error {e}");
-            Status::internal("Failed to save number_format")
+            ConnectError::internal("Failed to save number_format")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_date_format(
         &self,
-        request: Request<SetDateFormatRequest>,
-    ) -> Result<Response<()>, Status> {
-        let date_format =
-            try_from_date_time(request.into_inner().date_format()).map_err(|field_violation| {
-                Status::with_error_details(
-                    Code::InvalidArgument,
-                    GrpcError::BadRequest.to_string(),
-                    ErrorDetails::with_bad_request([field_violation]),
-                )
-            })?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetDateFormatRequest>,
+    ) -> ServiceResult<Empty> {
+        let date_format = try_from_date_time(request.date_format)
+            .map_err(|violation| bad_request(vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
         config.set_date_format(date_format);
 
         config.save().await.map_err(|e| {
             error!("Failed to save date_format, error {e}");
-            Status::internal("Failed to save date_format")
+            ConnectError::internal("Failed to save date_format")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn set_data_collection(&self, request: Request<bool>) -> Result<Response<()>, Status> {
+    async fn set_data_collection(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, BoolValue>,
+    ) -> ServiceResult<Empty> {
         let mut config = self.config_handle.write().await;
-        config.set_data_collection(request.into_inner());
+        config.set_data_collection(request.value);
 
         config.save().await.map_err(|e| {
             error!("Failed to save data_collection, error {e}");
-            Status::internal("Failed to save data_collection")
+            ConnectError::internal("Failed to save data_collection")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_first_day_of_week(
         &self,
-        request: Request<SetFirstDayOfWeekRequest>,
-    ) -> Result<Response<()>, Status> {
-        let weekday =
-            map_weekday_from_proto(request.into_inner().first_day_of_week()).ok_or_else(|| {
-                Status::with_error_details(
-                    tonic::Code::InvalidArgument,
-                    GrpcError::BadRequest.to_string(),
-                    ErrorDetails::with_bad_request_violation(
-                        "first_day_of_week",
-                        "value cannot be unspecified",
-                    ),
-                )
-            })?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetFirstDayOfWeekRequest>,
+    ) -> ServiceResult<Empty> {
+        let weekday = request
+            .first_day_of_week
+            .as_known()
+            .and_then(map_weekday_from_proto)
+            .ok_or_else(|| invalid_field("first_day_of_week", "value cannot be unspecified"))?;
 
         let mut config = self.config_handle.write().await;
         config.set_first_day_of_week(weekday);
 
         config.save().await.map_err(|e| {
             error!("Failed to save first_day_of_week, error {e}");
-            Status::internal("Failed to save first_day_of_week")
+            ConnectError::internal("Failed to save first_day_of_week")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_temperature_unit(
         &self,
-        request: Request<SetTemperatureUnitRequest>,
-    ) -> Result<Response<()>, Status> {
-        let temperature_unit = map_temperature_unit_from_proto(
-            request.into_inner().temperature_unit(),
-        )
-        .ok_or_else(|| {
-            Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request_violation(
-                    "temperature_unit",
-                    "value cannot be unspecified",
-                ),
-            )
-        })?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetTemperatureUnitRequest>,
+    ) -> ServiceResult<Empty> {
+        let temperature_unit = request
+            .temperature_unit
+            .as_known()
+            .and_then(map_temperature_unit_from_proto)
+            .ok_or_else(|| invalid_field("temperature_unit", "value cannot be unspecified"))?;
 
         let mut config = self.config_handle.write().await;
         config.set_temperature_unit(temperature_unit);
 
         config.save().await.map_err(|e| {
             error!("Failed to save temperature_unit, error {e}");
-            Status::internal("Failed to save temperature_unit")
+            ConnectError::internal("Failed to save temperature_unit")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_unit_system(
         &self,
-        request: Request<SetUnitSystemRequest>,
-    ) -> Result<Response<()>, Status> {
-        let unit_system = map_unit_system_from_proto(request.into_inner().unit_system())
-            .ok_or_else(|| {
-                Status::with_error_details(
-                    tonic::Code::InvalidArgument,
-                    GrpcError::BadRequest.to_string(),
-                    ErrorDetails::with_bad_request_violation(
-                        "unit_system",
-                        "value cannot be unspecified",
-                    ),
-                )
-            })?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetUnitSystemRequest>,
+    ) -> ServiceResult<Empty> {
+        let unit_system = request
+            .unit_system
+            .as_known()
+            .and_then(map_unit_system_from_proto)
+            .ok_or_else(|| invalid_field("unit_system", "value cannot be unspecified"))?;
 
         let mut config = self.config_handle.write().await;
         config.set_unit_system(unit_system);
 
         config.save().await.map_err(|e| {
             error!("Failed to save unit_system, error {e}");
-            Status::internal("Failed to save unit_system")
+            ConnectError::internal("Failed to save unit_system")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn show_seconds_in_status_bar(
         &self,
-        request: Request<bool>,
-    ) -> Result<Response<()>, Status> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, BoolValue>,
+    ) -> ServiceResult<Empty> {
         let mut config = self.config_handle.write().await;
-        config.show_seconds_in_status_bar(request.into_inner());
+        config.show_seconds_in_status_bar(request.value);
 
         config.save().await.map_err(|e| {
             error!("Failed to show/hide seconds in status bar, error {e}");
-            Status::internal("Failed to show/hide seconds in status bar")
+            ConnectError::internal("Failed to show/hide seconds in status bar")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn get_led_settings(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<LedSettingsResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<LedSettingsResponse> {
         let led_settings = self.system_manager.led_settings().await;
 
-        Ok(Response::new(LedSettingsResponse {
+        Response::ok(LedSettingsResponse {
             led_enabled: led_settings.led_enabled,
             led_enabled_nightmode: led_settings.led_enabled_night_mode,
-        }))
+        })
     }
 
-    async fn set_led_enabled(&self, request: Request<bool>) -> Result<Response<()>, Status> {
-        let led_enabled = request.into_inner();
-
+    async fn set_led_enabled(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, BoolValue>,
+    ) -> ServiceResult<Empty> {
         self.system_manager
-            .set_led_enabled(led_enabled)
+            .set_led_enabled(request.value)
             .await
             .map_err(|e| {
                 error!("Failed to set led_enabled, error {e}");
-                Status::internal("Failed to save led_enabled")
+                ConnectError::internal("Failed to save led_enabled")
             })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_led_enabled_nightmode(
         &self,
-        request: Request<bool>,
-    ) -> Result<Response<()>, Status> {
-        let enabled = request.into_inner();
-
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, BoolValue>,
+    ) -> ServiceResult<Empty> {
         self.system_manager
-            .set_led_enabled_night_mode(enabled)
+            .set_led_enabled_night_mode(request.value)
             .await
             .map_err(|e| {
                 error!("Failed to set led_enabled_nightmode, error {e}");
-                Status::internal("Failed to save led_enabled_nightmode")
+                ConnectError::internal("Failed to save led_enabled_nightmode")
             })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn get_boot_sound_settings(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<BootSoundSettingsResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<BootSoundSettingsResponse> {
         let boot_sound_enabled = self.config_handle.read().await.boot_sound_enabled();
 
-        Ok(Response::new(BootSoundSettingsResponse {
-            boot_sound_enabled,
-        }))
+        Response::ok(BootSoundSettingsResponse { boot_sound_enabled })
     }
 
-    async fn set_boot_sound_enabled(&self, request: Request<bool>) -> Result<Response<()>, Status> {
+    async fn set_boot_sound_enabled(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, BoolValue>,
+    ) -> ServiceResult<Empty> {
         let mut config = self.config_handle.write().await;
-        let enabled = request.into_inner();
+        let enabled = request.value;
 
         if config.boot_sound_enabled() == enabled {
-            return Ok(tonic::Response::new(()));
+            return Response::ok(Empty::default());
         }
 
         config.set_boot_sound_enabled(enabled);
 
         config.save().await.map_err(|e| {
             error!("Failed to save boot_sound_enabled, error {e}");
-            Status::internal("Failed to save boot_sound_enabled")
+            ConnectError::internal("Failed to save boot_sound_enabled")
         })?;
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_nightmode_screen_off_timeout(
         &self,
-        request: Request<u32>,
-    ) -> Result<Response<()>, Status> {
-        let value = request.into_inner();
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, UInt32Value>,
+    ) -> ServiceResult<Empty> {
+        let value = request.value;
 
         let timeout = if value == 0 { None } else { Some(value) };
 
@@ -576,10 +590,10 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 error!("Failed to set night mode screen off timeout, error: {e}");
-                Status::internal("Failed to set night mode screen off timeout")
+                ConnectError::internal("Failed to set night mode screen off timeout")
             })?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 }
 
@@ -587,9 +601,9 @@ fn clamp_brightness(value: u32) -> u32 {
     value.clamp(API_BRIGHTNESS_MIN, API_BRIGHTNESS_MAX)
 }
 
-fn validate_sound_volume(value: u32) -> Result<(), Status> {
+fn validate_sound_volume(value: u32) -> Result<(), ConnectError> {
     if value > API_SOUND_VOLUME_MAX {
-        return Err(Status::invalid_argument(format!(
+        return Err(ConnectError::invalid_argument(format!(
             "Invalid sound volume. Value must be within a range [{API_SOUND_VOLUME_MIN}-{API_SOUND_VOLUME_MAX}]"
         )));
     }

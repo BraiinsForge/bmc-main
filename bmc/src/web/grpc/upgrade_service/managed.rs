@@ -24,11 +24,11 @@ use std::time::Duration;
 
 use bmc_grpc::web::{CheckForUpgradeResponse, FirmwareUpgrade, UpgradeDisruption, UpgradeProgress};
 use bmc_upgrade_types::{Disruption, ExecutionId, wire};
+use buffa_types::google::protobuf::Timestamp;
 use chrono::{NaiveDate, NaiveTime};
-use futures::stream::{self, BoxStream, StreamExt};
-use prost_types::Timestamp;
+use connectrpc::{ConnectError, ServiceStream};
+use futures::stream::{self, StreamExt};
 use tokio::time::Instant;
-use tonic::Status;
 use tracing::warn;
 
 use super::{map_package_upgrade_plan, run_state_to_progress};
@@ -54,8 +54,8 @@ pub(super) fn check_response(response: wire::CheckUpgradeResponse) -> CheckForUp
     };
     CheckForUpgradeResponse {
         upgrade_id,
-        firmware: response.firmware.map(firmware_upgrade),
-        packages: response.packages.map(map_package_upgrade_plan),
+        firmware: response.firmware.map(firmware_upgrade).into(),
+        packages: response.packages.map(map_package_upgrade_plan).into(),
         disruption: disruption.into(),
     }
 }
@@ -65,6 +65,7 @@ fn firmware_upgrade(firmware: wire::FirmwareUpgrade) -> FirmwareUpgrade {
         Ok(date) => Some(Timestamp {
             seconds: date.and_time(NaiveTime::MIN).and_utc().timestamp(),
             nanos: 0,
+            ..Default::default()
         }),
         Err(error) => {
             warn!(
@@ -78,7 +79,7 @@ fn firmware_upgrade(firmware: wire::FirmwareUpgrade) -> FirmwareUpgrade {
     FirmwareUpgrade {
         hash: firmware.hash,
         version: firmware.version,
-        release_date,
+        release_date: release_date.into(),
         description: firmware.description,
         file_size_bytes: firmware.file_size_bytes,
         previous_releases: firmware
@@ -100,7 +101,7 @@ pub(super) async fn start(
     boser: &BoserUpgrade,
     session_id: &str,
     upgrade_id: &str,
-) -> BoxStream<'static, Result<UpgradeProgress, Status>> {
+) -> ServiceStream<UpgradeProgress> {
     let Ok(offer) = upgrade_id.parse::<ExecutionId>() else {
         return only(SystemUpgradeError::UpgradeExpired.into());
     };
@@ -115,15 +116,17 @@ pub(super) async fn start(
         .boxed()
 }
 
-pub(super) fn only(status: Status) -> BoxStream<'static, Result<UpgradeProgress, Status>> {
-    stream::once(std::future::ready(Err(status))).boxed()
+pub(super) fn only(error: ConnectError) -> ServiceStream<UpgradeProgress> {
+    stream::once(std::future::ready(Err(error))).boxed()
 }
 
-pub(super) fn boser_unavailable() -> Status {
-    Status::unavailable("Boser manages upgrades on this platform and its address is not configured")
+pub(super) fn boser_unavailable() -> ConnectError {
+    ConnectError::unavailable(
+        "Boser manages upgrades on this platform and its address is not configured",
+    )
 }
 
-fn progress(item: Result<Followed, FollowError>) -> Result<UpgradeProgress, Status> {
+fn progress(item: Result<Followed, FollowError>) -> Result<UpgradeProgress, ConnectError> {
     let state = match item? {
         Followed::Phase(phase) => UpgradeRunState::Phase(phase),
         Followed::Download(download) => UpgradeRunState::Progress {
@@ -135,33 +138,33 @@ fn progress(item: Result<Followed, FollowError>) -> Result<UpgradeProgress, Stat
     run_state_to_progress(state)
 }
 
-impl From<ClientError> for Status {
+impl From<ClientError> for ConnectError {
     fn from(error: ClientError) -> Self {
         let message = error.to_string();
         match error {
             ClientError::Unreachable | ClientError::NoAnswer | ClientError::StartUnconfirmed => {
-                Status::unavailable(message)
+                ConnectError::unavailable(message)
             }
-            ClientError::Unauthenticated => Status::unauthenticated(message),
+            ClientError::Unauthenticated => ConnectError::unauthenticated(message),
             ClientError::Rejected { rejection, .. } => match rejection {
-                Rejection::Busy => Status::unavailable(message),
+                Rejection::Busy => ConnectError::unavailable(message),
                 Rejection::Expired | Rejection::NotEnoughSpace | Rejection::PackagesUnavailable => {
-                    Status::failed_precondition(message)
+                    ConnectError::failed_precondition(message)
                 }
-                Rejection::InvalidArgument => Status::invalid_argument(message),
-                Rejection::Internal => Status::internal(message),
+                Rejection::InvalidArgument => ConnectError::invalid_argument(message),
+                Rejection::Internal => ConnectError::internal(message),
             },
-            ClientError::Unexpected(_) => Status::internal(message),
+            ClientError::Unexpected(_) => ConnectError::internal(message),
         }
     }
 }
 
-impl From<FollowError> for Status {
+impl From<FollowError> for ConnectError {
     fn from(error: FollowError) -> Self {
         let message = error.to_string();
         match error {
-            FollowError::Failed(_) => Status::internal(message),
-            FollowError::Lost => Status::unavailable(message),
+            FollowError::Failed(_) => ConnectError::internal(message),
+            FollowError::Lost => ConnectError::unavailable(message),
         }
     }
 }

@@ -26,17 +26,16 @@ mod common;
 
 use std::time::Duration;
 
-use bmc_grpc::web::scene_management_service_client::SceneManagementServiceClient;
-use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
-    CheckForUpgradeRequest, FirmwareUpgradePhase, PackageUpgradePhase, StartUpgradeRequest,
-    UpgradeDisruption, UpgradeProgress, WidgetCategory, WidgetSize, upgrade_progress,
+    CheckForUpgradeRequest, FirmwareUpgradePhase, PackageUpgradePhase,
+    SceneManagementServiceClient, StartUpgradeRequest, UpgradeDisruption, UpgradeProgress,
+    UpgradeProgressView, UpgradeServiceClient, WidgetCategory, WidgetSize, upgrade_progress,
 };
-use tonic::Request;
-use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
+use buffa_types::google::protobuf::Empty;
+use connectrpc::client::{ClientTransport, ServerStream};
+use connectrpc::{ConnectError, ErrorCode};
 
-use common::{MockInstance, spawn_mock};
+use common::{MockInstance, Transport, spawn_mock};
 
 const STREAM_TIMEOUT: Duration = Duration::from_mins(1);
 
@@ -48,45 +47,45 @@ fn spawn_mock_realistic(scenario_json: &str) -> MockInstance {
     common::spawn_mock_inner(scenario_json, None, false)
 }
 
-#[derive(Clone)]
-struct CookieAuth(MetadataValue<tonic::metadata::Ascii>);
+type UpgradeClient = UpgradeServiceClient<Transport>;
 
-impl tonic::service::Interceptor for CookieAuth {
-    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, tonic::Status> {
-        req.metadata_mut().insert("cookie", self.0.clone());
-        Ok(req)
-    }
-}
-
-type UpgradeClient =
-    UpgradeServiceClient<tonic::service::interceptor::InterceptedService<Channel, CookieAuth>>;
+type ProgressStream =
+    ServerStream<<Transport as ClientTransport>::ResponseBody, UpgradeProgressView<'static>>;
 
 async fn upgrade_client(mock: &mut MockInstance) -> UpgradeClient {
-    let (channel, cookie) = common::authenticated_channel(mock).await;
-    UpgradeServiceClient::with_interceptor(channel, CookieAuth(cookie))
+    let (transport, config) = common::authenticated_channel(mock).await;
+    UpgradeServiceClient::new(transport, config)
 }
 
-async fn scene_client(
-    mock: &mut MockInstance,
-) -> SceneManagementServiceClient<
-    tonic::service::interceptor::InterceptedService<Channel, CookieAuth>,
-> {
-    let (channel, cookie) = common::authenticated_channel(mock).await;
-    SceneManagementServiceClient::with_interceptor(channel, CookieAuth(cookie))
+async fn scene_client(mock: &mut MockInstance) -> SceneManagementServiceClient<Transport> {
+    let (transport, config) = common::authenticated_channel(mock).await;
+    SceneManagementServiceClient::new(transport, config)
+}
+
+/// The next progress event, `None` once the stream closes cleanly.
+async fn next(stream: &mut ProgressStream) -> Result<Option<UpgradeProgress>, ConnectError> {
+    Ok(stream
+        .message()
+        .await?
+        .map(|message| message.to_owned_message()))
+}
+
+fn message(error: &ConnectError) -> &str {
+    error.message.as_deref().unwrap_or_default()
 }
 
 // Bounded drain so a regression that leaves the stream open fails the
 // test instead of hanging it.
 async fn drain_until_error(
-    stream: &mut tonic::Streaming<UpgradeProgress>,
-) -> (Vec<upgrade_progress::Event>, tonic::Status) {
+    stream: &mut ProgressStream,
+) -> (Vec<upgrade_progress::Event>, ConnectError) {
     tokio::time::timeout(STREAM_TIMEOUT, async {
         let mut events = Vec::new();
         loop {
-            match stream.message().await {
+            match next(stream).await {
                 Ok(Some(progress)) => events.extend(progress.event),
                 Ok(None) => panic!("stream ended without error"),
-                Err(status) => return (events, status),
+                Err(error) => return (events, error),
             }
         }
     })
@@ -94,11 +93,11 @@ async fn drain_until_error(
     .expect("stream did not error within the timeout")
 }
 
-async fn drain_until_finished(stream: &mut tonic::Streaming<UpgradeProgress>) -> bool {
+async fn drain_until_finished(stream: &mut ProgressStream) -> bool {
     tokio::time::timeout(STREAM_TIMEOUT, async {
         let mut finished = false;
-        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
-            finished |= matches!(progress.event, Some(upgrade_progress::Event::Finished(())));
+        while let Some(progress) = next(stream).await.expect("BUG: stream errored") {
+            finished |= matches!(progress.event, Some(upgrade_progress::Event::Finished(_)));
         }
         finished
     })
@@ -109,18 +108,18 @@ async fn drain_until_finished(stream: &mut tonic::Streaming<UpgradeProgress>) ->
 #[tokio::test]
 async fn default_scenario_offers_firmware_and_packages() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     assert!(response.upgrade_id.is_some());
     assert_eq!(
         response.disruption,
-        UpgradeDisruption::Reboot as i32,
+        UpgradeDisruption::Reboot,
         "an available firmware upgrade reboots the device"
     );
     let firmware = response.firmware.expect("firmware offered");
@@ -138,88 +137,88 @@ async fn default_scenario_offers_firmware_and_packages() {
 #[tokio::test]
 async fn up_to_date_returns_empty_response() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "unavailable"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     assert!(response.upgrade_id.is_none());
-    assert!(response.firmware.is_none());
-    assert!(response.packages.is_none());
+    assert!(response.firmware.is_unset());
+    assert!(response.packages.is_unset());
 }
 
 #[tokio::test]
 async fn fetch_failed_surfaces_grpc_error() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "fetch-failed"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let status = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect_err("package fetch failure must surface as a gRPC error");
-    assert_eq!(status.code(), tonic::Code::Internal);
-    assert!(status.message().starts_with("Cannot check for upgrade:"));
+    assert_eq!(status.code, ErrorCode::Internal);
+    assert!(message(&status).starts_with("Cannot check for upgrade:"));
 }
 
 #[tokio::test]
 async fn precondition_failure_surfaces_failed_precondition() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "precondition-failed"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let status = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect_err("a non-transient package precondition must surface as a gRPC error");
-    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
-    assert!(status.message().starts_with("Cannot check for upgrade:"));
+    assert_eq!(status.code, ErrorCode::FailedPrecondition);
+    assert!(message(&status).starts_with("Cannot check for upgrade:"));
 }
 
 #[tokio::test]
 async fn check_error_surfaces_grpc_error() {
     let mut mock = spawn_mock(r#"{"firmware": "check-error"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let status = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect_err("check must fail");
-    assert_eq!(status.code(), tonic::Code::Internal);
+    assert_eq!(status.code, ErrorCode::Internal);
 }
 
 #[tokio::test]
 async fn package_failure_is_not_masked_by_available_firmware() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "fetch-failed"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let status = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect_err("package failure must not be masked by firmware availability");
-    assert_eq!(status.code(), tonic::Code::Internal);
-    assert!(status.message().starts_with("Cannot check for upgrade:"));
+    assert_eq!(status.code, ErrorCode::Internal);
+    assert!(message(&status).starts_with("Cannot check for upgrade:"));
 }
 
 #[tokio::test]
 async fn packages_only_run_completes_all_phases() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "available"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     assert_eq!(
         response.disruption,
-        UpgradeDisruption::AppRestart as i32,
+        UpgradeDisruption::AppRestart,
         "a packages-only upgrade only restarts the app"
     );
     // Packages-only: the check runs the size estimate, so the preview carries
@@ -231,18 +230,17 @@ async fn packages_only_run_completes_all_phases() {
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let mut phases = Vec::new();
     let mut downloads = 0;
     let mut finished = false;
     tokio::time::timeout(STREAM_TIMEOUT, async {
-        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+        while let Some(progress) = next(&mut stream).await.expect("BUG: stream errored") {
             match progress.event.expect("BUG: event set") {
                 upgrade_progress::Event::PackagePhase(phase) => phases.push(phase),
                 upgrade_progress::Event::Download(_) => downloads += 1,
-                upgrade_progress::Event::Finished(()) => finished = true,
+                upgrade_progress::Event::Finished(_) => finished = true,
                 upgrade_progress::Event::FirmwarePhase(_) => {}
             }
         }
@@ -257,10 +255,10 @@ async fn packages_only_run_completes_all_phases() {
     assert_eq!(
         phases,
         vec![
-            PackageUpgradePhase::Realizing as i32,
-            PackageUpgradePhase::Verifying as i32,
-            PackageUpgradePhase::Building as i32,
-            PackageUpgradePhase::Activating as i32,
+            PackageUpgradePhase::Realizing,
+            PackageUpgradePhase::Verifying,
+            PackageUpgradePhase::Building,
+            PackageUpgradePhase::Activating,
         ]
     );
 
@@ -282,29 +280,28 @@ async fn packages_restart_action_stops_the_app_after_activation() {
     let mut mock = spawn_mock(
         r#"{"firmware": "up-to-date", "packages": "available", "package_action": "restart"}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let mut phases = Vec::new();
     let mut finished = false;
     tokio::time::timeout(STREAM_TIMEOUT, async {
-        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+        while let Some(progress) = next(&mut stream).await.expect("BUG: stream errored") {
             match progress.event.expect("BUG: event set") {
                 upgrade_progress::Event::PackagePhase(phase) => phases.push(phase),
-                upgrade_progress::Event::Finished(()) => finished = true,
+                upgrade_progress::Event::Finished(_) => finished = true,
                 upgrade_progress::Event::Download(_)
                 | upgrade_progress::Event::FirmwarePhase(_) => {}
             }
@@ -314,7 +311,7 @@ async fn packages_restart_action_stops_the_app_after_activation() {
     .expect("stream did not finish within the timeout");
     assert!(finished, "the packages-only run must finish cleanly");
     assert!(
-        phases.contains(&(PackageUpgradePhase::Activating as i32)),
+        phases.contains(&PackageUpgradePhase::Activating.into()),
         "the restart action must follow a completed activation"
     );
 
@@ -347,42 +344,40 @@ async fn packages_restart_action_stops_the_app_after_activation() {
 #[tokio::test]
 async fn firmware_with_packages_streams_nested_package_stages() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let mut firmware_phases = Vec::new();
     let mut package_phases = Vec::new();
     let mut downloads = 0;
     tokio::time::timeout(Duration::from_mins(2), async {
         loop {
-            let progress = stream
-                .message()
+            let progress = next(&mut stream)
                 .await
                 .expect("BUG: stream errored before FirmwareApplying")
                 .expect("BUG: stream ended before FirmwareApplying");
             match progress.event.expect("BUG: event set") {
                 upgrade_progress::Event::FirmwarePhase(phase) => {
                     firmware_phases.push(phase);
-                    if phase == FirmwareUpgradePhase::Applying as i32 {
+                    if phase == FirmwareUpgradePhase::Applying {
                         return;
                     }
                 }
                 upgrade_progress::Event::PackagePhase(phase) => package_phases.push(phase),
                 upgrade_progress::Event::Download(_) => downloads += 1,
-                upgrade_progress::Event::Finished(()) => {}
+                upgrade_progress::Event::Finished(_) => {}
             }
         }
     })
@@ -390,7 +385,7 @@ async fn firmware_with_packages_streams_nested_package_stages() {
     .expect("timed out before FirmwareApplying");
 
     assert!(
-        firmware_phases.contains(&(FirmwareUpgradePhase::Downloading as i32)),
+        firmware_phases.contains(&FirmwareUpgradePhase::Downloading.into()),
         "the firmware pipeline must run its download phase"
     );
     assert!(
@@ -400,9 +395,9 @@ async fn firmware_with_packages_streams_nested_package_stages() {
     assert_eq!(
         package_phases,
         vec![
-            PackageUpgradePhase::Realizing as i32,
-            PackageUpgradePhase::Verifying as i32,
-            PackageUpgradePhase::Building as i32,
+            PackageUpgradePhase::Realizing,
+            PackageUpgradePhase::Verifying,
+            PackageUpgradePhase::Building,
         ],
         "firmware sysupgrade must surface the nested package upgrade stages"
     );
@@ -412,32 +407,30 @@ async fn firmware_with_packages_streams_nested_package_stages() {
 async fn packages_apply_fail_errors_the_stream() {
     let mut mock =
         spawn_mock(r#"{"firmware": "up-to-date", "packages": "available", "run": "apply-fail"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.iter().any(|e| matches!(
             e,
             upgrade_progress::Event::PackagePhase(p)
-                if *p == PackageUpgradePhase::Realizing as i32
-        )),
+                if *p == PackageUpgradePhase::Realizing        )),
         "apply failure must come after the realizing phase"
     );
-    assert_eq!(error.code(), tonic::Code::Internal);
+    assert_eq!(error.code, ErrorCode::Internal);
 }
 
 #[tokio::test]
@@ -445,35 +438,33 @@ async fn firmware_success_closes_the_stream_cleanly_then_reboots() {
     let mut mock = spawn_mock(
         r#"{"firmware": "available", "packages": "available", "package_action": "restart"}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let deadline = Duration::from_mins(2);
     tokio::time::timeout(deadline, async {
         loop {
-            let progress = stream
-                .message()
+            let progress = next(&mut stream)
                 .await
                 .expect("BUG: stream errored before FirmwareApplying")
                 .expect("BUG: stream ended before FirmwareApplying");
             if matches!(
                 progress.event,
                 Some(upgrade_progress::Event::FirmwarePhase(p))
-                    if p == FirmwareUpgradePhase::Applying as i32
-            ) {
+                    if p == FirmwareUpgradePhase::Applying            )
+            {
                 return;
             }
         }
@@ -484,7 +475,7 @@ async fn firmware_success_closes_the_stream_cleanly_then_reboots() {
     // The run closes the stream cleanly right after Applying: the client sees
     // end-of-stream (Ok(None)) with an OK status, not more events and not a
     // transport error, and it arrives before the mock's reboot-exit.
-    let outcome = tokio::time::timeout(Duration::from_secs(30), stream.message())
+    let outcome = tokio::time::timeout(Duration::from_secs(30), next(&mut stream))
         .await
         .expect("stream did not close after FirmwareApplying");
     match outcome {
@@ -515,34 +506,32 @@ async fn firmware_success_with_install_consumes_the_handoff() {
     let mut mock = spawn_mock(
         r#"{"firmware": "available", "packages": "unavailable", "shadowed_packages": ["widget-flip-clock"]}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec!["widget-flip-clock".to_owned()],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     tokio::time::timeout(Duration::from_mins(2), async {
         loop {
-            let progress = stream
-                .message()
+            let progress = next(&mut stream)
                 .await
                 .expect("BUG: stream errored before FirmwareApplying")
                 .expect("BUG: stream ended before FirmwareApplying");
             if matches!(
                 progress.event,
                 Some(upgrade_progress::Event::FirmwarePhase(p))
-                    if p == FirmwareUpgradePhase::Applying as i32
-            ) {
+                    if p == FirmwareUpgradePhase::Applying            )
+            {
                 return;
             }
         }
@@ -585,32 +574,30 @@ async fn firmware_download_fail_errors_the_stream() {
     let mut mock = spawn_mock(
         r#"{"firmware": "available", "packages": "unavailable", "run": "download-fail"}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.iter().any(|e| matches!(
             e,
             upgrade_progress::Event::FirmwarePhase(p)
-                if *p == FirmwareUpgradePhase::Downloading as i32
-        )),
+                if *p == FirmwareUpgradePhase::Downloading        )),
         "a download failure must come after the downloading phase"
     );
-    assert_eq!(error.code(), tonic::Code::Internal);
+    assert_eq!(error.code, ErrorCode::Internal);
 }
 
 #[tokio::test]
@@ -618,21 +605,20 @@ async fn firmware_hash_mismatch_errors_the_stream() {
     let mut mock = spawn_mock(
         r#"{"firmware": "available", "packages": "unavailable", "run": "hash-mismatch"}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
@@ -641,39 +627,37 @@ async fn firmware_hash_mismatch_errors_the_stream() {
             .any(|e| matches!(e, upgrade_progress::Event::Download(_))),
         "full download must precede the mismatch"
     );
-    assert_eq!(error.code(), tonic::Code::Internal);
+    assert_eq!(error.code, ErrorCode::Internal);
 }
 
 #[tokio::test]
 async fn firmware_apply_fail_errors_after_verify() {
     let mut mock =
         spawn_mock(r#"{"firmware": "available", "packages": "unavailable", "run": "apply-fail"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.iter().any(|e| matches!(
             e,
             upgrade_progress::Event::FirmwarePhase(p)
-                if *p == FirmwareUpgradePhase::Verifying as i32
-        )),
+                if *p == FirmwareUpgradePhase::Verifying        )),
         "apply failure must come after verify"
     );
-    assert_eq!(error.code(), tonic::Code::Internal);
+    assert_eq!(error.code, ErrorCode::Internal);
 }
 
 #[tokio::test]
@@ -681,24 +665,23 @@ async fn failed_firmware_apply_leaves_no_pending_install_handoff() {
     let mut mock = spawn_mock(
         r#"{"firmware": "available", "packages": "unavailable", "run": "apply-fail", "shadowed_packages": ["widget-flip-clock"]}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec!["widget-flip-clock".to_owned()],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let (_, error) = drain_until_error(&mut stream).await;
-    assert_eq!(error.code(), tonic::Code::Internal);
+    assert_eq!(error.code, ErrorCode::Internal);
 
     // The failed firmware run must not leave a pending-install handoff on
     // disk. A later, unrelated successful firmware upgrade that requested no
@@ -712,10 +695,10 @@ async fn failed_firmware_apply_leaves_no_pending_install_handoff() {
 
     // The requested widget stays shadowed (uninstalled) after the failed run.
     let after = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     assert!(
         after
             .widgets
@@ -728,22 +711,21 @@ async fn failed_firmware_apply_leaves_no_pending_install_handoff() {
 #[tokio::test]
 async fn unknown_upgrade_id_expires() {
     let mut mock = spawn_mock(r#"{"firmware": "available"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest {
             upgrade_id: "bogus".to_owned(),
         })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.is_empty(),
         "an unknown id must fail before any progress event"
     );
-    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
 }
 
 #[tokio::test]
@@ -751,13 +733,13 @@ async fn an_unchanged_check_keeps_the_upgrade_id_and_a_different_one_evicts_it()
     let mut mock = spawn_mock(
         r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
-    let mut check = async |install_packages: Vec<String>| {
+    let client = upgrade_client(&mut mock).await;
+    let check = async |install_packages: Vec<String>| {
         client
             .check_for_upgrade(CheckForUpgradeRequest { install_packages })
             .await
             .expect("BUG: check failed")
-            .into_inner()
+            .into_owned()
             .upgrade_id
             .expect("BUG: check must offer an id")
     };
@@ -770,20 +752,18 @@ async fn an_unchanged_check_keeps_the_upgrade_id_and_a_different_one_evicts_it()
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id: other })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.is_empty(),
         "an evicted id must fail before any progress event"
     );
-    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id: first })
         .await
-        .expect("BUG: the kept id must start")
-        .into_inner();
+        .expect("BUG: the kept id must start");
     assert!(
         drain_until_finished(&mut stream).await,
         "the kept id runs to the end"
@@ -793,26 +773,26 @@ async fn an_unchanged_check_keeps_the_upgrade_id_and_a_different_one_evicts_it()
 #[tokio::test]
 async fn a_changed_scenario_retires_the_offer_and_the_new_one_runs() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
-    let mut client = upgrade_client(&mut mock).await;
-    let mut check = async || {
+    let client = upgrade_client(&mut mock).await;
+    let check = async || {
         client
             .check_for_upgrade(CheckForUpgradeRequest {
                 install_packages: vec![],
             })
             .await
             .expect("BUG: check failed")
-            .into_inner()
+            .into_owned()
     };
 
     let before = check().await;
-    assert!(before.firmware.is_some(), "the first check offers firmware");
+    assert!(before.firmware.is_set(), "the first check offers firmware");
     std::fs::write(
         mock.mockfs.join("etc/upgrade-scenario.json"),
         r#"{"firmware": "up-to-date", "packages": "available"}"#,
     )
     .expect("BUG: rewrite scenario");
     let after = check().await;
-    assert!(after.firmware.is_none(), "the firmware release went away");
+    assert!(after.firmware.is_unset(), "the firmware release went away");
     let firmware = before.upgrade_id.expect("BUG: check must offer an id");
     let packages = after.upgrade_id.expect("BUG: check must offer an id");
     assert_ne!(packages, firmware, "a different upgrade gets a new id");
@@ -822,22 +802,20 @@ async fn a_changed_scenario_retires_the_offer_and_the_new_one_runs() {
             upgrade_id: firmware,
         })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.is_empty(),
         "a retired id must fail before any progress event"
     );
-    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest {
             upgrade_id: packages,
         })
         .await
-        .expect("BUG: the new id must start")
-        .into_inner();
+        .expect("BUG: the new id must start");
     assert!(
         drain_until_finished(&mut stream).await,
         "the new id runs to the end"
@@ -847,8 +825,8 @@ async fn a_changed_scenario_retires_the_offer_and_the_new_one_runs() {
 #[tokio::test]
 async fn check_during_a_running_upgrade_reports_in_progress() {
     let mut mock = spawn_mock_realistic(r#"{"firmware": "up-to-date", "packages": "available"}"#);
-    let mut client = upgrade_client(&mut mock).await;
-    let mut concurrent = client.clone();
+    let client = upgrade_client(&mut mock).await;
+    let concurrent = client.clone();
 
     let upgrade_id = client
         .check_for_upgrade(CheckForUpgradeRequest {
@@ -856,16 +834,14 @@ async fn check_during_a_running_upgrade_reports_in_progress() {
         })
         .await
         .expect("BUG: check failed")
-        .into_inner()
+        .into_owned()
         .upgrade_id
         .expect("BUG: upgrade id");
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
-    let first = stream
-        .message()
+        .expect("BUG: start failed");
+    let first = next(&mut stream)
         .await
         .expect("BUG: stream errored before first event")
         .expect("BUG: stream ended before first event");
@@ -877,21 +853,21 @@ async fn check_during_a_running_upgrade_reports_in_progress() {
         })
         .await
         .expect_err("a check during a running upgrade must be refused");
-    assert_eq!(status.code(), tonic::Code::Unavailable);
+    assert_eq!(status.code, ErrorCode::Unavailable);
 }
 
 #[tokio::test]
 async fn scenario_flip_changes_next_check() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "unavailable"}"#);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec![],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
-    assert!(response.firmware.is_some());
+        .into_owned();
+    assert!(response.firmware.is_set());
     let retired = response.upgrade_id.expect("BUG: firmware creates an offer");
 
     std::fs::write(
@@ -906,8 +882,8 @@ async fn scenario_flip_changes_next_check() {
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
-    assert!(response.firmware.is_none());
+        .into_owned();
+    assert!(response.firmware.is_unset());
     assert!(response.upgrade_id.is_none());
 
     let mut stream = client
@@ -915,39 +891,38 @@ async fn scenario_flip_changes_next_check() {
             upgrade_id: retired,
         })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.is_empty(),
         "a check that finds nothing must retire the offer before any progress event"
     );
-    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
 }
 
 #[tokio::test]
 async fn a_changed_profile_retires_the_packages_offer_and_the_new_one_runs() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);
-    let mut client = upgrade_client(&mut mock).await;
-    let check = async |client: &mut UpgradeClient| {
+    let client = upgrade_client(&mut mock).await;
+    let check = async |client: &UpgradeClient| {
         client
             .check_for_upgrade(CheckForUpgradeRequest {
                 install_packages: vec![],
             })
             .await
             .expect("BUG: check failed")
-            .into_inner()
+            .into_owned()
             .upgrade_id
             .expect("BUG: check must offer an id")
     };
 
-    let shadowed = check(&mut client).await;
+    let shadowed = check(&client).await;
     std::fs::write(
         mock.mockfs.join("etc/upgrade-scenario.json"),
         r#"{"firmware": "up-to-date", "packages": "available"}"#,
     )
     .expect("BUG: rewrite scenario");
-    let installed = check(&mut client).await;
+    let installed = check(&client).await;
     assert_ne!(
         installed, shadowed,
         "a widget that got installed changes the plan"
@@ -958,22 +933,20 @@ async fn a_changed_profile_retires_the_packages_offer_and_the_new_one_runs() {
             upgrade_id: shadowed,
         })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
     let (events, error) = drain_until_error(&mut stream).await;
     assert!(
         events.is_empty(),
         "a retired id must fail before any progress event"
     );
-    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest {
             upgrade_id: installed,
         })
         .await
-        .expect("BUG: the new id must start")
-        .into_inner();
+        .expect("BUG: the new id must start");
     assert!(
         drain_until_finished(&mut stream).await,
         "the new id runs to the end"
@@ -983,31 +956,29 @@ async fn a_changed_profile_retires_the_packages_offer_and_the_new_one_runs() {
 #[tokio::test]
 async fn a_shared_id_starts_once_and_is_busy_while_it_runs() {
     let mut mock = spawn_mock_realistic(r#"{"firmware": "up-to-date", "packages": "available"}"#);
-    let mut client = upgrade_client(&mut mock).await;
-    let mut other_tab = client.clone();
-    let check = async |client: &mut UpgradeClient| {
+    let client = upgrade_client(&mut mock).await;
+    let other_tab = client.clone();
+    let check = async |client: &UpgradeClient| {
         client
             .check_for_upgrade(CheckForUpgradeRequest {
                 install_packages: vec![],
             })
             .await
             .expect("BUG: check failed")
-            .into_inner()
+            .into_owned()
             .upgrade_id
             .expect("BUG: check must offer an id")
     };
-    let upgrade_id = check(&mut client).await;
-    assert_eq!(check(&mut other_tab).await, upgrade_id);
+    let upgrade_id = check(&client).await;
+    assert_eq!(check(&other_tab).await, upgrade_id);
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest {
             upgrade_id: upgrade_id.clone(),
         })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
-    let first = stream
-        .message()
+        .expect("BUG: start failed");
+    let first = next(&mut stream)
         .await
         .expect("BUG: stream errored before first event")
         .expect("BUG: stream ended before first event");
@@ -1016,14 +987,13 @@ async fn a_shared_id_starts_once_and_is_busy_while_it_runs() {
     let mut second = other_tab
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
     let (events, error) = drain_until_error(&mut second).await;
     assert!(
         events.is_empty(),
         "a second start of the shared id must be refused before any progress event"
     );
-    assert_eq!(error.code(), tonic::Code::Unavailable);
+    assert_eq!(error.code, ErrorCode::Unavailable);
     assert!(
         drain_until_finished(&mut stream).await,
         "the first start runs the shared offer to the end"
@@ -1035,12 +1005,12 @@ const SHADOWED_SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": "avail
 #[tokio::test]
 async fn lists_shadowed_widgets_with_supported_sizes_over_grpc() {
     let mut mock = spawn_mock(MULTI_SHADOWED_SCENARIO);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     let widget = response
         .widgets
         .iter()
@@ -1052,10 +1022,10 @@ async fn lists_shadowed_widgets_with_supported_sizes_over_grpc() {
     assert_eq!(
         widget.supported_sizes,
         vec![
-            WidgetSize::Small as i32,
-            WidgetSize::Medium as i32,
-            WidgetSize::Large as i32,
-            WidgetSize::Full as i32,
+            WidgetSize::Small,
+            WidgetSize::Medium,
+            WidgetSize::Large,
+            WidgetSize::Full,
         ],
         "manifest constraints must become BMC100 sizes over gRPC"
     );
@@ -1078,11 +1048,7 @@ async fn lists_shadowed_widgets_with_supported_sizes_over_grpc() {
         .expect("BUG: weather not offered as installable");
     assert_eq!(
         weather.supported_sizes,
-        vec![
-            WidgetSize::Medium as i32,
-            WidgetSize::Large as i32,
-            WidgetSize::Full as i32,
-        ],
+        vec![WidgetSize::Medium, WidgetSize::Large, WidgetSize::Full,],
         "weather manifest constraints must exclude the BMC100 small size"
     );
 }
@@ -1104,18 +1070,18 @@ const REAL_INDEX_JSON: &str = r#"{
 async fn serves_real_package_index_over_grpc() {
     let scenario = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
     let mut mock = spawn_mock_with_index(scenario, REAL_INDEX_JSON);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     assert_eq!(response.widgets.len(), 1, "widgets: {:?}", response.widgets);
     let widget = &response.widgets[0];
     assert_eq!(widget.package_name, "widget-flip-clock");
     assert_eq!(widget.uid, "real-flip-uid");
     assert_eq!(widget.display_name, "Real Flip Clock");
-    assert_eq!(widget.category, i32::from(WidgetCategory::Clock));
+    assert_eq!(widget.category, WidgetCategory::Clock);
     assert!(widget.icon.is_none());
     assert!(
         widget.supported_sizes.is_empty(),
@@ -1135,16 +1101,16 @@ const UNKNOWN_CATEGORY_INDEX_JSON: &str = r#"{
 async fn unknown_index_category_serves_as_unspecified_over_grpc() {
     let scenario = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
     let mut mock = spawn_mock_with_index(scenario, UNKNOWN_CATEGORY_INDEX_JSON);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     assert_eq!(response.widgets.len(), 1, "widgets: {:?}", response.widgets);
     assert_eq!(
         response.widgets[0].category,
-        i32::from(WidgetCategory::Unspecified),
+        WidgetCategory::Unspecified,
         "unknown index category must serve as UNSPECIFIED"
     );
 }
@@ -1152,14 +1118,14 @@ async fn unknown_index_category_serves_as_unspecified_over_grpc() {
 #[tokio::test]
 async fn check_surfaces_requested_install_over_grpc() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec!["widget-flip-clock".to_owned()],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let packages = response.packages.expect("BUG: packages offered");
     assert!(
         packages
@@ -1174,7 +1140,7 @@ async fn check_surfaces_requested_install_over_grpc() {
 #[tokio::test]
 async fn unknown_install_target_is_rejected_over_grpc() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     // widget-nope is not in the catalog (only widget-flip-clock is shadowed),
     // so the check must fail loud rather than silently offer a doomed install.
     let status = client
@@ -1183,13 +1149,11 @@ async fn unknown_install_target_is_rejected_over_grpc() {
         })
         .await
         .expect_err("an unknown install target must surface as a gRPC error");
-    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(status.code, ErrorCode::FailedPrecondition);
     assert!(
-        status
-            .message()
-            .contains("requested package to install is unavailable"),
+        message(&status).contains("requested package to install is unavailable"),
         "unexpected message: {}",
-        status.message()
+        message(&status)
     );
 }
 
@@ -1200,21 +1164,21 @@ async fn install_when_up_to_date_offers_the_widget() {
     let mut mock = spawn_mock(
         r#"{"firmware": "up-to-date", "packages": "unavailable", "shadowed_packages": ["widget-flip-clock"]}"#,
     );
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec!["widget-flip-clock".to_owned()],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     assert!(
         response.upgrade_id.is_some(),
         "an install request must yield an upgrade id even when up to date"
     );
     assert_eq!(
         response.disruption,
-        UpgradeDisruption::AppRestart as i32,
+        UpgradeDisruption::AppRestart,
         "an install-only upgrade only restarts the app"
     );
     let packages = response.packages.expect("BUG: packages offered");
@@ -1232,13 +1196,13 @@ const MULTI_SHADOWED_SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": 
 #[tokio::test]
 async fn multi_package_install_marks_all_installed_over_grpc() {
     let mut mock = spawn_mock(MULTI_SHADOWED_SCENARIO);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
 
     let before = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     assert!(
         before
             .widgets
@@ -1258,17 +1222,16 @@ async fn multi_package_install_marks_all_installed_over_grpc() {
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
     let mut finished = false;
     tokio::time::timeout(STREAM_TIMEOUT, async {
-        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
-            if matches!(progress.event, Some(upgrade_progress::Event::Finished(()))) {
+        while let Some(progress) = next(&mut stream).await.expect("BUG: stream errored") {
+            if matches!(progress.event, Some(upgrade_progress::Event::Finished(_))) {
                 finished = true;
             }
         }
@@ -1278,10 +1241,10 @@ async fn multi_package_install_marks_all_installed_over_grpc() {
     assert!(finished, "multi-install run did not finish");
 
     let after = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     assert!(
         !after
             .widgets
@@ -1301,13 +1264,13 @@ async fn multi_package_install_marks_all_installed_over_grpc() {
 #[tokio::test]
 async fn install_run_marks_widget_installed_over_grpc() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
 
     let before = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     assert!(
         before
             .widgets
@@ -1322,22 +1285,21 @@ async fn install_run_marks_widget_installed_over_grpc() {
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
 
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
 
     let mut phases = Vec::new();
     let mut finished = false;
     tokio::time::timeout(STREAM_TIMEOUT, async {
-        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+        while let Some(progress) = next(&mut stream).await.expect("BUG: stream errored") {
             match progress.event.expect("BUG: event set") {
                 upgrade_progress::Event::PackagePhase(phase) => phases.push(phase),
-                upgrade_progress::Event::Finished(()) => finished = true,
+                upgrade_progress::Event::Finished(_) => finished = true,
                 upgrade_progress::Event::Download(_)
                 | upgrade_progress::Event::FirmwarePhase(_) => {}
             }
@@ -1349,18 +1311,18 @@ async fn install_run_marks_widget_installed_over_grpc() {
     assert_eq!(
         phases,
         vec![
-            PackageUpgradePhase::Realizing as i32,
-            PackageUpgradePhase::Verifying as i32,
-            PackageUpgradePhase::Building as i32,
-            PackageUpgradePhase::Activating as i32,
+            PackageUpgradePhase::Realizing,
+            PackageUpgradePhase::Verifying,
+            PackageUpgradePhase::Building,
+            PackageUpgradePhase::Activating,
         ]
     );
 
     let after = client
-        .get_installable_widgets(())
+        .get_installable_widgets(Empty::default())
         .await
         .expect("BUG: list failed")
-        .into_inner();
+        .into_owned();
     assert!(
         !after
             .widgets
@@ -1373,37 +1335,36 @@ async fn install_run_marks_widget_installed_over_grpc() {
 #[tokio::test]
 async fn installed_widget_becomes_available_without_restart() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);
-    let mut scenes = scene_client(&mut mock).await;
+    let scenes = scene_client(&mut mock).await;
 
     let before = scenes
-        .get_available_widgets(())
+        .get_available_widgets(Empty::default())
         .await
         .expect("BUG: list available failed")
-        .into_inner();
+        .into_owned();
     assert!(
         !before.widgets.iter().any(|w| w.name == "Flip Clock"),
         "shadowed widget must not be available before install: {:?}",
         before.widgets
     );
 
-    let mut client = upgrade_client(&mut mock).await;
+    let client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(CheckForUpgradeRequest {
             install_packages: vec!["widget-flip-clock".to_owned()],
         })
         .await
         .expect("BUG: check failed")
-        .into_inner();
+        .into_owned();
     let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
     let mut stream = client
         .start_upgrade(StartUpgradeRequest { upgrade_id })
         .await
-        .expect("BUG: start failed")
-        .into_inner();
+        .expect("BUG: start failed");
     let mut finished = false;
     tokio::time::timeout(STREAM_TIMEOUT, async {
-        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
-            if matches!(progress.event, Some(upgrade_progress::Event::Finished(()))) {
+        while let Some(progress) = next(&mut stream).await.expect("BUG: stream errored") {
+            if matches!(progress.event, Some(upgrade_progress::Event::Finished(_))) {
                 finished = true;
             }
         }
@@ -1413,10 +1374,10 @@ async fn installed_widget_becomes_available_without_restart() {
     assert!(finished, "install run did not finish");
 
     let after = scenes
-        .get_available_widgets(())
+        .get_available_widgets(Empty::default())
         .await
         .expect("BUG: list available failed")
-        .into_inner();
+        .into_owned();
     assert!(
         after.widgets.iter().any(|w| w.name == "Flip Clock"),
         "installed widget must become available without a restart: {:?}",

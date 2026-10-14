@@ -52,8 +52,11 @@ bmc-upgrade-types.workspace = true
 bmc-widget.workspace = true
 bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
+buffa.workspace = true
+buffa-types.workspace = true
 chrono = { workspace = true }
 chrono-tz.workspace = true
+connectrpc.workspace = true
 eventsource-stream.workspace = true
 futures.workspace = true
 http.workspace = true
@@ -64,7 +67,6 @@ indexmap.workspace = true
 itertools.workspace = true
 libc.workspace = true
 mime_guess.workspace = true
-prost-types.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 semver.workspace = true
@@ -76,10 +78,6 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["time"] }
 tokio-util = { workspace = true, features = ["full"] }
-tonic.workspace = true
-tonic-middleware.workspace = true
-tonic-types.workspace = true
-tonic-web.workspace = true
 tower = { workspace = true, features = ["steer"] }
 tower-cookies.workspace = true
 tower-http = { workspace = true, features = [
@@ -102,9 +100,10 @@ nix = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 async-stream.workspace = true
+base64.workspace = true
 bmc-grpc = { workspace = true, features = ["client"] }
+bytes.workspace = true
 proptest.workspace = true
-prost.workspace = true
 similar-asserts.workspace = true
 tempfile.workspace = true
 

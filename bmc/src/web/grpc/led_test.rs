@@ -22,8 +22,10 @@ use crate::BmcManager;
 use crate::led::LedController;
 use bmc_grpc::web;
 use bmc_led::data::{LedCommand, LedEffect, LedScene, Rgb};
+use buffa::EnumValue;
+use buffa_types::google::protobuf::Empty;
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use std::time::Duration;
-use tonic::{Request, Response, Status};
 
 pub(crate) struct LedTestService<T: BmcManager> {
     led_controller: LedController<T>,
@@ -35,14 +37,14 @@ impl<T: BmcManager> LedTestService<T> {
     }
 }
 
-#[async_trait::async_trait]
-impl<T: BmcManager> web::led_test_service_server::LedTestService for LedTestService<T> {
+impl<T: BmcManager> web::LedTestService for LedTestService<T> {
     async fn set_effect(
         &self,
-        request: Request<web::SetLedEffectRequest>,
-    ) -> Result<Response<()>, Status> {
-        let req = request.into_inner();
-        let effect = map_effect(req.effect(), req.color)?;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, web::SetLedEffectRequest>,
+    ) -> ServiceResult<Empty> {
+        let req = request.to_owned_message();
+        let effect = map_effect(req.effect, req.color.into_option())?;
         let period_ms: u64 = req.period_ms.into();
         let scene = LedScene {
             effect,
@@ -59,43 +61,54 @@ impl<T: BmcManager> web::led_test_service_server::LedTestService for LedTestServ
         };
         self.led_controller
             .send_command(LedCommand::SetEffect(scene));
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn set_brightness(
         &self,
-        request: Request<web::SetLedBrightnessRequest>,
-    ) -> Result<Response<()>, Status> {
-        let brightness = request.into_inner().brightness;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, web::SetLedBrightnessRequest>,
+    ) -> ServiceResult<Empty> {
         self.led_controller
-            .send_command(LedCommand::SetBrightness(brightness));
-        Ok(Response::new(()))
+            .send_command(LedCommand::SetBrightness(request.brightness));
+        Response::ok(Empty::default())
     }
 
-    async fn disable(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+    async fn disable(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
         self.led_controller.send_command(LedCommand::Disable);
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn enable(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+    async fn enable(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
         self.led_controller.send_command(LedCommand::Enable);
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 }
 
 fn map_effect(
-    effect_type: web::LedEffectType,
+    effect_type: EnumValue<web::LedEffectType>,
     color: Option<web::RgbColor>,
-) -> Result<LedEffect, Status> {
-    if effect_type == web::LedEffectType::Unspecified {
-        return Err(Status::invalid_argument("Effect type not specified"));
-    }
+) -> Result<LedEffect, ConnectError> {
+    let effect_type = match effect_type {
+        EnumValue::Known(web::LedEffectType::Unspecified) | EnumValue::Unknown(_) => {
+            return Err(ConnectError::invalid_argument("Effect type not specified"));
+        }
+        EnumValue::Known(known) => known,
+    };
     if effect_type == web::LedEffectType::None {
         return Ok(LedEffect::None);
     }
 
-    let color =
-        color.ok_or_else(|| Status::invalid_argument("Color is required for this effect type"))?;
+    let color = color
+        .ok_or_else(|| ConnectError::invalid_argument("Color is required for this effect type"))?;
     let rgb = Rgb::new(
         color.r.min(255) as u8,
         color.g.min(255) as u8,

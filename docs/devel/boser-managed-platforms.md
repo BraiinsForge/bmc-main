@@ -22,9 +22,9 @@ automatic-upgrade pair; the BMC application observes Boser's upgrade state inste
 
 ## gRPC boundary
 
-`SystemService`, `NetworkService` and `UpgradeService` nest `BoserOwnershipInterceptor` inside `AuthInterceptor`, so
-authentication runs before the ownership policy. On a managed product, the ownership interceptor rejects the following
-exact gRPC methods with `Unimplemented` and the message `This operation is managed by Boser on this platform`:
+Every gRPC call passes one access gate (`AccessGate` in `bmc/src/web/grpc.rs`), which checks the session before the
+ownership policy. On a managed product, the gate rejects the following exact gRPC methods with `Unimplemented` and the
+message `This operation is managed by Boser on this platform`:
 
 | Boser-owned method                | System effect                                      |
 | --------------------------------- | -------------------------------------------------- |
@@ -73,17 +73,17 @@ Every mutating web gRPC service has an explicit managed-product owner:
 | `ConfigurationService`     | all `Set*`, `ShowSecondsInStatusBar`, `PlaySound`                                                                                                                                 | BMC application                      | manage display, sound, localization, telemetry, and presentation preferences |
 | `InitialSetupService`      | `SetWifi`, `SkipWifi`, `SetupDevice`                                                                                                                                              | BMC application setup and recovery   | retain provisioning checks                                                   |
 | `LedTestService`           | `SetEffect`, `SetBrightness`, `Disable`, `Enable`                                                                                                                                 | BMC application                      | control presentation hardware                                                |
-| `NetworkService`           | `SetNetworkConfig`, `SetWifi`                                                                                                                                                     | Boser                                | reject in `BoserOwnershipInterceptor` after authentication                   |
+| `NetworkService`           | `SetNetworkConfig`, `SetWifi`                                                                                                                                                     | Boser                                | reject in the access gate after authentication                               |
 | `SceneManagementService`   | `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`, `MoveScene`, `CloneScene`, `RemoveScene`, `PreviewScene`, `AddWidget`, `UpdateWidget`, `RemoveWidget`, `SetSceneCycling` | BMC application                      | manage scenes, widgets, and presentation state                               |
-| `SystemService`            | `CreatePassword`, `ChangePassword`, `RemovePassword`, `SetTimezone`, `FactoryReset`, `Reboot`                                                                                     | Boser                                | reject in `BoserOwnershipInterceptor` after authentication                   |
+| `SystemService`            | `CreatePassword`, `ChangePassword`, `RemovePassword`, `SetTimezone`, `FactoryReset`, `Reboot`                                                                                     | Boser                                | reject in the access gate after authentication                               |
 | `UpgradeService`           | `CheckForUpgrade`, `GetInstallableWidgets`, `StartUpgrade`                                                                                                                        | BMC application, forwarding to Boser | translate to Boser's REST API under the caller's session                     |
-| `UpgradeService`           | `SetAutoUpgrade`, `GetAutoUpgrade`                                                                                                                                                | Boser                                | reject in `BoserOwnershipInterceptor` after authentication                   |
+| `UpgradeService`           | `SetAutoUpgrade`, `GetAutoUpgrade`                                                                                                                                                | Boser                                | reject in the access gate after authentication                               |
 
 `CredentialManagementService`, `MetadataService`, and the remaining methods on the listed services are read-only.
 
 ## Initial setup and Wi-Fi recovery
 
-`InitialSetupService` is structurally outside both `AuthInterceptor` and `BoserOwnershipInterceptor`. `SetupDevice`
+`InitialSetupService` is public: the access gate checks neither a session nor Boser's ownership for it. `SetupDevice`
 remains restricted to `SetupPending` and can set network, timezone, password, and the BMC application's presentation
 preferences directly. On mining products, it also writes the pool seed Boser consumes on first boot, applies the
 hostname with the network settings, advances provisioning, and only then starts `boser` and `bosminer`. Consequently,
@@ -130,8 +130,8 @@ lost stream retains the last usable timezone.
 ## Extending the API
 
 Adding any `SystemService`, `NetworkService` or `UpgradeService` method requires assigning its exact path a
-`ManagedRpcOwner` value. `every_ownership_intercepted_service_method_has_the_expected_owner` compares those decisions
-with the generated descriptor set, so an unclassified addition fails the test suite. A Boser-owned mutation on another
-service must also nest `BoserOwnershipInterceptor` inside `AuthInterceptor` and extend the completeness test. Adding a
+`ManagedRpcOwner` value in `managed_rpc_owner`. `every_ownership_gated_service_method_has_the_expected_owner` compares
+those decisions with the methods the services register, so an unclassified addition fails the test suite. A Boser-owned
+mutation on another service must also be classified there and its service added to the completeness test. Adding a
 mutation owned by the BMC application requires an explicit decision in the audit above. Keep the corresponding frontend
 capability predicates aligned with that decision while retaining server-side enforcement for direct and older clients.

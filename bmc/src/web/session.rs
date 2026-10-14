@@ -95,7 +95,6 @@ where
     }
 }
 
-#[tonic::async_trait]
 impl<T, S, ReqBody, ResBody> Service<Request<ReqBody>> for Session<T, S>
 where
     T: session::Manager + Send + Sync + 'static,
@@ -145,14 +144,10 @@ pub(crate) fn extract_cookies(extensions: &http::Extensions) -> &tower_cookies::
 }
 
 /// Retrieves authentication session and fails if it is not present
-#[expect(
-    clippy::result_large_err,
-    reason = "tonic::Status is 176 bytes, boxing would be non-idiomatic"
-)]
 pub fn extract_session<S: session::Manager>(
     extensions: &http::Extensions,
-) -> Result<&S::Session, tonic::Status> {
+) -> Result<&S::Session, connectrpc::ConnectError> {
     extensions
         .get::<S::Session>()
-        .ok_or_else(|| tonic::Status::unauthenticated("Missing or invalid session"))
+        .ok_or_else(|| connectrpc::ConnectError::unauthenticated("Missing or invalid session"))
 }

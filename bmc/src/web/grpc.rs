@@ -19,13 +19,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-// gRPC handlers inherently return `Result<_, tonic::Status>` and `Status` is 176 bytes.
-// Boxing it would be non-idiomatic — this is tonic's API, not a design choice we control.
-#![expect(
-    clippy::result_large_err,
-    reason = "tonic::Status is inherent to the gRPC handler surface"
-)]
-
 use crate::BmcManager;
 use crate::alarm::AlarmController;
 use crate::backlight::DisplayBacklightDriver;
@@ -40,20 +33,18 @@ use crate::system_upgrade::boser::UpgradeRoute;
 use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use crate::widget::{Coordinator, WidgetRegistry};
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::middleware::Next;
+use axum::response::Response;
 use bmc_grpc::web;
 use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
+use connectrpc::{ConnectError, ConnectRpcService, Router};
 use std::fmt::Display;
 use std::sync::Arc;
 use strum::EnumMessage;
 use tokio::sync::RwLock;
-use tonic::service::Routes;
-use tonic::{Status, body::Body, codegen::http::Request};
-use tonic_middleware::InterceptorFor;
-use tonic_middleware::RequestInterceptor;
-use tonic_web::GrpcWebLayer;
-use tower::Layer;
-use tracing::debug;
 
 mod account_management;
 pub mod authentication;
@@ -71,7 +62,7 @@ mod scene_management;
 mod shared;
 mod upgrade_service;
 
-use logging::GrpcLoggingLayer;
+use logging::{RpcLog, log_refusal};
 
 const BOSER_MANAGED_STATUS_MESSAGE: &str = "This operation is managed by Boser on this platform";
 
@@ -81,112 +72,99 @@ enum ManagedRpcOwner {
     Boser,
 }
 
+fn split_procedure(path: &str) -> Option<(&str, &str)> {
+    path.strip_prefix('/')?.split_once('/')
+}
+
 fn managed_rpc_owner(path: &str) -> Option<ManagedRpcOwner> {
-    let path = path.strip_prefix('/')?;
-    let (service, method) = path.split_once('/')?;
+    let (service, method) = split_procedure(path)?;
 
     match (service, method) {
         (
-            web::network_service_server::SERVICE_NAME,
+            web::NETWORK_SERVICE_SERVICE_NAME,
             "GetNetworkInfo"
             | "GetNetworkConfig"
             | "GetWifiStatus"
             | "GetWifiSavedNetworks"
             | "ScanWifi",
         )
+        | (web::SYSTEM_SERVICE_SERVICE_NAME, "HasPassword" | "GetTimezone" | "GetTimezoneList")
         | (
-            web::system_service_server::SERVICE_NAME,
-            "HasPassword" | "GetTimezone" | "GetTimezoneList",
-        )
-        | (
-            web::upgrade_service_server::SERVICE_NAME,
+            web::UPGRADE_SERVICE_SERVICE_NAME,
             "CheckForUpgrade" | "GetInstallableWidgets" | "StartUpgrade",
         ) => Some(ManagedRpcOwner::Bmc),
-        (web::network_service_server::SERVICE_NAME, "SetNetworkConfig" | "SetWifi")
+        (web::NETWORK_SERVICE_SERVICE_NAME, "SetNetworkConfig" | "SetWifi")
         | (
-            web::system_service_server::SERVICE_NAME,
+            web::SYSTEM_SERVICE_SERVICE_NAME,
             "CreatePassword" | "ChangePassword" | "RemovePassword" | "SetTimezone" | "FactoryReset"
             | "Reboot",
         )
-        | (web::upgrade_service_server::SERVICE_NAME, "SetAutoUpgrade" | "GetAutoUpgrade") => {
+        | (web::UPGRADE_SERVICE_SERVICE_NAME, "SetAutoUpgrade" | "GetAutoUpgrade") => {
             Some(ManagedRpcOwner::Boser)
         }
         _ => None,
     }
 }
 
-struct AuthInterceptor<S: SessionManager> {
-    pub session_manager: Arc<S>,
+/// The services a client reaches before it has a session.
+fn is_public(service: &str) -> bool {
+    matches!(
+        service,
+        web::AUTHENTICATION_SERVICE_SERVICE_NAME
+            | web::METADATA_SERVICE_SERVICE_NAME
+            | web::INITIAL_SETUP_SERVICE_SERVICE_NAME
+    )
 }
 
-impl<S: SessionManager> Clone for AuthInterceptor<S> {
-    fn clone(&self) -> Self {
-        Self {
-            session_manager: self.session_manager.clone(),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl<S: SessionManager> RequestInterceptor for AuthInterceptor<S> {
-    async fn intercept(&self, req: Request<Body>) -> Result<Request<Body>, Status> {
-        debug!("Intercepting request: {:?}", req);
-
-        let _ = extract_session::<S>(req.extensions())?;
-        Ok(req)
-    }
-}
-
-#[derive(Clone, Copy)]
-struct BoserOwnershipInterceptor {
+/// What refuses a call before its body is read: a missing session on a
+/// non-public service, and Boser's ownership of a method on its platforms.
+pub(crate) struct AccessGate<S> {
+    router: Arc<Router>,
+    session_manager: Arc<S>,
     hardware_capabilities: HardwareCapabilities,
 }
 
-#[async_trait::async_trait]
-impl RequestInterceptor for BoserOwnershipInterceptor {
-    async fn intercept(&self, req: Request<Body>) -> Result<Request<Body>, Status> {
-        if self.hardware_capabilities.boser_managed
-            && managed_rpc_owner(req.uri().path()) == Some(ManagedRpcOwner::Boser)
-        {
-            return Err(Status::unimplemented(BOSER_MANAGED_STATUS_MESSAGE));
+impl<S> Clone for AccessGate<S> {
+    fn clone(&self) -> Self {
+        Self {
+            router: self.router.clone(),
+            session_manager: self.session_manager.clone(),
+            hardware_capabilities: self.hardware_capabilities,
         }
-
-        Ok(req)
     }
 }
 
-fn add_alarm_service<S: SessionManager>(
-    routes: Routes,
-    alarm_controller: Option<AlarmController>,
-    logging_layer: &GrpcLoggingLayer,
-    auth_interceptor: &AuthInterceptor<S>,
-) -> Routes {
-    let Some(alarm_controller) = alarm_controller else {
-        return routes;
-    };
-    let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
-        alarm::AlarmService::new(alarm_controller),
-    );
-
-    routes.add_service(
-        tower::ServiceBuilder::new()
-            .layer(logging_layer.clone())
-            .service(
-                GrpcWebLayer::new()
-                    .layer(InterceptorFor::new(alarm_service, auth_interceptor.clone())),
-            ),
-    )
+impl<S: SessionManager> AccessGate<S> {
+    fn check(&self, path: &str, extensions: &http::Extensions) -> Result<(), ConnectError> {
+        // A procedure nobody serves is the dispatcher's to refuse as unimplemented.
+        // That holds only while the gate and the dispatcher read the same path;
+        // nothing may rewrite the URI between them.
+        if !self.router.has_method(path) {
+            return Ok(());
+        }
+        if !split_procedure(path).is_some_and(|(service, _)| is_public(service)) {
+            extract_session::<S>(extensions)?;
+        }
+        if self.hardware_capabilities.boser_managed
+            && managed_rpc_owner(path) == Some(ManagedRpcOwner::Boser)
+        {
+            return Err(ConnectError::unimplemented(BOSER_MANAGED_STATUS_MESSAGE));
+        }
+        Ok(())
+    }
 }
 
-fn authenticated_with_boser_ownership<T, S: SessionManager>(
-    service: T,
-    ownership_interceptor: BoserOwnershipInterceptor,
-    auth_interceptor: AuthInterceptor<S>,
-) -> InterceptorFor<InterceptorFor<T, BoserOwnershipInterceptor>, AuthInterceptor<S>> {
-    InterceptorFor::new(
-        InterceptorFor::new(service, ownership_interceptor),
-        auth_interceptor,
-    )
+/// Middleware: answer a refused call in the caller's protocol without reading its body.
+pub(crate) async fn access_gate<S: SessionManager>(
+    State(gate): State<AccessGate<S>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if let Err(refusal) = gate.check(request.uri().path(), request.extensions()) {
+        log_refusal(request.extensions(), request.uri().path(), &refusal);
+        return refusal.into_http_response(request.headers()).map(Body::new);
+    }
+    next.run(request).await
 }
 
 pub(crate) struct GrpcWeb<
@@ -252,181 +230,76 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         }
     }
 
-    #[expect(clippy::too_many_lines)]
-    pub(crate) fn build(self) -> Routes {
-        let auth_interceptor = AuthInterceptor {
-            session_manager: self.session_manager.clone(),
-        };
-        let boser_ownership_interceptor = BoserOwnershipInterceptor {
-            hardware_capabilities: self.hardware_capabilities,
-        };
-
-        let upgrade_service = web::upgrade_service_server::UpgradeServiceServer::new(
-            upgrade_service::UpgradeService::<_, _, S>::new(
+    /// The services behind the access gate; the session and cookie layers go on top.
+    pub(crate) fn build(self) -> axum::Router {
+        let wifi_joins = self.initial_setup.wifi_joins();
+        let mut router = Router::new()
+            .add_service(Arc::new(authentication::AuthenticationService::new(
+                self.session_manager.clone(),
+            )))
+            .add_service(Arc::new(metadata::MetadataService::new(
+                self.manager.clone(),
+            )))
+            .add_service(Arc::new(initial_setup::InitialSetupService::new(
+                self.manager.clone(),
+                self.initial_setup,
+            )))
+            .add_service(Arc::new(network::NetworkService::new(
+                self.manager.clone(),
+                wifi_joins,
+            )))
+            .add_service(Arc::new(system::SystemService::new(
+                self.manager,
+                self.session_manager.clone(),
+            )))
+            .add_service(Arc::new(upgrade_service::UpgradeService::<_, _, S>::new(
                 self.system_upgrade_service,
                 self.config_handle.clone(),
                 &self.hardware_capabilities,
                 self.upgrade_route,
-            ),
-        );
+            )))
+            .add_service(Arc::new(configuration_service::ConfigurationService::new(
+                self.system_manager,
+                self.sound_controller,
+                self.config_handle.clone(),
+            )))
+            .add_service(Arc::new(scene_management::SceneManagementService::new(
+                self.widget_registry,
+                self.config_handle.clone(),
+                self.secret_store.clone(),
+                self.widget_coordinator,
+                self.hardware_capabilities,
+                self.led_coordinator,
+            )))
+            .add_service(Arc::new(account_management::AccountManagementService::new(
+                self.config_handle,
+                self.secret_store,
+            )))
+            .add_service(Arc::new(credential_management::CredentialManagementService))
+            .add_service(Arc::new(led_test::LedTestService::new(self.led_controller)));
+        if let Some(alarm_controller) = self.alarm_controller {
+            router = router.add_service(Arc::new(alarm::AlarmService::new(alarm_controller)));
+        }
 
-        let authentication_service =
-            web::authentication_service_server::AuthenticationServiceServer::new(
-                authentication::AuthenticationService::new(self.session_manager.clone()),
-            );
-
-        let metadata_service = web::metadata_service_server::MetadataServiceServer::new(
-            metadata::MetadataService::new(self.manager.clone()),
-        );
-
-        let network_service = web::network_service_server::NetworkServiceServer::new(
-            network::NetworkService::new(self.manager.clone(), self.initial_setup.wifi_joins()),
-        );
-
-        let initial_setup_service =
-            web::initial_setup_service_server::InitialSetupServiceServer::new(
-                initial_setup::InitialSetupService::new(self.manager.clone(), self.initial_setup),
-            );
-
-        let system_service = web::system_service_server::SystemServiceServer::new(
-            system::SystemService::new(self.manager, self.session_manager),
-        );
-
-        let configuration_service =
-            web::configuration_service_server::ConfigurationServiceServer::new(
-                configuration_service::ConfigurationService::new(
-                    self.system_manager,
-                    self.sound_controller,
-                    self.config_handle.clone(),
-                ),
-            );
-
-        let scene_management_service =
-            web::scene_management_service_server::SceneManagementServiceServer::new(
-                scene_management::SceneManagementService::new(
-                    self.widget_registry,
-                    self.config_handle.clone(),
-                    self.secret_store.clone(),
-                    self.widget_coordinator.clone(),
-                    self.hardware_capabilities,
-                    self.led_coordinator,
-                ),
-            );
-
-        let account_management_service =
-            web::account_management_service_server::AccountManagementServiceServer::new(
-                account_management::AccountManagementService::new(
-                    self.config_handle,
-                    self.secret_store,
-                ),
-            );
-
-        let credential_management_service =
-            web::credential_management_service_server::CredentialManagementServiceServer::new(
-                credential_management::CredentialManagementService,
-            );
-
-        let led_test_service = web::led_test_service_server::LedTestServiceServer::new(
-            led_test::LedTestService::new(self.led_controller),
-        );
-
-        let logging_layer = GrpcLoggingLayer::new();
-
-        // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services
-        // All services requiring authentication have to be wrapped in GrpcWebLayer and use "InterceptorFor"
-        let routes = Routes::default()
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(authentication_service)),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(metadata_service)),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        scene_management_service,
-                        auth_interceptor.clone(),
-                    ))),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        configuration_service,
-                        auth_interceptor.clone(),
-                    ))),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        account_management_service,
-                        auth_interceptor.clone(),
-                    ))),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
-                        credential_management_service,
-                        auth_interceptor.clone(),
-                    ))),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(
-                        GrpcWebLayer::new().layer(authenticated_with_boser_ownership(
-                            system_service,
-                            boser_ownership_interceptor,
-                            auth_interceptor.clone(),
-                        )),
-                    ),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(
-                        GrpcWebLayer::new().layer(authenticated_with_boser_ownership(
-                            upgrade_service,
-                            boser_ownership_interceptor,
-                            auth_interceptor.clone(),
-                        )),
-                    ),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(GrpcWebLayer::new().layer(initial_setup_service)),
-            )
-            .add_service(
-                tower::ServiceBuilder::new()
-                    .layer(logging_layer.clone())
-                    .service(
-                        GrpcWebLayer::new().layer(authenticated_with_boser_ownership(
-                            network_service,
-                            boser_ownership_interceptor,
-                            auth_interceptor.clone(),
-                        )),
-                    ),
-            );
-
-        let routes = add_alarm_service(
-            routes,
-            self.alarm_controller,
-            &logging_layer,
-            &auth_interceptor,
-        );
-
-        routes.add_service(tower::ServiceBuilder::new().layer(logging_layer).service(
-            GrpcWebLayer::new().layer(InterceptorFor::new(led_test_service, auth_interceptor)),
-        ))
+        gated(router, self.session_manager, self.hardware_capabilities)
     }
+}
+
+/// `router` as an axum router, answering through [`RpcLog`] and behind [`access_gate`].
+fn gated<S: SessionManager>(
+    router: Router,
+    session_manager: Arc<S>,
+    hardware_capabilities: HardwareCapabilities,
+) -> axum::Router {
+    let router = Arc::new(router);
+    let gate = AccessGate {
+        router: router.clone(),
+        session_manager,
+        hardware_capabilities,
+    };
+    axum::Router::new()
+        .fallback_service(ConnectRpcService::from_arc(router).with_interceptor(RpcLog))
+        .layer(axum::middleware::from_fn_with_state(gate, access_gate::<S>))
 }
 
 #[derive(EnumMessage)]
@@ -446,87 +319,6 @@ impl Display for GrpcError {
             "{}",
             self.get_serializations().first().unwrap_or(&"unknown")
         )
-    }
-}
-
-#[cfg(test)]
-mod alarm_tests {
-    use std::sync::Arc;
-
-    use axum::body::Body as AxumBody;
-    use http::header::CONTENT_TYPE;
-    use tonic::Code;
-    use tower::ServiceExt as _;
-
-    use crate::alarm::{AlarmController, tests::supported_alarm_controller};
-    use crate::test_support::StubSessionManager;
-
-    use super::{AuthInterceptor, GrpcLoggingLayer, Routes, add_alarm_service};
-
-    fn alarm_routes(alarm_controller: Option<AlarmController>) -> Routes {
-        add_alarm_service(
-            Routes::default(),
-            alarm_controller,
-            &GrpcLoggingLayer::new(),
-            &AuthInterceptor {
-                session_manager: Arc::new(StubSessionManager),
-            },
-        )
-    }
-
-    fn alarm_request(method: &str) -> http::Request<AxumBody> {
-        http::Request::builder()
-            .method(http::Method::POST)
-            .uri(format!("/braiins.bmc.web.AlarmService/{method}"))
-            .header(CONTENT_TYPE, "application/grpc-web+proto")
-            .body(AxumBody::empty())
-            .expect("BUG: build alarm route request")
-    }
-
-    #[tokio::test]
-    async fn unregistered_alarm_service_methods_are_unimplemented() {
-        let methods = [
-            "GetAlarmInfo",
-            "ListAlarms",
-            "AddAlarm",
-            "SetAlarm",
-            "DeleteAlarm",
-            "SetAlarmEnabled",
-        ];
-
-        for method in methods {
-            let response = alarm_routes(None)
-                .oneshot(alarm_request(method))
-                .await
-                .expect("BUG: tonic routes are infallible");
-
-            assert_eq!(
-                response
-                    .headers()
-                    .get("grpc-status")
-                    .expect("BUG: unregistered gRPC route returns grpc-status"),
-                &(Code::Unimplemented as i32).to_string(),
-                "{method}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn registered_alarm_service_is_wrapped_with_authentication() {
-        let (_temp, _timezone_sender, alarm_controller) =
-            supported_alarm_controller(bmc_platform::Product::Bmc100).await;
-        let response = alarm_routes(Some(alarm_controller))
-            .oneshot(alarm_request("GetAlarmInfo"))
-            .await
-            .expect("BUG: tonic routes are infallible");
-
-        assert_eq!(
-            response
-                .headers()
-                .get("grpc-status")
-                .expect("BUG: authenticated gRPC route returns grpc-status"),
-            &(Code::Unauthenticated as i32).to_string()
-        );
     }
 }
 

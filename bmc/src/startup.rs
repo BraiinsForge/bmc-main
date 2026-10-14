@@ -1222,8 +1222,8 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
-        self.into_quiet_server().web_service.build_grpc_routes()
+    pub(crate) fn build_grpc_router(self) -> axum::Router {
+        self.into_quiet_server().web_service.build_grpc_router()
     }
 
     /// Everything startup keeps alive, without serving connections.

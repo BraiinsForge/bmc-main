@@ -6,6 +6,9 @@ frontend/.pnp.*              binary linguist-generated
 frontend/**/*.d.ts           linguist-generated gitlab-generated
 frontend/**/*_pb.ts          linguist-generated gitlab-generated
 
+# Backend protobuf bindings (`just gen`)
+bmc-grpc/src/gen/**          linguist-generated gitlab-generated
+
 # Language overrides
 flake.lock        linguist-generated gitlab-generated linguist-language=json
 frontend/**/*.ejs linguist-language=html

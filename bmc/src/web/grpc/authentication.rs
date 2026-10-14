@@ -1,4 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -21,8 +22,9 @@
 use crate::session::Manager as SessionManager;
 use crate::web::session::{extract_cookies, extract_session};
 use bmc_grpc::web::{self, LoginRequest, LoginResponse};
+use buffa_types::google::protobuf::{BoolValue, Empty};
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
 
 pub struct AuthenticationService<S>
 where
@@ -40,52 +42,60 @@ where
     }
 }
 
-#[async_trait::async_trait]
-impl<S> web::authentication_service_server::AuthenticationService for AuthenticationService<S>
+impl<S> web::AuthenticationService for AuthenticationService<S>
 where
     S: SessionManager,
 {
-    async fn is_authenticated(&self, request: Request<()>) -> Result<Response<bool>, Status> {
-        Ok(Response::new(
-            extract_session::<S>(request.extensions()).is_ok(),
-        ))
+    async fn is_authenticated(
+        &self,
+        ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<BoolValue> {
+        Response::ok(BoolValue {
+            value: extract_session::<S>(ctx.extensions()).is_ok(),
+            ..Default::default()
+        })
     }
 
     async fn login(
         &self,
-        request: Request<LoginRequest>,
-    ) -> Result<Response<LoginResponse>, Status> {
-        let cookies = extract_cookies(request.extensions());
-        let request = request.get_ref();
+        ctx: RequestContext,
+        request: ServiceRequest<'_, LoginRequest>,
+    ) -> ServiceResult<LoginResponse> {
+        let cookies = extract_cookies(ctx.extensions());
         let cookie = self
             .session_manager
-            .login(&request.password)
+            .login(request.password)
             .await
-            .map_err(|e| Status::unauthenticated(e.to_string()))?;
+            .map_err(|e| ConnectError::unauthenticated(e.to_string()))?;
 
         #[cfg(debug_assertions)]
         tracing::debug!("Session {} has been started", cookie.value());
 
         cookies.add(cookie.clone());
 
-        Ok(Response::new(LoginResponse {
+        Response::ok(LoginResponse {
             token: cookie.value().to_owned(),
             timeout_s: S::SESSION_TIMEOUT,
-        }))
+        })
     }
 
-    async fn logout(&self, request: Request<()>) -> Result<Response<()>, Status> {
-        let cookies = extract_cookies(request.extensions());
-        let session = extract_session::<S>(request.extensions())?;
+    async fn logout(
+        &self,
+        ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
+        let cookies = extract_cookies(ctx.extensions());
+        let session = extract_session::<S>(ctx.extensions())?;
 
         let cookie = self
             .session_manager
             .logout(session.clone())
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| ConnectError::internal(e.to_string()))?;
 
         cookies.remove(cookie);
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 }

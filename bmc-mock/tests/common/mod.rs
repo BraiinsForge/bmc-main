@@ -24,13 +24,18 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use bmc_grpc::web::LoginRequest;
-use bmc_grpc::web::authentication_service_client::AuthenticationServiceClient;
-use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
+use bmc_grpc::web::{AuthenticationServiceClient, LoginRequest};
+use connectrpc::client::{ClientConfig, Http2Connection, SharedHttp2Connection};
+use connectrpc::{ConnectError, Protocol};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MOCK_SERVICE_NAME: &str = "bmc-mock-test-compositor";
+
+/// Native gRPC over cleartext HTTP/2, as grpcurl speaks to the device.
+pub type Transport = SharedHttp2Connection;
+
+/// The calls a test can have in flight on one connection at once.
+const IN_FLIGHT: usize = 16;
 
 pub struct MockInstance {
     pub child: Child,
@@ -184,10 +189,19 @@ pub fn spawn_mock_inner(
     }
 }
 
+fn grpc_config(port: u16) -> ClientConfig {
+    ClientConfig::new(
+        format!("http://127.0.0.1:{port}")
+            .parse()
+            .expect("BUG: endpoint parse"),
+    )
+    .with_protocol(Protocol::Grpc)
+}
+
 // free_port() picks a port by bind-and-drop, so another process can steal
 // it before the child binds. connect() detects the resulting child death
 // and respawns on a fresh port instead of hanging until the deadline.
-async fn connect(mock: &mut MockInstance) -> Channel {
+async fn connect(mock: &mut MockInstance) -> Transport {
     let deadline = std::time::Instant::now() + STARTUP_TIMEOUT;
     let mut respawns = 0;
     loop {
@@ -205,12 +219,10 @@ async fn connect(mock: &mut MockInstance) -> Channel {
             );
         }
         let endpoint = format!("http://127.0.0.1:{}", mock.port);
-        match Channel::from_shared(endpoint)
-            .expect("BUG: endpoint parse")
-            .connect()
+        match Http2Connection::connect_plaintext(endpoint.parse().expect("BUG: endpoint parse"))
             .await
         {
-            Ok(channel) => return channel,
+            Ok(connection) => return connection.shared(IN_FLIGHT),
             Err(err) => {
                 assert!(
                     std::time::Instant::now() < deadline,
@@ -222,20 +234,15 @@ async fn connect(mock: &mut MockInstance) -> Channel {
     }
 }
 
-async fn login(
-    channel: Channel,
-    password: &str,
-) -> Result<MetadataValue<tonic::metadata::Ascii>, tonic::Status> {
-    let mut auth = AuthenticationServiceClient::new(channel);
-    let response = auth
+/// The session cookie a login with `password` hands out.
+async fn login(transport: Transport, port: u16, password: &str) -> Result<String, ConnectError> {
+    let response = AuthenticationServiceClient::new(transport, grpc_config(port))
         .login(LoginRequest {
             password: password.to_owned(),
         })
         .await?
-        .into_inner();
-    Ok(format!("session_id={}", response.token)
-        .parse()
-        .expect("BUG: cookie metadata parse"))
+        .into_owned();
+    Ok(format!("session_id={}", response.token))
 }
 
 // A successful connect() can still land on a foreign mock: free_port()'s
@@ -243,14 +250,17 @@ async fn login(
 // port, and the loser dies only after we already connected to the winner.
 // The per-instance password makes login fail on a foreign mock; retrying
 // the whole connect+login on a fresh port then recovers.
-pub async fn authenticated_channel(
-    mock: &mut MockInstance,
-) -> (Channel, MetadataValue<tonic::metadata::Ascii>) {
+//
+// The returned config sends the session cookie on every call.
+pub async fn authenticated_channel(mock: &mut MockInstance) -> (Transport, ClientConfig) {
     let mut last_err = None;
     for _ in 0..4 {
-        let channel = connect(mock).await;
-        match login(channel.clone(), &mock.password).await {
-            Ok(cookie) => return (channel, cookie),
+        let transport = connect(mock).await;
+        match login(transport.clone(), mock.port, &mock.password).await {
+            Ok(cookie) => {
+                let config = grpc_config(mock.port).with_default_header("cookie", cookie);
+                return (transport, config);
+            }
             Err(err) => {
                 last_err = Some(err);
                 _ = mock.child.kill();

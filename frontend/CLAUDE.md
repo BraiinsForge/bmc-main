@@ -61,4 +61,4 @@ tests) or `just fe::validate` (format + lint + test). Config lives in `rstest.co
 ## Protocol Buffer Workflow
 
 Proto files are in `bmc-grpc/proto/web/`. `just gen` at the repository root regenerates `src/proto/gen/`
-from the root `buf.gen.yaml`; commit the generated files with the proto change.
+together with the backend's Rust from one `buf.gen.yaml`; commit the generated files with the proto change.

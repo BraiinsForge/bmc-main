@@ -24,18 +24,20 @@ use bmc_grpc::web::{
     GetAutoUpgradeResponse, GetInstallableWidgetsResponse, InstallablePreview, InstallableWidget,
     PackageChange, PackageUpgradePhase, PackageUpgradePlan, SetAutoUpgradeRequest,
     StartUpgradeRequest, UpgradeDisruption, UpgradeDownloadProgress, UpgradeProgress,
-    upgrade_progress, upgrade_service_server::UpgradeService as GrpcUpgradeService,
+    UpgradeService as GrpcUpgradeService, upgrade_progress,
 };
 use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail};
+use buffa_types::google::protobuf::{Empty, Timestamp};
 use chrono::NaiveTime;
-use futures::stream::{BoxStream, StreamExt};
-use prost_types::Timestamp;
+use connectrpc::{
+    ConnectError, RequestContext, Response, ServiceRequest, ServiceResult, ServiceStream,
+};
+use futures::stream::StreamExt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tonic::{Request, Status};
 use tracing::error;
 
 use super::SystemUpgradeService;
@@ -94,35 +96,32 @@ where
     }
 }
 
-#[tonic::async_trait]
 impl<T, U, S> GrpcUpgradeService for UpgradeService<T, U, S>
 where
     T: BmcManager,
     U: FirmwareIndex,
     S: SessionManager,
 {
-    type StartUpgradeStream = BoxStream<'static, Result<UpgradeProgress, tonic::Status>>;
-
     async fn check_for_upgrade(
         &self,
-        request: Request<CheckForUpgradeRequest>,
-    ) -> Result<tonic::Response<CheckForUpgradeResponse>, tonic::Status> {
+        ctx: RequestContext,
+        request: ServiceRequest<'_, CheckForUpgradeRequest>,
+    ) -> ServiceResult<CheckForUpgradeResponse> {
+        let install = request.to_owned_message().install_packages;
         match &self.route {
             UpgradeRoute::Local => {
-                let install = request.into_inner().install_packages;
                 let outcome = self
                     .system_upgrade
                     .check_for_upgrade(install)
                     .await
-                    .map_err(Into::<tonic::Status>::into)?;
+                    .map_err(Into::<ConnectError>::into)?;
 
-                Ok(tonic::Response::new(outcome_to_response(outcome)))
+                Response::ok(outcome_to_response(outcome))
             }
             UpgradeRoute::Boser(boser) => {
-                let session_id = extract_session::<S>(request.extensions())?.id();
-                let packages = request.into_inner().install_packages;
-                let response = boser.check(&session_id, packages).await?;
-                Ok(tonic::Response::new(managed::check_response(response)))
+                let session_id = extract_session::<S>(ctx.extensions())?.id();
+                let response = boser.check(&session_id, install).await?;
+                Response::ok(managed::check_response(response))
             }
             UpgradeRoute::BoserUnavailable => Err(managed::boser_unavailable()),
         }
@@ -130,66 +129,68 @@ where
 
     async fn get_installable_widgets(
         &self,
-        request: Request<()>,
-    ) -> Result<tonic::Response<GetInstallableWidgetsResponse>, tonic::Status> {
+        ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetInstallableWidgetsResponse> {
         let widgets = match &self.route {
             UpgradeRoute::Local => self
                 .system_upgrade
                 .list_installable_widgets()
                 .await
-                .map_err(Into::<tonic::Status>::into)?,
+                .map_err(Into::<ConnectError>::into)?,
             UpgradeRoute::Boser(boser) => {
-                let session_id = extract_session::<S>(request.extensions())?.id();
+                let session_id = extract_session::<S>(ctx.extensions())?.id();
                 installable_widgets::from_packages(boser.installable(&session_id).await?)
             }
             UpgradeRoute::BoserUnavailable => return Err(managed::boser_unavailable()),
         };
-        Ok(tonic::Response::new(GetInstallableWidgetsResponse {
+        Response::ok(GetInstallableWidgetsResponse {
             widgets: widgets
                 .into_iter()
                 .map(|widget| map_installable_widget(&self.platform, widget))
                 .collect(),
-        }))
+        })
     }
 
     async fn start_upgrade(
         &self,
-        request: Request<StartUpgradeRequest>,
-    ) -> Result<tonic::Response<Self::StartUpgradeStream>, tonic::Status> {
+        ctx: RequestContext,
+        request: ServiceRequest<'_, StartUpgradeRequest>,
+    ) -> ServiceResult<ServiceStream<UpgradeProgress>> {
+        let upgrade_id = request.upgrade_id.to_owned();
         let stream = match &self.route {
             UpgradeRoute::Local => {
-                let request = request.into_inner();
-                let run = self.system_upgrade.start_upgrade(request.upgrade_id).await;
+                let run = self.system_upgrade.start_upgrade(upgrade_id).await;
                 run.map(run_state_to_progress).boxed()
             }
             UpgradeRoute::Boser(boser) => {
-                let session_id = extract_session::<S>(request.extensions())?.id();
-                let upgrade_id = request.into_inner().upgrade_id;
+                let session_id = extract_session::<S>(ctx.extensions())?.id();
                 managed::start(boser, &session_id, &upgrade_id).await
             }
             UpgradeRoute::BoserUnavailable => managed::only(managed::boser_unavailable()),
         };
 
-        Ok(tonic::Response::new(stream))
+        Ok(Response::stream(stream))
     }
 
     async fn set_auto_upgrade(
         &self,
-        request: Request<SetAutoUpgradeRequest>,
-    ) -> Result<tonic::Response<()>, Status> {
-        let enabled = request.get_ref().enabled;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetAutoUpgradeRequest>,
+    ) -> ServiceResult<Empty> {
+        let enabled = request.enabled;
         let _transition = self.autoupgrade_transition.lock().await;
         let config = self
             .system_upgrade
             .create_autoupgrade_config(enabled)
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| ConnectError::internal(e.to_string()))?;
 
         let mut guard = self.config_handle.write().await;
         let previous_config = guard.autoupgrade();
         guard.set_autoupgrade(config);
         if let Err(err) = guard.save().await {
             guard.set_autoupgrade(previous_config);
-            return Err(Status::internal(err.to_string()));
+            return Err(ConnectError::internal(err.to_string()));
         }
         // Released before the scheduler call below so config readers do not
         // block on it.
@@ -211,18 +212,19 @@ where
                     "Failed to persist the disabled auto-upgrade state after a scheduling failure"
                 );
             }
-            return Err(Status::internal(err.to_string()));
+            return Err(ConnectError::internal(err.to_string()));
         }
 
-        Ok(tonic::Response::new(()))
+        Response::ok(Empty::default())
     }
 
     async fn get_auto_upgrade(
         &self,
-        _request: Request<()>,
-    ) -> Result<tonic::Response<GetAutoUpgradeResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetAutoUpgradeResponse> {
         let enabled = self.config_handle.read().await.autoupgrade().enabled;
-        Ok(tonic::Response::new(GetAutoUpgradeResponse { enabled }))
+        Response::ok(GetAutoUpgradeResponse { enabled })
     }
 }
 
@@ -235,8 +237,8 @@ fn outcome_to_response(outcome: CheckOutcome) -> CheckForUpgradeResponse {
 
     CheckForUpgradeResponse {
         upgrade_id: outcome.upgrade_id,
-        firmware: outcome.firmware.map(map_firmware_upgrade),
-        packages: outcome.packages.map(map_package_upgrade_plan),
+        firmware: outcome.firmware.map(map_firmware_upgrade).into(),
+        packages: outcome.packages.map(map_package_upgrade_plan).into(),
         disruption: disruption.into(),
     }
 }
@@ -248,10 +250,12 @@ fn map_firmware_upgrade(detail: UpgradeDetail) -> FirmwareUpgrade {
     FirmwareUpgrade {
         hash: release.hash,
         version: release.version,
-        release_date: Some(Timestamp {
+        release_date: Timestamp {
             seconds: release_date.timestamp(),
             nanos: 0,
-        }),
+            ..Default::default()
+        }
+        .into(),
         description: release.description,
         file_size_bytes: release.file_size as u64,
         previous_releases: detail
@@ -282,13 +286,14 @@ fn map_package_upgrade_plan(preview: PackagesPreview) -> PackageUpgradePlan {
     }
 }
 
-fn installable_category_to_proto(c: crate::installable_widgets::InstallableCategory) -> i32 {
+fn installable_category_to_proto(
+    c: crate::installable_widgets::InstallableCategory,
+) -> bmc_grpc::web::WidgetCategory {
     use crate::installable_widgets::InstallableCategory as Cat;
-    let proto = match c {
+    match c {
         Cat::Known(k) => super::scene_management::category_to_proto(k),
         Cat::Unknown => bmc_grpc::web::WidgetCategory::Unspecified,
-    };
-    proto as i32
+    }
 }
 
 fn map_installable_widget(
@@ -305,7 +310,7 @@ fn map_installable_widget(
         version: w.version,
         display_name: w.display_name,
         subname: w.subname,
-        category: installable_category_to_proto(w.category),
+        category: installable_category_to_proto(w.category).into(),
         description: w.description,
         icon: w.icon,
         previews: w
@@ -330,7 +335,7 @@ fn map_package_change(change: SystemPackageChange) -> PackageChange {
     }
 }
 
-fn run_state_to_progress(state: UpgradeRunState) -> Result<UpgradeProgress, Status> {
+fn run_state_to_progress(state: UpgradeRunState) -> Result<UpgradeProgress, ConnectError> {
     let event = match state {
         UpgradeRunState::Phase(phase) => match phase {
             UpgradePhase::FirmwareDownloading => {
@@ -362,14 +367,14 @@ fn run_state_to_progress(state: UpgradeRunState) -> Result<UpgradeProgress, Stat
             downloaded_bytes,
             total_bytes,
         }),
-        UpgradeRunState::Finished => upgrade_progress::Event::Finished(()),
+        UpgradeRunState::Finished => upgrade_progress::Event::Finished(Empty::default()),
         UpgradeRunState::Failed(err) => return Err(err.into()),
     };
 
     Ok(UpgradeProgress { event: Some(event) })
 }
 
-impl From<SystemUpgradeError> for Status {
+impl From<SystemUpgradeError> for ConnectError {
     fn from(value: SystemUpgradeError) -> Self {
         match value {
             SystemUpgradeError::FailedToDetectCurrentVersion
@@ -380,33 +385,38 @@ impl From<SystemUpgradeError> for Status {
             | SystemUpgradeError::UpgradeFailed
             | SystemUpgradeError::PackageUpgradeFailed(_)
             | SystemUpgradeError::PendingInstallWriteFailed(_) => {
-                Status::internal(value.to_string())
+                ConnectError::internal(value.to_string())
             }
             // Configuration/manifest/index-shape/plan failures cannot proceed
             // until the package source or profile is corrected; a transient
             // fetch is a server-side transport fault.
             SystemUpgradeError::PackageCheckFailed(ref err) => {
                 if err.is_transient() {
-                    Status::internal(value.to_string())
+                    ConnectError::internal(value.to_string())
                 } else {
-                    Status::failed_precondition(value.to_string())
+                    ConnectError::failed_precondition(value.to_string())
                 }
             }
             // Another run holds the gate; the condition clears by itself,
             // so the client sees "try again", not a server fault.
-            SystemUpgradeError::UpgradeInProgress => Status::unavailable(value.to_string()),
+            SystemUpgradeError::UpgradeInProgress => ConnectError::unavailable(value.to_string()),
             // The image is incompatible/unsigned/wrong-key: retrying the
             // same image will not help, so signal a precondition failure
             // the client can surface as "pick a different image".
             SystemUpgradeError::NotEnoughSpace
             | SystemUpgradeError::UpgradeExpired
-            | SystemUpgradeError::InvalidImage => Status::failed_precondition(value.to_string()),
+            | SystemUpgradeError::InvalidImage => {
+                ConnectError::failed_precondition(value.to_string())
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use buffa::EnumValue;
+    use connectrpc::ErrorCode;
+
     use super::*;
 
     #[test]
@@ -440,7 +450,7 @@ mod tests {
 
         assert_eq!(
             mapped.supported_sizes,
-            vec![bmc_grpc::web::WidgetSize::Full as i32]
+            vec![EnumValue::Known(bmc_grpc::web::WidgetSize::Full)]
         );
     }
 
@@ -451,13 +461,13 @@ mod tests {
         assert!(matches!(
             phase.event,
             Some(upgrade_progress::Event::PackagePhase(p))
-                if p == PackageUpgradePhase::Realizing as i32
+                if p == PackageUpgradePhase::Realizing
         ));
         let finished =
             run_state_to_progress(UpgradeRunState::Finished).expect("BUG: finished maps");
         assert!(matches!(
             finished.event,
-            Some(upgrade_progress::Event::Finished(()))
+            Some(upgrade_progress::Event::Finished(_))
         ));
         assert!(
             run_state_to_progress(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed))
@@ -474,14 +484,14 @@ mod tests {
             disruption: Disruption::Unspecified,
         });
         assert!(response.upgrade_id.is_none());
-        assert!(response.firmware.is_none());
-        assert!(response.packages.is_none());
-        assert_eq!(response.disruption(), UpgradeDisruption::Unspecified);
+        assert!(response.firmware.is_unset());
+        assert!(response.packages.is_unset());
+        assert_eq!(response.disruption, UpgradeDisruption::Unspecified);
     }
 
     #[test]
     fn package_plan_failure_maps_to_failed_precondition_with_message() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::PlanFailed(
                 bmc_upgrade::packages::PackagePlanFailure::MissingSystemPackages {
                     names: vec!["nix".to_owned()],
@@ -489,103 +499,107 @@ mod tests {
             ),
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
         assert_eq!(
-            status.message(),
-            "Cannot check for upgrade: package source is incomplete; \
-             required system package \"nix\" is missing."
+            error.message.as_deref(),
+            Some(
+                "Cannot check for upgrade: package source is incomplete; \
+                 required system package \"nix\" is missing."
+            )
         );
     }
 
     #[test]
     fn no_enabled_servers_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::NoEnabledServers,
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
         assert_eq!(
-            status.message(),
-            "Cannot check for upgrade: no enabled package servers are configured."
+            error.message.as_deref(),
+            Some("Cannot check for upgrade: no enabled package servers are configured.")
         );
     }
 
     #[test]
     fn transient_index_fetch_maps_to_internal() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::IndexFetchFailed("boom".to_owned()),
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::Internal);
+        assert_eq!(error.code, ErrorCode::Internal);
     }
 
     #[test]
     fn manifest_read_failure_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::ManifestReadFailed("io".to_owned()),
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
     }
 
     #[test]
     fn unusable_index_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::IndexUnusable("bad shape".to_owned()),
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
     }
 
     #[test]
     fn install_target_unavailable_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::InstallTargetUnavailable(
                 "package 'widget-nope' not found in any index".to_owned(),
             ),
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
         assert_eq!(
-            status.message(),
-            "Cannot check for upgrade: requested package to install is unavailable: \
-             package 'widget-nope' not found in any index."
+            error.message.as_deref(),
+            Some(
+                "Cannot check for upgrade: requested package to install is unavailable: \
+                 package 'widget-nope' not found in any index."
+            )
         );
     }
 
     #[test]
     fn servers_config_unavailable_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::ServersConfigUnavailable("io".to_owned()),
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
     }
 
     #[test]
     fn unrealizable_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::PackageCheckFailed(
+        let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
             bmc_upgrade::packages::PackageProbeError::Unrealizable("/nix/store/x".to_owned()),
         )
         .into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
     }
 
     #[test]
     fn upgrade_in_progress_maps_to_unavailable() {
-        let status: Status = SystemUpgradeError::UpgradeInProgress.into();
-        assert_eq!(status.code(), tonic::Code::Unavailable);
+        let error: ConnectError = SystemUpgradeError::UpgradeInProgress.into();
+        assert_eq!(error.code, ErrorCode::Unavailable);
     }
 
     #[test]
     fn not_enough_space_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::NotEnoughSpace.into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        let error: ConnectError = SystemUpgradeError::NotEnoughSpace.into();
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
     }
 
     #[test]
     fn invalid_image_maps_to_failed_precondition() {
-        let status: Status = SystemUpgradeError::InvalidImage.into();
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        let error: ConnectError = SystemUpgradeError::InvalidImage.into();
+        assert_eq!(error.code, ErrorCode::FailedPrecondition);
     }
 }

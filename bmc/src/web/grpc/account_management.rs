@@ -28,13 +28,12 @@ use std::time::Duration;
 use bmc_field_schema::ParamKey;
 use bmc_field_schema::credential::BRAIINS_POOL_HOST;
 use bmc_grpc::web;
+use buffa_types::google::protobuf::{Empty, StringValue, Timestamp};
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use indexmap::IndexMap;
-use prost_types::Timestamp;
 use reqwest::StatusCode;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tonic::{Code, Request, Response, Status};
-use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 use url::Url;
 
@@ -44,7 +43,9 @@ use crate::data::{Account, AccountId};
 use crate::scene::{Scene, SceneId};
 use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
-use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
+use crate::web::grpc::shared::{
+    FieldViolations, ParseOutput, unchecked_field_violations_status, with_violations,
+};
 
 /// Where the Braiins Pool token check goes.
 static POOL_ENDPOINT: LazyLock<Url> = LazyLock::new(|| {
@@ -73,12 +74,12 @@ impl AccountManagementService {
     }
 }
 
-#[async_trait::async_trait]
-impl web::account_management_service_server::AccountManagementService for AccountManagementService {
+impl web::AccountManagementService for AccountManagementService {
     async fn get_all_accounts(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<web::GetAllAccountsResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<web::GetAllAccountsResponse> {
         let mut bound = bindings_by_account(self.config_handle.read().await.scenes());
         let store = self.secret_store.read().await;
         let accounts = store
@@ -90,14 +91,15 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                 map_account_to_proto(account, widgets)
             })
             .collect();
-        Ok(Response::new(web::GetAllAccountsResponse { accounts }))
+        Response::ok(web::GetAllAccountsResponse { accounts })
     }
 
     async fn upsert_account(
         &self,
-        request: Request<web::UpsertAccountRequest>,
-    ) -> Result<Response<String>, Status> {
-        let req = request.into_inner();
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, web::UpsertAccountRequest>,
+    ) -> ServiceResult<StringValue> {
+        let req = request.to_owned_message();
 
         let mut violations = FieldViolations::new();
         let (name, v) = parse_account_name("name", &req.name);
@@ -124,7 +126,7 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                 .await
                 .accounts()
                 .get(id)
-                .ok_or_else(|| Status::not_found("Account not found"))?
+                .ok_or_else(|| ConnectError::not_found("Account not found"))?
                 .type_id
                 .clone(),
             None => req.type_id.clone(),
@@ -155,7 +157,7 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                     let account = temp
                         .accounts_mut()
                         .get_mut(&id)
-                        .ok_or_else(|| Status::not_found("Account not found"))?;
+                        .ok_or_else(|| ConnectError::not_found("Account not found"))?;
                     let effective_values = if replace_values {
                         field_values
                     } else {
@@ -165,7 +167,10 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                         && account.field_values == effective_values
                         && account.allow_hosts == allow_hosts
                     {
-                        return Ok(Response::new(id.to_string()));
+                        return Response::ok(StringValue {
+                            value: id.to_string(),
+                            ..Default::default()
+                        });
                     }
                     account.name = name;
                     account.field_values = effective_values;
@@ -181,11 +186,14 @@ impl web::account_management_service_server::AccountManagementService for Accoun
 
                 if let Err(err) = temp.save().await {
                     error!("Cannot save accounts: {err}");
-                    return Err(Status::internal("Failed to save accounts"));
+                    return Err(ConnectError::internal("Failed to save accounts"));
                 }
                 *store = temp;
 
-                Ok(Response::new(id.to_string()))
+                Response::ok(StringValue {
+                    value: id.to_string(),
+                    ..Default::default()
+                })
             }
         });
 
@@ -194,8 +202,12 @@ impl web::account_management_service_server::AccountManagementService for Accoun
             .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
     }
 
-    async fn remove_account(&self, request: Request<String>) -> Result<Response<()>, Status> {
-        let (id, violations) = parse_account_id("id", &request.into_inner());
+    async fn remove_account(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, StringValue>,
+    ) -> ServiceResult<Empty> {
+        let (id, violations) = parse_account_id("id", request.value);
         if !violations.is_empty() {
             return Err(bad_request(violations));
         }
@@ -216,22 +228,21 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                 let mut config = config_handle.write().await;
                 let mut store = secret_store.write().await;
                 if !store.accounts().contains_key(&id) {
-                    return Err(Status::not_found("Account not found"));
+                    return Err(ConnectError::not_found("Account not found"));
                 }
 
                 let mut new_config = config.clone();
                 if unbind_account(new_config.scenes_mut(), &id) {
-                    new_config
-                        .save()
-                        .await
-                        .map_err(|e| Status::internal(format!("failed to save config: {e}")))?;
+                    new_config.save().await.map_err(|e| {
+                        ConnectError::internal(format!("failed to save config: {e}"))
+                    })?;
                     *config = new_config;
                 }
 
                 let mut temp = store.clone();
                 temp.accounts_mut()
                     .shift_remove(&id)
-                    .ok_or_else(|| Status::not_found("Account not found"))?;
+                    .ok_or_else(|| ConnectError::not_found("Account not found"))?;
                 let delete_error = match temp.save().await {
                     Ok(()) => {
                         *store = temp;
@@ -239,13 +250,13 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                     }
                     Err(err) => {
                         error!("Cannot save accounts: {err}");
-                        Some(Status::internal("Failed to save accounts"))
+                        Some(ConnectError::internal("Failed to save accounts"))
                     }
                 };
                 if let Some(error) = delete_error {
                     return Err(error);
                 }
-                Ok(Response::new(()))
+                Response::ok(Empty::default())
             }
         });
 
@@ -268,7 +279,7 @@ fn field_error_key(field: &str) -> String {
 async fn validate_account(
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
-) -> Result<(), Status> {
+) -> Result<(), ConnectError> {
     let mut violations = FieldViolations::new();
     validate_schema(type_id, field_values, &mut violations);
     if !violations.is_empty() {
@@ -321,7 +332,7 @@ fn validate_schema(
 async fn validate_upstream(
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
-) -> Result<(), Status> {
+) -> Result<(), ConnectError> {
     if type_id != credential::BuiltinType::BraiinsPool.id() {
         return Ok(());
     }
@@ -335,7 +346,7 @@ async fn validate_upstream(
 /// A rejected token is the operator's to correct, so it stays an invalid-argument. Any
 /// other outcome means the check could not run, and calling that invalid would send the
 /// operator chasing a value that may be fine. Both keep the violation on the token field.
-fn upstream_check_status(err: &CredentialCheckError) -> Status {
+fn upstream_check_status(err: &CredentialCheckError) -> ConnectError {
     let mut violations = FieldViolations::new();
     violations.push(field_error_key("token"), err.to_string());
 
@@ -343,10 +354,9 @@ fn upstream_check_status(err: &CredentialCheckError) -> Status {
         CredentialCheckError::Invalid => bad_request(violations),
         CredentialCheckError::ServiceNotAvailable
         | CredentialCheckError::Unexpected
-        | CredentialCheckError::ClientInitFailed => Status::with_error_details(
-            Code::Unavailable,
-            GrpcError::CredentialUnverified.to_string(),
-            ErrorDetails::with_bad_request(violations),
+        | CredentialCheckError::ClientInitFailed => with_violations(
+            ConnectError::unavailable(GrpcError::CredentialUnverified.to_string()),
+            violations.into(),
         ),
     }
 }
@@ -424,10 +434,12 @@ fn map_account_to_proto(account: Account, connected_widgets: Vec<String>) -> web
         id: account.id.to_string(),
         type_id: account.type_id,
         name: account.name,
-        created_at: Some(Timestamp {
+        created_at: Timestamp {
             seconds: account.created_at.timestamp(),
             nanos: 0,
-        }),
+            ..Default::default()
+        }
+        .into(),
         connected_widgets,
         allow_hosts: account.allow_hosts,
     }
@@ -485,9 +497,9 @@ fn parse_account_id(field: &str, input: &str) -> ParseOutput<AccountId> {
     (maybe_id, violations)
 }
 
-fn parse_field_values(
+fn parse_field_values<S: std::hash::BuildHasher>(
     field: &str,
-    input: &HashMap<String, String>,
+    input: &HashMap<String, String, S>,
     violations: &mut FieldViolations,
 ) -> IndexMap<ParamKey, String> {
     let mut out = IndexMap::with_capacity(input.len());
@@ -502,11 +514,10 @@ fn parse_field_values(
     out
 }
 
-fn bad_request(violations: FieldViolations) -> Status {
-    Status::with_error_details(
-        Code::InvalidArgument,
-        GrpcError::BadRequest.to_string(),
-        ErrorDetails::with_bad_request(violations),
+fn bad_request(violations: FieldViolations) -> ConnectError {
+    with_violations(
+        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
+        violations.into(),
     )
 }
 
@@ -527,8 +538,10 @@ mod tests {
     use std::collections::BTreeMap;
     use std::os::unix::fs::PermissionsExt;
 
+    use bmc_grpc::google::rpc::bad_request::FieldViolation;
+    use bmc_grpc::web::AccountManagementService as _;
+    use connectrpc::ErrorCode;
     use proptest::prelude::*;
-    use tonic_types::FieldViolation;
 
     use super::*;
     use crate::compositor::testing::RecordingCompositor;
@@ -537,6 +550,7 @@ mod tests {
         WidgetConnectionMode, WidgetInitialConfig, WidgetInstanceKey, WidgetRegistration,
     };
     use crate::scene::{SceneKind, Widget, WidgetPlacement, WidgetPosition};
+    use crate::web::grpc::tests::{no_session, violation_fields, wire_request};
     use crate::widget::{Coordinator, WidgetManager};
 
     const TEST_WIDGET_TYPE: &str = "550e8400-e29b-41d4-a716-446655440000";
@@ -682,17 +696,34 @@ mod tests {
         assert!(!format!("{proto:?}").contains("secret-path"));
     }
 
-    fn violation_fields(status: &Status) -> Vec<String> {
-        status
-            .get_error_details()
-            .bad_request()
-            .map(|bad| {
-                bad.field_violations
-                    .iter()
-                    .map(|v| v.field.clone())
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// An `UpsertAccount` call over the wire, answering the account's id.
+    async fn upsert(
+        service: &AccountManagementService,
+        message: web::UpsertAccountRequest,
+    ) -> ServiceResult<StringValue> {
+        wire_request!(request, message);
+        service.upsert_account(no_session(), request).await
+    }
+
+    /// A `RemoveAccount` call over the wire.
+    async fn remove(service: &AccountManagementService, id: &str) -> ServiceResult<Empty> {
+        wire_request!(
+            request,
+            StringValue {
+                value: id.to_owned(),
+                ..Default::default()
+            }
+        );
+        service.remove_account(no_session(), request).await
+    }
+
+    fn field_values<S: std::hash::BuildHasher + Default>(
+        pairs: &[(&str, &str)],
+    ) -> HashMap<String, String, S> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
     }
 
     #[test]
@@ -1052,14 +1083,14 @@ mod tests {
         changes
     }
 
-    fn account_update_request(token: &str) -> Request<web::UpsertAccountRequest> {
-        Request::new(web::UpsertAccountRequest {
+    fn account_update_request(token: &str) -> web::UpsertAccountRequest {
+        web::UpsertAccountRequest {
             id: "acct-1".to_owned(),
             type_id: String::new(),
             name: "acct-1".to_owned(),
-            field_values: HashMap::from([("token".to_owned(), token.to_owned())]),
+            field_values: field_values(&[("token", token)]),
             allow_hosts: Vec::new(),
-        })
+        }
     }
 
     fn replace_file_with_directory(path: &std::path::Path) {
@@ -1069,8 +1100,6 @@ mod tests {
 
     #[tokio::test]
     async fn account_changes_refresh_all_widgets_and_retry_only_changed_ones() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let first = widget_binding(&["acct-1", "acct-1"]);
         let second = widget_binding(&["acct-1"]);
@@ -1081,40 +1110,34 @@ mod tests {
         let (service, _config, _store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
 
-        let request = |name: &str, token: &str, allow_hosts: &[&str]| {
-            Request::new(web::UpsertAccountRequest {
-                id: "acct-1".to_owned(),
-                type_id: String::new(),
-                name: name.to_owned(),
-                field_values: HashMap::from([("token".to_owned(), token.to_owned())]),
-                allow_hosts: allow_hosts.iter().map(|host| (*host).to_owned()).collect(),
-            })
+        let request = |name: &str, token: &str, allow_hosts: &[&str]| web::UpsertAccountRequest {
+            id: "acct-1".to_owned(),
+            type_id: String::new(),
+            name: name.to_owned(),
+            field_values: field_values(&[("token", token)]),
+            allow_hosts: allow_hosts.iter().map(|host| (*host).to_owned()).collect(),
         };
 
-        service
-            .upsert_account(request("renamed", "s3cr3t", &[]))
+        upsert(&service, request("renamed", "s3cr3t", &[]))
             .await
             .expect("BUG: name update must succeed");
         compositor.wait_for_credential_push_count(3).await;
         assert_eq!(pushed_widget_changes(&compositor), expected_changes);
         compositor.clear_credential_pushes();
 
-        service
-            .upsert_account(request("renamed", "replacement", &[]))
+        upsert(&service, request("renamed", "replacement", &[]))
             .await
             .expect("BUG: field update must succeed");
         compositor.wait_for_credential_push_count(3).await;
         assert_eq!(pushed_widget_changes(&compositor), expected_changes);
         compositor.clear_credential_pushes();
 
-        service
-            .upsert_account(request(
-                "renamed",
-                "replacement",
-                &["b.example", "a.example"],
-            ))
-            .await
-            .expect("BUG: host update must succeed");
+        upsert(
+            &service,
+            request("renamed", "replacement", &["b.example", "a.example"]),
+        )
+        .await
+        .expect("BUG: host update must succeed");
         compositor.wait_for_credential_push_count(3).await;
         assert_eq!(pushed_widget_changes(&compositor), expected_changes);
     }
@@ -1184,8 +1207,6 @@ mod tests {
 
     #[tokio::test]
     async fn one_failed_credential_enqueue_does_not_skip_later_widgets() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let first = widget_binding(&["acct-1"]);
         let second = widget_binding(&["acct-1"]);
@@ -1194,8 +1215,7 @@ mod tests {
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         compositor.fail_next_credential_update();
 
-        service
-            .upsert_account(account_update_request("replacement"))
+        upsert(&service, account_update_request("replacement"))
             .await
             .expect("BUG: one widget enqueue failure must not fail the account update");
 
@@ -1205,8 +1225,6 @@ mod tests {
 
     #[tokio::test]
     async fn missing_manifest_does_not_block_later_listener_refreshes() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let missing = widget_binding(&["acct-1"]);
         let installed = widget_binding(&["acct-1"]);
@@ -1227,8 +1245,7 @@ mod tests {
             .1
             .widget_type_id = uuid::Uuid::new_v4();
 
-        service
-            .upsert_account(account_update_request("replacement"))
+        upsert(&service, account_update_request("replacement"))
             .await
             .expect("BUG: account update must succeed");
 
@@ -1238,18 +1255,15 @@ mod tests {
 
     #[tokio::test]
     async fn dropped_credential_receipts_are_awaited_without_source_locks() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
         let (service, config, store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         compositor.hold_credential_receipts();
-        let update = tokio::spawn(async move {
-            service
-                .upsert_account(account_update_request("replacement"))
-                .await
-        });
+        let update =
+            tokio::spawn(
+                async move { upsert(&service, account_update_request("replacement")).await },
+            );
         compositor.wait_for_credential_push_count(1).await;
 
         let config_guard = tokio::time::timeout(Duration::from_secs(1), config.write())
@@ -1270,8 +1284,6 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_account_rpc_finishes_enqueued_refreshes() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
         let (service, _config, store, _coordinator, compositor) =
@@ -1279,15 +1291,17 @@ mod tests {
         compositor.hold_credential_receipts();
         let store_guard = store.write().await;
         let update = tokio::spawn(async move {
-            service
-                .upsert_account(Request::new(web::UpsertAccountRequest {
+            upsert(
+                &service,
+                web::UpsertAccountRequest {
                     id: String::new(),
                     type_id: credential::BuiltinType::GenericToken.id().to_owned(),
                     name: "cancelled-create".to_owned(),
-                    field_values: HashMap::from([("token".to_owned(), "replacement".to_owned())]),
+                    field_values: field_values(&[("token", "replacement")]),
                     allow_hosts: Vec::new(),
-                }))
-                .await
+                },
+            )
+            .await
         });
         tokio::task::yield_now().await;
 
@@ -1323,18 +1337,12 @@ mod tests {
 
     #[tokio::test]
     async fn account_deletion_holds_config_while_waiting_for_secrets() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
         let (service, config, store, _coordinator, _compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         let secret_guard = store.write().await;
-        let deletion = tokio::spawn(async move {
-            service
-                .remove_account(Request::new("acct-1".to_owned()))
-                .await
-        });
+        let deletion = tokio::spawn(async move { remove(&service, "acct-1").await });
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 if config.try_read().is_err() {
@@ -1364,18 +1372,15 @@ mod tests {
 
     #[tokio::test]
     async fn account_update_does_not_hold_config_while_waiting_for_secrets() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
         let (service, config, store, _coordinator, _compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         let secret_guard = store.read().await;
-        let update = tokio::spawn(async move {
-            service
-                .upsert_account(account_update_request("replacement"))
-                .await
-        });
+        let update =
+            tokio::spawn(
+                async move { upsert(&service, account_update_request("replacement")).await },
+            );
         let config_guard = tokio::time::timeout(Duration::from_secs(1), config.write())
             .await
             .expect("an account-only update must not acquire the config lock");
@@ -1392,38 +1397,25 @@ mod tests {
 
     #[tokio::test]
     async fn account_no_ops_do_not_wake_but_creation_is_a_semantic_noop() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
         let (service, _config, _store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
-        let request = |id: &str, fields: HashMap<String, String>| {
-            Request::new(web::UpsertAccountRequest {
-                id: id.to_owned(),
-                type_id: credential::BuiltinType::GenericToken.id().to_owned(),
-                name: if id.is_empty() { "created" } else { "acct-1" }.to_owned(),
-                field_values: fields,
-                allow_hosts: Vec::new(),
-            })
+        let request = |id: &str, fields: &[(&str, &str)]| web::UpsertAccountRequest {
+            id: id.to_owned(),
+            type_id: credential::BuiltinType::GenericToken.id().to_owned(),
+            name: if id.is_empty() { "created" } else { "acct-1" }.to_owned(),
+            field_values: field_values(fields),
+            allow_hosts: Vec::new(),
         };
 
-        service
-            .upsert_account(request("acct-1", HashMap::new()))
+        upsert(&service, request("acct-1", &[]))
             .await
             .expect("BUG: empty fields preserve the stored value");
-        service
-            .upsert_account(request(
-                "acct-1",
-                HashMap::from([("token".to_owned(), "s3cr3t".to_owned())]),
-            ))
+        upsert(&service, request("acct-1", &[("token", "s3cr3t")]))
             .await
             .expect("BUG: identical fields are a no-op");
-        service
-            .upsert_account(request(
-                "",
-                HashMap::from([("token".to_owned(), "new".to_owned())]),
-            ))
+        upsert(&service, request("", &[("token", "new")]))
             .await
             .expect("BUG: account creation must succeed");
 
@@ -1434,8 +1426,6 @@ mod tests {
 
     #[tokio::test]
     async fn account_deletion_refreshes_all_and_retries_only_formerly_bound_widgets() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let first = widget_binding(&["acct-1", "acct-1"]);
         let second = widget_binding(&["acct-1"]);
@@ -1446,8 +1436,7 @@ mod tests {
         let (service, config, store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
 
-        service
-            .remove_account(Request::new("acct-1".to_owned()))
+        remove(&service, "acct-1")
             .await
             .expect("BUG: bound account deletion must succeed");
 
@@ -1463,8 +1452,6 @@ mod tests {
 
     #[tokio::test]
     async fn config_save_failure_keeps_account_bindings_and_credentials_unchanged() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let widget = widget_binding(&["acct-1"]);
         let scene = scene_of(SceneKind::Fullscreen, vec![widget]);
@@ -1472,13 +1459,12 @@ mod tests {
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         replace_file_with_directory(&tmp.path().join("bmc-config.json"));
 
-        let error = service
-            .remove_account(Request::new("acct-1".to_owned()))
+        let error = remove(&service, "acct-1")
             .await
             .expect_err("BUG: deleting through an unwritable config must fail");
 
         let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
-        assert_eq!(error.code(), Code::Internal);
+        assert_eq!(error.code, ErrorCode::Internal);
         assert!(
             bindings_by_account(config.read().await.scenes()).contains_key(&id),
             "failed persistence must not commit cloned binding removal"
@@ -1491,8 +1477,6 @@ mod tests {
 
     #[tokio::test]
     async fn secret_save_failure_commits_safe_unbound_state_and_clears_former_target() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let affected = widget_binding(&["acct-1"]);
         let unrelated = widget_binding(&["acct-2"]);
@@ -1509,13 +1493,12 @@ mod tests {
             .expect("BUG: unrelated retained widget must be seeded");
         replace_file_with_directory(&tmp.path().join(crate::secret_store::SECRETS_FILE_NAME));
 
-        let error = service
-            .remove_account(Request::new("acct-1".to_owned()))
+        let error = remove(&service, "acct-1")
             .await
             .expect_err("BUG: deleting through an unwritable secret store must fail");
 
         let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
-        assert_eq!(error.code(), Code::Internal);
+        assert_eq!(error.code, ErrorCode::Internal);
         assert!(!bindings_by_account(config.read().await.scenes()).contains_key(&id));
         assert!(store.read().await.accounts().contains_key(&id));
         compositor.wait_for_credential_push_count(2).await;
@@ -1542,41 +1525,42 @@ mod tests {
 
     #[tokio::test]
     async fn an_account_pin_is_stored_then_replaced_wholesale_including_by_nothing() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let (service, _config, store, _coordinator, _compositor) =
             seeded_service(&tmp, vec![], &[]).await;
 
-        let upsert = async |id: &str, hosts: &[&str]| {
-            service
-                .upsert_account(Request::new(web::UpsertAccountRequest {
+        let save = async |id: &str, hosts: &[&str]| {
+            upsert(
+                &service,
+                web::UpsertAccountRequest {
                     id: id.to_owned(),
                     type_id: credential::BuiltinType::GenericToken.id().to_owned(),
                     name: "Mine".to_owned(),
-                    field_values: HashMap::from([("token".to_owned(), "s3cr3t".to_owned())]),
+                    field_values: field_values(&[("token", "s3cr3t")]),
                     allow_hosts: hosts.iter().map(|h| (*h).to_owned()).collect(),
-                }))
-                .await
-                .expect("BUG: a clean upsert must succeed")
-                .into_inner()
+                },
+            )
+            .await
+            .expect("BUG: a clean upsert must succeed")
+            .body
+            .value
         };
         let stored = async |id: &str| {
             let id = AccountId::from_str(id).expect("BUG: the returned id parses");
             store.read().await.accounts()[&id].allow_hosts.clone()
         };
 
-        let id = upsert("", &["a.example", "b.example"]).await;
+        let id = save("", &["a.example", "b.example"]).await;
         assert_eq!(stored(&id).await, ["a.example", "b.example"]);
 
-        upsert(&id, &["c.example"]).await;
+        save(&id, &["c.example"]).await;
         assert_eq!(
             stored(&id).await,
             ["c.example"],
             "the list is replaced, not merged — a dropped host must really be gone"
         );
 
-        upsert(&id, &[]).await;
+        save(&id, &[]).await;
         assert!(
             stored(&id).await.is_empty(),
             "an empty list has to clear the pin, unlike field_values which keeps on empty"
@@ -1585,15 +1569,12 @@ mod tests {
 
     #[tokio::test]
     async fn removing_a_bound_account_unbinds_it_everywhere_then_deletes_it() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let (scene, _) = scene_binding(&["acct-1"]);
         let (service, config_handle, secret_store, _coordinator, _compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
 
-        service
-            .remove_account(Request::new("acct-1".to_owned()))
+        remove(&service, "acct-1")
             .await
             .expect("BUG: a bound account must now cascade rather than refuse");
 
@@ -1606,19 +1587,16 @@ mod tests {
 
     #[tokio::test]
     async fn removing_an_account_that_is_not_there_leaves_the_bindings_alone() {
-        use web::account_management_service_server::AccountManagementService as _;
-
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let (scene, _) = scene_binding(&["acct-1"]);
         let (service, config_handle, _store, _coordinator, _compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
 
-        let err = service
-            .remove_account(Request::new("acct-gone".to_owned()))
+        let err = remove(&service, "acct-gone")
             .await
             .expect_err("BUG: an unknown account must not report success");
 
-        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert_eq!(err.code, ErrorCode::NotFound);
         assert!(
             !bindings_by_account(config_handle.read().await.scenes()).is_empty(),
             "a delete that found nothing must not cascade over the accounts still bound"
@@ -1742,10 +1720,10 @@ mod tests {
 
     #[test]
     fn a_rejected_token_is_the_operators_to_fix() {
-        let status = upstream_check_status(&CredentialCheckError::Invalid);
+        let error = upstream_check_status(&CredentialCheckError::Invalid);
 
-        assert_eq!(status.code(), Code::InvalidArgument);
-        assert_eq!(status.message(), GrpcError::BadRequest.to_string());
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.message, Some(GrpcError::BadRequest.to_string()));
     }
 
     #[test]
@@ -1755,12 +1733,12 @@ mod tests {
             CredentialCheckError::Unexpected,
             CredentialCheckError::ClientInitFailed,
         ] {
-            let status = upstream_check_status(&err);
+            let error = upstream_check_status(&err);
 
-            assert_eq!(status.code(), Code::Unavailable, "for {err:?}");
+            assert_eq!(error.code, ErrorCode::Unavailable, "for {err:?}");
             assert_eq!(
-                status.message(),
-                GrpcError::CredentialUnverified.to_string(),
+                error.message,
+                Some(GrpcError::CredentialUnverified.to_string()),
                 "for {err:?}"
             );
         }

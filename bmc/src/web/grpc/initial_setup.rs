@@ -25,18 +25,22 @@ use crate::web::grpc::network::{
     bad_request, into_network_config, parse_network_config, scan_wifi_response,
     try_into_wifi_network_config,
 };
-use crate::web::grpc::shared::try_from_number_format;
+use crate::web::grpc::shared::{try_from_number_format, violation};
 use crate::{
     BmcManager,
     initial_setup::{DeviceSetupConfig, InitialSetup, MinerSetupParams, PoolEntry, SkipWifiError},
     manager::{BmcState, WifiNetworkConfig},
 };
+use bmc_grpc::google::rpc::bad_request::FieldViolation;
 use bmc_grpc::web::{
-    DateFormat, NumberFormat, PoolConfig, ScanWifiResponse, SetWifiRequest, SettingsDataResponse,
-    SettingsRequest, TemperatureUnit, TimeFormat, UnitSystem,
-    initial_setup_service_server::InitialSetupService as GrpcInitialSetupService,
+    DateFormat, InitialSetupService as GrpcInitialSetupService, NumberFormat, PoolConfig,
+    ScanWifiResponse, SetWifiRequest, SettingsDataResponse, SettingsRequest, TemperatureUnit,
+    TimeFormat, UnitSystem,
 };
 use bmc_platform::HardwareProfile;
+use buffa::EnumValue;
+use buffa_types::google::protobuf::{BoolValue, Empty};
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 
 const SOLO_POOL_URL: &str = "stratum+tcp://solo.stratum.braiins.com:3333";
 use bmc_shared_time::time::{TimeSystem, Timezone};
@@ -44,8 +48,6 @@ use bmc_shared_utils::temperature::TemperatureUnit as ConfigTemperatureUnit;
 use bmc_shared_utils::unit_system::UnitSystem as ConfigUnitSystem;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{str::FromStr, sync::Arc};
-use tonic::{Request, Response, Status};
-use tonic_types::FieldViolation;
 use tracing::warn;
 
 #[derive(Clone)]
@@ -79,7 +81,7 @@ where
         }
     }
 
-    async fn check_precondition(&self, state: BmcState) -> Result<(), Status> {
+    async fn check_precondition(&self, state: BmcState) -> Result<(), ConnectError> {
         let current_state = self
             .manager
             .network_manager()
@@ -87,14 +89,14 @@ where
             .device_state()
             .await;
         if current_state != state {
-            return Err(Status::failed_precondition(format!(
+            return Err(ConnectError::failed_precondition(format!(
                 "Function is only available when the device is in '{state}' state. Current state is '{current_state}'.",
             )));
         }
         Ok(())
     }
 
-    async fn check_wifi_setup_precondition(&self) -> Result<BmcState, Status> {
+    async fn check_wifi_setup_precondition(&self) -> Result<BmcState, ConnectError> {
         let current_state = self
             .manager
             .network_manager()
@@ -104,7 +106,7 @@ where
         if current_state != BmcState::FactoryDefault
             && current_state != BmcState::WifiReconfiguration
         {
-            return Err(Status::failed_precondition(format!(
+            return Err(ConnectError::failed_precondition(format!(
                 "Function is only available when the device is in 'factory default' or 'wifi reconfiguration' state. Current state is '{current_state}'.",
             )));
         }
@@ -112,53 +114,59 @@ where
     }
 }
 
-#[async_trait::async_trait]
 impl<T> GrpcInitialSetupService for InitialSetupService<T>
 where
     T: BmcManager,
 {
-    async fn set_wifi(&self, request: Request<SetWifiRequest>) -> Result<Response<()>, Status> {
+    async fn set_wifi(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetWifiRequest>,
+    ) -> ServiceResult<Empty> {
         let state = self.check_wifi_setup_precondition().await?;
 
-        let request = request.into_inner();
         if request.ssid.trim().is_empty() {
-            return Err(bad_request(vec![FieldViolation::new(
-                "ssid",
-                "Missing value!",
-            )]));
+            return Err(bad_request(vec![violation("ssid", "Missing value!")]));
         }
 
-        let config = try_into_wifi_network_config(request)?;
+        let config = try_into_wifi_network_config(request.to_owned_message())?;
         let is_reconfig = state == BmcState::WifiReconfiguration;
 
         match self.product_setup.connect_wifi(config, is_reconfig) {
-            Ok(()) => Ok(Response::new(())),
+            Ok(()) => Response::ok(Empty::default()),
             Err(e) => match e {
-                WifiSetupError::InProgress => {
-                    Err(Status::failed_precondition("Wi-Fi setup is in progress"))
-                }
+                WifiSetupError::InProgress => Err(ConnectError::failed_precondition(
+                    "Wi-Fi setup is in progress",
+                )),
             },
         }
     }
 
-    async fn skip_wifi(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+    async fn skip_wifi(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
         self.check_wifi_setup_precondition().await?;
         self.product_setup.skip_wifi().await?;
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 
-    async fn scan_wifi(&self, _request: Request<()>) -> Result<Response<ScanWifiResponse>, Status> {
+    async fn scan_wifi(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<ScanWifiResponse> {
         self.check_wifi_setup_precondition().await?;
 
-        Ok(Response::new(
-            scan_wifi_response(self.manager.clone()).await?,
-        ))
+        Response::ok(scan_wifi_response(self.manager.clone()).await?)
     }
 
     async fn get_settings_data(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<SettingsDataResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<SettingsDataResponse> {
         self.check_precondition(BmcState::SetupPending).await?;
 
         let timezones = Timezone::list().iter().map(into_grpc_timezone).collect();
@@ -180,31 +188,37 @@ where
             password: None,
         });
 
-        Ok(Response::new(SettingsDataResponse {
+        Response::ok(SettingsDataResponse {
             timezones,
             timezone_id: Timezone::default().iana().to_owned(),
-            data_collection: Some(true),
+            data_collection: BoolValue {
+                value: true,
+                ..Default::default()
+            }
+            .into(),
             time_format: TimeFormat::TimeFormat24Hour.into(),
             date_format: DateFormat::DdMmYyyyDot.into(),
             number_format: NumberFormat::SpaceGroupCommaDecimal.into(),
             temperature_unit: TemperatureUnit::Celsius.into(),
             unit_system: UnitSystem::Metric.into(),
-            pool,
+            pool: pool.into(),
             hostname,
-            network,
-        }))
+            network: network.into(),
+        })
     }
 
     async fn setup_device(
         &self,
-        request: Request<SettingsRequest>,
-    ) -> Result<Response<()>, Status> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SettingsRequest>,
+    ) -> ServiceResult<Empty> {
         self.check_precondition(BmcState::SetupPending).await?;
 
-        let request = request.into_inner();
-        self.product_setup.setup_device(request).await?;
+        self.product_setup
+            .setup_device(request.to_owned_message())
+            .await?;
 
-        Ok(Response::new(()))
+        Response::ok(Empty::default())
     }
 }
 
@@ -217,8 +231,8 @@ pub(crate) trait ProductSetup: Send + Sync {
         config: WifiNetworkConfig,
         is_reconfig: bool,
     ) -> Result<(), WifiSetupError>;
-    async fn skip_wifi(&self) -> Result<(), Status>;
-    async fn setup_device(&self, request: SettingsRequest) -> Result<(), Status>;
+    async fn skip_wifi(&self) -> Result<(), ConnectError>;
+    async fn setup_device(&self, request: SettingsRequest) -> Result<(), ConnectError>;
 }
 
 /// Display device (Deck)
@@ -242,13 +256,13 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for DisplaySetup<T, F> {
         self.inner.connect_to_wifi(config, is_reconfig)
     }
 
-    async fn skip_wifi(&self) -> Result<(), Status> {
-        Err(Status::failed_precondition(
+    async fn skip_wifi(&self) -> Result<(), ConnectError> {
+        Err(ConnectError::failed_precondition(
             "WiFi setup is required on this device",
         ))
     }
 
-    async fn setup_device(&self, request: SettingsRequest) -> Result<(), Status> {
+    async fn setup_device(&self, request: SettingsRequest) -> Result<(), ConnectError> {
         let config: DeviceSetupConfig = request.try_into()?;
         self.inner
             .setup_device(config)
@@ -278,28 +292,28 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
         self.inner.connect_to_wifi(config, is_reconfig)
     }
 
-    async fn skip_wifi(&self) -> Result<(), Status> {
+    async fn skip_wifi(&self) -> Result<(), ConnectError> {
         self.inner.skip_wifi().await.map_err(|e| match e {
             SkipWifiError::NoEthernet | SkipWifiError::InProgress => {
-                Status::failed_precondition(e.to_string())
+                ConnectError::failed_precondition(e.to_string())
             }
         })
     }
 
-    async fn setup_device(&self, request: SettingsRequest) -> Result<(), Status> {
+    async fn setup_device(&self, request: SettingsRequest) -> Result<(), ConnectError> {
         // NOTE: every field is checked before anything is written, so a rejected
         // request leaves the device untouched and names each offending field.
         let mut field_violations = vec![];
 
-        let pool = request.pool.clone();
+        let pool = request.pool.clone().into_option();
         match &pool {
-            None => field_violations.push(FieldViolation::new("pool", "Missing value!")),
+            None => field_violations.push(violation("pool", "Missing value!")),
             Some(pool) => {
                 if url::Url::parse(&pool.url).is_err() {
-                    field_violations.push(FieldViolation::new("pool.url", "Invalid URL!"));
+                    field_violations.push(violation("pool.url", "Invalid URL!"));
                 }
                 if pool.user.trim().is_empty() {
-                    field_violations.push(FieldViolation::new("pool.user", "Missing value!"));
+                    field_violations.push(violation("pool.user", "Missing value!"));
                 }
             }
         }
@@ -308,10 +322,10 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
         if let Some(hostname) = hostname.as_deref()
             && let Err(err) = bmc_net::validate_hostname(hostname)
         {
-            field_violations.push(FieldViolation::new("hostname", err.to_string()));
+            field_violations.push(violation("hostname", err.to_string()));
         }
 
-        let network = match request.network.as_ref() {
+        let network = match request.network.as_option() {
             None => None,
             Some(config) => {
                 match parse_network_config(config, "network.protocol", "network.static.") {
@@ -357,7 +371,7 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
     }
 }
 
-fn map_device_setup_error(e: &DeviceSetupError) -> Status {
+fn map_device_setup_error(e: &DeviceSetupError) -> ConnectError {
     match e {
         DeviceSetupError::SetTimezone(..)
         | DeviceSetupError::SetPassword
@@ -367,13 +381,13 @@ fn map_device_setup_error(e: &DeviceSetupError) -> Status {
         | DeviceSetupError::ApplyNetwork(..)
         | DeviceSetupError::WritePoolConfig(..)
         | DeviceSetupError::StartServices(..) => {
-            Status::internal("Error while saving device settings")
+            ConnectError::internal("Error while saving device settings")
         }
     }
 }
 
 impl TryFrom<SettingsRequest> for DeviceSetupConfig {
-    type Error = Status;
+    type Error = ConnectError;
 
     fn try_from(value: SettingsRequest) -> Result<Self, Self::Error> {
         parse_device_setup(value).map_err(bad_request)
@@ -385,25 +399,22 @@ fn parse_device_setup(value: SettingsRequest) -> Result<DeviceSetupConfig, Vec<F
     let mut field_violations = vec![];
 
     let timezone = Timezone::from_str(&value.timezone_id).inspect_err(|_| {
-        field_violations.push(FieldViolation::new(
-            "timezone_id",
-            "invalid timezone variant",
-        ));
+        field_violations.push(violation("timezone_id", "invalid timezone variant"));
     });
 
-    let time_system = try_from_time_format(value.time_format())
+    let time_system = try_from_time_format(value.time_format)
         .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
-    let date_format = try_from_date_time(value.date_format())
+    let date_format = try_from_date_time(value.date_format)
         .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
-    let number_format = try_from_number_format(value.number_format())
+    let number_format = try_from_number_format(value.number_format)
         .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
-    let temperature_unit = try_from_temperature_unit(value.temperature_unit())
+    let temperature_unit = try_from_temperature_unit(value.temperature_unit)
         .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
-    let unit_system = try_from_unit_system(value.unit_system())
+    let unit_system = try_from_unit_system(value.unit_system)
         .inspect_err(|e: &FieldViolation| field_violations.push(e.clone()));
 
     if !field_violations.is_empty() {
@@ -429,10 +440,13 @@ fn parse_device_setup(value: SettingsRequest) -> Result<DeviceSetupConfig, Vec<F
 }
 
 pub(crate) fn try_from_time_format(
-    value: TimeFormat,
+    value: EnumValue<TimeFormat>,
 ) -> Result<bmc_shared_time::time::TimeSystem, FieldViolation> {
-    match value {
-        TimeFormat::Unspecified => Err(FieldViolation::new(
+    match value
+        .as_known()
+        .unwrap_or(TimeFormat::TimeFormatUnspecified)
+    {
+        TimeFormat::TimeFormatUnspecified => Err(violation(
             "time_format",
             "time_format cannot be unspecified",
         )),
@@ -442,10 +456,10 @@ pub(crate) fn try_from_time_format(
 }
 
 pub(crate) fn try_from_date_time(
-    value: DateFormat,
+    value: EnumValue<DateFormat>,
 ) -> Result<bmc_shared_time::time::DateFormat, FieldViolation> {
-    match value {
-        DateFormat::Unspecified => Err(FieldViolation::new(
+    match value.as_known().unwrap_or(DateFormat::Unspecified) {
+        DateFormat::Unspecified => Err(violation(
             "date_format",
             "date_format cannot be unspecified",
         )),
@@ -461,10 +475,10 @@ pub(crate) fn try_from_date_time(
 }
 
 fn try_from_temperature_unit(
-    value: TemperatureUnit,
+    value: EnumValue<TemperatureUnit>,
 ) -> Result<ConfigTemperatureUnit, FieldViolation> {
-    match value {
-        TemperatureUnit::Unspecified => Err(FieldViolation::new(
+    match value.as_known().unwrap_or(TemperatureUnit::Unspecified) {
+        TemperatureUnit::Unspecified => Err(violation(
             "temperature_unit",
             "temperature_unit cannot be unspecified",
         )),
@@ -473,9 +487,9 @@ fn try_from_temperature_unit(
     }
 }
 
-fn try_from_unit_system(value: UnitSystem) -> Result<ConfigUnitSystem, FieldViolation> {
-    match value {
-        UnitSystem::Unspecified => Err(FieldViolation::new(
+fn try_from_unit_system(value: EnumValue<UnitSystem>) -> Result<ConfigUnitSystem, FieldViolation> {
+    match value.as_known().unwrap_or(UnitSystem::Unspecified) {
+        UnitSystem::Unspecified => Err(violation(
             "unit_system",
             "unit_system cannot be unspecified",
         )),

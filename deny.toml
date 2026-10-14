@@ -31,11 +31,10 @@ skip = [
     { crate = "socket2@0.4" },
     { crate = "socket2@0.5" },
     { crate = "sync_wrapper@0.1" },
-    { crate = "tower@0.4" },
     { crate = "webpki-roots@0.25" },
 
     # ureq 3.4 requires base64 0.23.
-    # Remove after the workspace, tonic, tonic-web, and usvg leave 0.22.
+    # Remove after the workspace, connectrpc, and usvg leave 0.22.
     { crate = "base64@0.23" },
 
     # rand 0.8 → 0.9 migration (see BDK-465).
@@ -64,6 +63,11 @@ skip = [
 
     # gltf (sdk-macros) uses base64 0.13
     { crate = "base64@0.13" },
+
+    # buffa 0.9 requires hashbrown 0.15, and with it foldhash 0.1;
+    # the workspace's own line is hashbrown 0.16. Remove once buffa moves.
+    { crate = "foldhash@0.1" },
+    { crate = "hashbrown@0.15" },
 
     # Wayland/Smithay ecosystem splits
     { crate = "calloop@0.13" },

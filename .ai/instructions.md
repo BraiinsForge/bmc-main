@@ -55,8 +55,10 @@ See `frontend/CLAUDE.md`
 
 ### Communication Layer
 
-Frontend and backend communicate via gRPC-Web using Protocol Buffers defined in `bmc-grpc/proto/web/`. The backend runs
-a tonic gRPC server with tonic-web middleware. Frontend uses ConnectRPC (Connect-Web) for type-safe RPC calls.
+Frontend and backend communicate via gRPC-Web using Protocol Buffers defined in `bmc-grpc/proto/web/`. The backend
+serves them with connect-rust (`connectrpc`, message types from `buffa`) mounted in axum; it speaks gRPC-Web to the
+browser and native gRPC over cleartext HTTP/2 to grpcurl. Frontend uses ConnectRPC (Connect-Web) for type-safe RPC
+calls.
 
 ## Build System
 
@@ -231,8 +233,8 @@ nix-shell -p jq getopt --run "./scripts/verify_crates.sh --summary"
 ## Protocol Buffer Workflow
 
 Proto files are in `bmc-grpc/proto/web/`. After changing one, run `just gen`: the root `buf.gen.yaml` regenerates the
-TypeScript in `frontend/src/proto/gen/`, which is checked in, so commit it with the proto change. The Rust bindings are
-generated at build time by `bmc-grpc/build.rs`.
+Rust bindings in `bmc-grpc/src/gen/` and the TypeScript in `frontend/src/proto/gen/`. Both are checked in, so commit
+them with the proto change.
 
 The server registers no gRPC reflection; point grpcurl at the protos instead
 (`-import-path bmc-grpc/proto -proto web/<file>.proto`).

@@ -36,6 +36,7 @@ fix=0
 # Patterns matched against repository-relative paths with bash's ==.
 excludes=(
     "frontend/src/proto/gen/*"
+    "bmc-grpc/src/gen/*"
     "frontend/src/lib/react/props.tsx"
     "frontend/src/styles/fonts/*"
     "widgets-wasm-examples/media-control/proto/cast_channel.proto"

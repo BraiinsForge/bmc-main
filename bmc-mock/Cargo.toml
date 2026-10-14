@@ -45,10 +45,11 @@ walkdir.workspace = true
 
 [dev-dependencies]
 bmc-grpc = { workspace = true, features = ["client"] }
+buffa-types.workspace = true
+connectrpc = { workspace = true, features = ["client"] }
 libc.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-tonic.workspace = true
 
 [lints]
 workspace = true

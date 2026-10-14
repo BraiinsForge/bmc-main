@@ -25,41 +25,27 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use bmc_grpc::web::scene_management_service_client::SceneManagementServiceClient;
-use tonic::Request;
-use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
+use bmc_grpc::web::SceneManagementServiceClient;
+use buffa_types::google::protobuf::Empty;
 
 const SCENARIO: &str = r#"{"firmware":"up-to-date","packages":"unavailable"}"#;
 const SIGNAL_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Clone)]
-struct CookieAuth(MetadataValue<tonic::metadata::Ascii>);
+type SceneClient = SceneManagementServiceClient<common::Transport>;
 
-impl tonic::service::Interceptor for CookieAuth {
-    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, tonic::Status> {
-        request.metadata_mut().insert("cookie", self.0.clone());
-        Ok(request)
-    }
-}
-
-type SceneClient = SceneManagementServiceClient<
-    tonic::service::interceptor::InterceptedService<Channel, CookieAuth>,
->;
-
-async fn widget_names(client: &mut SceneClient) -> Vec<String> {
+async fn widget_names(client: &SceneClient) -> Vec<String> {
     client
-        .get_available_widgets(())
+        .get_available_widgets(Empty::default())
         .await
         .expect("BUG: list available widgets")
-        .into_inner()
+        .into_owned()
         .widgets
         .into_iter()
         .map(|widget| widget.name)
         .collect()
 }
 
-async fn wait_for_names(client: &mut SceneClient, expected: &[&str]) {
+async fn wait_for_names(client: &SceneClient, expected: &[&str]) {
     let deadline = Instant::now() + SIGNAL_TIMEOUT;
     loop {
         let mut names = widget_names(client).await;
@@ -142,9 +128,9 @@ fn send_signal(mock: &common::MockInstance, signal: UserSignal) {
 #[tokio::test]
 async fn user_signals_are_drained_and_winch_alone_refreshes_the_registry() {
     let mut mock = common::spawn_mock(SCENARIO);
-    let (channel, cookie) = common::authenticated_channel(&mut mock).await;
-    let mut client = SceneManagementServiceClient::with_interceptor(channel, CookieAuth(cookie));
-    wait_for_names(&mut client, &["Flip Clock", "Weather"]).await;
+    let (transport, config) = common::authenticated_channel(&mut mock).await;
+    let client = SceneManagementServiceClient::new(transport, config);
+    wait_for_names(&client, &["Flip Clock", "Weather"]).await;
 
     // A SIG_IGN disposition would survive exec into widget children;
     // an installed handler resets to default there. Lock the kernel-visible
@@ -165,24 +151,24 @@ async fn user_signals_are_drained_and_winch_alone_refreshes_the_registry() {
 
     send_signal(&mock, UserSignal::Usr1);
     send_signal(&mock, UserSignal::Usr2);
-    wait_for_names(&mut client, &["Flip Clock", "Weather"]).await;
+    wait_for_names(&client, &["Flip Clock", "Weather"]).await;
     assert!(mock.child.try_wait().expect("BUG: inspect child").is_none());
 
     let staging = mock.mockfs.join("tmp/staged-widgets");
     write_widget(&staging);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    wait_for_names(&mut client, &["Flip Clock", "Weather"]).await;
+    wait_for_names(&client, &["Flip Clock", "Weather"]).await;
 
     send_signal(&mock, UserSignal::Winch);
-    wait_for_names(&mut client, &["Flip Clock", "Signal Test", "Weather"]).await;
+    wait_for_names(&client, &["Flip Clock", "Signal Test", "Weather"]).await;
     send_signal(&mock, UserSignal::Winch);
-    wait_for_names(&mut client, &["Flip Clock", "Signal Test", "Weather"]).await;
+    wait_for_names(&client, &["Flip Clock", "Signal Test", "Weather"]).await;
 
     std::fs::remove_dir_all(staging.join("signal-test")).expect("BUG: remove signal widget");
     send_signal(&mock, UserSignal::Winch);
-    wait_for_names(&mut client, &["Flip Clock", "Weather"]).await;
+    wait_for_names(&client, &["Flip Clock", "Weather"]).await;
 
     std::fs::remove_dir_all(&staging).expect("BUG: empty staged widget tree");
     send_signal(&mock, UserSignal::Winch);
-    wait_for_names(&mut client, &[]).await;
+    wait_for_names(&client, &[]).await;
 }

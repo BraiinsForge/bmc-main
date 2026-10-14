@@ -24,19 +24,18 @@
 
 mod common;
 
-use bmc_grpc::web::GetServerInstanceRequest;
-use bmc_grpc::web::metadata_service_client::MetadataServiceClient;
-use tonic::transport::Channel;
+use bmc_grpc::web::{GetServerInstanceRequest, MetadataServiceClient};
+use connectrpc::client::ClientConfig;
 use uuid::Uuid;
 
 const SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": "unavailable"}"#;
 
-async fn fetch_instance_id(channel: Channel) -> Uuid {
-    let id = MetadataServiceClient::new(channel)
+async fn fetch_instance_id(transport: common::Transport, config: ClientConfig) -> Uuid {
+    let id = MetadataServiceClient::new(transport, config)
         .get_server_instance(GetServerInstanceRequest {})
         .await
         .expect("BUG: get_server_instance failed")
-        .into_inner()
+        .into_owned()
         .server_instance_id;
     let parsed = Uuid::parse_str(&id).expect("server instance id is a valid UUID");
     assert_eq!(parsed.get_version_num(), 4, "server instance id is v4");
@@ -46,10 +45,10 @@ async fn fetch_instance_id(channel: Channel) -> Uuid {
 #[tokio::test]
 async fn same_process_reports_a_stable_id() {
     let mut mock = common::spawn_mock(SCENARIO);
-    let (channel, _cookie) = common::authenticated_channel(&mut mock).await;
+    let (transport, config) = common::authenticated_channel(&mut mock).await;
 
-    let first = fetch_instance_id(channel.clone()).await;
-    let second = fetch_instance_id(channel).await;
+    let first = fetch_instance_id(transport.clone(), config.clone()).await;
+    let second = fetch_instance_id(transport, config).await;
 
     assert_eq!(
         first, second,
@@ -60,16 +59,16 @@ async fn same_process_reports_a_stable_id() {
 #[tokio::test]
 async fn restarted_process_reports_a_different_id() {
     let mut mock = common::spawn_mock(SCENARIO);
-    let (channel, _cookie) = common::authenticated_channel(&mut mock).await;
-    let first = fetch_instance_id(channel).await;
+    let (transport, config) = common::authenticated_channel(&mut mock).await;
+    let first = fetch_instance_id(transport, config).await;
 
     // Kill the child; authenticated_channel() detects the death and respawns
     // a fresh process from the same mockfs, simulating an app restart.
     _ = mock.child.kill();
     _ = mock.child.wait();
 
-    let (channel, _cookie) = common::authenticated_channel(&mut mock).await;
-    let second = fetch_instance_id(channel).await;
+    let (transport, config) = common::authenticated_channel(&mut mock).await;
+    let second = fetch_instance_id(transport, config).await;
 
     assert_ne!(
         first, second,

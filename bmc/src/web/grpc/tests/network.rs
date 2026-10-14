@@ -22,13 +22,15 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use bmc_grpc::web::{EncryptionType, SetWifiRequest, network_service_server::NetworkService as _};
+use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest};
 use bmc_net::mock::MockNetworkManager;
+use buffa_types::google::protobuf::Empty;
+use connectrpc::{ErrorCode, ServiceResult};
 use futures::FutureExt as _;
 use tokio::sync::{Notify, watch};
-use tonic::{Code, Request};
 
 use super::boser_managed::StubBmcManager;
+use super::{no_session, wire_request};
 use crate::initial_setup::{InitSetupState, StateService, Uplink, WifiJoins};
 use crate::web::grpc::network::NetworkService;
 
@@ -45,12 +47,16 @@ fn service(network: MockNetworkManager, progress: &StateService) -> NetworkServi
     NetworkService::new(manager, wifi_joins)
 }
 
-fn join_home_net() -> Request<SetWifiRequest> {
-    Request::new(SetWifiRequest {
-        ssid: "HomeNet".to_owned(),
-        password: Some("secret".to_owned()),
-        encryption_type: EncryptionType::Wpa2.into(),
-    })
+async fn join_home_net(service: &NetworkService<StubBmcManager>) -> ServiceResult<Empty> {
+    wire_request!(
+        request,
+        SetWifiRequest {
+            ssid: "HomeNet".to_owned(),
+            password: Some("secret".to_owned()),
+            encryption_type: EncryptionType::Wpa2.into(),
+        }
+    );
+    service.set_wifi(no_session(), request).await
 }
 
 async fn wait_for_step(feed: &mut watch::Receiver<Option<InitSetupState>>, step: &InitSetupState) {
@@ -72,7 +78,7 @@ async fn a_web_ui_join_names_the_network_before_joining() {
         MockNetworkManager::default().with_join_gate(gate.clone()),
         &progress,
     );
-    let call = tokio::spawn(async move { service.set_wifi(join_home_net()).await });
+    let call = tokio::spawn(async move { join_home_net(&service).await });
 
     wait_for_step(
         &mut feed,
@@ -98,12 +104,11 @@ async fn a_failed_web_ui_join_reports_the_failure_and_errors() {
     let feed = progress.subscribe();
     let service = service(MockNetworkManager::default().with_failing_join(), &progress);
 
-    let status = service
-        .set_wifi(join_home_net())
+    let error = join_home_net(&service)
         .await
         .expect_err("the mock join fails");
 
-    assert_eq!(status.code(), Code::Internal);
+    assert_eq!(error.code, ErrorCode::Internal);
     assert_eq!(*feed.borrow(), Some(InitSetupState::WifiConnectionFailed));
 }
 
@@ -118,7 +123,7 @@ async fn a_join_outlives_a_client_that_hangs_up() {
     );
 
     assert!(
-        service.set_wifi(join_home_net()).now_or_never().is_none(),
+        join_home_net(&service).now_or_never().is_none(),
         "the join waits on the gate, so the call is dropped mid-join"
     );
     gate.notify_one();
@@ -137,7 +142,7 @@ async fn a_second_join_is_refused_until_the_first_ends() {
     ));
     let first = tokio::spawn({
         let service = service.clone();
-        async move { service.set_wifi(join_home_net()).await }
+        async move { join_home_net(&service).await }
     });
     wait_for_step(
         &mut feed,
@@ -149,12 +154,11 @@ async fn a_second_join_is_refused_until_the_first_ends() {
     )
     .await;
 
-    let status = service
-        .set_wifi(join_home_net())
+    let error = join_home_net(&service)
         .now_or_never()
         .expect("a refused join answers without waiting on the radio")
         .expect_err("the first join still holds the guard");
-    assert_eq!(status.code(), Code::FailedPrecondition);
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
 
     gate.notify_one();
     assert!(
@@ -163,7 +167,7 @@ async fn a_second_join_is_refused_until_the_first_ends() {
     );
     gate.notify_one();
     assert!(
-        service.set_wifi(join_home_net()).await.is_ok(),
+        join_home_net(&service).await.is_ok(),
         "the first join released the guard"
     );
 }
@@ -173,15 +177,14 @@ async fn a_failed_join_releases_the_guard() {
     let progress = StateService::new();
     let service = service(MockNetworkManager::default().with_failing_join(), &progress);
 
-    let _ = service.set_wifi(join_home_net()).await;
+    let _ = join_home_net(&service).await;
 
-    let status = service
-        .set_wifi(join_home_net())
+    let error = join_home_net(&service)
         .await
         .expect_err("the mock join fails");
     assert_eq!(
-        status.code(),
-        Code::Internal,
+        error.code,
+        ErrorCode::Internal,
         "the second join ran instead of being refused"
     );
 }

@@ -23,9 +23,9 @@ use std::sync::Arc;
 
 use bmc_grpc::web::{
     GetMetadataRequest, GetServerInstanceRequest, GetServerInstanceResponse, Metadata,
-    metadata_service_server::MetadataService as GrpcMetadataService,
+    MetadataService as GrpcMetadataService,
 };
-use tonic::Request;
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 
 use crate::BmcManager;
 
@@ -52,32 +52,33 @@ where
     }
 }
 
-#[async_trait::async_trait]
 impl<T> GrpcMetadataService for MetadataService<T>
 where
     T: BmcManager,
 {
     async fn get_metadata(
         &self,
-        _request: Request<GetMetadataRequest>,
-    ) -> Result<tonic::Response<Metadata>, tonic::Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, GetMetadataRequest>,
+    ) -> ServiceResult<Metadata> {
         let version = self
             .bmc_manager
             .version()
             .await
-            .ok_or_else(|| tonic::Status::internal("Failed to detect current version"))?;
+            .ok_or_else(|| ConnectError::internal("Failed to detect current version"))?;
 
-        Ok(tonic::Response::new(Metadata {
+        Response::ok(Metadata {
             version: version.full,
-        }))
+        })
     }
 
     async fn get_server_instance(
         &self,
-        _request: Request<GetServerInstanceRequest>,
-    ) -> Result<tonic::Response<GetServerInstanceResponse>, tonic::Status> {
-        Ok(tonic::Response::new(GetServerInstanceResponse {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, GetServerInstanceRequest>,
+    ) -> ServiceResult<GetServerInstanceResponse> {
+        Response::ok(GetServerInstanceResponse {
             server_instance_id: self.server_instance_id.clone(),
-        }))
+        })
     }
 }

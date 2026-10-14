@@ -19,6 +19,7 @@
 // the grant above.
 
 use super::super::*;
+use super::{grpc, grpc_web, transport, violation_fields};
 use crate::backlight::DisplayBacklightDriver;
 use crate::bootloader_config::BootloaderConfig;
 use crate::compositor::SettingUpdate;
@@ -29,16 +30,13 @@ use crate::{App, BmcManager, Configuration, UpgradeError, UpgradeMarker};
 use axum_extra::extract::cookie::Cookie;
 use bmc_button::{ButtonEventStream, Buttons};
 use bmc_grpc::web::{
-    ChangePasswordRequest, CreatePasswordRequest, GetTimezoneListResponse, GetTimezoneResponse,
-    NetworkConfig, NetworkInfoResponse, RemovePasswordRequest, ScanWifiResponse,
-    SetAutoUpgradeRequest, SetTimezoneRequest, SetWifiRequest, SettingsRequest,
-    WifiSavedNetworksResponse, WifiStatusResponse,
-    initial_setup_service_client::InitialSetupServiceClient,
-    network_service_client::NetworkServiceClient,
-    network_service_server::{NetworkService, NetworkServiceServer},
-    system_service_client::SystemServiceClient,
-    system_service_server::{SystemService, SystemServiceServer},
-    upgrade_service_client::UpgradeServiceClient,
+    ChangePasswordRequest, CheckForUpgradeRequest, CheckForUpgradeResponse, CreatePasswordRequest,
+    GetAutoUpgradeResponse, GetInstallableWidgetsResponse, GetTimezoneListResponse,
+    GetTimezoneResponse, InitialSetupServiceClient, NetworkConfig, NetworkConfigStatic,
+    NetworkInfoResponse, NetworkService, NetworkServiceClient, RemovePasswordRequest,
+    ScanWifiResponse, SetAutoUpgradeRequest, SetTimezoneRequest, SetWifiRequest, SettingsRequest,
+    StartUpgradeRequest, SystemService, SystemServiceClient, UpgradeProgress, UpgradeService,
+    UpgradeServiceClient, WifiSavedNetworksResponse, WifiStatusResponse, network_config::Protocol,
 };
 use bmc_led::led_driver::LedDriver;
 use bmc_net::mock::MockNetworkManager;
@@ -49,14 +47,17 @@ use bmc_upgrade::packages::{
     ApplyError, EstimateMode, InstallablePackage, PackageBackend, PackageGcError, PackageGcOutcome,
     PackageGcRequest, PackageProbe, PackageProbeError,
 };
-use prost::Message;
+use buffa_types::google::protobuf::{BoolValue, Empty};
+use connectrpc::client::ServiceTransport;
+use connectrpc::{
+    ErrorCode, RequestContext, Response, ServiceRequest, ServiceResult, ServiceStream,
+};
 use reqwest::Client;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{Mutex, watch};
-use tonic::{Code, Response};
 
 const UNREACHABLE: &str = "BUG: session manager is not called by these tests";
 const GATED_ROUTE_UNREACHABLE: &str = "BUG: gated production route reached its stub";
@@ -309,66 +310,83 @@ struct RecordingSystemService {
 }
 
 impl RecordingSystemService {
-    fn record(&self) -> Response<()> {
+    fn record(&self) -> ServiceResult<Empty> {
         self.calls.fetch_add(1, Ordering::Relaxed);
-        Response::new(())
+        Response::ok(Empty::default())
     }
 }
 
-#[async_trait::async_trait]
 impl SystemService for RecordingSystemService {
-    async fn has_password(&self, _request: tonic::Request<()>) -> Result<Response<bool>, Status> {
-        Ok(Response::new(false))
+    async fn has_password(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<BoolValue> {
+        Response::ok(BoolValue::default())
     }
 
     async fn create_password(
         &self,
-        _request: tonic::Request<CreatePasswordRequest>,
-    ) -> Result<Response<()>, Status> {
-        Ok(self.record())
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, CreatePasswordRequest>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 
     async fn change_password(
         &self,
-        _request: tonic::Request<ChangePasswordRequest>,
-    ) -> Result<Response<()>, Status> {
-        Ok(self.record())
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, ChangePasswordRequest>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 
     async fn remove_password(
         &self,
-        _request: tonic::Request<RemovePasswordRequest>,
-    ) -> Result<Response<()>, Status> {
-        Ok(self.record())
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, RemovePasswordRequest>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 
     async fn get_timezone(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<GetTimezoneResponse>, Status> {
-        Ok(Response::new(GetTimezoneResponse::default()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetTimezoneResponse> {
+        Response::ok(GetTimezoneResponse::default())
     }
 
     async fn set_timezone(
         &self,
-        _request: tonic::Request<SetTimezoneRequest>,
-    ) -> Result<Response<()>, Status> {
-        Ok(self.record())
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, SetTimezoneRequest>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 
     async fn get_timezone_list(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<GetTimezoneListResponse>, Status> {
-        Ok(Response::new(GetTimezoneListResponse::default()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetTimezoneListResponse> {
+        Response::ok(GetTimezoneListResponse::default())
     }
 
-    async fn factory_reset(&self, _request: tonic::Request<()>) -> Result<Response<()>, Status> {
-        Ok(self.record())
+    async fn factory_reset(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 
-    async fn reboot(&self, _request: tonic::Request<()>) -> Result<Response<()>, Status> {
-        Ok(self.record())
+    async fn reboot(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 }
 
@@ -377,57 +395,113 @@ struct RecordingNetworkService {
     calls: Arc<AtomicUsize>,
 }
 
-#[async_trait::async_trait]
+impl RecordingNetworkService {
+    fn record(&self) -> ServiceResult<Empty> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        Response::ok(Empty::default())
+    }
+}
+
 impl NetworkService for RecordingNetworkService {
     async fn get_network_info(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<NetworkInfoResponse>, Status> {
-        Ok(Response::new(NetworkInfoResponse::default()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<NetworkInfoResponse> {
+        Response::ok(NetworkInfoResponse::default())
     }
 
     async fn get_network_config(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<NetworkConfig>, Status> {
-        Ok(Response::new(NetworkConfig::default()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<NetworkConfig> {
+        Response::ok(NetworkConfig::default())
     }
 
     async fn set_network_config(
         &self,
-        _request: tonic::Request<NetworkConfig>,
-    ) -> Result<Response<()>, Status> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        Ok(Response::new(()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, NetworkConfig>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 
     async fn get_wifi_status(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<WifiStatusResponse>, Status> {
-        Ok(Response::new(WifiStatusResponse::default()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<WifiStatusResponse> {
+        Response::ok(WifiStatusResponse::default())
     }
 
     async fn get_wifi_saved_networks(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<WifiSavedNetworksResponse>, Status> {
-        Ok(Response::new(WifiSavedNetworksResponse::default()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<WifiSavedNetworksResponse> {
+        Response::ok(WifiSavedNetworksResponse::default())
     }
 
     async fn set_wifi(
         &self,
-        _request: tonic::Request<SetWifiRequest>,
-    ) -> Result<Response<()>, Status> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        Ok(Response::new(()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, SetWifiRequest>,
+    ) -> ServiceResult<Empty> {
+        self.record()
     }
 
     async fn scan_wifi(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<ScanWifiResponse>, Status> {
-        Ok(Response::new(ScanWifiResponse::default()))
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<ScanWifiResponse> {
+        Response::ok(ScanWifiResponse::default())
+    }
+}
+
+#[derive(Clone, Default)]
+struct RecordingUpgradeService;
+
+impl UpgradeService for RecordingUpgradeService {
+    async fn check_for_upgrade(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, CheckForUpgradeRequest>,
+    ) -> ServiceResult<CheckForUpgradeResponse> {
+        Response::ok(CheckForUpgradeResponse::default())
+    }
+
+    async fn get_installable_widgets(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetInstallableWidgetsResponse> {
+        Response::ok(GetInstallableWidgetsResponse::default())
+    }
+
+    async fn start_upgrade(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, StartUpgradeRequest>,
+    ) -> ServiceResult<ServiceStream<UpgradeProgress>> {
+        Ok(Response::stream(futures::stream::empty()))
+    }
+
+    async fn set_auto_upgrade(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, SetAutoUpgradeRequest>,
+    ) -> ServiceResult<Empty> {
+        Response::ok(Empty::default())
+    }
+
+    async fn get_auto_upgrade(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<GetAutoUpgradeResponse> {
+        Response::ok(GetAutoUpgradeResponse::default())
     }
 }
 
@@ -435,55 +509,60 @@ fn capabilities(product: Product) -> HardwareCapabilities {
     HardwareProfile::for_product(product).capabilities()
 }
 
-fn auth_interceptor() -> AuthInterceptor<StubSessionManager> {
-    AuthInterceptor {
-        session_manager: Arc::new(StubSessionManager),
-    }
+/// The three services Boser may own, served by recording stubs.
+fn owned_services(system: RecordingSystemService, network: RecordingNetworkService) -> Router {
+    Router::new()
+        .add_service(Arc::new(system))
+        .add_service(Arc::new(network))
+        .add_service(Arc::new(RecordingUpgradeService))
 }
 
-fn ownership_interceptor(product: Product) -> BoserOwnershipInterceptor {
-    BoserOwnershipInterceptor {
-        hardware_capabilities: capabilities(product),
-    }
+fn gated_router(product: Product, router: Router) -> axum::Router {
+    gated(router, Arc::new(StubSessionManager), capabilities(product))
 }
 
-fn service_method_paths(service_name: &str) -> Vec<String> {
-    let descriptor_set = prost_types::FileDescriptorSet::decode(web::FILE_DESCRIPTOR_SET)
-        .expect("BUG: generated gRPC descriptor set must decode");
-
-    for file in descriptor_set.file {
-        let package = file
-            .package
-            .expect("BUG: generated gRPC file must declare its package");
-        for service in file.service {
-            let name = service
-                .name
-                .expect("BUG: generated gRPC service must have a name");
-            if format!("{package}.{name}") == service_name {
-                return service
-                    .method
-                    .into_iter()
-                    .map(|method| {
-                        let method = method
-                            .name
-                            .expect("BUG: generated gRPC method must have a name");
-                        format!("/{service_name}/{method}")
-                    })
-                    .collect();
-            }
-        }
-    }
-
-    panic!("BUG: generated gRPC service {service_name} is missing");
-}
-
-pub(super) fn authenticated<T>(message: T) -> tonic::Request<T> {
-    let mut request = tonic::Request::new(message);
+async fn stub_session(mut request: Request) -> Request {
     request.extensions_mut().insert(StubSession);
     request
 }
 
-async fn production_routes(product: Product) -> (tempfile::TempDir, Routes) {
+/// `router` as the session layer leaves it for a logged-in caller.
+pub(super) fn with_session(router: axum::Router) -> axum::Router {
+    router.layer(axum::middleware::map_request(stub_session))
+}
+
+/// A session a gate check reads, as the session layer would have left it.
+fn session_extensions() -> http::Extensions {
+    let mut extensions = http::Extensions::new();
+    extensions.insert(StubSession);
+    extensions
+}
+
+fn system_client(router: &axum::Router) -> SystemServiceClient<ServiceTransport<axum::Router>> {
+    SystemServiceClient::new(transport(router.clone()), grpc())
+}
+
+fn network_client(router: &axum::Router) -> NetworkServiceClient<ServiceTransport<axum::Router>> {
+    NetworkServiceClient::new(transport(router.clone()), grpc())
+}
+
+pub(super) fn upgrade_client(
+    router: &axum::Router,
+) -> UpgradeServiceClient<ServiceTransport<axum::Router>> {
+    UpgradeServiceClient::new(transport(router.clone()), grpc())
+}
+
+/// The procedures `router` serves under `service_name`, with their leading slash.
+fn service_method_paths(router: &Router, service_name: &str) -> Vec<String> {
+    let prefix = format!("{service_name}/");
+    router
+        .methods()
+        .filter(|method| method.starts_with(&prefix))
+        .map(|method| format!("/{method}"))
+        .collect()
+}
+
+async fn production_router(product: Product) -> (tempfile::TempDir, axum::Router) {
     let (tempdir, app) = production_app(
         Arc::new(StubBmcManager::default()),
         Arc::new(RecordingCompositor::with_hardware_capabilities(
@@ -491,16 +570,16 @@ async fn production_routes(product: Product) -> (tempfile::TempDir, Routes) {
         )),
     )
     .await;
-    (tempdir, app.build_grpc_routes())
+    (tempdir, app.build_grpc_router())
 }
 
-/// Production routes for `product` with Boser at `boser`;
+/// The production router for `product` with Boser at `boser`;
 /// `route` replaces the upgrade route startup chose, so a test can publish the display by hand.
-pub(super) async fn upgrade_routes(
+pub(super) async fn upgrade_router(
     product: Product,
     boser: Option<SocketAddr>,
     route: Option<UpgradeRoute>,
-) -> (tempfile::TempDir, Routes) {
+) -> (tempfile::TempDir, axum::Router) {
     let (tempdir, app) = production_app_with_boser(
         Arc::new(StubBmcManager::default()),
         Arc::new(RecordingCompositor::with_hardware_capabilities(
@@ -513,7 +592,7 @@ pub(super) async fn upgrade_routes(
         Some(route) => app.with_upgrade_route(route),
         None => app,
     };
-    (tempdir, app.build_grpc_routes())
+    (tempdir, app.build_grpc_router())
 }
 
 async fn production_app(
@@ -595,147 +674,153 @@ async fn timezone_changes_reach_widgets_without_alarm_support() {
         .await;
 }
 
-fn ownership_intercepted_routes(
-    product: Product,
-    system: RecordingSystemService,
-    network: RecordingNetworkService,
-) -> Routes {
-    let auth_interceptor = auth_interceptor();
-    let ownership_interceptor = ownership_interceptor(product);
-    Routes::new(authenticated_with_boser_ownership(
-        SystemServiceServer::new(system),
-        ownership_interceptor,
-        auth_interceptor.clone(),
-    ))
-    .add_service(authenticated_with_boser_ownership(
-        NetworkServiceServer::new(network),
-        ownership_interceptor,
-        auth_interceptor,
-    ))
-}
-
-async fn call_boser_owned_mutations(routes: Routes) -> Vec<Result<(), Status>> {
-    let mut system = SystemServiceClient::new(routes.clone());
-    let mut network = NetworkServiceClient::new(routes);
+async fn call_boser_owned_mutations(router: &axum::Router) -> Vec<Result<(), ConnectError>> {
+    let system = system_client(router);
+    let network = network_client(router);
 
     vec![
         system
-            .create_password(authenticated(CreatePasswordRequest::default()))
+            .create_password(CreatePasswordRequest::default())
             .await
             .map(|_| ()),
         system
-            .change_password(authenticated(ChangePasswordRequest::default()))
+            .change_password(ChangePasswordRequest::default())
             .await
             .map(|_| ()),
         system
-            .remove_password(authenticated(RemovePasswordRequest::default()))
+            .remove_password(RemovePasswordRequest::default())
             .await
             .map(|_| ()),
         system
-            .set_timezone(authenticated(SetTimezoneRequest::default()))
+            .set_timezone(SetTimezoneRequest::default())
             .await
             .map(|_| ()),
-        system.factory_reset(authenticated(())).await.map(|_| ()),
-        system.reboot(authenticated(())).await.map(|_| ()),
+        system.factory_reset(Empty::default()).await.map(|_| ()),
+        system.reboot(Empty::default()).await.map(|_| ()),
         network
-            .set_network_config(authenticated(NetworkConfig::default()))
+            .set_network_config(NetworkConfig::default())
             .await
             .map(|_| ()),
         network
-            .set_wifi(authenticated(SetWifiRequest::default()))
+            .set_wifi(SetWifiRequest::default())
             .await
             .map(|_| ()),
     ]
 }
 
+fn assert_boser_managed(error: &ConnectError) {
+    assert_eq!(error.code, ErrorCode::Unimplemented);
+    assert_eq!(error.message.as_deref(), Some(BOSER_MANAGED_STATUS_MESSAGE));
+}
+
 #[tokio::test]
 async fn production_routes_gate_system_and_network_mutations() {
-    let (_tempdir, routes) = production_routes(Product::Bfm100).await;
-    let mut system = SystemServiceClient::new(routes.clone());
-    let mut network = NetworkServiceClient::new(routes);
+    let (_tempdir, router) = production_router(Product::Bfm100).await;
+    let router = with_session(router);
+    let system = system_client(&router);
+    let network = network_client(&router);
 
     let results = [
-        system.reboot(authenticated(())).await.map(|_| ()),
+        system.reboot(Empty::default()).await.map(|_| ()),
         network
-            .set_wifi(authenticated(SetWifiRequest::default()))
+            .set_wifi(SetWifiRequest::default())
             .await
             .map(|_| ()),
     ];
 
     for result in results {
-        let status = result.expect_err("managed production route must reject mutation");
-        assert_eq!(status.code(), Code::Unimplemented);
-        assert_eq!(status.message(), BOSER_MANAGED_STATUS_MESSAGE);
+        let error = result.expect_err("managed production route must reject mutation");
+        assert_boser_managed(&error);
     }
 }
 
 #[tokio::test]
 async fn production_routes_preserve_self_managed_network_configuration() {
-    let (_tempdir, routes) = production_routes(Product::Bmc100).await;
-    let mut network = NetworkServiceClient::new(routes);
+    let (_tempdir, router) = production_router(Product::Bmc100).await;
+    let network = network_client(&with_session(router));
 
     network
-        .set_network_config(authenticated(NetworkConfig {
-            protocol: Some(bmc_grpc::web::network_config::Protocol::Dhcp(())),
-        }))
+        .set_network_config(NetworkConfig {
+            protocol: Some(Protocol::Dhcp(Empty::default())),
+        })
         .await
         .expect("BUG: self-managed production route must reach the network handler");
 }
 
 #[tokio::test]
+async fn field_violations_reach_clients_over_grpc_and_grpc_web() {
+    let (_tempdir, router) = production_router(Product::Bmc100).await;
+    let router = with_session(router);
+    let invalid_address = NetworkConfig {
+        protocol: Some(Protocol::Static(NetworkConfigStatic {
+            address: "not-an-address".to_owned(),
+            netmask: "255.255.255.0".to_owned(),
+            gateway: "192.168.1.1".to_owned(),
+            dns_servers: vec!["192.168.1.1".to_owned()],
+        })),
+    };
+
+    for (protocol, config) in [("gRPC", grpc()), ("gRPC-Web", grpc_web())] {
+        let error = NetworkServiceClient::new(transport(router.clone()), config)
+            .set_network_config(invalid_address.clone())
+            .await
+            .expect_err("an invalid address is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidArgument, "{protocol}");
+        assert_eq!(violation_fields(&error), ["address"], "{protocol}");
+    }
+}
+
+#[tokio::test]
 async fn managed_production_routes_keep_initial_setup_available() {
-    let (_tempdir, routes) = production_routes(Product::Bfm100).await;
-    let mut initial_setup = InitialSetupServiceClient::new(routes);
+    let (_tempdir, router) = production_router(Product::Bfm100).await;
+    let initial_setup = InitialSetupServiceClient::new(transport(router), grpc());
 
     let settings = initial_setup
-        .get_settings_data(())
+        .get_settings_data(Empty::default())
         .await
         .expect("managed production route must reach the initial-setup handler")
-        .into_inner();
+        .into_owned();
 
     assert!(
         !settings.timezones.is_empty(),
         "initial setup must return its timezone choices"
     );
 
-    let status = initial_setup
+    let error = initial_setup
         .setup_device(SettingsRequest::default())
         .await
         .expect_err("an invalid setup request must reach field validation");
-    assert_eq!(status.code(), Code::InvalidArgument);
+    assert_eq!(error.code, ErrorCode::InvalidArgument);
 }
 
 /// Boser owns the automatic-upgrade preference.
 #[tokio::test]
 async fn managed_production_routes_reject_the_auto_upgrade_rpcs() {
-    let (_tempdir, routes) = production_routes(Product::Bfm100).await;
-    let mut upgrade = UpgradeServiceClient::new(routes);
+    let (_tempdir, router) = production_router(Product::Bfm100).await;
+    let upgrade = upgrade_client(&with_session(router));
 
     let results = [
         upgrade
-            .set_auto_upgrade(authenticated(SetAutoUpgradeRequest::default()))
+            .set_auto_upgrade(SetAutoUpgradeRequest::default())
             .await
             .map(|_| ()),
-        upgrade
-            .get_auto_upgrade(authenticated(()))
-            .await
-            .map(|_| ()),
+        upgrade.get_auto_upgrade(Empty::default()).await.map(|_| ()),
     ];
 
     for result in results {
-        let status = result.expect_err("managed auto-upgrade RPC must be rejected");
-        assert_eq!(status.code(), Code::Unimplemented);
-        assert_eq!(status.message(), BOSER_MANAGED_STATUS_MESSAGE);
+        let error = result.expect_err("managed auto-upgrade RPC must be rejected");
+        assert_boser_managed(&error);
     }
 }
 
 #[tokio::test]
 async fn self_managed_production_routes_keep_upgrade_available() {
-    let (_tempdir, routes) = production_routes(Product::Bmc100).await;
-    let mut upgrade = UpgradeServiceClient::new(routes);
+    let (_tempdir, router) = production_router(Product::Bmc100).await;
+    let upgrade = upgrade_client(&with_session(router));
 
     upgrade
-        .get_auto_upgrade(authenticated(()))
+        .get_auto_upgrade(Empty::default())
         .await
         .expect("self-managed production route must reach the upgrade handler");
 }
@@ -745,19 +830,17 @@ async fn managed_mutations_are_rejected_before_handlers() {
     let system = RecordingSystemService::default();
     let network = RecordingNetworkService::default();
     let calls = [system.calls.clone(), network.calls.clone()];
-
-    let results = call_boser_owned_mutations(ownership_intercepted_routes(
+    let router = with_session(gated_router(
         Product::Bfm100,
-        system,
-        network,
-    ))
-    .await;
+        owned_services(system, network),
+    ));
+
+    let results = call_boser_owned_mutations(&router).await;
 
     assert_eq!(results.len(), 8);
     for result in results {
-        let status = result.expect_err("managed mutation must be rejected");
-        assert_eq!(status.code(), Code::Unimplemented);
-        assert_eq!(status.message(), BOSER_MANAGED_STATUS_MESSAGE);
+        let error = result.expect_err("managed mutation must be rejected");
+        assert_boser_managed(&error);
     }
     assert_eq!(
         calls
@@ -773,13 +856,12 @@ async fn self_managed_mutations_reach_handlers() {
     let system = RecordingSystemService::default();
     let network = RecordingNetworkService::default();
     let calls = [system.calls.clone(), network.calls.clone()];
-
-    let results = call_boser_owned_mutations(ownership_intercepted_routes(
+    let router = with_session(gated_router(
         Product::Bmc100,
-        system,
-        network,
-    ))
-    .await;
+        owned_services(system, network),
+    ));
+
+    let results = call_boser_owned_mutations(&router).await;
 
     for result in results {
         result.expect("self-managed mutation must reach its handler");
@@ -795,155 +877,159 @@ async fn self_managed_mutations_reach_handlers() {
 
 #[tokio::test]
 async fn authentication_precedes_ownership_check() {
-    let routes = ownership_intercepted_routes(
+    let router = gated_router(
         Product::Bfm100,
-        RecordingSystemService::default(),
-        RecordingNetworkService::default(),
+        owned_services(
+            RecordingSystemService::default(),
+            RecordingNetworkService::default(),
+        ),
     );
-    let mut system = SystemServiceClient::new(routes);
 
-    let status = system
-        .reboot(tonic::Request::new(()))
+    let error = system_client(&router)
+        .reboot(Empty::default())
         .await
         .expect_err("missing session must be rejected first");
 
-    assert_eq!(status.code(), Code::Unauthenticated);
+    assert_eq!(error.code, ErrorCode::Unauthenticated);
 }
 
 #[tokio::test]
-async fn auth_interceptor_does_not_enforce_ownership() {
-    let mut request = Request::builder()
-        .uri(format!(
-            "/{}/Reboot",
-            web::system_service_server::SERVICE_NAME
-        ))
-        .body(Body::empty())
-        .expect("BUG: static gRPC request is valid");
-    request.extensions_mut().insert(StubSession);
+async fn a_bmc_owned_call_passes_the_gate_on_a_managed_platform() {
+    let router = with_session(gated_router(
+        Product::Bfm100,
+        owned_services(
+            RecordingSystemService::default(),
+            RecordingNetworkService::default(),
+        ),
+    ));
 
-    auth_interceptor()
-        .intercept(request)
+    system_client(&router)
+        .has_password(Empty::default())
         .await
-        .expect("authentication must not enforce Boser ownership");
+        .expect("a BMC-owned method stays available");
 }
 
 const EXPECTED_MANAGED_RPC_OWNERS: [(&str, &str, ManagedRpcOwner); 21] = [
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "HasPassword",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "CreatePassword",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "ChangePassword",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "RemovePassword",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "GetTimezone",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "SetTimezone",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "GetTimezoneList",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "FactoryReset",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::system_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
         "Reboot",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::network_service_server::SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
         "GetNetworkInfo",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::network_service_server::SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
         "GetNetworkConfig",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::network_service_server::SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
         "SetNetworkConfig",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::network_service_server::SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
         "GetWifiStatus",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::network_service_server::SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
         "GetWifiSavedNetworks",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::network_service_server::SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
         "SetWifi",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::network_service_server::SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
         "ScanWifi",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::upgrade_service_server::SERVICE_NAME,
+        web::UPGRADE_SERVICE_SERVICE_NAME,
         "CheckForUpgrade",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::upgrade_service_server::SERVICE_NAME,
+        web::UPGRADE_SERVICE_SERVICE_NAME,
         "GetInstallableWidgets",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::upgrade_service_server::SERVICE_NAME,
+        web::UPGRADE_SERVICE_SERVICE_NAME,
         "StartUpgrade",
         ManagedRpcOwner::Bmc,
     ),
     (
-        web::upgrade_service_server::SERVICE_NAME,
+        web::UPGRADE_SERVICE_SERVICE_NAME,
         "SetAutoUpgrade",
         ManagedRpcOwner::Boser,
     ),
     (
-        web::upgrade_service_server::SERVICE_NAME,
+        web::UPGRADE_SERVICE_SERVICE_NAME,
         "GetAutoUpgrade",
         ManagedRpcOwner::Boser,
     ),
 ];
 
 #[test]
-fn every_ownership_intercepted_service_method_has_the_expected_owner() {
+fn every_ownership_gated_service_method_has_the_expected_owner() {
+    let router = owned_services(
+        RecordingSystemService::default(),
+        RecordingNetworkService::default(),
+    );
     let mut actual_paths = [
-        web::system_service_server::SERVICE_NAME,
-        web::network_service_server::SERVICE_NAME,
-        web::upgrade_service_server::SERVICE_NAME,
+        web::SYSTEM_SERVICE_SERVICE_NAME,
+        web::NETWORK_SERVICE_SERVICE_NAME,
+        web::UPGRADE_SERVICE_SERVICE_NAME,
     ]
     .into_iter()
-    .flat_map(service_method_paths)
+    .flat_map(|service| service_method_paths(&router, service))
     .collect::<Vec<_>>();
     let mut expected_paths = EXPECTED_MANAGED_RPC_OWNERS
         .iter()
@@ -959,24 +1045,28 @@ fn every_ownership_intercepted_service_method_has_the_expected_owner() {
     }
 }
 
-#[tokio::test]
-async fn ownership_interceptor_enforces_every_managed_rpc_owner() {
+#[test]
+fn the_gate_enforces_every_managed_rpc_owner() {
+    let gate = AccessGate {
+        router: Arc::new(owned_services(
+            RecordingSystemService::default(),
+            RecordingNetworkService::default(),
+        )),
+        session_manager: Arc::new(StubSessionManager),
+        hardware_capabilities: capabilities(Product::Bfm100),
+    };
+    let session = session_extensions();
+
     for (service, method, expected_owner) in EXPECTED_MANAGED_RPC_OWNERS {
         let path = format!("/{service}/{method}");
-        let request = Request::builder()
-            .uri(path)
-            .body(Body::empty())
-            .expect("BUG: static gRPC request is valid");
-        let result = ownership_interceptor(Product::Bfm100)
-            .intercept(request)
-            .await;
+        let result = gate.check(&path, &session);
         match expected_owner {
             ManagedRpcOwner::Bmc => {
                 result.expect("BMC-owned operation must remain available");
             }
             ManagedRpcOwner::Boser => {
-                let status = result.expect_err("Boser-owned operation must be rejected");
-                assert_eq!(status.code(), Code::Unimplemented);
+                let error = result.expect_err("Boser-owned operation must be rejected");
+                assert_eq!(error.code, ErrorCode::Unimplemented);
             }
         }
     }

@@ -23,7 +23,7 @@
 //! The transport is `ureq` (HTTP/1.1 with native chunked-transfer) plus a thin
 //! local helper for the 5-byte gRPC frame header.
 
-use prost::Message;
+use buffa::{Message, MessageField};
 use std::time::Duration;
 
 use bmc_grpc::web;
@@ -131,11 +131,12 @@ impl GrpcClient {
         self.ensure_session()?;
         let req = web::SetLedEffectRequest {
             effect: preset.effect.into(),
-            color: Some(web::RgbColor {
+            color: web::RgbColor {
                 r: u32::from(preset.r),
                 g: u32::from(preset.g),
                 b: u32::from(preset.b),
-            }),
+            }
+            .into(),
             period_ms: preset.period_ms,
             duration_ms: 0,
         };
@@ -151,7 +152,7 @@ impl GrpcClient {
         self.ensure_session()?;
         let req = web::SetLedEffectRequest {
             effect: LedEffectType::None.into(),
-            color: None,
+            color: MessageField::none(),
             period_ms: 0,
             duration_ms: 0,
         };
@@ -170,9 +171,9 @@ impl GrpcClient {
             "/braiins.bmc.web.ConfigurationService/GetSoundVolumeSettings",
             &[], // request type is google.protobuf.Empty; empty proto encodes to zero bytes
         )?;
-        let settings = web::SoundVolumeSettingsResponse::decode(payload.as_slice())
+        let settings = web::SoundVolumeSettingsResponse::decode_from_slice(&payload)
             .map_err(|e| format!("decode SoundVolumeSettingsResponse: {e}"))?;
-        Ok(settings.volume.map_or(0, |v| v.value as u8))
+        Ok(settings.volume.as_option().map_or(0, |v| v.value as u8))
     }
 
     fn ensure_session(&mut self) -> Result<(), String> {
@@ -186,7 +187,7 @@ impl GrpcClient {
             "/braiins.bmc.web.AuthenticationService/Login",
             &req.encode_to_vec(),
         )?;
-        let response = web::LoginResponse::decode(payload.as_slice())
+        let response = web::LoginResponse::decode_from_slice(&payload)
             .map_err(|e| format!("decode LoginResponse: {e}"))?;
         if response.token.is_empty() {
             return Err("login response contained an empty session token".into());
@@ -196,7 +197,7 @@ impl GrpcClient {
     }
 
     /// Send one gRPC-Web request and return the first frame's protobuf
-    /// payload, ready to feed to [`prost::Message::decode`]. `proto` is the
+    /// payload, ready to feed to [`Message::decode_from_slice`]. `proto` is the
     /// already-encoded request message (empty slice for
     /// `google.protobuf.Empty`).
     fn call(&self, path: &str, proto: &[u8]) -> Result<Vec<u8>, String> {
@@ -255,7 +256,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
 
-    use prost::Message;
+    use buffa::Message;
 
     use super::{GrpcClient, grpc_web_frame, web};
 

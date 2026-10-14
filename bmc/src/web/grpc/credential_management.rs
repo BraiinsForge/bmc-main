@@ -20,28 +20,25 @@
 // the grant above.
 
 use bmc_grpc::web;
-use tonic::{Request, Response, Status};
+use buffa_types::google::protobuf::Empty;
+use connectrpc::{RequestContext, Response, ServiceRequest, ServiceResult};
 
 use super::scene_management::scalar_field_to_proto;
 use crate::credential;
 
 pub(crate) struct CredentialManagementService;
 
-#[async_trait::async_trait]
-impl web::credential_management_service_server::CredentialManagementService
-    for CredentialManagementService
-{
+impl web::CredentialManagementService for CredentialManagementService {
     async fn get_credential_types(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<web::GetCredentialTypesResponse>, Status> {
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, Empty>,
+    ) -> ServiceResult<web::GetCredentialTypesResponse> {
         let credential_types = credential::builtins()
             .iter()
             .map(credential_type_to_proto)
             .collect();
-        Ok(Response::new(web::GetCredentialTypesResponse {
-            credential_types,
-        }))
+        Response::ok(web::GetCredentialTypesResponse { credential_types })
     }
 }
 
@@ -55,13 +52,21 @@ fn credential_type_to_proto(t: &credential::CredentialType) -> web::CredentialTy
             .iter()
             .map(|(key, field)| scalar_field_to_proto(key.as_str(), field))
             .collect(),
-        egress: t.egress.as_ref().map(|e| web::EgressPolicy {
-            allow_hosts: e.allow_hosts.clone(),
-        }),
-        icon: t.icon.as_ref().map(|i| web::Icon {
-            mime_type: i.mime_type.clone(),
-            data: i.data.clone(),
-        }),
+        egress: t
+            .egress
+            .as_ref()
+            .map(|e| web::EgressPolicy {
+                allow_hosts: e.allow_hosts.clone(),
+            })
+            .into(),
+        icon: t
+            .icon
+            .as_ref()
+            .map(|i| web::Icon {
+                mime_type: i.mime_type.clone(),
+                data: i.data.clone(),
+            })
+            .into(),
     }
 }
 
@@ -88,7 +93,7 @@ mod tests {
         );
 
         let userpass = credential_type_to_proto(&find("generic-userpass"));
-        assert!(userpass.egress.is_none(), "generics carry no egress pin");
+        assert!(userpass.egress.is_unset(), "generics carry no egress pin");
         let keys: Vec<_> = userpass.fields.iter().map(|f| f.key.clone()).collect();
         assert_eq!(keys, vec!["username".to_owned(), "password".to_owned()]);
     }

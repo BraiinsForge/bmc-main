@@ -123,7 +123,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
     }
 
     #[cfg(test)]
-    pub(crate) fn build_grpc_routes(self) -> tonic::service::Routes {
+    pub(crate) fn build_grpc_router(self) -> axum::Router {
         self.into_grpc_web().1.build()
     }
 
@@ -164,7 +164,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         .build();
         let grpc_router = grpc_web
             .build()
-            .into_axum_router()
             .layer(session::SessionLayer::new(session_manager.clone()))
             .layer(no_password::NoPasswordLayer::new(session_manager))
             .layer(tower_cookies::CookieManagerLayer::new());
@@ -190,8 +189,8 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 // rest, gRPC-web is boser's and goes to the HTTP router to be
                 // forwarded; it is the only flavour that crosses the HTTP/1.1
                 // proxy, and boser's native gRPC has its own listener anyway.
-                // Everything else stays with tonic, which answers UNIMPLEMENTED
-                // rather than the HTTP router's 405.
+                // Everything else stays with the gRPC router, which answers
+                // UNIMPLEMENTED rather than the HTTP router's 405.
                 let boser_web =
                     boser_proxied && !ours && content_type.starts_with(b"application/grpc-web");
                 if boser_web { HTTP } else { GRPC }
