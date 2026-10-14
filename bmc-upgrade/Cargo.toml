@@ -5,6 +5,11 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["Braiins <braiins@braiins.com>"]
 
+# The profile wrapper template the validator compares uploads against;
+# it lives beside its nix consumer so the two cannot drift.
+[package.metadata.nix]
+include = ["../nix/wasm-widget-wrapper.sh"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -12,6 +17,8 @@ bmc-nix.workspace = true
 bmc-platform.workspace = true
 bmc-scheduler.workspace = true
 bmc-upgrade-types.workspace = true
+bmc-wasm-protocol.workspace = true
+bmc-widget-manifest.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 data-encoding.workspace = true

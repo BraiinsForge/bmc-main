@@ -29,3 +29,4 @@ pub mod packages;
 pub mod phase;
 pub mod upgrader;
 mod utils;
+pub mod widget_package;

@@ -63,6 +63,8 @@ pub type CredentialKey = ParamKey;
 
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_SUBNAME_LENGTH: usize = 30;
+/// Semver puts no cap on pre-release and build parts.
+const MAX_VERSION_LENGTH: usize = 64;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
 /// Shorter than the widget's own name: a slot label sits inline beside a picker.
 const MAX_CREDENTIAL_LABEL_LENGTH: usize = 40;
@@ -94,6 +96,10 @@ pub enum ManifestError {
         version: String,
         source: semver::Error,
     },
+
+    /// The `version` field exceeded the declared length cap.
+    #[error("version exceeds maximum length of {max} characters")]
+    VersionTooLong { max: usize },
 
     /// The `name` field exceeded the declared length cap.
     #[error("name exceeds maximum length of {max} characters")]
@@ -433,6 +439,12 @@ impl Manifest {
             return Err(ManifestError::InvalidUuidVersion(
                 self.uid.get_version_num(),
             ));
+        }
+
+        if self.version.to_string().len() > MAX_VERSION_LENGTH {
+            return Err(ManifestError::VersionTooLong {
+                max: MAX_VERSION_LENGTH,
+            });
         }
 
         if self.name.len() > MAX_NAME_LENGTH {
@@ -1028,6 +1040,29 @@ mod tests {
         );
         let result = Manifest::from_str(&json);
         assert!(matches!(result, Err(ManifestError::NameTooLong { .. })));
+    }
+
+    #[test]
+    fn reject_version_too_long() {
+        let manifest = |version: &str| {
+            Manifest::from_str(&format!(
+                r#"{{
+                    "uid": "550e8400-e29b-41d4-a716-446655440000",
+                    "version": "{version}",
+                    "name": "Test",
+                    "description": "Test",
+                    "binary": "bin/test",
+                    "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
+                }}"#
+            ))
+        };
+        let at_cap = format!("1.0.0-{}", "a".repeat(MAX_VERSION_LENGTH - "1.0.0-".len()));
+
+        assert!(manifest(&at_cap).is_ok());
+        assert!(matches!(
+            manifest(&format!("{at_cap}a")),
+            Err(ManifestError::VersionTooLong { max: 64 })
+        ));
     }
 
     #[test]
