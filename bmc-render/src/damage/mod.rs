@@ -317,6 +317,134 @@ fn sin_range(start: f32, end: f32) -> (f32, f32) {
     (lo, hi)
 }
 
+/// Box around an arc stroke of `half_width`
+/// whose centre line runs over `angles`, ascending,
+/// measured clockwise from 12 o'clock as the renderer does.
+///
+/// Padding the centre line's bounds by the half width on every side
+/// also covers a round cap, which is a disc of that radius on the line's end.
+fn sector_bounds(centre: (f32, f32), radius: f32, angles: (f32, f32), half_width: f32) -> Rect {
+    let (sin_lo, sin_hi) = sin_range(angles.0, angles.1);
+    let (cos_lo, cos_hi) = cos_range(angles.0, angles.1);
+    let (left, right) = (centre.0 + radius * sin_lo, centre.0 + radius * sin_hi);
+    let (top, bottom) = (centre.1 - radius * cos_hi, centre.1 - radius * cos_lo);
+    Rect::new(
+        left - half_width,
+        top - half_width,
+        right - left + 2.0 * half_width,
+        bottom - top + 2.0 * half_width,
+    )
+}
+
+/// The angles an arc's stroke can cover, in radians clockwise from 12 o'clock.
+#[derive(Clone, Copy)]
+enum ArcSpan {
+    /// Between `start` and `end`, with `start <= end`.
+    Sector { start: f32, end: f32 },
+    /// Anywhere on the ring.
+    FullRing,
+}
+
+impl ArcSpan {
+    /// What a stroke from `start` to `end` covers.
+    ///
+    /// A negative sweep covers the ring too: femtovg 0.20 `Path::arc` adds full
+    /// turns until a hole-wound sweep is positive, so it paints the long way round.
+    fn between(start: f32, end: f32) -> Self {
+        if end < start || end - start >= TAU {
+            Self::FullRing
+        } else {
+            Self::Sector { start, end }
+        }
+    }
+}
+
+/// What a transition on an arc, its direct child, moves the arc through.
+///
+/// The renderer replaces the arc's interpolated geometry outright
+/// rather than composing it like the transforms in [`Transform`].
+#[derive(Clone, Copy)]
+struct ArcTransition {
+    span: ArcSpan,
+    /// Every radius the eased transition reaches, ascending.
+    radius: (f32, f32),
+}
+
+/// Where a [`DrawCommand::Arc`] strokes, with its angles in radians
+/// clockwise from 12 o'clock.
+#[derive(Clone, Copy)]
+struct ArcGeometry {
+    centre: (f32, f32),
+    radius: f32,
+    start_angle: f32,
+    end_angle: f32,
+    width: f32,
+}
+
+impl ArcGeometry {
+    fn of(draw: &DrawCommand) -> Option<Self> {
+        let DrawCommand::Arc {
+            cx,
+            cy,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            ..
+        } = *draw
+        else {
+            return None;
+        };
+        Some(Self {
+            centre: (cx, cy),
+            radius,
+            start_angle,
+            end_angle,
+            width,
+        })
+    }
+}
+
+/// Canvas-local box of an arc: the sector it or its transition can sweep,
+/// painted within its ring.
+///
+/// A `Scale` animation scales an arc's radius and stroke about the ring's centre,
+/// as it scales an icon about its box's, so the sector goes through the same
+/// [`Transform::apply_within`]. A transition moves the radius alone,
+/// so the stroke keeps its width at every radius in between.
+fn arc_bounds(
+    arc: ArcGeometry,
+    transition: Option<ArcTransition>,
+    transform: &Transform,
+    canvas: Rect,
+) -> Rect {
+    let (span, (least, most)) = transition.map_or_else(
+        || {
+            (
+                ArcSpan::between(arc.start_angle, arc.end_angle),
+                (arc.radius, arc.radius),
+            )
+        },
+        |transition| (transition.span, transition.radius),
+    );
+    let half_width = arc.width / 2.0;
+    // femtovg draws a negative radius mirrored through the centre.
+    let reach = least.abs().max(most) + half_width;
+    let (cx, cy) = arc.centre;
+    let ring = Rect::new(cx - reach, cy - reach, 2.0 * reach, 2.0 * reach);
+    let painted = match span {
+        // Each point of the centre line moves along its ray as the radius changes,
+        // so the sectors at both ends of the range cover every radius between.
+        ArcSpan::Sector { start, end } if least >= 0.0 => {
+            let mut painted = sector_bounds(arc.centre, least, (start, end), half_width);
+            painted.union(sector_bounds(arc.centre, most, (start, end), half_width));
+            painted
+        }
+        ArcSpan::Sector { .. } | ArcSpan::FullRing => ring,
+    };
+    transform.apply_within(ring, painted, canvas.w, canvas.h)
+}
+
 /// Slack on every side for femtovg's antialiasing fringe: `expand_fill`
 /// displaces a ribbon about half a fringe width past the geometry `bounded`
 /// returns. Whether flooring absorbs it depends on where the edge lands, so
@@ -458,7 +586,7 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
             inner,
             ..
         } => {
-            let transform = modified_transform(
+            let modification = modified_transform(
                 transform,
                 animations,
                 transition.as_ref(),
@@ -466,7 +594,14 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
                 scope.transitions,
                 scope.canvas_index,
             )?;
-            bounded(inner, transform, scope)
+            match modification {
+                Modification::Composed(transform) => bounded(inner, transform, scope),
+                Modification::ArcTransition {
+                    transform,
+                    arc,
+                    transition,
+                } => Some(arc_bounds(arc, Some(transition), &transform, canvas)),
+            }
         }
 
         // The shadow renders its inner draw into a canvas-sized layer and
@@ -513,22 +648,8 @@ fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Optio
             canvas.w,
             canvas.h,
         )),
-        // Both ends of an arc transition stay inside the full ring: an
-        // interpolated sweep only shortens it, and a moving start angle rotates
-        // within it.
-        DrawCommand::Arc {
-            cx,
-            cy,
-            radius,
-            width,
-            ..
-        } => {
-            let reach = radius + width / 2.0;
-            Some(transform.apply(
-                Rect::new(cx - reach, cy - reach, 2.0 * reach, 2.0 * reach),
-                canvas.w,
-                canvas.h,
-            ))
+        DrawCommand::Arc { .. } => {
+            ArcGeometry::of(draw).map(|arc| arc_bounds(arc, None, &transform, canvas))
         }
         // Text extents depend on shaping the host has not done at this point,
         // and a stroked path straddles its points by half a width this level
@@ -577,7 +698,20 @@ fn svg_bound(leaf: Rect, icon_id: Option<SvgId>, transform: Transform, scope: &S
         .apply_within(leaf, painted, canvas_w, canvas_h)
 }
 
-/// The transform range a `Modified` wrapper adds, or `None` when one of its
+/// What a `Modified` wrapper does to the draw inside it.
+enum Modification {
+    /// Moves it by a range the renderer composes, as [`Transform`] accumulates.
+    Composed(Transform),
+    /// Its transition replaces `arc`, the direct child, with interpolated geometry
+    /// on top of `transform`.
+    ArcTransition {
+        transform: Transform,
+        arc: ArcGeometry,
+        transition: ArcTransition,
+    },
+}
+
+/// What a `Modified` wrapper does to its draw, or `None` when one of its
 /// payloads moves the draw in a way this module cannot bound.
 fn modified_transform(
     transform: Transform,
@@ -586,7 +720,7 @@ fn modified_transform(
     inner: &DrawCommand,
     transitions: &HashMap<TransitionStateKey, TransitionState>,
     canvas_index: u16,
-) -> Option<Transform> {
+) -> Option<Modification> {
     let mut transform = transform;
     for anim in animations {
         let (lo, hi) = animated_range(anim);
@@ -602,7 +736,7 @@ fn modified_transform(
         };
     }
     let Some(def) = transition else {
-        return Some(transform);
+        return Some(Modification::Composed(transform));
     };
     // The renderer applies the interpolation as a delta against the tree's
     // current values: `target + delta * (1 - eased)`.
@@ -641,13 +775,43 @@ fn modified_transform(
             from.rotation,
             target.rotation,
         )));
-    if target.w > 0.0 {
+    let direct_arc = ArcGeometry::of(inner);
+    if target.w > 0.0 && direct_arc.is_none() {
         // Width interpolates the same way, so the reachable scale applies
         // the delta's factor about the target rather than the raw ratio.
         let ratio_delta = from.w / target.w - 1.0;
         transform = transform.compose_scale((1.0 + ratio_delta * near, 1.0 + ratio_delta * far));
     }
-    Some(transform)
+    // The renderer interpolates an arc's radius, start and sweep
+    // only when the arc is the transition's direct child.
+    // While the sweep stays non-negative it paints between the two ends.
+    // The start takes the shortest way round, like the rotation above.
+    let Some(arc) = direct_arc else {
+        return Some(Modification::Composed(transform));
+    };
+    let (radius_lo, radius_hi) = delta_range(from.w - target.w);
+    let (sweep_lo, _) = delta_range(from.arc_sweep - target.arc_sweep);
+    let span = if target.arc_sweep + sweep_lo < 0.0 {
+        ArcSpan::FullRing
+    } else {
+        let start_delta = -crate::components::draw::shortest_angle_delta(
+            from.arc_start_angle,
+            target.arc_start_angle,
+        );
+        let target_end = target.arc_start_angle + target.arc_sweep;
+        let (start_lo, start_hi) = delta_range(start_delta);
+        let (end_lo, end_hi) = delta_range(start_delta + from.arc_sweep - target.arc_sweep);
+        ArcSpan::between(
+            (target.arc_start_angle + start_lo).min(target_end + end_lo),
+            (target.arc_start_angle + start_hi).max(target_end + end_hi),
+        )
+    };
+    let radius = (target.w + radius_lo, target.w + radius_hi);
+    Some(Modification::ArcTransition {
+        transform,
+        arc,
+        transition: ArcTransition { span, radius },
+    })
 }
 
 /// The factors the renderer can multiply a transition's delta by.

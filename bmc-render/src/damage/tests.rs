@@ -504,10 +504,82 @@ fn a_thinning_arc_stroke_keeps_the_reach_of_its_thicker_end() {
     let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0, &no_icons)
         .region()
         .expect("BUG: an arc transition is bounded");
+    // The sector starts at 12 o'clock, so its left edge is the centre line
+    // less the 12px half of the 24px stroke and the fringe.
     assert_eq!(
         (rect.x, rect.w),
-        (137.0, 126.0),
+        (187.0, 69.0),
         "the widest stroke in the span sets the reach"
+    );
+}
+
+/// The 0..0.5 rad sector of a radius-50 ring about (200, 200), scaled `from..to`.
+fn scaled_sector(from: f32, to: f32) -> DrawCommand {
+    DrawCommand::Modified {
+        animations: vec![scaling(from, to)],
+        transition: None,
+        color_space: ColorSpace::default(),
+        inner: Box::new(DrawCommand::Arc {
+            cx: 200.0,
+            cy: 200.0,
+            radius: 50.0,
+            start_angle: 0.0,
+            end_angle: 0.5,
+            width: 4.0,
+            fill: ArcFill::Solid(Color::from_rgb(1, 2, 3)),
+            segments: ArcSegments::Continuous,
+            cap: ArcCap::Butt,
+        }),
+    }
+}
+
+/// The renderer shrinks an arc's radius about the ring's centre,
+/// moving a slice of it out of a sector box scaled about its own centre.
+#[test]
+fn a_shrinking_arc_scales_its_sector_about_the_ring_centre() {
+    let rect = damage(&scaled_sector(0.5, 1.0)).expect("BUG: a scaled arc is bounded");
+    assert_eq!(
+        (rect.x, rect.y, rect.w, rect.h),
+        (197.0, 147.0, 30.0, 34.0),
+        "the sector at half and at full size, not the 106 px wide ring"
+    );
+}
+
+/// A scale through zero flips the arc across the ring's centre.
+#[test]
+fn a_flipping_arc_mirrors_its_sector_about_the_ring_centre() {
+    let rect = damage(&scaled_sector(-1.0, 1.0)).expect("BUG: a scaled arc is bounded");
+    assert_eq!(
+        (rect.x, rect.y, rect.w, rect.h),
+        (173.0, 147.0, 54.0, 106.0),
+        "the sector mirrored about (200, 200)"
+    );
+}
+
+/// The renderer moves the radius alone, so the stroke keeps its width all the way in.
+#[test]
+fn an_arc_collapsing_onto_its_centre_damages_every_radius_it_passes() {
+    let inner = DrawCommand::Arc {
+        cx: 200.0,
+        cy: 200.0,
+        radius: 0.0,
+        start_angle: 0.0,
+        end_angle: 1.0,
+        width: 4.0,
+        fill: ArcFill::Solid(Color::from_rgb(1, 2, 3)),
+        segments: ArcSegments::Continuous,
+        cap: ArcCap::Round,
+    };
+    let mut from = extract_draw_values(&inner);
+    from.w = 80.0;
+    let (draw, transitions) = transitioning(inner, from);
+    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0, &no_icons)
+        .region()
+        .expect("BUG: an arc transition is bounded");
+    assert_eq!(
+        (rect.x, rect.y, rect.w, rect.h),
+        (197.0, 117.0, 74.0, 86.0),
+        "the 0..1 rad sector at radius 80 down to the centre, padded by the 2 px half stroke"
     );
 }
 

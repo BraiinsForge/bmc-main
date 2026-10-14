@@ -421,6 +421,252 @@ fn arc_transition_interpolates_sweep() {
     assert_eq!(*cap, ArcCap::Round);
 }
 
+fn gauge_arc(start_angle: f32, end_angle: f32, easing: Easing) -> DrawCommand {
+    sized_arc(30.0, 6.0, (start_angle, end_angle), easing, Vec::new())
+}
+
+fn sized_arc(
+    radius: f32,
+    width: f32,
+    (start_angle, end_angle): (f32, f32),
+    easing: Easing,
+    animations: Vec<crate::tree::HostAnimationDef>,
+) -> DrawCommand {
+    DrawCommand::Modified {
+        animations,
+        transition: Some(crate::tree::HostTransitionDef {
+            id_hash: 42,
+            duration_ms: 500,
+            easing,
+        }),
+        color_space: ColorSpace::default(),
+        inner: Box::new(DrawCommand::Arc {
+            cx: 50.0,
+            cy: 50.0,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            fill: ArcFill::Solid(Color::from_rgb(1, 2, 3)),
+            segments: ArcSegments::Continuous,
+            cap: ArcCap::Round,
+        }),
+    }
+}
+
+/// Arc transitions as `(before, after)` pairs:
+/// overshooting easings, a sweep overshooting below zero,
+/// a start angle travelling round, or wrapping past 12 o'clock,
+/// a radius growing, from zero too, with a thick stroke,
+/// and a radius or scale pulling the arc towards the ring's centre.
+fn arc_transitions() -> [(DrawCommand, DrawCommand); 10] {
+    let shrinking = crate::tree::HostAnimationDef {
+        property: AnimProperty::Scale,
+        from: 1.0,
+        to: 0.4,
+        duration_ms: 500,
+        delay_ms: 0,
+        easing: Easing::EaseOutElastic,
+        loop_mode: LoopMode::Once,
+    };
+    [
+        (
+            gauge_arc(0.0, 0.5, Easing::EaseOutCubic),
+            gauge_arc(2.0, 2.5, Easing::EaseOutCubic),
+        ),
+        (
+            sized_arc(15.0, 20.0, (0.0, 1.0), Easing::Linear, Vec::new()),
+            sized_arc(40.0, 20.0, (0.0, 1.0), Easing::Linear, Vec::new()),
+        ),
+        (
+            sized_arc(0.0, 10.0, (0.0, 1.0), Easing::Linear, Vec::new()),
+            sized_arc(30.0, 10.0, (0.0, 1.0), Easing::Linear, Vec::new()),
+        ),
+        (
+            sized_arc(40.0, 6.0, (0.0, 1.0), Easing::EaseOutElastic, Vec::new()),
+            sized_arc(15.0, 6.0, (0.0, 1.0), Easing::EaseOutElastic, Vec::new()),
+        ),
+        (
+            gauge_arc(0.2, 0.8, Easing::EaseOutBack),
+            sized_arc(30.0, 6.0, (0.2, 1.2), Easing::EaseOutBack, vec![shrinking]),
+        ),
+        (
+            gauge_arc(0.0, 0.4, Easing::EaseOutBack),
+            gauge_arc(0.0, 0.9, Easing::EaseOutBack),
+        ),
+        (
+            gauge_arc(0.0, 2.0, Easing::Linear),
+            gauge_arc(0.0, 1.0, Easing::Linear),
+        ),
+        (
+            gauge_arc(6.0, 6.5, Easing::EaseOutElastic),
+            gauge_arc(0.5, 1.0, Easing::EaseOutElastic),
+        ),
+        (
+            gauge_arc(0.0, 0.6, Easing::EaseOutBack),
+            gauge_arc(0.0, 0.0, Easing::EaseOutBack),
+        ),
+        (
+            gauge_arc(0.0, 0.6, Easing::EaseOutElastic),
+            gauge_arc(0.0, 0.05, Easing::EaseOutElastic),
+        ),
+    ]
+}
+
+/// Every arc a transition paints until the next retarget
+/// lies inside the damage taken right after that retarget.
+#[test]
+fn every_arc_a_transition_paints_lands_inside_its_damage() {
+    let canvas = crate::interaction::Rect::new(0.0, 0.0, 100.0, 100.0);
+    for (before, after) in arc_transitions() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+        let mut frame = |draw: &DrawCommand, anim_ctx: &mut AnimationContext<'_>, delta_ms| {
+            anim_ctx.delta_ms = delta_ms;
+            anim_ctx.frame_counter += 1;
+            // Animation state is keyed by draw position, which the walk restarts each pass.
+            anim_ctx.draw_counter = 0;
+            render_draw_inner_for_test(
+                &mut renderer,
+                draw,
+                canvas.x,
+                canvas.y,
+                canvas.w,
+                canvas.h,
+                DrawOffset::default(),
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                None,
+                anim_ctx,
+            );
+        };
+        frame(&before, &mut anim_ctx, 0);
+        frame(&after, &mut anim_ctx, 16);
+        let crate::damage::DrawDamage::Region(damage) = crate::damage::canvas_draw_damage(
+            &after,
+            canvas,
+            anim_ctx.transition_states,
+            0,
+            &|_| None,
+        ) else {
+            panic!("BUG: an arc transition is bounded");
+        };
+        for _ in 0..40 {
+            frame(&after, &mut anim_ctx, 16);
+        }
+
+        for event in &renderer.events {
+            for (x, y) in painted_arc_outline(event) {
+                assert!(
+                    x >= damage.x
+                        && x <= damage.x + damage.w
+                        && y >= damage.y
+                        && y <= damage.y + damage.h,
+                    "({x}, {y}) of {event:?} falls outside {damage:?}"
+                );
+            }
+        }
+    }
+}
+
+/// Points around the edge of what femtovg paints for one recorded arc:
+/// the stroke's inner and outer edges, and a round cap's disc at each end.
+///
+/// The renderer splits a sweep into chunks, and femtovg winds a negative one
+/// forward by full turns, so a negative sweep paints the ring like a full turn does.
+fn painted_arc_outline(event: &RenderEvent) -> Vec<(f32, f32)> {
+    use std::f32::consts::TAU;
+    let RenderEvent::Arc {
+        cx,
+        cy,
+        radius,
+        start_angle: start,
+        end_angle: end,
+        width,
+        cap,
+        ..
+    } = *event
+    else {
+        return Vec::new();
+    };
+    let sweep = end - start;
+    let whole_ring = !(0.0..TAU).contains(&sweep);
+    let (first, span) = if whole_ring {
+        (0.0, TAU)
+    } else {
+        (start, sweep)
+    };
+    let at = |reach: f32, angle: f32| (cx + reach * angle.sin(), cy - reach * angle.cos());
+    let mut points = Vec::new();
+    for step in 0..=64_u8 {
+        let angle = first + span * f32::from(step) / 64.0;
+        points.push(at(radius - width / 2.0, angle));
+        points.push(at(radius + width / 2.0, angle));
+    }
+    if !whole_ring && matches!(cap, ArcCap::Round) {
+        for end_angle in [start, end] {
+            let (ex, ey) = at(radius, end_angle);
+            for step in 0..16_u8 {
+                let around = TAU * f32::from(step) / 16.0;
+                points.push((
+                    ex + width / 2.0 * around.cos(),
+                    ey + width / 2.0 * around.sin(),
+                ));
+            }
+        }
+    }
+    points
+}
+
+#[test]
+fn a_gauge_gaining_a_tick_damages_a_wedge_not_the_ring() {
+    let canvas = crate::interaction::Rect::new(0.0, 0.0, 100.0, 100.0);
+    let mut renderer = RecordingRenderer::default();
+    let mut animation_states = HashMap::new();
+    let mut transition_states = HashMap::new();
+    let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+    for (draw, delta_ms) in [
+        (gauge_arc(0.0, 0.4, Easing::EaseOutCubic), 0),
+        (gauge_arc(0.0, 0.6, Easing::EaseOutCubic), 16),
+    ] {
+        anim_ctx.delta_ms = delta_ms;
+        anim_ctx.frame_counter += 1;
+        render_draw_inner_for_test(
+            &mut renderer,
+            &draw,
+            canvas.x,
+            canvas.y,
+            canvas.w,
+            canvas.h,
+            DrawOffset::default(),
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+            None,
+            &mut anim_ctx,
+        );
+    }
+    let crate::damage::DrawDamage::Region(damage) = crate::damage::canvas_draw_damage(
+        &gauge_arc(0.0, 0.6, Easing::EaseOutCubic),
+        canvas,
+        anim_ctx.transition_states,
+        0,
+        &|_| None,
+    ) else {
+        panic!("BUG: an arc transition is bounded");
+    };
+    // The 66x66 ring box costs 4356 px².
+    assert!(
+        damage.area() < 1_000.0,
+        "the top-right slice of the ring, got {damage:?}"
+    );
+}
+
 #[test]
 fn transition_start_frame_does_not_consume_the_gap_delta() {
     let mut renderer = RecordingRenderer::default();
