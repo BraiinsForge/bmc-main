@@ -1,13 +1,13 @@
 ---
 name: finalizing-story-ticket
-description: Use when finalizing a Story-type ticket — the addendum to `finalizing-ticket` that captures the user-facing feature in `docs/stories/`. Triggers on phrases like "finalize the story", "submit the story for review", "add the user story doc", "document this feature", "it's a story ticket", or when `finalizing-ticket` detects the Jira issue type is Story. Covers the `docs/stories/` document shape and the README index update.
+description: Use when finalizing a Story-type ticket — the addendum to `bmc-finalizing-ticket` that captures the user-facing feature in `docs/stories/`. Triggers on phrases like "finalize the story", "submit the story for review", "add the user story doc", "document this feature", "it's a story ticket", or when `bmc-finalizing-ticket` detects the Jira issue type is Story. Covers the `docs/stories/` document shape and the README index update.
 ---
 
 # Finalizing a Story ticket
 
 A Story ships user-visible behavior, so finishing it includes documenting *what the user gets* — not just the code. That
 documentation lives in `docs/stories/` and is a permanent, user-facing deliverable. This skill is the story-specific
-step of `finalizing-ticket`; run the rest of that checklist too.
+step of `bmc-finalizing-ticket`; run the rest of that checklist too.
 
 ## Story doc vs scratch devlog — keep them straight
 

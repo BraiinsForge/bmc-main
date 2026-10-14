@@ -1,5 +1,5 @@
 ---
-name: finalizing-ticket
+name: bmc-finalizing-ticket
 description: Use when wrapping up a ticket's work and getting it ready for review — the umbrella checklist that runs before a branch is offered for merge. Triggers on phrases like "finalize the ticket", "wrap this up", "ready for review", "submit for review", "prep the MR", "mark it done", "create an MR", "open an MR", "create a merge request", "open a merge request", or when the implementation is complete and the next step is review. Creating or opening an MR always runs through this skill. For Story-type tickets this skill defers the user-facing documentation step to the `finalizing-story-ticket` skill.
 ---
 
