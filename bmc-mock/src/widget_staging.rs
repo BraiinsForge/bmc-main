@@ -156,6 +156,28 @@ mod tests {
     }
 
     #[test]
+    fn a_grouped_widget_is_shadowed_by_its_maintainer_name() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let bundle = dir.path().join("bundle");
+        write_manifest(&bundle.join("acme/flip-clock"), "flip-clock");
+        write_manifest(&bundle.join("flip-clock"), "flip-clock");
+        let staging = dir.path().join("staged");
+
+        stage_installed_widgets(
+            &bundle,
+            &staging,
+            &BTreeSet::from(["widget-acme_flip-clock".to_owned()]),
+        )
+        .expect("BUG: staging failed");
+
+        assert!(
+            !staging.join("acme/flip-clock").exists(),
+            "the installable set names the grouped widget after both folders"
+        );
+        assert!(staging.join("flip-clock").exists());
+    }
+
+    #[test]
     fn preserves_grouped_widget_depth() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let bundle = dir.path().join("bundle");
