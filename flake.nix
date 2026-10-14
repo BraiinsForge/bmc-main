@@ -93,6 +93,8 @@
           armv7Pkgs = workspace.bmc.armv7-nixpkgs;
           deckPackages = workspace.legacyPackages.deck-packages;
           frontend = workspace.deps.frontend;
+          protoPlugins = proto-plugins;
+          inherit (workspace.packages) yarnFiles;
           inherit (workspace.bmc) profiles crates;
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
           inherit (workspace) wasmWrapperTestPackages;
@@ -111,6 +113,9 @@
           shell = true;
           config.exclude = [
             "frontend/node_modules/**"
+            # Written by `just gen` and checked by the `proto-bindings` check, not by hand.
+            "bmc-grpc/src/gen/**"
+            "frontend/src/proto/gen/**"
           ];
         };
 

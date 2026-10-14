@@ -88,6 +88,14 @@ ast-grep:
   script:
     - nix run .#ast-grep
 
+proto-bindings:
+  stage: lint
+  needs: []
+  script:
+    # `-L` streams the coloured diff (the runner sets NIX_FORCE_COLOR);
+    # `--log-lines 0` keeps nix from repeating it.
+    - nix build -L --log-lines 0 .#checks.x86_64-linux.proto-bindings
+
 "docs: wasm":
   stage: lint
   needs: []

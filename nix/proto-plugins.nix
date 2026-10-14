@@ -20,9 +20,19 @@
 
 # The protoc plugins `buf generate` runs for the Rust bindings (buf.gen.yaml):
 # `protoc-gen-buffa` for the message types, `protoc-gen-connect-rust` for the services.
+# Each is held to the runtime crate in Cargo.lock that its output is written against:
+# exactly for buffa, which releases its crates together,
+# and to the minor version for connectrpc, which patches its crates one by one.
 { lib, rustPlatform, fetchCrate }:
 
 let
+  lockedPackages = (builtins.fromTOML (builtins.readFile ../Cargo.lock)).package;
+  lockedVersion = name:
+    (lib.findSingle (package: package.name == name)
+      (throw "Cargo.lock has no ${name}")
+      (throw "Cargo.lock has more than one ${name}")
+      lockedPackages).version;
+
   mkPlugin =
     { crate
     , version
@@ -65,7 +75,16 @@ let
     description = "protoc plugin generating connectrpc service traits and clients";
     homepage = "https://github.com/connectrpc/connect-rust";
   };
+
+  buffa = lockedVersion "buffa";
+  buffa-types = lockedVersion "buffa-types";
+  connectrpc = lockedVersion "connectrpc";
 in
+assert lib.assertMsg (protoc-gen-buffa.version == buffa && protoc-gen-buffa.version == buffa-types)
+  "protoc-gen-buffa ${protoc-gen-buffa.version} must equal buffa ${buffa} and buffa-types ${buffa-types} in Cargo.lock";
+assert lib.assertMsg
+  (lib.versions.majorMinor protoc-gen-connect-rust.version == lib.versions.majorMinor connectrpc)
+  "connectrpc-codegen ${protoc-gen-connect-rust.version} must share the minor version of connectrpc ${connectrpc} in Cargo.lock";
 {
   inherit protoc-gen-buffa protoc-gen-connect-rust;
 }

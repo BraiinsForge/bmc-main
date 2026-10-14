@@ -28,10 +28,14 @@ NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "
 validate: format clippy python
     # Cheap static gates.
     just manifest::check-schema
-    # The other generated-artifact guard: every widget's manifest_params.rs
-    # against its manifest. Stale output otherwise surfaces only in CI.
-    # Bare like the cargo runs below, so one toolchain owns the target dir.
+
+    # Generated code against its sources; stale output otherwise surfaces only in CI.
+    # The protobuf bindings:
+    just gen-check
+    # Every widget's manifest_params.rs, bare like the cargo runs below,
+    # so one toolchain owns the target dir.
     just nextest -p bmc-widget-codegen
+
     # Native crates are clippy-gated above but not otherwise tested here: a
     # `--workspace` run cannot build (bmc-wasm-sdk loses bmc_render_macros under
     # workspace-wide feature unification), so each has to be named.
@@ -173,6 +177,11 @@ check ATTR:
 gen:
     # buf and the Rust plugins come from the dev shell; protoc-gen-es is the frontend's.
     PATH="{{ justfile_directory() }}/frontend/node_modules/.bin:$PATH" {{ NIX_DEV }} buf generate
+
+# Fail when the checked-in bindings differ from what `gen` writes, showing the difference.
+gen-check:
+    # Always `-L`, unlike `NIX_LOG`: with the log tail off, it is all that shows a failure's diff.
+    nix build -L --log-lines 0 ".#checks.{{ NIX_SYSTEM }}.proto-bindings"
 
 # === Tooling ===
 

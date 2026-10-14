@@ -32,7 +32,9 @@ pkgs.stdenv.mkDerivation {
     cp -r $offlineCache $out
   '';
 
-  buildInputs = [ pkgs.gcc-unwrapped ];
+  # nodejs lets the fixup phase rewrite the `#!/usr/bin/env node` shebangs in node_modules;
+  # it resolves them from `buildInputs`, the interpreters that run the output.
+  buildInputs = [ pkgs.gcc-unwrapped pkgs.nodejs ];
   nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.autoPatchelfHook ];
 
   # There are some binaries that
