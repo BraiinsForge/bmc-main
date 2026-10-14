@@ -26,9 +26,9 @@
 //!
 //! ## Fail-soft on registration failure
 //!
-//! If [`Renderer::register_svg`] returns `None` (renderer-side parse failure
-//! or ID-space exhaustion — see BDK-458 for ID-lifecycle), the function key's
-//! icon spot renders blank: function keys (Shift / Backspace / Enter) carry
+//! If [`bmc_render::renderer::RenderAssets::register_svg`] returns `None`
+//! (renderer-side parse failure or ID-space exhaustion — see BDK-458 for ID-lifecycle),
+//! the function key's icon spot renders blank: function keys (Shift / Backspace / Enter) carry
 //! an empty `key.label`, so the renderer's text path draws nothing. The
 //! keyboard remains operable — only the visual cue is missing. The first
 //! failure per tag is logged via `tracing`; subsequent failures are

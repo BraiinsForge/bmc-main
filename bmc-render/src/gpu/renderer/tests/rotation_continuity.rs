@@ -26,10 +26,12 @@
 //! A wrong composition order, or a skew applied twice,
 //! shows up in pixels and nowhere else.
 
+#![expect(clippy::cast_precision_loss)]
+
 use super::multiline_text::lit;
 use super::{FemtoVgRenderer, sans_line_style};
 use crate::gpu::text::{DIRECT_PATH_CUTOFF_PX, LineStyle, divergent_kerning_pair, snap};
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use femtovg::{Paint, Transform2D};
 

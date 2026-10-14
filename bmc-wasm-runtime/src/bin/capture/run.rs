@@ -46,7 +46,7 @@ use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::TouchEvent;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_wasm_protocol::{MdnsBrowseId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId};
 use bmc_wasm_runtime::capture_config::CaptureConfig;
 use bmc_wasm_runtime::platform_catalog::{DisplayShape, Target, manifest_viewport_shape};

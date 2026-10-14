@@ -31,7 +31,7 @@
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::FrameClear;
-use bmc_render::renderer::Renderer as _;
+use bmc_render::renderer::prelude::*;
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
 use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, TargetContents, WasmWidgetRuntime};
 

@@ -29,7 +29,8 @@
 use bmc_wasm_protocol::*;
 
 use crate::interaction::{InteractionState, Rect};
-use crate::renderer::{RenderTarget, Renderer};
+use crate::renderer::RenderTarget;
+use crate::renderer::prelude::*;
 use crate::tree::{TouchHit, TreeResult};
 
 // ── Geometry / theme ─────────────────────────────────────────────────

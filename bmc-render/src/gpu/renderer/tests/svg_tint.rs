@@ -19,7 +19,7 @@
 // the grant above.
 
 use super::brightness::{FULL, W, render};
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use bmc_wasm_protocol::colors::{BLACK, WHITE};
 use bmc_wasm_protocol::{Color, SVG_FLAG_HAS_FILL, SVG_OP_CLOSE, SVG_OP_LINE_TO, SVG_OP_MOVE_TO};
 

@@ -26,7 +26,7 @@ use crate::components::ButtonSize;
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::InteractionState;
 use crate::interaction::Rect;
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use bmc_wasm_protocol::*;
 use std::collections::HashMap;
 use taffy::prelude::*;
@@ -56,27 +56,41 @@ struct KeyRecordingRenderer {
     meshes: Vec<(MeshId, u8)>,
 }
 
-impl Renderer for KeyRecordingRenderer {
-    fn begin_static_layer(&mut self, key: &str, _width: u32, _height: u32) -> bool {
-        self.calls.push(("begin", key.to_owned()));
-        true
+impl RenderFrame for KeyRecordingRenderer {
+    fn save(&mut self) {}
+
+    fn restore(&mut self) {}
+
+    fn translate(&mut self, _x: f32, _y: f32) {}
+
+    fn rotate(&mut self, _angle_radians: f32) {}
+
+    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
+
+    fn pop_scissor(&mut self) {}
+
+    fn brightness(&self) -> f32 {
+        self.brightness.unwrap_or(1.0)
     }
 
-    fn end_static_layer(&mut self, key: &str) {
-        self.calls.push(("end", key.to_owned()));
-        self.captured.push(key.to_owned());
+    fn set_brightness(&mut self, brightness: f32) {
+        self.brightness = Some(brightness);
     }
 
-    fn blit_static_layer(&mut self, key: &str) -> bool {
-        self.calls.push(("blit", key.to_owned()));
-        self.captured.iter().any(|k| k == key)
+    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn flush(&mut self) {}
+
+    fn width(&self) -> f32 {
+        0.0
     }
 
-    fn invalidate_static_layer(&mut self, key: &str) {
-        self.calls.push(("invalidate", key.to_owned()));
-        self.captured.retain(|k| k != key);
+    fn height(&self) -> f32 {
+        0.0
     }
+}
 
+impl RenderShapes for KeyRecordingRenderer {
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         let rect = crate::interaction::Rect::new(x, y, w, h);
         self.draws.push(rect);
@@ -136,26 +150,32 @@ impl Renderer for KeyRecordingRenderer {
 
     fn draw_line(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _width: f32, _color: Color) {}
 
-    fn save(&mut self) {}
-
-    fn restore(&mut self) {}
-
-    fn translate(&mut self, _x: f32, _y: f32) {}
-
-    fn rotate(&mut self, _angle_radians: f32) {}
-
-    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
-
-    fn pop_scissor(&mut self) {}
-
-    fn brightness(&self) -> f32 {
-        self.brightness.unwrap_or(1.0)
+    fn stroke_rounded_rect(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        _w: f32,
+        _h: f32,
+        _radius: f32,
+        _border_width: f32,
+        _color: Color,
+    ) {
     }
 
-    fn set_brightness(&mut self, brightness: f32) {
-        self.brightness = Some(brightness);
+    fn stroke_path(
+        &mut self,
+        _points: &[(f32, f32)],
+        _stroke_width: f32,
+        _color: Color,
+        _closed: bool,
+        _smooth: bool,
+    ) {
     }
 
+    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+}
+
+impl RenderText for KeyRecordingRenderer {
     fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
 
     fn measure_text(&mut self, _text: &str, _size: f32) -> f32 {
@@ -195,6 +215,37 @@ impl Renderer for KeyRecordingRenderer {
     ) {
     }
 
+    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+
+    fn draw_autofit_text(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        _box_width: f32,
+        _box_height: f32,
+        _text: &str,
+        _style: &TextStyle,
+        _mode: AutoFit,
+        _min_size: u16,
+        _max_size: u16,
+    ) {
+    }
+
+    fn draw_curved_text(
+        &mut self,
+        _cx: f32,
+        _cy: f32,
+        _radius: f32,
+        _angle: f32,
+        _anchor: ArcAnchor,
+        _facing: ArcTextFacing,
+        _text: &str,
+        _style: &TextStyle,
+    ) {
+    }
+}
+
+impl RenderAssets for KeyRecordingRenderer {
     fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {
         None
     }
@@ -246,18 +297,6 @@ impl Renderer for KeyRecordingRenderer {
     ) {
     }
 
-    fn stroke_rounded_rect(
-        &mut self,
-        _x: f32,
-        _y: f32,
-        _w: f32,
-        _h: f32,
-        _radius: f32,
-        _border_width: f32,
-        _color: Color,
-    ) {
-    }
-
     fn register_bitmap_rgba_nearest(
         &mut self,
         _tag: &str,
@@ -301,46 +340,35 @@ impl Renderer for KeyRecordingRenderer {
     ) {
     }
 
-    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
-
-    fn draw_autofit_text(
-        &mut self,
-        _x: f32,
-        _y: f32,
-        _box_width: f32,
-        _box_height: f32,
-        _text: &str,
-        _style: &TextStyle,
-        _mode: AutoFit,
-        _min_size: u16,
-        _max_size: u16,
-    ) {
+    fn evict_prefix(&mut self, _prefix: &str) -> usize {
+        0
     }
 
-    fn draw_curved_text(
-        &mut self,
-        _cx: f32,
-        _cy: f32,
-        _radius: f32,
-        _angle: f32,
-        _anchor: ArcAnchor,
-        _facing: ArcTextFacing,
-        _text: &str,
-        _style: &TextStyle,
-    ) {
+    fn bitmap_resident_bytes(&self) -> u64 {
+        0
+    }
+}
+
+impl RenderOffscreen for KeyRecordingRenderer {
+    fn begin_static_layer(&mut self, key: &str, _width: u32, _height: u32) -> bool {
+        self.calls.push(("begin", key.to_owned()));
+        true
     }
 
-    fn stroke_path(
-        &mut self,
-        _points: &[(f32, f32)],
-        _stroke_width: f32,
-        _color: Color,
-        _closed: bool,
-        _smooth: bool,
-    ) {
+    fn end_static_layer(&mut self, key: &str) {
+        self.calls.push(("end", key.to_owned()));
+        self.captured.push(key.to_owned());
     }
 
-    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+    fn blit_static_layer(&mut self, key: &str) -> bool {
+        self.calls.push(("blit", key.to_owned()));
+        self.captured.iter().any(|k| k == key)
+    }
+
+    fn invalidate_static_layer(&mut self, key: &str) {
+        self.calls.push(("invalidate", key.to_owned()));
+        self.captured.retain(|k| k != key);
+    }
 
     fn drop_shadow(
         &mut self,
@@ -354,26 +382,6 @@ impl Renderer for KeyRecordingRenderer {
         _color: Color,
         _inner: &mut dyn FnMut(&mut dyn Renderer),
     ) {
-    }
-
-    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
-
-    fn flush(&mut self) {}
-
-    fn width(&self) -> f32 {
-        0.0
-    }
-
-    fn height(&self) -> f32 {
-        0.0
-    }
-
-    fn evict_prefix(&mut self, _prefix: &str) -> usize {
-        0
-    }
-
-    fn bitmap_resident_bytes(&self) -> u64 {
-        0
     }
 }
 

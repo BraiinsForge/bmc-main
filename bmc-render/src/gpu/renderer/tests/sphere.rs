@@ -19,7 +19,8 @@
 // the grant above.
 
 use super::{FemtoVgRenderer, SphereRendererState};
-use crate::renderer::{AssetSuspendResult, AssetTagState, Renderer};
+use crate::renderer::prelude::*;
+use crate::renderer::{AssetSuspendResult, AssetTagState};
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use glow::HasContext;
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};

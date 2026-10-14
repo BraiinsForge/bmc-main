@@ -26,7 +26,8 @@ use bmc_wasm_protocol::{
     TagKind,
 };
 
-use crate::renderer::{RenderTarget, Renderer};
+use crate::renderer::RenderTarget;
+use crate::renderer::prelude::*;
 
 // ── Geometry ───────────────────────────────────────────────────────────
 const TAG_RADIUS: f32 = 16.0; // pill `border-radius`, clamped to a stadium (h/2)

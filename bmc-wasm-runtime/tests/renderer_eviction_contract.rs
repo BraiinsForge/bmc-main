@@ -42,7 +42,7 @@ use std::fmt::Write as _;
 use std::ptr::NonNull;
 
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 

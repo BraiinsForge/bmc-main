@@ -25,7 +25,7 @@
 //! builds with `--all-features`, so this runs there.
 
 use super::FemtoVgRenderer;
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo};
 use crate::tree::{SpanData, TextStyle};
 use bmc_wasm_protocol::text::{ArcAnchor, ArcTextFacing};

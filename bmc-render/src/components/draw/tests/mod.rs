@@ -96,7 +96,47 @@ struct RecordingRenderer {
     asset_events: Rc<RefCell<Vec<AssetEvent>>>,
 }
 
-impl Renderer for RecordingRenderer {
+impl RenderFrame for RecordingRenderer {
+    fn save(&mut self) {
+        self.events.push(RenderEvent::Save);
+    }
+
+    fn restore(&mut self) {
+        self.events.push(RenderEvent::Restore);
+    }
+
+    fn translate(&mut self, x: f32, y: f32) {
+        self.events.push(RenderEvent::Translate(x, y));
+    }
+
+    fn rotate(&mut self, angle_radians: f32) {
+        self.events.push(RenderEvent::Rotate(angle_radians));
+    }
+
+    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
+
+    fn pop_scissor(&mut self) {}
+
+    fn brightness(&self) -> f32 {
+        1.0
+    }
+
+    fn set_brightness(&mut self, _brightness: f32) {}
+
+    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn flush(&mut self) {}
+
+    fn width(&self) -> f32 {
+        0.0
+    }
+
+    fn height(&self) -> f32 {
+        0.0
+    }
+}
+
+impl RenderShapes for RecordingRenderer {
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         self.rects.push((x, y, w, h, color));
     }
@@ -168,32 +208,20 @@ impl Renderer for RecordingRenderer {
 
     fn draw_line(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _width: f32, _color: Color) {}
 
-    fn save(&mut self) {
-        self.events.push(RenderEvent::Save);
+    fn stroke_path(
+        &mut self,
+        _points: &[(f32, f32)],
+        _stroke_width: f32,
+        _color: Color,
+        _closed: bool,
+        _smooth: bool,
+    ) {
     }
 
-    fn restore(&mut self) {
-        self.events.push(RenderEvent::Restore);
-    }
+    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+}
 
-    fn translate(&mut self, x: f32, y: f32) {
-        self.events.push(RenderEvent::Translate(x, y));
-    }
-
-    fn rotate(&mut self, angle_radians: f32) {
-        self.events.push(RenderEvent::Rotate(angle_radians));
-    }
-
-    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
-
-    fn pop_scissor(&mut self) {}
-
-    fn brightness(&self) -> f32 {
-        1.0
-    }
-
-    fn set_brightness(&mut self, _brightness: f32) {}
-
+impl RenderText for RecordingRenderer {
     fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
 
     fn measure_text(&mut self, _text: &str, _size: f32) -> f32 {
@@ -231,6 +259,58 @@ impl Renderer for RecordingRenderer {
     ) {
     }
 
+    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+
+    fn draw_curved_text(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        text: &str,
+        style: &TextStyle,
+    ) {
+        self.events.push(RenderEvent::CurvedText {
+            cx,
+            cy,
+            radius,
+            angle,
+            anchor,
+            facing,
+            text: text.to_owned(),
+            style: *style,
+        });
+    }
+
+    fn draw_autofit_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        text: &str,
+        style: &TextStyle,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+    ) {
+        self.events.push(RenderEvent::AutofitText {
+            x,
+            y,
+            box_width,
+            box_height,
+            text: text.to_string(),
+            size: style.size,
+            mode,
+            min_size,
+            max_size,
+        });
+    }
+}
+
+impl RenderAssets for RecordingRenderer {
     fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {
         None
     }
@@ -341,68 +421,16 @@ impl Renderer for RecordingRenderer {
             .push(AssetEvent::Draw(Asset::Bitmap(bitmap_id)));
     }
 
-    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
-
-    fn draw_curved_text(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        radius: f32,
-        angle: f32,
-        anchor: ArcAnchor,
-        facing: ArcTextFacing,
-        text: &str,
-        style: &TextStyle,
-    ) {
-        self.events.push(RenderEvent::CurvedText {
-            cx,
-            cy,
-            radius,
-            angle,
-            anchor,
-            facing,
-            text: text.to_owned(),
-            style: *style,
-        });
+    fn evict_prefix(&mut self, _prefix: &str) -> usize {
+        0
     }
 
-    fn draw_autofit_text(
-        &mut self,
-        x: f32,
-        y: f32,
-        box_width: f32,
-        box_height: f32,
-        text: &str,
-        style: &TextStyle,
-        mode: AutoFit,
-        min_size: u16,
-        max_size: u16,
-    ) {
-        self.events.push(RenderEvent::AutofitText {
-            x,
-            y,
-            box_width,
-            box_height,
-            text: text.to_string(),
-            size: style.size,
-            mode,
-            min_size,
-            max_size,
-        });
+    fn bitmap_resident_bytes(&self) -> u64 {
+        0
     }
+}
 
-    fn stroke_path(
-        &mut self,
-        _points: &[(f32, f32)],
-        _stroke_width: f32,
-        _color: Color,
-        _closed: bool,
-        _smooth: bool,
-    ) {
-    }
-
-    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
-
+impl RenderOffscreen for RecordingRenderer {
     fn drop_shadow(
         &mut self,
         _cx: f32,
@@ -416,26 +444,6 @@ impl Renderer for RecordingRenderer {
         inner: &mut dyn FnMut(&mut dyn Renderer),
     ) {
         inner(self);
-    }
-
-    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
-
-    fn flush(&mut self) {}
-
-    fn width(&self) -> f32 {
-        0.0
-    }
-
-    fn height(&self) -> f32 {
-        0.0
-    }
-
-    fn evict_prefix(&mut self, _prefix: &str) -> usize {
-        0
-    }
-
-    fn bitmap_resident_bytes(&self) -> u64 {
-        0
     }
 }
 

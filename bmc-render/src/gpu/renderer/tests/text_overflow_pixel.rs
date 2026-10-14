@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use super::multiline_text::{H, W, lit, render, span};
 use crate::FrameTimings;
 use crate::interaction::InteractionState;
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use crate::tree::{
     EmitMode, LayerUse, ProcessContext, PropsData, TextAlign, TextOverflow, TextStyle, TreeNode,
     layout_and_render,

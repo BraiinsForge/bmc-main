@@ -36,7 +36,8 @@ use bmc_wasm_protocol::{
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color};
 use crate::gpu::mesh::{MeshDrawArgs, MeshLighting, MeshTransform};
-use crate::renderer::{RenderTarget, Renderer};
+use crate::renderer::RenderTarget;
+use crate::renderer::prelude::*;
 use crate::tree::{AnimationContext, DrawCommand, HostAnimationDef};
 use crate::{AnimationState, TransitionState};
 

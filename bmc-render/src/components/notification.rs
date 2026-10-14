@@ -26,7 +26,8 @@
 use bmc_wasm_protocol::*;
 use taffy::prelude::*;
 
-use crate::renderer::{RenderTarget, Renderer};
+use crate::renderer::RenderTarget;
+use crate::renderer::prelude::*;
 use crate::tree::{SpanData, min_content_paragraph_width};
 
 // ── Constants ────────────────────────────────────────────────────────

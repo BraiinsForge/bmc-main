@@ -43,6 +43,14 @@ mod render_target;
 
 pub(crate) use render_target::RenderTarget;
 
+/// Brings every renderer sub-trait into scope, so their methods resolve on a
+/// concrete renderer as well as on `dyn Renderer`.
+pub mod prelude {
+    pub use super::{
+        RenderAssets, RenderFrame, RenderOffscreen, RenderShapes, RenderText, Renderer,
+    };
+}
+
 /// Paragraph layout cache tallies, monotonic over the renderer's lifetime.
 /// Kept apart from [`GlyphCacheCounters`]: shaping and rasterization are
 /// separate caches, and a warm frame must reshape nothing.
@@ -111,7 +119,87 @@ pub enum FrameClear {
 ///
 /// Implemented by [`crate::gpu::FemtoVgRenderer`] for GPU-accelerated rendering.
 /// The trait is object-safe so `process_tree` can accept `&mut dyn Renderer`.
-pub trait Renderer {
+///
+/// A backend implements the sub-traits, one per area of the backend,
+/// and gets `Renderer` from the blanket impl below.
+pub trait Renderer:
+    RenderFrame + RenderShapes + RenderText + RenderAssets + RenderOffscreen
+{
+}
+
+impl<T> Renderer for T where
+    T: RenderFrame + RenderShapes + RenderText + RenderAssets + RenderOffscreen
+{
+}
+
+/// Frame lifecycle and canvas state: transforms, scissors, brightness.
+pub trait RenderFrame {
+    // -- Transform stack --
+
+    fn save(&mut self);
+
+    fn restore(&mut self);
+
+    fn translate(&mut self, x: f32, y: f32);
+
+    fn rotate(&mut self, angle_radians: f32);
+
+    // -- Scissor clipping --
+
+    fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32);
+
+    fn pop_scissor(&mut self);
+
+    // -- Brightness --
+
+    /// The factor every colour drawn from here on is scaled by,
+    /// as [`Color::brightness`] scales one: RGB only, alpha kept.
+    /// `1.0` draws colours as given, and each frame starts there.
+    fn brightness(&self) -> f32;
+
+    /// `brightness` lies in `0.0..=1.0`: it only dims.
+    /// No default: an implementor that ignored it would draw dimmed content lit.
+    fn set_brightness(&mut self, brightness: f32);
+
+    // -- Frame lifecycle --
+
+    /// Begin a frame with DPI scaling.
+    ///
+    /// `dpi_scale` > 1.0 renders at higher internal resolution for sharper text.
+    /// The coordinate system stays at `width × height` logical pixels.
+    fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32);
+
+    /// Begin a frame with an explicit clear policy.
+    fn begin_frame_with_clear(
+        &mut self,
+        width: u32,
+        height: u32,
+        dpi_scale: f32,
+        _clear: FrameClear,
+    ) {
+        self.begin_frame(width, height, dpi_scale);
+    }
+
+    fn flush(&mut self);
+
+    fn width(&self) -> f32;
+
+    fn height(&self) -> f32;
+
+    /// Submit everything recorded so far and block until the GPU has finished
+    /// it, returning how long that took in microseconds.
+    ///
+    /// Diagnostic only, for attributing a frame's GPU cost to individual passes;
+    /// `0` for renderers with no GPU behind them. This defeats the pipelining
+    /// between CPU recording and GPU execution, so it belongs behind
+    /// [`crate::tree::gpu_pass_timing_enabled`] rather than on a normal path.
+    fn flush_and_fence_us(&mut self) -> u32 {
+        0
+    }
+}
+
+/// Filled and stroked geometry.
+pub trait RenderShapes {
     // -- Shapes --
 
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color);
@@ -165,31 +253,31 @@ pub trait Renderer {
 
     fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color);
 
-    // -- Transform stack --
+    // -- Paths --
 
-    fn save(&mut self);
-    fn restore(&mut self);
-    fn translate(&mut self, x: f32, y: f32);
-    fn rotate(&mut self, angle_radians: f32);
+    /// Stroke a path through the given points.
+    /// If `smooth` is true, use Catmull-Rom spline interpolation.
+    /// If `closed` is true, join last point to first.
+    fn stroke_path(
+        &mut self,
+        points: &[(f32, f32)],
+        stroke_width: f32,
+        color: Color,
+        closed: bool,
+        smooth: bool,
+    );
 
-    // -- Scissor clipping --
+    /// Fill a closed polygon through `points` with a [`Fill`] paint.
+    /// If `smooth` is true, use Catmull-Rom spline interpolation.
+    fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool);
+}
 
-    fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32);
-    fn pop_scissor(&mut self);
-
-    // -- Brightness --
-
-    /// The factor every colour drawn from here on is scaled by,
-    /// as [`Color::brightness`] scales one: RGB only, alpha kept.
-    /// `1.0` draws colours as given, and each frame starts there.
-    fn brightness(&self) -> f32;
-    /// `brightness` lies in `0.0..=1.0`: it only dims.
-    /// No default: an implementor that ignored it would draw dimmed content lit.
-    fn set_brightness(&mut self, brightness: f32);
-
+/// Text drawing and measuring, and the text caches' statistics.
+pub trait RenderText {
     // -- Simple text --
 
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color);
+
     fn measure_text(&mut self, text: &str, size: f32) -> f32;
 
     // -- Rich text paragraphs --
@@ -226,6 +314,81 @@ pub trait Renderer {
         clip_bottom: f32,
     );
 
+    // -- Canvas text --
+
+    /// Draw styled text on a canvas at an explicit position.
+    ///
+    /// Alignment is handled by the caller via `TextStyle.align`:
+    /// Left = text starts at x, Center = centered on x, Right = text ends at x.
+    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle);
+
+    /// Draw `text` scaled to fit the `(box_width, box_height)` rectangle whose
+    /// top-left is `(x, y)`. The font size is searched per `mode` within
+    /// `[min_size, max_size]` (0 = use defaults: floor 12 / bounded by box).
+    #[expect(clippy::too_many_arguments)]
+    fn draw_autofit_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        text: &str,
+        style: &TextStyle,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+    );
+
+    /// Draw styled text with glyph centers placed on a circular arc.
+    #[expect(clippy::too_many_arguments)]
+    fn draw_curved_text(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        text: &str,
+        style: &TextStyle,
+    );
+
+    // -- Text profiling --
+    //
+    // Defaulted, not required: the trait has implementors with no glyph cache
+    // at all, for which zero is the honest answer.
+
+    /// Nominal bytes held by the application-owned glyph atlas pages.
+    fn text_atlas_resident_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Lifetime glyph cache tallies: hits, misses, evictions,
+    /// and the pressure paths the memory bound is argued from.
+    fn glyph_cache_counters(&self) -> GlyphCacheCounters {
+        GlyphCacheCounters::default()
+    }
+
+    /// Bytes the glyph cache's metadata occupies at its allocated capacity —
+    /// the ceiling the spec bounds, not the live footprint.
+    fn glyph_cache_metadata_capacity_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Lifetime paragraph layout cache tallies.
+    fn text_layout_counters(&self) -> TextLayoutCounters {
+        TextLayoutCounters::default()
+    }
+
+    /// Paragraph-shaping misses this frame, and cache occupancy. Diagnostic
+    /// only — `(0, 0)` when a renderer keeps no such cache.
+    fn paragraph_cache_stats(&self) -> (u32, usize) {
+        (0, 0)
+    }
+}
+
+/// SVG, bitmap and mesh registration, drawing and eviction.
+pub trait RenderAssets {
     // -- Icons --
 
     /// Register icon data under a stable `tag`.
@@ -396,107 +559,6 @@ pub trait Renderer {
         atmosphere: bool,
     );
 
-    // -- Canvas text --
-
-    /// Draw styled text on a canvas at an explicit position.
-    ///
-    /// Alignment is handled by the caller via `TextStyle.align`:
-    /// Left = text starts at x, Center = centered on x, Right = text ends at x.
-    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle);
-
-    /// Draw `text` scaled to fit the `(box_width, box_height)` rectangle whose
-    /// top-left is `(x, y)`. The font size is searched per `mode` within
-    /// `[min_size, max_size]` (0 = use defaults: floor 12 / bounded by box).
-    #[expect(clippy::too_many_arguments)]
-    fn draw_autofit_text(
-        &mut self,
-        x: f32,
-        y: f32,
-        box_width: f32,
-        box_height: f32,
-        text: &str,
-        style: &TextStyle,
-        mode: AutoFit,
-        min_size: u16,
-        max_size: u16,
-    );
-
-    /// Draw styled text with glyph centers placed on a circular arc.
-    #[expect(clippy::too_many_arguments)]
-    fn draw_curved_text(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        radius: f32,
-        angle: f32,
-        anchor: ArcAnchor,
-        facing: ArcTextFacing,
-        text: &str,
-        style: &TextStyle,
-    );
-
-    // -- Paths --
-
-    /// Stroke a path through the given points.
-    /// If `smooth` is true, use Catmull-Rom spline interpolation.
-    /// If `closed` is true, join last point to first.
-    fn stroke_path(
-        &mut self,
-        points: &[(f32, f32)],
-        stroke_width: f32,
-        color: Color,
-        closed: bool,
-        smooth: bool,
-    );
-
-    /// Fill a closed polygon through `points` with a [`Fill`] paint.
-    /// If `smooth` is true, use Catmull-Rom spline interpolation.
-    fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool);
-
-    // -- Drop shadow --
-
-    /// Backend hook for `DrawCommand::Shadow`. `(cx, cy)` is the canvas origin;
-    /// `(fbo_w, fbo_h)` an offscreen size holding the inner content;
-    /// `inner` rasterises the wrapped draw at FBO-local coordinates.
-    ///
-    /// Backends without offscreen targets may stub this to just run `inner`.
-    #[expect(clippy::too_many_arguments)]
-    fn drop_shadow(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        fbo_w: u32,
-        fbo_h: u32,
-        dx: f32,
-        dy: f32,
-        blur: f32,
-        color: Color,
-        inner: &mut dyn FnMut(&mut dyn Renderer),
-    );
-
-    // -- Frame lifecycle --
-
-    /// Begin a frame with DPI scaling.
-    ///
-    /// `dpi_scale` > 1.0 renders at higher internal resolution for sharper text.
-    /// The coordinate system stays at `width × height` logical pixels.
-    fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32);
-
-    /// Begin a frame with an explicit clear policy.
-    fn begin_frame_with_clear(
-        &mut self,
-        width: u32,
-        height: u32,
-        dpi_scale: f32,
-        _clear: FrameClear,
-    ) {
-        self.begin_frame(width, height, dpi_scale);
-    }
-
-    fn flush(&mut self);
-    fn width(&self) -> f32;
-    fn height(&self) -> f32;
-
     // -- Eviction --
 
     /// Drop every icon, bitmap, and mesh registered under a tag that starts
@@ -520,33 +582,30 @@ pub trait Renderer {
     fn mesh_resident_bytes(&self) -> u64 {
         0
     }
+}
 
-    // -- Text profiling --
-    //
-    // Defaulted, not required: the trait has implementors with no glyph cache
-    // at all, for which zero is the honest answer.
+/// Drawing through offscreen targets: the static-layer cache and drop shadows.
+pub trait RenderOffscreen {
+    // -- Drop shadow --
 
-    /// Nominal bytes held by the application-owned glyph atlas pages.
-    fn text_atlas_resident_bytes(&self) -> u64 {
-        0
-    }
-
-    /// Lifetime glyph cache tallies: hits, misses, evictions,
-    /// and the pressure paths the memory bound is argued from.
-    fn glyph_cache_counters(&self) -> GlyphCacheCounters {
-        GlyphCacheCounters::default()
-    }
-
-    /// Bytes the glyph cache's metadata occupies at its allocated capacity —
-    /// the ceiling the spec bounds, not the live footprint.
-    fn glyph_cache_metadata_capacity_bytes(&self) -> u64 {
-        0
-    }
-
-    /// Lifetime paragraph layout cache tallies.
-    fn text_layout_counters(&self) -> TextLayoutCounters {
-        TextLayoutCounters::default()
-    }
+    /// Backend hook for `DrawCommand::Shadow`. `(cx, cy)` is the canvas origin;
+    /// `(fbo_w, fbo_h)` an offscreen size holding the inner content;
+    /// `inner` rasterises the wrapped draw at FBO-local coordinates.
+    ///
+    /// Backends without offscreen targets may stub this to just run `inner`.
+    #[expect(clippy::too_many_arguments)]
+    fn drop_shadow(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        fbo_w: u32,
+        fbo_h: u32,
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        inner: &mut dyn FnMut(&mut dyn Renderer),
+    );
 
     // -- Static-layer cache --
     //
@@ -564,7 +623,7 @@ pub trait Renderer {
     /// every widget slot and system overlay, so a layer keyed by geometry alone
     /// would let two equally-sized slots capture over each other and blit each
     /// other's content. Pass the caller's asset namespace, so
-    /// [`Renderer::evict_prefix`] reclaims the layer on slot teardown.
+    /// [`RenderAssets::evict_prefix`] reclaims the layer on slot teardown.
     fn begin_static_layer(&mut self, _key: &str, _width: u32, _height: u32) -> bool {
         false
     }
@@ -582,7 +641,7 @@ pub trait Renderer {
     ///
     /// The rest of the target keeps whatever it already held, which is only
     /// sound when the caller knows those pixels are still current. Returns
-    /// `false` if the layer is unusable, as [`Renderer::blit_static_layer`]
+    /// `false` if the layer is unusable, as [`RenderOffscreen::blit_static_layer`]
     /// does.
     fn blit_static_layer_rects(&mut self, key: &str, _rects: &[Rect]) -> bool {
         self.blit_static_layer(key)
@@ -592,23 +651,6 @@ pub trait Renderer {
     /// Must be called whenever the caller stops using the layer
     /// without capturing over it, so a stale layer never outlives its tree.
     fn invalidate_static_layer(&mut self, _key: &str) {}
-
-    /// Submit everything recorded so far and block until the GPU has finished
-    /// it, returning how long that took in microseconds.
-    ///
-    /// Diagnostic only, for attributing a frame's GPU cost to individual passes;
-    /// `0` for renderers with no GPU behind them. This defeats the pipelining
-    /// between CPU recording and GPU execution, so it belongs behind
-    /// [`crate::tree::gpu_pass_timing_enabled`] rather than on a normal path.
-    fn flush_and_fence_us(&mut self) -> u32 {
-        0
-    }
-
-    /// Paragraph-shaping misses this frame, and cache occupancy. Diagnostic
-    /// only — `(0, 0)` when a renderer keeps no such cache.
-    fn paragraph_cache_stats(&self) -> (u32, usize) {
-        (0, 0)
-    }
 }
 
 /// Restores suspended renderer assets at the point where a draw first needs them.

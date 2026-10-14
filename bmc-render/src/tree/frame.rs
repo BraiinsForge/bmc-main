@@ -35,7 +35,8 @@ use super::walk::TreeResult;
 use crate::components::modal::{ModalInfo, render_modal};
 use crate::interaction::InteractionState;
 use crate::interaction::Rect;
-use crate::renderer::{RenderTarget, Renderer, RendererAssetResolver};
+use crate::renderer::prelude::*;
+use crate::renderer::{RenderTarget, RendererAssetResolver};
 use crate::{
     AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
 };

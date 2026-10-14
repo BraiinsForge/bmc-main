@@ -28,7 +28,8 @@
 
 use bmc_wasm_protocol::{Color, ProgressKind};
 
-use crate::renderer::{RenderTarget, Renderer};
+use crate::renderer::RenderTarget;
+use crate::renderer::prelude::*;
 use crate::tree::{AnimationContext, SliderSkinData};
 
 // ── Data ─────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ use anyhow::{Context, Result};
 use bmc_render::FrameTimings;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::FrameClear;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::{RenderAssets, Renderer};
 use bmc_wasm_runtime::{
     DiskCache, LedEffect, LedRequest, LedScope, NetworkInfo, NextAlarm as RuntimeNextAlarm,
     RenderStatus, RuntimeConfig, SystemSnapshot, TargetContents, WasmWidgetRuntime,
@@ -167,9 +167,9 @@ trait RendererAssetEvictor {
     fn evict_renderer_prefix(&mut self, prefix: &str) -> usize;
 }
 
-impl<T: Renderer + ?Sized> RendererAssetEvictor for T {
+impl<T: RenderAssets + ?Sized> RendererAssetEvictor for T {
     fn evict_renderer_prefix(&mut self, prefix: &str) -> usize {
-        Renderer::evict_prefix(self, prefix)
+        RenderAssets::evict_prefix(self, prefix)
     }
 }
 

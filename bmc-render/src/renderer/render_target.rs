@@ -23,12 +23,12 @@
 use super::AssetSuspendResult;
 use super::AssetTagState;
 use super::FrameClear;
-use super::Renderer;
+use super::GlyphCacheCounters;
 use super::RendererAssetResolver;
 use super::TextLayoutCounters;
-use crate::gpu::glyph_cache::Counters as GlyphCacheCounters;
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::Rect;
+use crate::renderer::prelude::*;
 use crate::tree::{AutoFit, SpanData, TextStyle};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
@@ -71,7 +71,72 @@ impl<'renderer, 'cell, 'resolver> RenderTarget<'renderer, 'cell, 'resolver> {
     }
 }
 
-impl Renderer for RenderTarget<'_, '_, '_> {
+impl RenderFrame for RenderTarget<'_, '_, '_> {
+    fn save(&mut self) {
+        self.renderer.save();
+    }
+
+    fn restore(&mut self) {
+        self.renderer.restore();
+    }
+
+    fn translate(&mut self, x: f32, y: f32) {
+        self.renderer.translate(x, y);
+    }
+
+    fn rotate(&mut self, angle_radians: f32) {
+        self.renderer.rotate(angle_radians);
+    }
+
+    fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.renderer.push_scissor(x, y, w, h);
+    }
+
+    fn pop_scissor(&mut self) {
+        self.renderer.pop_scissor();
+    }
+
+    fn brightness(&self) -> f32 {
+        self.renderer.brightness()
+    }
+
+    fn set_brightness(&mut self, brightness: f32) {
+        self.renderer.set_brightness(brightness);
+    }
+
+    fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32) {
+        self.renderer.begin_frame(width, height, dpi_scale);
+    }
+
+    fn begin_frame_with_clear(
+        &mut self,
+        width: u32,
+        height: u32,
+        dpi_scale: f32,
+        clear: FrameClear,
+    ) {
+        self.renderer
+            .begin_frame_with_clear(width, height, dpi_scale, clear);
+    }
+
+    fn flush(&mut self) {
+        self.renderer.flush();
+    }
+
+    fn width(&self) -> f32 {
+        self.renderer.width()
+    }
+
+    fn height(&self) -> f32 {
+        self.renderer.height()
+    }
+
+    fn flush_and_fence_us(&mut self) -> u32 {
+        self.renderer.flush_and_fence_us()
+    }
+}
+
+impl RenderShapes for RenderTarget<'_, '_, '_> {
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         self.renderer.fill_rect(x, y, w, h, color);
     }
@@ -139,38 +204,24 @@ impl Renderer for RenderTarget<'_, '_, '_> {
         self.renderer.draw_line(x1, y1, x2, y2, width, color);
     }
 
-    fn save(&mut self) {
-        self.renderer.save();
+    fn stroke_path(
+        &mut self,
+        points: &[(f32, f32)],
+        stroke_width: f32,
+        color: Color,
+        closed: bool,
+        smooth: bool,
+    ) {
+        self.renderer
+            .stroke_path(points, stroke_width, color, closed, smooth);
     }
 
-    fn restore(&mut self) {
-        self.renderer.restore();
+    fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool) {
+        self.renderer.fill_path_paint(points, fill, smooth);
     }
+}
 
-    fn translate(&mut self, x: f32, y: f32) {
-        self.renderer.translate(x, y);
-    }
-
-    fn rotate(&mut self, angle_radians: f32) {
-        self.renderer.rotate(angle_radians);
-    }
-
-    fn push_scissor(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.renderer.push_scissor(x, y, w, h);
-    }
-
-    fn pop_scissor(&mut self) {
-        self.renderer.pop_scissor();
-    }
-
-    fn brightness(&self) -> f32 {
-        self.renderer.brightness()
-    }
-
-    fn set_brightness(&mut self, brightness: f32) {
-        self.renderer.set_brightness(brightness);
-    }
-
+impl RenderText for RenderTarget<'_, '_, '_> {
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
         self.renderer.draw_text(text, x, y, size, color);
     }
@@ -213,6 +264,64 @@ impl Renderer for RenderTarget<'_, '_, '_> {
             .draw_paragraph_clipped(style, spans, x, y, max_width, clip_top, clip_bottom);
     }
 
+    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
+        self.renderer.draw_canvas_text(text, x, y, style);
+    }
+
+    fn draw_autofit_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        text: &str,
+        style: &TextStyle,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+    ) {
+        self.renderer.draw_autofit_text(
+            x, y, box_width, box_height, text, style, mode, min_size, max_size,
+        );
+    }
+
+    fn draw_curved_text(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        text: &str,
+        style: &TextStyle,
+    ) {
+        self.renderer
+            .draw_curved_text(cx, cy, radius, angle, anchor, facing, text, style);
+    }
+
+    fn text_atlas_resident_bytes(&self) -> u64 {
+        self.renderer.text_atlas_resident_bytes()
+    }
+
+    fn glyph_cache_counters(&self) -> GlyphCacheCounters {
+        self.renderer.glyph_cache_counters()
+    }
+
+    fn glyph_cache_metadata_capacity_bytes(&self) -> u64 {
+        self.renderer.glyph_cache_metadata_capacity_bytes()
+    }
+
+    fn text_layout_counters(&self) -> TextLayoutCounters {
+        self.renderer.text_layout_counters()
+    }
+
+    fn paragraph_cache_stats(&self) -> (u32, usize) {
+        self.renderer.paragraph_cache_stats()
+    }
+}
+
+impl RenderAssets for RenderTarget<'_, '_, '_> {
     fn register_svg(&mut self, tag: &str, data: &[u8]) -> Option<SvgId> {
         self.renderer.register_svg(tag, data)
     }
@@ -387,105 +496,6 @@ impl Renderer for RenderTarget<'_, '_, '_> {
         }
     }
 
-    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
-        self.renderer.draw_canvas_text(text, x, y, style);
-    }
-
-    fn draw_autofit_text(
-        &mut self,
-        x: f32,
-        y: f32,
-        box_width: f32,
-        box_height: f32,
-        text: &str,
-        style: &TextStyle,
-        mode: AutoFit,
-        min_size: u16,
-        max_size: u16,
-    ) {
-        self.renderer.draw_autofit_text(
-            x, y, box_width, box_height, text, style, mode, min_size, max_size,
-        );
-    }
-
-    fn draw_curved_text(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        radius: f32,
-        angle: f32,
-        anchor: ArcAnchor,
-        facing: ArcTextFacing,
-        text: &str,
-        style: &TextStyle,
-    ) {
-        self.renderer
-            .draw_curved_text(cx, cy, radius, angle, anchor, facing, text, style);
-    }
-
-    fn stroke_path(
-        &mut self,
-        points: &[(f32, f32)],
-        stroke_width: f32,
-        color: Color,
-        closed: bool,
-        smooth: bool,
-    ) {
-        self.renderer
-            .stroke_path(points, stroke_width, color, closed, smooth);
-    }
-
-    fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool) {
-        self.renderer.fill_path_paint(points, fill, smooth);
-    }
-
-    fn drop_shadow(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        fbo_w: u32,
-        fbo_h: u32,
-        dx: f32,
-        dy: f32,
-        blur: f32,
-        color: Color,
-        inner: &mut dyn FnMut(&mut dyn Renderer),
-    ) {
-        let resolver = self.resolver;
-        self.renderer
-            .drop_shadow(cx, cy, fbo_w, fbo_h, dx, dy, blur, color, &mut |renderer| {
-                let mut target = RenderTarget::new(renderer, resolver);
-                inner(&mut target);
-            });
-    }
-
-    fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32) {
-        self.renderer.begin_frame(width, height, dpi_scale);
-    }
-
-    fn begin_frame_with_clear(
-        &mut self,
-        width: u32,
-        height: u32,
-        dpi_scale: f32,
-        clear: FrameClear,
-    ) {
-        self.renderer
-            .begin_frame_with_clear(width, height, dpi_scale, clear);
-    }
-
-    fn flush(&mut self) {
-        self.renderer.flush();
-    }
-
-    fn width(&self) -> f32 {
-        self.renderer.width()
-    }
-
-    fn height(&self) -> f32 {
-        self.renderer.height()
-    }
-
     fn evict_prefix(&mut self, prefix: &str) -> usize {
         self.renderer.evict_prefix(prefix)
     }
@@ -505,21 +515,27 @@ impl Renderer for RenderTarget<'_, '_, '_> {
     fn mesh_resident_bytes(&self) -> u64 {
         self.renderer.mesh_resident_bytes()
     }
+}
 
-    fn text_atlas_resident_bytes(&self) -> u64 {
-        self.renderer.text_atlas_resident_bytes()
-    }
-
-    fn glyph_cache_counters(&self) -> GlyphCacheCounters {
-        self.renderer.glyph_cache_counters()
-    }
-
-    fn glyph_cache_metadata_capacity_bytes(&self) -> u64 {
-        self.renderer.glyph_cache_metadata_capacity_bytes()
-    }
-
-    fn text_layout_counters(&self) -> TextLayoutCounters {
-        self.renderer.text_layout_counters()
+impl RenderOffscreen for RenderTarget<'_, '_, '_> {
+    fn drop_shadow(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        fbo_w: u32,
+        fbo_h: u32,
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        inner: &mut dyn FnMut(&mut dyn Renderer),
+    ) {
+        let resolver = self.resolver;
+        self.renderer
+            .drop_shadow(cx, cy, fbo_w, fbo_h, dx, dy, blur, color, &mut |renderer| {
+                let mut target = RenderTarget::new(renderer, resolver);
+                inner(&mut target);
+            });
     }
 
     // Forwarded, not defaulted: the inert defaults would have a wrapped renderer
@@ -543,13 +559,5 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn invalidate_static_layer(&mut self, key: &str) {
         self.renderer.invalidate_static_layer(key);
-    }
-
-    fn paragraph_cache_stats(&self) -> (u32, usize) {
-        self.renderer.paragraph_cache_stats()
-    }
-
-    fn flush_and_fence_us(&mut self) -> u32 {
-        self.renderer.flush_and_fence_us()
     }
 }

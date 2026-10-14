@@ -22,7 +22,7 @@
 
 use bmc_render::colors::Color;
 use bmc_render::gpu::mesh::MeshDrawArgs;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_render::tree::{AutoFit, SpanData, TextStyle};
 use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
@@ -34,7 +34,39 @@ pub(crate) struct TestRenderer {
     text: Option<String>,
 }
 
-impl Renderer for TestRenderer {
+impl RenderFrame for TestRenderer {
+    fn save(&mut self) {}
+
+    fn restore(&mut self) {}
+
+    fn translate(&mut self, _x: f32, _y: f32) {}
+
+    fn rotate(&mut self, _angle_radians: f32) {}
+
+    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
+
+    fn pop_scissor(&mut self) {}
+
+    fn brightness(&self) -> f32 {
+        1.0
+    }
+
+    fn set_brightness(&mut self, _brightness: f32) {}
+
+    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn flush(&mut self) {}
+
+    fn width(&self) -> f32 {
+        0.0
+    }
+
+    fn height(&self) -> f32 {
+        0.0
+    }
+}
+
+impl RenderShapes for TestRenderer {
     fn fill_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _color: Color) {
         self.filled = true;
     }
@@ -95,24 +127,20 @@ impl Renderer for TestRenderer {
 
     fn draw_line(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _width: f32, _color: Color) {}
 
-    fn save(&mut self) {}
-
-    fn restore(&mut self) {}
-
-    fn translate(&mut self, _x: f32, _y: f32) {}
-
-    fn rotate(&mut self, _angle_radians: f32) {}
-
-    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
-
-    fn pop_scissor(&mut self) {}
-
-    fn brightness(&self) -> f32 {
-        1.0
+    fn stroke_path(
+        &mut self,
+        _points: &[(f32, f32)],
+        _stroke_width: f32,
+        _color: Color,
+        _closed: bool,
+        _smooth: bool,
+    ) {
     }
 
-    fn set_brightness(&mut self, _brightness: f32) {}
+    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+}
 
+impl RenderText for TestRenderer {
     fn draw_text(&mut self, text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {
         self.text = Some(text.to_owned());
     }
@@ -152,6 +180,37 @@ impl Renderer for TestRenderer {
     ) {
     }
 
+    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+
+    fn draw_autofit_text(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        _box_width: f32,
+        _box_height: f32,
+        _text: &str,
+        _style: &TextStyle,
+        _mode: AutoFit,
+        _min_size: u16,
+        _max_size: u16,
+    ) {
+    }
+
+    fn draw_curved_text(
+        &mut self,
+        _cx: f32,
+        _cy: f32,
+        _radius: f32,
+        _angle: f32,
+        _anchor: ArcAnchor,
+        _facing: ArcTextFacing,
+        _text: &str,
+        _style: &TextStyle,
+    ) {
+    }
+}
+
+impl RenderAssets for TestRenderer {
     fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {
         None
     }
@@ -249,47 +308,12 @@ impl Renderer for TestRenderer {
     ) {
     }
 
-    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
-
-    fn draw_autofit_text(
-        &mut self,
-        _x: f32,
-        _y: f32,
-        _box_width: f32,
-        _box_height: f32,
-        _text: &str,
-        _style: &TextStyle,
-        _mode: AutoFit,
-        _min_size: u16,
-        _max_size: u16,
-    ) {
+    fn evict_prefix(&mut self, _prefix: &str) -> usize {
+        0
     }
+}
 
-    fn draw_curved_text(
-        &mut self,
-        _cx: f32,
-        _cy: f32,
-        _radius: f32,
-        _angle: f32,
-        _anchor: ArcAnchor,
-        _facing: ArcTextFacing,
-        _text: &str,
-        _style: &TextStyle,
-    ) {
-    }
-
-    fn stroke_path(
-        &mut self,
-        _points: &[(f32, f32)],
-        _stroke_width: f32,
-        _color: Color,
-        _closed: bool,
-        _smooth: bool,
-    ) {
-    }
-
-    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
-
+impl RenderOffscreen for TestRenderer {
     fn drop_shadow(
         &mut self,
         _cx: f32,
@@ -303,21 +327,5 @@ impl Renderer for TestRenderer {
         inner: &mut dyn FnMut(&mut dyn Renderer),
     ) {
         inner(self);
-    }
-
-    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
-
-    fn flush(&mut self) {}
-
-    fn width(&self) -> f32 {
-        0.0
-    }
-
-    fn height(&self) -> f32 {
-        0.0
-    }
-
-    fn evict_prefix(&mut self, _prefix: &str) -> usize {
-        0
     }
 }

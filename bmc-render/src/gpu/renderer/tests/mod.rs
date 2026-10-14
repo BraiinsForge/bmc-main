@@ -18,9 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use super::geometry::linear_endpoints;
+use super::geometry::{linear_endpoints, scissor_box};
 #[cfg(target_os = "linux")]
 use super::render_targets::gl_name;
+#[cfg(target_os = "linux")]
+use super::text_draw::femtovg_baseline;
 use super::*;
 
 mod brightness;

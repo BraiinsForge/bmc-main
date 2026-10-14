@@ -377,7 +377,7 @@ pub enum TreeNode {
         skin: Option<SliderSkinData>,
     },
     /// `child` drawn with every colour scaled by `brightness`,
-    /// as [`crate::renderer::Renderer::set_brightness`] scales it, and nested ones multiply.
+    /// as [`crate::renderer::RenderFrame::set_brightness`] scales it, and nested ones multiply.
     /// No layout box of its own: `child` lays out as if unwrapped,
     /// so absolute insets still resolve against the same parent.
     /// A modal inside still draws lit: modals paint after the tree, outside it.

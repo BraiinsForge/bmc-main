@@ -31,7 +31,7 @@
 pub use super::{Counters, MAX_RESIDENT_ENTRIES};
 
 use crate::gpu::FemtoVgRenderer;
-use crate::renderer::Renderer as _;
+use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo};
 use crate::tree::{SpanData, TextStyle};
 use bmc_wasm_protocol::Color;

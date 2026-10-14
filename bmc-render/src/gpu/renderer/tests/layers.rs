@@ -19,7 +19,7 @@
 // the grant above.
 
 use super::{FemtoVgRenderer, PhysicalSize, PoolSlot, RenderTargetProbe, gl_name};
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use crate::test_harness::{
     GlHarness, create_colour_only_fbo, create_packed_stencil_fbo, create_readback_fbo,
     read_pixels_top_down,

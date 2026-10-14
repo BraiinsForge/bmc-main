@@ -51,7 +51,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::{AssetTagState, Renderer};
+use bmc_render::renderer::AssetTagState;
+use bmc_render::renderer::prelude::*;
 use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };

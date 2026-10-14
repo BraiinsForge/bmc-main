@@ -23,7 +23,7 @@
 #![cfg(target_os = "linux")]
 
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
 use bmc_wasm_sdk::{AnimProperty, Draw, Easing, LoopMode, Node, PropsData};

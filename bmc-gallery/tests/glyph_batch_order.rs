@@ -33,7 +33,7 @@
 
 use bmc_render::colors::Color;
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_render::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 
 const W: u32 = 512;

@@ -31,7 +31,7 @@ use std::ffi::CString;
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::{ActionEvent, InteractionState, TouchEvent};
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_render::tree::{NodeContext, TouchHit};
 use bmc_render::{
     AnimationState, ModalState, ProcessContext, ScrollState, TransitionState, TransitionStateKey,

@@ -19,7 +19,7 @@
 // the grant above.
 
 use bmc_render::interaction::InteractionState;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_render::renderer::test_support::{DrawnRect, DrawnText, ShapingRecorder};
 
 use crate::layout::ALL_LAYOUTS;

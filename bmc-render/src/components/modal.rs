@@ -35,7 +35,8 @@ use bmc_wasm_protocol::*;
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button_with_target};
 use crate::interaction::InteractionState;
-use crate::renderer::{RenderTarget, Renderer};
+use crate::renderer::RenderTarget;
+use crate::renderer::prelude::*;
 use crate::tree::{
     AnimationContext, NodeContext, TouchHit, TreeNode, TreeResult, build_taffy_node,
     compute_taffy_layout, debug_layout_enabled, render_taffy_node,

@@ -19,7 +19,8 @@
 // the grant above.
 
 use super::FemtoVgRenderer;
-use crate::renderer::{RenderTarget, Renderer};
+use crate::renderer::RenderTarget;
+use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo};
 use bmc_wasm_protocol::Color;
 

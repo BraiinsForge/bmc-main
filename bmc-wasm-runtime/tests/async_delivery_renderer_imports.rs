@@ -31,7 +31,7 @@ use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::prelude::*;
 use bmc_wasm_runtime::{InterceptedReply, RuntimeConfig, WasmWidgetRuntime};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 

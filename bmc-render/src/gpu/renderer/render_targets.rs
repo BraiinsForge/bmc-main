@@ -20,7 +20,16 @@
 
 //! Offscreen targets: the static layer, its stencils, shadow FBOs and the render-to-texture probe.
 
+#![expect(clippy::cast_precision_loss)]
+
 use super::FemtoVgRenderer;
+use super::geometry::scissor_box;
+use crate::gpu::text::to_femtovg_color;
+use crate::interaction::Rect;
+use crate::renderer::prelude::*;
+use bmc_wasm_protocol::colors::Color;
+use femtovg::Paint;
+use femtovg::Path;
 use femtovg::RenderTarget;
 use glow::HasContext;
 use std::num::{NonZeroU16, NonZeroU32};
@@ -52,7 +61,7 @@ impl FemtoVgRenderer {
 
     /// Begin a frame targeting a femtovg Image (offscreen render target).
     ///
-    /// Like [`crate::renderer::Renderer::begin_frame`] but renders to the given Image instead of
+    /// Like [`crate::renderer::RenderFrame::begin_frame`] but renders to the given Image instead of
     /// the screen FBO. femtovg manages its own FBO with stencil for the Image.
     ///
     /// The image must be `width·dpi_scale × height·dpi_scale` texels.
@@ -207,7 +216,7 @@ impl FemtoVgRenderer {
     ///
     /// Clock shadows are all canvas-sized, so they don't;
     /// a multi-entry pool would be needed otherwise.
-    pub(super) fn acquire_shadow_fbos(
+    fn acquire_shadow_fbos(
         &mut self,
         width: u32,
         height: u32,
@@ -495,7 +504,7 @@ impl FemtoVgRenderer {
     /// otherwise land underneath it. Returns `false` if the program or the
     /// layer's texture is unavailable, so a failure degrades to femtovg's own
     /// blit rather than to a blank frame.
-    pub(super) fn blit_static_layer_raw(&mut self, image: femtovg::ImageId) -> bool {
+    fn blit_static_layer_raw(&mut self, image: femtovg::ImageId) -> bool {
         let Ok(texture) = self.canvas.get_native_texture(image) else {
             return false;
         };
@@ -541,6 +550,21 @@ impl FemtoVgRenderer {
         }
         true
     }
+
+    /// Run `inner` translated to the canvas origin `(cx, cy)`.
+    /// Used by the `drop_shadow` fallbacks,
+    /// since the closure draws at FBO-local `(0, 0)`.
+    fn render_inner_translated(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        inner: &mut dyn FnMut(&mut dyn Renderer),
+    ) {
+        self.canvas.save();
+        self.canvas.translate(cx, cy);
+        inner(self);
+        self.canvas.restore();
+    }
 }
 
 /// Offscreen textures for `drop_shadow`, kept alive across frames
@@ -569,7 +593,7 @@ pub(super) struct RawBlit {
     pub(super) uv_loc: u32,
 }
 
-pub(super) const F32_BYTES: i32 = 4;
+const F32_BYTES: i32 = 4;
 
 impl RawBlit {
     const VERT: &'static str = r"#version 100
@@ -802,9 +826,379 @@ pub(super) fn gl_name(value: i32) -> Option<NonZeroU32> {
     clippy::cast_sign_loss,
     reason = "a float-to-int `as` saturates, and `PhysicalSize::new` rejects the extremes"
 )]
-pub(super) fn physical_size(width: u32, height: u32, dpi_scale: f32) -> Option<PhysicalSize> {
+fn physical_size(width: u32, height: u32, dpi_scale: f32) -> Option<PhysicalSize> {
     PhysicalSize::new(
         (width as f32 * dpi_scale) as u32,
         (height as f32 * dpi_scale) as u32,
     )
+}
+
+impl RenderOffscreen for FemtoVgRenderer {
+    // -- Drop shadow --
+
+    fn drop_shadow(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        fbo_w: u32,
+        fbo_h: u32,
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        inner: &mut dyn FnMut(&mut dyn Renderer),
+    ) {
+        if fbo_w == 0 || fbo_h == 0 {
+            self.render_inner_translated(cx, cy, inner);
+            return;
+        }
+
+        // Physical-pixel FBO size, so the offscreen pass matches screen DPI
+        // and the composite doesn't upscale a half-resolution buffer.
+        let dpi = self.dpi_scale.max(1.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "FBO dimensions are small positive pixel counts after ceil()"
+        )]
+        let (pw, ph) = (
+            ((fbo_w as f32) * dpi).ceil() as u32,
+            ((fbo_h as f32) * dpi).ceil() as u32,
+        );
+
+        let Some((unblurred, blurred)) = self.acquire_shadow_fbos(pw, ph) else {
+            tracing::warn!("drop_shadow: FBO pool allocation failed; falling back to no shadow");
+            self.render_inner_translated(cx, cy, inner);
+            return;
+        };
+
+        // Rasterise the inner draw into `unblurred` at FBO-local coordinates.
+        // `reset` drops transform and scissor, and the scale has to go back on:
+        // the FBO is sized in physical pixels while the inner draw is logical.
+        self.canvas.save();
+        self.canvas.reset();
+        self.scale_to_logical(dpi);
+        self.canvas
+            .set_render_target(RenderTarget::Image(unblurred));
+        self.canvas
+            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+
+        inner(self);
+
+        // Sigma is logical pixels; scale to physical.
+        // Clamp mirrors the SDK cap so a malformed
+        // wire value can't request an unbounded blur.
+        let sigma = blur.clamp(0.0, bmc_wasm_protocol::DROP_SHADOW_BLUR_MAX) * dpi;
+        if sigma > 0.0 {
+            self.canvas.filter_image(
+                blurred,
+                femtovg::ImageFilter::GaussianBlur { sigma },
+                unblurred,
+            );
+        }
+
+        // No mid-frame flush: femtovg replays its queue in submission order
+        // and the target switch is an ordering barrier, so the composites
+        // below read fully-rendered textures. That same ordering lets one
+        // pooled pair serve every shadow in a frame — draw N's composites
+        // are queued before draw N+1's `clear_rect`. A flush here,
+        // or out-of-order shadow rendering, would break that.
+        // Back to whatever the frame draws into rather than `Screen`.
+        // Under `begin_frame_to_image` that is a stage's image,
+        // and assuming the window strands everything queued after this shadow.
+        self.canvas.set_render_target(self.frame_target);
+        self.canvas.restore();
+
+        let composite_src = if sigma > 0.0 { blurred } else { unblurred };
+        // Not dimmed: the tint multiplies the inner draw, which already was.
+        let tint = to_femtovg_color(color.to_u32());
+        let fbo_w_f = fbo_w as f32;
+        let fbo_h_f = fbo_h as f32;
+
+        // Each composite flips Y so the GL FBO's bottom-left-origin texture
+        // lands right-side-up; paint and path anchor at (0, 0) in flipped space.
+        self.canvas.save();
+        self.canvas.translate(cx + dx, cy + dy + fbo_h_f);
+        self.canvas.scale(1.0, -1.0);
+        let shadow_paint = Paint::image_tint(composite_src, 0.0, 0.0, fbo_w_f, fbo_h_f, 0.0, tint);
+        let mut shadow_path = Path::new();
+        shadow_path.rect(0.0, 0.0, fbo_w_f, fbo_h_f);
+        self.canvas.fill_path(&shadow_path, &shadow_paint);
+        self.canvas.restore();
+
+        self.canvas.save();
+        self.canvas.translate(cx, cy + fbo_h_f);
+        self.canvas.scale(1.0, -1.0);
+        let asset_paint = Paint::image(unblurred, 0.0, 0.0, fbo_w_f, fbo_h_f, 0.0, 1.0);
+        let mut asset_path = Path::new();
+        asset_path.rect(0.0, 0.0, fbo_w_f, fbo_h_f);
+        self.canvas.fill_path(&asset_path, &asset_paint);
+        self.canvas.restore();
+    }
+
+    // -- Static-layer cache --
+
+    fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
+        if self.render_to_texture != RenderTargetProbe::Working {
+            return false;
+        }
+        let dpi_scale = self.dpi_scale;
+        let Some(size) = physical_size(width, height, dpi_scale) else {
+            // No layer can have this size, so whatever the key held is stale.
+            self.invalidate_static_layer(key);
+            return false;
+        };
+        if self.incomplete_static_layers.get(key) == Some(&size) {
+            // A layer captured at another size will never be blitted again.
+            self.invalidate_static_layer(key);
+            return false;
+        }
+        let first_retarget = !self.static_layers.get(key).is_some_and(|layer| {
+            layer.width == width
+                && layer.height == height
+                && (layer.dpi_scale - dpi_scale).abs() < f32::EPSILON
+        });
+        if first_retarget {
+            // A geometry change makes the existing texture the wrong shape.
+            self.invalidate_static_layer(key);
+            // FLIP_Y, not a canvas transform: femtovg's cheap
+            // `is_straight_tinted_image` path ignores the canvas transform,
+            // while `FLIP_Y` folds into the paint's inverse transform and so
+            // survives it.
+            let Ok(image) = self.canvas.create_image_empty(
+                usize::from(size.width.get()),
+                usize::from(size.height.get()),
+                femtovg::PixelFormat::Rgba8,
+                femtovg::ImageFlags::FLIP_Y,
+            ) else {
+                return false;
+            };
+            self.static_layers.insert(
+                key.to_owned(),
+                StaticLayer {
+                    image,
+                    width,
+                    height,
+                    dpi_scale,
+                    captured: false,
+                },
+            );
+        }
+        let Some(layer) = self.static_layers.get(key) else {
+            return false;
+        };
+        let image = layer.image;
+        // Deliberately not `begin_frame_to_image`: that opens a new frame on
+        // the paragraph cache, and a capture is a second pass over the frame
+        // already in progress rather than a new one — the double step would
+        // charge this frame's shaping twice over. Canvas size and dpi are
+        // already the frame's, so only the target and the clear change here.
+        self.canvas.set_render_target(RenderTarget::Image(image));
+
+        // femtovg reports no failed retarget,
+        // and a skipped one leaves the caller's export buffer bound.
+        // The static pass would then paint over the frame,
+        // `end_static_layer` would mark the layer captured anyway,
+        // and every later blit would copy an uninitialised texture over the widget.
+        // Ask GL what is bound instead of trusting the call.
+        //
+        // The flush is what makes the question answerable: `set_render_target`
+        // only queues the command, so without it GL still reports the frame's
+        // own target and the check reads as a failure on every capture.
+        self.canvas.flush();
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        let bound = unsafe { self.gl.get_parameter_framebuffer(glow::FRAMEBUFFER_BINDING) };
+        // femtovg never renders a layer into the default framebuffer,
+        // so finding that bound is as much a failed retarget as finding the screen's.
+        if bound.is_none_or(|fbo| Some(fbo) == self.screen_fbo) {
+            tracing::error!(
+                key,
+                "static layer retarget failed; falling back to a full pass"
+            );
+            self.canvas.set_render_target(RenderTarget::Screen);
+            self.invalidate_static_layer(key);
+            return false;
+        }
+        // A non-screen binding is not yet a usable one:
+        // a failing `Framebuffer::new` leaves its incomplete framebuffer bound.
+        // The probe has settled the format, so what fails here is this layer,
+        // most likely its size; it is refused at that size rather than retried every frame.
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        let status = unsafe { self.gl.check_framebuffer_status(glow::FRAMEBUFFER) };
+        if status != glow::FRAMEBUFFER_COMPLETE {
+            tracing::error!(
+                key,
+                status,
+                width,
+                height,
+                "static layer framebuffer incomplete; not caching it at this size"
+            );
+            self.incomplete_static_layers.insert(key.to_owned(), size);
+            self.canvas.set_render_target(RenderTarget::Screen);
+            // SAFETY: the context is current for the frame,
+            // and on a first retarget the framebuffer `Framebuffer::new` failed on is still bound.
+            unsafe {
+                if first_retarget {
+                    self.delete_orphaned_framebuffer();
+                }
+                // Rebind now rather than at the next flush,
+                // so raw passes before it do not draw into the incomplete framebuffer.
+                self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
+                // The failed allocation leaves its error queued,
+                // where a later `get_error` would pin it on an unrelated draw.
+                self.drain_gl_errors();
+            }
+            self.invalidate_static_layer(key);
+            return false;
+        }
+        // femtovg builds the layer's framebuffer during the retarget above,
+        // so the swap has nothing to act on any earlier than here.
+        // SAFETY: the context is current for the frame, and the check above
+        // found the layer's framebuffer bound.
+        unsafe { self.share_layer_stencil(size) };
+        // `drop_shadow` restores `frame_target` after its offscreen pass, so the
+        // capture has to own it: a shadowed *static* draw sits in `Band::Below`
+        // and is emitted here, and leaving this on `Screen` would send that
+        // shadow — and every static draw queued after it — to the export buffer
+        // while the layer is still marked captured.
+        debug_assert!(
+            matches!(self.frame_target, RenderTarget::Screen),
+            "a static-layer capture may only borrow a screen-backed frame; \
+             `end_static_layer` hands the target back as `Screen`",
+        );
+        self.frame_target = RenderTarget::Image(image);
+
+        // Opaque, because the frame itself starts opaque black: rasterising
+        // static content against transparency and compositing it later blends
+        // those edges twice, which shows as antialiasing drift on thin geometry
+        // and text. Opaque makes the blit a copy rather than a blend.
+        self.canvas.clear_rect(
+            0,
+            0,
+            u32::from(size.width.get()),
+            u32::from(size.height.get()),
+            femtovg::Color::rgbf(0.0, 0.0, 0.0),
+        );
+        true
+    }
+
+    fn end_static_layer(&mut self, key: &str) {
+        // The capture is still only queued, and femtovg binds a target when it
+        // *executes* a command rather than at flush start. Draining here, while
+        // the layer's framebuffer is still bound, is what puts the static half
+        // into the layer; without it the rebind below sends the whole capture
+        // to the screen and leaves the layer undefined.
+        self.canvas.flush();
+        self.frame_target = RenderTarget::Screen;
+        self.canvas.set_render_target(RenderTarget::Screen);
+        // Keep GL agreeing with the retarget just queued, so raw passes before
+        // the next flush do not land in the layer.
+        unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
+        }
+        if let Some(layer) = self.static_layers.get_mut(key) {
+            layer.captured = true;
+        }
+    }
+
+    fn blit_static_layer(&mut self, key: &str) -> bool {
+        let Some(layer) = self.static_layers.get(key) else {
+            return false;
+        };
+        if !layer.captured {
+            return false;
+        }
+        let (image, w, h) = (layer.image, layer.width as f32, layer.height as f32);
+        if self.blit_static_layer_raw(image) {
+            return true;
+        }
+
+        // No canvas transform: the fast path below ignores it, and the Y-flip
+        // comes from the `ImageFlags::FLIP_Y` set at allocation.
+        self.canvas.save();
+        let paint = Paint::image(image, 0.0, 0.0, w, h, 0.0, 1.0).with_anti_alias(false);
+        let mut path = Path::new();
+        path.rect(0.0, 0.0, w, h);
+        self.canvas.fill_path(&path, &paint);
+        self.canvas.restore();
+        true
+    }
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "damage rectangles are small positive values within the surface"
+    )]
+    fn blit_static_layer_rects(&mut self, key: &str, rects: &[Rect]) -> bool {
+        if rects.is_empty() {
+            return false;
+        }
+        let Some(layer) = self.static_layers.get(key) else {
+            return false;
+        };
+        if !layer.captured {
+            return false;
+        }
+        let image = layer.image;
+        let Ok(texture) = self.canvas.get_native_texture(image) else {
+            return false;
+        };
+        self.canvas.flush();
+        if self.raw_blit.is_none() {
+            self.raw_blit = RawBlit::new(&self.gl);
+        }
+        let Some(blit) = self.raw_blit.as_ref() else {
+            return false;
+        };
+
+        let dpi = self.dpi_scale;
+        let (width_px, height_px) = ((self.width * dpi) as i32, (self.height * dpi) as i32);
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        unsafe {
+            self.gl.disable(glow::BLEND);
+            self.gl.disable(glow::STENCIL_TEST);
+            self.gl.enable(glow::SCISSOR_TEST);
+            self.gl.use_program(Some(blit.program));
+            self.gl.active_texture(glow::TEXTURE0);
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            if let Some(vao) = blit.vao {
+                self.gl.bind_vertex_array(Some(vao));
+            }
+            self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(blit.vbo));
+            let stride = 4 * F32_BYTES;
+            self.gl.enable_vertex_attrib_array(blit.pos_loc);
+            self.gl
+                .vertex_attrib_pointer_f32(blit.pos_loc, 2, glow::FLOAT, false, stride, 0);
+            self.gl.enable_vertex_attrib_array(blit.uv_loc);
+            self.gl.vertex_attrib_pointer_f32(
+                blit.uv_loc,
+                2,
+                glow::FLOAT,
+                false,
+                stride,
+                2 * F32_BYTES,
+            );
+
+            for &rect in rects {
+                // The quad covers the whole surface and the scissor restricts
+                // what is written, so cost tracks damage area, not rect count.
+                let (px, py, pw, ph) = scissor_box(rect, dpi, width_px, height_px);
+                self.gl.scissor(px, py, pw, ph);
+                self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            }
+
+            self.gl.disable(glow::SCISSOR_TEST);
+            self.gl.disable_vertex_attrib_array(blit.pos_loc);
+            self.gl.disable_vertex_attrib_array(blit.uv_loc);
+            if blit.vao.is_some() {
+                self.gl.bind_vertex_array(None);
+            }
+        }
+        true
+    }
+
+    fn invalidate_static_layer(&mut self, key: &str) {
+        if let Some(layer) = self.static_layers.remove(key) {
+            self.canvas.delete_image(layer.image);
+        }
+    }
 }

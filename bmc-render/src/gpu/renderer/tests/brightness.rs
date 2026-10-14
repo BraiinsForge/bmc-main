@@ -18,8 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+#![expect(clippy::cast_precision_loss)]
+
 use super::FemtoVgRenderer;
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use crate::tree::{SpanData, TextStyle};
 use bmc_wasm_protocol::colors::{TRANSPARENT, WHITE};

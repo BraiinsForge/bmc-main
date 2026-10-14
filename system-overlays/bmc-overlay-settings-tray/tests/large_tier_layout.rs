@@ -43,7 +43,8 @@ use std::time::Instant;
 use bmc_overlay_settings_tray::ui::{Action, Phase, Status};
 use bmc_overlay_settings_tray::{SettingsTrayRenderState, SettingsTrayView, render_settings_tray};
 use bmc_render::gpu::mesh::MeshDrawArgs;
-use bmc_render::renderer::{FrameClear, Renderer};
+use bmc_render::renderer::FrameClear;
+use bmc_render::renderer::prelude::*;
 use bmc_render::tree::{AutoFit, SpanData, TextOverflow, TextStyle};
 use bmc_system_overlay::{DisplayShape, OverlayViewport, SettingsCaps};
 use bmc_wasm_protocol::colors::Color;
@@ -92,9 +93,61 @@ impl ProbeRenderer {
     }
 }
 
-impl Renderer for ProbeRenderer {
+impl RenderFrame for ProbeRenderer {
+    fn save(&mut self) {
+        self.saved.push(self.offset);
+    }
+
+    fn restore(&mut self) {
+        if let Some(prev) = self.saved.pop() {
+            self.offset = prev;
+        }
+    }
+
+    fn translate(&mut self, x: f32, y: f32) {
+        self.offset.0 += x;
+        self.offset.1 += y;
+    }
+
+    fn rotate(&mut self, _angle_radians: f32) {}
+
+    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
+
+    fn pop_scissor(&mut self) {}
+
+    fn brightness(&self) -> f32 {
+        1.0
+    }
+
+    fn set_brightness(&mut self, _brightness: f32) {}
+
+    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn begin_frame_with_clear(
+        &mut self,
+        _width: u32,
+        _height: u32,
+        _dpi_scale: f32,
+        _clear: FrameClear,
+    ) {
+    }
+
+    fn flush(&mut self) {}
+
+    fn width(&self) -> f32 {
+        0.0
+    }
+
+    fn height(&self) -> f32 {
+        0.0
+    }
+}
+
+impl RenderShapes for ProbeRenderer {
     fn fill_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _color: Color) {}
+
     fn fill_rounded_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _r: f32, _color: Color) {}
+
     fn stroke_rounded_rect(
         &mut self,
         _x: f32,
@@ -106,13 +159,17 @@ impl Renderer for ProbeRenderer {
         _color: Color,
     ) {
     }
+
     fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, _color: Color) {
         self.record_circle(cx, cy, r);
     }
+
     fn fill_rect_paint(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _fill: &Fill) {}
+
     fn fill_circle_paint(&mut self, cx: f32, cy: f32, r: f32, _fill: &Fill) {
         self.record_circle(cx, cy, r);
     }
+
     fn stroke_arc(
         &mut self,
         _cx: f32,
@@ -126,31 +183,31 @@ impl Renderer for ProbeRenderer {
         _cap: ArcCap,
     ) {
     }
+
     fn stroke_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bw: f32, _color: Color) {}
+
     fn draw_line(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _w: f32, _color: Color) {}
-    fn save(&mut self) {
-        self.saved.push(self.offset);
+
+    fn stroke_path(
+        &mut self,
+        _points: &[(f32, f32)],
+        _stroke_width: f32,
+        _color: Color,
+        _closed: bool,
+        _smooth: bool,
+    ) {
     }
-    fn restore(&mut self) {
-        if let Some(prev) = self.saved.pop() {
-            self.offset = prev;
-        }
-    }
-    fn translate(&mut self, x: f32, y: f32) {
-        self.offset.0 += x;
-        self.offset.1 += y;
-    }
-    fn rotate(&mut self, _angle_radians: f32) {}
-    fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
-    fn pop_scissor(&mut self) {}
-    fn brightness(&self) -> f32 {
-        1.0
-    }
-    fn set_brightness(&mut self, _brightness: f32) {}
+
+    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+}
+
+impl RenderText for ProbeRenderer {
     fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
+
     fn measure_text(&mut self, text: &str, size: f32) -> f32 {
         text.chars().count() as f32 * size * 0.6
     }
+
     fn measure_paragraph(
         &mut self,
         style: &TextStyle,
@@ -219,6 +276,7 @@ impl Renderer for ProbeRenderer {
         flush(&mut lines, &mut line, &mut widest);
         (widest * char_w, lines * line_h)
     }
+
     fn draw_paragraph(
         &mut self,
         style: &TextStyle,
@@ -233,6 +291,7 @@ impl Renderer for ProbeRenderer {
             .push((text.clone(), self.offset.1 + y + height));
         self.paragraphs.push((text, max_width));
     }
+
     fn draw_paragraph_clipped(
         &mut self,
         _style: &TextStyle,
@@ -244,10 +303,43 @@ impl Renderer for ProbeRenderer {
         _clip_bottom: f32,
     ) {
     }
+
+    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+
+    fn draw_autofit_text(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        _box_width: f32,
+        _box_height: f32,
+        _text: &str,
+        _style: &TextStyle,
+        _mode: AutoFit,
+        _min_size: u16,
+        _max_size: u16,
+    ) {
+    }
+
+    fn draw_curved_text(
+        &mut self,
+        _cx: f32,
+        _cy: f32,
+        _radius: f32,
+        _angle: f32,
+        _anchor: ArcAnchor,
+        _facing: ArcTextFacing,
+        _text: &str,
+        _style: &TextStyle,
+    ) {
+    }
+}
+
+impl RenderAssets for ProbeRenderer {
     fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {
         self.next_svg += 1;
         SvgId::from_wire(self.next_svg)
     }
+
     fn draw_svg(
         &mut self,
         _x: f32,
@@ -260,12 +352,15 @@ impl Renderer for ProbeRenderer {
         _fills: &[(String, Color)],
     ) {
     }
+
     fn register_bitmap(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
         None
     }
+
     fn register_bitmap_nearest(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
         None
     }
+
     fn register_bitmap_rgba(
         &mut self,
         _tag: &str,
@@ -285,7 +380,9 @@ impl Renderer for ProbeRenderer {
     ) -> Option<BitmapId> {
         None
     }
+
     fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bitmap_id: BitmapId) {}
+
     fn draw_nine_patch(
         &mut self,
         _x: f32,
@@ -299,9 +396,11 @@ impl Renderer for ProbeRenderer {
         _bottom: u16,
     ) {
     }
+
     fn register_mesh(&mut self, _tag: &str, _data: &[u8]) -> Option<MeshId> {
         None
     }
+
     fn draw_mesh(
         &mut self,
         _x: f32,
@@ -313,6 +412,7 @@ impl Renderer for ProbeRenderer {
         _args: MeshDrawArgs,
     ) {
     }
+
     fn draw_sphere(
         &mut self,
         _x: f32,
@@ -328,42 +428,17 @@ impl Renderer for ProbeRenderer {
         _atmosphere: bool,
     ) {
     }
-    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
-    fn draw_autofit_text(
-        &mut self,
-        _x: f32,
-        _y: f32,
-        _box_width: f32,
-        _box_height: f32,
-        _text: &str,
-        _style: &TextStyle,
-        _mode: AutoFit,
-        _min_size: u16,
-        _max_size: u16,
-    ) {
+
+    fn evict_prefix(&mut self, _prefix: &str) -> usize {
+        0
     }
-    fn draw_curved_text(
-        &mut self,
-        _cx: f32,
-        _cy: f32,
-        _radius: f32,
-        _angle: f32,
-        _anchor: ArcAnchor,
-        _facing: ArcTextFacing,
-        _text: &str,
-        _style: &TextStyle,
-    ) {
+
+    fn bitmap_resident_bytes(&self) -> u64 {
+        0
     }
-    fn stroke_path(
-        &mut self,
-        _points: &[(f32, f32)],
-        _stroke_width: f32,
-        _color: Color,
-        _closed: bool,
-        _smooth: bool,
-    ) {
-    }
-    fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+}
+
+impl RenderOffscreen for ProbeRenderer {
     fn drop_shadow(
         &mut self,
         _cx: f32,
@@ -376,28 +451,6 @@ impl Renderer for ProbeRenderer {
         _color: Color,
         _inner: &mut dyn FnMut(&mut dyn Renderer),
     ) {
-    }
-    fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
-    fn begin_frame_with_clear(
-        &mut self,
-        _width: u32,
-        _height: u32,
-        _dpi_scale: f32,
-        _clear: FrameClear,
-    ) {
-    }
-    fn flush(&mut self) {}
-    fn width(&self) -> f32 {
-        0.0
-    }
-    fn height(&self) -> f32 {
-        0.0
-    }
-    fn evict_prefix(&mut self, _prefix: &str) -> usize {
-        0
-    }
-    fn bitmap_resident_bytes(&self) -> u64 {
-        0
     }
 }
 

@@ -28,32 +28,81 @@
 //! This asserts the source itself: every defaulted trait method must appear in
 //! the wrapper's impl.
 
-/// Method names declared with a default body in `trait Renderer`.
+/// Lines of each top-level item whose header satisfies `header`,
+/// up to the item's closing brace at column 0.
+fn item_bodies(src: &str, header: impl Fn(&str) -> bool) -> Vec<Vec<&str>> {
+    let mut bodies = Vec::new();
+    let mut current: Option<Vec<&str>> = None;
+    for line in src.lines() {
+        match current.as_mut() {
+            Some(body) if line == "}" => bodies.push(std::mem::take(body)),
+            Some(body) => body.push(line),
+            None if header(line) => current = Some(Vec::new()),
+            None => {}
+        }
+        if line == "}" {
+            current = None;
+        }
+    }
+    bodies
+}
+
+/// The sub-traits `Renderer` gathers, read from its supertrait bound.
+fn sub_traits(src: &str) -> Vec<&str> {
+    let (_, rest) = src
+        .split_once("pub trait Renderer:")
+        .expect("BUG: Renderer must name its sub-traits as supertraits");
+    let (bound, _) = rest
+        .split_once('{')
+        .expect("BUG: Renderer's supertrait bound must end at its body");
+    bound.split('+').map(str::trim).collect()
+}
+
+/// Method names declared with a default body in the renderer sub-traits.
 fn defaulted_trait_methods(src: &str) -> Vec<&str> {
-    let trait_body = src
-        .split_once("pub trait Renderer")
-        .expect("BUG: trait Renderer must be present")
-        .1;
-    let trait_body = trait_body
-        .split_once("pub trait RendererAssetResolver")
-        .expect("BUG: RendererAssetResolver must follow trait Renderer")
-        .0;
-    trait_body
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("fn "))
-        // A default body opens on the signature line; a required method ends `;`.
-        .filter(|rest| rest.trim_end().ends_with('{'))
-        .filter_map(|rest| rest.split('(').next())
-        .collect()
+    let mut traits = Vec::new();
+    for name in sub_traits(src) {
+        let header = format!("pub trait {name} {{");
+        let found = item_bodies(src, |line| line == header);
+        assert_eq!(
+            found.len(),
+            1,
+            "BUG: sub-trait {name} must be declared once, as `{header}`"
+        );
+        traits.extend(found);
+    }
+    let mut methods = Vec::new();
+    for body in traits {
+        let mut pending: Option<&str> = None;
+        for line in body.into_iter().map(str::trim) {
+            if let Some(rest) = line.strip_prefix("fn ") {
+                pending = rest.split('(').next();
+            }
+            let Some(name) = pending else { continue };
+            // A signature may span lines; it ends in `;` when required
+            // and in `{` or `{}` when it has a default body.
+            if line.ends_with(';') {
+                pending = None;
+            } else if line.ends_with('{') || line.ends_with("{}") {
+                methods.push(name);
+                pending = None;
+            }
+        }
+    }
+    methods
 }
 
 fn wrapper_methods(src: &str) -> Vec<&str> {
-    let impl_body = src
-        .split_once("impl Renderer for RenderTarget")
-        .expect("BUG: RenderTarget must implement Renderer")
-        .1;
-    impl_body
-        .lines()
+    let impls = item_bodies(src, |line| {
+        line.starts_with("impl Render") && line.contains(" for RenderTarget")
+    });
+    assert!(
+        !impls.is_empty(),
+        "BUG: RenderTarget must implement the renderer sub-traits"
+    );
+    impls
+        .into_iter()
+        .flatten()
         .filter_map(|line| line.trim().strip_prefix("fn "))
         .filter_map(|rest| rest.split('(').next())
         .collect()

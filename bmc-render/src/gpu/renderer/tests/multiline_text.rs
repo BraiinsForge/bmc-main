@@ -26,8 +26,10 @@
 //! inherits an earlier span's style. These exercise the real `FemtoVgRenderer`
 //! GL path end to end (shape → draw → read back pixels).
 
+#![expect(clippy::cast_precision_loss)]
+
 use super::FemtoVgRenderer;
-use crate::renderer::Renderer;
+use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use crate::tree::{SpanData, TextStyle};
 use bmc_wasm_protocol::{AutoFit, Color};

@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 
 use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::{FrameClear, Renderer as _};
+use bmc_render::renderer::FrameClear;
+use bmc_render::renderer::prelude::*;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
