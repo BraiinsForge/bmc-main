@@ -153,6 +153,27 @@ nix run .#deck -- deploy --device "$DEVICE_IP" --packages widget-my-widget
 Replace `my-widget` with your widget's directory name. Verify the result on the device as well as in the testbed. See
 the [`bmc-wasm-runtime` README](bmc-wasm-runtime/README.md) for the full tooling reference.
 
+#### Package a widget for upload
+
+A Deck also installs a widget uploaded from its web UI, so a widget can be shared without a package feed. Build the
+package and dump it as a NAR archive:
+
+```shell
+nix build .#deck-packages.widget-my-widget.pkg --out-link my-widget
+nix-store --dump "$(readlink my-widget)" > widget-my-widget.nar
+```
+
+On the Deck's Display Widgets page, choose Install Widget, accept the third-party notice and pick the `.nar` file. The
+device checks the archive before installing it and refuses anything that is not a single WASM widget under
+`lib/bmc-widgets/`, an archive over 64 MiB, a version older than the one installed, or a widget whose folder would hide
+an installed one or be hidden by it.
+
+A widget built outside this tree should sit under a maintainer folder, `lib/bmc-widgets/<maintainer>/<widget>/`, so that
+its package is named `widget-<maintainer>_<widget>`, clear of the feed's widgets. A flat upload replaces the feed widget
+of the same name only while its version is above the feed's: the next upgrade, automatic ones included, puts the feed's
+build back over an upload at the feed's version or below. A template repository for such widgets will be linked here
+soon.
+
 ### Deploy to a Deck
 
 On a Deck running firmware 26.09, deploy the packages built from your checkout to the address set in `DEVICE_IP`:

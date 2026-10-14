@@ -88,6 +88,13 @@ with per-category counts. On a miner, the device address opens the BOSer interfa
 The backend can discover available-but-not-installed widget packages and install them through the shared upgrade flow.
 The frontend picker integration and interactive installation experience will be delivered in a future change.
 
+### [Widget Package Upload](widget-package-upload.md)
+
+A widget built outside the package feed is installed by uploading its `.nar` file from the Display Widgets page. The
+device inspects the archive contents, accepts exactly one WASM widget in the standard package layout, and reports
+whether it was installed, upgraded, reinstalled or already present. A rejected upload leaves the active profile and the
+installed widgets untouched.
+
 ### [Seamless Widget Upgrades](seamless-widget-upgrades.md)
 
 Widget-only upgrades replace changed widget instances without blanking or restarting the whole display. Host, thin, or
