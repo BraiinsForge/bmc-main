@@ -45,10 +45,12 @@ export const URLS = {
 
     api: {
         supportArchive: '/api/get_support_archive',
+        installWidgetPackage: '/api/install_widget_package',
     },
 
     external: {
         academy: 'https://academy.braiins.com/',
+        bmcMainRepository: 'https://github.com/BraiinsForge/bmc-main',
         pool: { accessProfiles: 'https://pool.braiins.com/settings/access' },
         widgetsDirectory: 'https://braiins.com/hardware/braiins-deck-widgets',
     },

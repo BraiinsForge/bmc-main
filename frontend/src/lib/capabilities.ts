@@ -63,6 +63,11 @@ export function upgradesManaged(caps: Capabilities): boolean {
     return boserManaged(caps);
 }
 
+// Widget packages would land in the profile boser owns on a managed miner.
+export function widgetPackageInstallable(caps: Capabilities): boolean {
+    return !boserManaged(caps);
+}
+
 export function timezoneConfigurable(caps: Capabilities): boolean {
     return !boserManaged(caps);
 }

@@ -19,10 +19,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component, createRef, Fragment, type ReactElement } from 'react';
-import { debounce } from 'es-toolkit';
+import { type ChangeEvent, Component, createRef, Fragment, type ReactElement } from 'react';
+import { debounce, escape, isPlainObject } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
-import { type IntlShape, useIntl } from 'react-intl';
+import { FormattedMessage, type IntlShape, useIntl } from 'react-intl';
 import { type NavigateFunction, useNavigate } from 'react-router';
 
 // Libs
@@ -34,20 +34,24 @@ import { serial } from '@/lib/async';
 import { listenDocumentEvent } from '@/lib/dom';
 import { setState, Sized, stopEventPropagation } from '@/lib/react';
 import { Form, type iField } from '@/lib/form';
+import { assertUnreachable } from '@/lib/ts';
 
 // App
 import * as pb from '@/proto';
 import type { Capabilities } from '@/lib/system';
-import { useStore } from '@/store';
+import { widgetPackageInstallable } from '@/lib/capabilities';
+import { store, useStore } from '@/store';
 import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
+import { Button, Link } from '@/components';
 import { Dropdown, OverflowMenu, MenuButton, MenuItem, Toggle, Layer } from '@carbon/react';
 import {
     CarouselHorizontal as IconCycle,
     ChevronDown as IconChevronDown,
     ChevronUp as IconChevronUp,
+    Upload as IconUpload,
     type CarbonIconType,
 } from '@carbon/react/icons';
 import * as Comp from './components';
@@ -59,6 +63,38 @@ const $ = getID('list').get;
 
 // Monotonic source of unique ids for optimistic clone placeholders.
 let optimisticCloneSeq = 0;
+
+// The backend accepts no other type: one outside the CORS safelist makes a
+// cross-site page preflight, which the device never answers.
+const WIDGET_PACKAGE_CONTENT_TYPE = 'application/x-nix-archive';
+
+// Comfortably past the backend's upload deadline and profile-lock wait;
+// the build and activation after them have no bound of their own.
+const INSTALL_WIDGET_PACKAGE_TIMEOUT_MS = 8 * 60 * 1000;
+// Install failures explain themselves in a sentence or two,
+// which the default 3 s takes away before it is read.
+const INSTALL_WIDGET_PACKAGE_ERROR_SECONDS = 10;
+
+type InstalledWidgetPackage = { display_name: string; version: string } & (
+    | { outcome: 'installed' | 'reinstalled' | 'already_installed' }
+    | { outcome: 'replaced'; previous_version: string }
+);
+
+function installedWidgetPackage(body: unknown): InstalledWidgetPackage | null {
+    if (!isPlainObject(body)) return null;
+    const { display_name, version, outcome, previous_version } = body;
+    if (typeof display_name !== 'string' || typeof version !== 'string') return null;
+    switch (outcome) {
+        case 'installed':
+        case 'reinstalled':
+        case 'already_installed':
+            return { display_name, version, outcome };
+        case 'replaced':
+            return typeof previous_version === 'string' ? { display_name, version, outcome, previous_version } : null;
+        default:
+            return null;
+    }
+}
 
 type OpenDialogKind = null | 'scene-select' | 'manifest';
 
@@ -96,6 +132,7 @@ interface State {
     manifestWidgets: pb.WidgetManifest[];
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
+    packageUploading: boolean;
     timezones: pb.Timezone[];
     accounts: null | pb.Account[];
     credentialTypes: pb.CredentialTypeLookup;
@@ -119,6 +156,7 @@ const getInitialState = (): State => ({
     manifestWidgets: [],
     manifestLookup: new Map(),
     manifestsLoading: false,
+    packageUploading: false,
     timezones: [],
     accounts: null,
     credentialTypes: new Map(),
@@ -326,6 +364,7 @@ class View extends Component<Props, State> {
             on: formatMessage({ defaultMessage: 'On' }),
             off: formatMessage({ defaultMessage: 'Off' }),
             addNew: formatMessage({ defaultMessage: 'Add New' }),
+            installPackage: formatMessage({ defaultMessage: 'Install Widget' }),
         };
     }
 
@@ -334,6 +373,112 @@ class View extends Component<Props, State> {
         const { runningWidgets } = this.state;
         if (runningWidgets === null || runningWidgets.max <= 0) return false;
         return runningWidgets.count >= runningWidgets.max;
+    }
+
+    #packageInputRef = createRef<HTMLInputElement>();
+    #packagePick = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const accepted = await this.context.confirm({
+            size: 'sm',
+            danger: true,
+            title: formatMessage({ defaultMessage: 'Install a Third-Party Widget' }),
+            message: (
+                <div className={css.packageRiskMessage}>
+                    <FormattedMessage
+                        tagName="p"
+                        defaultMessage="Widget packages installed from a file are not checked by Braiins Forge. A malicious package can take over this device and anything it can reach on your network. Install only packages from a source you trust."
+                    />
+                    <FormattedMessage
+                        tagName="p"
+                        defaultMessage="Upload the widget as a .nar archive of its package. See the <a>bmc-main repository</a> for instructions."
+                        values={{ a: ch => <Link href={URLS.external.bmcMainRepository} external children={ch} /> }}
+                    />
+                </div>
+            ),
+            confirmLabel: formatMessage({ defaultMessage: 'I Accept the Risk' }),
+            cancelLabel: formatMessage({ defaultMessage: 'Cancel' }),
+        });
+        if (accepted) this.#packageInputRef.current?.click();
+    };
+    #packageChosen = (e: ChangeEvent<HTMLInputElement>): void => {
+        const file = e.target.files?.[0];
+        // Cleared so choosing the same file again fires change again.
+        e.target.value = '';
+        if (file) this.#installWidgetPackage(file);
+    };
+    #installWidgetPackage = async (file: File): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        this.setState({ packageUploading: true });
+        try {
+            const response = await fetch(URLS.api.installWidgetPackage, {
+                method: 'POST',
+                headers: { 'Content-Type': WIDGET_PACKAGE_CONTENT_TYPE },
+                body: file,
+                credentials: 'same-origin',
+                signal: AbortSignal.timeout(INSTALL_WIDGET_PACKAGE_TIMEOUT_MS),
+            });
+            const body: unknown = await response.json().catch(() => null);
+            if (response.status === 401) {
+                store.goToLogin();
+                return;
+            }
+            if (!response.ok) {
+                // Toast messages are rendered as HTML; the reason can quote package-controlled text.
+                const error = isPlainObject(body) && typeof body.error === 'string' ? escape(body.error) : '';
+                toast.error(error || formatMessage({ defaultMessage: 'Failed to install the widget package!' }), {
+                    duration: INSTALL_WIDGET_PACKAGE_ERROR_SECONDS,
+                });
+                return;
+            }
+            const installed = installedWidgetPackage(body);
+            toast.success(
+                installed
+                    ? this.#packageInstalledMessage(installed)
+                    : formatMessage({ defaultMessage: 'The widget package was installed.' }),
+                { title: formatMessage({ defaultMessage: 'Widget Package Installed' }) },
+            );
+            this.#loadManifestWidgets();
+        } catch (error) {
+            // Once the device has the whole upload it installs regardless,
+            // so a timeout is not a failure.
+            const timedOut = error instanceof DOMException && error.name === 'TimeoutError';
+            toast.error(
+                timedOut
+                    ? formatMessage({
+                          defaultMessage:
+                              'The device did not answer in time. The install may still finish; check the widget list in a moment.',
+                      })
+                    : formatMessage({ defaultMessage: 'Failed to install the widget package!' }),
+                { duration: INSTALL_WIDGET_PACKAGE_ERROR_SECONDS },
+            );
+        } finally {
+            this.setState({ packageUploading: false });
+        }
+    };
+    #packageInstalledMessage(installed: InstalledWidgetPackage): string {
+        const { formatMessage } = this.props.intl;
+        // The message is rendered as HTML and these values come from the package.
+        const name = escape(installed.display_name);
+        const version = escape(installed.version);
+        const { outcome } = installed;
+        switch (outcome) {
+            case 'installed':
+                return formatMessage(
+                    { defaultMessage: '{name} {version} can now be added to a scene.' },
+                    { name, version },
+                );
+            case 'replaced':
+                return formatMessage(
+                    { defaultMessage: '{name} was upgraded from {previous} to {version}.' },
+                    { name, version, previous: escape(installed.previous_version) },
+                );
+            case 'reinstalled':
+                return formatMessage({ defaultMessage: '{name} {version} was reinstalled.' }, { name, version });
+            case 'already_installed':
+                return formatMessage({ defaultMessage: '{name} {version} was already installed.' }, { name, version });
+            default:
+                return assertUnreachable(outcome, 'widget install outcome');
+        }
     }
 
     #sceneAddChooseKind = (): void => {
@@ -1021,6 +1166,27 @@ class View extends Component<Props, State> {
 
                     return (
                         <div className={css.headerControls} ref={ref}>
+                            {widgetPackageInstallable(this.props.hardwareCapabilities) && (
+                                <>
+                                    <input
+                                        ref={this.#packageInputRef}
+                                        id={$('widget-package-file')}
+                                        type="file"
+                                        accept=".nar"
+                                        hidden
+                                        onChange={this.#packageChosen}
+                                    />
+                                    <Button
+                                        id={$('install-widget-package')}
+                                        kind="secondary"
+                                        renderIcon={IconUpload}
+                                        loading={this.state.packageUploading}
+                                        onClick={this.#packagePick}
+                                        children={txt.installPackage}
+                                    />
+                                </>
+                            )}
+
                             <ScreenCyclingConfigForm
                                 cycle={{ value: cycle.isActive, onChange: this.#cycleChangeActive }}
                                 duration={{
