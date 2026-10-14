@@ -2647,6 +2647,8 @@ _UPGRADE_SERVER_APP = ".#upgrade-server"
 # The device serves gRPC(-web) on the plain web port; grpcurl talks h2c to it.
 _GRPC_PORT = 80
 _GRPC_PACKAGE = "braiins.bmc.web"
+# The device serves no reflection, so grpcurl reads the schemas from the repository's protos.
+_PROTO_ROOT = Path("bmc-grpc/proto")
 _GRPCURL_MAX_TIME = 120
 
 _PACKAGE_PHASE_PREFIX = "PACKAGE_UPGRADE_PHASE_"
@@ -3364,7 +3366,9 @@ def _grpcurl_argv(
     cookie: str | None,
     max_time: int | None,
 ) -> list[str]:
-    argv = ["grpcurl", "-plaintext"]
+    argv = ["grpcurl", "-plaintext", "-import-path", str(_PROTO_ROOT)]
+    for proto in sorted(_PROTO_ROOT.glob("web/*.proto")):
+        argv += ["-proto", str(proto.relative_to(_PROTO_ROOT))]
     if max_time is not None:
         argv += ["-max-time", str(max_time)]
     if cookie is not None:

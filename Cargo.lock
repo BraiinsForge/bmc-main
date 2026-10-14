@@ -758,7 +758,6 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tonic-middleware",
- "tonic-reflection",
  "tonic-types",
  "tonic-web",
  "tower 0.5.2",
@@ -825,12 +824,9 @@ dependencies = [
 name = "bmc-grpc"
 version = "0.1.0"
 dependencies = [
- "fs-err",
  "glob",
- "hex",
  "prost",
  "prost-types",
- "sha2",
  "tonic",
  "tonic-build",
 ]
@@ -8420,19 +8416,6 @@ dependencies = [
  "futures-util",
  "tonic",
  "tower 0.4.13",
-]
-
-[[package]]
-name = "tonic-reflection"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9687bd5bfeafebdded2356950f278bba8226f0b32109537c4253406e09aafe1"
-dependencies = [
- "prost",
- "prost-types",
- "tokio",
- "tokio-stream",
- "tonic",
 ]
 
 [[package]]

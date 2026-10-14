@@ -234,6 +234,9 @@ Proto files are in `bmc-grpc/proto/web/`. After changing one, run `just gen`: th
 TypeScript in `frontend/src/proto/gen/`, which is checked in, so commit it with the proto change. The Rust bindings are
 generated at build time by `bmc-grpc/build.rs`.
 
+The server registers no gRPC reflection; point grpcurl at the protos instead
+(`-import-path bmc-grpc/proto -proto web/<file>.proto`).
+
 ## Cross-Compilation Notes
 
 - The main target platform is ARMv7 (`armv7-unknown-linux-gnueabihf`)

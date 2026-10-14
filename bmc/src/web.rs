@@ -79,7 +79,8 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 {
     /// gRPC package our own services live under.
     const GRPC_OWN_PACKAGE_PREFIX: &'static str = "/braiins.bmc.";
-    /// gRPC's own namespace (reflection is what we register there).
+    /// gRPC's own namespace (reflection, health). Nothing is served there,
+    /// but a probe gets our UNIMPLEMENTED rather than being forwarded to boser.
     const GRPC_RESERVED_PREFIX: &'static str = "/grpc.";
 
     #[expect(clippy::too_many_arguments)]

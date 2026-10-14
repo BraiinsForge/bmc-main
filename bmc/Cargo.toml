@@ -78,7 +78,6 @@ tokio-stream = { workspace = true, features = ["time"] }
 tokio-util = { workspace = true, features = ["full"] }
 tonic.workspace = true
 tonic-middleware.workspace = true
-tonic-reflection.workspace = true
 tonic-types.workspace = true
 tonic-web.workspace = true
 tower = { workspace = true, features = ["steer"] }

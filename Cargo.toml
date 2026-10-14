@@ -455,7 +455,6 @@ toml_edit = "0.22"
 tonic = "0.13.1"
 tonic-build = "0.13.1"
 tonic-middleware = "0.3.0"
-tonic-reflection = "0.13.1"
 tonic-types = "0.13.1"
 tonic-web = "0.13.1"
 tower = { version = "0.5.2", default-features = false }

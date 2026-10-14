@@ -56,7 +56,8 @@ marker before preparing the device.
 - Auto-upgrade disabled on the device. The harness asserts this up front (via `GetAutoUpgrade`) and aborts with an
   instruction to disable it, so a scheduled upgrade cannot race the test.
 
-- `grpcurl` on the developer machine (the harness ensures it is present) to speak gRPC-web to the device.
+- `grpcurl` on the developer machine (the harness ensures it is present) to speak native gRPC to the device. The device
+  serves no reflection, so grpcurl reads the schemas from the checkout's `bmc-grpc/proto`.
 
 - A local nix able to build the package plan the rig serves, plus enough free RAM on the device for the flash
   (sysupgrade stages the tar in tmpfs and pivots to a ramdisk). The "Memory headroom" check runs before any mutation and

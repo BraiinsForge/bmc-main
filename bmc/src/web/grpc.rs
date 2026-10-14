@@ -51,7 +51,6 @@ use tonic::service::Routes;
 use tonic::{Status, body::Body, codegen::http::Request};
 use tonic_middleware::InterceptorFor;
 use tonic_middleware::RequestInterceptor;
-use tonic_reflection::server::Builder;
 use tonic_web::GrpcWebLayer;
 use tower::Layer;
 use tracing::debug;
@@ -271,11 +270,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             ),
         );
 
-        let reflection_service = Builder::configure()
-            .register_encoded_file_descriptor_set(web::FILE_DESCRIPTOR_SET)
-            .build_v1alpha()
-            .expect("BUG: Unable to decode reflection descriptor");
-
         let authentication_service =
             web::authentication_service_server::AuthenticationServiceServer::new(
                 authentication::AuthenticationService::new(self.session_manager.clone()),
@@ -340,7 +334,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         // GrpcWebLayer is badly named, it's not a "layer", it's re-wrapper for other Services
         // All services requiring authentication have to be wrapped in GrpcWebLayer and use "InterceptorFor"
-        let routes = Routes::new(GrpcWebLayer::new().layer(reflection_service))
+        let routes = Routes::default()
             .add_service(
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())
