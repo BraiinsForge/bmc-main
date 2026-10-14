@@ -149,4 +149,5 @@ claude mcp add --transport http --scope user atlassian https://mcp.atlassian.com
 ```
 
 Use acli when the MCP is not connected: `acli jira workitem` creates, edits and verifies tickets with the converted ADF
-and `view --json`.
+and `view --json`. It is not in the dev shell; run it as `nix run .#pkgs.acli -- jira …`, or open
+`nix shell .#pkgs.acli` for a session.

@@ -59,6 +59,8 @@
         pkgs = import nixpkgs {
           inherit localSystem;
           config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [
+            "acli"
+            "acli-unwrapped"
             "corefonts"
           ];
           overlays = [
