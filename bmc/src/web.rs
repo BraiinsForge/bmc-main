@@ -24,6 +24,7 @@ mod grpc;
 mod http_server;
 mod no_password;
 mod session;
+mod widget_upload;
 
 use crate::alarm::AlarmController;
 use crate::backlight::DisplayBacklightDriver;
@@ -154,6 +155,11 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let session_manager = self.session_manager.clone();
         let widget_registry = self.widget_registry.clone();
         let hardware_capabilities = self.hardware_capabilities;
+        let widget_upload = widget_upload::router(
+            session_manager.clone(),
+            Arc::new(self.system_upgrade_service.clone()),
+            widget_upload::InstallTarget::from(&self.upgrade_route),
+        );
         let (config, grpc_web) = self.into_grpc_web();
         let http_router = http_server::HttpServer::new(
             config,
@@ -161,7 +167,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             widget_registry,
             hardware_capabilities,
         )
-        .build();
+        .build(widget_upload);
         let grpc_router = grpc_web
             .build()
             .layer(session::SessionLayer::new(session_manager.clone()))

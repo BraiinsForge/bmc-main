@@ -278,8 +278,11 @@ impl<T: BmcManager> HttpServer<T> {
         }
     }
 
-    pub(crate) fn build(&self) -> Router {
+    /// `session_routes` bring their own session layers; the routes built
+    /// here are open, and the Boser proxy authenticates on its own.
+    pub(crate) fn build(&self, session_routes: Router) -> Router {
         self.routes()
+            .merge(session_routes)
             .layer(CompressionLayer::new())
             .layer(CaptivePortalLayer::new(self.manager.clone()))
             .layer(middleware::from_fn(Self::log_request))
@@ -1880,7 +1883,8 @@ mod tests {
                     Some(boser),
                     StubManager::with_network(network),
                 );
-                let (status, headers, _) = send(&server.build(), request("GET", "/", "")).await;
+                let (status, headers, _) =
+                    send(&server.build(Router::new()), request("GET", "/", "")).await;
                 assert!(status.is_redirection(), "{state}: {status}");
                 assert_eq!(
                     headers.get(LOCATION).map(HeaderValue::as_bytes),

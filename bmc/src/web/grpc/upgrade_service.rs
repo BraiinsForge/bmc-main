@@ -384,6 +384,7 @@ impl From<SystemUpgradeError> for ConnectError {
             | SystemUpgradeError::UnableToCheckForUpgrade(_)
             | SystemUpgradeError::UpgradeFailed
             | SystemUpgradeError::PackageUpgradeFailed(_)
+            | SystemUpgradeError::WidgetInstallFailed
             | SystemUpgradeError::PendingInstallWriteFailed(_) => {
                 ConnectError::internal(value.to_string())
             }
@@ -399,11 +400,27 @@ impl From<SystemUpgradeError> for ConnectError {
             }
             // Another run holds the gate; the condition clears by itself,
             // so the client sees "try again", not a server fault.
-            SystemUpgradeError::UpgradeInProgress => ConnectError::unavailable(value.to_string()),
+            SystemUpgradeError::UpgradeInProgress | SystemUpgradeError::WidgetInstallBusy => {
+                ConnectError::unavailable(value.to_string())
+            }
+            // The archive itself is wrong; the client picks another file.
+            SystemUpgradeError::WidgetPackageRejected(_)
+            | SystemUpgradeError::WidgetPackageTooLarge => {
+                ConnectError::invalid_argument(value.to_string())
+            }
+            SystemUpgradeError::WidgetUploadStalled => {
+                ConnectError::deadline_exceeded(value.to_string())
+            }
+            SystemUpgradeError::WidgetUploadAborted => ConnectError::canceled(value.to_string()),
             // The image is incompatible/unsigned/wrong-key: retrying the
             // same image will not help, so signal a precondition failure
             // the client can surface as "pick a different image".
-            SystemUpgradeError::NotEnoughSpace
+            // A widget older than the installed one, or one that would hide
+            // or be hidden by an installed one, is refused the same way.
+            SystemUpgradeError::WidgetDowngradeRefused(_)
+            | SystemUpgradeError::WidgetFolderTaken(_)
+            | SystemUpgradeError::NotEnoughSpace
+            | SystemUpgradeError::WidgetInstallNoSpace
             | SystemUpgradeError::UpgradeExpired
             | SystemUpgradeError::InvalidImage => {
                 ConnectError::failed_precondition(value.to_string())
