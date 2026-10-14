@@ -2749,6 +2749,7 @@ mod tests {
         mod boser_managed;
         mod display_id;
         mod firmware_pause;
+        mod widget_install;
 
         const UNREACHABLE: &str = "BUG: a gated auto-upgrade must not reach the service's stubs";
 
