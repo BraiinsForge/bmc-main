@@ -68,12 +68,17 @@ When you do open the MR (with `glab`, run unsandboxed):
 - **A reviewer is optional.** If the user named a reviewer, set it. If they did not, open the MR without one — never
   block MR creation on a reviewer and never guess one. After the MR exists, ask the user, as a friendly follow-up,
   whether they'd like a reviewer; only add one if they say yes.
-- **When a reviewer is set, put it on the MR yourself and nudge the user to mirror it on the Jira ticket.** On the MR
-  use `--reviewer <username>` (find the account with `jira api "users?search=<name>"`). The Jira **Reviewers** field
-  (custom field `customfield_10118`, an array of user) cannot be written from the CLI — `jira issue edit --custom`
-  (jira-cli ≤ 1.7.0) only serializes array-of-`option` fields and returns `400 Invalid request payload` for it. So do
-  not try to set it; instead gently remind the user to add the reviewer to the ticket's Reviewers field in the Jira web
-  UI.
+- **When a reviewer is set, put it on the MR and on the Jira ticket.** GitLab and Jira hold separate accounts, so
+  resolve the person in each system on its own. Query both with the full name spelled without diacritics: both match
+  accent-insensitively (`Ondrej Golasowski` finds Ondřej Golasowski), and a first name alone is ambiguous.
+  - GitLab: `glab api -X GET users -f "search=<name>"` gives the `username` for `--reviewer <username>` on the MR. Pass
+    the name through `-f`: a space in a raw `users?search=` query is a 400.
+  - Jira: the MCP operation `lookupJiraAccountId` (`executeRead`, `query: "<name>"`) lists the matching accounts; take
+    the one with the `@braiinsforge.com` email and pass its `accountId` to `editJiraIssue` as
+    `{ "customfield_10118": [{ "accountId": "<id>" }] }` under `additional_fields`. The list is set, not appended.
+    Verify with `getJiraIssue` using `view: "full"` and `fields: ["customfield_10118"]`; the value shows under
+    `customFields.Reviewers`. acli cannot write the field, so when the MCP is not connected remind the user to set it in
+    the Jira web UI.
 
 ## Hard rules — never
 
@@ -84,5 +89,4 @@ When you do open the MR (with `glab`, run unsandboxed):
 - Never treat push / MR creation as an automatic finalization step; it is a separate, explicit action.
 - Never open an MR with no assignee — the assignee is always the opener.
 - Never require a reviewer or block MR creation on one — asking whether the user wants a reviewer is a friendly
-  follow-up after the MR exists; a named reviewer goes on the MR, and for Jira just remind the user to set the
-  `customfield_10118` Reviewers field (the CLI cannot write it).
+  follow-up after the MR exists; a named reviewer goes on both the MR and the ticket's Reviewers field.
