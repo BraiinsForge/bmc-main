@@ -1489,6 +1489,22 @@ mod tests {
                 });
             }
 
+            if program == "nix-store" && args.contains(&"--add") {
+                return Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: b"/nix/store/0000000000000000000000000000000-added\n".to_vec(),
+                    stderr: Vec::new(),
+                });
+            }
+
+            if program == "nix-store" && args.first() == Some(&"--delete") {
+                return Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
+            }
+
             Ok(std::process::Output {
                 status: std::process::ExitStatus::from_raw(1 << 8),
                 stdout: Vec::new(),
@@ -1567,6 +1583,43 @@ mod tests {
             vec!["bad \u{FFFD} byte".to_owned(), "ok".to_owned()],
             "every stderr line must be surfaced, bad bytes replaced"
         );
+    }
+
+    #[tokio::test]
+    async fn run_with_input_returns_once_the_child_exits_without_reading() {
+        // The writer stays open, so the input never ends.
+        let (input, _writer) = tokio::io::simplex(16);
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            TokioCommandRunner.run_with_input("sh", &["-c", "exit 3"], Box::pin(input)),
+        )
+        .await
+        .expect("BUG: an exited child must not keep the call waiting on its input")
+        .expect("BUG: the child ran");
+        assert_eq!(output.status.code(), Some(3));
+    }
+
+    #[tokio::test]
+    async fn run_with_input_reports_an_input_error_over_the_child_result() {
+        use tokio::io::AsyncReadExt as _;
+
+        struct FailAfterwards;
+        impl tokio::io::AsyncRead for FailAfterwards {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+                _buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::ErrorKind::FileTooLarge.into()))
+            }
+        }
+
+        let input = tokio::io::repeat(b'x').take(10).chain(FailAfterwards);
+        let error = TokioCommandRunner
+            .run_with_input("cat", &[], Box::pin(input))
+            .await
+            .expect_err("BUG: the input failed, which beats cat exiting cleanly at EOF");
+        assert_eq!(error.kind(), std::io::ErrorKind::FileTooLarge);
     }
 
     #[tokio::test]
@@ -2131,6 +2184,199 @@ mod tests {
         assert!(
             !stage.join("etc").exists() && !stage.join("nix.tmp").exists(),
             "non-nix tarball entries must never leave the staging directory"
+        );
+    }
+}
+
+#[cfg(test)]
+mod store_command_tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt as _;
+
+    struct ScriptedRunner {
+        output: std::process::Output,
+        stdin: std::sync::Mutex<Vec<Vec<u8>>>,
+        args: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl CommandRunner for ScriptedRunner {
+        async fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+        ) -> Result<std::process::Output, std::io::Error> {
+            assert_eq!(program, "nix-store");
+            assert_eq!(
+                args.iter().rev().nth(1),
+                Some(&"--"),
+                "the path follows `--`"
+            );
+            *self.args.lock().expect("BUG: mutex poisoned") =
+                args.iter().map(|&arg| arg.to_owned()).collect();
+            Ok(std::process::Output {
+                status: self.output.status,
+                stdout: self.output.stdout.clone(),
+                stderr: self.output.stderr.clone(),
+            })
+        }
+
+        async fn run_with_stderr_lines<F>(
+            &self,
+            _program: &str,
+            _args: &[&str],
+            _on_line: F,
+        ) -> Result<std::process::Output, std::io::Error>
+        where
+            F: FnMut(&str) + Send,
+        {
+            unreachable!("BUG: --add is not streamed")
+        }
+
+        async fn run_with_input(
+            &self,
+            program: &str,
+            args: &[&str],
+            mut input: InputStream,
+        ) -> Result<std::process::Output, std::io::Error> {
+            use tokio::io::AsyncReadExt as _;
+
+            assert_eq!(program, "nix-store");
+            assert_eq!(args[1], "--");
+            let mut fed = Vec::new();
+            input.read_to_end(&mut fed).await?;
+            self.stdin.lock().expect("BUG: mutex poisoned").push(fed);
+            Ok(std::process::Output {
+                status: self.output.status,
+                stdout: self.output.stdout.clone(),
+                stderr: self.output.stderr.clone(),
+            })
+        }
+    }
+
+    fn exited(code: i32, stdout: &[u8], stderr: &[u8]) -> ScriptedRunner {
+        ScriptedRunner {
+            output: std::process::Output {
+                status: std::process::ExitStatus::from_raw(code << 8),
+                stdout: stdout.to_vec(),
+                stderr: stderr.to_vec(),
+            },
+            stdin: std::sync::Mutex::new(Vec::new()),
+            args: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_printed_store_path_is_returned_trimmed() {
+        let runner = exited(0, b"/nix/store/abc-bmc-widget-x\n", b"");
+        assert_eq!(
+            add_to_store(&runner, Path::new("/tmp/stage"))
+                .await
+                .expect("BUG: add succeeded"),
+            "/nix/store/abc-bmc-widget-x"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_add_caps_what_nix_buffers_in_memory() {
+        let runner = exited(0, b"/nix/store/abc-bmc-widget-x\n", b"");
+        add_to_store(&runner, Path::new("/tmp/stage"))
+            .await
+            .expect("BUG: add succeeded");
+
+        let args = runner.args.lock().expect("BUG: mutex poisoned").clone();
+        assert!(
+            args.windows(3)
+                .any(|option| option == ["--option", "nar-buffer-size", "8388608"]),
+            "an uploaded tree must not be held in memory past 8 MiB: {args:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_add_carries_nix_stderr() {
+        let runner = exited(1, b"", b"error: disk full\n");
+        let error = add_to_store(&runner, Path::new("/tmp/stage"))
+            .await
+            .expect_err("BUG: non-zero exit is an error");
+        assert!(
+            matches!(
+                &error,
+                AddToStoreError::Command(StoreCommandError::Exited { stderr, .. })
+                    if stderr == "error: disk full"
+            ),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_answer_is_an_error_not_an_empty_path() {
+        let runner = exited(0, b"\n", b"");
+        assert!(matches!(
+            add_to_store(&runner, Path::new("/tmp/stage")).await,
+            Err(AddToStoreError::NoPath)
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_archive_is_fed_to_the_restore_on_stdin() {
+        let runner = exited(0, b"", b"");
+        restore_nar(
+            &runner,
+            Box::pin(&b"nix-archive-1"[..]),
+            Path::new("/tmp/stage/package"),
+        )
+        .await
+        .expect("BUG: scripted success");
+        assert_eq!(
+            runner.stdin.lock().expect("BUG: mutex poisoned").as_slice(),
+            [b"nix-archive-1".to_vec()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_archive_reports_what_nix_said() {
+        let runner = exited(
+            1,
+            b"",
+            b"error: input doesn't look like a Nix archive
+",
+        );
+        let error = restore_nar(
+            &runner,
+            Box::pin(&b"PK"[..]),
+            Path::new("/tmp/stage/package"),
+        )
+        .await
+        .expect_err("BUG: scripted failure");
+        assert!(
+            matches!(
+                &error,
+                StoreCommandError::Exited { command: "--restore", stderr, .. }
+                    if stderr == "error: input doesn't look like a Nix archive"
+            ),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_live_path_cannot_be_deleted() {
+        let runner = exited(
+            1,
+            b"",
+            b"error: Cannot delete path since it is still alive
+",
+        );
+        let error = delete_store_path(&runner, "/nix/store/x-bmc-widget-example")
+            .await
+            .expect_err("BUG: scripted failure");
+        assert!(
+            matches!(
+                &error,
+                StoreCommandError::Exited {
+                    command: "--delete",
+                    ..
+                }
+            ),
+            "{error}"
         );
     }
 }
