@@ -1017,6 +1017,9 @@ pub fn build_packages_preview(
 }
 
 #[cfg(test)]
+mod widget_install_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::error::Error as _;

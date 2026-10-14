@@ -694,3 +694,33 @@ fn a_wrapper_mismatch_is_reported_in_one_line() {
         "the reason names the file; the template is the SDK's to show: {reason}"
     );
 }
+
+#[test]
+fn a_name_that_is_not_utf8_is_the_packages_fault() {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let staging = tempfile::tempdir().expect("BUG: tempdir");
+    let root = staging.path().join("package");
+    restore(
+        &encode(&package_tree("example", widget_dir("example", "1.2.3"))),
+        &root,
+        CaseHack::Disabled,
+    )
+    .expect("BUG: fixture restores");
+    std::fs::write(root.join(std::ffi::OsStr::from_bytes(b"bad-\xff")), b"")
+        .expect("BUG: the staging fs takes any bytes");
+
+    let error = WidgetPackage::from_dir(&root, SDK_MAJOR).expect_err("BUG: the name is not UTF-8");
+
+    assert!(
+        matches!(&error, WidgetPackageError::NotUtf8Name(name) if name == "bad-\u{fffd}"),
+        "{error}"
+    );
+    assert!(
+        matches!(
+            crate::packages::package_error(error),
+            crate::packages::WidgetInstallError::Rejected(_)
+        ),
+        "the uploader sent the name, so it is a refusal, not a device fault"
+    );
+}
