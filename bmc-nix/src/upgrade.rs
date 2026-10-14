@@ -806,6 +806,25 @@ mod tests {
             self.record("gc");
             std::future::ready(Ok(()))
         }
+
+        async fn add_to_store(&self, _path: &Path) -> Result<String, store::AddToStoreError> {
+            unreachable!("BUG: FakeStore never imports local trees")
+        }
+
+        async fn restore_nar(
+            &self,
+            _nar: store::InputStream,
+            _target: &Path,
+        ) -> Result<(), store::StoreCommandError> {
+            unreachable!("BUG: FakeStore never imports local trees")
+        }
+
+        async fn delete_store_path(
+            &self,
+            _store_path: &str,
+        ) -> Result<(), store::StoreCommandError> {
+            unreachable!("BUG: FakeStore never deletes paths")
+        }
     }
 
     fn create_empty_generation(profile_dir: &Path, number: usize) {

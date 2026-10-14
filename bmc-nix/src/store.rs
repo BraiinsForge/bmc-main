@@ -172,6 +172,17 @@ pub trait CommandRunner: Send + Sync {
         args: &[&str],
     ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send;
 
+    /// Run a command with `input` streamed to its stdin, capturing both
+    /// outputs. An input that fails to read for a reason other than the
+    /// child closing its stdin is the error returned, even when the child
+    /// then exits non-zero on the truncated input.
+    fn run_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: InputStream,
+    ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send;
+
     /// Run a command with stderr streamed line-by-line to a callback.
     ///
     /// Returns the full `std::process::Output` (stdout captured, stderr
@@ -185,6 +196,10 @@ pub trait CommandRunner: Send + Sync {
     where
         F: FnMut(&str) + Send;
 }
+
+/// Bytes fed to a command's stdin, read as they are needed so a large input
+/// never sits in memory whole.
+pub type InputStream = std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>;
 
 /// Default implementation using `tokio::process::Command`.
 #[derive(Debug)]
@@ -200,6 +215,45 @@ impl CommandRunner for TokioCommandRunner {
             .args(args)
             .output()
             .await
+    }
+
+    async fn run_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        mut input: InputStream,
+    ) -> Result<std::process::Output, std::io::Error> {
+        use tokio::io::AsyncWriteExt as _;
+
+        let mut child = command_without_stdio_preload(program)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .expect("BUG: stdin was piped but is missing");
+        // Feed stdin while draining the outputs, or a child that fills its
+        // stderr before reading everything deadlocks against us.
+        let feed = tokio::spawn(async move {
+            tokio::io::copy(&mut input, &mut stdin).await?;
+            stdin.shutdown().await
+        });
+        let output = child.wait_with_output().await?;
+        // Once the child is gone nothing reads what is left of the input,
+        // so stop feeding instead of waiting for a stream that may never end.
+        feed.abort();
+        // A child that rejects the input exits early and the copy sees a
+        // broken pipe; its stderr says why, so that is the error to keep.
+        match feed.await {
+            Ok(Err(error)) if error.kind() != std::io::ErrorKind::BrokenPipe => Err(error),
+            Ok(_) => Ok(output),
+            Err(join) if join.is_cancelled() => Ok(output),
+            Err(join) => std::panic::resume_unwind(join.into_panic()),
+        }
     }
 
     async fn run_with_stderr_lines<F>(
@@ -341,6 +395,141 @@ pub async fn verify_store_paths(
         }
     }
     Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreCommandError {
+    #[error("nix-store {command}: {source}")]
+    Io {
+        command: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("nix-store {command} failed ({status}): {stderr}")]
+    Exited {
+        command: &'static str,
+        status: std::process::ExitStatus,
+        stderr: String,
+    },
+}
+
+fn utf8_arg<'a>(path: &'a Path, command: &'static str) -> Result<&'a str, StoreCommandError> {
+    path.to_str().ok_or_else(|| StoreCommandError::Io {
+        command,
+        source: std::io::Error::other(format!("{} is not UTF-8", path.display())),
+    })
+}
+
+fn exited_ok(
+    command: &'static str,
+    output: std::process::Output,
+) -> Result<std::process::Output, StoreCommandError> {
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(StoreCommandError::Exited {
+            command,
+            status: output.status,
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        })
+    }
+}
+
+/// Unpack a NAR archive to `target`, which must not exist yet, with nix's
+/// own reader (`nix-store --restore`). Nothing is added to the store.
+///
+/// # Errors
+///
+/// The command failing to start, or exiting non-zero with its stderr, as it
+/// does for bytes that are not a NAR.
+pub async fn restore_nar(
+    runner: &impl CommandRunner,
+    nar: InputStream,
+    target: &Path,
+) -> Result<(), StoreCommandError> {
+    const COMMAND: &str = "--restore";
+    let target = utf8_arg(target, COMMAND)?;
+    let output = runner
+        .run_with_input("nix-store", &[COMMAND, "--", target], nar)
+        .await
+        .map_err(|source| StoreCommandError::Io {
+            command: COMMAND,
+            source,
+        })?;
+    exited_ok(COMMAND, output).map(|_| ())
+}
+
+/// Delete one store path (`nix-store --delete`), which nix refuses while a
+/// profile generation or another live path still references it.
+///
+/// # Errors
+///
+/// The command failing to start or exiting non-zero, with its stderr.
+pub async fn delete_store_path(
+    runner: &impl CommandRunner,
+    store_path: &str,
+) -> Result<(), StoreCommandError> {
+    const COMMAND: &str = "--delete";
+    let output = runner
+        .run("nix-store", &[COMMAND, "--", store_path])
+        .await
+        .map_err(|source| StoreCommandError::Io {
+            command: COMMAND,
+            source,
+        })?;
+    exited_ok(COMMAND, output).map(|_| ())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AddToStoreError {
+    #[error(transparent)]
+    Command(StoreCommandError),
+    #[error("nix-store --add printed no store path")]
+    NoPath,
+}
+
+/// Copy the tree at `path` into the store and return its content-addressed
+/// store path. Nothing references the path yet, so a later garbage
+/// collection reclaims it unless a profile picks it up first.
+///
+/// # Errors
+///
+/// The command failing to start or exiting non-zero, with its stderr.
+pub async fn add_to_store(
+    runner: &impl CommandRunner,
+    path: &Path,
+) -> Result<String, AddToStoreError> {
+    const COMMAND: &str = "--add";
+    // Nix buffers up to this much of the tree in memory, then spills to disk;
+    // its 32 MiB default raises the add's peak from 34 MB to 57 MB on a Deck.
+    const NAR_BUFFER_BYTES: &str = "8388608";
+    let path = utf8_arg(path, COMMAND).map_err(AddToStoreError::Command)?;
+    let output = runner
+        .run(
+            "nix-store",
+            &[
+                "--option",
+                "nar-buffer-size",
+                NAR_BUFFER_BYTES,
+                COMMAND,
+                "--",
+                path,
+            ],
+        )
+        .await
+        .map_err(|source| {
+            AddToStoreError::Command(StoreCommandError::Io {
+                command: COMMAND,
+                source,
+            })
+        })?;
+    let output = exited_ok(COMMAND, output).map_err(AddToStoreError::Command)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let store_path = stdout.trim();
+    if store_path.is_empty() {
+        return Err(AddToStoreError::NoPath);
+    }
+    Ok(store_path.to_owned())
 }
 
 /// Progress callback for store path realization.
@@ -596,6 +785,25 @@ pub trait StoreOperations: Send + Sync + std::fmt::Debug + 'static {
         &self,
         progress: Option<&dyn crate::gc::CollectGarbageProgress>,
     ) -> impl std::future::Future<Output = Result<(), crate::gc::CollectGarbageError>> + Send;
+
+    /// See [`add_to_store`].
+    fn add_to_store(
+        &self,
+        path: &Path,
+    ) -> impl std::future::Future<Output = Result<String, AddToStoreError>> + Send;
+
+    /// See [`restore_nar`].
+    fn restore_nar(
+        &self,
+        nar: InputStream,
+        target: &Path,
+    ) -> impl std::future::Future<Output = Result<(), StoreCommandError>> + Send;
+
+    /// See [`delete_store_path`].
+    fn delete_store_path(
+        &self,
+        store_path: &str,
+    ) -> impl std::future::Future<Output = Result<(), StoreCommandError>> + Send;
 }
 
 /// Production [`StoreOperations`], backed by the real nix CLI.
@@ -634,6 +842,28 @@ impl StoreOperations for Nix {
         progress: Option<&dyn crate::gc::CollectGarbageProgress>,
     ) -> impl std::future::Future<Output = Result<(), crate::gc::CollectGarbageError>> + Send {
         crate::gc::collect_garbage(&TokioCommandRunner, progress)
+    }
+
+    fn add_to_store(
+        &self,
+        path: &Path,
+    ) -> impl std::future::Future<Output = Result<String, AddToStoreError>> + Send {
+        add_to_store(&TokioCommandRunner, path)
+    }
+
+    fn restore_nar(
+        &self,
+        nar: InputStream,
+        target: &Path,
+    ) -> impl std::future::Future<Output = Result<(), StoreCommandError>> + Send {
+        restore_nar(&TokioCommandRunner, nar, target)
+    }
+
+    fn delete_store_path(
+        &self,
+        store_path: &str,
+    ) -> impl std::future::Future<Output = Result<(), StoreCommandError>> + Send {
+        delete_store_path(&TokioCommandRunner, store_path)
     }
 }
 
@@ -1209,6 +1439,24 @@ mod tests {
     }
 
     impl CommandRunner for MockCommandRunner {
+        async fn run_with_input(
+            &self,
+            program: &str,
+            args: &[&str],
+            _input: InputStream,
+        ) -> Result<std::process::Output, std::io::Error> {
+            self.invocations.lock().expect("BUG: mutex poisoned").push((
+                program.to_owned(),
+                args.iter().map(|s| (*s).to_owned()).collect(),
+            ));
+            let restore = program == "nix-store" && args.first() == Some(&"--restore");
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(if restore { 0 } else { 1 << 8 }),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+
         async fn run(
             &self,
             program: &str,

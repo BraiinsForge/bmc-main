@@ -676,7 +676,8 @@ async fn fetch_and_merge_indexes_with_cap(
 /// -> `0.8.0`). A pre-release or build suffix is preserved. Returns
 /// `None` for versions that are not numeric-dotted at the core; those are
 /// not semver-comparable and remain unsupported.
-pub(crate) fn parse_package_version(raw: &str) -> Option<Version> {
+#[must_use]
+pub fn parse_package_version(raw: &str) -> Option<Version> {
     if let Ok(version) = Version::parse(raw) {
         return Some(version);
     }

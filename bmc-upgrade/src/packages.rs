@@ -698,6 +698,21 @@ mod tests {
             unreachable!("BUG: GcStore only serves garbage collection")
         }
 
+        async fn restore_nar(
+            &self,
+            _nar: bmc_nix::store::InputStream,
+            _target: &Path,
+        ) -> Result<(), bmc_nix::store::StoreCommandError> {
+            unreachable!("BUG: GcStore only serves garbage collection")
+        }
+
+        async fn delete_store_path(
+            &self,
+            _store_path: &str,
+        ) -> Result<(), bmc_nix::store::StoreCommandError> {
+            unreachable!("BUG: GcStore only serves garbage collection")
+        }
+
         fn store_free_bytes(&self, _profile_dir: &std::path::Path) -> std::io::Result<u64> {
             unreachable!("BUG: GcStore only serves garbage collection")
         }
@@ -729,6 +744,13 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        async fn add_to_store(
+            &self,
+            _path: &Path,
+        ) -> Result<String, bmc_nix::store::AddToStoreError> {
+            unreachable!("BUG: GcStore only serves garbage collection")
         }
     }
 
@@ -1466,6 +1488,21 @@ mod tests {
             unreachable!("BUG: StubStore serves probe estimates only")
         }
 
+        async fn restore_nar(
+            &self,
+            _nar: bmc_nix::store::InputStream,
+            _target: &Path,
+        ) -> Result<(), bmc_nix::store::StoreCommandError> {
+            unreachable!("BUG: StubStore serves probe estimates only")
+        }
+
+        async fn delete_store_path(
+            &self,
+            _store_path: &str,
+        ) -> Result<(), bmc_nix::store::StoreCommandError> {
+            unreachable!("BUG: StubStore serves probe estimates only")
+        }
+
         async fn realize_store_paths(
             &self,
             _packages: &[bmc_nix::types::ResolvedPackage],
@@ -1485,6 +1522,13 @@ mod tests {
             &self,
             _progress: Option<&dyn bmc_nix::gc::CollectGarbageProgress>,
         ) -> Result<(), bmc_nix::gc::CollectGarbageError> {
+            unreachable!("BUG: StubStore serves probe estimates only")
+        }
+
+        async fn add_to_store(
+            &self,
+            _path: &Path,
+        ) -> Result<String, bmc_nix::store::AddToStoreError> {
             unreachable!("BUG: StubStore serves probe estimates only")
         }
     }
@@ -1548,6 +1592,28 @@ mod tests {
             _progress: Option<&dyn bmc_nix::gc::CollectGarbageProgress>,
         ) -> Result<(), bmc_nix::gc::CollectGarbageError> {
             unreachable!("BUG: package apply disables garbage collection")
+        }
+
+        async fn add_to_store(
+            &self,
+            _path: &Path,
+        ) -> Result<String, bmc_nix::store::AddToStoreError> {
+            unreachable!("BUG: ApplyStore serves indexed installs only")
+        }
+
+        async fn restore_nar(
+            &self,
+            _nar: bmc_nix::store::InputStream,
+            _target: &Path,
+        ) -> Result<(), bmc_nix::store::StoreCommandError> {
+            unreachable!("BUG: ApplyStore serves indexed installs only")
+        }
+
+        async fn delete_store_path(
+            &self,
+            _store_path: &str,
+        ) -> Result<(), bmc_nix::store::StoreCommandError> {
+            unreachable!("BUG: ApplyStore serves indexed installs only")
         }
     }
 

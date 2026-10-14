@@ -452,6 +452,15 @@ mod tests {
     }
 
     impl CommandRunner for ScriptedRunner {
+        async fn run_with_input(
+            &self,
+            _program: &str,
+            _args: &[&str],
+            _input: crate::store::InputStream,
+        ) -> Result<std::process::Output, std::io::Error> {
+            unreachable!("BUG: nothing here feeds stdin")
+        }
+
         async fn run(
             &self,
             program: &str,
