@@ -1,6 +1,6 @@
 ---
 name: bmc-jira-ticket-writing
-description: Use when creating or editing BDK Jira tickets, choosing their type or parent, or writing their descriptions. Triggers on requests to create a Jira ticket, file follow-up tickets, update a ticket description, or use `acli jira workitem`.
+description: Use when creating or editing BDK Jira tickets, choosing their type or parent, or writing their descriptions. Triggers on requests to create a Jira ticket, file follow-up tickets, update a ticket description, set a fix version, or use the Atlassian MCP or `acli jira workitem`.
 ---
 
 # Writing a Jira ticket
@@ -35,23 +35,20 @@ The fix version denotes the release a change goes into. For work that is going t
 in the next release, choose that release before reporting the ticket complete. If the target release is not yet known,
 leave Fix version unset and fill it in once the release is known, by the time the ticket is done.
 
-Create the ticket with acli, then add a known Fix version with jira-cli. `fixVersions` is a Jira system field, not a
-custom field. `acli jira workitem edit` has no Fix version flag and rejects both `fixVersions` and
-`additionalAttributes` in `--from-json`:
+List the release names with the `getJiraProjectVersions` operation (`executeRead`, `projectIdOrKey: "BDK"`,
+`status: ["unreleased"]`). Set the version with `editJiraIssue`; `fixVersions` is a system field passed in raw shape
+under `additional_fields`:
 
-```bash
-jira issue edit PROJ-123 --fix-version "26.10" --no-input
+```json
+{ "fixVersions": [{ "name": "26.10" }] }
 ```
 
-`--fix-version` appends. When changing the planned release, remove the stale version with a minus-prefixed name:
+The list is set, not appended: send the full list, and `[]` to clear it. The edit response does not echo `fixVersions`;
+verify with `getJiraIssue` using `view: "full"`, `fields: ["fixVersions"]` and `fieldsByKeys: true`, since the compact
+view omits the field even when asked for it. Do not silently leave Fix version unset when the release is known.
 
-```bash
-jira issue edit PROJ-123 --fix-version -26.10 --fix-version 26.11 --no-input
-```
-
-List existing release names with `jira release list -p BDK`. Verify the saved version list with
-`acli jira workitem view --json`, including that an old target was removed; do not silently leave Fix version unset when
-the release is known.
+When the MCP is not connected, do not reach for another tool to set the version: tell the user which release the ticket
+should carry and ask them to connect the MCP or set the field themselves.
 
 ## Ticket content
 
@@ -66,10 +63,10 @@ the designer must produce and what information they need. Avoid criteria that me
 
 Use explicit Markdown links for every URL and Jira issue reference, such as
 `[Home Assistant WebSocket API](https://developers.home-assistant.io/docs/api/websocket/)` and
-`[BDK-201](https://braiins.atlassian.net/browse/BDK-201)`. `md_to_adf.py` emits bare URLs and bare `BDK-123` text as
-plain text, with no link. Use a `## References` heading when references warrant their own section. After submission,
-inspect the raw stored description for heading, bullet-list, and link nodes; correct any literal Markdown or unlinked
-references.
+`[BDK-201](https://braiins.atlassian.net/browse/BDK-201)`. A bare `BDK-123` key is stored as plain text by both
+submission paths; a bare URL becomes a smart-link card through the MCP and plain text through `md_to_adf.py`. Use a
+`## References` heading when references warrant their own section. After submission, inspect the stored description for
+heading, bullet-list, and link nodes; correct any literal Markdown or unlinked references.
 
 ## Writing Stories
 
@@ -87,12 +84,21 @@ or failure, as relevant. Keep implementation choices out of this section. If tec
 a separate `## Technical implementation` heading. A design Story still states the intended user experience; its
 acceptance criteria specify the design deliverables.
 
-## Convert, never paste
+## Submitting the description
 
-Jira Cloud stores rich text as Atlassian Document Format. Markdown handed to a description field is stored **literally**
-— readers see `## Goal` and `**bold**` as characters — and Atlassian publishes no Markdown converter, only ADF builders.
+Jira Cloud stores rich text as Atlassian Document Format. Write the body as Markdown in a file under `.tmp/jira/` and
+keep to constructs both submission paths map: headings, paragraphs, bold, italic, inline code, fenced code, explicit
+links, bullet and numbered lists, tables, blockquotes, rules.
 
-Write the body as Markdown in a temporary file under `.tmp/jira/`, then convert:
+**Atlassian MCP, primary.** `createJiraIssue` and `editJiraIssue` take the Markdown as `description` and convert it on
+Atlassian's side. `contentFormat` accepts only `markdown` or `html`; there is no ADF input. Verified on a probe ticket:
+headings, nested lists, task lists, blockquotes, fenced code with its language, tables with a header row, rules,
+explicit links and strikethrough all arrive as proper nodes. Two silent losses: a hard break (two trailing spaces) stays
+literal inside the paragraph, and an image reference becomes an external media node Jira does not render. Pass the
+parent key as `parent` and the type as `issueType`.
+
+**acli, secondary.** acli hands the description to Jira verbatim, so convert first; unconverted Markdown is stored
+**literally** and readers see `## Goal` and `**bold**` as characters:
 
 ```bash
 just md-to-adf .tmp/jira/PROJ-123.md --skip-title > .tmp/jira/PROJ-123.json
@@ -108,12 +114,16 @@ acli jira workitem create --project PROJ --type Story --parent PROJ-1 \
 A `PreToolUse` hook refuses `--description`/`--from-file` on either subcommand: those take the text inline, so markdown
 reaches the field unconverted and nothing errors until a reader opens the issue.
 
-`--skip-title` drops a leading `#` heading, for when the title is already the Jira summary. Never hand-author ADF: it is
-verbose, easy to get subtly wrong, and drifts from the markdown it came from.
+`--skip-title` drops a leading `#` heading, for when the title is already the Jira summary. `md_to_adf.py` refuses a
+construct it cannot map, such as an image, rather than dropping it, but emits strikethrough and task lists as literal
+text. Never hand-author ADF: it is verbose, easy to get subtly wrong, and drifts from the markdown it came from.
 
 Drafting does not authorize creation. Submit only when the user has asked to create the ticket or approved the draft.
-After creation, verify the issue type, parent, description structure, and links in Jira using acli's JSON output; report
-the issue key. For example:
+After creation, verify the issue type, parent, description structure, and links in Jira; report the issue key.
+
+Through the MCP, `getJiraIssue` with `responseContentFormat: "html"` renders the stored document: check for `<h2>`,
+`<ul>` or `<ol>` and `<a href>` where headings, lists and links were intended, and for no literal `##` or `**`. The MCP
+does not expose the raw ADF nodes; for those use acli:
 
 ```bash
 acli jira workitem view PROJ-123 --json --fields key,issuetype,parent,description,fixVersions \
@@ -124,16 +134,19 @@ Check that `blocks` contains `heading` and `bulletList`, `links` contains each i
 `fixVersions` contains the release when one was required. An Epic may have a null parent.
 
 `acli` cannot upload attachments — `create`, `edit` and `--from-json` have no attachment field, and
-`acli jira workitem attachment` offers only `list` and `delete`. Images have to be attached by hand.
+`acli jira workitem attachment` offers only `list` and `delete`. The MCP lists an `uploadAttachmentToJiraIssue`
+operation, untested here. Otherwise images have to be attached by hand.
 
-## Jira command-line clients
+## Jira clients
 
-Use `acli jira workitem` to create, edit, and verify tickets. Its description-file option accepts the converted ADF, and
-`view --json` exposes the stored fields needed for verification. Use jira-cli only for what acli cannot do: fields it
-cannot edit, such as Fix version above, and raw API calls such as `jira api "users?search=<name>"`. Verify the result
-with acli afterwards.
+The Atlassian MCP is the primary client: `createJiraIssue`, `editJiraIssue` and `getJiraIssue` are primary tools; other
+operations are found with `discover` and run through `executeRead` or `executeWrite`. Every call needs the `cloudId`
+from `getAccessibleAtlassianResources`, fetched once per session, and calls draw on the organisation's Rovo credits. It
+is a remote server the user connects once, then authorises in a session with `/mcp`:
 
-If acli is unavailable, the Atlassian MCP is the remaining sink that accepts ADF: pass the converter's JSON as
-`description` with `contentFormat: "adf"`, since its default `markdown` format converts on Atlassian's side and skips
-the fail-loud converter. Verify with `getJiraIssue` using `responseContentFormat: "adf"`. Do not fall back to jira-cli
-for descriptions: it converts markdown itself and its README warns the conversion is lossy.
+```bash
+claude mcp add --transport http --scope user atlassian https://mcp.atlassian.com/v2/mcp
+```
+
+Use acli when the MCP is not connected: `acli jira workitem` creates, edits and verifies tickets with the converted ADF
+and `view --json`.
