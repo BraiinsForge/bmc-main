@@ -143,6 +143,7 @@
           name = "bmc-local-env";
           packages = (commonDeps.frontendDeps pkgs)
             ++ (with pkgs; [
+            buf
             cargo-watch
             e2fsprogs
             ffmpeg-headless

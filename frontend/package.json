@@ -56,7 +56,6 @@
     },
     "devDependencies": {
         "@biomejs/biome": "2.5.12",
-        "@bufbuild/buf": "1.72.0",
         "@bufbuild/protoc-gen-es": "2.14.1",
         "@emotion/react": "11.14.0",
         "@emotion/styled": "11.14.1",

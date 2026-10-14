@@ -60,8 +60,5 @@ tests) or `just fe::validate` (format + lint + test). Config lives in `rstest.co
 
 ## Protocol Buffer Workflow
 
-Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require:
-
-**Frontend**: Regenerate TypeScript code using `@bufbuild/buf` and `@bufbuild/protoc-gen-es`
-
-The frontend has build tooling configured for protobuf generation (check `frontend/justfile`) .
+Proto files are in `bmc-grpc/proto/web/`. `just gen` at the repository root regenerates `src/proto/gen/`
+from the root `buf.gen.yaml`; commit the generated files with the proto change.

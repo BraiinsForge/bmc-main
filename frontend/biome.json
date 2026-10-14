@@ -13,7 +13,8 @@
             "!**/.yarn",
             "!**/.yarnrc.yml",
             "!**/.claude",
-            "!**/result"
+            "!**/result",
+            "!src/proto/gen"
         ]
     },
 
@@ -87,8 +88,7 @@
             },
 
             "nursery": {}
-        },
-        "includes": ["**", "!**/*_pb.ts"]
+        }
     },
 
     "formatter": {

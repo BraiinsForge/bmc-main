@@ -167,6 +167,13 @@ validate-full:
 check ATTR:
     nix build .#{{ ATTR }} -L --no-link
 
+# === Codegen ===
+
+# Regenerate the protobuf bindings: TypeScript under frontend/src/proto/gen.
+gen:
+    # buf comes from the dev shell; protoc-gen-es is the frontend's.
+    PATH="{{ justfile_directory() }}/frontend/node_modules/.bin:$PATH" {{ NIX_DEV }} buf generate
+
 # === Tooling ===
 
 # Find unused workspace dependencies declared in Cargo.toml.

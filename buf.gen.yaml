@@ -1,0 +1,19 @@
+# https://buf.build/docs/configuration/v2/buf-gen-yaml
+# Run with `just gen`; buf comes from the nix dev shell.
+version: v2
+
+clean: true
+
+inputs:
+  - directory: bmc-grpc/proto
+  # googleapis has no releases, so this pins its BSR commit of 2026-04-14;
+  # the bindings must change only with this line.
+  - module: buf.build/googleapis/googleapis:c17df5b2beca46928cc87d5656bd5343
+    types:
+      - "google.rpc"
+
+plugins:
+  # Frontend
+  - local: protoc-gen-es
+    opt: target=ts,import_extension=none
+    out: frontend/src/proto/gen

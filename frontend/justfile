@@ -79,12 +79,6 @@ storybook-start:
 
 # === Codegen ===
 
-# Regenerate protobuf bindings, then format.
-gen:
-    yarn run buf generate --verbose
-    ./bin/strip-proto-source-comments.ts
-    @just format
-
 # Extract i18n strings from sources.
 intl-extract:
     yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json

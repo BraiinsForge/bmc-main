@@ -230,7 +230,9 @@ nix-shell -p jq getopt --run "./scripts/verify_crates.sh --summary"
 
 ## Protocol Buffer Workflow
 
-Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
+Proto files are in `bmc-grpc/proto/web/`. After changing one, run `just gen`: the root `buf.gen.yaml` regenerates the
+TypeScript in `frontend/src/proto/gen/`, which is checked in, so commit it with the proto change. The Rust bindings are
+generated at build time by `bmc-grpc/build.rs`.
 
 ## Cross-Compilation Notes
 
