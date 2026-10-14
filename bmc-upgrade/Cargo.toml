@@ -24,11 +24,13 @@ chrono.workspace = true
 data-encoding.workspace = true
 index-bmc.workspace = true
 index-common.workspace = true
+nix-archive = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sysinfo = { workspace = true, features = ["linux-tmpfs"], optional = true }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -36,11 +38,12 @@ url.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+nix-archive.workspace = true
 semver.workspace = true
-tempfile.workspace = true
 
 [features]
 disk-check = ["sysinfo"]
+test-support = ["dep:nix-archive"]
 
 [lints]
 workspace = true

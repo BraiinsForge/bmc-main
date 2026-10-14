@@ -668,3 +668,207 @@ fn wrapper_sdk_major(name: &str, contents: &[u8]) -> Option<u16> {
     }
     std::str::from_utf8(major).ok()?.parse().ok()
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures {
+    //! Archive builders shared by the validator, backend and mock tests.
+
+    use nix_archive::nar::{Encoder, Error};
+    use std::collections::BTreeMap;
+
+    pub const SDK_MAJOR: u16 = super::WASM_SDK_MAJOR;
+    pub const UID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    /// An owned tree a test can edit before it is encoded.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Node {
+        Regular { executable: bool, contents: Vec<u8> },
+        Symlink { target: Vec<u8> },
+        Directory(BTreeMap<String, Node>),
+    }
+
+    #[must_use]
+    pub fn encode(tree: &Node) -> Vec<u8> {
+        let mut encoder = Encoder::new(Vec::new()).expect("BUG: a Vec accepts the NAR magic");
+        encode_node(&mut encoder, None, tree).expect("BUG: a fixture tree encodes");
+        encoder
+            .finish()
+            .expect("BUG: encode_node closes every directory")
+    }
+
+    fn encode_node(
+        encoder: &mut Encoder<Vec<u8>>,
+        name: Option<&[u8]>,
+        node: &Node,
+    ) -> Result<(), Error> {
+        match node {
+            Node::Regular {
+                executable,
+                contents,
+            } => encoder.regular(name, *executable, contents),
+            Node::Symlink { target } => encoder.symlink(name, target),
+            Node::Directory(entries) => {
+                encoder.start_directory(name)?;
+                for (child, node) in entries {
+                    encode_node(encoder, Some(child.as_bytes()), node)?;
+                }
+                encoder.end_directory()
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn file(contents: &[u8]) -> Node {
+        Node::Regular {
+            executable: false,
+            contents: contents.to_vec(),
+        }
+    }
+
+    #[must_use]
+    pub fn executable(contents: &[u8]) -> Node {
+        Node::Regular {
+            executable: true,
+            contents: contents.to_vec(),
+        }
+    }
+
+    #[must_use]
+    pub fn dir(entries: Vec<(&str, Node)>) -> Node {
+        Node::Directory(
+            entries
+                .into_iter()
+                .map(|(name, node)| (name.to_owned(), node))
+                .collect(),
+        )
+    }
+
+    #[must_use]
+    pub fn manifest_json(name: &str, version: &str) -> String {
+        format!(
+            r#"{{
+  "uid": "{UID}",
+  "version": "{version}",
+  "name": "Example",
+  "description": "An example widget.",
+  "binary": "bin/{name}",
+  "icon": "assets/icon.svg",
+  "supported_viewports": [{{"type": "rectangular", "min_width": 100, "max_width": 1280, "min_height": 100, "max_height": 480}}]
+}}"#
+        )
+    }
+
+    /// The widget directory `nix/wasm-widgets.nix` builds, as a mutable map
+    /// so a test can break one thing.
+    #[must_use]
+    pub fn widget_dir(name: &str, version: &str) -> BTreeMap<String, Node> {
+        let Node::Directory(entries) = dir(vec![
+            (
+                "manifest.json",
+                file(manifest_json(name, version).as_bytes()),
+            ),
+            (
+                "bin",
+                dir(vec![(
+                    name,
+                    executable(super::expected_wrapper(name, SDK_MAJOR).as_bytes()),
+                )]),
+            ),
+            (
+                "lib",
+                dir(vec![
+                    (
+                        "wasm",
+                        dir(vec![(
+                            &format!("{name}.wasm"),
+                            file(b"\0asm\x01\0\0\0 module body"),
+                        )]),
+                    ),
+                    (
+                        "assets",
+                        dir(vec![(
+                            "v1",
+                            dir(vec![("svg", dir(vec![("abc.asset", file(b"<svg/>"))]))]),
+                        )]),
+                    ),
+                ]),
+            ),
+            ("assets", dir(vec![("icon.svg", file(b"<svg/>"))])),
+        ]) else {
+            unreachable!("BUG: dir() builds a directory")
+        };
+        entries
+    }
+
+    #[must_use]
+    pub fn package_tree(name: &str, widget_dir: BTreeMap<String, Node>) -> Node {
+        widgets_root(dir(vec![(name, Node::Directory(widget_dir))]))
+    }
+
+    /// The package tree with the widget under a maintainer folder.
+    #[must_use]
+    pub fn maintained_package_tree(
+        maintainer: &str,
+        name: &str,
+        widget_dir: BTreeMap<String, Node>,
+    ) -> Node {
+        widgets_root(dir(vec![(
+            maintainer,
+            dir(vec![(name, Node::Directory(widget_dir))]),
+        )]))
+    }
+
+    fn widgets_root(widgets: Node) -> Node {
+        dir(vec![("lib", dir(vec![("bmc-widgets", widgets)]))])
+    }
+
+    #[must_use]
+    pub fn valid_nar(name: &str, version: &str) -> Vec<u8> {
+        encode(&package_tree(name, widget_dir(name, version)))
+    }
+
+    /// Reads as a body does once the browser tab closed mid-upload.
+    #[derive(Debug)]
+    pub struct ClientGone;
+
+    impl tokio::io::AsyncRead for ClientGone {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "client went away",
+            )))
+        }
+    }
+
+    /// Replace the node at `path` (slash separated) inside `dir`.
+    pub fn set(dir: &mut BTreeMap<String, Node>, path: &str, node: Node) {
+        let (head, rest) = path.split_once('/').unwrap_or((path, ""));
+        if rest.is_empty() {
+            dir.insert(head.to_owned(), node);
+            return;
+        }
+        let Some(Node::Directory(child)) = dir.get_mut(head) else {
+            panic!("BUG: fixture path {path} crosses a non-directory");
+        };
+        set(child, rest, node);
+    }
+
+    pub fn remove(dir: &mut BTreeMap<String, Node>, path: &str) {
+        let (head, rest) = path.split_once('/').unwrap_or((path, ""));
+        if rest.is_empty() {
+            dir.remove(head);
+            return;
+        }
+        let Some(Node::Directory(child)) = dir.get_mut(head) else {
+            panic!("BUG: fixture path {path} crosses a non-directory");
+        };
+        remove(child, rest);
+    }
+}
+
+#[cfg(test)]
+mod tests;

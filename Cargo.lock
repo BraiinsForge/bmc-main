@@ -1390,6 +1390,7 @@ dependencies = [
  "futures",
  "index-bmc",
  "index-common",
+ "nix-archive",
  "reqwest",
  "ring",
  "semver",
@@ -5550,6 +5551,19 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "memoffset 0.9.1",
+]
+
+[[package]]
+name = "nix-archive"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "033c9031c4b23ed3d19a97810eb4e89f81fc7fbdd0afba351c56f6684350265e"
+dependencies = [
+ "digest",
+ "libc",
+ "rustix 1.1.2",
+ "sha2",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
