@@ -94,3 +94,7 @@ minify-svg:
 # Refresh yarn-files hash.
 nix-update-hash:
     ./bin/nix-update-hash.ts
+
+# Build the yarn offline cache on a remote darwin store, bypassing the nix daemon
+nix-darwin-hash STORE="ssh-ng://badmin@ci-macos.dev.ii.zone" KEY=(home_directory() / ".ssh/id_rsa"):
+    nix build --eval-store auto --store '{{ STORE }}?ssh-key={{ KEY }}' '{{ dir }}/..#packages.x86_64-darwin.yarnFiles.offlineCache' --no-link -L
