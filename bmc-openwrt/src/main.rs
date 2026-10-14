@@ -240,6 +240,7 @@ async fn main() -> Result<()> {
         servers_config_path: config.nix_servers_config_path.clone(),
         gc_config_path: config.nix_gc_config_path.clone(),
         profile_dir: config.nix_profile_dir.clone(),
+        staging_dir: config.nix_upload_staging_dir.clone(),
         hooks_dir: config.nix_hooks_dir.clone(),
         hooks_override_path: config.nix_hooks_override_path.clone(),
     }));

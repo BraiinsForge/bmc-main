@@ -534,6 +534,16 @@ impl PackageBackend for MockPackageBackend {
         Ok(())
     }
 
+    async fn install_widget_package(
+        &self,
+        _upload: bmc_upgrade::widget_package::WidgetUpload,
+    ) -> Result<bmc_upgrade::packages::InstalledWidget, bmc_upgrade::packages::WidgetInstallError>
+    {
+        Err(bmc_upgrade::packages::WidgetInstallError::Failed(
+            "mock: widget package upload is not supported".to_owned(),
+        ))
+    }
+
     async fn list_installable_packages(
         &self,
         _firmware: Option<&str>,

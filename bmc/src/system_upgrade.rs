@@ -1639,6 +1639,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PackageBackend for StubBackend {
+        async fn install_widget_package(
+            &self,
+            _upload: bmc_upgrade::widget_package::WidgetUpload,
+        ) -> Result<bmc_upgrade::packages::InstalledWidget, bmc_upgrade::packages::WidgetInstallError>
+        {
+            unreachable!("BUG: StubBackend does not install widget packages")
+        }
+
         async fn gc(&self, _request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
             Ok(PackageGcOutcome::Collected)
         }
@@ -1688,6 +1696,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PackageBackend for FailingBackend {
+        async fn install_widget_package(
+            &self,
+            _upload: bmc_upgrade::widget_package::WidgetUpload,
+        ) -> Result<bmc_upgrade::packages::InstalledWidget, bmc_upgrade::packages::WidgetInstallError>
+        {
+            unreachable!("BUG: FailingBackend does not install widget packages")
+        }
+
         async fn gc(&self, _request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
             Ok(PackageGcOutcome::Collected)
         }
@@ -1836,6 +1852,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PackageBackend for RecordingGcBackend {
+        async fn install_widget_package(
+            &self,
+            _upload: bmc_upgrade::widget_package::WidgetUpload,
+        ) -> Result<bmc_upgrade::packages::InstalledWidget, bmc_upgrade::packages::WidgetInstallError>
+        {
+            unreachable!("BUG: RecordingGcBackend does not install widget packages")
+        }
+
         async fn gc(&self, request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
             self.requests
                 .lock()
@@ -2671,6 +2695,16 @@ mod tests {
 
         #[async_trait::async_trait]
         impl PackageBackend for StubBackend {
+            async fn install_widget_package(
+                &self,
+                _upload: bmc_upgrade::widget_package::WidgetUpload,
+            ) -> Result<
+                bmc_upgrade::packages::InstalledWidget,
+                bmc_upgrade::packages::WidgetInstallError,
+            > {
+                unreachable!("BUG: StubBackend does not install widget packages")
+            }
+
             async fn gc(
                 &self,
                 _request: PackageGcRequest,

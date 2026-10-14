@@ -19,11 +19,17 @@
 // the grant above.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bmc_nix::store::ESTIMATE_TIMEOUT;
+use crate::widget_package::{
+    ArchiveStream, FolderClash, MAX_ARCHIVE_BYTES, UPLOAD_DEADLINE_MINS, WASM_SDK_MAJOR,
+    WidgetPackage, WidgetPackageError, WidgetUpload, limit_archive, shown,
+};
+use bmc_nix::store::{
+    AddToStoreError, ESTIMATE_TIMEOUT, StoreCommandError, required_with_headroom,
+};
 use tracing::{info, warn};
 
 pub use bmc_upgrade_types::{
@@ -35,11 +41,18 @@ pub use bmc_upgrade_types::{
 /// `UpgradeInProgress`.
 const INDEX_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A widget install waits this long for another writer of the profile,
+/// such as the CLI, while it holds the upgrade run gate.
+const PROFILE_LOCK_TIMEOUT: Duration = Duration::from_mins(1);
+
 #[derive(Clone, Debug)]
 pub struct NixUpgradeConfig {
     pub servers_config_path: PathBuf,
     pub gc_config_path: PathBuf,
     pub profile_dir: PathBuf,
+    /// Where an uploaded archive unpacks before the store takes it; on the
+    /// store's filesystem, since tmpfs would hold it in RAM.
+    pub staging_dir: PathBuf,
     pub hooks_dir: String,
     pub hooks_override_path: Option<PathBuf>,
 }
@@ -164,6 +177,65 @@ pub enum ApplyError {
     Failed(String),
 }
 
+/// How an uploaded widget package ended up in the profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WidgetInstallOutcome {
+    Installed,
+    Replaced {
+        previous_version: String,
+    },
+    /// The same version was in the profile with different contents.
+    Reinstalled,
+    /// The same version at the same store path was already in the profile.
+    AlreadyInstalled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledWidget {
+    pub package_name: String,
+    pub display_name: String,
+    pub version: String,
+    pub outcome: WidgetInstallOutcome,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WidgetInstallError {
+    #[error("{0}")]
+    Rejected(#[source] WidgetPackageError),
+    #[error(
+        "{} {} is installed; uploading the older {} would downgrade it",
+        shown(.package_name),
+        shown(.installed),
+        shown(.uploaded)
+    )]
+    Downgrade {
+        package_name: String,
+        installed: String,
+        uploaded: String,
+    },
+    #[error("{} cannot be installed next to {installed}: only one of them would show", .uploaded.display())]
+    FolderTaken {
+        uploaded: PathBuf,
+        installed: FolderClash,
+    },
+    #[error("upload did not finish within {UPLOAD_DEADLINE_MINS} minutes")]
+    UploadStalled,
+    #[error("another package change kept the profile locked")]
+    ProfileBusy,
+    #[error("the upload ended before the archive was complete")]
+    UploadAborted,
+    #[error("reading the installed packages failed: {0}")]
+    ReadProfile(#[source] bmc_nix::manifest::ReadManifestError),
+    #[error("staging the widget package failed: {0}")]
+    Staging(#[source] std::io::Error),
+    #[error("importing the widget package into the store failed: {0}")]
+    Store(#[source] StoreCommandError),
+    #[error("installing the widget package failed: {0}")]
+    Install(#[source] bmc_nix::upgrade::InstallError),
+    #[error("{0}")]
+    Failed(String),
+}
+
 pub type PackageGcOutcome = bmc_nix::gc::ProfileGcOutcome;
 pub type PackageGcRequest = bmc_nix::gc::GcRequest;
 
@@ -213,8 +285,84 @@ pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
         &self,
         firmware: Option<&str>,
     ) -> Result<Vec<InstallablePackage>, PackageProbeError>;
+    /// Validate an uploaded widget archive and install it into the profile.
+    /// A rejected or failed upload leaves the profile as it was,
+    /// unless undoing a failed activation fails as well.
+    async fn install_widget_package(
+        &self,
+        upload: WidgetUpload,
+    ) -> Result<InstalledWidget, WidgetInstallError>;
     /// Free bytes on the filesystem holding the package store.
     fn store_free_bytes(&self) -> std::io::Result<u64>;
+}
+
+fn install_outcome(
+    result: &bmc_nix::types::InstallResult,
+    package_name: &str,
+) -> WidgetInstallOutcome {
+    if result.added.iter().any(|added| added.name == package_name) {
+        WidgetInstallOutcome::Installed
+    } else if let Some(change) = result.changed.iter().find(|c| c.name == package_name) {
+        if same_version(&change.from_version, &change.to_version) {
+            WidgetInstallOutcome::Reinstalled
+        } else {
+            WidgetInstallOutcome::Replaced {
+                previous_version: change.from_version.clone(),
+            }
+        }
+    } else {
+        WidgetInstallOutcome::AlreadyInstalled
+    }
+}
+
+/// Read the way the downgrade check reads them, so `1.0` and `1.0.0` are one version.
+fn same_version(installed: &str, uploaded: &str) -> bool {
+    bmc_nix::index::parse_package_version(installed)
+        .zip(bmc_nix::index::parse_package_version(uploaded))
+        .map_or(installed == uploaded, |(installed, uploaded)| {
+            installed == uploaded
+        })
+}
+
+/// The profile plan keeps an installed package when an explicit add would
+/// downgrade it, silently from the uploader's point of view; refuse up front
+/// so they learn why nothing changed.
+fn refuse_downgrade(profile_dir: &Path, package: &WidgetPackage) -> Result<(), WidgetInstallError> {
+    let installed = match bmc_nix::manifest::read_current_manifest(profile_dir) {
+        Ok(manifest) => manifest,
+        Err(bmc_nix::manifest::ReadManifestError::CurrentNotFound { .. }) => return Ok(()),
+        Err(error) => return Err(WidgetInstallError::ReadProfile(error)),
+    };
+    let package_name = package.package_name();
+    let Some(current) = installed.packages.get(&package_name) else {
+        return Ok(());
+    };
+    let is_downgrade = bmc_nix::index::parse_package_version(&current.version)
+        .is_some_and(|installed| package.manifest().version < installed);
+    if is_downgrade {
+        return Err(WidgetInstallError::Downgrade {
+            package_name,
+            installed: current.version.clone(),
+            uploaded: package.manifest().version.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn refuse_folder_clash(
+    profile_dir: &Path,
+    package: &WidgetPackage,
+) -> Result<(), WidgetInstallError> {
+    let current = bmc_nix::profile::current_generation_link(profile_dir)
+        .map_err(|error| WidgetInstallError::Failed(error.to_string()))?;
+    let clash = current.and_then(|current| package.folder_clash(&current.join("lib/bmc-widgets")));
+    match clash {
+        Some(installed) => Err(WidgetInstallError::FolderTaken {
+            uploaded: package.relative_dir(),
+            installed,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// The nix-backed [`PackageBackend`]: fetches package indexes over HTTP,
@@ -228,6 +376,7 @@ pub struct PackageUpgrader<N = bmc_nix::store::Nix> {
     /// tests inject a stub to drive the probe's estimate-routing branches
     /// (transient error keeps offering, unsubstitutable paths fail the probe).
     nix: N,
+    profile_lock_timeout: Duration,
 }
 
 impl PackageUpgrader {
@@ -247,6 +396,7 @@ impl<N> PackageUpgrader<N> {
             config,
             client,
             nix,
+            profile_lock_timeout: PROFILE_LOCK_TIMEOUT,
         }
     }
 
@@ -333,6 +483,177 @@ impl<N> PackageUpgrader<N> {
 
         Ok((merged, base))
     }
+}
+
+/// A checked upload in the store, with the profile lock
+/// that keeps the GC off it until the profile roots it.
+struct StagedUpload {
+    package: WidgetPackage,
+    store_path: String,
+    lock: bmc_nix::profile::ProfileLock,
+    generations_before: Option<usize>,
+}
+
+impl<N: bmc_nix::store::StoreOperations> PackageUpgrader<N> {
+    /// Unpack the upload under `staging` and check it,
+    /// then lock the profile and add it to the store.
+    async fn add_upload(
+        &self,
+        staging: &Path,
+        nar: ArchiveStream,
+    ) -> Result<StagedUpload, WidgetInstallError> {
+        let unpacked = staging.join("package");
+        self.nix
+            .restore_nar(limit_archive(nar), &unpacked)
+            .await
+            .map_err(restore_error)?;
+        let checked = unpacked.clone();
+        let package = blocking(move || WidgetPackage::from_dir(&checked, WASM_SDK_MAJOR))
+            .await
+            .map_err(package_error)?;
+
+        // The store path is named after the directory added, so the name
+        // matches what the index-built package would have.
+        let tree = staging.join(format!("bmc-{}", package.package_name()));
+        std::fs::rename(&unpacked, &tree).map_err(WidgetInstallError::Staging)?;
+        let (lock, generations_before) = self.lock_for_install(&package).await?;
+        let store_path = self
+            .nix
+            .add_to_store(&tree)
+            .await
+            .map_err(|error| match error {
+                AddToStoreError::Command(error) => WidgetInstallError::Store(error),
+                AddToStoreError::NoPath => WidgetInstallError::Failed(error.to_string()),
+            })?;
+        Ok(StagedUpload {
+            package,
+            store_path,
+            lock,
+            generations_before,
+        })
+    }
+
+    /// The installed widgets and the floor are read under the lock the build
+    /// holds, so another writer's install meanwhile can neither slip past
+    /// the checks nor be mistaken for this one's generation.
+    async fn lock_for_install(
+        &self,
+        package: &WidgetPackage,
+    ) -> Result<(bmc_nix::profile::ProfileLock, Option<usize>), WidgetInstallError> {
+        let lock = bmc_nix::profile::lock_profile_with_timeout(
+            &self.config.profile_dir,
+            self.profile_lock_timeout,
+        )
+        .await
+        .map_err(|error| WidgetInstallError::Install(bmc_nix::upgrade::InstallError::Lock(error)))?
+        .ok_or(WidgetInstallError::ProfileBusy)?;
+        refuse_downgrade(&self.config.profile_dir, package)?;
+        refuse_folder_clash(&self.config.profile_dir, package)?;
+        let generations_before = bmc_nix::profile::max_generation(&self.config.profile_dir)
+            .map_err(|error| WidgetInstallError::Failed(error.to_string()))?;
+        Ok((lock, generations_before))
+    }
+
+    /// Refuse an upload the filesystem cannot hold before any of it is staged:
+    /// the archive lands once unpacked in staging and once more in the store,
+    /// and an unannounced size is taken to be the cap.
+    fn refuse_unless_it_fits(
+        &self,
+        announced_bytes: Option<u64>,
+    ) -> Result<(), WidgetInstallError> {
+        let announced = announced_bytes.unwrap_or(MAX_ARCHIVE_BYTES);
+        let unpacked_bytes = announced.saturating_mul(2);
+        let required_bytes = required_with_headroom(unpacked_bytes);
+        let free_bytes = self
+            .nix
+            .store_free_bytes(&self.config.profile_dir)
+            .map_err(WidgetInstallError::Staging)?;
+        if free_bytes < required_bytes {
+            return Err(WidgetInstallError::Install(
+                bmc_nix::upgrade::InstallError::NotEnoughSpace {
+                    free_bytes,
+                    required_bytes,
+                    unpacked_bytes,
+                },
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Nix refusing the bytes is the uploader's archive; any other failure is
+/// the device's store, unless the feed was cut off at the size cap, the
+/// deadline or the client going away.
+fn restore_error(error: StoreCommandError) -> WidgetInstallError {
+    match error {
+        StoreCommandError::Exited { ref stderr, .. } if nix_refused_the_archive(stderr) => {
+            WidgetInstallError::Rejected(WidgetPackageError::Archive(stderr.clone()))
+        }
+        StoreCommandError::Io { ref source, .. }
+            if source.kind() == std::io::ErrorKind::FileTooLarge =>
+        {
+            WidgetInstallError::Rejected(WidgetPackageError::TooLarge)
+        }
+        StoreCommandError::Io { ref source, .. }
+            if source.kind() == std::io::ErrorKind::TimedOut =>
+        {
+            WidgetInstallError::UploadStalled
+        }
+        StoreCommandError::Io { ref source, .. }
+            if source.kind() == std::io::ErrorKind::ConnectionAborted =>
+        {
+            WidgetInstallError::UploadAborted
+        }
+        StoreCommandError::Exited { .. } | StoreCommandError::Io { .. } => {
+            WidgetInstallError::Store(error)
+        }
+    }
+}
+
+/// An upload's tree can hold enough entries to stall an async worker
+/// for seconds while it is walked or deleted.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    tokio::task::spawn_blocking(work)
+        .await
+        .expect("BUG: blocking filesystem work does not panic")
+}
+
+/// Symlinks are refused before any read, so a tree nix just unpacked
+/// failing to read is the device's fault, not the package's.
+#[must_use]
+pub fn package_error(error: WidgetPackageError) -> WidgetInstallError {
+    match error {
+        WidgetPackageError::Io { .. } => WidgetInstallError::Failed(error.to_string()),
+        WidgetPackageError::TooLarge
+        | WidgetPackageError::Archive(_)
+        | WidgetPackageError::FileTooLarge { .. }
+        | WidgetPackageError::NotOneWidget(_)
+        | WidgetPackageError::NotADirectory(_)
+        | WidgetPackageError::BadWidgetName(_)
+        | WidgetPackageError::NotUtf8Name(_)
+        | WidgetPackageError::Missing(_)
+        | WidgetPackageError::NativeBinary(_)
+        | WidgetPackageError::Symlink(_)
+        | WidgetPackageError::TooDeep(_)
+        | WidgetPackageError::TooManyEntries(_)
+        | WidgetPackageError::Unexpected(_)
+        | WidgetPackageError::UnexpectedExecutable(_)
+        | WidgetPackageError::Manifest(_)
+        | WidgetPackageError::BinaryPath { .. }
+        | WidgetPackageError::Icon(_)
+        | WidgetPackageError::WrapperNotExecutable(_)
+        | WidgetPackageError::SdkMajor { .. }
+        | WidgetPackageError::Wrapper(_)
+        | WidgetPackageError::NotWasm(_) => WidgetInstallError::Rejected(error),
+    }
+}
+
+/// Nix reports malformed input with these messages and no error kind,
+/// in plain and JSON log formats alike (checked with nix 2.28 and 2.34).
+/// Were they reworded, a bad archive would read as a device fault:
+/// a less helpful answer, but one that leaks nothing.
+fn nix_refused_the_archive(stderr: &str) -> bool {
+    stderr.contains("bad archive:") || stderr.contains("unexpected end-of-file")
 }
 
 #[async_trait::async_trait]
@@ -490,6 +811,80 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
     fn store_free_bytes(&self) -> std::io::Result<u64> {
         // The profile directory lives on the same filesystem as the store.
         bmc_nix::store::statvfs_free_bytes(&self.config.profile_dir)
+    }
+
+    async fn install_widget_package(
+        &self,
+        upload: WidgetUpload,
+    ) -> Result<InstalledWidget, WidgetInstallError> {
+        self.refuse_unless_it_fits(upload.announced_bytes)?;
+        std::fs::create_dir_all(&self.config.staging_dir).map_err(WidgetInstallError::Staging)?;
+        let staging =
+            tempfile::tempdir_in(&self.config.staging_dir).map_err(WidgetInstallError::Staging)?;
+        let added = self.add_upload(staging.path(), upload.nar).await;
+        blocking(move || drop(staging)).await;
+        let StagedUpload {
+            package,
+            store_path,
+            lock,
+            generations_before,
+        } = added?;
+        let package_name = package.package_name();
+
+        let result = bmc_nix::upgrade::apply_locked_profile_change(
+            &lock,
+            &self.nix,
+            &self.config.profile_dir,
+            None,
+            None,
+            &[package.resolved(store_path.clone())],
+            &[],
+            bmc_nix::upgrade::ActivationMode::Activate,
+            None,
+            None,
+            &self.config.hooks_dir,
+            self.config.hooks_override_path.as_deref(),
+        )
+        .await;
+        // A crash between the add and here leaves the path unreferenced
+        // as well; the periodic GC reclaims it.
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                // A failed activation leaves its generation behind, still
+                // pinning the store path; drop the generation first or the
+                // delete refuses the path as live.
+                match bmc_nix::gc::discard_generations_above(
+                    &lock,
+                    &self.config.profile_dir,
+                    generations_before,
+                ) {
+                    Ok(discarded) if !discarded.is_empty() => {
+                        info!(
+                            ?discarded,
+                            "discarded the generation the failed widget install built"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(discard_error) => {
+                        warn!(%discard_error, "could not discard the failed widget install's generation");
+                    }
+                }
+                if let Err(delete_error) = self.nix.delete_store_path(&store_path).await {
+                    warn!(store_path, %delete_error, "could not discard the rejected widget package");
+                }
+                return Err(WidgetInstallError::Install(error));
+            }
+        };
+
+        let outcome = install_outcome(&result, &package_name);
+        info!(package = package_name, version = %package.manifest().version, ?outcome, "widget package installed");
+        Ok(InstalledWidget {
+            package_name,
+            display_name: package.manifest().name.clone(),
+            version: package.manifest().version.to_string(),
+            outcome,
+        })
     }
 }
 
@@ -658,6 +1053,7 @@ mod tests {
             servers_config_path: servers.to_path_buf(),
             gc_config_path: root.join("gc.json"),
             profile_dir: root.join("profile"),
+            staging_dir: root.join("upload"),
             hooks_dir: "hooks".to_owned(),
             hooks_override_path: None,
         }

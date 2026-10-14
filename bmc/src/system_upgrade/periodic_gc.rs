@@ -213,6 +213,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PackageBackend for ScriptedBackend {
+        async fn install_widget_package(
+            &self,
+            _upload: bmc_upgrade::widget_package::WidgetUpload,
+        ) -> Result<bmc_upgrade::packages::InstalledWidget, bmc_upgrade::packages::WidgetInstallError>
+        {
+            unreachable!("BUG: ScriptedBackend does not install widget packages")
+        }
+
         async fn gc(&self, request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.requests

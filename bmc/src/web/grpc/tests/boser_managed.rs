@@ -126,6 +126,14 @@ struct StubPackageBackend;
 
 #[async_trait::async_trait]
 impl PackageBackend for StubPackageBackend {
+    async fn install_widget_package(
+        &self,
+        _upload: bmc_upgrade::widget_package::WidgetUpload,
+    ) -> Result<bmc_upgrade::packages::InstalledWidget, bmc_upgrade::packages::WidgetInstallError>
+    {
+        unreachable!("BUG: StubPackageBackend does not install widget packages")
+    }
+
     async fn gc(&self, _request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
         unimplemented!("{GATED_ROUTE_UNREACHABLE}")
     }
