@@ -26,6 +26,7 @@ import {
     ethernetConfigurable,
     networkConfigurable,
     soundOrLightConfigurable,
+    widgetPackageInstallable,
     wifiConfigurable,
 } from './capabilities';
 
@@ -43,6 +44,7 @@ describe('capability predicates', () => {
 
         expect(networkConfigurable(caps)).toBe(false);
         expect(boserChrome(caps)).toBe(true);
+        expect(widgetPackageInstallable(caps)).toBe(false);
     });
 
     test('either output alone opens Sound & Light', () => {

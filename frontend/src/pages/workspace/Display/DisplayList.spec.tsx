@@ -32,8 +32,21 @@ import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
 import { deferred } from '@/lib/async';
-import { Toaster } from '@/lib/toast';
+import { Toaster, toast } from '@/lib/toast';
 import { badRequest, paramDef } from './fn/test-helpers';
+import { URLS } from '@/constants';
+import AppContext, { type ConfirmationDescriptor, getAppContextDefault } from '@/context';
+
+// The app's confirmation dialog, answered by the test instead of a click.
+let confirmAnswer = false;
+let confirmations: ConfirmationDescriptor[] = [];
+const appContext = {
+    ...getAppContextDefault(),
+    confirm: async (d: ConfirmationDescriptor): Promise<boolean> => {
+        confirmations.push(d);
+        return confirmAnswer;
+    },
+};
 
 // `mocks.service` wants every method typed; at runtime it only registers what we
 // pass. This lets us register a typed subset.
@@ -107,7 +120,7 @@ function renderPage() {
         <HelmetProvider>
             <IntlProvider locale="en">
                 <MemoryRouter>
-                    <DisplayList />
+                    <AppContext.Provider value={appContext} children={<DisplayList />} />
                     <Toaster />
                 </MemoryRouter>
             </IntlProvider>
@@ -1499,5 +1512,242 @@ describe('the add control at capacity', () => {
 
         expect(document.body.textContent).not.toContain(SLOTS_FULL_TITLE);
         expect(addNewButton().hasAttribute('disabled')).toBe(false);
+    });
+});
+
+describe('widget package upload', () => {
+    const INPUT_ID = 'display-list-widget-package-file';
+    const REAL_FETCH = globalThis.fetch;
+    const INSTALLED = { package_name: 'widget-hello', display_name: 'Hello', version: '1.2.0', outcome: 'installed' };
+
+    // The RPC transport shares global fetch, so only the upload URL is intercepted.
+    function stubUpload(status: number, body: unknown): ReturnType<typeof rstest.fn> {
+        const upload = rstest.fn(async (_init?: RequestInit) => new Response(JSON.stringify(body), { status }));
+        globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+            input === URLS.api.installWidgetPackage
+                ? upload(init)
+                : REAL_FETCH(input, init)) as typeof globalThis.fetch;
+        return upload;
+    }
+
+    function choose(file: File): void {
+        fireEvent.change(elementById(INPUT_ID), { target: { files: [file] } });
+    }
+
+    beforeEach(() => {
+        confirmAnswer = false;
+        confirmations = [];
+    });
+
+    afterEach(() => {
+        globalThis.fetch = REAL_FETCH;
+    });
+
+    test('the Install Widget button opens the file picker once the risk is accepted', async () => {
+        confirmAnswer = true;
+        renderPage();
+        await flush();
+
+        const open = rstest.spyOn(elementById(INPUT_ID), 'click');
+        fireEvent.click(elementById('display-list-install-widget-package'));
+        await flush();
+
+        expect(confirmations).toHaveLength(1);
+        expect(confirmations[0]).toMatchObject({ danger: true, confirmLabel: 'I Accept the Risk' });
+        const { container: message } = render(
+            <IntlProvider locale="en">
+                <MemoryRouter children={confirmations[0].message} />
+            </IntlProvider>,
+        );
+        expect(message.textContent).toContain('not checked by Braiins Forge');
+        expect(message.textContent).toContain('Upload the widget as a .nar archive');
+        expect(message.querySelector('a')?.getAttribute('href')).toBe('https://github.com/BraiinsForge/bmc-main');
+        expect(open).toHaveBeenCalledTimes(1);
+    });
+
+    test('a boser-managed device offers no widget install', async () => {
+        store.setHardwareCapabilities(deckCapabilities({ combinedScenesSupported: false, boserManaged: true }));
+        renderPage();
+        await flush();
+
+        expect(document.getElementById('display-list-install-widget-package')).toBeNull();
+        expect(document.getElementById(INPUT_ID)).toBeNull();
+    });
+
+    test('declining the risk keeps the file picker closed', async () => {
+        renderPage();
+        await flush();
+
+        const open = rstest.spyOn(elementById(INPUT_ID), 'click');
+        fireEvent.click(elementById('display-list-install-widget-package'));
+        await flush();
+
+        expect(confirmations).toHaveLength(1);
+        expect(open).not.toHaveBeenCalled();
+    });
+
+    test('an accepted package is announced and the widget list is reloaded', async () => {
+        const getAvailableWidgets = rstest.fn(() => ({ widgets: [] }));
+        registerMocks(pb.services.SceneManagementService, { getAvailableWidgets });
+        const upload = stubUpload(200, INSTALLED);
+        renderPage();
+        await flush();
+        const loadsBefore = getAvailableWidgets.mock.calls.length;
+
+        const file = new File(['nar'], 'hello.nar');
+        choose(file);
+        await flush();
+
+        expect(upload).toHaveBeenCalledWith(
+            expect.objectContaining({
+                method: 'POST',
+                body: file,
+                headers: { 'Content-Type': 'application/x-nix-archive' },
+            }),
+        );
+        expect(document.body.textContent).toContain('Hello 1.2.0 can now be added to a scene.');
+        expect(getAvailableWidgets.mock.calls.length).toBe(loadsBefore + 1);
+    });
+
+    test('a package-controlled display name is shown as text, not markup', async () => {
+        stubUpload(200, { ...INSTALLED, display_name: '<a href="https://example.invalid">Hello</a>' });
+        renderPage();
+        await flush();
+
+        choose(new File(['nar'], 'hello.nar'));
+        await flush();
+
+        expect(document.body.textContent).toContain(
+            '<a href="https://example.invalid">Hello</a> 1.2.0 can now be added',
+        );
+        expect(document.querySelector('a[href="https://example.invalid"]')).toBeNull();
+    });
+
+    test('a rebuilt package at the same version is reported as reinstalled', async () => {
+        stubUpload(200, { ...INSTALLED, outcome: 'reinstalled' });
+        renderPage();
+        await flush();
+
+        choose(new File(['nar'], 'hello.nar'));
+        await flush();
+
+        expect(document.body.textContent).toContain('Hello 1.2.0 was reinstalled.');
+    });
+
+    test('the button is busy while the upload is in flight', async () => {
+        let finish: (response: Response) => void = () => {};
+        const pending = new Promise<Response>(resolve => {
+            finish = resolve;
+        });
+        globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+            input === URLS.api.installWidgetPackage ? pending : REAL_FETCH(input, init)) as typeof globalThis.fetch;
+        renderPage();
+        await flush();
+
+        choose(new File(['nar'], 'hello.nar'));
+        await flush();
+
+        const button = elementById('display-list-install-widget-package');
+        expect(button.getAttribute('aria-busy')).toBe('true');
+        expect(button.hasAttribute('disabled')).toBe(true);
+        expect(button.querySelector('[role="status"]')).not.toBeNull();
+
+        finish(new Response(JSON.stringify(INSTALLED), { status: 200 }));
+        await flush();
+
+        expect(elementById('display-list-install-widget-package').hasAttribute('disabled')).toBe(false);
+    });
+
+    test('an install the device does not answer in time may still finish', async () => {
+        const deadline = new AbortController();
+        const timeout = rstest.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+        globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+            input === URLS.api.installWidgetPackage
+                ? new Promise<Response>((_, reject) => {
+                      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+                  })
+                : REAL_FETCH(input, init)) as typeof globalThis.fetch;
+        try {
+            renderPage();
+            await flush();
+
+            choose(new File(['nar'], 'slow.nar'));
+            await flush();
+            deadline.abort(new DOMException('signal timed out', 'TimeoutError'));
+            await flush();
+
+            expect(document.body.textContent).toContain('The install may still finish');
+            expect(elementById('display-list-install-widget-package').hasAttribute('disabled')).toBe(false);
+        } finally {
+            timeout.mockRestore();
+        }
+    });
+
+    test('a rejected package shows the backend reason and leaves the list alone', async () => {
+        const getAvailableWidgets = rstest.fn(() => ({ widgets: [] }));
+        registerMocks(pb.services.SceneManagementService, { getAvailableWidgets });
+        stubUpload(400, { error: 'manifest.json is invalid: missing field `name`' });
+        renderPage();
+        await flush();
+        const loadsBefore = getAvailableWidgets.mock.calls.length;
+
+        choose(new File(['nar'], 'broken.nar'));
+        await flush();
+
+        expect(document.body.textContent).toContain('manifest.json is invalid: missing field `name`');
+        expect(getAvailableWidgets.mock.calls.length).toBe(loadsBefore);
+    });
+
+    test('an expired session goes to login instead of a toast', async () => {
+        const goToLogin = rstest.spyOn(store, 'goToLogin').mockImplementation(() => {});
+        stubUpload(401, { error: 'no session' });
+        renderPage();
+        await flush();
+
+        choose(new File(['nar'], 'hello.nar'));
+        await flush();
+
+        expect(goToLogin).toHaveBeenCalledTimes(1);
+        expect(document.body.textContent).not.toContain('no session');
+    });
+
+    test('a backend reason quoting markup is shown as text', async () => {
+        stubUpload(400, { error: 'package path <img src=x onerror=alert(1)> is invalid' });
+        renderPage();
+        await flush();
+
+        choose(new File(['nar'], 'broken.nar'));
+        await flush();
+
+        expect(document.body.textContent).toContain('package path <img src=x onerror=alert(1)> is invalid');
+        expect(document.querySelector('img[src="x"]')).toBeNull();
+    });
+
+    test('a rejection reason stays up long enough to read', async () => {
+        const showError = rstest.spyOn(toast, 'error');
+        stubUpload(400, { error: 'manifest.json is invalid: missing field `name`' });
+        try {
+            renderPage();
+            await flush();
+
+            choose(new File(['nar'], 'broken.nar'));
+            await flush();
+
+            const [, extra] = showError.mock.lastCall ?? [];
+            expect(extra?.duration).toBeGreaterThan(3);
+        } finally {
+            showError.mockRestore();
+        }
+    });
+
+    test('a body without a string reason falls back to the generic message', async () => {
+        stubUpload(400, { error: { nested: 'object' } });
+        renderPage();
+        await flush();
+
+        choose(new File(['nar'], 'broken.nar'));
+        await flush();
+
+        expect(document.body.textContent).toContain('Failed to install the widget package!');
     });
 });
