@@ -27,6 +27,7 @@
 //! of the host-side public surface.
 
 use chrono::{DateTime, FixedOffset};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
@@ -1011,6 +1012,10 @@ pub(crate) struct HostState {
     /// intervening frames still has to be repainted or a stale pixel survives.
     pub recent_dynamic_rects: [Vec<Rect>; 2],
 
+    /// [`Self::frame_damage`]'s last answer and the inputs it came from:
+    /// the host asks twice a frame, and merging the rects costs more than comparing them.
+    damage_memo: RefCell<Option<DamageMemo>>,
+
     /// How the last frame repainted its target.
     pub last_repaint: FrameRepaint,
 
@@ -1487,6 +1492,7 @@ impl HostState {
             transition_states: HashMap::new(),
             frame_counter: 0,
             recent_dynamic_rects: [Vec::new(), Vec::new()],
+            damage_memo: RefCell::new(None),
             last_repaint: FrameRepaint::NoTree,
             layout_outlines: None,
             static_layer_useful: true,
@@ -1690,7 +1696,21 @@ impl HostState {
         if self.stale_export_buffers > 0 {
             return Vec::new();
         }
-        damage_rects(&self.recent_dynamic_rects, width, height)
+        let size = (width.to_bits(), height.to_bits());
+        let mut memo = self.damage_memo.borrow_mut();
+        if let Some(memo) = memo.as_ref()
+            && memo.size == size
+            && memo.recent == self.recent_dynamic_rects
+        {
+            return memo.damage.clone();
+        }
+        let damage = damage_rects(&self.recent_dynamic_rects, width, height);
+        *memo = Some(DamageMemo {
+            size,
+            recent: self.recent_dynamic_rects.clone(),
+            damage: damage.clone(),
+        });
+        damage
     }
 
     /// Whether the next frame replays the cached tree instead of running the
@@ -1779,6 +1799,20 @@ impl FrameRepaint {
     }
 }
 
+/// A [`HostState::frame_damage`] answer with the surface size, as bits,
+/// and the two walks' rects it was worked out from.
+struct DamageMemo {
+    size: (u32, u32),
+    recent: [Vec<Rect>; 2],
+    damage: Vec<Rect>,
+}
+
+/// How much larger than the two rects apart a merged damage rect may be.
+///
+/// The blit paints each rect separately, so merging only pays while the union
+/// covers no more than the pair does.
+const DAMAGE_MERGE_TOLERANCE: f32 = 1.0;
+
 /// Damage covering the last two frames, or empty to repaint everything.
 ///
 /// Empty when the regions cover more of the surface than `BMC_DAMAGE_MAX_PCT`
@@ -1789,9 +1823,13 @@ pub fn damage_rects(recent: &[Vec<Rect>; 2], width: f32, height: f32) -> Vec<Rec
     if surface <= 0.0 || recent.iter().all(Vec::is_empty) {
         return Vec::new();
     }
-    let rects = recent.iter().flatten().copied().coalesce();
-    // Rectangles that survive coalescing are disjoint, so this is the real
-    // covered area rather than an over-count.
+    let rects = recent
+        .iter()
+        .flatten()
+        .copied()
+        .coalesce_within(DAMAGE_MERGE_TOLERANCE);
+    // Rectangles that cross survive coalescing,
+    // so their shared area counts twice, just as the per-rect blit paints it.
     let covered: f32 = rects.iter().map(|Rect { w, h, .. }| w * h).sum();
     if covered / surface > damage_max_fraction() {
         return Vec::new();
@@ -2178,6 +2216,20 @@ mod tests {
         );
     }
 
+    /// Asked twice a frame, the damage is worked out once,
+    /// but a walk that moves the rects must not be answered from the last frame.
+    #[test]
+    fn frame_damage_follows_the_rects_it_comes_from() {
+        let mut state = state_with_damage();
+        assert_eq!(
+            state.frame_damage(1280.0, 480.0),
+            state.frame_damage(1280.0, 480.0)
+        );
+        let moved = Rect::new(600.0, 200.0, 40.0, 40.0);
+        state.recent_dynamic_rects = [vec![moved], vec![moved]];
+        assert_eq!(state.frame_damage(1280.0, 480.0), [moved]);
+    }
+
     /// A state carrying damage from two walks, as a settled widget has.
     fn state_with_damage() -> HostState {
         let mut state = HostState::new(
@@ -2489,6 +2541,18 @@ mod tests {
             [(0.0, 0.0, 10.0, 10.0), (100.0, 100.0, 202.0, 200.0)],
             "the two hand rects merge; the disjoint one is left alone"
         );
+    }
+
+    #[test]
+    fn rects_overlapping_at_a_corner_stay_apart() {
+        // A 10x10 overlap, under a bounding box twice the pair's area.
+        let upper_left = Rect::new(400.0, 40.0, 210.0, 210.0);
+        let lower_right = Rect::new(600.0, 240.0, 200.0, 200.0);
+        let recent = [vec![upper_left, lower_right], Vec::new()];
+        let mut rects = damage_rects(&recent, 1280.0, 480.0);
+        rects.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let corners: Vec<(f32, f32, f32, f32)> = rects.into_iter().map(Into::into).collect();
+        assert_eq!(corners, [upper_left.into(), lower_right.into()]);
     }
 
     #[test]

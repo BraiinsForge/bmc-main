@@ -70,7 +70,7 @@ pub enum ActionEvent {
 }
 
 /// Rectangle for hit testing.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,
@@ -134,46 +134,6 @@ impl Rect {
             *bounds = Some(rect);
         }
     }
-
-    /// Merge overlapping rectangles in place into their bounding unions until none overlap.
-    ///
-    /// The damage set spans two walks, so anything still moving contributes a
-    /// near-identical rect per walk. Left alone each is scissored and drawn
-    /// separately, painting the same pixels twice and counting them twice
-    /// against `BMC_DAMAGE_MAX_PCT` — enough on its own to cross the cap and
-    /// fall back to full repaints.
-    ///
-    /// Merging to the bounding box can cover pixels neither input did, which is
-    /// sound for damage and cheap here because the inputs are near-duplicates.
-    #[must_use]
-    pub fn coalesce(mut rects: Vec<Rect>) -> Vec<Rect> {
-        let mut head: usize = 0;
-        while head < rects.len() {
-            let mut i = head + 1;
-            let mut merged = false;
-            while i < rects.len() {
-                if rects[head].overlaps(rects[i]) {
-                    let other = rects.swap_remove(i);
-                    rects[head].union(other);
-                    merged = true;
-                    i = head + 1;
-                } else {
-                    i += 1;
-                }
-            }
-            // A union reaches further than either input, so it can overlap a
-            // rect already passed over; restarting is what makes the result
-            // disjoint, which is the property the damage area count assumes.
-            if merged {
-                head = 0;
-            } else {
-                head += 1;
-            }
-        }
-
-        rects.shrink_to_fit();
-        rects
-    }
 }
 
 impl From<Rect> for (f32, f32, f32, f32) {
@@ -194,21 +154,66 @@ impl From<(f32, f32, f32, f32)> for Rect {
     }
 }
 
-pub trait Coalesce {
+pub trait Coalesce: Sized {
+    /// Merge rectangles into their bounding unions
+    /// for as long as `merges` approves some pair.
     #[must_use]
-    fn coalesce(self) -> Self;
+    fn coalesce_by(self, merges: impl Fn(Rect, Rect) -> bool) -> Self;
+
+    /// Merge two overlapping rectangles into their bounding box only while it
+    /// covers at most `tolerance` times their combined area.
+    ///
+    /// The damage set spans two walks, so anything still moving contributes a
+    /// near-identical rect per walk. Left alone each is scissored and drawn
+    /// separately, painting the same pixels twice and counting them twice
+    /// against `BMC_DAMAGE_MAX_PCT` — enough on its own to cross the cap and
+    /// fall back to full repaints.
+    ///
+    /// At 1.0 a merge never paints more than the two apart,
+    /// so rects that overlap only a little but lie far apart stay apart,
+    /// and the survivors may overlap.
+    #[must_use]
+    fn coalesce_within(self, tolerance: f32) -> Self {
+        self.coalesce_by(|a, b| {
+            let mut union = a;
+            union.union(b);
+            a.overlaps(b) && union.area() <= tolerance * (a.area() + b.area())
+        })
+    }
 }
 
 impl Coalesce for Vec<Rect> {
-    fn coalesce(self) -> Self {
-        Rect::coalesce(self)
+    fn coalesce_by(mut self, merges: impl Fn(Rect, Rect) -> bool) -> Self {
+        let mut settled = Vec::with_capacity(self.len());
+        while let Some(mut rect) = self.pop() {
+            // Only a rect that grew can newly qualify for a merge,
+            // so the one being grown is the only one rechecked.
+            loop {
+                let mut grew = false;
+                let mut absorb = |other: &Rect| {
+                    let merge = merges(rect, *other);
+                    if merge {
+                        rect.union(*other);
+                        grew = true;
+                    }
+                    !merge
+                };
+                self.retain(&mut absorb);
+                settled.retain(&mut absorb);
+                if !grew {
+                    break;
+                }
+            }
+            settled.push(rect);
+        }
+        settled
     }
 }
 
 pub trait CoalesceIterExt: Iterator<Item = Rect> + Sized {
-    fn coalesce(self) -> Vec<Rect> {
-        let rects: Vec<Rect> = self.collect();
-        Rect::coalesce(rects)
+    /// [`Coalesce::coalesce_within`] over the rects this yields.
+    fn coalesce_within(self, tolerance: f32) -> Vec<Rect> {
+        self.collect::<Vec<_>>().coalesce_within(tolerance)
     }
 }
 
@@ -216,7 +221,7 @@ impl<I: Iterator<Item = Rect>> CoalesceIterExt for I {}
 
 #[cfg(test)]
 mod tests {
-    use super::Rect;
+    use super::{Coalesce, Rect};
 
     #[test]
     fn intersection_is_the_shared_area() {
@@ -226,6 +231,95 @@ mod tests {
         assert_eq!(
             (shared.x, shared.y, shared.w, shared.h),
             (5.0, 2.0, 5.0, 4.0)
+        );
+    }
+
+    /// Two rects overlapping in a 10x10 corner, under a bounding box far larger than the pair.
+    fn rects_overlapping_at_a_corner() -> Vec<Rect> {
+        vec![
+            Rect::new(0.0, 0.0, 110.0, 110.0),
+            Rect::new(100.0, 100.0, 100.0, 100.0),
+        ]
+    }
+
+    #[test]
+    fn coalesce_by_merges_every_pair_its_predicate_approves() {
+        assert_eq!(
+            rects_overlapping_at_a_corner()
+                .coalesce_by(|a, b| a.overlaps(b))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn coalesce_within_keeps_apart_rects_whose_union_costs_more() {
+        assert_eq!(
+            rects_overlapping_at_a_corner().coalesce_within(1.0).len(),
+            2,
+            "a 200x200 union paints far more than the two 110x110 and 100x100 rects"
+        );
+    }
+
+    #[test]
+    fn coalesce_within_merges_near_duplicates() {
+        let rects = vec![
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            Rect::new(2.0, 0.0, 100.0, 100.0),
+        ];
+        assert_eq!(rects.coalesce_within(1.0).len(), 1);
+    }
+
+    #[test]
+    fn a_rect_grown_by_a_merge_absorbs_what_it_now_reaches() {
+        let chain: Vec<_> = (0..50_u8)
+            .map(|step| Rect::new(f32::from(step) * 9.0, 0.0, 10.0, 10.0))
+            .collect();
+        assert_eq!(chain.coalesce_by(|a, b| a.overlaps(b)).len(), 1);
+    }
+
+    /// 256 draws on a grid, each reported by two walks a pixel apart.
+    fn two_walks_of_a_grid() -> Vec<Rect> {
+        (0..16_u8)
+            .flat_map(|row| {
+                (0..16_u8).flat_map(move |column| {
+                    let (x, y) = (f32::from(column) * 20.0, f32::from(row) * 20.0);
+                    [
+                        Rect::new(x, y, 10.0, 10.0),
+                        Rect::new(x + 1.0, y, 10.0, 10.0),
+                    ]
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn merging_two_walks_of_many_draws_checks_each_pair_a_bounded_number_of_times() {
+        let rects = two_walks_of_a_grid();
+        let count = rects.len();
+        let checks = std::cell::Cell::new(0_usize);
+        let merged = rects.coalesce_by(|a, b| {
+            checks.set(checks.get() + 1);
+            a.overlaps(b)
+        });
+        assert_eq!(
+            merged.len(),
+            256,
+            "each draw's two walks merge, nothing else"
+        );
+        assert!(
+            checks.get() <= count * count,
+            "{} checks for {count} rects, past the {} of a quadratic merge",
+            checks.get(),
+            count * count
+        );
+    }
+
+    #[test]
+    fn a_loose_enough_tolerance_merges_any_overlap() {
+        assert_eq!(
+            rects_overlapping_at_a_corner().coalesce_within(2.0).len(),
+            1
         );
     }
 

@@ -91,6 +91,51 @@ fn assert_dynamic_draws_land_inside_span(older: &TreeNode, newer: &TreeNode) {
     }
 }
 
+/// An 8 px square at `(x, y)` sliding 2 px right and back.
+fn sliding_square(x: f32, y: f32) -> super::DrawCommand {
+    super::DrawCommand::Modified {
+        animations: vec![super::HostAnimationDef {
+            property: AnimProperty::TranslateX,
+            from: 0.0,
+            to: 2.0,
+            duration_ms: 500,
+            delay_ms: 0,
+            easing: Easing::Linear,
+            loop_mode: LoopMode::Forever,
+        }],
+        transition: None,
+        color_space: ColorSpace::default(),
+        inner: Box::new(super::DrawCommand::Rect {
+            x,
+            y,
+            w: 8.0,
+            h: 8.0,
+            fill: Fill::Solid(Color::from_rgb(9, 9, 9)),
+        }),
+    }
+}
+
+#[test]
+fn draws_far_apart_in_one_canvas_report_a_rect_each() {
+    let tree = TreeNode::Canvas {
+        props: PropsData::default(),
+        touch_key: None,
+        draws: vec![sliding_square(2.0, 2.0), sliding_square(88.0, 88.0)],
+    };
+    let mut renderer = KeyRecordingRenderer::default();
+    let result = render_once(&mut SlotState::default(), &mut renderer, &tree);
+
+    let sizes: Vec<_> = result
+        .dynamic_rects
+        .iter()
+        .map(|rect| (rect.w, rect.h))
+        .collect();
+    assert!(
+        sizes.len() == 2 && sizes.iter().all(|&(w, h)| w <= 14.0 && h <= 12.0),
+        "each square owes only its own slide, not the 94 px box spanning both: {sizes:?}"
+    );
+}
+
 #[test]
 fn every_dynamic_draw_lands_inside_the_two_walk_damage_span() {
     assert_dynamic_draws_land_inside_span(&moving_dot(10.0), &moving_dot(60.0));

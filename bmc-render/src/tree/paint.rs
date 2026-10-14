@@ -326,15 +326,21 @@ fn render_taffy_node_body(
         // and the layer blitted underneath holds no copy of it.
         // Containers too — a background painted `Above` covers what the layer
         // supplied beneath it.
-        let mut damaged = (band == Some(Band::Above) && paints_own_box(ctx)).then_some(node_rect);
+        let mut damaged: Vec<Rect> = Vec::new();
+        if band == Some(Band::Above) && paints_own_box(ctx) {
+            damaged.push(node_rect);
+        }
         if taffy.child_count(node_id) == 0 {
             // A canvas is one leaf holding many draws,
             // so its own rect is far coarser than what the dynamic pass repaints:
             // `crate::damage` bounds each draw,
             // and only one it cannot bound falls back to the whole canvas.
             // A dynamic leaf with no draws is host-driven and repaints entirely.
+            //
+            // Each draw keeps its own rect: draws far apart in one canvas
+            // would otherwise union into everything between them.
             if ctx.draws.is_empty() && ctx.dynamic {
-                damaged = Some(node_rect);
+                damaged.push(node_rect);
             }
             let bands = crate::partition::canvas_bands_after(&ctx.draws, band == Some(Band::Above));
             for (draw, _) in ctx
@@ -350,20 +356,20 @@ fn render_taffy_node_body(
                     canvas_index,
                     &|icon_id| renderer.svg_content(icon_id),
                 ) {
-                    crate::damage::DrawDamage::Region(rect) => {
-                        Rect::union_bounds(&mut damaged, rect);
-                    }
+                    crate::damage::DrawDamage::Region(rect) => damaged.push(rect),
                     crate::damage::DrawDamage::Nothing => {}
                     crate::damage::DrawDamage::WholeCanvas => {
-                        damaged = Some(node_rect);
+                        damaged = vec![node_rect];
                         break;
                     }
                 }
             }
         }
-        if let Some(damaged) = damaged {
-            Rect::union_bounds(&mut result.dynamic_bounds, damaged);
-            result.dynamic_rects.push(damaged);
+        if !damaged.is_empty() {
+            for &rect in &damaged {
+                Rect::union_bounds(&mut result.dynamic_bounds, rect);
+            }
+            result.dynamic_rects.append(&mut damaged);
             result.dynamic_node_count += 1;
         }
     }
