@@ -1262,6 +1262,7 @@ pub struct Configuration {
     pub nix_servers_config_path: PathBuf,
     pub nix_gc_config_path: PathBuf,
     pub nix_profile_dir: PathBuf,
+    pub nix_upload_staging_dir: PathBuf,
     pub pending_install_path: PathBuf,
     pub nix_hooks_dir: String,
     pub nix_hooks_override_path: Option<PathBuf>,
@@ -1283,6 +1284,7 @@ impl Configuration {
     const NIX_SERVERS_CONFIG_PATH: &str = "/etc/nix-upgrade/servers.json";
     const NIX_GC_CONFIG_PATH: &str = "/etc/nix-upgrade/gc.json";
     const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
+    const NIX_UPLOAD_STAGING_DIR: &str = "/nix/var/bmc/upload";
     // Handoff for a firmware-carried widget install: bmc writes it here, the
     // sysupgrade sequence consumes it via `bmc-nix-cli upgrade --install-from`
     // before the flash in the same boot, so it never crosses the reboot and its
@@ -1310,6 +1312,7 @@ impl Default for Configuration {
             nix_servers_config_path: PathBuf::from(Self::NIX_SERVERS_CONFIG_PATH),
             nix_gc_config_path: PathBuf::from(Self::NIX_GC_CONFIG_PATH),
             nix_profile_dir: PathBuf::from(Self::NIX_PROFILE_DIR),
+            nix_upload_staging_dir: PathBuf::from(Self::NIX_UPLOAD_STAGING_DIR),
             pending_install_path: PathBuf::from(Self::PENDING_INSTALL_PATH),
             nix_hooks_dir: Self::NIX_HOOKS_DIR.to_owned(),
             nix_hooks_override_path: None,

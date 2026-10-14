@@ -156,6 +156,7 @@ impl From<Config> for Configuration {
             nix_servers_config_path: value.mockfs_path.join("etc/nix-upgrade/servers.json"),
             nix_gc_config_path: value.mockfs_path.join("etc/nix-upgrade/gc.json"),
             nix_profile_dir: value.mockfs_path.join("nix/profiles/bmc"),
+            nix_upload_staging_dir: value.mockfs_path.join("nix/upload"),
             pending_install_path: value
                 .mockfs_path
                 .join("dev/shm/bmc-nix-pending-install.json"),
