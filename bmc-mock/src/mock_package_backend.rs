@@ -37,11 +37,15 @@ use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_shared_utils::include_png;
 use bmc_upgrade::offers::PackageOffer;
 use bmc_upgrade::packages::{
-    ApplyError, EstimateMode, InstallablePackage, PackageBackend, PackageGcError, PackageGcOutcome,
-    PackageGcRequest, PackageProbe, PackageProbeError, PackagesPreview, SystemPackageChange,
-    installable_packages_from,
+    ApplyError, EstimateMode, InstallablePackage, InstalledWidget, PackageBackend, PackageGcError,
+    PackageGcOutcome, PackageGcRequest, PackageProbe, PackageProbeError, PackagesPreview,
+    SystemPackageChange, WidgetInstallError, WidgetInstallOutcome, installable_packages_from,
+};
+use bmc_upgrade::widget_package::{
+    WASM_SDK_MAJOR, WidgetPackage, WidgetPackageError, WidgetUpload, limit_archive,
 };
 use bmc_widget_manifest::Manifest;
+use nix_archive::nar::{CaseHack, restore};
 use tokio::sync::Notify;
 
 use crate::pacing::UpgradePacing;
@@ -109,6 +113,7 @@ pub struct MockPackageBackend {
     index_path: Option<PathBuf>,
     widgets_path: Option<PathBuf>,
     staging_path: Option<PathBuf>,
+    uploads_path: Option<PathBuf>,
     service_upgrade_marker: Option<PathBuf>,
 }
 
@@ -134,11 +139,15 @@ impl MockPackageBackend {
         let mut widgets: Vec<(String, String)> = self
             .widgets_path
             .as_deref()
-            .map(crate::widget_staging::widget_dirs)
+            .map(|root| {
+                crate::widget_staging::widget_dirs(root)
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .filter_map(|dir| widget_manifest(root, &dir))
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default()
             .into_iter()
-            .filter_map(Result::ok)
-            .filter_map(|dir| widget_manifest(&dir.join("manifest.json")))
             .map(|(name, manifest)| (name, manifest.version.to_string()))
             .collect();
         // The tree walk is unordered; sorting keeps the profile equal across probes when two
@@ -202,6 +211,7 @@ impl MockPackageBackend {
             index_path: None,
             widgets_path: None,
             staging_path: None,
+            uploads_path: None,
             service_upgrade_marker: None,
         }
     }
@@ -227,6 +237,14 @@ impl MockPackageBackend {
     #[must_use]
     pub fn with_staging_path(mut self, staging_path: Option<PathBuf>) -> Self {
         self.staging_path = staging_path;
+        self
+    }
+
+    /// Where uploaded widget packages are unpacked;
+    /// the registry discovers from it beside the staging tree.
+    #[must_use]
+    pub fn with_uploads_path(mut self, uploads_path: Option<PathBuf>) -> Self {
+        self.uploads_path = uploads_path;
         self
     }
 
@@ -311,21 +329,82 @@ fn installable_widgets_from_dir(root: &Path) -> Vec<InstallableWidget> {
     crate::widget_staging::widget_dirs(root)
         .into_iter()
         .filter_map(Result::ok)
-        .filter_map(|dir| widget_from_manifest(&dir.join("manifest.json")))
+        .filter_map(|dir| widget_from_manifest(root, &dir))
         .collect()
 }
 
+/// Whether two unpacked trees hold the same files with the same bytes and
+/// executable bits: the stand-in for nix's content addressing, which tells
+/// a repeat upload from a rebuilt one.
+fn same_tree(a: &Path, b: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let names = |dir: &Path| -> std::io::Result<BTreeSet<std::ffi::OsString>> {
+        std::fs::read_dir(dir)?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect()
+    };
+    let names_a = names(a)?;
+    if names_a != names(b)? {
+        return Ok(false);
+    }
+    for name in names_a {
+        let (path_a, path_b) = (a.join(&name), b.join(&name));
+        let (meta_a, meta_b) = (std::fs::metadata(&path_a)?, std::fs::metadata(&path_b)?);
+        if meta_a.is_dir() != meta_b.is_dir() {
+            return Ok(false);
+        }
+        let same = if meta_a.is_dir() {
+            same_tree(&path_a, &path_b)?
+        } else {
+            meta_a.permissions().mode() & 0o100 == meta_b.permissions().mode() & 0o100
+                && std::fs::read(&path_a)? == std::fs::read(&path_b)?
+        };
+        if !same {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The old tree moves aside into staging rather than being deleted first,
+/// so a failed rename puts it back and only a success lets the staging
+/// tempdir take it away.
+fn replace_tree(target: &Path, new_tree: &Path, staging: &Path) -> std::io::Result<()> {
+    let previous = staging.join("previous");
+    let had_previous = target.exists();
+    if had_previous {
+        std::fs::rename(target, &previous)?;
+    }
+    let Err(error) = std::fs::rename(new_tree, target) else {
+        return Ok(());
+    };
+    if had_previous {
+        std::fs::rename(&previous, target).map_err(|restore| {
+            std::io::Error::new(
+                error.kind(),
+                format!("{error}; restoring the installed widget failed too: {restore}"),
+            )
+        })?;
+    }
+    Err(error)
+}
+
 /// A manifest that does not parse yields `None`, so one broken widget cannot fail the tree.
-fn widget_manifest(manifest_path: &Path) -> Option<(String, Manifest)> {
-    let widget_dir = manifest_path.parent()?;
-    let package_name = format!("widget-{}", widget_dir.file_name()?.to_str()?);
-    let manifest = std::fs::read_to_string(manifest_path).ok()?.parse().ok()?;
+fn read_manifest(manifest_path: &Path) -> Option<Manifest> {
+    std::fs::read_to_string(manifest_path).ok()?.parse().ok()
+}
+
+/// The widget at `widget_dir` with the package name its folders below
+/// `root` give it.
+fn widget_manifest(root: &Path, widget_dir: &Path) -> Option<(String, Manifest)> {
+    let package_name = crate::widget_staging::package_name(widget_dir.strip_prefix(root).ok()?)?;
+    let manifest = read_manifest(&widget_dir.join("manifest.json"))?;
     Some((package_name, manifest))
 }
 
-fn widget_from_manifest(manifest_path: &Path) -> Option<InstallableWidget> {
-    let (package_name, manifest) = widget_manifest(manifest_path)?;
-    let widget_dir = manifest_path.parent()?;
+fn widget_from_manifest(root: &Path, widget_dir: &Path) -> Option<InstallableWidget> {
+    let (package_name, manifest) = widget_manifest(root, widget_dir)?;
     let icon = manifest
         .icon
         .map(|rel| widget_dir.join(rel).to_string_lossy().into_owned());
@@ -536,12 +615,91 @@ impl PackageBackend for MockPackageBackend {
 
     async fn install_widget_package(
         &self,
-        _upload: bmc_upgrade::widget_package::WidgetUpload,
-    ) -> Result<bmc_upgrade::packages::InstalledWidget, bmc_upgrade::packages::WidgetInstallError>
-    {
-        Err(bmc_upgrade::packages::WidgetInstallError::Failed(
-            "mock: widget package upload is not supported".to_owned(),
-        ))
+        upload: WidgetUpload,
+    ) -> Result<InstalledWidget, WidgetInstallError> {
+        use tokio::io::AsyncReadExt as _;
+
+        let mut bytes = Vec::new();
+        limit_archive(upload.nar)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::FileTooLarge {
+                    WidgetInstallError::Rejected(WidgetPackageError::TooLarge)
+                } else if error.kind() == std::io::ErrorKind::TimedOut {
+                    WidgetInstallError::UploadStalled
+                } else if error.kind() == std::io::ErrorKind::ConnectionAborted {
+                    WidgetInstallError::UploadAborted
+                } else {
+                    WidgetInstallError::Staging(error)
+                }
+            })?;
+        let Some(uploads) = &self.uploads_path else {
+            return Err(WidgetInstallError::Failed(
+                "mock: no uploads path configured".to_owned(),
+            ));
+        };
+        // Staged beside the uploads dir so the accepted widget can be renamed
+        // into place and a rejected one leaves the dir untouched.
+        let staging_root = uploads.parent().unwrap_or(uploads);
+        std::fs::create_dir_all(staging_root).map_err(WidgetInstallError::Staging)?;
+        let staging = tempfile::tempdir_in(staging_root).map_err(WidgetInstallError::Staging)?;
+        let unpacked = staging.path().join("package");
+        // No nix here: nix-archive stands in for `nix-store --restore`,
+        // then the tree is checked the way the device checks it.
+        restore(&bytes, &unpacked, CaseHack::Disabled).map_err(|error| {
+            if let nix_archive::nar::Error::Io(source) = error {
+                WidgetInstallError::Staging(source)
+            } else {
+                WidgetInstallError::Rejected(WidgetPackageError::Archive(error.to_string()))
+            }
+        })?;
+        drop(bytes);
+        let package = WidgetPackage::from_dir(&unpacked, WASM_SDK_MAJOR)
+            .map_err(bmc_upgrade::packages::package_error)?;
+
+        let target = uploads.join(package.relative_dir());
+        let unpacked_widget = unpacked
+            .join("lib/bmc-widgets")
+            .join(package.relative_dir());
+        let previous_version =
+            read_manifest(&target.join("manifest.json")).map(|manifest| manifest.version);
+        let uploaded = package.manifest().version.clone();
+        let outcome = match previous_version {
+            None => WidgetInstallOutcome::Installed,
+            Some(installed) if installed == uploaded => {
+                if same_tree(&target, &unpacked_widget).map_err(WidgetInstallError::Staging)? {
+                    WidgetInstallOutcome::AlreadyInstalled
+                } else {
+                    WidgetInstallOutcome::Reinstalled
+                }
+            }
+            Some(installed) if uploaded < installed => {
+                return Err(WidgetInstallError::Downgrade {
+                    package_name: package.package_name(),
+                    installed: installed.to_string(),
+                    uploaded: uploaded.to_string(),
+                });
+            }
+            Some(installed) => WidgetInstallOutcome::Replaced {
+                previous_version: installed.to_string(),
+            },
+        };
+        tokio::time::sleep(self.pacing.progress_step()).await;
+        if outcome != WidgetInstallOutcome::AlreadyInstalled {
+            let parent = target
+                .parent()
+                .expect("BUG: the target sits below the uploads dir");
+            std::fs::create_dir_all(parent).map_err(WidgetInstallError::Staging)?;
+            replace_tree(&target, &unpacked_widget, staging.path())
+                .map_err(WidgetInstallError::Staging)?;
+        }
+        Ok(InstalledWidget {
+            package_name: package.package_name(),
+            display_name: package.manifest().name.clone(),
+            version: uploaded.to_string(),
+            outcome,
+        })
     }
 
     async fn list_installable_packages(

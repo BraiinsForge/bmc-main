@@ -74,6 +74,8 @@ async fn run() -> Result<()> {
     // Add-a-widget list until installed. Installing one re-stages the tree.
     let bundle = config.widgets_path.clone();
     let staging = config.mockfs_path.join("tmp/staged-widgets");
+    let uploads = config.mockfs_path.join("tmp/uploaded-widgets");
+    std::fs::create_dir_all(&uploads)?;
     let scenario_path = mockfs.upgrade_scenario();
     let shadowed: BTreeSet<String> = scenario::read(&scenario_path)
         .shadowed_packages
@@ -101,6 +103,7 @@ async fn run() -> Result<()> {
             .with_package_index(config.package_index.clone())
             .with_widgets_path(Some(bundle))
             .with_staging_path(Some(staging.clone()))
+            .with_uploads_path(Some(uploads.clone()))
             .with_service_upgrade_marker(mockfs.service_upgrade_marker()),
     );
 
@@ -133,7 +136,7 @@ async fn run() -> Result<()> {
     );
 
     let mut config: bmc::Configuration = config.into();
-    config.widgets_paths = vec![staging];
+    config.widgets_paths = vec![staging, uploads];
 
     let backlight_driver = MockBacklightDriver::new(true, 18, 20);
     let backlight_driver = Arc::new(tokio::sync::Mutex::new(backlight_driver));

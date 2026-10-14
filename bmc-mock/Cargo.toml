@@ -32,10 +32,12 @@ chrono.workspace = true
 clap.workspace = true
 dirs.workspace = true
 futures = { workspace = true }
+nix-archive.workspace = true
 rand = { workspace = true, features = ["thread_rng"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
@@ -49,7 +51,6 @@ buffa-types.workspace = true
 connectrpc = { workspace = true, features = ["client"] }
 libc.workspace = true
 sha2.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -80,15 +80,15 @@ pub fn stage_installed_widgets(
     std::fs::create_dir_all(staging)?;
 
     for widget_dir in widget_dirs {
-        let Some(name) = widget_dir.file_name().and_then(std::ffi::OsStr::to_str) else {
-            continue;
-        };
-        if shadowed.contains(&format!("widget-{name}")) {
-            continue;
-        }
         let Ok(relative) = widget_dir.strip_prefix(bundle) else {
             continue;
         };
+        let Some(name) = package_name(relative) else {
+            continue;
+        };
+        if shadowed.contains(&name) {
+            continue;
+        }
         let link = staging.join(relative);
         if let Some(parent) = link.parent() {
             std::fs::create_dir_all(parent)?;
@@ -96,6 +96,17 @@ pub fn stage_installed_widgets(
         symlink(std::path::absolute(&widget_dir)?, &link)?;
     }
     Ok(())
+}
+
+/// The package name the folders below the widgets root give a widget:
+/// `widget-<name>`, or `widget-<maintainer>_<name>` under a maintainer
+/// folder, the way the device names an uploaded package.
+pub(crate) fn package_name(relative_dir: &Path) -> Option<String> {
+    let folders: Vec<_> = relative_dir
+        .iter()
+        .map(|folder| folder.to_str())
+        .collect::<Option<_>>()?;
+    Some(format!("widget-{}", folders.join("_")))
 }
 
 #[cfg(test)]
