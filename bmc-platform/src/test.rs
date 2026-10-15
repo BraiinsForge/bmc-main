@@ -440,3 +440,34 @@ fn profile_override_maps_codes_and_auto() {
         Some(BosPlatform::Am2)
     );
 }
+
+/// A core without a version ships no file, and a blank file says no more.
+#[test]
+fn read_packages_version_reads_trimmed_file_and_treats_missing_or_empty_as_none() {
+    let tmp = tempfile::tempdir().expect("BUG: tempdir");
+    let etc = tmp.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("BUG: create etc");
+
+    let read =
+        || read_packages_version(tmp.path()).expect("a readable or absent file is not an error");
+    assert_eq!(read(), None);
+
+    std::fs::write(etc.join("bmc_version"), "\n").expect("BUG: write empty");
+    assert_eq!(read(), None);
+
+    std::fs::write(etc.join("bmc_version"), "2026.09.18-39e9db98-26.10\n").expect("BUG: write");
+    assert_eq!(read().as_deref(), Some("2026.09.18-39e9db98-26.10"));
+}
+
+/// The caller must learn why the rows vanished, not see an absent file.
+#[test]
+fn read_packages_version_reports_a_read_failure_other_than_absence() {
+    let tmp = tempfile::tempdir().expect("BUG: tempdir");
+    std::fs::create_dir_all(tmp.path().join("etc/bmc_version"))
+        .expect("BUG: create a dir at the file path");
+
+    let err =
+        read_packages_version(tmp.path()).expect_err("a directory at the path is a read failure");
+
+    assert_ne!(err.kind(), std::io::ErrorKind::NotFound);
+}

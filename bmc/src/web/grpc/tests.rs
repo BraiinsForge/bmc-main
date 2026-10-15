@@ -33,6 +33,7 @@ use connectrpc::{ConnectError, Protocol, RequestContext};
 mod alarm;
 mod boser_managed;
 mod boser_upgrade;
+mod metadata;
 mod network;
 
 /// Binds `$request` to the `ServiceRequest` of `$message`, decoded from its own wire bytes
