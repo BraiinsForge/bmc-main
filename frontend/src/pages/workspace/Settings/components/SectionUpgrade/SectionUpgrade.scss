@@ -63,10 +63,25 @@
 
     > table {
         width: 100%;
+        border-collapse: collapse;
+
+        tbody + tbody {
+            border-top: 1px solid $border-subtle;
+        }
+
+        @container (width > 500px) {
+            tbody + tbody > tr:first-child > * {
+                padding-block-start: mini-units(1);
+            }
+            tbody > tr:last-child > * {
+                padding-block-end: mini-units(1);
+            }
+        }
 
         th,
         td {
             height: 1.5rem;
+            box-sizing: content-box;
             vertical-align: middle;
         }
 
@@ -82,6 +97,11 @@
         @container (width <= 500px) {
             display: flex;
             flex-flow: column nowrap;
+
+            // Rows already end in a margin, so the space below the rule goes on the group
+            tbody + tbody {
+                padding-block-start: mini-units(2);
+            }
 
             tr {
                 display: flex;

@@ -320,6 +320,19 @@ class View extends Component<Props, State> {
         }
     };
 
+    private refreshMetadataAbort = pb.abort.get();
+    // Metadata only: re-reading the system info would also reset an unsaved timezone edit.
+    #refreshMetadata = async (): Promise<void> => {
+        try {
+            const { signal } = this.refreshMetadataAbort.replace();
+            const metadata = await pb.rpc.meta.getMetadata({}, { signal });
+            this.setState(s => ({ data: { ...s.data, metadata } }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            this.setState({ globalErrors: pb.collectAllErrors($) });
+        }
+    };
+
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
@@ -1497,6 +1510,14 @@ class View extends Component<Props, State> {
                             overlay: false,
                             onSettled: () => {
                                 toast.success(formatMessage({ defaultMessage: 'Packages updated' }));
+                                // The stamp on disk changed with the generation; show none until re-read.
+                                this.setState(s => ({
+                                    data: {
+                                        ...s.data,
+                                        metadata: s.data.metadata && { ...s.data.metadata, packagesVersion: undefined },
+                                    },
+                                }));
+                                void this.#refreshMetadata();
                                 this.#upgradesFeedCheck();
                             },
                         });
@@ -1654,7 +1675,8 @@ class View extends Component<Props, State> {
         return (
             <SectionUpgrade
                 automaticUpgrades={automaticUpgrades}
-                versionCurrent={data.metadata?.version ?? null}
+                systemVersion={data.metadata?.version ?? null}
+                packagesVersion={data.metadata?.packagesVersion ?? null}
                 status={upgradeFromFeedStatus}
                 errors={upgradeFromFeedErrors}
                 onCheckUpdates={this.#upgradesFeedCheck}

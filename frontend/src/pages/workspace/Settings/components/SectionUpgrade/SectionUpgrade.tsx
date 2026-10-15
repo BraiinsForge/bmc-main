@@ -84,7 +84,10 @@ export type UpgradeFromFeedStatus =
 
 export interface SectionUpgradeProps {
     automaticUpgrades: iField<boolean>;
-    versionCurrent: null | string;
+    /** Firmware (BOS) version the device runs; `null` when unknown. */
+    systemVersion: null | string;
+    /** Packages version of the installed core; `null` when it carries none. */
+    packagesVersion: null | string;
 
     status: null | UpgradeFromFeedStatus;
     errors?: Maybe<string[]>;
@@ -205,32 +208,45 @@ class View extends Component<Props, State> {
         );
     };
     #renderFacts = (
-        versionCurrent: Maybe<ReactNode>,
-        versionLatest: Maybe<ReactNode>,
+        versions: {
+            systemCurrent: Maybe<ReactNode>;
+            systemLatest: Maybe<ReactNode>;
+            packages: null | { current: Maybe<ReactNode>; latest: Maybe<ReactNode> };
+        },
         statusMessage: ReactNode,
         downloadSize?: Maybe<ReactNode>,
     ) => {
         const { formatMessage } = this.props.intl;
+        type Row = [string, Maybe<ReactNode>];
+        const groups: Row[][] = [
+            [
+                [formatMessage({ defaultMessage: 'Your system version:' }), versions.systemCurrent],
+                [formatMessage({ defaultMessage: 'Latest system version:' }), versions.systemLatest],
+            ],
+        ];
+        if (versions.packages) {
+            groups.push([
+                [formatMessage({ defaultMessage: 'Your packages version:' }), versions.packages.current],
+                [formatMessage({ defaultMessage: 'Latest packages version:' }), versions.packages.latest],
+            ]);
+        }
+        if (downloadSize != null) {
+            groups.push([[formatMessage({ defaultMessage: 'Download size:' }), downloadSize]]);
+        }
 
         return (
             <div className={css.facts}>
                 <table>
-                    <tbody>
-                        <tr>
-                            <th scope="row" children={formatMessage({ defaultMessage: 'Your version:' })} />
-                            <td children={versionCurrent ?? 'N/A'} />
-                        </tr>
-                        <tr>
-                            <th scope="row" children={formatMessage({ defaultMessage: 'Latest available version:' })} />
-                            <td children={versionLatest ?? 'N/A'} />
-                        </tr>
-                        {downloadSize != null ? (
-                            <tr>
-                                <th scope="row" children={formatMessage({ defaultMessage: 'Download size:' })} />
-                                <td children={downloadSize} />
-                            </tr>
-                        ) : null}
-                    </tbody>
+                    {groups.map(rows => (
+                        <tbody key={rows[0][0]}>
+                            {rows.map(([label, value]) => (
+                                <tr key={label}>
+                                    <th scope="row" children={label} />
+                                    <td children={value ?? 'N/A'} />
+                                </tr>
+                            ))}
+                        </tbody>
+                    ))}
                 </table>
 
                 <div className={css.statusMessage} children={statusMessage} />
@@ -246,29 +262,37 @@ class View extends Component<Props, State> {
 
             status,
             errors,
-            versionCurrent,
+            systemVersion,
+            packagesVersion,
 
             onCheckUpdates,
             onStartUpgrade,
         } = this.props;
 
-        const versionLatest: ReactNode =
-            status?.upgradeInfo?.firmware?.version ??
-            status?.upgradeInfo?.packages?.bmcVersion ??
-            versionCurrent ??
-            this.#NA;
+        const systemLatest: ReactNode = status?.upgradeInfo?.firmware?.version ?? systemVersion ?? this.#NA;
+        // A packages offer without a stamp removes the installed one, so the
+        // installed stamp stands in for the latest only while nothing is offered.
+        const packagesOffer = status?.upgradeInfo?.packages;
+        const packagesLatest = packagesOffer ? packagesOffer.bmcVersion : packagesVersion;
 
-        // Shis one is defined as static because it is used in both overlay and base
-        // layers and the only status dependent part is the loading spinner
-        const latestVersionCellContent =
+        // Both latest cells show the spinner while a check runs.
+        const whileChecking = (latest: ReactNode): ReactNode =>
             status?.kind === 'checking-upgrade' ? (
                 <InlineLoading
                     status="active"
                     description={formatMessage({ defaultMessage: 'Checking for updates…' })}
                 />
             ) : (
-                (versionLatest ?? 'N/A')
+                latest
             );
+        const versions = {
+            systemCurrent: systemVersion,
+            systemLatest: whileChecking(systemLatest),
+            packages:
+                packagesLatest != null || packagesVersion != null
+                    ? { current: packagesVersion, latest: whileChecking(packagesLatest ?? this.#NA) }
+                    : null,
+        };
         const changelog = this.#renderChangelog();
 
         // Total bytes this upgrade fetches — firmware image plus package downloads —
@@ -297,7 +321,7 @@ class View extends Component<Props, State> {
                         theme="inverse"
                         hideCloseButton
                         title={formatMessage({ defaultMessage: 'You are up to date' })}
-                        children={formatMessage({ defaultMessage: "You're running the latest firmware" })}
+                        children={formatMessage({ defaultMessage: 'Your system and packages are up to date' })}
                     />,
                     errors?.length ? this.#renderInlineNotificationError(errors, 'error-up-to-date') : null,
                 ];
@@ -371,7 +395,7 @@ class View extends Component<Props, State> {
                             children={formatMessage({ defaultMessage: 'Upgrading the system' })}
                         />
 
-                        {this.#renderFacts(versionCurrent, latestVersionCellContent, statusMessage)}
+                        {this.#renderFacts(versions, statusMessage)}
 
                         {changelog}
                     </div>
@@ -431,7 +455,7 @@ class View extends Component<Props, State> {
 
         return (
             <div className={css.updateContainer}>
-                {this.#renderFacts(versionCurrent, latestVersionCellContent, statusMessage, downloadSize)}
+                {this.#renderFacts(versions, statusMessage, downloadSize)}
 
                 <div className={css.control} children={control} />
 

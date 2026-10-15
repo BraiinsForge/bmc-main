@@ -35,7 +35,8 @@ export default {
             disabled: false,
             onChange: action('automaticUpdates.onChange'),
         },
-        versionCurrent: '24.04.1',
+        systemVersion: '24.04.1',
+        packagesVersion: '2026.09.18-39e9db98-26.10',
         status: null,
         errors: [],
 
