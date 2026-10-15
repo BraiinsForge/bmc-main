@@ -3,7 +3,8 @@
 The Formula 1 widget follows a Grand Prix season: the drivers' championship standings, the upcoming race weekend and its
 schedule, one driver's career card, and live timing while a session is running. It reads the Braiins Forge Nexus, which
 also hosts the artwork the screens draw. Left on **Automatic** the widget picks the view for itself, so the same tile
-shows the live board on a race Sunday and the standings on a quiet week. All four widget sizes are supported.
+shows the live board on a race Sunday and the standings on a quiet week. All four widget sizes are supported, and
+BMM101's 480×320 panel has a frame of its own.
 
 ## User stories
 
@@ -19,6 +20,8 @@ shows the live board on a race Sunday and the standings on a quiet week. All fou
 - A car in the pits reads as itself rather than as a slow lap.
 - The full-screen qualifying board splits the whole field into two tables side by side, so every driver has a row —
   including whoever sorted to the tail. The other boards seat the leading ten, or five on the narrower frames.
+- BMM101 seats the leading ten on every board. Its race board names each driver in full rather than by their
+  three-letter code, and shows the tyre by its compound alone.
 
 ### Know when the next race is
 
@@ -31,6 +34,7 @@ shows the live board on a race Sunday and the standings on a quiet week. All fou
 - A sprint weekend shows the sprint and its own qualifying in place of two practices, so the schedule matches the
   weekend actually being run.
 - The full-screen frame adds the circuit map, drawn beside the two columns.
+- BMM101 keeps the Grand Prix, its country and both columns, with the date range in the header.
 - With no race announced — between seasons, or before the first fetch lands — the screen drops its whole body and reads
   *Next race unavailable*, rather than a card with every value missing.
 
@@ -47,7 +51,7 @@ shows the live board on a race Sunday and the standings on a quiet week. All fou
 > As a fan, I want the drivers' championship table so I can see who is actually winning the season.
 
 - The standings list drivers in championship order with their points, their constructor and its mark, and — where the
-  frame has room — their nationality flag and code. Ten drivers fit the wider frames, five the narrower ones.
+  frame has room — their nationality flag and code. Ten drivers fit the wider frames and BMM101, five the narrower ones.
 - Between seasons the table has no rows, and the widget reads *Standings unavailable* rather than showing last year's
   order. It reads the same while the first fetch is still in flight, so an off-season and a slow start look alike.
 
@@ -58,6 +62,7 @@ shows the live board on a race Sunday and the standings on a quiet week. All fou
 - Driver Statistics shows the chosen driver's portrait, name and number, their constructor and its mark, championship
   position and points, and their career figures: Grand Prix wins, world titles, F1 debut season.
 - The wider frames add the personal details — age, weight, height, nationality with its flag, and the race engineer.
+  BMM101 shows them too, in one column beside the portrait.
 - A driver whose card the deployment has not filled in shows what is known rather than blanking the screen.
 
 ### Let the widget choose the screen
@@ -113,8 +118,8 @@ The widget follows the deck's localization and timezone settings.
 
 ## Constraints
 
-- Rectangular viewports only, from 317×238 up to the Deck's full 1280×480. The layout is chosen from four size buckets
-  rather than scaled continuously.
+- Rectangular viewports only, from 317×238 up to the Deck's full 1280×480. The layout is chosen from the four Deck size
+  buckets and BMM101's own frame rather than scaled continuously; BMM100's 320×240 renders the small layout.
 - The driver list is fixed in the manifest, so a mid-season seat change needs a firmware release before the new driver
   can be picked.
 - All artwork arrives from Nexus rather than being bundled, so a driver, constructor or country the deployment has no
