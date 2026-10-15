@@ -11707,10 +11707,18 @@ pub struct Metadata {
     ///
     /// Field 1: `version`
     pub version: ::buffa::alloc::string::String,
+    /// The packages version the installed core carries, e.g. "2026.09.18-39e9db98-26.10".
+    /// Absent when the installed core carries none.
+    ///
+    /// Field 2: `packages_version`
+    pub packages_version: ::core::option::Option<::buffa::alloc::string::String>,
 }
 impl ::core::fmt::Debug for Metadata {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("Metadata").field("version", &self.version).finish()
+        f.debug_struct("Metadata")
+            .field("version", &self.version)
+            .field("packages_version", &self.packages_version)
+            .finish()
     }
 }
 impl Metadata {
@@ -11719,6 +11727,18 @@ impl Metadata {
     ///
     /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
     pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.Metadata";
+}
+impl Metadata {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::packages_version`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_packages_version(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.packages_version = Some(value.into());
+        self
+    }
 }
 ::buffa::impl_default_instance!(Metadata);
 impl ::buffa::MessageName for Metadata {
@@ -11743,6 +11763,9 @@ impl ::buffa::Message for Metadata {
         if !self.version.is_empty() {
             size += 1u64 + ::buffa::types::string_encoded_len(&self.version) as u64;
         }
+        if let Some(ref v) = self.packages_version {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         ::buffa::saturate_size(size)
     }
     fn write_to(
@@ -11754,6 +11777,9 @@ impl ::buffa::Message for Metadata {
         use ::buffa::Enumeration as _;
         if !self.version.is_empty() {
             ::buffa::types::put_string_field(1u32, &self.version, buf);
+        }
+        if let Some(ref v) = self.packages_version {
+            ::buffa::types::put_string_field(2u32, v, buf);
         }
     }
     fn merge_field(
@@ -11774,6 +11800,18 @@ impl ::buffa::Message for Metadata {
                 )?;
                 ::buffa::types::merge_string(&mut self.version, buf)?;
             }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .packages_version
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
             }
@@ -11782,6 +11820,7 @@ impl ::buffa::Message for Metadata {
     }
     fn clear(&mut self) {
         self.version.clear();
+        self.packages_version = ::core::option::Option::None;
     }
 }
 #[derive(Clone, PartialEq, Default)]
@@ -40720,6 +40759,11 @@ pub mod __buffa {
             ///
             /// Field 1: `version`
             pub version: &'a str,
+            /// The packages version the installed core carries, e.g. "2026.09.18-39e9db98-26.10".
+            /// Absent when the installed core carries none.
+            ///
+            /// Field 2: `packages_version`
+            pub packages_version: ::core::option::Option<&'a str>,
         }
         impl<'a> ::buffa::MessageView<'a> for MetadataView<'a> {
             type Owned = super::super::Metadata;
@@ -40764,6 +40808,15 @@ pub mod __buffa {
                         )?;
                         view.version = ::buffa::types::borrow_str(&mut cur)?;
                     }
+                    2u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.packages_version = Some(
+                            ::buffa::types::borrow_str(&mut cur)?,
+                        );
+                    }
                     _ => {
                         ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     }
@@ -40785,6 +40838,7 @@ pub mod __buffa {
                 let _ = __buffa_src;
                 ::core::result::Result::Ok(super::super::Metadata {
                     version: self.version.to_string(),
+                    packages_version: self.packages_version.map(|s| s.to_string()),
                     ..::core::default::Default::default()
                 })
             }
@@ -40800,6 +40854,9 @@ pub mod __buffa {
                         += 1u64
                             + ::buffa::types::string_encoded_len(&self.version) as u64;
                 }
+                if let Some(ref v) = self.packages_version {
+                    size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+                }
                 ::buffa::saturate_size(size)
             }
             #[allow(clippy::needless_borrow)]
@@ -40812,6 +40869,9 @@ pub mod __buffa {
                 use ::buffa::Enumeration as _;
                 if !self.version.is_empty() {
                     ::buffa::types::put_string_field(1u32, &self.version, buf);
+                }
+                if let Some(ref v) = self.packages_version {
+                    ::buffa::types::put_string_field(2u32, v, buf);
                 }
             }
         }
@@ -40911,6 +40971,14 @@ pub mod __buffa {
             #[must_use]
             pub fn version(&self) -> &'_ str {
                 self.0.reborrow().version
+            }
+            /// The packages version the installed core carries, e.g. "2026.09.18-39e9db98-26.10".
+            /// Absent when the installed core carries none.
+            ///
+            /// Field 2: `packages_version`
+            #[must_use]
+            pub fn packages_version(&self) -> ::core::option::Option<&'_ str> {
+                self.0.reborrow().packages_version
             }
         }
         impl ::core::convert::From<::buffa::OwnedView<MetadataView<'static>>>

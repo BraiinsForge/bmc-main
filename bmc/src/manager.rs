@@ -106,6 +106,9 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     async fn version(&self) -> Option<BosVersion>;
 
+    /// The installed core's packages version, or `None` when it carries none.
+    async fn packages_version(&self) -> Option<String>;
+
     fn platform(&self) -> BosPlatform;
 
     /// The platform network facade: ethernet config, optional WiFi (via

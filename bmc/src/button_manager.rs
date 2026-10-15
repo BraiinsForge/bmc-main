@@ -343,6 +343,9 @@ mod tests {
         async fn version(&self) -> Option<BosVersion> {
             unimplemented!("{UNREACHABLE}")
         }
+        async fn packages_version(&self) -> Option<String> {
+            unimplemented!("{UNREACHABLE}")
+        }
         fn platform(&self) -> BosPlatform {
             unimplemented!("{UNREACHABLE}")
         }

@@ -95,6 +95,9 @@ impl BmcManager for StubManager {
     async fn version(&self) -> Option<BosVersion> {
         Some(BosVersion::new(&"current", &"current"))
     }
+    async fn packages_version(&self) -> Option<String> {
+        None
+    }
     fn platform(&self) -> BosPlatform {
         BosPlatform::Bmc1
     }

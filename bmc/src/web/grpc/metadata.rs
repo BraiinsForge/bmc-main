@@ -66,9 +66,11 @@ where
             .version()
             .await
             .ok_or_else(|| ConnectError::internal("Failed to detect current version"))?;
+        let packages_version = self.bmc_manager.packages_version().await;
 
         Response::ok(Metadata {
             version: version.full,
+            packages_version,
         })
     }
 

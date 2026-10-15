@@ -31,7 +31,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file web/metadata.proto.
  */
 export const file_web_metadata: GenFile = /*@__PURE__*/
-  fileDesc("ChJ3ZWIvbWV0YWRhdGEucHJvdG8SD2JyYWlpbnMuYm1jLndlYiIbCghNZXRhZGF0YRIPCgd2ZXJzaW9uGAEgASgJIhQKEkdldE1ldGFkYXRhUmVxdWVzdCIaChhHZXRTZXJ2ZXJJbnN0YW5jZVJlcXVlc3QiNwoZR2V0U2VydmVySW5zdGFuY2VSZXNwb25zZRIaChJzZXJ2ZXJfaW5zdGFuY2VfaWQYASABKAkyzAEKD01ldGFkYXRhU2VydmljZRJNCgtHZXRNZXRhZGF0YRIjLmJyYWlpbnMuYm1jLndlYi5HZXRNZXRhZGF0YVJlcXVlc3QaGS5icmFpaW5zLmJtYy53ZWIuTWV0YWRhdGESagoRR2V0U2VydmVySW5zdGFuY2USKS5icmFpaW5zLmJtYy53ZWIuR2V0U2VydmVySW5zdGFuY2VSZXF1ZXN0GiouYnJhaWlucy5ibWMud2ViLkdldFNlcnZlckluc3RhbmNlUmVzcG9uc2ViBnByb3RvMw");
+  fileDesc("ChJ3ZWIvbWV0YWRhdGEucHJvdG8SD2JyYWlpbnMuYm1jLndlYiJPCghNZXRhZGF0YRIPCgd2ZXJzaW9uGAEgASgJEh0KEHBhY2thZ2VzX3ZlcnNpb24YAiABKAlIAIgBAUITChFfcGFja2FnZXNfdmVyc2lvbiIUChJHZXRNZXRhZGF0YVJlcXVlc3QiGgoYR2V0U2VydmVySW5zdGFuY2VSZXF1ZXN0IjcKGUdldFNlcnZlckluc3RhbmNlUmVzcG9uc2USGgoSc2VydmVyX2luc3RhbmNlX2lkGAEgASgJMswBCg9NZXRhZGF0YVNlcnZpY2USTQoLR2V0TWV0YWRhdGESIy5icmFpaW5zLmJtYy53ZWIuR2V0TWV0YWRhdGFSZXF1ZXN0GhkuYnJhaWlucy5ibWMud2ViLk1ldGFkYXRhEmoKEUdldFNlcnZlckluc3RhbmNlEikuYnJhaWlucy5ibWMud2ViLkdldFNlcnZlckluc3RhbmNlUmVxdWVzdBoqLmJyYWlpbnMuYm1jLndlYi5HZXRTZXJ2ZXJJbnN0YW5jZVJlc3BvbnNlYgZwcm90bzM");
 
 /**
  * Structure to handle system details
@@ -45,6 +45,14 @@ export type Metadata = Message<"braiins.bmc.web.Metadata"> & {
    * @generated from field: string version = 1;
    */
   version: string;
+
+  /**
+   * The packages version the installed core carries, e.g. "2026.09.18-39e9db98-26.10".
+   * Absent when the installed core carries none.
+   *
+   * @generated from field: optional string packages_version = 2;
+   */
+  packagesVersion?: string | undefined;
 };
 
 /**

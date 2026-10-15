@@ -111,6 +111,10 @@ impl bmc::BmcManager for Manager {
         Some(BosVersion::new(&25, &7))
     }
 
+    async fn packages_version(&self) -> Option<String> {
+        Some("2026.05.21-e05df053-26.05".to_owned())
+    }
+
     fn platform(&self) -> BosPlatform {
         self.platform
     }

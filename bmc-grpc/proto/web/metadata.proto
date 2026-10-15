@@ -27,6 +27,9 @@ package braiins.bmc.web;
 message Metadata {
   // OS version
   string version = 1;
+  // The packages version the installed core carries, e.g. "2026.09.18-39e9db98-26.10".
+  // Absent when the installed core carries none.
+  optional string packages_version = 2;
 }
 
 message GetMetadataRequest {}

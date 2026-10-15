@@ -236,6 +236,10 @@ impl BmcManager for StubBmcManager {
         Some(BosVersion::new(&"current", &"current"))
     }
 
+    async fn packages_version(&self) -> Option<String> {
+        Some("2026.09.18-39e9db98-26.10".to_owned())
+    }
+
     fn platform(&self) -> BosPlatform {
         BosPlatform::Bfm1
     }

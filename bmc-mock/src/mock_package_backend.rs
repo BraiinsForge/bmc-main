@@ -308,7 +308,7 @@ fn static_preview(estimate: EstimateMode) -> PackagesPreview {
             EstimateMode::Estimate => Some(UNPACKED_TOTAL_BYTES),
             EstimateMode::Skip => None,
         },
-        bmc_version: Some("26.07".to_owned()),
+        bmc_version: Some("2026.07.04-424f9a7f-26.07".to_owned()),
         bmc_changelog: Some(
             "- improve upgrade progress reporting\n- fix alarm scheduling around DST".to_owned(),
         ),

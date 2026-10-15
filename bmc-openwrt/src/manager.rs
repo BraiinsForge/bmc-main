@@ -189,6 +189,13 @@ impl BmcManager for Manager {
             .map(|bmc_info| bmc_info.bos_version.clone())
     }
 
+    async fn packages_version(&self) -> Option<String> {
+        bmc_platform::read_packages_version("/").unwrap_or_else(|err| {
+            warn!(%err, "reading the packages version stamp failed; reporting none");
+            None
+        })
+    }
+
     fn platform(&self) -> BosPlatform {
         resolve_platform(self.platform_override, self.bmc_info.as_ref().as_ref())
     }

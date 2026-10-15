@@ -681,5 +681,21 @@ impl BmcInfo {
     }
 }
 
+const PACKAGES_VERSION_PATH: &str = "etc/bmc_version";
+
+/// The packages version the installed core ships in `/etc/bmc_version`.
+/// Read on every call: a package upgrade replaces the file without restarting the application.
+/// `Ok(None)` when the file is missing or blank; any other read failure is the caller's to report.
+pub fn read_packages_version(root: impl AsRef<Path>) -> io::Result<Option<String>> {
+    let path = root.as_ref().join(PACKAGES_VERSION_PATH);
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let trimmed = contents.trim();
+    Ok((!trimmed.is_empty()).then(|| trimmed.to_owned()))
+}
+
 #[cfg(test)]
 mod test;
