@@ -58,6 +58,12 @@ const advance = async (ms: number): Promise<void> => {
 let baselineInstanceId = 'instance-pre';
 let polledInstanceId = 'instance-pre';
 let instanceReads = 0;
+let metadataReads = 0;
+let timezoneReads = 0;
+let metadataFailsAfterFirstRead = false;
+// Reads after the first return `secondStamp` when set, after `secondReadDelay` ms.
+let secondStamp: string | null = null;
+let secondReadDelay = 0;
 
 // jsdom won't let us spy on location.reload directly; swap the whole location.
 const REAL_LOCATION = window.location;
@@ -79,21 +85,22 @@ function registerMocks<S extends AnyService>(service: S, methods: Partial<Servic
 
 // A package-only offer: no firmware, so the backend would arbitrate this as an
 // AppRestart. All the fold cares about is that it yields an upgradeId to start.
-function packageOffer(): pb.CheckForUpgradeResponse {
+function packageOffer(stamp: string | null = '2026.07.04-424f9a7f-26.07'): pb.CheckForUpgradeResponse {
+    const packages = pb.create(pb.PackageUpgradePlanSchema, {
+        changes: [
+            pb.create(pb.PackageChangeSchema, {
+                name: 'core',
+                versionFrom: '26.06',
+                versionTo: '26.07',
+                category: 'system',
+            }),
+        ],
+    });
+    if (stamp != null) packages.bmcVersion = stamp;
     return pb.create(pb.CheckForUpgradeResponseSchema, {
         upgradeId: 'upgrade-0',
         disruption: pb.UpgradeDisruption.APP_RESTART,
-        packages: pb.create(pb.PackageUpgradePlanSchema, {
-            bmcVersion: '26.07',
-            changes: [
-                pb.create(pb.PackageChangeSchema, {
-                    name: 'core',
-                    versionFrom: '26.06',
-                    versionTo: '26.07',
-                    category: 'system',
-                }),
-            ],
-        }),
+        packages,
     });
 }
 
@@ -121,6 +128,25 @@ function installMocks(startUpgrade: StartUpgradeMock): void {
                 serverInstanceId: instanceReads === 1 ? baselineInstanceId : polledInstanceId,
             });
         },
+        getMetadata: ({ conf }) => {
+            metadataReads += 1;
+            if (metadataReads > 1) {
+                if (metadataFailsAfterFirstRead) {
+                    throw new ConnectError('mock: metadata unavailable', Code.Unavailable);
+                }
+                conf({ delay: secondReadDelay });
+            }
+            const packagesVersion = (metadataReads > 1 && secondStamp) || '2026.09.18-39e9db98-26.10';
+            return pb.create(pb.MetadataSchema, { version: '26.02', packagesVersion });
+        },
+    });
+    const prague = pb.create(pb.TimezoneSchema, { id: 'Europe/Prague', label: 'Prague', offset: '+02:00' });
+    registerMocks(pb.services.SystemService, {
+        getTimezone: () => {
+            timezoneReads += 1;
+            return { timezone: prague };
+        },
+        getTimezoneList: () => ({ timezones: [prague] }),
     });
 }
 
@@ -161,6 +187,11 @@ afterEach(() => {
     baselineInstanceId = 'instance-pre';
     polledInstanceId = 'instance-pre';
     instanceReads = 0;
+    metadataReads = 0;
+    timezoneReads = 0;
+    metadataFailsAfterFirstRead = false;
+    secondStamp = null;
+    secondReadDelay = 0;
     Object.defineProperty(window, 'location', { configurable: true, value: REAL_LOCATION });
 });
 
@@ -225,6 +256,142 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
         await advance(11_000);
         expect(screen.getByText('Packages updated')).toBeTruthy();
         expect(screen.queryByText(/restarting/i)).toBeNull();
+
+        // The installed stamp changed on disk when the generation activated;
+        // without a re-fetch the page would keep showing the old one.
+        // The timezone is not re-read: that would discard an unsaved edit.
+        expect(metadataReads).toBeGreaterThanOrEqual(2);
+        expect(timezoneReads).toBe(1);
+    });
+
+    // Activating the generation changed the stamp on disk, not the firmware.
+    test('a failed metadata re-read after a package upgrade drops the stale stamp only', async () => {
+        rstest.useFakeTimers();
+        metadataFailsAfterFirstRead = true;
+        installMocks(() =>
+            (async function* () {
+                yield pkgPhase(pb.PackageUpgradePhase.ACTIVATING);
+                yield finished;
+            })(),
+        );
+
+        renderPage();
+        await advance(300);
+        expect(screen.getByText('2026.09.18-39e9db98-26.10')).toBeTruthy();
+        fireEvent.click(startButton());
+
+        await advance(13_000);
+        expect(screen.getByText('Packages updated')).toBeTruthy();
+        expect(screen.queryByText('2026.09.18-39e9db98-26.10')).toBeNull();
+        expect(screen.getByText('mock: metadata unavailable')).toBeTruthy();
+        const row = (label: string) => screen.getByText(label).closest('tr') as HTMLTableRowElement;
+        expect(row('Your system version:').textContent).toContain('26.02');
+    });
+
+    test('a package upgrade shows no installed stamp until the re-read returns the new one', async () => {
+        rstest.useFakeTimers();
+        secondStamp = '2026.10.19-0abc1234-26.11';
+        secondReadDelay = 5000;
+        installMocks(() =>
+            (async function* () {
+                yield pkgPhase(pb.PackageUpgradePhase.ACTIVATING);
+                yield finished;
+            })(),
+        );
+
+        renderPage();
+        await advance(300);
+        expect(screen.getByText('2026.09.18-39e9db98-26.10')).toBeTruthy();
+        fireEvent.click(startButton());
+
+        await advance(13_000);
+        expect(screen.getByText('Packages updated')).toBeTruthy();
+        expect(screen.queryByText('2026.09.18-39e9db98-26.10')).toBeNull();
+        expect(screen.queryByText('2026.10.19-0abc1234-26.11')).toBeNull();
+
+        await advance(5000);
+        expect(screen.getByText('2026.10.19-0abc1234-26.11')).toBeTruthy();
+    });
+
+    // The offer's stamp is the latest packages value, never the firmware's.
+    test('shows the system and packages versions with their latest values', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+
+        renderPage();
+        await advance(300);
+
+        const row = (label: string) => screen.getByText(label).closest('tr') as HTMLTableRowElement;
+        expect(row('Your system version:').textContent).toContain('26.02');
+        expect(row('Latest system version:').textContent).toContain('26.02');
+        expect(row('Your packages version:').textContent).toContain('2026.09.18-39e9db98-26.10');
+        expect(row('Latest packages version:').textContent).toContain('2026.07.04-424f9a7f-26.07');
+    });
+
+    // The two pairs read alike; the stylesheet separates the row groups.
+    test('groups the packages rows apart from the system rows', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+
+        renderPage();
+        await advance(300);
+
+        const group = (label: string) => screen.getByText(label).closest('tbody');
+        expect(group('Your packages version:')).toBe(group('Latest packages version:'));
+        expect(group('Your packages version:')).not.toBe(group('Latest system version:'));
+    });
+
+    // Showing the installed stamp as the latest would pass a stale value
+    // off as the version of an offer that carries none.
+    test('an offer without a stamp shows N/A as the latest packages version', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => packageOffer(null),
+        });
+
+        renderPage();
+        await advance(300);
+
+        const row = (label: string) => screen.getByText(label).closest('tr') as HTMLTableRowElement;
+        expect(row('Your packages version:').textContent).toContain('2026.09.18-39e9db98-26.10');
+        expect(row('Latest packages version:').textContent).toContain('N/A');
+    });
+
+    // Two N/A rows would read as a fault rather than an absence.
+    test('hides the packages rows when no stamp is installed or offered', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.MetadataService, {
+            getMetadata: () => pb.create(pb.MetadataSchema, { version: '26.02' }),
+        });
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => pb.create(pb.CheckForUpgradeResponseSchema, {}),
+        });
+
+        renderPage();
+        await advance(300);
+
+        const row = (label: string) => screen.getByText(label).closest('tr') as HTMLTableRowElement;
+        expect(row('Your system version:').textContent).toContain('26.02');
+        expect(screen.queryByText('Your packages version:')).toBeNull();
+        expect(screen.queryByText('Latest packages version:')).toBeNull();
+    });
+
+    // The upgrade that brings the first stamp is when the user wants to see it.
+    test('shows an offered stamp beside N/A on an unstamped device', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.MetadataService, {
+            getMetadata: () => pb.create(pb.MetadataSchema, { version: '26.02' }),
+        });
+
+        renderPage();
+        await advance(300);
+
+        const row = (label: string) => screen.getByText(label).closest('tr') as HTMLTableRowElement;
+        expect(row('Your packages version:').textContent).toContain('N/A');
+        expect(row('Latest packages version:').textContent).toContain('2026.07.04-424f9a7f-26.07');
     });
 
     // A package `finished` followed by a server cycle: the instance id changes,
