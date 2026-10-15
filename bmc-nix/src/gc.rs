@@ -978,6 +978,50 @@ mod tests {
         profile_dir.join(format!("{number}-link")).exists()
     }
 
+    #[tokio::test]
+    async fn discarding_above_the_floor_spares_current_and_older_generations() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile = dir.path().join("profile");
+        for number in 1..=4 {
+            create_generation(&profile, number);
+        }
+        std::fs::create_dir_all(profile.join("5-link.tmp")).expect("BUG: half-built generation");
+        set_current(&profile, 3);
+        let lock = crate::profile::lock_profile(&profile)
+            .await
+            .expect("BUG: profile lock");
+
+        let removed =
+            discard_generations_above(&lock, &profile, Some(2)).expect("BUG: discard succeeds");
+
+        assert_eq!(removed, [4, 5]);
+        assert!(generation_exists(&profile, 1) && generation_exists(&profile, 2));
+        assert!(generation_exists(&profile, 3), "current is never discarded");
+        assert!(!generation_exists(&profile, 4));
+        assert!(
+            !profile.join("5-link.tmp").exists(),
+            "a half-built generation pins paths too"
+        );
+    }
+
+    #[tokio::test]
+    async fn discarding_with_no_floor_keeps_only_current() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let profile = dir.path().join("profile");
+        create_generation(&profile, 1);
+        create_generation(&profile, 2);
+        set_current(&profile, 1);
+        let lock = crate::profile::lock_profile(&profile)
+            .await
+            .expect("BUG: profile lock");
+
+        let removed =
+            discard_generations_above(&lock, &profile, None).expect("BUG: discard succeeds");
+
+        assert_eq!(removed, [2]);
+        assert!(generation_exists(&profile, 1));
+    }
+
     #[test]
     fn cleanup_generations_aborts_when_current_symlink_unreadable() {
         let tmp = tempfile::tempdir().expect("BUG: temp dir");
