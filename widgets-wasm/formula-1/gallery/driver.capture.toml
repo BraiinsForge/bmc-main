@@ -152,3 +152,11 @@ frames = 24
 
 [shot.knobs]
 Size = "Deck small"
+
+[[shot]]
+name = "driver-overlong-bmm"
+scene = "bmc_gallery::f1::Driver Overlong"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"

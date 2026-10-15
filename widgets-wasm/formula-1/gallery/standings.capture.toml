@@ -191,3 +191,11 @@ frames = 24
 
 [shot.knobs]
 Size = "Deck small"
+
+[[shot]]
+name = "standings-overlong-bmm"
+scene = "bmc_gallery::f1::Standings Overlong"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"

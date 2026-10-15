@@ -178,3 +178,11 @@ frames = 24
 
 [shot.knobs]
 Size = "Deck small"
+
+[[shot]]
+name = "next-race-overlong-bmm"
+scene = "bmc_gallery::f1::Next Race Overlong"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
