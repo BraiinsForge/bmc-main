@@ -39,12 +39,15 @@ pub struct StandingsViewData {
     pub rows: Vec<StandingsRow>,
 }
 
-/// Team logo box, which keeps its size at every frame.
+/// Team logo box, which keeps its size at every BMC100 frame.
 const LOGO: f32 = 32.0;
+const LOGO_BMM101: f32 = 16.0;
 /// A flag's height beside its trigram; the box width derives from it.
 const FLAG_HEIGHT: f32 = LOGO * 0.7;
 /// Position column, its 28 px plus the 8 px it holds off the name.
 const POSITION: f32 = 36.0;
+/// BMM101's position column, sized for `10.` at its smaller row font.
+const POSITION_BMM101: f32 = 24.0;
 
 /// The table's geometry for one frame: the ported layout's flex ratios
 /// — name 4, country 2, team 4 — resolved per frame.
@@ -52,6 +55,11 @@ const POSITION: f32 = 36.0;
 struct Columns {
     rows: usize,
     stripe: bool,
+    font: u32,
+    position: f32,
+    /// The team mark, and what it holds off the team's name.
+    logo: f32,
+    logo_gap: f32,
     name: f32,
     /// `None` drops the column, as the narrow frames do.
     country: Option<f32>,
@@ -63,10 +71,15 @@ struct Columns {
 }
 
 fn columns(bucket: SizeBucket) -> Columns {
+    let logo_gap = parts::space::GAP * 3.0;
     match bucket {
         SizeBucket::Full => Columns {
             rows: 10,
             stripe: true,
+            font: font::ROW,
+            position: POSITION,
+            logo: LOGO,
+            logo_gap,
             name: 443.0,
             country: Some(221.0),
             team: Some(443.0),
@@ -76,6 +89,10 @@ fn columns(bucket: SizeBucket) -> Columns {
         SizeBucket::Large => Columns {
             rows: 10,
             stripe: false,
+            font: font::ROW,
+            position: POSITION,
+            logo: LOGO,
+            logo_gap,
             name: 237.0,
             country: None,
             team: Some(237.0),
@@ -85,6 +102,10 @@ fn columns(bucket: SizeBucket) -> Columns {
         SizeBucket::Medium => Columns {
             rows: 5,
             stripe: true,
+            font: font::ROW,
+            position: POSITION,
+            logo: LOGO,
+            logo_gap,
             name: 245.0,
             country: None,
             team: Some(245.0),
@@ -94,36 +115,53 @@ fn columns(bucket: SizeBucket) -> Columns {
         SizeBucket::Small => Columns {
             rows: 5,
             stripe: false,
+            font: font::ROW,
+            position: POSITION,
+            logo: LOGO,
+            logo_gap,
             name: 189.0,
             country: None,
             team: None,
             points: 44.0,
             points_weight: FontWeight::REGULAR,
         },
+        SizeBucket::Bmm101 => Columns {
+            rows: 10,
+            stripe: true,
+            font: font::ROW_BMM101,
+            position: POSITION_BMM101,
+            logo: LOGO_BMM101,
+            logo_gap: parts::space::GAP,
+            name: 200.0,
+            country: None,
+            team: Some(150.0),
+            points: 44.0,
+            points_weight: FontWeight::BOLD,
+        },
     }
 }
 
 /// The one run the row sets in semibold.
-fn name(content: impl Into<String>) -> Node {
+fn name(content: impl Into<String>, size: u32) -> Node {
     text(
         content,
-        style!(size: font::ROW, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+        style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
     )
 }
 
 /// Every other cell, in the one white the table sets.
-fn plain(content: impl Into<String>) -> Node {
+fn plain(content: impl Into<String>, size: u32) -> Node {
     text(
         content,
-        style!(size: font::ROW, color: color::TEXT, line_height: 1.0),
+        style!(size: size, color: color::TEXT, line_height: 1.0),
     )
 }
 
 /// A cell the payload left empty, dimmed so a reader's eye passes it.
-fn muted(content: impl Into<String>) -> Node {
+fn muted(content: impl Into<String>, size: u32) -> Node {
     text(
         content,
-        style!(size: font::ROW, color: color::TEXT_MUTED, line_height: 1.0),
+        style!(size: size, color: color::TEXT_MUTED, line_height: 1.0),
     )
 }
 
@@ -133,15 +171,16 @@ fn cell(width: f32, child: Node) -> Node {
 }
 
 fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
+    let size = cols.font;
     let mut cells = vec![
         cell(
-            POSITION,
+            cols.position,
             match entry.position {
-                Some(place) => plain(fmt!("{}.", place)),
-                None => muted(parts::NO_TABLE_VALUE),
+                Some(place) => plain(fmt!("{}.", place), size),
+                None => muted(parts::NO_TABLE_VALUE, size),
             },
         ),
-        cell(cols.name, name(&entry.driver_name)),
+        cell(cols.name, name(&entry.driver_name, size)),
     ];
     if let Some(width) = cols.country {
         cells.push(cell(
@@ -150,7 +189,7 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
                 props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
                 [
                     parts::flag(FLAG_HEIGHT, &entry.country_flag_url),
-                    plain(entry.country_code.clone()),
+                    plain(entry.country_code.clone(), size),
                 ],
             ),
         ));
@@ -159,12 +198,12 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
         cells.push(cell(
             width,
             row(
-                props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
+                props!(gap: cols.logo_gap, cross_align: CrossAlign::Center),
                 [
-                    parts::team_mark(LOGO, &entry.team_logo_url, entry.team_color),
+                    parts::team_mark(cols.logo, &entry.team_logo_url, entry.team_color),
                     parts::yielding(vec![text(
                         &entry.team_name,
-                        style!(size: font::ROW, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+                        style!(size: size, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
                     )]),
                 ],
             ),
@@ -180,7 +219,7 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
         props!(flex: 1.0, width: cols.points),
         [text(
             points,
-            style!(size: font::ROW, weight: cols.points_weight, color: points_color, align: TextAlign::Right, line_height: 1.0),
+            style!(size: size, weight: cols.points_weight, color: points_color, align: TextAlign::Right, line_height: 1.0),
         )],
     ));
 
@@ -197,7 +236,7 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
 pub fn standings_view(view: &StandingsViewData) -> Node {
     let cols = columns(view.bucket);
     let mut children = vec![parts::header(
-        vec![parts::title("Drivers Standing")],
+        vec![parts::title("Drivers Standing", view.bucket)],
         cols.stripe,
         view.bucket,
     )];
@@ -206,7 +245,7 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
             props!(flex: 1.0),
             [text(
                 "Standings unavailable",
-                style!(size: font::ROW, color: color::TEXT_MUTED),
+                style!(size: font::notice(view.bucket), color: color::TEXT_MUTED),
             )],
         ));
         return parts::frame(children, view.bucket);
@@ -229,28 +268,20 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
 mod tests {
     use bmc_wasm_sdk::{Node, TextOverflow};
 
-    use super::{FontWeight, POSITION, columns, standings_row};
+    use super::{FontWeight, columns, standings_row};
 
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
     use crate::screens::parts::{NO_TABLE_VALUE, color, space};
 
-    /// Every bucket, so a new frame cannot skip these checks.
-    const ALL: [SizeBucket; 4] = [
-        SizeBucket::Full,
-        SizeBucket::Large,
-        SizeBucket::Medium,
-        SizeBucket::Small,
-    ];
-
     #[test]
     fn the_columns_fit_inside_every_frame() {
         // Guards the regression that shipped a table wider than its frame.
-        for bucket in ALL {
+        for bucket in SizeBucket::ALL {
             let cols = columns(bucket);
             let (width, _) = bucket.design_size();
             let content = width - space::padding(bucket) * 2.0;
-            let taken = POSITION
+            let taken = cols.position
                 + cols.name
                 + cols.country.unwrap_or(0.0)
                 + cols.team.unwrap_or(0.0)
@@ -286,6 +317,7 @@ mod tests {
                 false,
                 FontWeight::REGULAR,
             ),
+            (SizeBucket::Bmm101, 10, false, true, true, FontWeight::BOLD),
         ];
         for (bucket, rows, country, team, stripe, points_weight) in expected {
             let cols = columns(bucket);

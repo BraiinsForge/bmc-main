@@ -55,22 +55,31 @@ const PHOTO_FULL: f32 = 327.0;
 /// taller than 300 takes the last stat out of view with it.
 const PHOTO_LARGE: f32 = 280.0;
 const PHOTO_SMALL: f32 = 160.0;
+/// The largest square on the 8 px grid whose caption still leaves the stats inside the frame.
+const PHOTO_BMM101: f32 = 184.0;
 const PHOTO_RADIUS: f32 = 4.0;
 /// The constructor mark trailing the header.
 const TEAM_MARK: f32 = 40.0;
-/// The nationality flag's height, which holds as the stat text shrinks;
+/// BMM101's mark, which its 14 px header line has room for.
+const TEAM_MARK_BMM101: f32 = 18.0;
+/// The nationality flag's height across the Deck frames,
+/// which holds as their stat text shrinks from 24 to 20;
 /// its width follows the artwork the deployment sends.
 const FLAG: f32 = 16.8;
 
-/// Which pieces a frame keeps, across the four ported layouts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which pieces a frame keeps, and at what size.
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Portrait {
     /// No room for a headshot; the stats have the frame to themselves.
     Absent,
-    /// The headshot alone; the header carries the driver's name.
-    Photo,
+    /// The headshot alone, this wide; the header carries the driver's name.
+    Photo(f32),
     /// The headshot over the driver's name, and their team under it.
-    Named,
+    Named {
+        photo: f32,
+        name: u32,
+        team: Option<u32>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -80,33 +89,64 @@ struct Layout {
     split_stats: bool,
     stat_font: u32,
     labels: LabelWeight,
+    team_mark: f32,
+    flag: f32,
 }
 
 fn layout(bucket: SizeBucket) -> Layout {
     match bucket {
         SizeBucket::Full => Layout {
-            portrait: Portrait::Named,
+            portrait: Portrait::Named {
+                photo: PHOTO_FULL,
+                name: NAME_FULL,
+                // The header's mark names the team.
+                team: None,
+            },
             split_stats: true,
             stat_font: font::TITLE,
             labels: LabelWeight::Muted,
+            team_mark: TEAM_MARK,
+            flag: FLAG,
         },
         SizeBucket::Large => Layout {
-            portrait: Portrait::Named,
+            portrait: Portrait::Named {
+                photo: PHOTO_LARGE,
+                name: font::TITLE,
+                team: Some(font::ROW),
+            },
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Muted,
+            team_mark: TEAM_MARK,
+            flag: FLAG,
         },
         SizeBucket::Medium => Layout {
-            portrait: Portrait::Photo,
+            portrait: Portrait::Photo(PHOTO_SMALL),
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Muted,
+            team_mark: TEAM_MARK,
+            flag: FLAG,
         },
         SizeBucket::Small => Layout {
             portrait: Portrait::Absent,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Strong,
+            team_mark: TEAM_MARK,
+            flag: FLAG,
+        },
+        SizeBucket::Bmm101 => Layout {
+            portrait: Portrait::Named {
+                photo: PHOTO_BMM101,
+                name: font::ROW,
+                team: Some(font::ROW_BMM101),
+            },
+            split_stats: false,
+            stat_font: font::ROW_BMM101,
+            labels: LabelWeight::Muted,
+            team_mark: TEAM_MARK_BMM101,
+            flag: parts::flag_height(font::ROW_BMM101),
         },
     }
 }
@@ -200,7 +240,7 @@ fn nationality_row(driver: &DriverStats, layout: Layout) -> Node {
                         &driver.nationality,
                         style!(size: layout.stat_font, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
                     ),
-                    parts::flag(FLAG, &driver.nationality_flag_url),
+                    parts::flag(layout.flag, &driver.nationality_flag_url),
                 ],
             ),
         ],
@@ -239,31 +279,28 @@ fn photo(driver: &DriverStats, width: f32, height: f32) -> Node {
 fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
     match layout.portrait {
         Portrait::Absent => None,
-        Portrait::Photo => Some(photo(driver, PHOTO_SMALL, PHOTO_SMALL)),
-        Portrait::Named => {
-            let (width, height, name_size) = if layout.split_stats {
-                (PHOTO_FULL, PHOTO_FULL, NAME_FULL)
-            } else {
-                (PHOTO_LARGE, PHOTO_LARGE, font::TITLE)
-            };
+        Portrait::Photo(side) => Some(photo(driver, side, side)),
+        Portrait::Named {
+            photo: side,
+            name,
+            team,
+        } => {
             let mut named = vec![text(
                 name_line(driver),
-                style!(size: name_size, weight: FontWeight::SEMIBOLD, color: color::TEXT, text_overflow: TextOverflow::Ellipsis),
+                style!(size: name, weight: FontWeight::SEMIBOLD, color: color::TEXT, text_overflow: TextOverflow::Ellipsis),
             )];
-            // The widest frame names the team in the header's mark
-            // instead, so only the frame below it repeats the team here.
-            if !layout.split_stats {
+            if let Some(team) = team {
                 named.push(text(
                     &driver.team,
-                    style!(size: font::ROW, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
+                    style!(size: team, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
                 ));
             }
             // As wide as the photo, so a long name is cut under it
             // rather than widening the column into the stats.
             Some(col(
-                props!(width: width, gap: space::GAP * 2.0),
+                props!(width: side, gap: space::GAP * 2.0),
                 [
-                    photo(driver, width, height),
+                    photo(driver, side, side),
                     col(props!(gap: space::GAP / 2.0), named),
                 ],
             ))
@@ -271,11 +308,11 @@ fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
     }
 }
 
-fn header(driver: &DriverStats, logo: &ImageUrl, bucket: SizeBucket) -> Node {
-    let mark = parts::team_mark(TEAM_MARK, logo, driver.team_color);
+fn header(driver: &DriverStats, logo: &ImageUrl, bucket: SizeBucket, layout: Layout) -> Node {
+    let mark = parts::team_mark(layout.team_mark, logo, driver.team_color);
     let content = match bucket {
-        SizeBucket::Full | SizeBucket::Large => {
-            vec![parts::title("Driver stats"), spacer(1.0), mark]
+        SizeBucket::Full | SizeBucket::Large | SizeBucket::Bmm101 => {
+            vec![parts::title("Driver stats", bucket), spacer(1.0), mark]
         }
         SizeBucket::Medium => vec![
             parts::yielding(vec![parts::subtitle(&name_line(driver), bucket)]),
@@ -303,7 +340,7 @@ fn stats(driver: &DriverStats, layout: Layout) -> Node {
     // The narrower frames drop what will not fit, keeping the season
     // before the person: a rank and a score outrank a shirt size.
     let mut rows = Vec::new();
-    if layout.portrait == Portrait::Named {
+    if matches!(layout.portrait, Portrait::Named { .. }) {
         rows.extend(season_rows(driver, layout));
         rows.extend(record_rows(driver, layout));
         rows.extend(person_rows(driver, layout));
@@ -322,12 +359,16 @@ pub fn driver_view(view: &DriverViewData) -> Node {
     let Some(driver) = view.driver.as_ref() else {
         return parts::frame(
             vec![
-                parts::header(vec![parts::title("Driver stats")], false, view.bucket),
+                parts::header(
+                    vec![parts::title("Driver stats", view.bucket)],
+                    false,
+                    view.bucket,
+                ),
                 center(
                     props!(flex: 1.0),
                     [text(
                         "Driver unavailable",
-                        style!(size: font::ROW, color: color::TEXT_MUTED),
+                        style!(size: font::notice(view.bucket), color: color::TEXT_MUTED),
                     )],
                 ),
             ],
@@ -352,21 +393,27 @@ pub fn driver_view(view: &DriverViewData) -> Node {
         }
     };
     parts::frame(
-        vec![header(driver, &view.team_logo_url, view.bucket), body],
+        vec![
+            header(driver, &view.team_logo_url, view.bucket, layout),
+            body,
+        ],
         view.bucket,
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, name_line, parts::space};
+    use bmc_wasm_sdk::tree::TextStyle;
+
+    use super::{Portrait, layout, name_line};
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
+    use crate::screens::parts::{font, space};
 
-    /// What sits under the photo on the frames that name the team there:
-    /// `GAP * 2`, [`super::font::TITLE`], `GAP / 2`, then
-    /// [`super::font::ROW`].
-    const PHOTO_CAPTION: f32 = 64.0;
+    /// The height a line of `size` takes at the renderer's default line height.
+    fn line(size: u32) -> f64 {
+        f64::from(size) * f64::from(TextStyle::default().line_height)
+    }
 
     /// There is no zeroth car, so a driver the payload gave no number
     /// keeps their name to themselves rather than trailing a bare `#`.
@@ -389,32 +436,46 @@ mod tests {
     /// which is how this frame lost its bottom row once.
     #[test]
     fn the_portrait_leaves_the_stats_inside_the_frame() {
-        let bucket = SizeBucket::Large;
-        let (_, frame) = bucket.design_size();
-        let body = frame
-            - space::padding(bucket) * 2.0
-            - TEAM_MARK
-            - space::below_header(bucket)
-            - space::GAP;
-        let portrait = PHOTO_LARGE + PHOTO_CAPTION;
-        assert!(
-            portrait <= body,
-            "the portrait takes {portrait} of the {body} under the header",
-        );
+        for bucket in SizeBucket::ALL {
+            let layout = layout(bucket);
+            let Portrait::Named { photo, name, team } = layout.portrait else {
+                continue;
+            };
+            // Split stats keep their own height rather than stretching to the portrait.
+            if layout.split_stats {
+                continue;
+            }
+            let (_, frame) = bucket.design_size();
+            let header = f64::from(layout.team_mark).max(line(font::header(bucket)));
+            let body = f64::from(
+                frame - space::padding(bucket) * 2.0 - space::below_header(bucket) - space::GAP,
+            ) - header;
+            // The photo, `GAP * 2`, the name, then `GAP / 2` and the team where it is drawn.
+            let caption = team.map_or(0.0, |team| f64::from(space::GAP / 2.0) + line(team));
+            let portrait = f64::from(photo + space::GAP * 2.0) + line(name) + caption;
+            assert!(
+                portrait <= body,
+                "{bucket:?}: the portrait takes {portrait} of the {body} under the header",
+            );
+        }
     }
 
     /// The per-frame rules the port keeps.
     #[test]
     fn every_frame_matches_the_ported_layout() {
-        let expected = [
-            (SizeBucket::Full, Portrait::Named, true),
-            (SizeBucket::Large, Portrait::Named, false),
-            (SizeBucket::Medium, Portrait::Photo, false),
-            (SizeBucket::Small, Portrait::Absent, false),
+        let named = |portrait| matches!(portrait, Portrait::Named { .. });
+        let photo = |portrait| matches!(portrait, Portrait::Photo(_));
+        let absent = |portrait| matches!(portrait, Portrait::Absent);
+        let expected: [(SizeBucket, fn(Portrait) -> bool, bool); 5] = [
+            (SizeBucket::Full, named, true),
+            (SizeBucket::Large, named, false),
+            (SizeBucket::Medium, photo, false),
+            (SizeBucket::Small, absent, false),
+            (SizeBucket::Bmm101, named, false),
         ];
         for (bucket, portrait, split) in expected {
             let layout = layout(bucket);
-            assert_eq!(layout.portrait, portrait, "{bucket:?} portrait");
+            assert!(portrait(layout.portrait), "{bucket:?} portrait");
             assert_eq!(layout.split_stats, split, "{bucket:?} split stats");
         }
     }

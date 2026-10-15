@@ -43,14 +43,34 @@ pub struct NextRaceViewData {
 
 /// The design's gap between columns.
 const COLUMN_GAP: f32 = 40.0;
-/// The Grand Prix name, the largest type on the widget.
-const GP_NAME: u32 = 32;
-/// What the design floats the Grand Prix block off the header, past
-/// the frame's own gap.
-const GP_BLOCK_LEAD: f32 = 12.0;
-/// What the design leaves between the Grand Prix block and the columns.
-const GP_BLOCK_GAP: f32 = 48.0;
+const COLUMN_GAP_BMM101: f32 = 24.0;
 const TRACK_MAP_RADIUS: f32 = 8.0;
+
+/// The Grand Prix name and country above the columns, at a frame's own sizes.
+#[derive(Clone, Copy, Debug)]
+struct GpBlock {
+    /// The Grand Prix name, the largest type on the widget.
+    name: u32,
+    country: u32,
+    /// What the design floats the block off the header, past the frame's own gap.
+    lead: f32,
+    /// What the design leaves between the block and the columns.
+    gap: f32,
+}
+
+const GP_BLOCK: GpBlock = GpBlock {
+    name: 32,
+    country: font::TITLE,
+    lead: 12.0,
+    gap: 48.0,
+};
+
+const GP_BLOCK_BMM101: GpBlock = GpBlock {
+    name: 40,
+    country: font::ROW,
+    lead: 4.0,
+    gap: 16.0,
+};
 
 /// What the schedule column beside the circuit's stats carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,9 +87,9 @@ enum Schedule {
 #[derive(Clone, Copy, Debug)]
 struct Layout {
     stripe: bool,
-    /// The Grand Prix name and country, above the columns.
-    gp_block: bool,
+    gp_block: Option<GpBlock>,
     schedule: Schedule,
+    column_gap: f32,
     /// The circuit outline, which only the widest frame has room for.
     track_map: bool,
     info_font: u32,
@@ -80,16 +100,18 @@ fn layout(bucket: SizeBucket) -> Layout {
     match bucket {
         SizeBucket::Full => Layout {
             stripe: true,
-            gp_block: true,
+            gp_block: Some(GP_BLOCK),
             schedule: Schedule::Sessions,
+            column_gap: COLUMN_GAP,
             track_map: true,
             info_font: font::TITLE,
             labels: LabelWeight::Muted,
         },
         SizeBucket::Large => Layout {
             stripe: true,
-            gp_block: true,
+            gp_block: Some(GP_BLOCK),
             schedule: Schedule::DatedSessions,
+            column_gap: COLUMN_GAP,
             track_map: false,
             // Smaller than the widest frame's, because this one carries the
             // schedule beside the stats in half the width: at the larger
@@ -99,19 +121,32 @@ fn layout(bucket: SizeBucket) -> Layout {
         },
         SizeBucket::Medium => Layout {
             stripe: false,
-            gp_block: false,
+            gp_block: None,
             schedule: Schedule::DatedSessions,
+            column_gap: COLUMN_GAP,
             track_map: false,
             info_font: font::ROW,
             labels: LabelWeight::Muted,
         },
         SizeBucket::Small => Layout {
             stripe: false,
-            gp_block: false,
+            gp_block: None,
             schedule: Schedule::Absent,
+            column_gap: COLUMN_GAP,
             track_map: false,
             info_font: font::ROW,
             labels: LabelWeight::Strong,
+        },
+        // The header carries the dates, as on the widest frame,
+        // so the schedule's rows line up with the circuit's five.
+        SizeBucket::Bmm101 => Layout {
+            stripe: true,
+            gp_block: Some(GP_BLOCK_BMM101),
+            schedule: Schedule::Sessions,
+            column_gap: COLUMN_GAP_BMM101,
+            track_map: false,
+            info_font: font::ROW_BMM101,
+            labels: LabelWeight::Muted,
         },
     }
 }
@@ -185,7 +220,7 @@ fn schedule_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
     rows
 }
 
-fn gp_block(race: &NextRace) -> Node {
+fn gp_block(race: &NextRace, block: GpBlock) -> Node {
     col(
         props!(gap: 4.0),
         [
@@ -194,14 +229,14 @@ fn gp_block(race: &NextRace) -> Node {
                 [
                     text(
                         &race.gp_name,
-                        style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+                        style!(size: block.name, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
                     ),
-                    parts::flag(22.4, &race.country_flag_url),
+                    parts::flag(parts::flag_height(block.name), &race.country_flag_url),
                 ],
             ),
             text(
                 &race.country_name,
-                style!(size: font::TITLE, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
+                style!(size: block.country, color: color::TEXT_MUTED, text_overflow: TextOverflow::Ellipsis),
             ),
         ],
     )
@@ -251,12 +286,12 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
         .date_start
         .map(|start| parts::date_range(start, race.date_end));
     let content = match bucket {
-        SizeBucket::Full | SizeBucket::Large => vec![
-            parts::title("Next Race"),
+        SizeBucket::Full | SizeBucket::Large | SizeBucket::Bmm101 => vec![
+            parts::title("Next Race", bucket),
             parts::subtitle(&dates.unwrap_or_default(), bucket),
         ],
         SizeBucket::Medium => vec![
-            parts::title("Next Race"),
+            parts::title("Next Race", bucket),
             parts::subtitle(&race.gp_name, bucket),
             parts::flag(16.8, &race.country_flag_url),
         ],
@@ -284,7 +319,7 @@ fn columns(race: &NextRace, layout: Layout) -> Node {
         return circuit;
     }
     row(
-        props!(flex: 1.0, gap: COLUMN_GAP),
+        props!(flex: 1.0, gap: layout.column_gap),
         [circuit, parts::stat_col(schedule_rows(race, layout))],
     )
 }
@@ -296,12 +331,16 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
     let Some(race) = view.race.as_ref() else {
         return parts::frame(
             vec![
-                parts::header(vec![parts::title("Next Race")], layout.stripe, view.bucket),
+                parts::header(
+                    vec![parts::title("Next Race", view.bucket)],
+                    layout.stripe,
+                    view.bucket,
+                ),
                 center(
                     props!(flex: 1.0),
                     [text(
                         "Next race unavailable",
-                        style!(size: font::ROW, color: color::TEXT_MUTED),
+                        style!(size: font::notice(view.bucket), color: color::TEXT_MUTED),
                     )],
                 ),
             ],
@@ -309,22 +348,21 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
         );
     };
 
-    let mut body = if layout.gp_block {
-        col(
+    let mut body = match layout.gp_block {
+        Some(block) => col(
             props!(flex: 1.0),
             [
-                col(props!(height: GP_BLOCK_LEAD), []),
-                gp_block(race),
-                col(props!(height: GP_BLOCK_GAP), []),
+                col(props!(height: block.lead), []),
+                gp_block(race, block),
+                col(props!(height: block.gap), []),
                 columns(race, layout),
             ],
-        )
-    } else {
-        columns(race, layout)
+        ),
+        None => columns(race, layout),
     };
     if layout.track_map {
         body = row(
-            props!(flex: 1.0, gap: COLUMN_GAP),
+            props!(flex: 1.0, gap: layout.column_gap),
             [body, track_map(race, view.bucket)],
         );
     }
@@ -356,11 +394,16 @@ mod tests {
                 false,
             ),
             (SizeBucket::Small, false, false, Schedule::Absent, false),
+            (SizeBucket::Bmm101, true, true, Schedule::Sessions, false),
         ];
         for (bucket, stripe, gp_block, schedule, track_map) in expected {
             let layout = layout(bucket);
             assert_eq!(layout.stripe, stripe, "{bucket:?} header stripe");
-            assert_eq!(layout.gp_block, gp_block, "{bucket:?} Grand Prix block");
+            assert_eq!(
+                layout.gp_block.is_some(),
+                gp_block,
+                "{bucket:?} Grand Prix block"
+            );
             assert_eq!(layout.schedule, schedule, "{bucket:?} schedule column");
             assert_eq!(layout.track_map, track_map, "{bucket:?} track map");
         }

@@ -63,12 +63,36 @@ const UNKNOWN: &str = "N/A";
 pub const NO_TABLE_VALUE: &str = "—";
 
 pub mod font {
+    use crate::model::SizeBucket;
+
     pub const TITLE: u32 = 24;
-    /// Every table row, at every frame.
+    /// Every table row, at every BMC100 frame.
     pub const ROW: u32 = 20;
     /// The subtitle, which the narrow frames set smaller.
     pub const SUBTITLE_MEDIUM: u32 = 20;
     pub const SUBTITLE_SMALL: u32 = 18;
+    /// BMM101's header line, as its sibling widgets set theirs.
+    pub const HEADER_BMM101: u32 = 14;
+    /// BMM101's rows and stats, which seat ten to the frame.
+    pub const ROW_BMM101: u32 = 16;
+
+    /// The header's `F1` mark and the screen's title.
+    #[must_use]
+    pub fn header(bucket: SizeBucket) -> u32 {
+        match bucket {
+            SizeBucket::Bmm101 => HEADER_BMM101,
+            SizeBucket::Small | SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => TITLE,
+        }
+    }
+
+    /// The message a board shows in place of data it does not have.
+    #[must_use]
+    pub fn notice(bucket: SizeBucket) -> u32 {
+        match bucket {
+            SizeBucket::Bmm101 => ROW_BMM101,
+            SizeBucket::Small | SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => ROW,
+        }
+    }
 }
 
 /// How far below its own box's middle a glyph renders, as a share of the font's size,
@@ -89,7 +113,7 @@ pub mod space {
     #[must_use]
     pub fn padding(bucket: SizeBucket) -> f32 {
         match bucket {
-            SizeBucket::Small | SizeBucket::Medium => 16.0,
+            SizeBucket::Small | SizeBucket::Medium | SizeBucket::Bmm101 => 16.0,
             SizeBucket::Large | SizeBucket::Full => 24.0,
         }
     }
@@ -99,17 +123,33 @@ pub mod space {
     #[must_use]
     pub fn below_header(bucket: SizeBucket) -> f32 {
         match bucket {
+            SizeBucket::Bmm101 => 10.0 - GAP,
             SizeBucket::Medium => 16.0 - GAP,
             SizeBucket::Small => 24.0 - GAP,
             SizeBucket::Large | SizeBucket::Full => 28.0 - GAP,
         }
     }
+
+    /// What separates the header's pieces.
+    #[must_use]
+    pub fn header_gap(bucket: SizeBucket) -> f32 {
+        match bucket {
+            SizeBucket::Bmm101 => GAP,
+            SizeBucket::Small | SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => {
+                GAP * 2.0
+            }
+        }
+    }
 }
 
-/// The swept bars, at the artwork's own 10:1 aspect — fitting them to a
-/// square collapses them to a dash.
-const STRIPE_HEIGHT: f32 = 24.0;
-const STRIPE_WIDTH: f32 = STRIPE_HEIGHT * 10.0;
+/// The swept bars' height; their width keeps the artwork's own 10:1 aspect,
+/// since fitting them to a square collapses them to a dash.
+fn stripe_height(bucket: SizeBucket) -> f32 {
+    match bucket {
+        SizeBucket::Bmm101 => 16.0,
+        SizeBucket::Small | SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => 24.0,
+    }
+}
 
 /// The frame every screen sits in: the design's black field, padded.
 #[must_use]
@@ -131,35 +171,32 @@ pub fn frame(children: Vec<Node>, bucket: SizeBucket) -> Node {
 pub fn header(content: Vec<Node>, stripe: bool, bucket: SizeBucket) -> Node {
     let mut children = vec![text(
         "F1",
-        style!(size: font::TITLE, weight: FontWeight::BOLD, color: color::TEXT),
+        style!(size: font::header(bucket), weight: FontWeight::BOLD, color: color::TEXT),
     )];
     children.extend(content);
     if stripe {
+        let height = stripe_height(bucket);
+        let width = height * 10.0;
         // Absolutely positioned, as the design bleeds the bars through
         // the frame's padding to the widget's right edge.
         children.push(canvas(
             props!(
-                width: STRIPE_WIDTH,
-                height: STRIPE_HEIGHT,
+                width: width,
+                height: height,
                 inset_top: 0.0,
                 inset_right: -space::padding(bucket)
             ),
-            [Draw::svg(
-                0.0,
-                0.0,
-                STRIPE_WIDTH,
-                STRIPE_HEIGHT,
-                &icons::BRAND_STRIPE,
-                color::BRAND,
-            )
-            .with_anti_alias()],
+            [
+                Draw::svg(0.0, 0.0, width, height, &icons::BRAND_STRIPE, color::BRAND)
+                    .with_anti_alias(),
+            ],
         ));
     }
     col(
         props!(),
         [
             row(
-                props!(gap: space::GAP * 2.0, cross_align: CrossAlign::Center),
+                props!(gap: space::header_gap(bucket), cross_align: CrossAlign::Center),
                 children,
             ),
             col(props!(height: space::below_header(bucket)), []),
@@ -169,10 +206,10 @@ pub fn header(content: Vec<Node>, stripe: bool, bucket: SizeBucket) -> Node {
 
 /// What the screen is, in the design's quieter weight.
 #[must_use]
-pub fn title(label: &str) -> Node {
+pub fn title(label: &str, bucket: SizeBucket) -> Node {
     text(
         unbroken(label),
-        style!(size: font::TITLE, color: color::TEXT_MUTED),
+        style!(size: font::header(bucket), color: color::TEXT_MUTED),
     )
 }
 
@@ -186,6 +223,7 @@ pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
         SizeBucket::Full | SizeBucket::Large => font::TITLE,
         SizeBucket::Medium => font::SUBTITLE_MEDIUM,
         SizeBucket::Small => font::SUBTITLE_SMALL,
+        SizeBucket::Bmm101 => font::HEADER_BMM101,
     };
     text(
         label,
@@ -420,6 +458,17 @@ pub fn team_mark(size: f32, url: &ImageUrl, livery: Color) -> Node {
         size,
         image_placeholder(size, Some(livery)),
     )
+}
+
+/// A flag's height beside text of `size`, a share of the type that keeps it inside the line.
+#[must_use]
+pub fn flag_height(size: u32) -> f32 {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "type is a few dozen points, exact in f32"
+    )]
+    let size = size as f32;
+    size * 0.7
 }
 
 /// A country's flag, contain-drawn in the fixed box of [`flag_size`].

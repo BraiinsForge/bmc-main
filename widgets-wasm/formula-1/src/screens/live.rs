@@ -108,6 +108,8 @@ fn compound_color(compound: Option<TireCompound>) -> Color {
 /// height; this tree has no negative margin, so the box is the 24 px
 /// that leaves, which the rows have room for at every frame.
 const LOGO: f32 = 24.0;
+/// BMM101's logo, sized to its 16 px rows.
+const LOGO_BMM101: f32 = 16.0;
 /// What the rows hold off one another, standing in for the port's
 /// `padding: 2px 4px` on every cell.
 const ROW_GAP: f32 = 4.0;
@@ -116,7 +118,12 @@ const ROW_GAP: f32 = 4.0;
 /// precedes another has to hold a width of its own or the row below
 /// with a wider entry pushes everything after it out of line.
 const POSITION_WIDTH: f32 = 40.0;
+/// BMM101's position column, sized for `10` at its smaller row type.
+const POSITION_WIDTH_BMM101: f32 = 32.0;
 const CODE_WIDTH: f32 = 64.0;
+/// BMM101's name column, the one row with room for names. The longest in the
+/// recorded feeds, "Gabriel Bortoleto", sets 128 px at its 16 px semibold.
+const NAME_WIDTH: f32 = 168.0;
 const CHANGE_WIDTH: f32 = 56.0;
 /// The compound and age badges, both circles of this diameter.
 const BADGE: f32 = 22.0;
@@ -132,9 +139,6 @@ const WEAR_WIDTH: f32 = 60.0;
 const WEAR_HEIGHT: f32 = 6.0;
 /// The stint length a full wear bar stands for.
 const WEAR_FULL_LAPS: f32 = 30.0;
-/// The height of the flag beside the Grand Prix in the header; its width
-/// follows the artwork the deployment sends.
-const FLAG: f32 = 16.8;
 
 /// A cell of a timing row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +146,8 @@ enum Cell {
     Position,
     TeamLogo,
     Code,
+    /// The driver's name as the feed sends it, where the row has room for more than the code.
+    Name,
     /// Places gained or lost since the previous lap.
     Change,
     /// The gap to the leader, which a car in the pits replaces.
@@ -184,7 +190,7 @@ struct Columns {
 
 fn columns(board: Board, bucket: SizeBucket) -> Columns {
     use Cell::{
-        BestLap, Change, Code, Compound, Gap, Interval, LastLap, Position, PracticeGap,
+        BestLap, Change, Code, Compound, Gap, Interval, LastLap, Name, Position, PracticeGap,
         PracticeGapOrOut, PracticeLap, TeamLogo, Tire, TotalTime,
     };
 
@@ -204,10 +210,14 @@ fn columns(board: Board, bucket: SizeBucket) -> Columns {
             vec![Position, TeamLogo, Code, Change, Gap, Tire],
         ),
         (Board::Race, SizeBucket::Small) => (Seats::Top(5), vec![Position, Code, Change, Gap]),
+        (Board::Race, SizeBucket::Bmm101) => (
+            Seats::Top(10),
+            vec![Position, TeamLogo, Name, Change, Gap, Compound],
+        ),
         (Board::Quali, SizeBucket::Full) => {
             (Seats::Split, vec![Position, TeamLogo, Code, TotalTime])
         }
-        (Board::Quali, SizeBucket::Large) => {
+        (Board::Quali, SizeBucket::Large | SizeBucket::Bmm101) => {
             (Seats::Top(10), vec![Position, TeamLogo, Code, TotalTime])
         }
         (Board::Quali, SizeBucket::Medium | SizeBucket::Small) => {
@@ -236,13 +246,24 @@ fn columns(board: Board, bucket: SizeBucket) -> Columns {
         (Board::Practice, SizeBucket::Small) => {
             (Seats::Top(5), vec![Position, TeamLogo, Code, BestLap])
         }
+        (Board::Practice, SizeBucket::Bmm101) => {
+            (Seats::Top(10), vec![Position, TeamLogo, Code, BestLap])
+        }
     };
     // Sectors ride along wherever the frame has the width for them:
-    // the race keeps them to its widest frame, the slimmer boards
-    // carry them down to the medium one, and the smallest never does.
-    let sectored = match board {
-        Board::Race => bucket == SizeBucket::Full,
-        Board::Quali | Board::Practice => bucket != SizeBucket::Small,
+    // the race keeps them to its widest frame,
+    // and the slimmer boards carry them on every frame but the smallest.
+    let sectored = match (board, bucket) {
+        (Board::Race, SizeBucket::Full)
+        | (
+            Board::Quali | Board::Practice,
+            SizeBucket::Full | SizeBucket::Large | SizeBucket::Medium | SizeBucket::Bmm101,
+        ) => true,
+        (
+            Board::Race,
+            SizeBucket::Large | SizeBucket::Medium | SizeBucket::Small | SizeBucket::Bmm101,
+        )
+        | (Board::Quali | Board::Practice, SizeBucket::Small) => false,
     };
     if sectored {
         cells.extend([Cell::Sector(0), Cell::Sector(1), Cell::Sector(2)]);
@@ -250,7 +271,10 @@ fn columns(board: Board, bucket: SizeBucket) -> Columns {
     Columns {
         seats,
         cells,
-        titled: bucket != SizeBucket::Small,
+        titled: match bucket {
+            SizeBucket::Small => false,
+            SizeBucket::Full | SizeBucket::Large | SizeBucket::Medium | SizeBucket::Bmm101 => true,
+        },
     }
 }
 
@@ -258,6 +282,29 @@ fn row_font(bucket: SizeBucket) -> u32 {
     match bucket {
         SizeBucket::Full => font::TITLE,
         SizeBucket::Large | SizeBucket::Medium | SizeBucket::Small => font::ROW,
+        SizeBucket::Bmm101 => font::ROW_BMM101,
+    }
+}
+
+/// The identity columns, which BMM101's smaller rows scale down.
+#[derive(Clone, Copy, Debug)]
+struct IdentitySizes {
+    position: f32,
+    logo: f32,
+}
+
+fn identity_sizes(bucket: SizeBucket) -> IdentitySizes {
+    match bucket {
+        SizeBucket::Bmm101 => IdentitySizes {
+            position: POSITION_WIDTH_BMM101,
+            logo: LOGO_BMM101,
+        },
+        SizeBucket::Small | SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => {
+            IdentitySizes {
+                position: POSITION_WIDTH,
+                logo: LOGO,
+            }
+        }
     }
 }
 
@@ -441,16 +488,23 @@ fn cell(which: Cell, row_data: &TimingRow, bucket: SizeBucket) -> Node {
             Some(place) => plain(fmt!("{}", place), size, identity),
             None => plain(parts::NO_TABLE_VALUE, size, parts::color::TEXT_MUTED),
         },
-        Cell::TeamLogo => parts::remote_image(
-            ImageKind::TeamLogo,
-            &row_data.team_logo_url,
-            LOGO,
-            LOGO,
-            parts::image_placeholder(LOGO, Some(row_data.team_color)),
-        ),
+        Cell::TeamLogo => {
+            let logo = identity_sizes(bucket).logo;
+            parts::remote_image(
+                ImageKind::TeamLogo,
+                &row_data.team_logo_url,
+                logo,
+                logo,
+                parts::image_placeholder(logo, Some(row_data.team_color)),
+            )
+        }
         Cell::Code => text(
             row_data.driver_code.as_str(),
             style!(size: size, weight: FontWeight::SEMIBOLD, color: identity, line_height: 1.0),
+        ),
+        Cell::Name => text(
+            row_data.driver_name.as_str(),
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: identity, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
         ),
         Cell::Change => change_cell(row_data.position_change, size),
         Cell::Gap => {
@@ -491,9 +545,10 @@ fn cell(which: Cell, row_data: &TimingRow, bucket: SizeBucket) -> Node {
         }
         // Sectors keep the narrower frames' font wherever the row is
         // set larger, staying subordinate to the identity beside them.
-        Cell::Sector(index) => {
-            sector_cell(row_data.sectors.get(index).copied().flatten(), font::ROW)
-        }
+        Cell::Sector(index) => sector_cell(
+            row_data.sectors.get(index).copied().flatten(),
+            size.min(font::ROW),
+        ),
     }
 }
 
@@ -533,12 +588,13 @@ fn timing_row(row_data: &TimingRow, cols: &Columns, bucket: SizeBucket) -> Node 
         match which {
             // Who the row is: packed left, each holding its column's
             // width so the identity block lines up down the table.
-            Cell::Position => cells.push(fixed(POSITION_WIDTH, node)),
+            Cell::Position => cells.push(fixed(identity_sizes(bucket).position, node)),
             // Sized artwork, which centres itself against the row.
             Cell::TeamLogo | Cell::Compound => {
                 cells.push(col(props!(justify_content: Justify::Center), [node]));
             }
             Cell::Code => cells.push(fixed(CODE_WIDTH, node)),
+            Cell::Name => cells.push(fixed(NAME_WIDTH, node)),
             // The port rules everything after the driver's code off
             // from what precedes it, the change column included.
             Cell::Change => {
@@ -566,7 +622,7 @@ fn timing_row(row_data: &TimingRow, cols: &Columns, bucket: SizeBucket) -> Node 
     // The wide gap overflows a narrow row, and the engine then squeezes
     // the fixed cells by a per-row amount — columns land at different x.
     let cell_gap = match bucket {
-        SizeBucket::Small => space::GAP,
+        SizeBucket::Small | SizeBucket::Bmm101 => space::GAP,
         SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => space::GAP * 2.0,
     };
 
@@ -601,10 +657,13 @@ fn header(
         },
         Board::Quali | Board::Practice => data.session_label.clone(),
     };
-    let flag = parts::flag(FLAG, &data.country_flag_url);
+    let flag = parts::flag(
+        parts::flag_height(font::header(bucket)),
+        &data.country_flag_url,
+    );
     let mut content = Vec::new();
     if cols.titled {
-        content.push(parts::title(board.title()));
+        content.push(parts::title(board.title(), bucket));
         content.push(parts::yielding(vec![
             parts::subtitle(&data.gp_name, bucket),
             flag,
@@ -623,12 +682,16 @@ fn board_view(board: Board, view: &LiveViewData) -> Node {
     let Some(data) = view.board.board() else {
         return parts::frame(
             vec![
-                parts::header(vec![parts::title(board.title())], false, view.bucket),
+                parts::header(
+                    vec![parts::title(board.title(), view.bucket)],
+                    false,
+                    view.bucket,
+                ),
                 center(
                     props!(flex: 1.0),
                     [text(
                         board.idle(),
-                        style!(size: font::ROW, color: color::TEXT_MUTED),
+                        style!(size: font::notice(view.bucket), color: color::TEXT_MUTED),
                     )],
                 ),
             ],
@@ -684,13 +747,6 @@ mod tests {
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
     use crate::screens::parts::{NO_TABLE_VALUE, color};
-
-    const ALL: [SizeBucket; 4] = [
-        SizeBucket::Full,
-        SizeBucket::Large,
-        SizeBucket::Medium,
-        SizeBucket::Small,
-    ];
 
     #[test]
     fn a_sector_time_keeps_its_thousandths() {
@@ -752,14 +808,17 @@ mod tests {
             (Board::Race, SizeBucket::Large, Seats::Top(10), 6),
             (Board::Race, SizeBucket::Medium, Seats::Top(5), 6),
             (Board::Race, SizeBucket::Small, Seats::Top(5), 4),
+            (Board::Race, SizeBucket::Bmm101, Seats::Top(10), 6),
             (Board::Quali, SizeBucket::Full, Seats::Split, 7),
             (Board::Quali, SizeBucket::Large, Seats::Top(10), 7),
             (Board::Quali, SizeBucket::Medium, Seats::Top(5), 7),
             (Board::Quali, SizeBucket::Small, Seats::Top(5), 4),
+            (Board::Quali, SizeBucket::Bmm101, Seats::Top(10), 7),
             (Board::Practice, SizeBucket::Full, Seats::Top(10), 10),
             (Board::Practice, SizeBucket::Large, Seats::Top(10), 7),
             (Board::Practice, SizeBucket::Medium, Seats::Top(5), 7),
             (Board::Practice, SizeBucket::Small, Seats::Top(5), 4),
+            (Board::Practice, SizeBucket::Bmm101, Seats::Top(10), 7),
         ];
         for (board, bucket, seats, cells) in expected {
             let cols = columns(board, bucket);
@@ -771,7 +830,7 @@ mod tests {
     #[test]
     fn only_the_widest_qualifying_frame_splits_its_field() {
         for board in [Board::Race, Board::Quali, Board::Practice] {
-            for bucket in ALL {
+            for bucket in SizeBucket::ALL {
                 let splits = columns(board, bucket).seats == Seats::Split;
                 let expected = board == Board::Quali && bucket == SizeBucket::Full;
                 assert_eq!(splits, expected, "{board:?} {bucket:?} split");

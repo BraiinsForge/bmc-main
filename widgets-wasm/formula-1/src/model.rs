@@ -27,7 +27,8 @@
 use bmc_wasm_sdk::types::{Length, Mass};
 use bmc_wasm_sdk::{CalendarDate, Color, LocalDateTime};
 
-/// The design's four frames. The widget renders the same screens in each,
+/// The design's frames: the four BMC100 slots and BMM101's 480×320.
+/// The widget renders the same screens in each,
 /// dropping columns and rows as the box shrinks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SizeBucket {
@@ -35,29 +36,58 @@ pub enum SizeBucket {
     Medium,
     Large,
     Full,
+    Bmm101,
 }
 
 impl SizeBucket {
-    /// Design reference sizes: S 317×238, M 638×238, L 638×480, Full 1280×480.
+    /// Every frame, for tests that check a rule holds in each.
+    #[cfg(test)]
+    pub const ALL: [Self; 5] = [
+        Self::Small,
+        Self::Medium,
+        Self::Large,
+        Self::Full,
+        Self::Bmm101,
+    ];
+
+    /// Design reference sizes:
+    /// S 317×238
+    /// M 638×238
+    /// L 638×480
+    /// Full 1280×480
+    /// BMM101 480×320
     #[must_use]
     pub fn design_size(self) -> (f32, f32) {
         match self {
             Self::Small => (317.0, 238.0),
             Self::Medium => (638.0, 238.0),
             Self::Large => (638.0, 480.0),
-            Self::Full => (1280.0, 480.0),
+            Self::Full => (1_280.0, 480.0),
+            Self::Bmm101 => (f32::from(BMM101_WIDTH), f32::from(BMM101_HEIGHT)),
         }
     }
 }
 
+const BMM101_WIDTH: u16 = 480;
+const BMM101_HEIGHT: u16 = 320;
+/// The BMM frame the narrow band has to tell BMM101 apart from.
+const BMM100_HEIGHT: u16 = 240;
+/// Split at their midpoint, so either frame keeps its bucket a few pixels either way.
+const BMM101_MIN_HEIGHT: u16 = u16::midpoint(BMM100_HEIGHT, BMM101_HEIGHT);
+
 /// Which frame a viewport falls in.
 ///
-/// A box narrower than the medium design takes the small frame rather than
-/// the nearest band: the wider frames seat a second column, and one drawn
-/// for 638 px does not fit a Mini Miner's 480.
+/// BMM101 has a frame of its own: a landscape box no wider than 480
+/// and at least as tall as the midpoint between the two BMM heights.
+///
+/// Any other box narrower than 638 takes the small frame, however close it is to medium:
+/// the wider frames lay out two columns, which do not fit BMM100's 320.
 #[must_use]
 pub fn size_bucket(width: u32, height: u32) -> SizeBucket {
-    if width >= 900 {
+    if width <= u32::from(BMM101_WIDTH) && height < width && height >= u32::from(BMM101_MIN_HEIGHT)
+    {
+        SizeBucket::Bmm101
+    } else if width >= 900 {
         SizeBucket::Full
     } else if width < 638 {
         SizeBucket::Small
@@ -518,8 +548,40 @@ impl Data {
 mod tests {
     use super::{
         CarNumber, Color, Data, DriverStats, DriverStatus, DriverTeam, FALLBACK_TEAM_COLOR,
-        ImageUrl, LiveBoard, SectorColor, Team, TimingBoard, TimingText, TireCompound, team_color,
+        ImageUrl, LiveBoard, SectorColor, SizeBucket, Team, TimingBoard, TimingText, TireCompound,
+        size_bucket, team_color,
     };
+
+    #[test]
+    fn the_bmm101_bucket_ends_at_the_midpoint_of_the_bmm_heights_and_at_its_width() {
+        assert_eq!(size_bucket(480, 280), SizeBucket::Bmm101);
+        assert_ne!(
+            size_bucket(480, 279),
+            SizeBucket::Bmm101,
+            "below the midpoint"
+        );
+        assert_ne!(
+            size_bucket(481, 320),
+            SizeBucket::Bmm101,
+            "wider than BMM101"
+        );
+        assert_ne!(size_bucket(320, 480), SizeBucket::Bmm101, "portrait");
+    }
+
+    #[test]
+    fn each_panel_lands_in_its_layout() {
+        let panels = [
+            ("BMM101", (480, 320), SizeBucket::Bmm101),
+            ("BMM100", (320, 240), SizeBucket::Small),
+            ("Deck small", (317, 238), SizeBucket::Small),
+            ("Deck medium", (638, 238), SizeBucket::Medium),
+            ("Deck large", (638, 480), SizeBucket::Large),
+            ("Deck fullscreen", (1_280, 480), SizeBucket::Full),
+        ];
+        for (panel, (width, height), bucket) in panels {
+            assert_eq!(size_bucket(width, height), bucket, "{panel}");
+        }
+    }
 
     fn board(gp: &str) -> LiveBoard {
         LiveBoard::Running(Box::new(TimingBoard {

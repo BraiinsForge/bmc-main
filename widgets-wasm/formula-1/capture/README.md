@@ -38,8 +38,8 @@ restarts inside it does not matter, since every frame replays from its own recor
 ## The inventory
 
 Viewports are `bmc100` `full` 1280×480, `large` 638×480, `medium` 638×238 and `small` 317×238, plus `bmm100:full`
-320×240 and `bmm101:full` 480×320. The layout bucket follows width alone, so both BMM panels land in the same bucket as
-`bmc100:small`.
+320×240 and `bmm101:full` 480×320. `bmm101:full` has a layout bucket of its own; `bmm100:full` lands in the same bucket
+as `bmc100:small`.
 
 | Scenario     | Targets                                              | Views walked                 | What it pins                                                         |
 | ------------ | ---------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------- |
