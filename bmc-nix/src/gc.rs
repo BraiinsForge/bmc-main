@@ -404,6 +404,55 @@ fn remove_profile_entry(path: &Path) -> Result<(), std::io::Error> {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum DiscardGenerationsError {
+    #[error("failed to read profile directory: {0}")]
+    ReadDir(#[source] std::io::Error),
+    #[error("failed to remove generation entry {name}: {source}")]
+    Remove {
+        name: String,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// Remove the generations numbered above `floor`, built or half-built
+/// (`<N>-link.tmp`), except the one `current` points to; returns the
+/// numbers removed, ascending.
+pub fn discard_generations_above(
+    _lock: &crate::profile::ProfileLock,
+    profile_dir: &Path,
+    floor: Option<usize>,
+) -> Result<Vec<usize>, DiscardGenerationsError> {
+    let current =
+        current_generation_number(profile_dir).map_err(DiscardGenerationsError::ReadDir)?;
+    let entries = std::fs::read_dir(profile_dir).map_err(DiscardGenerationsError::ReadDir)?;
+    let mut removed = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(DiscardGenerationsError::ReadDir)?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(number) =
+            crate::profile::parse_generation_link_name(name.strip_suffix(".tmp").unwrap_or(name))
+        else {
+            continue;
+        };
+        if floor.is_some_and(|floor| number <= floor) || current == Some(number) {
+            continue;
+        }
+        remove_profile_entry(&entry.path()).map_err(|source| DiscardGenerationsError::Remove {
+            name: name.to_owned(),
+            source,
+        })?;
+        removed.push(number);
+    }
+    removed.sort_unstable();
+    removed.dedup();
+    Ok(removed)
+}
+
 /// Generation number named by a `<N>-link` symlink target, if any.
 fn generation_number_of(target: &Path) -> Option<usize> {
     let name = target.file_name()?.to_str()?;

@@ -243,7 +243,7 @@ pub async fn apply_profile_change(
     clippy::too_many_arguments,
     reason = "orchestration entrypoint - every parameter is required"
 )]
-pub(crate) async fn apply_locked_profile_change(
+pub async fn apply_locked_profile_change(
     lock: &profile::ProfileLock,
     store: &impl store::StoreOperations,
     profile_dir: &Path,
