@@ -1,0 +1,171 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
+
+@use 'styles/carbon/colors';
+@use 'styles/carbon' as *;
+
+.root {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(3);
+}
+
+.errorMessage {
+    margin: mini-units(1) 0 0;
+}
+
+//
+// Drop zone
+//
+
+.dropContainer {
+    composes: vertical selfStretch from 'styles/layout.scss';
+    align-items: center;
+    justify-content: center;
+    padding: mini-units(4);
+    gap: mini-units(2);
+
+    transition: border-color 150ms ease-in-out;
+    border: 1px dashed $text-secondary;
+    border-radius: 2px;
+
+    user-select: none;
+    cursor: pointer;
+
+    &:hover,
+    &.dragOver {
+        border-style: solid;
+        border-color: colors.$braiins-accent-violet;
+
+        .button {
+            background-color: colors.$braiins-accent-violet;
+        }
+    }
+
+    &.invalid {
+        border-color: $support-error;
+    }
+}
+
+.title {
+    composes: heading-02 from 'styles/carbon/typography.scss';
+    color: $text-primary;
+}
+
+.button {
+    appearance: none;
+    cursor: pointer;
+    display: block;
+    border: none;
+
+    padding: mini-units(2);
+    background: $button-secondary;
+    color: $text-on-color;
+
+    &:hover,
+    &:focus {
+        background: $button-secondary-hover;
+    }
+
+    &.primary {
+        background: $button-primary;
+
+        &:hover,
+        &:focus {
+            background: $button-primary-hover;
+        }
+    }
+
+    &:focus-visible {
+        outline: 2px solid $focus;
+        outline-offset: -2px;
+    }
+}
+
+//
+// Chosen file
+//
+
+.file {
+    composes: inline horizontal center justified from 'styles/layout.scss';
+    width: 100%;
+
+    min-height: mini-units(5);
+    background-color: $field-02;
+    color: $text-primary;
+
+    &.invalid {
+        color: $support-error;
+        outline: 1px solid currentcolor;
+        outline-offset: -1px;
+    }
+}
+
+.name {
+    composes: heading-01 from 'styles/carbon/typography.scss';
+    margin-left: mini-units(2);
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: none;
+}
+.size {
+    display: inline-block;
+    margin-inline-start: mini-units(1);
+
+    font-weight: normal;
+    color: $text-secondary;
+
+    &::before {
+        content: '(';
+    }
+    &::after {
+        content: ')';
+    }
+}
+
+.actions {
+    display: flex;
+    min-width: mini-units(3);
+    align-items: center;
+    justify-content: center;
+    padding-right: mini-units(2);
+}
+
+.deleteButton {
+    composes: horizontal centerCenter from 'styles/layout.scss';
+
+    $size: mini-units(3);
+    width: $size;
+    height: $size;
+
+    padding: 0;
+    border: none;
+    cursor: pointer;
+
+    background-color: transparent;
+    color: $icon-primary;
+
+    &:focus {
+        outline: 2px solid $focus;
+        outline-offset: -2px;
+    }
+}

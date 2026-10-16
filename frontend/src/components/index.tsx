@@ -28,6 +28,7 @@ export * from './Checkbox';
 export * from './CopyButton';
 export * from './DataTable';
 export * from './Empty';
+export * from './FileUploader';
 export * from './Image';
 export * from './InlineLoading';
 export * from './InlineNotification';
