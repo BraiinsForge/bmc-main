@@ -590,12 +590,30 @@ pub(super) fn combo_cell(
     selected_text: impl Into<egui::WidgetText>,
     populate: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
-    egui::ComboBox::from_id_salt(id_salt)
+    let selected_text = selected_text.into();
+    let spacing = ui.spacing();
+    let text_width =
+        width - 2.0 * spacing.button_padding.x - spacing.icon_spacing - spacing.icon_width;
+    let truncated = selected_text
+        .clone()
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            text_width,
+            egui::TextStyle::Button,
+        )
+        .elided;
+    let full = selected_text.text().to_owned();
+    // Truncated, as an extended label widens the grid and the scroll area holding the sidebar.
+    let combo = egui::ComboBox::from_id_salt(id_salt)
         .selected_text(selected_text)
+        .wrap_mode(egui::TextWrapMode::Truncate)
         .width(width)
-        .show_ui(ui, populate)
-        .inner
-        .unwrap_or(false)
+        .show_ui(ui, populate);
+    if truncated {
+        combo.response.on_hover_text(full);
+    }
+    combo.inner.unwrap_or(false)
 }
 
 /// Always-visible vertical radio group for small enum-valued params.

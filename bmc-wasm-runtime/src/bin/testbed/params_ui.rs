@@ -917,6 +917,11 @@ mod layout_tests {
             "params": {
                 "free_string": {"type": "string", "name": "S", "default_value": "Hello"},
                 "string_enum": {"type": "string", "name": "E", "default_value": "info", "enum_values": tones},
+                "long_enum": {
+                    "type": "string", "name": "LE", "default_value": "auto", "enum_values": [
+                        {"value": "auto", "label": "An option label far wider than the sidebar's value column"},
+                    ],
+                },
                 "radio_enum": {
                     "type": "string", "name": "R", "default_value": "info", "enum_values": tones,
                     "enum_control": "radio",
