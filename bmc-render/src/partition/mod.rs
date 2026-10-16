@@ -349,7 +349,7 @@ fn props_paint(props: &PropsData) -> bool {
 ///
 /// Banding needs the laid-out boxes, so this answers only whether anything static paints.
 /// A static node laid over the animation counts, though it never reaches the layer;
-/// a capture left empty that way reports [`crate::tree::TreeResult::static_layer_empty`].
+/// a capture left empty that way reports [`crate::tree::StaticLayer::Captured`] as `empty`.
 ///
 /// Errs toward `true`: a wrong `true` costs one empty capture, a wrong
 /// `false` re-rasterises the static half. Neither changes what reaches screen.

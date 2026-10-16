@@ -658,6 +658,11 @@ impl TestbedApp {
                 continue;
             }
             super::paint_tile_texture(ui, view, rect, palette);
+            if self.show_view_damage
+                && let Some(damage) = view.last_damage()
+            {
+                paint::paint_view_damage(ui.painter(), rect, zoom, damage);
+            }
             debug_outline(ui, rect, "view", egui::Align2::LEFT_TOP);
             // A choose overlay per candidate viewport: clicking it is what
             // starts the take, so it swallows the view's touch input.

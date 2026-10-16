@@ -59,10 +59,18 @@ pub(crate) struct ViewTick {
     /// A level, not an edge: each view compares it against what it last told
     /// its widget and fires the hook on the difference.
     pub(crate) dormant: bool,
-    /// Drain the guest's profiling sections into this tick's report.
+    pub(crate) extras: ReportExtras,
+}
+
+/// What a tick's report carries beyond the view's own state.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ReportExtras {
+    /// Drain the guest's profiling sections into the report.
     /// Asked of one view: draining empties them, so two readers would
     /// halve what each sees.
     pub(crate) profile: bool,
+    /// Copy the last frame's damage into the report.
+    pub(crate) damage: bool,
 }
 
 /// What one tick did, and when the view wants the next one.
@@ -340,7 +348,7 @@ impl ViewCore {
     ///
     /// Takes `&mut self` because profiling sections are drained, not read: the
     /// guest accumulates them until someone collects.
-    pub(crate) fn report(&mut self, profile: bool) -> ViewReport {
+    pub(crate) fn report(&mut self, profile: bool, damage: bool) -> ViewReport {
         let timings = self.runtime.as_ref().map(|rt| {
             Box::new(bmc_render::FrameTimings {
                 flush_us: self.sched.last_flush_us,
@@ -354,11 +362,18 @@ impl ViewCore {
                     .map(WasmWidgetRuntime::take_profile_sections)
             })
             .flatten();
+        let damage = self.runtime.as_ref().filter(|_| damage).map(|rt| {
+            Box::new(ViewDamage {
+                repaint: rt.last_repaint().clone(),
+                regions: rt.last_dynamic_rects().map_or_else(Vec::new, <[_]>::to_vec),
+            })
+        });
         ViewReport {
             timings,
             slip_ms: self.sched.last_slip_ms,
             led_scene: self.led.scene.filter(|_| self.led.enabled),
             sections,
+            damage,
         }
     }
 }
@@ -393,6 +408,16 @@ pub(crate) struct ViewReport {
     /// Present only for a tick that asked to profile, so the other views do
     /// not mint a map apiece every frame.
     pub(crate) sections: Option<std::collections::BTreeMap<String, u64>>,
+    /// Present only while the damage overlay is on, so nothing is cloned per tick otherwise.
+    pub(crate) damage: Option<Box<ViewDamage>>,
+}
+
+/// The last frame's damage, in widget pixels.
+#[derive(Debug, Clone)]
+pub(crate) struct ViewDamage {
+    pub(crate) repaint: bmc_wasm_runtime::FrameRepaint,
+    /// What its walk reported moving; empty when it painted no tree.
+    pub(crate) regions: Vec<bmc_render::interaction::Rect>,
 }
 
 pub(crate) struct DeviceView {
@@ -568,6 +593,11 @@ impl DeviceView {
         self.report.slip_ms
     }
 
+    /// The last frame's damage, while the damage overlay is on.
+    pub(crate) fn last_damage(&self) -> Option<&ViewDamage> {
+        self.report.damage.as_deref()
+    }
+
     /// The scene to draw on the strip, or `None` when it is off.
     pub(crate) fn led_scene(&self) -> Option<&bmc_led::data::LedScene> {
         self.report.led_scene.as_ref()
@@ -704,7 +734,8 @@ impl DeviceView {
                     core.apply(command);
                 }
                 let ticked = core.tick(tick, gl, targets);
-                self.report = core.report(tick.profile && ticked.rendered);
+                self.report =
+                    core.report(tick.extras.profile && ticked.rendered, tick.extras.damage);
                 ticked
             }
             Render::Threaded(worker) => {

@@ -76,9 +76,20 @@ pub struct ShapingRecorder {
     layouts: ParagraphLayoutCache,
     width: f32,
     height: f32,
+    /// Keys of the static layers captured so far, once [`Self::with_static_layers`]
+    /// lets the recorder capture any.
+    static_layers: Option<Vec<String>>,
 }
 
 impl ShapingRecorder {
+    /// A recorder that captures static layers and blits back the ones it holds,
+    /// as a renderer with offscreen targets does.
+    #[must_use]
+    pub fn with_static_layers(mut self) -> Self {
+        self.static_layers = Some(Vec::new());
+        self
+    }
+
     #[must_use]
     pub fn new(width: f32, height: f32) -> Self {
         Self {
@@ -90,6 +101,7 @@ impl ShapingRecorder {
             layouts: ParagraphLayoutCache::new(),
             width,
             height,
+            static_layers: None,
         }
     }
 
@@ -435,5 +447,27 @@ impl RenderOffscreen for ShapingRecorder {
         inner: &mut dyn FnMut(&mut dyn Renderer),
     ) {
         inner(self);
+    }
+
+    fn begin_static_layer(&mut self, key: &str, _width: u32, _height: u32) -> bool {
+        let Some(layers) = &mut self.static_layers else {
+            return false;
+        };
+        if !layers.iter().any(|captured| captured == key) {
+            layers.push(key.to_owned());
+        }
+        true
+    }
+
+    fn blit_static_layer(&mut self, key: &str) -> bool {
+        self.static_layers
+            .as_ref()
+            .is_some_and(|layers| layers.iter().any(|captured| captured == key))
+    }
+
+    fn invalidate_static_layer(&mut self, key: &str) {
+        if let Some(layers) = &mut self.static_layers {
+            layers.retain(|captured| captured != key);
+        }
     }
 }

@@ -39,6 +39,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use egui_glow::glow::HasContext as _;
 
+use bmc_wasm_runtime::FrameRepaint;
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
 
 use super::view::DeviceView;
@@ -730,6 +731,66 @@ pub(super) fn paint_view_timings(
             value,
             egui::FontId::monospace(9.0),
             egui::Color32::from_gray(230),
+        );
+    }
+}
+
+/// Draw the last frame's damage over its view, scaled by `zoom` from widget pixels.
+///
+/// Yellow fills what the frame blitted back, a red border says it repainted all of it,
+/// and a grey one that it painted no tree at all.
+/// Cyan outlines what the last walk reported moving, which the next two frames repaint:
+/// a tight one hugs what moves, while a loose one leaves room nothing paints.
+///
+/// Deliberately unthemed, like [`paint_view_timings`].
+pub(super) fn paint_view_damage(
+    painter: &egui::Painter,
+    view: egui::Rect,
+    zoom: f32,
+    damage: &super::view::ViewDamage,
+) {
+    const BLITTED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xD0, 0x00);
+    const FULL: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x30, 0x30);
+    const NO_TREE: egui::Color32 = egui::Color32::from_gray(0x90);
+    const MOVING: egui::Color32 = egui::Color32::from_rgb(0x00, 0xE0, 0xFF);
+
+    let on_view = |r: &bmc_render::interaction::Rect| {
+        egui::Rect::from_min_size(
+            view.min + egui::vec2(r.x, r.y) * zoom,
+            egui::vec2(r.w, r.h) * zoom,
+        )
+        .intersect(view)
+    };
+    let border = |color| {
+        painter.rect_stroke(
+            view,
+            0.0,
+            egui::Stroke::new(2.0_f32, color),
+            egui::StrokeKind::Inside,
+        );
+    };
+    match &damage.repaint {
+        FrameRepaint::NoTree => border(NO_TREE),
+        FrameRepaint::Full => border(FULL),
+        FrameRepaint::Damage { blitted } => {
+            for rect in blitted {
+                let rect = on_view(rect);
+                painter.rect_filled(rect, 0.0, BLITTED.gamma_multiply(0.25));
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(1.0_f32, BLITTED),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+    }
+    for rect in &damage.regions {
+        painter.rect_stroke(
+            on_view(rect),
+            0.0,
+            egui::Stroke::new(1.0_f32, MOVING),
+            egui::StrokeKind::Inside,
         );
     }
 }

@@ -196,12 +196,27 @@ pub struct TreeResult {
     /// How many nodes contributed to [`Self::dynamic_bounds`]. A union is only
     /// a good proxy for the repaint cost when the parts are close together.
     pub dynamic_node_count: usize,
-    /// Whether the frame asked for the static layer and did not get it, so the
-    /// caller must not treat the layer as holding this frame's static half.
-    pub static_layer_missed: bool,
-    /// Whether this frame captured a layer and painted nothing into it,
-    /// every static node having banded above the dynamic half.
-    /// Such a layer only costs a blit; dropping it never changes the picture,
-    /// since a frame without one paints the whole tree.
-    pub static_layer_empty: bool,
+    /// What became of the static layer this frame.
+    pub static_layer: StaticLayer,
+}
+
+/// What a frame did with its static layer.
+#[derive(Debug, Default)]
+pub enum StaticLayer {
+    /// The frame neither captured nor reused a layer.
+    #[default]
+    Unused,
+    /// The frame captured the layer.
+    Captured {
+        /// Nothing landed in it, every static node having banded above
+        /// the dynamic half. Such a layer only costs a blit;
+        /// dropping it never changes the picture,
+        /// since a frame without one paints the whole tree.
+        empty: bool,
+    },
+    /// The frame blitted the layer back, under the damage it was handed if any.
+    Blitted,
+    /// The frame asked for the layer and did not get it,
+    /// so the caller must not treat the layer as holding its static half.
+    Missed,
 }

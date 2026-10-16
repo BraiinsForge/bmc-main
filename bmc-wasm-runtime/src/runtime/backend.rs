@@ -37,10 +37,12 @@ use wasmi::{Caller, Extern, Linker};
 
 use bmc_render::renderer::{AssetSuspendResult, AssetTagState, Renderer};
 use bmc_render::tree;
-use bmc_render::tree::TouchHit;
+use bmc_render::tree::{StaticLayer, TouchHit};
 use bmc_render::{FrameTimings, RendererAssetResolver, layout_and_render_with_asset_resolver};
 
-use crate::host_api::{FixtureEvent, GuestTree, HermeticRun, HostState, Lifecycle, namespaced_tag};
+use crate::host_api::{
+    FixtureEvent, FrameRepaint, GuestTree, HermeticRun, HostState, Lifecycle, namespaced_tag,
+};
 use crate::network::NetworkInfo;
 use crate::renderer_assets::{
     AssetBacking, RendererAssetId, RendererAssetKind, RendererAssetRecord, cached_bitmap_dimensions,
@@ -1163,6 +1165,7 @@ impl WasmWidgetRuntime {
     pub fn render(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
         let state = self.store.data_mut();
         state.last_asset_restoration = None;
+        state.last_repaint = FrameRepaint::NoTree;
         tracing::trace!(
             instance_id = %state.instance_id,
             delta_ms,
@@ -1464,6 +1467,9 @@ impl WasmWidgetRuntime {
                 // newest, and the pair spans the buffer rotation.
                 state.recent_dynamic_rects.swap(0, 1);
                 state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
+                let missed = matches!(result.static_layer, StaticLayer::Missed);
+                let empty = matches!(result.static_layer, StaticLayer::Captured { empty: true });
+                state.last_repaint = FrameRepaint::of_walk(&result.static_layer, damage);
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
@@ -1490,12 +1496,12 @@ impl WasmWidgetRuntime {
                 // target the host did not clear, so the pixels no draw covers
                 // still hold the previous frame's dynamic half. Owe every
                 // buffer a full repaint and stop reusing the layer.
-                if result.static_layer_missed {
+                if missed {
                     state.last_static_key = None;
                     state.static_layer_useful = false;
                     state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS;
                 }
-                if result.static_layer_empty {
+                if empty {
                     state.release_empty_layer(renderer);
                 }
                 true
@@ -2106,6 +2112,25 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn last_timings(&self) -> FrameTimings {
         self.store.data().last_timings
+    }
+
+    /// How the last frame repainted its target.
+    #[must_use]
+    pub fn last_repaint(&self) -> &FrameRepaint {
+        &self.store.data().last_repaint
+    }
+
+    /// What the last frame's walk reported moving, which the next two frames repaint;
+    /// `None` when that frame painted no tree.
+    #[must_use]
+    pub fn last_dynamic_rects(&self) -> Option<&[bmc_render::interaction::Rect]> {
+        let state = self.store.data();
+        match state.last_repaint {
+            FrameRepaint::NoTree => None,
+            FrameRepaint::Full | FrameRepaint::Damage { .. } => {
+                Some(&state.recent_dynamic_rects[0])
+            }
+        }
     }
 
     /// Drains the fuel charged to each profiling section this frame.
@@ -2851,5 +2876,87 @@ mod tests {
 
         assert!(!is_host_renderer_asset(RendererAssetId::Svg(widget_svg)));
         assert!(is_host_renderer_asset(RendererAssetId::Svg(host_svg)));
+    }
+
+    fn renderer_ptr(
+        renderer: &mut bmc_render::renderer::test_support::ShapingRecorder,
+    ) -> std::ptr::NonNull<dyn bmc_render::renderer::Renderer> {
+        let raw: *mut dyn bmc_render::renderer::Renderer = core::ptr::addr_of_mut!(*renderer);
+        std::ptr::NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null")
+    }
+
+    /// A frame that paints no tree must not keep reporting the last one's repaint,
+    /// nor the regions an older walk moved.
+    #[test]
+    fn a_frame_painting_no_tree_reports_none() {
+        let mut runtime = minimal_runtime();
+        runtime.store.data_mut().last_repaint = crate::host_api::FrameRepaint::Damage {
+            blitted: vec![Rect::new(0.0, 0.0, 1.0, 1.0)],
+        };
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(480.0, 480.0);
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| {
+                runtime.render(16, crate::TargetContents::Cleared)
+            })
+            .expect("BUG: the minimal fixture renders");
+
+        assert!(
+            matches!(
+                runtime.last_repaint(),
+                crate::host_api::FrameRepaint::NoTree
+            ),
+            "got {:?}",
+            runtime.last_repaint()
+        );
+        assert!(runtime.last_dynamic_rects().is_none());
+    }
+
+    /// A replay that blits its layer back under the damage reports those regions.
+    #[test]
+    fn a_replay_blitting_under_damage_reports_the_regions_it_blitted() {
+        let mut runtime = minimal_runtime();
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
+            .with_static_layers();
+        let panel = bmc_render::tree::TreeNode::Column(
+            bmc_render::tree::PropsData {
+                background: bmc_wasm_protocol::colors::Color::from_rgb(1, 2, 3),
+                ..bmc_render::tree::PropsData::default()
+            },
+            Vec::new(),
+        );
+        let state = runtime.store.data_mut();
+        state.cached_tree = Some((panel, 100.0, 100.0));
+        state.static_layer_useful = true;
+        // A layout key no tree has, so the first replay captures the layer.
+        state.last_static_key = Some((0, state.renderer_assets.generation(), u64::MAX));
+        assert!(runtime.replay_cached_tree_for_test(
+            renderer_ptr(&mut renderer),
+            16,
+            crate::TargetContents::Cleared
+        ));
+
+        let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
+        let state = runtime.store.data_mut();
+        state.stale_export_buffers = 0;
+        state.recent_dynamic_rects = [vec![moved], vec![moved]];
+        assert!(runtime.replay_cached_tree_for_test(
+            renderer_ptr(&mut renderer),
+            16,
+            crate::TargetContents::Preserved
+        ));
+
+        let crate::host_api::FrameRepaint::Damage { blitted } = runtime.last_repaint() else {
+            panic!(
+                "BUG: a preserved target with damage must blit under it, got {:?}",
+                runtime.last_repaint()
+            );
+        };
+        assert_eq!(
+            blitted
+                .iter()
+                .map(|r| (r.x, r.y, r.w, r.h))
+                .collect::<Vec<_>>(),
+            [(10.0, 10.0, 10.0, 10.0)]
+        );
     }
 }

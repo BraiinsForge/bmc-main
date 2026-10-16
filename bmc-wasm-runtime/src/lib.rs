@@ -138,7 +138,9 @@ pub mod stack_profile;
 pub mod unified_fixture;
 
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope, Rgb};
-pub use host_api::{EXPORT_BUFFERS, FixtureEvent, FixtureEventKind, FixtureEventState};
+pub use host_api::{
+    EXPORT_BUFFERS, FixtureEvent, FixtureEventKind, FixtureEventState, FrameRepaint,
+};
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use network::NetworkInfo;
 pub use runtime::{

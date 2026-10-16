@@ -424,7 +424,10 @@ fn a_capture_with_every_static_node_above_reports_an_empty_layer() {
 
     let result = capture_once(&mut state, &mut renderer, &static_over_dynamic());
 
-    assert!(result.static_layer_empty);
+    assert!(matches!(
+        result.static_layer,
+        super::StaticLayer::Captured { empty: true }
+    ));
 }
 
 #[test]
@@ -434,7 +437,10 @@ fn a_capture_holding_the_dial_reports_a_layer_in_use() {
 
     let result = capture_once(&mut state, &mut renderer, &dynamic_over_static());
 
-    assert!(!result.static_layer_empty);
+    assert!(matches!(
+        result.static_layer,
+        super::StaticLayer::Captured { empty: false }
+    ));
 }
 
 /// A row scrolled out below the viewport paints nothing,

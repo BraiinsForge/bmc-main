@@ -87,7 +87,7 @@ pub use frame::{
 pub(crate) use walk::AnimationContext;
 #[cfg(test)]
 pub(crate) use walk::DynamicHalf;
-pub use walk::{EmitMode, TouchHit, TreeResult};
+pub use walk::{EmitMode, StaticLayer, TouchHit, TreeResult};
 
 pub use decode::{deserialize_tree, deserialize_tree_keyed};
 

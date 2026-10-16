@@ -1011,6 +1011,9 @@ pub(crate) struct HostState {
     /// intervening frames still has to be repainted or a stale pixel survives.
     pub recent_dynamic_rects: [Vec<Rect>; 2],
 
+    /// How the last frame repainted its target.
+    pub last_repaint: FrameRepaint,
+
     /// Whether the last submitted tree had a static half worth caching,
     /// per [`has_static_content`](bmc_render::partition::has_static_content).
     pub static_layer_useful: bool,
@@ -1479,6 +1482,7 @@ impl HostState {
             transition_states: HashMap::new(),
             frame_counter: 0,
             recent_dynamic_rects: [Vec::new(), Vec::new()],
+            last_repaint: FrameRepaint::NoTree,
             static_layer_useful: true,
             last_static_key: None,
             empty_static_key: None,
@@ -1722,6 +1726,35 @@ impl HostState {
     }
 }
 
+/// How a frame repainted its target.
+#[derive(Debug, Clone)]
+pub enum FrameRepaint {
+    /// No tree was painted this frame;
+    /// the target holds whatever was laid down before it.
+    NoTree,
+    /// The tree was painted over the whole target.
+    Full,
+    /// The static layer was blitted back only under `blitted`,
+    /// and the dynamic draws painted over the rest an earlier frame left.
+    Damage { blitted: Vec<Rect> },
+}
+
+impl FrameRepaint {
+    /// How a walk handed `damage` repainted, from what it did with its static layer:
+    /// only a blit under the damage leaves the rest of the target alone.
+    /// Relies on `render_tree` blitting under the damage whenever there is any.
+    pub(crate) fn of_walk(static_layer: &bmc_render::tree::StaticLayer, damage: Vec<Rect>) -> Self {
+        use bmc_render::tree::StaticLayer;
+        match static_layer {
+            StaticLayer::Blitted if !damage.is_empty() => Self::Damage { blitted: damage },
+            StaticLayer::Unused
+            | StaticLayer::Captured { .. }
+            | StaticLayer::Blitted
+            | StaticLayer::Missed => Self::Full,
+        }
+    }
+}
+
 /// Damage covering the last two frames, or empty to repaint everything.
 ///
 /// Empty when the regions cover more of the surface than `BMC_DAMAGE_MAX_PCT`
@@ -1770,6 +1803,35 @@ mod tests {
     use crate::image_decode_lock::ImageDecodePermit;
     use crate::runtime::FetchAgent;
     use crate::runtime_limits::RuntimeResourceLimits;
+
+    /// Only a blit under some regions leaves the rest of the target alone;
+    /// a whole-layer blit, a capture or a miss repaints all of it, whatever damage it was handed.
+    #[test]
+    fn only_a_partial_blit_reports_a_damage_repaint() {
+        use bmc_render::tree::StaticLayer;
+        let region = Rect::new(1.0, 2.0, 3.0, 4.0);
+        let partial = super::FrameRepaint::of_walk(&StaticLayer::Blitted, vec![region]);
+        assert!(
+            matches!(&partial, super::FrameRepaint::Damage { blitted } if blitted.len() == 1),
+            "got {partial:?}"
+        );
+        let whole_blit = super::FrameRepaint::of_walk(&StaticLayer::Blitted, Vec::new());
+        assert!(
+            matches!(whole_blit, super::FrameRepaint::Full),
+            "got {whole_blit:?}"
+        );
+        for whole in [
+            StaticLayer::Captured { empty: false },
+            StaticLayer::Missed,
+            StaticLayer::Unused,
+        ] {
+            let repaint = super::FrameRepaint::of_walk(&whole, vec![region]);
+            assert!(
+                matches!(repaint, super::FrameRepaint::Full),
+                "got {repaint:?}"
+            );
+        }
+    }
 
     #[test]
     fn decoded_image_holds_permit_while_rgba_is_consumed() {

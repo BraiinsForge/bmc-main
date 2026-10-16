@@ -98,38 +98,7 @@ impl TestbedApp {
                         self.paint_view_controls(row);
                         super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
-                        // The widget's own build and its rendering.
-                        if Button::bar("Reload")
-                            .icon(&mut self.icons.reload)
-                            .show(row, palette)
-                            .on_hover_text("re-read the widget's wasm from disk")
-                            .clicked()
-                        {
-                            self.hot_reload.manual_reload = true;
-                        }
-                        let debug_on = bmc_render::tree::debug_layout_enabled();
-                        if Button::bar("Debug")
-                            .icon(&mut self.icons.debug)
-                            .tone(Tone::switch(palette, debug_on))
-                            .show(row, palette)
-                            .on_hover_text(
-                                "outline every layout node in the widget render, \
-                                 and egui's own inspector over the chrome",
-                            )
-                            .clicked()
-                        {
-                            bmc_render::tree::toggle_debug_layout();
-                        }
-                        let timings_on = self.show_view_timings;
-                        if Button::bar("Timings")
-                            .icon(&mut self.icons.timer)
-                            .tone(Tone::switch(palette, timings_on))
-                            .show(row, palette)
-                            .on_hover_text("show each view's own frame cost over it")
-                            .clicked()
-                        {
-                            self.show_view_timings = !self.show_view_timings;
-                        }
+                        self.paint_render_controls(row, palette);
                         super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
                     }
 
@@ -316,6 +285,56 @@ impl TestbedApp {
             self.cancel_record_mode(&ctx);
         }
         true
+    }
+
+    /// The widget's own build, and the switches over how it renders.
+    fn paint_render_controls(&mut self, row: &mut egui::Ui, palette: &super::theme::Palette) {
+        if Button::bar("Reload")
+            .icon(&mut self.icons.reload)
+            .show(row, palette)
+            .on_hover_text("re-read the widget's wasm from disk")
+            .clicked()
+        {
+            self.hot_reload.manual_reload = true;
+        }
+        let debug_on = bmc_render::tree::debug_layout_enabled();
+        if Button::bar("Debug")
+            .icon(&mut self.icons.debug)
+            .tone(Tone::switch(palette, debug_on))
+            .show(row, palette)
+            .on_hover_text(
+                "outline every layout node in the widget render, \
+                 and egui's own inspector over the chrome",
+            )
+            .clicked()
+        {
+            bmc_render::tree::toggle_debug_layout();
+        }
+        let timings_on = self.show_view_timings;
+        if Button::bar("Timings")
+            .icon(&mut self.icons.timer)
+            .tone(Tone::switch(palette, timings_on))
+            .show(row, palette)
+            .on_hover_text("show each view's own frame cost over it")
+            .clicked()
+        {
+            self.show_view_timings = !self.show_view_timings;
+        }
+        let damage_on = self.show_view_damage;
+        if Button::bar("Damage")
+            .icon(&mut self.icons.damage)
+            .tone(Tone::switch(palette, damage_on))
+            .show(row, palette)
+            .on_hover_text(
+                "show each view's last frame of damage over it: \
+                 yellow where it was blitted back, a red border when \
+                 it repainted in full, grey when it painted no tree, \
+                 and cyan around what its walk reported moving",
+            )
+            .clicked()
+        {
+            self.show_view_damage = !self.show_view_damage;
+        }
     }
 
     /// Where the devices sit and how large they read.

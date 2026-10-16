@@ -267,6 +267,10 @@ struct CliArgs {
     /// it reports. Defaults to what the GL version supports.
     #[arg(long = "view-handoff")]
     view_handoff: Option<view::GpuWait>,
+    /// Start with each view's last frame of damage drawn over it,
+    /// as the toolbar's Damage switch does.
+    #[arg(long = "show-damage")]
+    show_damage: bool,
 }
 
 /// Where this run's views render.
@@ -735,6 +739,14 @@ mod platforms_startup_tests {
     }
 
     #[test]
+    fn show_damage_parses_as_a_switch() {
+        let off = parse_test_args(&["testbed", "widget.wasm"]).expect("BUG: bare args must parse");
+        let on = parse_test_args(&["testbed", "widget.wasm", "--show-damage"])
+            .expect("BUG: --show-damage must parse");
+        assert_eq!((off.show_damage, on.show_damage), (false, true));
+    }
+
+    #[test]
     fn parse_args_accepts_widget_root_forms() {
         let cli = parse_test_args(&["testbed", "widget.wasm", "--widget-root", "widgets/clock"])
             .expect("BUG: widget-root split arg must parse");
@@ -1189,6 +1201,8 @@ pub(crate) struct TestbedApp {
     /// Whether each view carries its own timings — off by default:
     /// an instrument over the widget, while the status bar covers the whole.
     show_view_timings: bool,
+    /// Whether each view carries its last frame's damage; off unless `--show-damage`.
+    show_view_damage: bool,
     notice: Option<Notice>,
     /// Where views render, once the modes that cannot thread have had their say.
     views: ViewPlacement,
@@ -1461,6 +1475,7 @@ impl TestbedApp {
         let (watcher, watcher_rx) =
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
+        let show_view_damage = cli.show_damage;
 
         // The build runs from the widget's workspace, where its lock file
         // and `target/` live; without a widget root there is no source
@@ -1498,6 +1513,7 @@ impl TestbedApp {
             theme: theme::ThemeChoice::Auto,
             icons: icon::Icons::new(),
             show_view_timings: false,
+            show_view_damage,
             notice: None,
             views,
             exit_requested: false,
@@ -2207,7 +2223,10 @@ impl TestbedApp {
             monotonic_ms,
             offline: self.state().offline,
             dormant: self.state().dormant,
-            profile: false,
+            extras: view::ReportExtras {
+                profile: false,
+                damage: self.show_view_damage,
+            },
         };
         // In recording mode only the active view runs; `App::ui` paints the rest
         // as blank slabs. Skipping their render keeps the visual focus clear,
@@ -2233,7 +2252,10 @@ impl TestbedApp {
                 continue;
             }
             let tick = view::ViewTick {
-                profile: Some(idx) == perf_idx,
+                extras: view::ReportExtras {
+                    profile: Some(idx) == perf_idx,
+                    ..tick.extras
+                },
                 ..tick
             };
             let ticked = view.tick(&tick, &self.gl);

@@ -407,7 +407,10 @@ fn commit_submitted_frame(
     state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
     state.cached_tree = Some((frame.tree_node, frame.w, frame.h));
     state.guest_tree = crate::host_api::GuestTree::Committed;
-    if result.static_layer_empty {
+    if matches!(
+        result.static_layer,
+        bmc_render::tree::StaticLayer::Captured { empty: true }
+    ) {
         state.release_empty_layer(renderer);
         state.empty_static_key = Some(frame.static_key);
     }
@@ -415,7 +418,7 @@ fn commit_submitted_frame(
     // that does not exist, and the host preserve a target on its strength.
     // An ignored frame captured none either, though its wire-byte key never
     // matches a layered tree's, so declining to record it is only defensive.
-    if result.static_layer_missed {
+    if matches!(result.static_layer, bmc_render::tree::StaticLayer::Missed) {
         state.last_static_key = None;
         state.static_layer_useful = false;
     } else if state.static_layer_useful {
@@ -433,6 +436,7 @@ fn commit_submitted_frame(
     // pair spans the buffer rotation.
     state.recent_dynamic_rects.swap(0, 1);
     state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
+    state.last_repaint = crate::host_api::FrameRepaint::Full;
 }
 
 fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
@@ -519,9 +523,20 @@ mod tests {
                 has_active: true,
             },
             TreeResult {
-                static_layer_empty: true,
+                static_layer: bmc_render::tree::StaticLayer::Captured { empty: true },
                 ..TreeResult::default()
             },
+        );
+    }
+
+    #[test]
+    fn a_guest_frame_reports_a_full_repaint() {
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        commit_empty_capture(&mut renderer, &mut state);
+        assert!(
+            matches!(state.last_repaint, crate::host_api::FrameRepaint::Full),
+            "got {:?}",
+            state.last_repaint
         );
     }
 

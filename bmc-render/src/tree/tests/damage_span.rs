@@ -157,8 +157,89 @@ fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
         "a base that is not opaque lets last frame's pixels show through",
     );
     assert!(
-        result.static_layer_missed,
+        matches!(result.static_layer, super::StaticLayer::Missed),
         "a failed blit must report the miss, or the host keeps reusing the layer \
          and never repaints the other export buffers",
+    );
+}
+
+/// Walk the moving dot handed `damage`, with its layer captured beforehand when `captured`.
+fn walk_with_layer_and_damage(
+    static_layer: LayerUse,
+    captured: bool,
+    damage: &[crate::interaction::Rect],
+) -> super::TreeResult {
+    const KEY: &str = "damage-only-test";
+    let mut renderer = KeyRecordingRenderer::default();
+    if captured {
+        renderer.captured.push(KEY.to_owned());
+    }
+    let mut state = SlotState::default();
+    let mut ctx = ProcessContext {
+        interaction: &mut state.interaction,
+        modal_states: &mut state.modal_states,
+        scroll_states: &mut state.scroll_states,
+        animation_states: &mut state.animation_states,
+        transition_states: &mut state.transition_states,
+        taffy: &mut state.taffy,
+        frame_counter: 1,
+        delta_ms: 16,
+        now_unix_secs: 0,
+        emit: super::EmitMode::All,
+        static_layer,
+        static_layer_key: KEY,
+        damage_rects: damage,
+    };
+    let mut timings = FrameTimings::default();
+    let (result, _) = layout_and_render(
+        &moving_dot(60.0),
+        100.0,
+        100.0,
+        &mut renderer,
+        &mut timings,
+        &mut ctx,
+    )
+    .expect("BUG: layout_and_render must succeed for the moving dot");
+    result
+}
+
+fn walk_with_layer(static_layer: LayerUse, captured: bool) -> super::TreeResult {
+    walk_with_layer_and_damage(
+        static_layer,
+        captured,
+        &[crate::interaction::Rect::new(0.0, 0.0, 30.0, 30.0)],
+    )
+}
+
+#[test]
+fn a_reused_layer_reports_a_blit_with_or_without_damage() {
+    for layer in [
+        walk_with_layer_and_damage(LayerUse::Reuse, true, &[]).static_layer,
+        walk_with_layer(LayerUse::Reuse, true).static_layer,
+    ] {
+        assert!(
+            matches!(layer, super::StaticLayer::Blitted),
+            "got {layer:?}"
+        );
+    }
+}
+
+/// Handed damage, a frame can still paint everything: the damage alone
+/// would tell the host the rest of the target was kept when it was not.
+#[test]
+fn a_recaptured_or_missed_layer_reports_no_blit_despite_the_damage() {
+    assert!(
+        matches!(
+            walk_with_layer(LayerUse::Capture, false).static_layer,
+            super::StaticLayer::Captured { .. }
+        ),
+        "capturing paints the whole frame"
+    );
+    assert!(
+        matches!(
+            walk_with_layer(LayerUse::Reuse, false).static_layer,
+            super::StaticLayer::Missed
+        ),
+        "a failed blit lays the base over the whole frame"
     );
 }

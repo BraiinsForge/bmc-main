@@ -31,6 +31,7 @@ use super::paint::render_taffy_node;
 use super::walk::AnimationContext;
 use super::walk::DynamicHalf;
 use super::walk::EmitMode;
+use super::walk::StaticLayer;
 use super::walk::TreeResult;
 use crate::components::modal::{ModalInfo, render_modal};
 use crate::interaction::InteractionState;
@@ -417,7 +418,7 @@ fn render_tree(
         && static_layer == LayerUse::Capture
         && renderer.begin_static_layer(static_layer_key, width as u32, height as u32);
     if anim_ctx.emit == EmitMode::All && static_layer == LayerUse::Capture && !split {
-        result.static_layer_missed = true;
+        result.static_layer = StaticLayer::Missed;
     }
 
     // Nothing static changed since the layer was captured, so paint it rather
@@ -431,6 +432,7 @@ fn render_tree(
             renderer.blit_static_layer_rects(static_layer_key, damage_rects)
         };
         if blitted {
+            result.static_layer = StaticLayer::Blitted;
             #[cfg(feature = "frame-timings")]
             if pass_timing {
                 timings.gpu_blit_us = renderer.flush_and_fence_us();
@@ -444,7 +446,7 @@ fn render_tree(
             // captured against. Only reachable with a captured layer, so the
             // transparent-based overlays never take it.
             renderer.fill_rect(0.0, 0.0, width, height, Color::from_rgb(0, 0, 0));
-            result.static_layer_missed = true;
+            result.static_layer = StaticLayer::Missed;
         }
     }
 
@@ -463,7 +465,9 @@ fn render_tree(
             0,
         );
         renderer.end_static_layer(static_layer_key);
-        result.static_layer_empty = !anim_ctx.layer_painted;
+        result.static_layer = StaticLayer::Captured {
+            empty: !anim_ctx.layer_painted,
+        };
         #[cfg(feature = "frame-timings")]
         if pass_timing {
             timings.gpu_capture_us = renderer.flush_and_fence_us();
