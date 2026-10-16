@@ -52,6 +52,7 @@ pub struct NixUpgradeConfig {
     pub profile_dir: PathBuf,
     /// Where an uploaded archive unpacks before the store takes it; on the
     /// store's filesystem, since tmpfs would hold it in RAM.
+    /// Removed before every upload, so nothing else may live in it.
     pub staging_dir: PathBuf,
     pub hooks_dir: String,
     pub hooks_override_path: Option<PathBuf>,
@@ -288,6 +289,7 @@ pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
     /// Validate an uploaded widget archive and install it into the profile.
     /// A rejected or failed upload leaves the profile as it was,
     /// unless undoing a failed activation fails as well.
+    /// Calls must not overlap: each one starts by clearing the staging dir.
     async fn install_widget_package(
         &self,
         upload: WidgetUpload,
@@ -817,6 +819,15 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         &self,
         upload: WidgetUpload,
     ) -> Result<InstalledWidget, WidgetInstallError> {
+        // Calls never overlap, so anything staged is left over
+        // from an install a power cut or kill interrupted.
+        let leftover = self.config.staging_dir.clone();
+        match blocking(move || std::fs::remove_dir_all(leftover)).await {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(WidgetInstallError::Staging(error));
+            }
+            Ok(()) | Err(_) => {}
+        }
         self.refuse_unless_it_fits(upload.announced_bytes)?;
         std::fs::create_dir_all(&self.config.staging_dir).map_err(WidgetInstallError::Staging)?;
         let staging =
