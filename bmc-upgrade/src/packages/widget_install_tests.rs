@@ -870,7 +870,7 @@ fn bytes_nix_cannot_read_are_the_uploaders_archive() {
     ] {
         assert!(
             matches!(
-                super::restore_error(restore_exit(stderr)),
+                super::widget_install::restore_error(restore_exit(stderr)),
                 WidgetInstallError::Rejected(crate::widget_package::WidgetPackageError::Archive(_))
             ),
             "{stderr}"
@@ -886,7 +886,7 @@ fn a_restore_the_device_cannot_write_is_its_own_fault() {
     ] {
         assert!(
             matches!(
-                super::restore_error(restore_exit(stderr)),
+                super::widget_install::restore_error(restore_exit(stderr)),
                 WidgetInstallError::Store(_)
             ),
             "a 400 would blame the uploader and hand them device paths: {stderr}"
@@ -909,10 +909,10 @@ fn a_staged_tree_the_device_cannot_read_is_its_own_fault() {
 
 #[test]
 fn a_version_spelled_two_ways_is_a_reinstall_not_a_replacement() {
-    assert!(super::same_version("1.0", "1.0.0"));
-    assert!(!super::same_version("1.0", "1.0.1"));
+    assert!(super::widget_install::same_version("1.0", "1.0.0"));
+    assert!(!super::widget_install::same_version("1.0", "1.0.1"));
     assert!(
-        super::same_version("nightly", "nightly"),
+        super::widget_install::same_version("nightly", "nightly"),
         "a version semver cannot read still equals itself"
     );
 }
