@@ -408,6 +408,26 @@ async fn an_upload_that_cannot_fit_is_refused_before_anything_is_staged() {
 }
 
 #[tokio::test]
+async fn an_install_clears_what_an_interrupted_one_left_staged() {
+    let rig = Rig::new();
+    let leftover = rig.dir.path().join("staging/.tmpInterrupted/package");
+    std::fs::create_dir_all(&leftover).expect("BUG: leftover dir");
+    std::fs::write(leftover.join("widget.wasm"), [0_u8; 4096]).expect("BUG: leftover file");
+
+    rig.install(valid_nar("example", "1.2.3"))
+        .await
+        .expect("BUG: a valid package installs");
+
+    let staging: Vec<_> = std::fs::read_dir(rig.dir.path().join("staging"))
+        .expect("BUG: staging dir")
+        .collect();
+    assert!(
+        staging.is_empty(),
+        "nothing else clears the staging dir, and the space check would count what stays there"
+    );
+}
+
+#[tokio::test]
 async fn the_same_version_with_other_contents_is_reinstalled() {
     let rig = Rig::new();
     rig.install(valid_nar("example", "1.2.3"))
