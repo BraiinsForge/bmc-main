@@ -56,14 +56,13 @@ fn size_stages<Build: FnOnce() -> Node>(
 ) {
     let only = only_size(ctx);
     system_settings(ctx);
-    for (bucket, label) in BUCKETS {
-        if only.is_some_and(|wanted| wanted != bucket) {
-            continue;
-        }
-        ui.heading(label);
-        let build = view(bucket);
-        ctx.node_stage(ui, bucket.design_size(), build);
-    }
+    ctx.wrapping_flow(
+        ui,
+        BUCKETS
+            .into_iter()
+            .filter(|(bucket, _)| only.is_none_or(|wanted| wanted == *bucket))
+            .map(|(bucket, label)| titled(label, bucket.design_size(), view(bucket))),
+    );
 }
 
 /// One state's fixture, built for whichever bucket the viewport snaps to.

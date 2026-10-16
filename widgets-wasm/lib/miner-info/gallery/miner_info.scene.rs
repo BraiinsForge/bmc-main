@@ -64,24 +64,6 @@ fn round_size() -> RenderSize {
     }
 }
 
-/// How many stages of `stage_width` fit across the visible canvas.
-///
-/// The scene canvas is an `egui::ScrollArea::both`, so `available_width`
-/// is the scrollable extent and never bounds anything — `horizontal_wrapped`
-/// therefore never wraps. `clip_rect` is the part actually on screen,
-/// which is what a column count has to be measured against.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    reason = "screen widths are exact in f32 at this magnitude, and the column count they yield is small and non-negative"
-)]
-fn columns_across(ui: &Ui, stage_width: usize) -> usize {
-    let gap = ui.spacing().item_spacing.x;
-    let visible = ui.clip_rect().width();
-    ((visible / (stage_width as f32 + gap)).floor() as usize).max(1)
-}
-
 fn reported(ctx: &mut SceneCtx) -> Reported {
     match ctx.select(
         "Data",
@@ -125,35 +107,24 @@ fn rectangular(ctx: &mut SceneCtx, ui: &mut Ui) {
     let price = price_move(ctx);
     system_settings(ctx);
 
-    // Laid out across rather than stacked: the frames are small enough that
-    // a wide window fits several side by side, which is how you compare them.
-    let staged: Vec<_> = SMALL_VIEWPORTS
-        .into_iter()
-        .enumerate()
-        .filter(|(index, _)| selected == 0 || selected == index + 1)
-        .map(|(_, viewport)| viewport)
-        .collect();
-    let widest = staged.iter().map(|(width, ..)| *width).max().unwrap_or(1);
-    let per_row = columns_across(ui, widest as usize);
-
-    for row in staged.chunks(per_row) {
-        ui.horizontal_top(|ui| {
-            for &(width, height, label) in row {
-                ui.vertical(|ui| {
-                    ui.heading(label);
-                    ctx.node_stage(ui, (width, height), move || {
-                        let data = miner(shown, Some(1.02));
-                        let market = public(shown, price);
-                        match face {
-                            Face::Mining => face::mining(&data),
-                            Face::Geek => face::geek(Panel::Small, &data, &market),
-                            Face::InfoOverload => face::info_overload(&data, &market),
-                        }
-                    });
-                });
-            }
-        });
-    }
+    ctx.wrapping_flow(
+        ui,
+        SMALL_VIEWPORTS
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| selected == 0 || selected == index + 1)
+            .map(|(_, (width, height, label))| {
+                titled(label, (width, height), move || {
+                    let data = miner(shown, Some(1.02));
+                    let market = public(shown, price);
+                    match face {
+                        Face::Mining => face::mining(&data),
+                        Face::Geek => face::geek(Panel::Small, &data, &market),
+                        Face::InfoOverload => face::info_overload(&data, &market),
+                    }
+                })
+            }),
+    );
 }
 
 /// The BMM101 faces at their own size.
@@ -185,26 +156,21 @@ fn round_gauge(ctx: &mut SceneCtx, ui: &mut Ui) {
     let shown = reported(ctx);
     system_settings(ctx);
 
-    let per_row = columns_across(ui, ROUND_DIAMETER);
-    for row in GAUGE_STATES.chunks(per_row) {
-        ui.horizontal_top(|ui| {
-            for &(label, hashrate) in row {
-                ui.vertical(|ui| {
-                    ui.heading(label);
-                    ctx.node_stage(ui, Round(ROUND_DIAMETER), move || {
-                        let data = miner(shown, hashrate);
-                        let market = public(shown, PriceMove::Up);
-                        let at = round_size();
-                        if geek {
-                            face::round::geek(at, &data, &market, false)
-                        } else {
-                            face::round::mining(at, &data, false)
-                        }
-                    });
-                });
-            }
-        });
-    }
+    ctx.wrapping_flow(
+        ui,
+        GAUGE_STATES.into_iter().map(|(label, hashrate)| {
+            titled(label, Round(ROUND_DIAMETER), move || {
+                let data = miner(shown, hashrate);
+                let market = public(shown, PriceMove::Up);
+                let at = round_size();
+                if geek {
+                    face::round::geek(at, &data, &market, false)
+                } else {
+                    face::round::mining(at, &data, false)
+                }
+            })
+        }),
+    );
 }
 
 #[scene]

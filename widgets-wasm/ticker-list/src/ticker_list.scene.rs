@@ -46,18 +46,20 @@ fn only_size(ctx: &mut SceneCtx) -> Option<usize> {
 fn list_stages(ctx: &mut SceneCtx, ui: &mut Ui, list: impl Fn() -> List + Copy + 'static) {
     let only = only_size(ctx);
     system_settings(ctx);
-    for (index, viewport) in viewports().enumerate() {
-        if only.is_some_and(|wanted| wanted != index) {
-            continue;
-        }
-        let (width, height) = viewport.pixels();
-        let size = WidgetSize::from_dimensions(width, height);
-        ui.heading(viewport.label);
-        ctx.node_stage(ui, viewport.size, move || {
-            let list = list();
-            render::view(&list.symbols, &list.states, &list.names, &list.stale, size)
-        });
-    }
+    ctx.wrapping_flow(
+        ui,
+        viewports()
+            .enumerate()
+            .filter(|(index, _)| only.is_none_or(|wanted| wanted == *index))
+            .map(|(_, viewport)| {
+                let (width, height) = viewport.pixels();
+                let size = WidgetSize::from_dimensions(width, height);
+                titled(viewport.label, viewport.size, move || {
+                    let list = list();
+                    render::view(&list.symbols, &list.states, &list.names, &list.stale, size)
+                })
+            }),
+    );
 }
 
 #[scene(default)]

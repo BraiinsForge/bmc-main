@@ -19,7 +19,7 @@
 // the grant above.
 
 //! Formula 1 screen scenes, rendered natively over fixture data.
-//! Every scene shows all four design sizes as stacked stages.
+//! Every scene stages each device frame, side by side where the pane has room.
 
 use bmc_gallery::prelude::*;
 use formula_1::model::{SizeBucket, size_bucket};
@@ -111,13 +111,21 @@ fn seed_images() {
 /// Which viewport to stage, as an index into [`viewports`],
 /// `None` for every one of them.
 ///
-/// Stacking them all is what a scene is worth looking at for,
+/// Staging them all is what a scene is worth looking at for,
 /// so that is the default; a capture recipe pins one
-/// and gets a frame per shot rather than a column of six.
+/// and gets a frame per shot rather than all six.
 fn only_size(ctx: &mut SceneCtx) -> Option<usize> {
     let mut labels = vec!["All"];
     labels.extend(viewports().map(|viewport| viewport.label));
     ctx.select("Size", &labels, 0).checked_sub(1)
+}
+
+/// The viewports [`only_size`] lets through.
+fn staged_viewports(only: Option<usize>) -> impl Iterator<Item = DeviceViewport> {
+    viewports()
+        .enumerate()
+        .filter(move |(index, _)| only.is_none_or(|wanted| wanted == *index))
+        .map(|(_, viewport)| viewport)
 }
 
 /// Each design size on its own stage, under whichever settings the knobs
@@ -135,15 +143,17 @@ fn size_stages<Build: FnOnce() -> Node>(
     let only = only_size(ctx);
     system_settings(ctx);
     seed_images();
-    for (index, viewport) in viewports().enumerate() {
-        if only.is_some_and(|wanted| wanted != index) {
-            continue;
-        }
-        let (width, height) = viewport.pixels();
-        let build = view(size_bucket(width, height));
-        ui.heading(viewport.label);
-        ctx.node_stage(ui, viewport.size, build);
-    }
+    ctx.wrapping_flow(
+        ui,
+        staged_viewports(only).map(|viewport| {
+            let (width, height) = viewport.pixels();
+            titled(
+                viewport.label,
+                viewport.size,
+                view(size_bucket(width, height)),
+            )
+        }),
+    );
 }
 
 #[scene(default)]
@@ -271,20 +281,23 @@ fn live_idle(ctx: &mut SceneCtx, ui: &mut Ui) {
     let only = only_size(ctx);
     system_settings(ctx);
     seed_images();
-    for (index, viewport) in viewports().enumerate() {
-        if only.is_some_and(|wanted| wanted != index) {
-            continue;
-        }
-        let (width, height) = viewport.pixels();
-        let bucket = size_bucket(width, height);
-        ui.heading(viewport.label);
-        ui.label("race, quali, practice");
-        for view in [live::race_view, live::quali_view, live::practice_view] {
-            ctx.node_stage(ui, viewport.size, move || {
-                view(&fixtures::live_idle(bucket))
-            });
-        }
-    }
+    // Three boards under one heading, which a titled stage cannot hold.
+    ctx.wrapping_flow_with(
+        ui,
+        staged_viewports(only),
+        |viewport| stage_width(viewport.size),
+        |ctx, ui, viewport| {
+            let (width, height) = viewport.pixels();
+            let bucket = size_bucket(width, height);
+            ui.heading(viewport.label);
+            ui.label("race, quali, practice");
+            for view in [live::race_view, live::quali_view, live::practice_view] {
+                ctx.node_stage(ui, viewport.size, move || {
+                    view(&fixtures::live_idle(bucket))
+                });
+            }
+        },
+    );
 }
 
 #[scene]

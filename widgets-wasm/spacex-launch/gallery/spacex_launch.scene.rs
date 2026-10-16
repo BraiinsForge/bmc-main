@@ -63,51 +63,20 @@ fn pick_state(ctx: &mut SceneCtx) -> StateFixture {
     STATES[ctx.select("State", &labels, 0)].1
 }
 
-/// What `matrix_with` measures its columns from: each bucket's design size.
-fn matrix_sizes(buckets: &[(SizeBucket, &str)]) -> Vec<egui::Vec2> {
-    buckets
-        .iter()
-        .map(|(bucket, _)| {
-            let (width, height) = bucket.design_size();
-            let side = |px: u32| {
-                f32::from(u16::try_from(px).expect("BUG: a design frame is a few hundred pixels"))
-            };
-            egui::vec2(side(width), side(height))
-        })
-        .collect()
-}
-
-fn bucket_stage(
-    ctx: &mut SceneCtx,
-    ui: &mut Ui,
-    (bucket, label): (SizeBucket, &str),
-    state: StateFixture,
-) {
-    // A grid counts every widget as a column, so the heading rides with its
-    // stage as one block.
-    ui.vertical(|ui| {
-        ui.heading(label);
-        let view = state(fixtures::at_bucket(bucket));
-        ctx.node_stage(ui, bucket.design_size(), move || launch_view(&view));
-    });
-}
-
-/// One stage per bucket, each at its design size, in as many columns as fit.
-/// Fullscreen goes on its own: the grid measures its columns from the widest
-/// stage, and 1280 would hold the rest to one column.
+/// One stage per bucket, each at its design size.
 fn state_stages(ctx: &mut SceneCtx, ui: &mut Ui, state: StateFixture) {
     let only = only_size(ctx);
     system_settings(ctx);
-    let (fullscreen, rest): (Vec<_>, Vec<_>) = BUCKETS
-        .into_iter()
-        .filter(|(bucket, _)| only.is_none_or(|wanted| wanted == *bucket))
-        .partition(|(bucket, _)| *bucket == SizeBucket::Full);
-    for stage in fullscreen {
-        bucket_stage(ctx, ui, stage, state);
-    }
-    ctx.matrix_with(ui, &matrix_sizes(&rest), |ctx, ui, at| {
-        bucket_stage(ctx, ui, rest[at], state);
-    });
+    ctx.wrapping_flow(
+        ui,
+        BUCKETS
+            .into_iter()
+            .filter(|(bucket, _)| only.is_none_or(|wanted| wanted == *bucket))
+            .map(|(bucket, label)| {
+                let view = state(fixtures::at_bucket(bucket));
+                titled(label, bucket.design_size(), move || launch_view(&view))
+            }),
+    );
 }
 
 #[scene(default)]

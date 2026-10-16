@@ -63,19 +63,21 @@ fn size_stages<Build: FnOnce() -> Node>(
     mut view: impl FnMut(SizeBucket, f32, f32) -> Build,
 ) {
     let only = only_size(ctx);
-    for (index, viewport) in viewports().enumerate() {
-        if only.is_some_and(|wanted| wanted != index) {
-            continue;
-        }
-        let (width, height) = viewport.pixels();
-        let build = view(
-            size_bucket(width, height),
-            viewport.size.layout_width(),
-            viewport.size.layout_height(),
-        );
-        ui.heading(viewport.label);
-        ctx.node_stage(ui, viewport.size, build);
-    }
+    ctx.wrapping_flow(
+        ui,
+        viewports()
+            .enumerate()
+            .filter(|(index, _)| only.is_none_or(|wanted| wanted == *index))
+            .map(|(_, viewport)| {
+                let (width, height) = viewport.pixels();
+                let build = view(
+                    size_bucket(width, height),
+                    viewport.size.layout_width(),
+                    viewport.size.layout_height(),
+                );
+                titled(viewport.label, viewport.size, build)
+            }),
+    );
 }
 
 /// How many decades the hashrate history climbs from its 5 TH/s baseline

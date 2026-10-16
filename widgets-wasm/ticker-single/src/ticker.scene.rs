@@ -82,32 +82,15 @@ fn sample_series(market_open: bool, falling: bool) -> Series {
     series
 }
 
-fn render_viewport(
-    ctx: &mut SceneCtx,
-    ui: &mut Ui,
-    market_open: bool,
-    candlestick: bool,
-    falling: bool,
-    (viewport, label): (Viewport, &str),
-) {
-    let size = match viewport {
+fn widget_size(viewport: Viewport) -> WidgetSize {
+    match viewport {
         Viewport::Variant(variant) => WidgetSize {
             variant,
             width: variant.width(),
             height: variant.height(),
         },
         Viewport::Dimensions(width, height) => WidgetSize::from_dimensions(width, height),
-    };
-    let (width, height) = (size.width, size.height);
-    ui.heading(label);
-    ctx.node_stage(ui, (width, height), || {
-        let series = sample_series(market_open, falling);
-        if candlestick {
-            candlestick::series_view(&series, "AAPL", Period::D7, Period::D7.window(), size)
-        } else {
-            sparkline::series_view(&series, "AAPL", Period::D1.window(), size)
-        }
-    });
+    }
 }
 
 #[scene(default)]
@@ -115,17 +98,18 @@ fn ticker_single(ctx: &mut SceneCtx, ui: &mut Ui) {
     let market_open = ctx.toggle("Market open", true);
     let candlestick = ctx.radio("View", &["Sparkline", "Candlestick"], 0) == 1;
     let falling = ctx.radio("Trend", &["Rising", "Falling"], 0) == 1;
-    render_viewport(ctx, ui, market_open, candlestick, falling, VIEWPORTS[0]);
-    ui.columns(2, |columns| {
-        for (index, viewport) in VIEWPORTS[1..].iter().copied().enumerate() {
-            render_viewport(
-                ctx,
-                &mut columns[index % 2],
-                market_open,
-                candlestick,
-                falling,
-                viewport,
-            );
-        }
-    });
+    ctx.wrapping_flow(
+        ui,
+        VIEWPORTS.into_iter().map(|(viewport, label)| {
+            let size = widget_size(viewport);
+            titled(label, (size.width, size.height), move || {
+                let series = sample_series(market_open, falling);
+                if candlestick {
+                    candlestick::series_view(&series, "AAPL", Period::D7, Period::D7.window(), size)
+                } else {
+                    sparkline::series_view(&series, "AAPL", Period::D1.window(), size)
+                }
+            })
+        }),
+    );
 }

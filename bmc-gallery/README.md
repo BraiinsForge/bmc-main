@@ -40,6 +40,9 @@ Put a `*.scene.rs` beside the code it exercises; the glob in `gallery.toml` find
 and stage through `ctx.node_stage` (an SDK tree) or `ctx.custom_stage` (straight onto the renderer) — the `_input`
 variants take the pointer and the wheel, for widgets that hit-test themselves.
 
+A scene showing one view at several sizes passes `titled(heading, size, build)` stages to `ctx.wrapping_flow`, which
+packs them side by side as far as the pane allows; `ctx.wrapping_flow_with` takes blocks the scene stages itself.
+
 Register assets *inside* the stage closure: the renderer is built on the first stage draw, so `ensure_registered` above
 it panics in a process that has drawn nothing yet — which is what a headless render of that scene is.
 

@@ -23,6 +23,7 @@
 
 mod audio;
 mod bridge;
+mod flow;
 mod images;
 mod round;
 mod settings;
@@ -31,6 +32,7 @@ mod size;
 pub use audio::RodioSink;
 pub use bmc_render::interaction::ActionEvent;
 pub use bridge::{CustomRenderFn, DeckSceneCtx, Fired};
+pub use flow::{Titled, WrappingFlow, stage_width, titled};
 pub use images::seed_image;
 pub use settings::system_settings;
 pub use size::{
