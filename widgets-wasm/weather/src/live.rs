@@ -20,7 +20,7 @@
 
 //! The entry points the host calls: the forecast poll, and a render of what it holds.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 #[expect(
     clippy::wildcard_imports,
@@ -37,7 +37,7 @@ const REFRESH_MS: u32 = 300_000;
 
 thread_local! {
     static STATE: RefCell<State> = const { RefCell::new(State::Loading) };
-    static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
+    static POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
 }
 
 #[unsafe(no_mangle)]
@@ -50,10 +50,10 @@ pub extern "C" fn init() {
             ..Default::default()
         },
     );
-    POLL.with(|p| p.set(Some(handle)));
+    POLL.set(Some(handle));
 }
 
-fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
     let location = Params::current().location;
     let location = location.trim();
     if location.is_empty() {
@@ -62,7 +62,7 @@ fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(api::weather_url(api::NEXUS_BASE, location)))
 }
 
-fn on_weather(handle: PollHandle, response: &FetchResponse) {
+fn on_weather(handle: &PollHandle, response: &FetchResponse) {
     let action = api::weather_fetch_action(response.status);
     let parsed = match action {
         WeatherFetchAction::ReadPayload => Weather::try_from(&response.json()).ok(),
@@ -103,8 +103,8 @@ pub extern "C" fn on_params_update() {
     if prev.as_ref().is_none_or(|p| p.location != cur.location) {
         STATE.with(|s| *s.borrow_mut() = State::Loading);
         // poll engine does not rebuild on param change; invalidate forces a fresh fetch
-        POLL.with(|p| {
-            if let Some(handle) = p.get() {
+        POLL.with_borrow(|p| {
+            if let Some(handle) = p {
                 handle.set_enabled(true);
                 handle.invalidate();
             }
@@ -120,12 +120,11 @@ pub extern "C" fn on_system_update() {
 
 // The stale overlay's anchor: the last good load, but only while stale.
 fn stale_anchor() -> Option<SystemTime> {
-    let handle = POLL.with(Cell::get)?;
-    if handle.is_stale() {
-        handle.last_success_time()
-    } else {
-        None
-    }
+    POLL.with_borrow(|p| {
+        p.as_ref()
+            .filter(|handle| handle.is_stale())
+            .and_then(PollHandle::last_success_time)
+    })
 }
 
 #[unsafe(no_mangle)]

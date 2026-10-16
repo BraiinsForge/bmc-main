@@ -57,11 +57,11 @@ thread_local! {
     clippy::unnecessary_wraps,
     reason = "signature must match the poll Build fn pointer, which returns Option"
 )]
-fn build(_handle: PollHandle) -> Option<FetchSpec> {
+fn build(_handle: &PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(api::URL).timeout(FETCH_TIMEOUT))
 }
 
-fn on_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_reply(handle: &PollHandle, response: &FetchResponse) {
     LIVE.with(|live| {
         let mut live = live.borrow_mut();
         live.rate_limited = response.status == 429;
@@ -122,7 +122,7 @@ fn status(live: &Live, now_secs: i64) -> Status {
     {
         return Status::Stale(anchor);
     }
-    if let Some(handle) = live.handle
+    if let Some(handle) = &live.handle
         && handle.is_stale()
         && let Some(anchor) = handle.last_success_time()
     {

@@ -58,7 +58,7 @@ mod wasm_glue {
         clippy::unnecessary_wraps,
         reason = "matches the SDK Build callback signature; this widget always fetches"
     )]
-    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
         Some(FetchSpec::get(FACTS_API_URL))
     }
 
@@ -76,7 +76,7 @@ mod wasm_glue {
         POLL_HANDLE.with(|h| *h.borrow_mut() = Some(handle));
     }
 
-    fn on_fact_data(handle: PollHandle, response: &FetchResponse) {
+    fn on_fact_data(handle: &PollHandle, response: &FetchResponse) {
         // The response carries `text` (the fact) plus `source` / `url`, which we
         // ignore. Anything other than a non-empty `/text` on a 2xx response is a
         // failure: keep the last-known-good fact and retry.

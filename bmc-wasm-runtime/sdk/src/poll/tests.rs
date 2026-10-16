@@ -59,11 +59,11 @@ impl FetchBackend for FakeBackend {
     clippy::unnecessary_wraps,
     reason = "must match the Build fn-pointer signature, which returns Option"
 )]
-fn build_url(_h: Handle) -> Option<FetchSpec> {
+fn build_url(_h: &Handle) -> Option<FetchSpec> {
     Some(FetchSpec::get("http://x/data"))
 }
 
-fn build_none(_h: Handle) -> Option<FetchSpec> {
+fn build_none(_h: &Handle) -> Option<FetchSpec> {
     None
 }
 
@@ -71,7 +71,7 @@ thread_local! {
     static TOGGLE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
-fn build_toggle(_h: Handle) -> Option<FetchSpec> {
+fn build_toggle(_h: &Handle) -> Option<FetchSpec> {
     TOGGLE
         .with(std::cell::Cell::get)
         .then(|| FetchSpec::get("http://x/data"))
@@ -398,6 +398,76 @@ fn reply_to_disabled_poll_stops_without_reschedule() {
 }
 
 #[test]
+fn an_ended_poll_cancels_its_live_fetch() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = reg.register(build_url, CFG);
+    reg.start(h, &mut be);
+
+    reg.release(h, &mut be);
+
+    assert_eq!(be.cancels.len(), 1);
+}
+
+#[test]
+fn a_reply_already_queued_for_an_ended_poll_is_not_delivered() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = reg.register(build_url, CFG);
+    reg.start(h, &mut be);
+
+    reg.release(h, &mut be);
+
+    assert_eq!(deliver(&mut reg, &mut be, 1, true), ReplyAction::Ignore);
+    assert_eq!(be.sends.len(), 1, "an ended poll never fetches again");
+}
+
+#[test]
+fn an_ended_poll_ignores_later_calls() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = reg.register(build_url, CFG);
+    reg.start(h, &mut be);
+    reg.release(h, &mut be);
+
+    reg.invalidate(h, &mut be);
+    reg.set_enabled(h, false, &mut be);
+    reg.set_enabled(h, true, &mut be);
+    reg.set_enabled_after(h, 1_000, &mut be);
+
+    assert_eq!(be.sends.len(), 1);
+    assert!(!reg.enabled(h));
+}
+
+#[test]
+fn a_poll_ended_by_its_reply_handler_is_not_rescheduled() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = reg.register(build_url, CFG);
+    reg.start(h, &mut be);
+    let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
+    assert_eq!(reg.begin_reply(id, &mut be), ReplyAction::Deliver(h));
+
+    reg.release(h, &mut be);
+    reg.reschedule(h, true, 0, &mut be);
+
+    assert_eq!(be.sends.len(), 1);
+}
+
+#[test]
+fn an_ended_polls_index_is_never_reused() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let first = reg.register(build_url, CFG);
+    reg.release(first, &mut be);
+
+    let second = reg.register(build_url, CFG);
+
+    assert_ne!(first, second);
+}
+
+#[test]
 fn not_stale_while_replies_succeed() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -566,4 +636,85 @@ fn not_stale_without_prior_success_or_interval() {
         "one-shot polls never stale on a cadence"
     );
     assert_eq!(reg.last_success_age(h, 5), None);
+}
+
+thread_local! {
+    static REPLIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static REPLIED_TO: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static STORED: std::cell::RefCell<Option<Handle>> = const { std::cell::RefCell::new(None) };
+}
+
+fn count_reply(_handle: &Handle, _response: &crate::net::FetchResponse) {
+    REPLIES.set(REPLIES.get() + 1);
+}
+
+fn record_index(handle: &Handle, _response: &crate::net::FetchResponse) {
+    REPLIED_TO.set(Some(handle.index()));
+}
+
+fn stop_stored(_handle: &Handle, _response: &crate::net::FetchResponse) {
+    if let Some(stored) = STORED.take() {
+        stored.stop();
+    }
+}
+
+fn is_registered(index: usize) -> bool {
+    glue::REGISTRY.with_borrow(|registry| registry.is_registered(index))
+}
+
+fn reply_to_first_fetch() {
+    let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
+    glue::trampoline(&crate::net::FetchResponse::empty(id, 200));
+}
+
+#[test]
+fn a_reply_reaches_its_handler_with_its_handle() {
+    let handle = register(build_url, record_index, CFG);
+
+    reply_to_first_fetch();
+
+    assert_eq!(REPLIED_TO.get(), Some(handle.index()));
+}
+
+#[test]
+fn a_dropped_handle_stops_its_replies() {
+    let handle = register(build_url, count_reply, CFG);
+
+    drop(handle);
+    reply_to_first_fetch();
+
+    assert_eq!(REPLIES.get(), 0);
+}
+
+#[test]
+fn a_dropped_handle_ends_its_poll() {
+    let handle = register(build_url, count_reply, CFG);
+    let index = handle.index();
+
+    drop(handle);
+
+    assert!(!is_registered(index));
+    assert_eq!(backend::cancels(), 1, "the live fetch is cancelled");
+}
+
+#[test]
+fn a_reply_leaves_its_poll_registered() {
+    let handle = register(build_url, count_reply, CFG);
+
+    reply_to_first_fetch();
+
+    assert_eq!(REPLIES.get(), 1);
+    assert!(is_registered(handle.index()));
+}
+
+#[test]
+fn a_reply_handler_can_stop_its_own_poll_through_the_stored_handle() {
+    let handle = register(build_url, stop_stored, CFG);
+    let index = handle.index();
+    STORED.set(Some(handle));
+
+    reply_to_first_fetch();
+
+    assert!(!is_registered(index));
+    assert_eq!(backend::sends(), 1, "a stopped poll is not rescheduled");
 }

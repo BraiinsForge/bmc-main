@@ -286,7 +286,7 @@ mod wasm_glue {
 
     const PRICE_INTERVAL_MS: u32 = 300_000;
 
-    fn reschedule_failure(handle: PollHandle, class: FetchClass) {
+    fn reschedule_failure(handle: &PollHandle, class: FetchClass) {
         if transition::should_retry(class) {
             handle.retry();
         } else if class.uses_poll_interval() {
@@ -429,15 +429,15 @@ mod wasm_glue {
         request_frame();
     }
 
-    fn price_row(handle: PollHandle) -> Option<usize> {
+    fn price_row(handle: &PollHandle) -> Option<usize> {
         handle.index().checked_sub(PRICE_BASE.with(Cell::get)?)
     }
 
-    fn reference_row(handle: PollHandle) -> Option<usize> {
+    fn reference_row(handle: &PollHandle) -> Option<usize> {
         handle.index().checked_sub(REF_BASE.with(Cell::get)?)
     }
 
-    fn build_price(handle: PollHandle) -> Option<FetchSpec> {
+    fn build_price(handle: &PollHandle) -> Option<FetchSpec> {
         let row = price_row(handle)?;
         if row >= enabled_rows() {
             return None;
@@ -455,7 +455,7 @@ mod wasm_glue {
         )
     }
 
-    fn build_reference(handle: PollHandle) -> Option<FetchSpec> {
+    fn build_reference(handle: &PollHandle) -> Option<FetchSpec> {
         let row = reference_row(handle)?;
         let symbol = SYMBOLS.with(|s| s.borrow().get(row).cloned())?;
         Some(
@@ -464,7 +464,7 @@ mod wasm_glue {
         )
     }
 
-    fn on_price_reply(handle: PollHandle, response: &FetchResponse) {
+    fn on_price_reply(handle: &PollHandle, response: &FetchResponse) {
         let Some(row) = price_row(handle) else {
             return;
         };
@@ -547,7 +547,7 @@ mod wasm_glue {
         request_frame();
     }
 
-    fn on_reference_reply(handle: PollHandle, response: &FetchResponse) {
+    fn on_reference_reply(handle: &PollHandle, response: &FetchResponse) {
         let Some(row) = reference_row(handle) else {
             return;
         };

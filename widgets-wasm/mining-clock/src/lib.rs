@@ -174,7 +174,7 @@ pub extern "C" fn init() {
 // Mapped by registration index, not through `HANDLES`: `register_poll`
 // runs the builder before `init` can store the handle it returns.
 #[cfg(target_arch = "wasm32")]
-fn miner_source(handle: PollHandle) -> MinerSource {
+fn miner_source(handle: &PollHandle) -> MinerSource {
     match handle.index() {
         STATS_POLL => MinerSource::Stats,
         CONSTRAINTS_POLL => MinerSource::Constraints,
@@ -200,7 +200,7 @@ fn auth_mode() -> AuthMode {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
+fn build_login(_handle: &PollHandle) -> Option<FetchSpec> {
     let (url, body) = auth_mode().login()?;
     Some(
         FetchSpec::post(url)
@@ -211,7 +211,7 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
+fn build_miner(handle: &PollHandle) -> Option<FetchSpec> {
     let path = match miner_source(handle) {
         MinerSource::Stats => bos::STATS_PATH,
         MinerSource::Constraints => bos::CONSTRAINTS_PATH,
@@ -232,7 +232,7 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
 // Forcing a frame here would paint at a sub-second offset and reset
 // the 1s cadence, so the second hand stops advancing in even steps.
 #[cfg(target_arch = "wasm32")]
-fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_login_reply(handle: &PollHandle, response: &FetchResponse) {
     if response.ok()
         && let Some(token) = bos::parse_token(&response.json())
     {
@@ -277,7 +277,7 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
 // Painting on every fetch reply would knock
 // the second hand off its even one-second steps.
 #[cfg(target_arch = "wasm32")]
-fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_miner_reply(handle: &PollHandle, response: &FetchResponse) {
     let current = STATE.with(|state| state.borrow().auth.clone());
     match auth_mode().reply_action(&current, response.status) {
         // Local mode has no login to re-arm; the next tick paints the banner.

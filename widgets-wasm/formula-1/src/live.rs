@@ -45,7 +45,7 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-fn resource_of(handle: PollHandle) -> Resource {
+fn resource_of(handle: &PollHandle) -> Resource {
     Resource::ALL[handle.index()]
 }
 
@@ -58,7 +58,7 @@ pub fn with_data<T>(read: impl FnOnce(&Data) -> T) -> T {
     clippy::unnecessary_wraps,
     reason = "matches the SDK Build callback signature; these resources need no credential, so a request is always issuable"
 )]
-fn build(handle: PollHandle) -> Option<FetchSpec> {
+fn build(handle: &PollHandle) -> Option<FetchSpec> {
     let slug = Params::current().driver.as_manifest_value();
     Some(FetchSpec::get(resource_of(handle).url(slug)).timeout(FETCH_TIMEOUT))
 }
@@ -125,7 +125,7 @@ fn keep_last_good(resource: Resource) {
     );
 }
 
-fn on_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_reply(handle: &PollHandle, response: &FetchResponse) {
     let resource = resource_of(handle);
     let json = match valid_reply(resource, response) {
         Ok(json) => json,
@@ -203,7 +203,7 @@ fn retune_live_cadence() {
     HANDLES.with(|handles| {
         if let Some(handles) = handles.borrow().as_ref() {
             for handle in handles {
-                if resource_of(*handle).is_live_board() {
+                if resource_of(handle).is_live_board() {
                     handle.set_interval(interval);
                 }
             }
@@ -217,7 +217,7 @@ pub fn reconcile() {
     HANDLES.with(|handles| {
         if let Some(handles) = handles.borrow().as_ref() {
             for handle in handles {
-                handle.set_enabled(resource_needed(resource_of(*handle), view));
+                handle.set_enabled(resource_needed(resource_of(handle), view));
             }
         }
     });
@@ -264,7 +264,7 @@ fn invalidate(resource: Resource) {
     HANDLES.with(|handles| {
         if let Some(handles) = handles.borrow().as_ref() {
             for handle in handles {
-                if resource_of(*handle) == resource {
+                if resource_of(handle) == resource {
                     handle.invalidate();
                 }
             }

@@ -20,7 +20,7 @@
 
 //! The entry points the host calls: the launch poll, and a render of what it holds.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 #[expect(clippy::wildcard_imports, reason = "widget glue uses many SDK exports")]
 use bmc_wasm_sdk::*;
@@ -37,7 +37,7 @@ const TICK_MS: u32 = 1_000;
 
 thread_local! {
     static STATE: RefCell<State> = const { RefCell::new(State::Loading) };
-    static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
+    static POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
 }
 
 #[unsafe(no_mangle)]
@@ -51,18 +51,18 @@ pub extern "C" fn init() {
             ..Default::default()
         },
     );
-    POLL.with(|p| p.set(Some(handle)));
+    POLL.set(Some(handle));
 }
 
 #[expect(
     clippy::unnecessary_wraps,
     reason = "matches the SDK Build callback signature; this widget always fetches"
 )]
-fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(api::NEXUS_URL))
 }
 
-fn on_launch(handle: PollHandle, response: &FetchResponse) {
+fn on_launch(handle: &PollHandle, response: &FetchResponse) {
     let reply = if response.ok() {
         match LaunchData::parse(&response.json()) {
             Ok(Some(data)) => Reply::Data(data),

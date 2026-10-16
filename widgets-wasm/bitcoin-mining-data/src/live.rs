@@ -43,7 +43,7 @@ thread_local! {
     static RATE_LIMITED: RefCell<[bool; Resource::ALL.len()]> = const { RefCell::new([false; Resource::ALL.len()]) };
 }
 
-fn resource_of(handle: PollHandle) -> Resource {
+fn resource_of(handle: &PollHandle) -> Resource {
     Resource::ALL[handle.index()]
 }
 
@@ -51,11 +51,11 @@ fn resource_of(handle: PollHandle) -> Resource {
     clippy::unnecessary_wraps,
     reason = "matches the SDK poll builder signature; every resource is always requestable"
 )]
-fn build(handle: PollHandle) -> Option<FetchSpec> {
+fn build(handle: &PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(api::url(resource_of(handle))).timeout(FETCH_TIMEOUT))
 }
 
-fn on_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_reply(handle: &PollHandle, response: &FetchResponse) {
     let resource = resource_of(handle);
     if response.status == 429 {
         RATE_LIMITED.with(|limited| limited.borrow_mut()[handle.index()] = true);
@@ -109,7 +109,7 @@ fn reconcile() {
     HANDLES.with(|handles| {
         if let Some(handles) = handles.borrow().as_ref() {
             for handle in handles {
-                handle.set_enabled(resource_needed(resource_of(*handle), bucket));
+                handle.set_enabled(resource_needed(resource_of(handle), bucket));
             }
         }
     });
@@ -171,7 +171,7 @@ fn poll_status() -> Option<Status> {
             .iter()
             .filter(|handle| handle.enabled())
             .filter(|handle| handle.is_stale())
-            .filter_map(|handle| handle.last_success_time())
+            .filter_map(PollHandle::last_success_time)
             .min_by_key(|anchor| anchor.unix_secs)
             .map(|anchor| Status::Stale(anchor.unix_secs));
         if stale.is_some() {
@@ -179,7 +179,6 @@ fn poll_status() -> Option<Status> {
         }
         handles
             .iter()
-            .copied()
             .filter(|handle| handle.enabled())
             .any(PollHandle::is_offline)
             .then_some(Status::Failed)

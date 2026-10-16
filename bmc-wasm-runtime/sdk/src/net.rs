@@ -596,6 +596,18 @@ pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u3
 }
 
 #[cfg(test)]
+impl FetchResponse {
+    /// A reply to `request_id` with no body.
+    pub(crate) fn empty(request_id: FetchRequestId, status: u32) -> Self {
+        Self {
+            status,
+            request_id,
+            body: FetchResponseBody::Guest(Vec::new()),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use bmc_wasm_protocol::FetchRequestId;
 

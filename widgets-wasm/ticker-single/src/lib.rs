@@ -361,7 +361,7 @@ mod wasm_glue {
 
     const REFRESH_MS: u32 = 60_000;
 
-    fn reschedule_failure(handle: PollHandle, class: FetchClass) {
+    fn reschedule_failure(handle: &PollHandle, class: FetchClass) {
         if transition::should_retry(class) {
             handle.retry();
         } else if class.uses_poll_interval() {
@@ -374,8 +374,8 @@ mod wasm_glue {
         static MARKET_OPEN: Cell<Option<bool>> = const { Cell::new(None) };
         static REFERENCE: Cell<ReferenceOutcome> =
             const { Cell::new(ReferenceOutcome::Unknown) };
-        static PRICE_POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
-        static REFERENCE_POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
+        static PRICE_POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
+        static REFERENCE_POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
     }
 
     fn period_of(params: &manifest_params::Params) -> Period {
@@ -393,7 +393,7 @@ mod wasm_glue {
                 ..PollConfig::default()
             },
         );
-        PRICE_POLL.with(|p| p.set(Some(handle)));
+        PRICE_POLL.set(Some(handle));
         let reference_handle = register_poll(
             build_reference_request,
             on_reference_reply,
@@ -402,10 +402,10 @@ mod wasm_glue {
                 ..PollConfig::default()
             },
         );
-        REFERENCE_POLL.with(|poll| poll.set(Some(reference_handle)));
+        REFERENCE_POLL.set(Some(reference_handle));
     }
 
-    fn build_reference_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_reference_request(_handle: &PollHandle) -> Option<FetchSpec> {
         let params = manifest_params::Params::current();
         let pair = effective_pair(&params);
         if pair.is_empty() {
@@ -417,7 +417,7 @@ mod wasm_glue {
         )
     }
 
-    fn on_reference_reply(handle: PollHandle, response: &FetchResponse) {
+    fn on_reference_reply(handle: &PollHandle, response: &FetchResponse) {
         let class = fetch::classify(response.status);
         if let Some(delay_ms) = reference::reference_reschedule(class) {
             handle.retry_after(delay_ms);
@@ -442,7 +442,7 @@ mod wasm_glue {
         request_frame();
     }
 
-    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
         let params = manifest_params::Params::current();
         let pair = effective_pair(&params);
         if pair.is_empty() {
@@ -460,7 +460,7 @@ mod wasm_glue {
         )
     }
 
-    fn on_reply(handle: PollHandle, response: &FetchResponse) {
+    fn on_reply(handle: &PollHandle, response: &FetchResponse) {
         let class = fetch::classify(response.status);
         let parsed = if class == FetchClass::Ok {
             let series =
@@ -520,15 +520,15 @@ mod wasm_glue {
         if change == ParamChange::Instrument {
             MARKET_OPEN.with(|market_open| market_open.set(None));
             REFERENCE.with(|reference| reference.set(ReferenceOutcome::Unknown));
-            REFERENCE_POLL.with(|poll| {
-                if let Some(handle) = poll.get() {
+            REFERENCE_POLL.with_borrow(|poll| {
+                if let Some(handle) = poll {
                     handle.invalidate();
                 }
             });
         }
         STATE.with(|s| *s.borrow_mut() = State::Loading);
-        PRICE_POLL.with(|p| {
-            if let Some(handle) = p.get() {
+        PRICE_POLL.with_borrow(|p| {
+            if let Some(handle) = p {
                 // Blanked data drops its staleness — the new instrument
                 // must not inherit the old one's refresh anchor.
                 handle.reset_staleness();
@@ -555,12 +555,11 @@ mod wasm_glue {
 
     // The stale overlay's anchor: the last good load, but only while stale.
     fn stale_anchor() -> Option<SystemTime> {
-        let handle = PRICE_POLL.with(Cell::get)?;
-        if handle.is_stale() {
-            handle.last_success_time()
-        } else {
-            None
-        }
+        PRICE_POLL.with_borrow(|p| {
+            p.as_ref()
+                .filter(|handle| handle.is_stale())
+                .and_then(PollHandle::last_success_time)
+        })
     }
 
     #[unsafe(no_mangle)]

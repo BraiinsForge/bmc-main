@@ -132,7 +132,7 @@ mod wasm_glue {
 
     thread_local! {
         static STATE: RefCell<State> = const { RefCell::new(State::Loading) };
-        static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
+        static POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
         static PROPAGATION_UNIX_SECS: Cell<Option<f64>> = const { Cell::new(None) };
     }
 
@@ -147,19 +147,19 @@ mod wasm_glue {
                 ..Default::default()
             },
         );
-        POLL.with(|p| p.set(Some(handle)));
+        POLL.set(Some(handle));
     }
 
     #[expect(
         clippy::unnecessary_wraps,
-        reason = "coerced to the SDK `Build` callback type `fn(PollHandle) -> Option<FetchSpec>`; \
+        reason = "coerced to the SDK `Build` callback type `fn(&PollHandle) -> Option<FetchSpec>`; \
                   `None` skips a poll cycle, which this always-fetch widget never needs"
     )]
-    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
         Some(FetchSpec::get(NEXUS_URL))
     }
 
-    fn on_iss(handle: PollHandle, response: &FetchResponse) {
+    fn on_iss(handle: &PollHandle, response: &FetchResponse) {
         let json = response.json();
         let parsed = if response.ok() {
             IssData::try_from(&json).ok()

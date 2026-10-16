@@ -86,7 +86,7 @@ mod wasm_glue {
         static FETCHED_NAMEDAY_TIMESTAMP: RefCell<Option<TimeWithTimezone>> = const { RefCell::new(None) };
     }
 
-    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
         let tz = system::current().timezone().map(Tz::from_runtime)?;
         let time = SystemTime::now();
         let local_time = time.local(&tz)?;
@@ -150,7 +150,7 @@ mod wasm_glue {
         local_now.month == local_time.month && local_now.day == local_time.day
     }
 
-    fn on_nameday_data(handle: PollHandle, response: &FetchResponse) {
+    fn on_nameday_data(handle: &PollHandle, response: &FetchResponse) {
         if response.ok() {
             // Parse the response once and pull out the names for every supported
             // country, so switching country later needs no new fetch. A country
@@ -272,7 +272,7 @@ mod wasm_glue {
             && !is_today(&timestamp)
         {
             POLL_HANDLE.with_borrow(|p| {
-                if let Some(handle) = *p {
+                if let Some(handle) = p {
                     handle.invalidate();
                 }
             });

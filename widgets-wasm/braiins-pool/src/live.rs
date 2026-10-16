@@ -107,7 +107,7 @@ impl Drop for PageChain {
     }
 }
 
-fn source_of(handle: PollHandle) -> Source {
+fn source_of(handle: &PollHandle) -> Source {
     Source::ALL[handle.index()]
 }
 
@@ -144,7 +144,7 @@ fn window() -> (String, String) {
     )
 }
 
-fn build(handle: PollHandle) -> Option<FetchSpec> {
+fn build(handle: &PollHandle) -> Option<FetchSpec> {
     if !pool_bound() {
         return None;
     }
@@ -170,7 +170,7 @@ fn build(handle: PollHandle) -> Option<FetchSpec> {
     )
 }
 
-fn on_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_reply(handle: &PollHandle, response: &FetchResponse) {
     let source = source_of(handle);
     if !response.ok() {
         log_debug!(
@@ -531,7 +531,7 @@ fn reconcile() {
         if let Some(handles) = handles.borrow().as_ref() {
             for handle in handles {
                 let needed = source_needed(
-                    source_of(*handle),
+                    source_of(handle),
                     params.style,
                     bucket,
                     params.worker_states,
@@ -581,7 +581,7 @@ pub extern "C" fn on_params_update() {
         HANDLES.with(|handles| {
             if let Some(handles) = handles.borrow().as_ref() {
                 for handle in handles {
-                    if outdated.contains(&source_of(*handle)) {
+                    if outdated.contains(&source_of(handle)) {
                         handle.invalidate();
                     }
                 }

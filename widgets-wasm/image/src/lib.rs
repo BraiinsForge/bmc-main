@@ -45,7 +45,7 @@ mod wasm_glue {
 
     thread_local! {
         static VIEW: RefCell<View> = const { RefCell::new(View::Loading { decode: None }) };
-        static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
+        static POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
         // Menu auto-dismiss countdown (ms); 0 = closed.
         static MENU_MS: Cell<u32> = const { Cell::new(0) };
         // First render restores from cache (init() has no renderer scope).
@@ -69,7 +69,7 @@ mod wasm_glue {
                 ..Default::default()
             },
         );
-        POLL.with(|p| p.set(Some(handle)));
+        POLL.set(Some(handle));
         INITIAL_RESTORE.with(|f| f.set(true));
     }
 
@@ -99,9 +99,9 @@ mod wasm_glue {
         }
     }
 
-    fn with_poll(f: impl FnOnce(PollHandle)) {
-        POLL.with(|p| {
-            if let Some(handle) = p.get() {
+    fn with_poll(f: impl FnOnce(&PollHandle)) {
+        POLL.with_borrow(|p| {
+            if let Some(handle) = p {
                 f(handle);
             }
         });
@@ -138,7 +138,7 @@ mod wasm_glue {
         Some(id)
     }
 
-    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
         expanded_url().map(|url| FetchSpec::get(url).host_body())
     }
 
@@ -147,7 +147,7 @@ mod wasm_glue {
         picture::restore(&cache_identity().unwrap_or_default(), refresh_interval_ms())
     }
 
-    fn on_image(_handle: PollHandle, response: &FetchResponse) {
+    fn on_image(_handle: &PollHandle, response: &FetchResponse) {
         dispatch(picture::classify_body(
             response,
             widget_size(),
@@ -257,11 +257,11 @@ mod wasm_glue {
                             with_overlay(view, render::updating_pill(), widget_viewport().shape)
                         }
                         // is_stale adds the grace window, so the 10s retry heals a blip first.
-                        Badge::Stale => match POLL
-                            .with(Cell::get)
-                            .filter(|handle| handle.is_stale())
-                            .and_then(PollHandle::last_success_time)
-                        {
+                        Badge::Stale => match POLL.with_borrow(|p| {
+                            p.as_ref()
+                                .filter(|handle| handle.is_stale())
+                                .and_then(PollHandle::last_success_time)
+                        }) {
                             Some(anchor) => {
                                 with_stale_overlay(view, anchor, widget_viewport().shape)
                             }

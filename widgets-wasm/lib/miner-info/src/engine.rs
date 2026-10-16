@@ -411,12 +411,12 @@ const MINER_BASE: usize = 1;
 const PUBLIC_BASE: usize = MINER_BASE + MINER_ENDPOINTS.len();
 
 #[cfg(target_arch = "wasm32")]
-fn miner_index(handle: PollHandle) -> usize {
+fn miner_index(handle: &PollHandle) -> usize {
     handle.index() - MINER_BASE
 }
 
 #[cfg(target_arch = "wasm32")]
-fn public_index(handle: PollHandle) -> usize {
+fn public_index(handle: &PollHandle) -> usize {
     handle.index() - PUBLIC_BASE
 }
 
@@ -605,7 +605,7 @@ pub fn on_credentials_update() {
 // or the mode has no login. The poll is one-shot,
 // so re-auth happens by invalidating the handle rather than looping.
 #[cfg(target_arch = "wasm32")]
-fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
+fn build_login(_handle: &PollHandle) -> Option<FetchSpec> {
     let params = config();
     if !view_needs_miner(params.view, panel()) {
         return None;
@@ -623,7 +623,7 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
 // remote mode holds no token yet, or no slot picks a mode —
 // so the poll stays dormant until a login succeeds and invalidates it.
 #[cfg(target_arch = "wasm32")]
-fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
+fn build_miner(handle: &PollHandle) -> Option<FetchSpec> {
     let auth = STATE.with(|state| state.borrow().auth.clone());
     let (url, header) = config()
         .auth
@@ -640,7 +640,7 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
     clippy::unnecessary_wraps,
     reason = "signature must match the poll Build fn pointer, which returns Option"
 )]
-fn build_public(handle: PollHandle) -> Option<FetchSpec> {
+fn build_public(handle: &PollHandle) -> Option<FetchSpec> {
     let url = (PUBLIC_ENDPOINTS[public_index(handle)].url)(selected_currency());
     Some(FetchSpec::get(url))
 }
@@ -650,7 +650,7 @@ fn build_public(handle: PollHandle) -> Option<FetchSpec> {
 // A refusal raises the auth overlay, anything else the offline one,
 // and either way the one-shot login re-arms rather than wedging.
 #[cfg(target_arch = "wasm32")]
-fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_login_reply(handle: &PollHandle, response: &FetchResponse) {
     if response.ok()
         && let Some(token) = bos::parse_token(&response.json())
     {
@@ -706,7 +706,7 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
 //
 // Any other failure keeps the last good data, flagging it stale.
 #[cfg(target_arch = "wasm32")]
-fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_miner_reply(handle: &PollHandle, response: &FetchResponse) {
     let current = STATE.with(|state| state.borrow().auth.clone());
     let action = config().auth.reply_action(&current, response.status);
     match &action {
@@ -767,7 +767,7 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
 // The "this data is now wrong" case is a currency change,
 // which `on_params_update` resets deliberately.
 #[cfg(target_arch = "wasm32")]
-fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
+fn on_public_reply(handle: &PollHandle, response: &FetchResponse) {
     let idx = public_index(handle);
     if response.ok() {
         let currency = selected_currency();
@@ -822,7 +822,7 @@ pub fn overlay(view: View, panel: Panel, auth: &AuthState) -> Option<mining::ove
                 .chain(handles.public.iter())
                 .filter(|handle| handle.enabled())
                 .filter(|handle| handle.is_stale())
-                .filter_map(|handle| handle.last_success_time())
+                .filter_map(PollHandle::last_success_time)
                 .min_by_key(|anchor| anchor.unix_secs)
                 .map(mining::overlay::OverlayKind::Stale);
             if stale.is_some() {
@@ -835,13 +835,11 @@ pub fn overlay(view: View, panel: Panel, auth: &AuthState) -> Option<mining::ove
                 || handles
                     .miner
                     .iter()
-                    .copied()
                     .filter(|handle| handle.enabled())
                     .any(PollHandle::is_offline);
             let public_offline = handles
                 .public
                 .iter()
-                .copied()
                 .filter(|handle| handle.enabled())
                 .any(PollHandle::is_offline);
             offline_label(miner_offline, public_offline).map(mining::overlay::OverlayKind::Failed)

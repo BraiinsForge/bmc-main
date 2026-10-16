@@ -167,19 +167,21 @@ mod wasm_glue {
 
     thread_local! {
         static STATE: RefCell<State> = const { RefCell::new(State::Loading) };
+        /// Keeps the poll running for the widget's lifetime.
+        static POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
     }
 
     #[expect(
         clippy::unnecessary_wraps,
         reason = "signature must match the poll Build fn pointer, which returns Option"
     )]
-    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
         Some(FetchSpec::get(BLOCK_HEIGHT_API_URL))
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn init() {
-        let _ = register_poll(
+        let handle = register_poll(
             build_request,
             on_block_data,
             PollConfig {
@@ -188,9 +190,10 @@ mod wasm_glue {
                 ..Default::default()
             },
         );
+        POLL.set(Some(handle));
     }
 
-    fn on_block_data(handle: PollHandle, response: &FetchResponse) {
+    fn on_block_data(handle: &PollHandle, response: &FetchResponse) {
         let outcome = if response.ok() {
             let json = response.json();
             let raw_height = json.i64("/data/height");

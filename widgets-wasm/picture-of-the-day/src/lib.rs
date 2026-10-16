@@ -104,8 +104,8 @@ mod wasm_glue {
         /// The same pair for the outstanding decode, keyed by its job,
         /// so a superseded completion cannot install its caption.
         static DECODING: RefCell<Option<(ImageJobId, String, Meta)>> = const { RefCell::new(None) };
-        static FEED_POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
-        static PICTURE_POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
+        static FEED_POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
+        static PICTURE_POLL: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
         // Menu auto-dismiss countdown (ms); 0 = closed.
         static MENU_MS: Cell<u32> = const { Cell::new(0) };
         // First render restores from cache (init() has no renderer scope).
@@ -129,7 +129,7 @@ mod wasm_glue {
                 ..Default::default()
             },
         );
-        FEED_POLL.with(|p| p.set(Some(feed_poll)));
+        FEED_POLL.set(Some(feed_poll));
 
         // No interval: the feed arms this one, and a success must not
         // reschedule a re-download of a picture that has not changed.
@@ -143,7 +143,7 @@ mod wasm_glue {
                 ..Default::default()
             },
         );
-        PICTURE_POLL.with(|p| p.set(Some(picture_poll)));
+        PICTURE_POLL.set(Some(picture_poll));
 
         INITIAL_RESTORE.with(|f| f.set(true));
     }
@@ -181,17 +181,17 @@ mod wasm_glue {
         }
     }
 
-    fn with_feed_poll(f: impl FnOnce(PollHandle)) {
-        FEED_POLL.with(|p| {
-            if let Some(handle) = p.get() {
+    fn with_feed_poll(f: impl FnOnce(&PollHandle)) {
+        FEED_POLL.with_borrow(|p| {
+            if let Some(handle) = p {
                 f(handle);
             }
         });
     }
 
-    fn with_picture_poll(f: impl FnOnce(PollHandle)) {
-        PICTURE_POLL.with(|p| {
-            if let Some(handle) = p.get() {
+    fn with_picture_poll(f: impl FnOnce(&PollHandle)) {
+        PICTURE_POLL.with_borrow(|p| {
+            if let Some(handle) = p {
                 f(handle);
             }
         });
@@ -232,11 +232,11 @@ mod wasm_glue {
         clippy::unnecessary_wraps,
         reason = "matches the SDK Build callback signature; the feed URL is fixed"
     )]
-    fn build_feed_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_feed_request(_handle: &PollHandle) -> Option<FetchSpec> {
         Some(FetchSpec::get(feed::metadata_url(source())))
     }
 
-    fn on_feed(handle: PollHandle, response: &FetchResponse) {
+    fn on_feed(handle: &PollHandle, response: &FetchResponse) {
         if !response.ok() {
             // The poll engine reschedules on retry_ms.
             log_warn!(
@@ -297,7 +297,7 @@ mod wasm_glue {
 
     // ── Picture poll ─────────────────────────────────────────────────
 
-    fn build_picture_request(_handle: PollHandle) -> Option<FetchSpec> {
+    fn build_picture_request(_handle: &PollHandle) -> Option<FetchSpec> {
         let size = widget_size();
         let meta = PENDING.with(|p| p.borrow().clone());
         if meta.date.is_empty() {
@@ -309,7 +309,7 @@ mod wasm_glue {
         Some(spec)
     }
 
-    fn on_picture(_handle: PollHandle, response: &FetchResponse) {
+    fn on_picture(_handle: &PollHandle, response: &FetchResponse) {
         let Some((identity, meta)) = REQUESTED.with(|r| r.borrow().clone()) else {
             return;
         };
@@ -527,15 +527,15 @@ mod wasm_glue {
             Badge::Updating => with_overlay(view, render::updating_pill(), shape),
             // The badge already means the last picture fetch failed,
             // so only the grace window is left to check.
-            Badge::Stale => match PICTURE_POLL
-                .with(Cell::get)
-                .filter(|handle| {
-                    handle
-                        .last_success_age()
-                        .is_some_and(|age| age > PICTURE_STALE_AFTER)
-                })
-                .and_then(PollHandle::last_success_time)
-            {
+            Badge::Stale => match PICTURE_POLL.with_borrow(|p| {
+                p.as_ref()
+                    .filter(|handle| {
+                        handle
+                            .last_success_age()
+                            .is_some_and(|age| age > PICTURE_STALE_AFTER)
+                    })
+                    .and_then(PollHandle::last_success_time)
+            }) {
                 Some(anchor) => with_stale_overlay(view, anchor, shape),
                 None => view,
             },
