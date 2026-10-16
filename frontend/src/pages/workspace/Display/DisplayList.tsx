@@ -19,10 +19,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { type ChangeEvent, Component, createRef, Fragment, type ReactElement } from 'react';
+import { Component, createRef, Fragment, type ReactElement } from 'react';
 import { debounce, escape, isPlainObject } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
-import { FormattedMessage, type IntlShape, useIntl } from 'react-intl';
+import { type IntlShape, useIntl } from 'react-intl';
 import { type NavigateFunction, useNavigate } from 'react-router';
 
 // Libs
@@ -31,7 +31,7 @@ import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from './fn';
 import { getID } from './const';
 import { toast } from '@/lib/toast';
 import { serial } from '@/lib/async';
-import { listenDocumentEvent } from '@/lib/dom';
+import { listenDocumentEvent, unloadGuard } from '@/lib/dom';
 import { setState, Sized, stopEventPropagation } from '@/lib/react';
 import { Form, type iField } from '@/lib/form';
 import { assertUnreachable } from '@/lib/ts';
@@ -45,7 +45,7 @@ import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Button, Link } from '@/components';
+import { Button } from '@/components';
 import { Dropdown, OverflowMenu, MenuButton, MenuItem, Toggle, Layer } from '@carbon/react';
 import {
     CarouselHorizontal as IconCycle,
@@ -96,6 +96,10 @@ function installedWidgetPackage(body: unknown): InstalledWidgetPackage | null {
     }
 }
 
+// Once the device has the whole upload it installs regardless,
+// so the dialog stays up while installing and a timeout is not a failure.
+type PackageDialog = 'closed' | 'open' | 'installing';
+
 type OpenDialogKind = null | 'scene-select' | 'manifest';
 
 enum DialogCloseResult {
@@ -132,7 +136,7 @@ interface State {
     manifestWidgets: pb.WidgetManifest[];
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
-    packageUploading: boolean;
+    packageDialog: PackageDialog;
     timezones: pb.Timezone[];
     accounts: null | pb.Account[];
     credentialTypes: pb.CredentialTypeLookup;
@@ -156,7 +160,7 @@ const getInitialState = (): State => ({
     manifestWidgets: [],
     manifestLookup: new Map(),
     manifestsLoading: false,
-    packageUploading: false,
+    packageDialog: 'closed',
     timezones: [],
     accounts: null,
     credentialTypes: new Map(),
@@ -375,40 +379,15 @@ class View extends Component<Props, State> {
         return runningWidgets.count >= runningWidgets.max;
     }
 
-    #packageInputRef = createRef<HTMLInputElement>();
-    #packagePick = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-        const accepted = await this.context.confirm({
-            size: 'sm',
-            danger: true,
-            title: formatMessage({ defaultMessage: 'Install a Third-Party Widget' }),
-            message: (
-                <div className={css.packageRiskMessage}>
-                    <FormattedMessage
-                        tagName="p"
-                        defaultMessage="Widget packages installed from a file are not checked by Braiins Forge. A malicious package can take over this device and anything it can reach on your network. Install only packages from a source you trust."
-                    />
-                    <FormattedMessage
-                        tagName="p"
-                        defaultMessage="Upload the widget as a .nar archive of its package. See the <a>bmc-main repository</a> for instructions."
-                        values={{ a: ch => <Link href={URLS.external.bmcMainRepository} external children={ch} /> }}
-                    />
-                </div>
-            ),
-            confirmLabel: formatMessage({ defaultMessage: 'I Accept the Risk' }),
-            cancelLabel: formatMessage({ defaultMessage: 'Cancel' }),
-        });
-        if (accepted) this.#packageInputRef.current?.click();
-    };
-    #packageChosen = (e: ChangeEvent<HTMLInputElement>): void => {
-        const file = e.target.files?.[0];
-        // Cleared so choosing the same file again fires change again.
-        e.target.value = '';
-        if (file) this.#installWidgetPackage(file);
+    // Carbon 1.115 keeps the first onRequestClose for Escape (its effect depends on `open` only),
+    // so the dialog hiding its close button does not stop Escape.
+    #closePackageModal = (): void => {
+        if (this.state.packageDialog === 'open') this.setState({ packageDialog: 'closed' });
     };
     #installWidgetPackage = async (file: File): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        this.setState({ packageUploading: true });
+        this.setState({ packageDialog: 'installing' });
+        unloadGuard.enable();
         try {
             const response = await fetch(URLS.api.installWidgetPackage, {
                 method: 'POST',
@@ -439,8 +418,6 @@ class View extends Component<Props, State> {
             );
             this.#loadManifestWidgets();
         } catch (error) {
-            // Once the device has the whole upload it installs regardless,
-            // so a timeout is not a failure.
             const timedOut = error instanceof DOMException && error.name === 'TimeoutError';
             toast.error(
                 timedOut
@@ -452,7 +429,8 @@ class View extends Component<Props, State> {
                 { duration: INSTALL_WIDGET_PACKAGE_ERROR_SECONDS },
             );
         } finally {
-            this.setState({ packageUploading: false });
+            unloadGuard.disable();
+            this.setState({ packageDialog: 'closed' });
         }
     };
     #packageInstalledMessage(installed: InstalledWidgetPackage): string {
@@ -1168,22 +1146,22 @@ class View extends Component<Props, State> {
                         <div className={css.headerControls} ref={ref}>
                             {widgetPackageInstallable(this.props.hardwareCapabilities) && (
                                 <>
-                                    <input
-                                        ref={this.#packageInputRef}
-                                        id={$('widget-package-file')}
-                                        type="file"
-                                        accept=".nar"
-                                        hidden
-                                        onChange={this.#packageChosen}
-                                    />
                                     <Button
                                         id={$('install-widget-package')}
                                         kind="secondary"
                                         renderIcon={IconUpload}
-                                        loading={this.state.packageUploading}
-                                        onClick={this.#packagePick}
+                                        onClick={() => this.setState({ packageDialog: 'open' })}
                                         children={txt.installPackage}
                                     />
+                                    {/* Mounted per opening, so a cancelled pick does not come back. */}
+                                    {this.state.packageDialog !== 'closed' && (
+                                        <Comp.InstallWidgetPackageModal
+                                            id={$('install-widget-package-modal')}
+                                            installing={this.state.packageDialog === 'installing'}
+                                            onClose={this.#closePackageModal}
+                                            onInstall={this.#installWidgetPackage}
+                                        />
+                                    )}
                                 </>
                             )}
 

@@ -12,13 +12,17 @@ that risk before uploading.
 > As a Deck user, I want to upload a widget `.nar` file in the Display Widgets tab so I can install a WASM widget
 > without developer tooling or a package feed.
 
-- The Display Widgets page has an **Install Widget** button, first among the page controls, that opens a file picker for
-  a `.nar` file.
-- Before the file picker opens, a warning says that packages installed from a file are not checked by Braiins Forge and
-  may be malicious; the user accepts the risk or cancels. The same dialog says what to upload, the widget as a `.nar`
-  archive of its package, and links to the BraiinsForge/bmc-main repository for instructions.
+- The Display Widgets page has an **Install Widget** button, first among the page controls, that opens an install
+  dialog.
+- The dialog warns that packages installed from a file are not checked by Braiins Forge and may be malicious. It says
+  what to upload, the widget as a `.nar` archive of its package, and links to the BraiinsForge/bmc-main repository for
+  instructions.
+- The user drops the file on the dialog or chooses it, and sees its name and size; a file of another type is marked
+  invalid. The install starts only once a `.nar` file is chosen and the user accepts the risk; cancelling uploads
+  nothing.
 - The upload runs in the browser session the user is already signed in to; no extra login or token is needed.
-- While the file uploads and installs, the button shows a spinner and cannot be pressed again.
+- While the file uploads and installs, the dialog stays open with a spinner on its install button and cannot be closed;
+  it closes once the device answers or the page stops waiting for it.
 - After a successful install the widget appears in the widget picker straight away, with no device restart.
 
 ### Know what happened
