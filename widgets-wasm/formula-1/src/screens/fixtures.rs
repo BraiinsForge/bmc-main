@@ -396,10 +396,10 @@ pub fn next_race_weekend() -> NextRace {
         drs_zones: Some(2),
         tire_compounds: Some("C1, C2, C3".to_owned()),
         sessions: vec![
-            session("P1", 21, 10, 30),
-            session("Sprint Quali", 21, 14, 30),
-            session("Sprint Race", 22, 10, 0),
-            session("Quali", 22, 14, 0),
+            session("Practice 1", 21, 10, 30),
+            session("Sprint Qualifying", 21, 14, 30),
+            session("Sprint", 22, 10, 0),
+            session("Qualifying", 22, 14, 0),
             session("Race", 23, 13, 0),
         ],
     }

@@ -57,7 +57,7 @@ impl Board {
     fn title(self) -> &'static str {
         match self {
             Self::Race => "Race Live",
-            Self::Quali => "Quali Live",
+            Self::Quali => "Qualifying Live",
             Self::Practice => "Practice Live",
         }
     }
