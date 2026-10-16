@@ -449,8 +449,8 @@ impl<T: BmcManager> HttpServer<T> {
             .with_state(self.widget_registry.clone())
     }
 
-    /// Serve a widget's manifest icon. The path is from the trusted install-time
-    /// manifest (the uid only selects the widget), so the URL adds no traversal.
+    /// Serve a widget's manifest icon. The path comes from the installed manifest
+    /// (the uid only selects the widget), so the URL adds no traversal.
     async fn handle_widget_icon(
         State(registry): State<Arc<WidgetRegistry>>,
         Path(uid): Path<String>,
@@ -466,7 +466,23 @@ impl<T: BmcManager> HttpServer<T> {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("icon");
-        let headers = Storage::get_file_headers(filename, &file).await;
+        let mut headers = Storage::get_file_headers(filename, &file).await;
+        // The icon comes from the widget package: opened directly,
+        // an SVG's script would otherwise run on the device's origin with its session.
+        headers.insert(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        );
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox"),
+        );
+        // The file name comes from the package too;
+        // quoted into a header it could smuggle parameters.
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("inline"),
+        );
         let body = Body::from_stream(ReaderStream::new(file));
         (headers, body).into_response()
     }
