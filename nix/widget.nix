@@ -31,6 +31,7 @@ let
       };
       widgetSrc = ../widgets + "/${name}";
     in
+    assert pkgs.callPackage ./widget-name.nix { } name;
     pkgs.runCommand "bmc-widget-${name}" { } ''
       mkdir -p $out/lib/bmc-widgets/${name}/bin
       cp ${widgetSrc}/manifest.json $out/lib/bmc-widgets/${name}/

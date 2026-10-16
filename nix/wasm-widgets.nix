@@ -206,6 +206,7 @@ let
           chmod +x "$base/bin/${name}"
         '';
     in
+    assert pkgs.callPackage ./widget-name.nix { } name;
     assert lib.assertMsg (builtins.elem wrapperMode [ "profile" "baked" ])
       "wrapperMode must be either profile or baked";
     (pkgs.runCommand "bmc-widget-${name}" { } ''
