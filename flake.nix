@@ -26,9 +26,9 @@
   inputs = {
     self.lfs = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    # `set default-list` in common.justfile needs just >= 1.52.0, which the pin
-    # above misses by three weeks. Scoped to that tool rather than moving it.
-    nixpkgs-just.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    # Tools newer than the pin above carries, scoped to them rather than moving it:
+    # `set default-list` in common.justfile needs just >= 1.52.0, and the frontend builds with pnpm 12.
+    nixpkgs-tools.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-source-info.url = "github:BraiinsForge/nix-source-info";
     nixlib.url = "github:BraiinsForge/nix-lib/master";
@@ -53,7 +53,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-just, flake-utils, nixlib, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
+  outputs = { self, nixpkgs, nixpkgs-tools, flake-utils, nixlib, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
@@ -69,15 +69,20 @@
               file = ./rust-toolchain.toml;
               sha256 = "sha256-A1abGIbOtcBSdrUMhDGrER3pRM1hQP4fp9gh3Y4PKc8=";
             })
-            # Overlay yarn & nodejs
             (final: prev: {
               nodejs = prev.nodejs_24;
-              yarn = prev.yarn.override { nodejs = prev.nodejs_24; };
             })
-            # See the `nixpkgs-just` input for why this one tool comes from elsewhere.
-            (final: prev: {
-              just = nixpkgs-just.legacyPackages.${localSystem}.just;
-            })
+            # See the `nixpkgs-tools` input for why these tools come from elsewhere.
+            (final: prev:
+              let tools = nixpkgs-tools.legacyPackages.${localSystem}; in {
+                just = tools.just;
+                # Its own set rather than nixpkgs' attributes, so the pin's packages built with `fetchPnpmDeps`
+                # keep the fetcher, and so the hashes, they were locked with.
+                pnpmToolchain = {
+                  inherit (tools) fetchPnpmDeps pnpmConfigHook;
+                  pnpm = tools.pnpm_12;
+                };
+              })
           ];
         };
 
@@ -94,7 +99,7 @@
           deckPackages = workspace.legacyPackages.deck-packages;
           frontend = workspace.deps.frontend;
           protoPlugins = proto-plugins;
-          inherit (workspace.packages) yarnFiles;
+          inherit (workspace.packages) frontendNodeModules;
           inherit (workspace.bmc) profiles crates;
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
           inherit (workspace) wasmWrapperTestPackages;
@@ -147,7 +152,7 @@
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = (bmc.profiles.fast.mkShell {
           name = "bmc-local-env";
-          packages = (commonDeps.frontendDeps pkgs)
+          packages = (commonDeps.frontendDeps { inherit (pkgs) nodejs; inherit (pkgs.pnpmToolchain) pnpm; })
             ++ [
             proto-plugins.protoc-gen-buffa
             proto-plugins.protoc-gen-connect-rust

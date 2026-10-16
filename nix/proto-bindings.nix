@@ -27,9 +27,10 @@
 , buf
 , delta
 , git
+, nodejs
 , cacert
 , protoPlugins
-, yarnFiles
+, frontendNodeModules
 ,
 }:
 
@@ -72,10 +73,12 @@ stdenv.mkDerivation {
     ];
   };
 
+  # nodejs runs the `node_modules/.bin` shims, which pnpm writes to call `node` from PATH.
   nativeBuildInputs = [
     buf
     delta
     git
+    nodejs
     protoPlugins.protoc-gen-buffa
     protoPlugins.protoc-gen-connect-rust
   ];
@@ -86,7 +89,7 @@ stdenv.mkDerivation {
 
     for tree in $trees; do mkdir -p $TMPDIR/checked-in/$tree && cp -r $tree/. $TMPDIR/checked-in/$tree; done
     substituteInPlace buf.gen.yaml --replace-fail "module: ${module}:${pin}" "binary_image: ${googleapis}"
-    PATH=${yarnFiles}/node_modules/.bin:$PATH buf generate
+    PATH=${frontendNodeModules}/node_modules/.bin:$PATH buf generate
     for tree in $trees; do mkdir -p $TMPDIR/generated/$tree && cp -r $tree/. $TMPDIR/generated/$tree; done
 
     # delta exits 1 on a difference, like diff, and shows it syntax-highlighted.

@@ -11,7 +11,7 @@ dependencies:
 2. **bmc-mock-display/shell.nix was orphaned** — used impure `<nixpkgs>` channel, had a separate Rust toolchain, not
    integrated with the flake
 3. **Missing runtime libraries** — `libfontconfig.so.1` needed by Slint for font enumeration (loaded via dlopen)
-4. **No frontend devShell** — developers needed global node/yarn; biome/sass ship prebuilt native binaries that don't
+4. **No frontend devShell** — developers needed global node/pnpm; biome/sass ship prebuilt native binaries that don't
    work on NixOS out of the box
 5. **No documentation** — unclear which shell to use for what
 
@@ -25,7 +25,7 @@ flake.nix devShells:
 ├── armv7-musl-debug    → musl ARM cross-compile shell
 ├── armv7-glibc-release → glibc ARM cross-compile shell
 ├── armv7-gilbc-debug   → glibc ARM cross-compile shell
-└── frontend       → mkShell with nodejs/yarn + LD_LIBRARY_PATH for libgcc
+└── frontend       → mkShell with nodejs/pnpm + LD_LIBRARY_PATH for libgcc
 
 bmc-mock-display/shell.nix  → standalone, impure, X11/Wayland/GL deps
 ```

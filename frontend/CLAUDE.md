@@ -2,8 +2,9 @@ For building, linting, testing we use justfile.
 
 ### Frontend Development
 
-The frontend uses Yarn 4.x and requires Node.js 24. Both are pinned in `package.json` (`packageManager` for yarn,
-`devEngines` for node), which mise reads through `frontend/mise.toml`; the default `nix develop` shell provides mise.
+The frontend uses pnpm 12.x and requires Node.js 24. Both majors are declared in `package.json` `devEngines`,
+which mise reads through `frontend/mise.toml`; the default `nix develop` shell provides mise.
+pnpm 11+ refuses another major (`onFail: "error"`); the `just` recipes check it for any pnpm.
 mise refuses to run under an untrusted project config, hence the one-time `mise trust` per checkout:
 
 ```bash
@@ -13,7 +14,7 @@ cd frontend/
 mise trust
 
 # Install dependencies
-yarn install
+pnpm install
 
 # Development server (check package.json for available scripts)
 just dev
@@ -39,7 +40,7 @@ Located in `frontend/`:
 - gRPC-Web via ConnectRPC for backend communication
 - Carbon Design System for UI components
 - TypeScript with strict typing
-- Yarn 4.x for package management
+- pnpm 12.x for package management; install scripts are blocked unless reviewed in `pnpm-workspace.yaml`
 
 ## Frontend Tests
 

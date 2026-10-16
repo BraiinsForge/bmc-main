@@ -1,7 +1,7 @@
 # frontend
 
 ## TOOLS
- - [Yarn](https://yarnpkg.com)
+ - [pnpm](https://pnpm.io)
  - [mise](https://mise.jdx.dev)
  - [Biome](https://biomejs.dev)
  - [RSpack](https://rspack.dev)

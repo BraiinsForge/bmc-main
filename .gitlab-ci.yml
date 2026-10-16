@@ -328,12 +328,12 @@ deck-runtime-closure:
           - "flake.lock"
           - "*.nix"
           - "**/*.nix"
-          - "frontend/.yarnrc.yml"
           - "frontend/justfile"
           - "frontend/package.json"
+          - "frontend/pnpm-lock.yaml"
+          - "frontend/pnpm-workspace.yaml"
           - "frontend/rsbuild.config.ts"
           - "frontend/tsconfig.json"
-          - "frontend/yarn.lock"
     - when: never
   tags: [nix]
   script:

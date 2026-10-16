@@ -43,7 +43,7 @@ Install the following host tools:
 - `mprocs` for widget workflows that run a simulator beside the testbed (`cargo install mprocs` from the development
   shell)
 
-The `nix develop` shell provides the Rust toolchain, Protobuf compiler, `pkg-config`, Node.js, and Yarn. GPU libraries
+The `nix develop` shell provides the Rust toolchain, Protobuf compiler, `pkg-config`, Node.js, and pnpm. GPU libraries
 from Nix are currently not supported, so running the widget testbed requires the native development libraries from your
 system package manager: Fontconfig, FreeType, Wayland, libxkbcommon, Mesa/OpenGL/EGL, ALSA, libinput, udev, and libdrm.
 Package names differ between distributions. Building for and deploying to the device via `nix run .#deck -- deploy` does

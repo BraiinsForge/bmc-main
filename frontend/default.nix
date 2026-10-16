@@ -23,7 +23,7 @@
 
  let
    src = import ./nix/patched-src.nix { inherit pkgs; };
-   yarnFiles = import ./nix/yarn-files.nix { inherit pkgs; };
+   nodeModules = import ./nix/node-modules.nix { inherit pkgs; };
 in {
     build = pkgs.stdenv.mkDerivation {
       name = "bmc-frontend";
@@ -31,10 +31,12 @@ in {
       # `src` keeps the repo shape; the recipes run from the frontend itself.
       sourceRoot = "bmc-fe-patched-src/frontend";
 
-      buildInputs = [ pkgs.yarn pkgs.just ];
+      buildInputs = [ pkgs.nodejs pkgs.pnpmToolchain.pnpm pkgs.just ];
+      # `pnpm exec` otherwise reinstalls first, into the read-only copied tree, offline.
+      pnpm_config_verify_deps_before_run = "false";
 
       buildPhase = ''
-        cp -r ${yarnFiles}/. -t .
+        cp -r ${nodeModules}/. -t .
         export HOME=$(pwd)
         just build
       '';
@@ -45,7 +47,7 @@ in {
       '';
     };
 
-    checks = import ./nix/checks.nix { inherit pkgs src yarnFiles; };
+    checks = import ./nix/checks.nix { inherit pkgs src nodeModules; };
 
-    inherit yarnFiles;
+    inherit nodeModules;
 }

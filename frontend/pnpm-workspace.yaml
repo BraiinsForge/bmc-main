@@ -1,0 +1,46 @@
+# Reviewed install scripts: IBM telemetry, the core-js banner,
+# and binary fallbacks the optional platform packages make redundant.
+allowBuilds:
+  '@carbon/colors': false
+  '@carbon/feature-flags': false
+  '@carbon/grid': false
+  '@carbon/icon-helpers': false
+  '@carbon/icons-react': false
+  '@carbon/layout': false
+  '@carbon/motion': false
+  '@carbon/react': false
+  '@carbon/styles': false
+  '@carbon/themes': false
+  '@carbon/type': false
+  '@carbon/utilities': false
+  '@ibm/plex': false
+  '@ibm/plex-mono': false
+  '@ibm/plex-sans': false
+  '@ibm/plex-sans-arabic': false
+  '@ibm/plex-sans-devanagari': false
+  '@ibm/plex-sans-hebrew': false
+  '@ibm/plex-sans-thai': false
+  '@ibm/plex-sans-thai-looped': false
+  '@ibm/plex-serif': false
+  '@parcel/watcher': false
+  core-js: false
+  esbuild: false
+
+strictDepBuilds: true
+
+savePrefix: ''
+
+# Unmet peers stay unmet, as under yarn: rspack stands in for the `webpack` peer
+# that postcss-loader, sass-loader and the Storybook docgen plugin declare.
+autoInstallPeers: false
+peerDependencyRules:
+  ignoreMissing:
+    - webpack
+
+overrides:
+  react: 19.2.8
+  react-dom: 19.2.8
+  react-is: 19.2.8
+  react-refresh@^0.17.0: 0.18.0
+  core-js: 3.50.0
+  sass-embedded: 1.104.0

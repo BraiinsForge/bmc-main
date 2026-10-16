@@ -19,7 +19,7 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-{ pkgs, src, yarnFiles }:
+{ pkgs, src, nodeModules }:
 
 let
   run =
@@ -32,10 +32,12 @@ let
       inherit src;
       # `src` keeps the repo shape; the recipes run from the frontend itself.
       sourceRoot = "bmc-fe-patched-src/frontend";
-      buildInputs = [ pkgs.yarn pkgs.just ];
+      buildInputs = [ pkgs.nodejs pkgs.pnpmToolchain.pnpm pkgs.just ];
+      # `pnpm exec` otherwise reinstalls first, into the read-only copied tree, offline.
+      pnpm_config_verify_deps_before_run = "false";
       buildPhase = ''
         export HOME=$(pwd)
-        cp -r ${yarnFiles}/. -t .
+        cp -r ${nodeModules}/. -t .
 
         mkdir -p $out
 

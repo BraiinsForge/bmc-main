@@ -8,6 +8,6 @@
       "extraNixConfig": "experimental-features = nix-command flakes"
     }
   },
-  "postCreateCommand": "nix develop --command bash -c 'cd frontend && yarn install'",
+  "postCreateCommand": "nix develop --command bash -c 'cd frontend && pnpm install'",
   "postStartCommand": "nix develop"
 }

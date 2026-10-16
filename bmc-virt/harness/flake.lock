@@ -6,7 +6,7 @@
         "nix-source-info": "nix-source-info",
         "nixlib": "nixlib",
         "nixpkgs": "nixpkgs_2",
-        "nixpkgs-just": "nixpkgs-just",
+        "nixpkgs-tools": "nixpkgs-tools",
         "pyproject-build-systems": "pyproject-build-systems",
         "pyproject-nix": "pyproject-nix",
         "uv2nix": "uv2nix"
@@ -206,13 +206,13 @@
         "type": "github"
       }
     },
-    "nixpkgs-just": {
+    "nixpkgs-tools": {
       "locked": {
-        "lastModified": 1787631388,
-        "narHash": "sha256-vMiXptXarfSdJb1Gkc+FYVOAibuBRj7qxGa8z68q1Uw=",
+        "lastModified": 1791966044,
+        "narHash": "sha256-t1hT8UW97rFCWCJO7/pClvu0AhLN5V3uir2M0ic4w/Q=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "ac6b2166e7a9375683b8e98f860f273222337b16",
+        "rev": "319e4cebef10cbb636c6ea392137b52ad105336a",
         "type": "github"
       },
       "original": {

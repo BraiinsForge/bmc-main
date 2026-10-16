@@ -27,7 +27,7 @@
 , deckPackages
 , frontend
 , protoPlugins
-, yarnFiles
+, frontendNodeModules
 , wasmExamples
 , wasmWidgetsBundle
 , wasmStackSize
@@ -269,7 +269,7 @@ in
     checks = [ "bans" "sources" ];
   };
 
-  proto-bindings = pkgs.callPackage ./proto-bindings.nix { inherit protoPlugins yarnFiles; };
+  proto-bindings = pkgs.callPackage ./proto-bindings.nix { inherit protoPlugins frontendNodeModules; };
 
   cargo-deny-wasm = profiles.wasm-widgets-debug.mkCargoDeny {
     config = ../deny-wasm.toml;

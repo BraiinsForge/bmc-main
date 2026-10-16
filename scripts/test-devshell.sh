@@ -41,7 +41,7 @@ cargo build -p bmc-shared-utils
 echo '  OK: cargo build succeeded'
 
 echo '--- Frontend (tests FHS compat for node binaries) ---'
-cd frontend && yarn install && just build
+cd frontend && pnpm install && just build
 test -f dist/index.html && echo '  OK: dist/index.html exists'
 EOF
 

@@ -245,7 +245,7 @@ let
     ];
 
     # Node.js tooling for frontend builds
-    frontendDeps = pkgs: with pkgs; [ nodejs yarn ];
+    frontendDeps = { nodejs, pnpm }: [ nodejs pnpm ];
   };
 
   # Minimal workspace config for musl profiles (bmc-nix-cli, statically linked)
@@ -748,7 +748,7 @@ in
     };
 
     frontend = frontend.build;
-    yarnFiles = frontend.yarnFiles;
+    frontendNodeModules = frontend.nodeModules;
     inherit sounds;
   };
   devShells =

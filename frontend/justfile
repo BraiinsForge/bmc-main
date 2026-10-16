@@ -1,4 +1,4 @@
-# Frontend dev tasks (yarn-driven). Source of truth for builds is the nix
+# Frontend dev tasks (pnpm-driven). Source of truth for builds is the nix
 # flake (`nix build .#frontend`); these recipes mirror what runs in CI and
 # what's useful during local iteration.
 
@@ -12,23 +12,28 @@ export SLINT_LIVE_PREVIEW := "1"
 # so every path below would climb one too far.
 dir := source_directory()
 
+# Fail unless the pnpm on PATH has the major that package.json declares.
+[private]
+check-pnpm:
+    @node {{ dir }}/bin/check-pnpm.mjs
+
 # === QA ===
 
 # Auto-format JS/TS/SCSS sources.
-format:
-    yarn run biome migrate --write
-    yarn run biome format --write .
-    yarn run prettier './**/*.scss' --log-level=warn --write
+format: check-pnpm
+    pnpm exec biome migrate --write
+    pnpm exec biome format --write .
+    pnpm exec prettier './**/*.scss' --log-level=warn --write
 
 # Static analysis (biome + stylelint).
-lint:
-    yarn run biome check --max-diagnostics=100 .
-    yarn run stylelint '**/*.scss' --color --quiet --formatter string --allow-empty-input --config stylelint.config.cjs
+lint: check-pnpm
+    pnpm exec biome check --max-diagnostics=100 .
+    pnpm exec stylelint '**/*.scss' --color --quiet --formatter string --allow-empty-input --config stylelint.config.cjs
 
 # Type-check + run unit tests.
-test:
-    yarn run tsc --diagnostics --pretty --project ./tsconfig.json
-    yarn run rstest run
+test: check-pnpm
+    pnpm exec tsc --diagnostics --pretty --project ./tsconfig.json
+    pnpm exec rstest run
 
 # Full validation: format + lint + test.
 validate: format lint test
@@ -36,14 +41,14 @@ validate: format lint test
 # === Build ===
 
 # Production build (dist/).
-build:
-    yarn run rsbuild build
+build: check-pnpm
+    pnpm exec rsbuild build
 
 # === Dev ===
 
 # Frontend dev server (rsbuild watch).
-dev:
-    yarn run rsbuild dev
+dev: check-pnpm
+    pnpm exec rsbuild dev
 
 # Build the native widget bundle bmc-mock serves as installable widgets.
 [private]
@@ -70,8 +75,8 @@ serve-loop:
     while true; do just serve; echo "mock exited - restarting (simulated reboot)"; sleep 2; done
 
 # Storybook (component sandbox).
-storybook-start:
-    yarn run storybook dev \
+storybook-start: check-pnpm
+    pnpm exec storybook dev \
         --no-open \
         --port=6005 \
         --exact-port \
@@ -80,21 +85,17 @@ storybook-start:
 # === Codegen ===
 
 # Extract i18n strings from sources.
-intl-extract:
-    yarn run formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
+intl-extract: check-pnpm
+    pnpm exec formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
 
 # === Image optimization ===
 
-# Minify SVG files under ./src using yarn-installed svgo defaults.
-minify-svg:
-    yarn run svgo --recursive --folder ./src
+# Minify SVG files under ./src using the installed svgo defaults.
+minify-svg: check-pnpm
+    pnpm exec svgo --recursive --folder ./src
 
 # === Nix integration ===
 
-# Refresh yarn-files hash.
-nix-update-hash:
+# Refresh the pnpm deps hash.
+nix-update-hash: check-pnpm
     ./bin/nix-update-hash.ts
-
-# Build the yarn offline cache on a remote darwin store, bypassing the nix daemon
-nix-darwin-hash STORE="ssh-ng://badmin@ci-macos.dev.ii.zone" KEY=(home_directory() / ".ssh/id_rsa"):
-    nix build --eval-store auto --store '{{ STORE }}?ssh-key={{ KEY }}' '{{ dir }}/..#packages.x86_64-darwin.yarnFiles.offlineCache' --no-link -L

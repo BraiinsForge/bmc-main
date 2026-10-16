@@ -36,5 +36,5 @@ pkgs.stdenv.mkDerivation {
   '';
 
   # dependencies used for automatic shebang patching in fixupPhase
-  buildInputs = [ pkgs.yarn ];
+  buildInputs = [ pkgs.pnpmToolchain.pnpm ];
 }

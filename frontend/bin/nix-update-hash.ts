@@ -1,4 +1,4 @@
-#!/usr/bin/env -S yarn tsx
+#!/usr/bin/env -S pnpm exec tsx
 // Copyright (C) 2025  Braiins Systems s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -20,10 +20,10 @@
 // the grant above.
 
 /**
- * Update yarn-files FOD (Fixed-Output Derivation) hash.
+ * Update the pnpm deps FOD (Fixed-Output Derivation) hash.
  *
  * Usage:
- *   ./bin/nix-update-hash.ts           # Build for current platform
+ *   ./bin/nix-update-hash.ts           # Fetch the pnpm deps and pin their hash
  */
 
 import { fileURLToPath } from 'node:url';
@@ -35,11 +35,11 @@ const PATH_FRONTEND = path.dirname(PATH_BIN);
 const PATH_ROOT = path.dirname(PATH_FRONTEND);
 
 cd(PATH_ROOT);
-const PATH_YARN_FILES = path.resolve(PATH_FRONTEND, 'nix/yarn-files.nix');
+const PATH_NODE_MODULES_NIX = path.resolve(PATH_FRONTEND, 'nix/node-modules.nix');
 
 const timeStart: DOMHighResTimeStamp = performance.now();
 const res = await spinner('', () => {
-    const args = ['-L', '--log-format', 'bar-with-logs', '.#frontend'];
+    const args = ['-L', '--log-format', 'bar-with-logs', '--no-link', '.#frontendNodeModules.pnpmDeps'];
 
     // language=bash
     return $({ cwd: PATH_ROOT, nothrow: true, verbose: true, env: process.env })`nix build ${args}`;
@@ -47,33 +47,31 @@ const res = await spinner('', () => {
 const timeEnd: DOMHighResTimeStamp = performance.now();
 echo(`> Took ${((timeEnd - timeStart) / 1_000).toFixed(2)}s`);
 
-// language=bash
-await $`rm -rf ./result`;
-
 if (res.ok) {
-    echo(chalk.green('Build passed, nothing to do!'));
+    echo(chalk.green('Hash is up to date, nothing to do!'));
 } else {
     const out: string = res.stdall;
     const hashSpecified = out.match(/specified: (.*)\n/)?.[1];
     const hashReceived = out.match(/got:\s+(.*)\n/)?.[1];
+
+    if (!hashSpecified || !hashReceived) {
+        echo(chalk.red('The fetch failed without a hash mismatch; see the log above'));
+        process.exit(1);
+    }
 
     echo('');
     echo('> specified: ', chalk.yellowBright(hashSpecified));
     echo('>       got: ', chalk.redBright(hashReceived));
     echo('> ');
 
-    if (!hashSpecified || !hashReceived) {
-        echo(chalk.red('Failed to parse hash from build output'));
+    const current = fs.readFileSync(PATH_NODE_MODULES_NIX, 'utf-8');
+    if (!current.includes(hashSpecified)) {
+        echo(chalk.red(`${path.basename(PATH_NODE_MODULES_NIX)} does not contain the specified hash`));
         process.exit(1);
     }
+    fs.writeFileSync(PATH_NODE_MODULES_NIX, current.replace(hashSpecified, hashReceived), 'utf-8');
 
-    const patchedYarnFiles = fs
-        .readFileSync(PATH_YARN_FILES, 'utf-8')
-        // It can be present multiple times since we do platform specific hashes
-        .replaceAll(hashSpecified, hashReceived);
-    fs.writeFileSync(PATH_YARN_FILES, patchedYarnFiles, 'utf-8');
-
-    const underlinedFileName: string = chalk.underline(path.basename(PATH_YARN_FILES));
+    const underlinedFileName: string = chalk.underline(path.basename(PATH_NODE_MODULES_NIX));
     const message: string = chalk.greenBright(`${underlinedFileName} has been updated`);
     echo(`> ${message}`);
     echo('');
