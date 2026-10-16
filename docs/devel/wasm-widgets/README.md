@@ -51,6 +51,12 @@ temporary compatibility fallback to `widget_size()` / `SizeVariant::{Small, Medi
 How a widget does periodic background work that continues while it is off screen: starting and stopping a timer, what a
 tick may do, the limits a timer runs under, and how missed periods arrive.
 
+### [Resource Handles](resource-handles.md)
+
+How a widget holds what it starts in the background: timers, sockets, WebSockets, mDNS, SSDP and UDP discovery, HTTP
+listeners and polls. Each comes with the only handle to it, dropping the handle ends it, and a callback borrows the
+handle rather than owning a copy.
+
 ## Previews
 
 `tools/render_shots.py <widget>` renders every viewport the widget's manifest supports to a PNG under
