@@ -1281,6 +1281,63 @@ mod tests {
         );
     }
 
+    async fn served_icon(icon: PathBuf) -> axum::response::Response {
+        let uid = Uuid::new_v4();
+        let router = Router::new()
+            .route(
+                HttpServer::<crate::test_support::StubManager>::WIDGET_ICON,
+                get(HttpServer::<crate::test_support::StubManager>::handle_widget_icon),
+            )
+            .with_state(Arc::new(registry_with_icon(uid, Some(icon))));
+
+        router
+            .oneshot(
+                Request::get(format!("/widgets/{uid}/icon"))
+                    .body(Body::empty())
+                    .expect("BUG: build icon request"),
+            )
+            .await
+            .expect("BUG: router should respond")
+    }
+
+    #[tokio::test]
+    async fn a_widget_icon_cannot_run_script_on_the_device_origin() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let icon = dir.path().join("icon.svg");
+        std::fs::write(&icon, "<svg><script>fetch('/api')</script></svg>").expect("BUG: icon");
+
+        let response = served_icon(icon).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let headers = response.headers();
+        assert_eq!(
+            headers.get(header::X_CONTENT_TYPE_OPTIONS),
+            Some(&HeaderValue::from_static("nosniff")),
+            "the browser must not reinterpret an icon as a page"
+        );
+        assert_eq!(
+            headers.get(header::CONTENT_SECURITY_POLICY),
+            Some(&HeaderValue::from_static("sandbox")),
+            "an SVG opened directly must not run its script with the device's session"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_widget_icon_file_name_stays_out_of_the_headers() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let icon = dir.path().join("icon\"; filename=page.html; x=\".svg");
+        std::fs::write(&icon, "<svg/>").expect("BUG: icon");
+
+        let response = served_icon(icon).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_DISPOSITION),
+            Some(&HeaderValue::from_static("inline")),
+            "a quote in the package's file name must not add header parameters"
+        );
+    }
+
     #[test]
     fn widget_icon_path_none_when_widget_has_no_icon() {
         let uid = Uuid::new_v4();
