@@ -724,3 +724,75 @@ fn a_name_that_is_not_utf8_is_the_packages_fault() {
         "the uploader sent the name, so it is a refusal, not a device fault"
     );
 }
+
+/// A widgets directory with each folder holding a `manifest.json` of the given contents.
+fn installed_widgets(widgets: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("BUG: tempdir");
+    for (folder, manifest) in widgets {
+        let widget = dir.path().join(folder);
+        std::fs::create_dir_all(&widget).expect("BUG: widget dir");
+        std::fs::write(widget.join("manifest.json"), manifest).expect("BUG: write manifest");
+    }
+    dir
+}
+
+fn example_package() -> WidgetPackage {
+    validate_dir(widget_dir("example", "1.0.0")).expect("BUG: valid fixture")
+}
+
+#[test]
+fn a_uid_clash_is_found_as_deep_as_discovery_looks_and_no_deeper() {
+    let manifest = manifest_json("clock", "1.0.0");
+    let within = installed_widgets(&[("a/b/clock", &manifest)]);
+    let beyond = installed_widgets(&[("a/b/c/clock", &manifest)]);
+
+    assert_eq!(
+        example_package().uid_clash(within.path()),
+        Some(PathBuf::from("a/b/clock"))
+    );
+    assert_eq!(
+        example_package().uid_clash(beyond.path()),
+        None,
+        "discovery never loads a widget four folders down, so it hides nothing"
+    );
+}
+
+#[test]
+fn a_folder_below_an_installed_widget_is_not_a_widget() {
+    let other =
+        manifest_json("other", "1.0.0").replace(UID, "6ba7b810-9dad-41d1-80b4-00c04fd430c8");
+    let widgets = installed_widgets(&[
+        ("other", &other),
+        ("other/clock", &manifest_json("clock", "1.0.0")),
+    ]);
+
+    assert_eq!(
+        example_package().uid_clash(widgets.path()),
+        None,
+        "discovery stops at the first manifest on a path"
+    );
+}
+
+#[test]
+fn an_installed_manifest_that_does_not_parse_holds_no_uid() {
+    let widgets = installed_widgets(&[("broken", &format!(r#"{{"uid": "{UID}""#))]);
+
+    assert_eq!(
+        example_package().uid_clash(widgets.path()),
+        None,
+        "the registry skips a widget it cannot parse, so it hides nothing"
+    );
+}
+
+#[test]
+fn a_widget_folder_the_profile_links_to_is_searched() {
+    let store = installed_widgets(&[("clock", &manifest_json("clock", "1.0.0"))]);
+    let widgets = tempfile::tempdir().expect("BUG: tempdir");
+    std::os::unix::fs::symlink(store.path().join("clock"), widgets.path().join("clock"))
+        .expect("BUG: link widget");
+
+    assert_eq!(
+        example_package().uid_clash(widgets.path()),
+        Some(PathBuf::from("clock"))
+    );
+}

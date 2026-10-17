@@ -266,6 +266,25 @@ async fn a_folder_an_installed_widget_holds_is_reported_as_taken() {
 }
 
 #[tokio::test]
+async fn a_uid_an_installed_widget_holds_is_reported_as_taken() {
+    let backend = ScriptedBackend::answering(Err(WidgetInstallError::UidTaken {
+        uploaded: "clock".into(),
+        installed: "acme/clock".into(),
+    }));
+    let (service, _timezone) = service_with(backend, Arc::new(RefreshCounter::default())).await;
+
+    let error = service
+        .install_widget_package(archive(b""))
+        .await
+        .expect_err("BUG: scripted uid clash");
+
+    assert!(
+        matches!(&error, SystemUpgradeError::WidgetUidTaken(_)),
+        "{error}"
+    );
+}
+
+#[tokio::test]
 async fn a_running_upgrade_turns_the_upload_away_before_the_backend() {
     let backend = ScriptedBackend::answering(Ok(installed()));
     let (service, _timezone) =

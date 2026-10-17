@@ -309,6 +309,26 @@ async fn a_taken_folder_conflicts_with_the_installed_widget() {
 }
 
 #[tokio::test]
+async fn a_taken_uid_conflicts_with_the_installed_widget() {
+    let installer = ScriptedInstaller::answering(Err(SystemUpgradeError::WidgetUidTaken(
+        "clock has the uid of the installed widget acme/clock".to_owned(),
+    )));
+
+    let (status, _body) = send(
+        installer,
+        InstallTarget::Local,
+        upload(Some(SESSION_COOKIE), b"nar"),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "the archive is fine; an installed widget stands in the way"
+    );
+}
+
+#[tokio::test]
 async fn a_boser_managed_platform_has_nowhere_to_install() {
     let installer = ScriptedInstaller::answering(Ok(installed()));
 

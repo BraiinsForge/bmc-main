@@ -916,3 +916,5 @@ fn a_version_spelled_two_ways_is_a_reinstall_not_a_replacement() {
         "a version semver cannot read still equals itself"
     );
 }
+
+mod uid_clash;
