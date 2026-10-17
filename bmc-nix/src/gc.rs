@@ -863,14 +863,6 @@ mod tests {
             unreachable!("BUG: RecordingStore serves garbage collection only")
         }
 
-        async fn restore_nar(
-            &self,
-            _nar: crate::store::InputStream,
-            _target: &Path,
-        ) -> Result<(), crate::store::StoreCommandError> {
-            unreachable!("BUG: RecordingStore serves garbage collection only")
-        }
-
         async fn delete_store_path(
             &self,
             _store_path: &str,
@@ -1627,15 +1619,6 @@ mod tests {
     }
 
     impl CommandRunner for MockGcRunner {
-        async fn run_with_input(
-            &self,
-            _program: &str,
-            _args: &[&str],
-            _input: crate::store::InputStream,
-        ) -> Result<std::process::Output, std::io::Error> {
-            unreachable!("BUG: nothing here feeds stdin")
-        }
-
         async fn run(
             &self,
             _program: &str,

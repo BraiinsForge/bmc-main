@@ -811,14 +811,6 @@ mod tests {
             unreachable!("BUG: FakeStore never imports local trees")
         }
 
-        async fn restore_nar(
-            &self,
-            _nar: store::InputStream,
-            _target: &Path,
-        ) -> Result<(), store::StoreCommandError> {
-            unreachable!("BUG: FakeStore never imports local trees")
-        }
-
         async fn delete_store_path(
             &self,
             _store_path: &str,

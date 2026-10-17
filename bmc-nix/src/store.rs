@@ -172,17 +172,6 @@ pub trait CommandRunner: Send + Sync {
         args: &[&str],
     ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send;
 
-    /// Run a command with `input` streamed to its stdin, capturing both
-    /// outputs. An input that fails to read for a reason other than the
-    /// child closing its stdin is the error returned, even when the child
-    /// then exits non-zero on the truncated input.
-    fn run_with_input(
-        &self,
-        program: &str,
-        args: &[&str],
-        input: InputStream,
-    ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send;
-
     /// Run a command with stderr streamed line-by-line to a callback.
     ///
     /// Returns the full `std::process::Output` (stdout captured, stderr
@@ -196,10 +185,6 @@ pub trait CommandRunner: Send + Sync {
     where
         F: FnMut(&str) + Send;
 }
-
-/// Bytes fed to a command's stdin, read as they are needed so a large input
-/// never sits in memory whole.
-pub type InputStream = std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>;
 
 /// Default implementation using `tokio::process::Command`.
 #[derive(Debug)]
@@ -215,45 +200,6 @@ impl CommandRunner for TokioCommandRunner {
             .args(args)
             .output()
             .await
-    }
-
-    async fn run_with_input(
-        &self,
-        program: &str,
-        args: &[&str],
-        mut input: InputStream,
-    ) -> Result<std::process::Output, std::io::Error> {
-        use tokio::io::AsyncWriteExt as _;
-
-        let mut child = command_without_stdio_preload(program)
-            .args(args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .expect("BUG: stdin was piped but is missing");
-        // Feed stdin while draining the outputs, or a child that fills its
-        // stderr before reading everything deadlocks against us.
-        let feed = tokio::spawn(async move {
-            tokio::io::copy(&mut input, &mut stdin).await?;
-            stdin.shutdown().await
-        });
-        let output = child.wait_with_output().await?;
-        // Once the child is gone nothing reads what is left of the input,
-        // so stop feeding instead of waiting for a stream that may never end.
-        feed.abort();
-        // A child that rejects the input exits early and the copy sees a
-        // broken pipe; its stderr says why, so that is the error to keep.
-        match feed.await {
-            Ok(Err(error)) if error.kind() != std::io::ErrorKind::BrokenPipe => Err(error),
-            Ok(_) => Ok(output),
-            Err(join) if join.is_cancelled() => Ok(output),
-            Err(join) => std::panic::resume_unwind(join.into_panic()),
-        }
     }
 
     async fn run_with_stderr_lines<F>(
@@ -433,30 +379,6 @@ fn exited_ok(
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         })
     }
-}
-
-/// Unpack a NAR archive to `target`, which must not exist yet, with nix's
-/// own reader (`nix-store --restore`). Nothing is added to the store.
-///
-/// # Errors
-///
-/// The command failing to start, or exiting non-zero with its stderr, as it
-/// does for bytes that are not a NAR.
-pub async fn restore_nar(
-    runner: &impl CommandRunner,
-    nar: InputStream,
-    target: &Path,
-) -> Result<(), StoreCommandError> {
-    const COMMAND: &str = "--restore";
-    let target = utf8_arg(target, COMMAND)?;
-    let output = runner
-        .run_with_input("nix-store", &[COMMAND, "--", target], nar)
-        .await
-        .map_err(|source| StoreCommandError::Io {
-            command: COMMAND,
-            source,
-        })?;
-    exited_ok(COMMAND, output).map(|_| ())
 }
 
 /// Delete one store path (`nix-store --delete`), which nix refuses while a
@@ -792,13 +714,6 @@ pub trait StoreOperations: Send + Sync + std::fmt::Debug + 'static {
         path: &Path,
     ) -> impl std::future::Future<Output = Result<String, AddToStoreError>> + Send;
 
-    /// See [`restore_nar`].
-    fn restore_nar(
-        &self,
-        nar: InputStream,
-        target: &Path,
-    ) -> impl std::future::Future<Output = Result<(), StoreCommandError>> + Send;
-
     /// See [`delete_store_path`].
     fn delete_store_path(
         &self,
@@ -849,14 +764,6 @@ impl StoreOperations for Nix {
         path: &Path,
     ) -> impl std::future::Future<Output = Result<String, AddToStoreError>> + Send {
         add_to_store(&TokioCommandRunner, path)
-    }
-
-    fn restore_nar(
-        &self,
-        nar: InputStream,
-        target: &Path,
-    ) -> impl std::future::Future<Output = Result<(), StoreCommandError>> + Send {
-        restore_nar(&TokioCommandRunner, nar, target)
     }
 
     fn delete_store_path(
@@ -1439,24 +1346,6 @@ mod tests {
     }
 
     impl CommandRunner for MockCommandRunner {
-        async fn run_with_input(
-            &self,
-            program: &str,
-            args: &[&str],
-            _input: InputStream,
-        ) -> Result<std::process::Output, std::io::Error> {
-            self.invocations.lock().expect("BUG: mutex poisoned").push((
-                program.to_owned(),
-                args.iter().map(|s| (*s).to_owned()).collect(),
-            ));
-            let restore = program == "nix-store" && args.first() == Some(&"--restore");
-            Ok(std::process::Output {
-                status: std::process::ExitStatus::from_raw(if restore { 0 } else { 1 << 8 }),
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            })
-        }
-
         async fn run(
             &self,
             program: &str,
@@ -1583,43 +1472,6 @@ mod tests {
             vec!["bad \u{FFFD} byte".to_owned(), "ok".to_owned()],
             "every stderr line must be surfaced, bad bytes replaced"
         );
-    }
-
-    #[tokio::test]
-    async fn run_with_input_returns_once_the_child_exits_without_reading() {
-        // The writer stays open, so the input never ends.
-        let (input, _writer) = tokio::io::simplex(16);
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            TokioCommandRunner.run_with_input("sh", &["-c", "exit 3"], Box::pin(input)),
-        )
-        .await
-        .expect("BUG: an exited child must not keep the call waiting on its input")
-        .expect("BUG: the child ran");
-        assert_eq!(output.status.code(), Some(3));
-    }
-
-    #[tokio::test]
-    async fn run_with_input_reports_an_input_error_over_the_child_result() {
-        use tokio::io::AsyncReadExt as _;
-
-        struct FailAfterwards;
-        impl tokio::io::AsyncRead for FailAfterwards {
-            fn poll_read(
-                self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-                _buf: &mut tokio::io::ReadBuf<'_>,
-            ) -> std::task::Poll<std::io::Result<()>> {
-                std::task::Poll::Ready(Err(std::io::ErrorKind::FileTooLarge.into()))
-            }
-        }
-
-        let input = tokio::io::repeat(b'x').take(10).chain(FailAfterwards);
-        let error = TokioCommandRunner
-            .run_with_input("cat", &[], Box::pin(input))
-            .await
-            .expect_err("BUG: the input failed, which beats cat exiting cleanly at EOF");
-        assert_eq!(error.kind(), std::io::ErrorKind::FileTooLarge);
     }
 
     #[tokio::test]
@@ -2195,7 +2047,6 @@ mod store_command_tests {
 
     struct ScriptedRunner {
         output: std::process::Output,
-        stdin: std::sync::Mutex<Vec<Vec<u8>>>,
         args: std::sync::Mutex<Vec<String>>,
     }
 
@@ -2231,26 +2082,6 @@ mod store_command_tests {
         {
             unreachable!("BUG: --add is not streamed")
         }
-
-        async fn run_with_input(
-            &self,
-            program: &str,
-            args: &[&str],
-            mut input: InputStream,
-        ) -> Result<std::process::Output, std::io::Error> {
-            use tokio::io::AsyncReadExt as _;
-
-            assert_eq!(program, "nix-store");
-            assert_eq!(args[1], "--");
-            let mut fed = Vec::new();
-            input.read_to_end(&mut fed).await?;
-            self.stdin.lock().expect("BUG: mutex poisoned").push(fed);
-            Ok(std::process::Output {
-                status: self.output.status,
-                stdout: self.output.stdout.clone(),
-                stderr: self.output.stderr.clone(),
-            })
-        }
     }
 
     fn exited(code: i32, stdout: &[u8], stderr: &[u8]) -> ScriptedRunner {
@@ -2260,7 +2091,6 @@ mod store_command_tests {
                 stdout: stdout.to_vec(),
                 stderr: stderr.to_vec(),
             },
-            stdin: std::sync::Mutex::new(Vec::new()),
             args: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -2314,47 +2144,6 @@ mod store_command_tests {
             add_to_store(&runner, Path::new("/tmp/stage")).await,
             Err(AddToStoreError::NoPath)
         ));
-    }
-
-    #[tokio::test]
-    async fn the_archive_is_fed_to_the_restore_on_stdin() {
-        let runner = exited(0, b"", b"");
-        restore_nar(
-            &runner,
-            Box::pin(&b"nix-archive-1"[..]),
-            Path::new("/tmp/stage/package"),
-        )
-        .await
-        .expect("BUG: scripted success");
-        assert_eq!(
-            runner.stdin.lock().expect("BUG: mutex poisoned").as_slice(),
-            [b"nix-archive-1".to_vec()]
-        );
-    }
-
-    #[tokio::test]
-    async fn a_refused_archive_reports_what_nix_said() {
-        let runner = exited(
-            1,
-            b"",
-            b"error: input doesn't look like a Nix archive
-",
-        );
-        let error = restore_nar(
-            &runner,
-            Box::pin(&b"PK"[..]),
-            Path::new("/tmp/stage/package"),
-        )
-        .await
-        .expect_err("BUG: scripted failure");
-        assert!(
-            matches!(
-                &error,
-                StoreCommandError::Exited { command: "--restore", stderr, .. }
-                    if stderr == "error: input doesn't look like a Nix archive"
-            ),
-            "{error}"
-        );
     }
 
     #[tokio::test]

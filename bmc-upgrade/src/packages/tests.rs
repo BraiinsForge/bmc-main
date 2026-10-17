@@ -569,14 +569,6 @@ impl bmc_nix::store::StoreOperations for StubStore {
         unreachable!("BUG: StubStore serves probe estimates only")
     }
 
-    async fn restore_nar(
-        &self,
-        _nar: bmc_nix::store::InputStream,
-        _target: &Path,
-    ) -> Result<(), bmc_nix::store::StoreCommandError> {
-        unreachable!("BUG: StubStore serves probe estimates only")
-    }
-
     async fn delete_store_path(
         &self,
         _store_path: &str,
@@ -673,14 +665,6 @@ impl bmc_nix::store::StoreOperations for ApplyStore {
     }
 
     async fn add_to_store(&self, _path: &Path) -> Result<String, bmc_nix::store::AddToStoreError> {
-        unreachable!("BUG: ApplyStore serves indexed installs only")
-    }
-
-    async fn restore_nar(
-        &self,
-        _nar: bmc_nix::store::InputStream,
-        _target: &Path,
-    ) -> Result<(), bmc_nix::store::StoreCommandError> {
         unreachable!("BUG: ApplyStore serves indexed installs only")
     }
 

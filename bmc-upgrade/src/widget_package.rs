@@ -174,7 +174,7 @@ impl std::fmt::Display for FolderClash {
 }
 
 /// An uploaded archive as it arrives.
-pub type ArchiveStream = bmc_nix::store::InputStream;
+pub type ArchiveStream = std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>;
 
 /// An archive and, when the client announced one, its size,
 /// so an archive that will not fit is refused before a byte of it is staged.

@@ -35,12 +35,10 @@ use bmc_nix::store::{
     AddToStoreError, RealizeEstimate, StoreCommandError, StoreOperations, StorePathError,
 };
 use bmc_nix::types::ResolvedPackage;
-use nix_archive::nar::{CaseHack, restore};
 
 /// A store that files added trees under one directory as `<hash>-<name>`,
 /// hashed over the tree like nix, and refuses to delete a path a profile
-/// generation still links to, as nix does. Archives unpack through
-/// nix-archive in place of nix.
+/// generation still links to, as nix does.
 #[derive(Debug)]
 struct DiskStore {
     root: PathBuf,
@@ -140,30 +138,6 @@ impl StoreOperations for DiskStore {
                 .map_err(|source| AddToStoreError::Command(store_io("--add", source)))?;
         }
         Ok(target.to_str().expect("BUG: UTF-8 path").to_owned())
-    }
-
-    async fn restore_nar(
-        &self,
-        mut nar: bmc_nix::store::InputStream,
-        target: &Path,
-    ) -> Result<(), StoreCommandError> {
-        use tokio::io::AsyncReadExt as _;
-
-        let mut bytes = Vec::new();
-        nar.read_to_end(&mut bytes)
-            .await
-            .map_err(|source| store_io("--restore", source))?;
-        restore(&bytes, target, CaseHack::Disabled).map_err(|error| {
-            if let nix_archive::nar::Error::Io(source) = error {
-                store_io("--restore", source)
-            } else {
-                StoreCommandError::Exited {
-                    command: "--restore",
-                    status: std::process::ExitStatus::default(),
-                    stderr: format!("error: bad archive: {error}"),
-                }
-            }
-        })
     }
 
     async fn delete_store_path(&self, store_path: &str) -> Result<(), StoreCommandError> {

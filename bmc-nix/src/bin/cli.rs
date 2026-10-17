@@ -1838,14 +1838,6 @@ mod tests {
             unreachable!("BUG: RecordingGcStore serves garbage collection only")
         }
 
-        async fn restore_nar(
-            &self,
-            _nar: bmc_nix::store::InputStream,
-            _target: &std::path::Path,
-        ) -> Result<(), bmc_nix::store::StoreCommandError> {
-            unreachable!("BUG: RecordingGcStore serves garbage collection only")
-        }
-
         async fn delete_store_path(
             &self,
             _store_path: &str,

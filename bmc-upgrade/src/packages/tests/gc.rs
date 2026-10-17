@@ -56,14 +56,6 @@ impl bmc_nix::store::StoreOperations for GcStore {
         unreachable!("BUG: GcStore only serves garbage collection")
     }
 
-    async fn restore_nar(
-        &self,
-        _nar: bmc_nix::store::InputStream,
-        _target: &Path,
-    ) -> Result<(), bmc_nix::store::StoreCommandError> {
-        unreachable!("BUG: GcStore only serves garbage collection")
-    }
-
     async fn delete_store_path(
         &self,
         _store_path: &str,
