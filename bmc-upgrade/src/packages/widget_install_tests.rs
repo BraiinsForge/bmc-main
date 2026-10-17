@@ -851,4 +851,5 @@ fn a_version_spelled_two_ways_is_a_reinstall_not_a_replacement() {
     );
 }
 
+mod entry_bound;
 mod uid_clash;
