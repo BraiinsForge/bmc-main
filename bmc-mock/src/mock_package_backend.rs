@@ -365,6 +365,75 @@ fn same_tree(a: &Path, b: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    tokio::task::spawn_blocking(work)
+        .await
+        .expect("BUG: blocking filesystem work does not panic")
+}
+
+/// Check the tree unpacked under `staging` the way the device checks it,
+/// with the widgets under `installed_roots` standing in for the profile's,
+/// and move it into `uploads` unless the same tree is there already.
+fn install_unpacked(
+    uploads: &Path,
+    installed_roots: &[PathBuf],
+    unpacked: &Path,
+    staging: &Path,
+) -> Result<(WidgetPackage, WidgetInstallOutcome), WidgetInstallError> {
+    let package = WidgetPackage::from_dir(unpacked, WASM_SDK_MAJOR)
+        .map_err(bmc_upgrade::packages::package_error)?;
+    for root in installed_roots {
+        if let Some(installed) = package.folder_clash(root) {
+            return Err(WidgetInstallError::FolderTaken {
+                uploaded: package.relative_dir(),
+                installed,
+            });
+        }
+        if let Some(installed) = package.uid_clash(root) {
+            return Err(WidgetInstallError::UidTaken {
+                uploaded: package.relative_dir(),
+                installed,
+            });
+        }
+    }
+
+    let target = uploads.join(package.relative_dir());
+    let unpacked_widget = unpacked
+        .join("lib/bmc-widgets")
+        .join(package.relative_dir());
+    let previous_version =
+        read_manifest(&target.join("manifest.json")).map(|manifest| manifest.version);
+    let uploaded = &package.manifest().version;
+    let outcome = match previous_version {
+        None => WidgetInstallOutcome::Installed,
+        Some(installed) if installed == *uploaded => {
+            if same_tree(&target, &unpacked_widget).map_err(WidgetInstallError::Staging)? {
+                WidgetInstallOutcome::AlreadyInstalled
+            } else {
+                WidgetInstallOutcome::Reinstalled
+            }
+        }
+        Some(installed) if *uploaded < installed => {
+            return Err(WidgetInstallError::Downgrade {
+                package_name: package.package_name(),
+                installed: installed.to_string(),
+                uploaded: uploaded.to_string(),
+            });
+        }
+        Some(installed) => WidgetInstallOutcome::Replaced {
+            previous_version: installed.to_string(),
+        },
+    };
+    if outcome != WidgetInstallOutcome::AlreadyInstalled {
+        let parent = target
+            .parent()
+            .expect("BUG: the target sits below the uploads dir");
+        std::fs::create_dir_all(parent).map_err(WidgetInstallError::Staging)?;
+        replace_tree(&target, &unpacked_widget, staging).map_err(WidgetInstallError::Staging)?;
+    }
+    Ok((package, outcome))
+}
+
 /// The old tree moves aside into staging rather than being deleted first,
 /// so a failed rename puts it back and only a success lets the staging
 /// tempdir take it away.
@@ -615,63 +684,45 @@ impl PackageBackend for MockPackageBackend {
         &self,
         upload: WidgetUpload,
     ) -> Result<InstalledWidget, WidgetInstallError> {
-        let Some(uploads) = &self.uploads_path else {
+        let Some(uploads) = self.uploads_path.clone() else {
             return Err(WidgetInstallError::Failed(
                 "mock: no uploads path configured".to_owned(),
             ));
         };
-        // Staged beside the uploads dir so the accepted widget can be renamed
-        // into place and a rejected one leaves the dir untouched.
-        let staging_root = uploads.parent().unwrap_or(uploads);
-        std::fs::create_dir_all(staging_root).map_err(WidgetInstallError::Staging)?;
-        let staging = tempfile::tempdir_in(staging_root).map_err(WidgetInstallError::Staging)?;
+        // Beside the uploads dir so the accepted widget can be renamed into
+        // place, and cleared first as the device clears its staging dir.
+        let staging_root = uploads.with_file_name("upload-staging");
+        let staging = blocking(move || {
+            match std::fs::remove_dir_all(&staging_root) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                Ok(()) | Err(_) => {}
+            }
+            std::fs::create_dir_all(&staging_root)?;
+            tempfile::tempdir_in(&staging_root)
+        })
+        .await
+        .map_err(WidgetInstallError::Staging)?;
         let unpacked = SavedUpload::save(staging.path(), upload.nar)
             .await?
             .unpack()
             .await?;
-        let package = WidgetPackage::from_dir(&unpacked, WASM_SDK_MAJOR)
-            .map_err(bmc_upgrade::packages::package_error)?;
-
-        let target = uploads.join(package.relative_dir());
-        let unpacked_widget = unpacked
-            .join("lib/bmc-widgets")
-            .join(package.relative_dir());
-        let previous_version =
-            read_manifest(&target.join("manifest.json")).map(|manifest| manifest.version);
-        let uploaded = package.manifest().version.clone();
-        let outcome = match previous_version {
-            None => WidgetInstallOutcome::Installed,
-            Some(installed) if installed == uploaded => {
-                if same_tree(&target, &unpacked_widget).map_err(WidgetInstallError::Staging)? {
-                    WidgetInstallOutcome::AlreadyInstalled
-                } else {
-                    WidgetInstallOutcome::Reinstalled
-                }
-            }
-            Some(installed) if uploaded < installed => {
-                return Err(WidgetInstallError::Downgrade {
-                    package_name: package.package_name(),
-                    installed: installed.to_string(),
-                    uploaded: uploaded.to_string(),
-                });
-            }
-            Some(installed) => WidgetInstallOutcome::Replaced {
-                previous_version: installed.to_string(),
-            },
-        };
         tokio::time::sleep(self.pacing.progress_step()).await;
-        if outcome != WidgetInstallOutcome::AlreadyInstalled {
-            let parent = target
-                .parent()
-                .expect("BUG: the target sits below the uploads dir");
-            std::fs::create_dir_all(parent).map_err(WidgetInstallError::Staging)?;
-            replace_tree(&target, &unpacked_widget, staging.path())
-                .map_err(WidgetInstallError::Staging)?;
-        }
+        let installed_roots: Vec<_> = self
+            .staging_path
+            .iter()
+            .cloned()
+            .chain([uploads.clone()])
+            .collect();
+        let (package, outcome) = blocking(move || {
+            let installed = install_unpacked(&uploads, &installed_roots, &unpacked, staging.path());
+            drop(staging);
+            installed
+        })
+        .await?;
         Ok(InstalledWidget {
             package_name: package.package_name(),
             display_name: package.manifest().name.clone(),
-            version: uploaded.to_string(),
+            version: package.manifest().version.to_string(),
             outcome,
         })
     }
