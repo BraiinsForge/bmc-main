@@ -901,7 +901,6 @@ dependencies = [
  "dirs",
  "futures",
  "libc",
- "nix-archive",
  "rand 0.9.1",
  "reqwest",
  "serde",

@@ -70,7 +70,8 @@ that risk before uploading.
 
 ## Constraints
 
-- One upload holds one widget package. Archives larger than 64 MiB are refused.
+- One upload holds one widget package. Archives larger than 64 MiB or holding more than 4096 files and folders are
+  refused.
 - Uploading an older version than the one installed is refused, as is a version longer than 64 characters.
 - A widget uploaded without a maintainer folder replaces the feed widget of the same name only while its version is
   above the feed's. At the feed's version or below, the next upgrade, automatic ones included, puts the feed's build

@@ -31,10 +31,15 @@ use bmc_widget_manifest::{MAX_WIDGET_DIR_DEPTH, Manifest, ManifestError};
 /// Upper bound on an uploaded archive. Built widgets are a few hundred
 /// kilobytes, an asset-heavy one tens of megabytes;
 /// the bound keeps a hostile upload from tying up the device.
-/// The archive streams to nix-store, which buffers a bounded part of it,
-/// so the bound is on disk and time.
+/// The archive is saved whole before it is unpacked, so the bound is on
+/// disk and time.
 pub const MAX_ARCHIVE_MIB: u64 = 64;
 pub const MAX_ARCHIVE_BYTES: u64 = MAX_ARCHIVE_MIB * 1024 * 1024;
+
+/// Files, directories and symlinks an archive may hold in all. They are
+/// counted before any is unpacked: a flood of one-byte files costs
+/// a 4 KiB block and an inode each, far more than its share of the archive.
+pub const MAX_ARCHIVE_ENTRIES: usize = 4096;
 
 /// Total time an upload may take, slow link or not; a client that trickles
 /// bytes would otherwise hold the upgrade gate forever.
@@ -85,6 +90,8 @@ pub enum WidgetPackageError {
     TooLarge,
     #[error("not a valid NAR archive: {}", shown(.0))]
     Archive(String),
+    #[error("archive holds more than {MAX_ARCHIVE_ENTRIES} files and folders")]
+    TooManyArchiveEntries,
     #[error("cannot read '{}': {source}", shown(.path))]
     Io {
         path: String,

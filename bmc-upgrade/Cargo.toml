@@ -24,7 +24,7 @@ chrono.workspace = true
 data-encoding.workspace = true
 index-bmc.workspace = true
 index-common.workspace = true
-nix-archive = { workspace = true, optional = true }
+nix-archive.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -38,12 +38,11 @@ url.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
-nix-archive.workspace = true
 semver.workspace = true
 
 [features]
 disk-check = ["sysinfo"]
-test-support = ["dep:nix-archive"]
+test-support = []
 
 [lints]
 workspace = true

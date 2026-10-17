@@ -165,8 +165,9 @@ nix-store --dump "$(readlink my-widget)" > widget-my-widget.nar
 
 On the Deck's Display Widgets page, choose Install Widget, accept the third-party notice and pick the `.nar` file. The
 device checks the archive before installing it and refuses anything that is not a single WASM widget under
-`lib/bmc-widgets/`, an archive over 64 MiB, a version older than the one installed, or a widget whose folder would hide
-an installed one or be hidden by it.
+`lib/bmc-widgets/`, an archive over 64 MiB or with more than 4096 files and folders, a version older than the one
+installed, a widget whose folder would hide an installed one or be hidden by it, or a widget whose uid an installed
+widget already carries.
 
 A widget built outside this tree should sit under a maintainer folder, `lib/bmc-widgets/<maintainer>/<widget>/`, so that
 its package is named `widget-<maintainer>_<widget>`, clear of the feed's widgets. A flat upload replaces the feed widget

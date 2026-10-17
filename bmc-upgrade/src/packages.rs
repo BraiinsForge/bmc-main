@@ -35,7 +35,7 @@ pub use bmc_upgrade_types::{
 
 mod widget_install;
 
-pub use widget_install::package_error;
+pub use widget_install::{SavedUpload, package_error};
 use widget_install::{StagedUpload, blocking, install_outcome};
 
 /// Package-index fetches run under the upgrade run gate: a hung index

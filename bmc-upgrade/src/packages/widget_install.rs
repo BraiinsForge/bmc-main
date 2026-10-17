@@ -18,14 +18,15 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use bmc_nix::store::{AddToStoreError, StoreCommandError, required_with_headroom};
+use bmc_nix::store::{AddToStoreError, required_with_headroom};
+use nix_archive::nar;
 
 use super::{PackageUpgrader, WidgetInstallError, WidgetInstallOutcome};
 use crate::widget_package::{
-    ArchiveStream, MAX_ARCHIVE_BYTES, WASM_SDK_MAJOR, WidgetPackage, WidgetPackageError,
-    limit_archive,
+    ArchiveStream, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, WASM_SDK_MAJOR, WidgetPackage,
+    WidgetPackageError, limit_archive,
 };
 
 pub(super) fn install_outcome(
@@ -120,18 +121,17 @@ pub(super) struct StagedUpload {
 }
 
 impl<N: bmc_nix::store::StoreOperations> PackageUpgrader<N> {
-    /// Unpack the upload under `staging` and check it,
+    /// Save the upload under `staging`, unpack it if it fits and check it,
     /// then lock the profile and add it to the store.
     pub(super) async fn add_upload(
         &self,
         staging: &Path,
         nar: ArchiveStream,
     ) -> Result<StagedUpload, WidgetInstallError> {
-        let unpacked = staging.join("package");
-        self.nix
-            .restore_nar(limit_archive(nar), &unpacked)
-            .await
-            .map_err(restore_error)?;
+        let saved = SavedUpload::save(staging, nar).await?;
+        // The tree lands once in staging and once more in the store.
+        self.refuse_unless_free(saved.unpacked_bytes().saturating_mul(2))?;
+        let unpacked = saved.unpack().await?;
         let checked = unpacked.clone();
         let package = blocking(move || WidgetPackage::from_dir(&checked, WASM_SDK_MAJOR))
             .await
@@ -188,7 +188,10 @@ impl<N: bmc_nix::store::StoreOperations> PackageUpgrader<N> {
         announced_bytes: Option<u64>,
     ) -> Result<(), WidgetInstallError> {
         let announced = announced_bytes.unwrap_or(MAX_ARCHIVE_BYTES);
-        let unpacked_bytes = announced.saturating_mul(2);
+        self.refuse_unless_free(announced.saturating_mul(2))
+    }
+
+    fn refuse_unless_free(&self, unpacked_bytes: u64) -> Result<(), WidgetInstallError> {
         let required_bytes = required_with_headroom(unpacked_bytes);
         let free_bytes = self
             .nix
@@ -207,32 +210,142 @@ impl<N: bmc_nix::store::StoreOperations> PackageUpgrader<N> {
     }
 }
 
-/// Nix refusing the bytes is the uploader's archive; any other failure is
-/// the device's store, unless the feed was cut off at the size cap, the
-/// deadline or the client going away.
-pub(super) fn restore_error(error: StoreCommandError) -> WidgetInstallError {
-    match error {
-        StoreCommandError::Exited { ref stderr, .. } if nix_refused_the_archive(stderr) => {
-            WidgetInstallError::Rejected(WidgetPackageError::Archive(stderr.clone()))
+/// The block size of the device's ext4 data partition;
+/// no entry unpacks into less than one block.
+const BLOCK_BYTES: u64 = 4096;
+
+/// An upload saved whole under staging and measured, none of it unpacked yet.
+#[derive(Debug)]
+pub struct SavedUpload {
+    archive: PathBuf,
+    unpacked_bytes: u64,
+}
+
+impl SavedUpload {
+    /// Save an upload under `staging` and measure the tree it unpacks to,
+    /// counting its entries before any is written out.
+    pub async fn save(staging: &Path, nar: ArchiveStream) -> Result<Self, WidgetInstallError> {
+        let archive = staging.join("upload.nar");
+        write_archive(nar, &archive).await?;
+        let measured = archive.clone();
+        let unpacked_bytes = blocking(move || {
+            let unpacked_bytes = measure(&measured);
+            if unpacked_bytes.is_err() {
+                std::fs::remove_file(&measured).map_err(WidgetInstallError::Staging)?;
+            }
+            unpacked_bytes
+        })
+        .await?;
+        Ok(Self {
+            archive,
+            unpacked_bytes,
+        })
+    }
+
+    /// What the unpacked tree takes on disk, each file's contents
+    /// in whole blocks and every other entry in one.
+    #[must_use]
+    pub fn unpacked_bytes(&self) -> u64 {
+        self.unpacked_bytes
+    }
+
+    /// Unpack to `package` beside the saved archive,
+    /// which is gone before the tree can reach the store.
+    pub async fn unpack(self) -> Result<PathBuf, WidgetInstallError> {
+        let unpacked = self.archive.with_file_name("package");
+        let target = unpacked.clone();
+        blocking(move || {
+            let restored = std::fs::File::open(&self.archive)
+                .map(std::io::BufReader::new)
+                .map_err(WidgetInstallError::Staging)
+                .and_then(|mut archive| {
+                    nar::restore_reader(&mut archive, &target, nar::CaseHack::Disabled)
+                        .map_err(archive_error)
+                });
+            let removed = std::fs::remove_file(&self.archive).map_err(WidgetInstallError::Staging);
+            restored.and(removed)
+        })
+        .await?;
+        Ok(unpacked)
+    }
+}
+
+async fn write_archive(nar: ArchiveStream, path: &Path) -> Result<(), WidgetInstallError> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let mut nar = limit_archive(nar);
+    let mut file = tokio::fs::File::create_new(path)
+        .await
+        .map_err(WidgetInstallError::Staging)?;
+    let mut chunk = vec![0; 64 * 1024];
+    loop {
+        let read = nar.read(&mut chunk).await.map_err(upload_error)?;
+        if read == 0 {
+            break;
         }
-        StoreCommandError::Io { ref source, .. }
-            if source.kind() == std::io::ErrorKind::FileTooLarge =>
-        {
+        file.write_all(&chunk[..read])
+            .await
+            .map_err(WidgetInstallError::Staging)?;
+    }
+    file.flush().await.map_err(WidgetInstallError::Staging)
+}
+
+/// The size cap, the deadline and the client going away end the upload as
+/// read errors of their own kinds; any other is the device's.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "io::ErrorKind is non-exhaustive"
+)]
+fn upload_error(error: std::io::Error) -> WidgetInstallError {
+    match error.kind() {
+        std::io::ErrorKind::FileTooLarge => {
             WidgetInstallError::Rejected(WidgetPackageError::TooLarge)
         }
-        StoreCommandError::Io { ref source, .. }
-            if source.kind() == std::io::ErrorKind::TimedOut =>
-        {
-            WidgetInstallError::UploadStalled
+        std::io::ErrorKind::TimedOut => WidgetInstallError::UploadStalled,
+        std::io::ErrorKind::ConnectionAborted => WidgetInstallError::UploadAborted,
+        _ => WidgetInstallError::Staging(error),
+    }
+}
+
+fn measure(archive: &Path) -> Result<u64, WidgetInstallError> {
+    let mut archive = std::fs::File::open(archive)
+        .map(std::io::BufReader::new)
+        .map_err(WidgetInstallError::Staging)?;
+    let mut entries = 0_usize;
+    let mut unpacked_bytes = 0_u64;
+    let decoded = nar::decode_events_reader(&mut archive, |event| {
+        let entry_bytes = match event {
+            nar::Event::DirectoryStart { .. } | nar::Event::Symlink { .. } => BLOCK_BYTES,
+            nar::Event::Regular { contents, .. } => contents
+                .size()
+                .checked_next_multiple_of(BLOCK_BYTES)
+                .unwrap_or(u64::MAX)
+                .max(BLOCK_BYTES),
+            nar::Event::DirectoryEnd { .. } => return Ok(()),
+        };
+        entries += 1;
+        unpacked_bytes = unpacked_bytes.saturating_add(entry_bytes);
+        if entries > MAX_ARCHIVE_ENTRIES {
+            return Err(nar::Error::Io(std::io::Error::other("entry bound reached")));
         }
-        StoreCommandError::Io { ref source, .. }
-            if source.kind() == std::io::ErrorKind::ConnectionAborted =>
-        {
-            WidgetInstallError::UploadAborted
-        }
-        StoreCommandError::Exited { .. } | StoreCommandError::Io { .. } => {
-            WidgetInstallError::Store(error)
-        }
+        Ok(())
+    });
+    if entries > MAX_ARCHIVE_ENTRIES {
+        return Err(WidgetInstallError::Rejected(
+            WidgetPackageError::TooManyArchiveEntries,
+        ));
+    }
+    decoded.map_err(archive_error)?;
+    Ok(unpacked_bytes)
+}
+
+/// Failing to read the saved archive or write the tree is the device's
+/// fault; anything else nix-archive refuses is the uploader's archive.
+fn archive_error(error: nar::Error) -> WidgetInstallError {
+    if let nar::Error::Io(source) = error {
+        WidgetInstallError::Staging(source)
+    } else {
+        WidgetInstallError::Rejected(WidgetPackageError::Archive(error.to_string()))
     }
 }
 
@@ -244,14 +357,15 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send 
         .expect("BUG: blocking filesystem work does not panic")
 }
 
-/// Symlinks are refused before any read, so a tree nix just unpacked
-/// failing to read is the device's fault, not the package's.
+/// Symlinks are refused before any read, so failing to read
+/// the unpacked tree is the device's fault, not the package's.
 #[must_use]
 pub fn package_error(error: WidgetPackageError) -> WidgetInstallError {
     match error {
         WidgetPackageError::Io { .. } => WidgetInstallError::Failed(error.to_string()),
         WidgetPackageError::TooLarge
         | WidgetPackageError::Archive(_)
+        | WidgetPackageError::TooManyArchiveEntries
         | WidgetPackageError::FileTooLarge { .. }
         | WidgetPackageError::NotOneWidget(_)
         | WidgetPackageError::NotADirectory(_)
@@ -272,12 +386,4 @@ pub fn package_error(error: WidgetPackageError) -> WidgetInstallError {
         | WidgetPackageError::Wrapper(_)
         | WidgetPackageError::NotWasm(_) => WidgetInstallError::Rejected(error),
     }
-}
-
-/// Nix reports malformed input with these messages and no error kind,
-/// in plain and JSON log formats alike (checked with nix 2.28 and 2.34).
-/// Were they reworded, a bad archive would read as a device fault:
-/// a less helpful answer, but one that leaks nothing.
-fn nix_refused_the_archive(stderr: &str) -> bool {
-    stderr.contains("bad archive:") || stderr.contains("unexpected end-of-file")
 }

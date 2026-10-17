@@ -32,7 +32,6 @@ chrono.workspace = true
 clap.workspace = true
 dirs.workspace = true
 futures = { workspace = true }
-nix-archive.workspace = true
 rand = { workspace = true, features = ["thread_rng"] }
 reqwest.workspace = true
 serde.workspace = true

@@ -854,46 +854,6 @@ async fn an_upload_the_client_abandons_is_not_a_store_fault() {
     assert!(staging.is_empty(), "the staging dir is cleaned up");
 }
 
-fn restore_exit(stderr: &str) -> StoreCommandError {
-    StoreCommandError::Exited {
-        command: "--restore",
-        status: std::process::ExitStatus::default(),
-        stderr: stderr.to_owned(),
-    }
-}
-
-#[test]
-fn bytes_nix_cannot_read_are_the_uploaders_archive() {
-    for stderr in [
-        "error: bad archive: input doesn't look like a Nix archive",
-        "error: unexpected end-of-file",
-    ] {
-        assert!(
-            matches!(
-                super::widget_install::restore_error(restore_exit(stderr)),
-                WidgetInstallError::Rejected(crate::widget_package::WidgetPackageError::Archive(_))
-            ),
-            "{stderr}"
-        );
-    }
-}
-
-#[test]
-fn a_restore_the_device_cannot_write_is_its_own_fault() {
-    for stderr in [
-        "error: filesystem error: cannot create directory: Permission denied [/mnt/data/bmc/staging/x]",
-        "error: path '/mnt/data/bmc/staging/x/package' already exists",
-    ] {
-        assert!(
-            matches!(
-                super::widget_install::restore_error(restore_exit(stderr)),
-                WidgetInstallError::Store(_)
-            ),
-            "a 400 would blame the uploader and hand them device paths: {stderr}"
-        );
-    }
-}
-
 #[test]
 fn a_staged_tree_the_device_cannot_read_is_its_own_fault() {
     let unreadable = crate::widget_package::WidgetPackageError::Io {

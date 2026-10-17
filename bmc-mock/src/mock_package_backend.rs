@@ -39,13 +39,11 @@ use bmc_upgrade::offers::PackageOffer;
 use bmc_upgrade::packages::{
     ApplyError, EstimateMode, InstallablePackage, InstalledWidget, PackageBackend, PackageGcError,
     PackageGcOutcome, PackageGcRequest, PackageProbe, PackageProbeError, PackagesPreview,
-    SystemPackageChange, WidgetInstallError, WidgetInstallOutcome, installable_packages_from,
+    SavedUpload, SystemPackageChange, WidgetInstallError, WidgetInstallOutcome,
+    installable_packages_from,
 };
-use bmc_upgrade::widget_package::{
-    WASM_SDK_MAJOR, WidgetPackage, WidgetPackageError, WidgetUpload, limit_archive,
-};
+use bmc_upgrade::widget_package::{WASM_SDK_MAJOR, WidgetPackage, WidgetUpload};
 use bmc_widget_manifest::Manifest;
-use nix_archive::nar::{CaseHack, restore};
 use tokio::sync::Notify;
 
 use crate::pacing::UpgradePacing;
@@ -617,23 +615,6 @@ impl PackageBackend for MockPackageBackend {
         &self,
         upload: WidgetUpload,
     ) -> Result<InstalledWidget, WidgetInstallError> {
-        use tokio::io::AsyncReadExt as _;
-
-        let mut bytes = Vec::new();
-        limit_archive(upload.nar)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::FileTooLarge {
-                    WidgetInstallError::Rejected(WidgetPackageError::TooLarge)
-                } else if error.kind() == std::io::ErrorKind::TimedOut {
-                    WidgetInstallError::UploadStalled
-                } else if error.kind() == std::io::ErrorKind::ConnectionAborted {
-                    WidgetInstallError::UploadAborted
-                } else {
-                    WidgetInstallError::Staging(error)
-                }
-            })?;
         let Some(uploads) = &self.uploads_path else {
             return Err(WidgetInstallError::Failed(
                 "mock: no uploads path configured".to_owned(),
@@ -644,17 +625,10 @@ impl PackageBackend for MockPackageBackend {
         let staging_root = uploads.parent().unwrap_or(uploads);
         std::fs::create_dir_all(staging_root).map_err(WidgetInstallError::Staging)?;
         let staging = tempfile::tempdir_in(staging_root).map_err(WidgetInstallError::Staging)?;
-        let unpacked = staging.path().join("package");
-        // No nix here: nix-archive stands in for `nix-store --restore`,
-        // then the tree is checked the way the device checks it.
-        restore(&bytes, &unpacked, CaseHack::Disabled).map_err(|error| {
-            if let nix_archive::nar::Error::Io(source) = error {
-                WidgetInstallError::Staging(source)
-            } else {
-                WidgetInstallError::Rejected(WidgetPackageError::Archive(error.to_string()))
-            }
-        })?;
-        drop(bytes);
+        let unpacked = SavedUpload::save(staging.path(), upload.nar)
+            .await?
+            .unpack()
+            .await?;
         let package = WidgetPackage::from_dir(&unpacked, WASM_SDK_MAJOR)
             .map_err(bmc_upgrade::packages::package_error)?;
 

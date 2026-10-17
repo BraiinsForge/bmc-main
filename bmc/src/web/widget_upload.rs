@@ -19,7 +19,7 @@
 // the grant above.
 
 //! `POST /api/install_widget_package`, the widget package upload.
-//! The body streams into `nix-store --restore`;
+//! The body streams to a file in staging;
 //! one gRPC-web message would hold the whole archive in RAM.
 
 use std::sync::Arc;
