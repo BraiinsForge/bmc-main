@@ -52,6 +52,9 @@ that risk before uploading.
   third-party widget does not take the place of a feed widget of the same name at the next upgrade.
 - A maintainer folder named like an installed widget, or a widget named like an installed maintainer folder, is refused:
   the device would show only one of them.
+- A widget whose metadata carries the uid of a different installed widget is refused with a message naming that widget,
+  since the device would show only one of them. Uploading the same widget again keeps its uid and stays an upgrade or a
+  reinstall.
 - Archives with malformed or missing widget metadata, native (non-WASM) widget binaries, or any content outside that
   layout are rejected.
 

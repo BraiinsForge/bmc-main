@@ -22,7 +22,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use bmc_widget_manifest::Manifest;
+use bmc_widget_manifest::{MAX_WIDGET_DIR_DEPTH, Manifest};
 use tokio::{fs, task};
 use tracing::warn;
 use walkdir::WalkDir;
@@ -113,7 +113,7 @@ impl PathDiscovery {
         let mut entries = WalkDir::new(path)
             .follow_links(true)
             .min_depth(1)
-            .max_depth(3)
+            .max_depth(MAX_WIDGET_DIR_DEPTH)
             .into_iter();
 
         while let Some(entry) = entries.next() {

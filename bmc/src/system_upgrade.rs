@@ -1045,6 +1045,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                     warn!(error = %taken, "Widget package refused");
                     SystemUpgradeError::WidgetFolderTaken(taken.to_string())
                 }
+                taken @ WidgetInstallError::UidTaken { .. } => {
+                    warn!(error = %taken, "Widget package refused");
+                    SystemUpgradeError::WidgetUidTaken(taken.to_string())
+                }
                 WidgetInstallError::UploadStalled => {
                     warn!(error = %err, "Widget package upload stalled");
                     SystemUpgradeError::WidgetUploadStalled
@@ -1538,6 +1542,8 @@ pub(crate) enum SystemUpgradeError {
     WidgetDowngradeRefused(String),
     #[error("{0}")]
     WidgetFolderTaken(String),
+    #[error("{0}")]
+    WidgetUidTaken(String),
     #[error("{}", WidgetInstallError::UploadStalled)]
     WidgetUploadStalled,
     #[error("{}", WidgetInstallError::UploadAborted)]

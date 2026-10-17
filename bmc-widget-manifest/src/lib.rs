@@ -70,6 +70,9 @@ const MAX_DESCRIPTION_LENGTH: usize = 200;
 const MAX_CREDENTIAL_LABEL_LENGTH: usize = 40;
 const MAX_CONFIG_HELP_LENGTH: usize = 2_000;
 
+/// Folder levels below a widgets directory a widget may sit at; discovery looks no deeper.
+pub const MAX_WIDGET_DIR_DEPTH: usize = 3;
+
 /// Errors produced by [`Manifest::from_str`] and the structural / semantic
 /// validators it dispatches to. Each variant names the rule that was violated,
 /// so a downstream caller can surface them without re-parsing the message.

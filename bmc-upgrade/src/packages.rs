@@ -221,6 +221,15 @@ pub enum WidgetInstallError {
         uploaded: PathBuf,
         installed: FolderClash,
     },
+    #[error(
+        "{} has the uid of the installed widget {}: only one of them would show",
+        .uploaded.display(),
+        .installed.display()
+    )]
+    UidTaken {
+        uploaded: PathBuf,
+        installed: PathBuf,
+    },
     #[error("upload did not finish within {UPLOAD_DEADLINE_MINS} minutes")]
     UploadStalled,
     #[error("another package change kept the profile locked")]

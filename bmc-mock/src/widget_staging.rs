@@ -28,19 +28,21 @@ use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
+use bmc_widget_manifest::MAX_WIDGET_DIR_DEPTH;
 use walkdir::WalkDir;
 
 /// Widget directories under `root`, mirroring production `PathDiscovery`
-/// exactly: a directory holding a `manifest.json`, found by a depth-1..=3 walk
-/// that follows links and does not descend past a discovered widget. Yields
-/// per-entry walk errors so a caller that gates a mutation on a complete
-/// listing can fail loud rather than treat an unreadable tree as empty.
+/// exactly: a directory holding a `manifest.json`, found by a walk at most
+/// [`MAX_WIDGET_DIR_DEPTH`] deep that follows links and does not descend
+/// past a discovered widget. Yields per-entry walk errors so a caller that
+/// gates a mutation on a complete listing can fail loud rather than treat
+/// an unreadable tree as empty.
 pub(crate) fn widget_dirs(root: &Path) -> Vec<walkdir::Result<PathBuf>> {
     let mut dirs = Vec::new();
     let mut entries = WalkDir::new(root)
         .follow_links(true)
         .min_depth(1)
-        .max_depth(3)
+        .max_depth(MAX_WIDGET_DIR_DEPTH)
         .into_iter();
     while let Some(entry) = entries.next() {
         match entry {

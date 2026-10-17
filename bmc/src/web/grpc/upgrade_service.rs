@@ -419,6 +419,7 @@ impl From<SystemUpgradeError> for ConnectError {
             // or be hidden by an installed one, is refused the same way.
             SystemUpgradeError::WidgetDowngradeRefused(_)
             | SystemUpgradeError::WidgetFolderTaken(_)
+            | SystemUpgradeError::WidgetUidTaken(_)
             | SystemUpgradeError::NotEnoughSpace
             | SystemUpgradeError::WidgetInstallNoSpace
             | SystemUpgradeError::UpgradeExpired

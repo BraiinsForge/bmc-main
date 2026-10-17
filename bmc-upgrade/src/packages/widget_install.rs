@@ -97,6 +97,19 @@ fn refuse_folder_clash(
     }
 }
 
+fn refuse_uid_clash(profile_dir: &Path, package: &WidgetPackage) -> Result<(), WidgetInstallError> {
+    let current = bmc_nix::profile::current_generation_link(profile_dir)
+        .map_err(|error| WidgetInstallError::Failed(error.to_string()))?;
+    let clash = current.and_then(|current| package.uid_clash(&current.join("lib/bmc-widgets")));
+    match clash {
+        Some(installed) => Err(WidgetInstallError::UidTaken {
+            uploaded: package.relative_dir(),
+            installed,
+        }),
+        None => Ok(()),
+    }
+}
+
 /// A checked upload in the store, with the profile lock
 /// that keeps the GC off it until the profile roots it.
 pub(super) struct StagedUpload {
@@ -161,6 +174,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageUpgrader<N> {
         .ok_or(WidgetInstallError::ProfileBusy)?;
         refuse_downgrade(&self.config.profile_dir, package)?;
         refuse_folder_clash(&self.config.profile_dir, package)?;
+        refuse_uid_clash(&self.config.profile_dir, package)?;
         let generations_before = bmc_nix::profile::max_generation(&self.config.profile_dir)
             .map_err(|error| WidgetInstallError::Failed(error.to_string()))?;
         Ok((lock, generations_before))

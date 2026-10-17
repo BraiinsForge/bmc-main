@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bmc_nix::types::{InstalledBy, ResolvedPackage};
-use bmc_widget_manifest::{Manifest, ManifestError};
+use bmc_widget_manifest::{MAX_WIDGET_DIR_DEPTH, Manifest, ManifestError};
 
 /// Upper bound on an uploaded archive. Built widgets are a few hundred
 /// kilobytes, an asset-heavy one tens of megabytes;
@@ -324,6 +324,41 @@ impl WidgetPackage {
             .then(|| FolderClash::MaintainerFolder(self.name.clone()))
     }
 
+    /// The installed folder under `widgets_dir`, other than this widget's own,
+    /// whose manifest carries this widget's uid; the registry keys widgets
+    /// by uid, so only one of the two would show. It walks as discovery
+    /// walks, and skips a manifest it cannot read as discovery skips it.
+    #[must_use]
+    pub fn uid_clash(&self, widgets_dir: &Path) -> Option<PathBuf> {
+        let own = self.relative_dir();
+        let mut level = vec![PathBuf::new()];
+        for _ in 0..MAX_WIDGET_DIR_DEPTH {
+            let mut next = Vec::new();
+            for parent in level {
+                let Ok(entries) = std::fs::read_dir(widgets_dir.join(&parent)) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let folder = parent.join(entry.file_name());
+                    let path = widgets_dir.join(&folder);
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    if !path.join("manifest.json").exists() {
+                        next.push(folder);
+                    } else if folder != own
+                        && installed_manifest(&path)
+                            .is_some_and(|installed| installed.uid == self.manifest.uid)
+                    {
+                        return Some(folder);
+                    }
+                }
+            }
+            level = next;
+        }
+        None
+    }
+
     /// `widget-<name>`, the package name the index would use for this widget,
     /// or `widget-<maintainer>_<name>` for a widget under a maintainer folder;
     /// neither name can contain `_`, so no two folders share a package.
@@ -421,6 +456,12 @@ fn single_widget_dir(root: &Path) -> Result<WidgetDir, WidgetPackageError> {
 /// is refused as such by the widget checks, not read as a maintainer folder.
 fn has_manifest(dir: &Path) -> bool {
     dir.join("manifest.json").symlink_metadata().is_ok()
+}
+
+/// Read as the registry reads it: an installed manifest is not size-capped.
+fn installed_manifest(dir: &Path) -> Option<Manifest> {
+    let contents = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
+    contents.parse().ok()
 }
 
 fn only_entry(

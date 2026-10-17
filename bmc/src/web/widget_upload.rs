@@ -218,7 +218,8 @@ fn status_of(error: &SystemUpgradeError) -> StatusCode {
         }
         SystemUpgradeError::WidgetPackageTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         SystemUpgradeError::WidgetDowngradeRefused(_)
-        | SystemUpgradeError::WidgetFolderTaken(_) => StatusCode::CONFLICT,
+        | SystemUpgradeError::WidgetFolderTaken(_)
+        | SystemUpgradeError::WidgetUidTaken(_) => StatusCode::CONFLICT,
         SystemUpgradeError::WidgetUploadStalled => StatusCode::REQUEST_TIMEOUT,
         SystemUpgradeError::UpgradeInProgress | SystemUpgradeError::WidgetInstallBusy => {
             StatusCode::SERVICE_UNAVAILABLE
