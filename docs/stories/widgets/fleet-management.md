@@ -80,6 +80,34 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 - The per-model and per-device rows carry a compact sparkline of the same history.
 - History is accumulated on-device from successive polls, so it is uniform across families whether or not a miner
   exposes a hashrate-history endpoint.
+- Each chart range is split into 60 slots: 15 seconds on the 15-minute range, 1 minute on 1 hour, 6 minutes on 6 hours
+  and 24 minutes on 24 hours. A chart keeps one point per slot. Its line joins points up to one empty slot apart and
+  breaks at two or more, so a stretch without data shows as a gap.
+- A slot's point appears once the slot has ended, so the line stops up to one slot short of the chart's right edge. The
+  hashrate shown with the chart is the current one.
+- A device's chart keeps the newest reading from each slot in which the device was polled. Its line may break once polls
+  of that device land more than 30 seconds apart on the 15-minute range (2 minutes on 1 hour), and always breaks at 45
+  seconds or more (3 minutes on 1 hour). A large fleet, or one with many unreachable miners, can make a polling pass
+  that slow, and its 15-minute device charts then show separate dots. The fleet-total and per-model charts take their
+  points on the widget's own timer and do not break this way.
+- A miner that answers counts at its latest reading, however long the pass took to reach it again. A miner that stops
+  answering keeps its last reading until it flips to unreachable (see
+  [Trust what the numbers say](#trust-what-the-numbers-say)), and from then on its line breaks and it drops out of the
+  totals.
+
+### Keep the trend while another widget is on screen
+
+> As an operator cycling several widgets on one Deck, I want the fleet charts to cover their whole range when I come
+> back to the widget, not only the stretches I happened to be looking at it.
+
+- The widget keeps polling and sampling the fleet while another widget is on screen, so the hashrate charts show no gaps
+  for the time it was cycled away.
+- The fleet-total and per-model chart history is saved on the Deck every five minutes, whether or not the widget is on
+  screen, so a restart loses at most the last five minutes of it.
+- Per-device charts are not saved and start empty after a restart.
+- After a boot with the Deck's clock behind the saved history, such as a reset clock before network time arrives, the
+  charts start without the saved history and take it back once the clock is set; until then they are not saved.
+- When the Deck's clock is set back, the charts drop what they recorded after the new time, in the saved history too.
 
 ### Point the widget at my miners' credentials
 
@@ -124,10 +152,10 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 > As an operator, I want clear behavior when miners come and go so the screen never shows a stale value as if it were
 > live, nor a phantom fleet after everything is gone.
 
-- A miner keeps its last good reading through a few failed passes before it flips to unreachable, so a single missed
-  poll on a flaky network does not blank it. Once unreachable it counts as *off* and drops out of the fleet totals
-  entirely — an unreachable miner is unknown, not a measured zero, so an all-down group reads as unavailable rather than
-  a fabricated `0`.
+- A miner keeps its last good reading through two failed passes and flips to unreachable on the third, so a single
+  missed poll on a flaky network does not blank it. Once unreachable it counts as *off* and drops out of the fleet
+  totals entirely — an unreachable miner is unknown, not a measured zero, so an all-down group reads as unavailable
+  rather than a fabricated `0`.
 - A confirmed miner, or one marked *Check account*, is kept across an mDNS *removed* event — which fires unreliably on
   lossy Wi-Fi as a cache expiry, not only a real departure — so a dropped announcement cannot churn it out of the fleet.
   Its liveness is governed by polling from then on, not by discovery.
@@ -191,9 +219,10 @@ how accounts are saved and bound.
 
 - The widget targets the Deck's full **1280×480** rectangular viewport only; the manifest declares no smaller sizes.
 - Font sizes are fixed for that layout.
-- Every device across all families is polled on a single global round-robin, one device at a time, aiming to refresh the
-  whole fleet roughly every 5 seconds — bounded by a floor on the per-device poll rate, so a large fleet's freshness
-  degrades gracefully rather than the box drowning in parallel requests.
+- Every device across all families is polled on a single global round-robin, one device at a time. A pass aims to
+  refresh the whole fleet roughly every 5 seconds, but starts at most one device every 150 ms, so above 33 miners it
+  takes longer: at least 13.5 seconds for 90. This keeps the Deck from drowning in parallel requests. Each miner's
+  response time adds to the pass, and an unreachable miner adds up to its 1 second request timeout.
 - The widget never holds a miner password: the device puts the bound account into each request as it leaves. The
   password still crosses the local network unencrypted, since the miner APIs are HTTP-only. Listing the network's range
   (for example `192.168.1.0/24`) under the account's allowed destinations keeps it from being sent anywhere else.

@@ -37,7 +37,8 @@ digital layout on BMM101, scales to fit the BMM100 and BFM100 panels, and recolo
 An at-a-glance view of every Bitcoin miner on the local network. Discovers BOS, Braiins OS Libre, and AxeOS (Bitaxe /
 NerdQAxe++) miners over mDNS, polls each for live telemetry, and rolls them up into a fleet total, a per-model
 breakdown, and a per-device detail view — with hashrate trend charts, OK/degraded/off health against each miner's
-nominal, per-family credentials, and a selectable chart time range.
+nominal, per-family credentials, and a selectable chart time range. The charts keep sampling while another widget is on
+screen.
 
 ### [Formula 1 Widget](formula-1.md)
 
