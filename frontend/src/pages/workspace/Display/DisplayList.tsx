@@ -387,7 +387,7 @@ class View extends Component<Props, State> {
     #installWidgetPackage = async (file: File): Promise<void> => {
         const { formatMessage } = this.props.intl;
         this.setState({ packageDialog: 'installing' });
-        unloadGuard.enable();
+        const releaseUnloadGuard = unloadGuard.enable();
         try {
             const response = await fetch(URLS.api.installWidgetPackage, {
                 method: 'POST',
@@ -429,7 +429,7 @@ class View extends Component<Props, State> {
                 { duration: INSTALL_WIDGET_PACKAGE_ERROR_SECONDS },
             );
         } finally {
-            unloadGuard.disable();
+            releaseUnloadGuard();
             this.setState({ packageDialog: 'closed' });
         }
     };

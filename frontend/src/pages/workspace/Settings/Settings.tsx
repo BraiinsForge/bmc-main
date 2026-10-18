@@ -259,6 +259,8 @@ class View extends Component<Props, State> {
     // `finished` before settling — erring long so a real restart isn't settled past.
     readonly #packageReconcileMs = 10 * 1_000;
 
+    #releaseUnloadGuard?: () => void;
+
     constructor(props: Props) {
         super(props);
         this.state = getInitialState();
@@ -1390,7 +1392,7 @@ class View extends Component<Props, State> {
         const { upgradeInfo } = this.state.data;
 
         const setBackWithError = (error: string[]) => {
-            unloadGuard.disable();
+            this.#releaseUnloadGuard?.();
             this.setState(
                 {
                     upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
@@ -1421,7 +1423,7 @@ class View extends Component<Props, State> {
 
         // The upgrade ends in either an error or a device restart;
         // block navigation away for the whole duration.
-        unloadGuard.enable();
+        this.#releaseUnloadGuard = unloadGuard.enable();
 
         // Firmware reboots by process death after `FirmwareApplying` (no `finished`);
         // packages settle via an explicit `finished` while the server stays up.
@@ -1518,7 +1520,7 @@ class View extends Component<Props, State> {
             setBackWithError([formatMessage({ defaultMessage: 'The upgrade ended unexpectedly.' })]);
         } catch ($) {
             if (pb.abort.is($)) {
-                unloadGuard.disable();
+                this.#releaseUnloadGuard?.();
                 return;
             }
 
@@ -1568,9 +1570,8 @@ class View extends Component<Props, State> {
         }
 
         const outcome = await this.#awaitRestart(baselineInstanceId, signal, opts.timeoutMs);
+        this.#releaseUnloadGuard?.();
         if (outcome === 'aborted') return; // unmounted mid-wait
-
-        unloadGuard.disable();
         if (outcome === 'restarted') return window.location.reload();
         opts.onSettled();
     };

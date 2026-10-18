@@ -251,6 +251,29 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
         expect(screen.queryByText('Packages updated')).toBeNull();
     });
 
+    // The upgrade's hold on the unload guard is its own: leaving Settings
+    // mid-wait must release it, as no other page can.
+    test('leaving the page while it waits for a restart stops guarding the unload', async () => {
+        rstest.useFakeTimers();
+        const leaveIsQuestioned = (): boolean => !window.dispatchEvent(new Event('beforeunload', { cancelable: true }));
+        installMocks(() =>
+            (async function* () {
+                yield pkgPhase(pb.PackageUpgradePhase.ACTIVATING);
+                yield finished;
+            })(),
+        );
+
+        const { rerender } = renderPage();
+        await advance(300);
+        fireEvent.click(startButton());
+        await advance(2_000);
+        expect(leaveIsQuestioned()).toBe(true);
+
+        rerender(pageTree('#updates', false));
+        await advance(1_000);
+        expect(leaveIsQuestioned()).toBe(false);
+    });
+
     // Declining the pre-commit confirmation must not start the run.
     // Asserted on the RPC spy after the confirmation has resolved
     // — the UI-only checks are all true from the initial state,

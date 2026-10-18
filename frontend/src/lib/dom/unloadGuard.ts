@@ -18,26 +18,28 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-let isConnected: boolean = false;
+const holds = new Set<symbol>();
 
 function listener(e: BeforeUnloadEvent) {
     // For legacy browsers
     e.returnValue = true;
     e.preventDefault();
 }
-function enable() {
+
+/** Asks before the page unloads until the returned release runs; releasing twice is harmless. */
+function enable(): () => void {
+    const hold = Symbol('unloadGuard');
+    holds.add(hold);
     window.addEventListener('beforeunload', listener);
-    isConnected = true;
-}
-function disable() {
-    window.removeEventListener('beforeunload', listener);
-    isConnected = false;
+    return () => {
+        holds.delete(hold);
+        if (holds.size === 0) window.removeEventListener('beforeunload', listener);
+    };
 }
 
 export const unloadGuard = {
     enable,
-    disable,
     get isEnabled(): boolean {
-        return isConnected;
+        return holds.size > 0;
     },
 };
