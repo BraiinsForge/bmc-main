@@ -54,3 +54,6 @@ pub fn widget_dirs(root: &Path) -> Vec<walkdir::Result<PathBuf>> {
     }
     dirs
 }
+
+#[cfg(test)]
+mod tests;
