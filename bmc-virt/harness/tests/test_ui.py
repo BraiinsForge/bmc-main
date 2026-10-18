@@ -38,6 +38,11 @@ class _FakeStdin:
         return self._tty
 
 
+def _press_enter(*_args: object, **_kwargs: object) -> str:
+    """Stand-in for ``input()``: the user presses Enter at once."""
+    return ""
+
+
 class _RecordingCapture:
     """Minimal ``SupportsCapture`` implementation that records its labels."""
 
@@ -52,9 +57,8 @@ class _RecordingCapture:
 @pytest.fixture
 def tty_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stdin", _FakeStdin(tty=True))
-    # ``input()`` reads from the real stdin by default; replace it with a
-    # canned no-op that simulates the user pressing Enter immediately.
-    monkeypatch.setattr("builtins.input", lambda *_a, **_kw: "")
+    # ``input()`` reads from the real stdin by default.
+    monkeypatch.setattr("builtins.input", _press_enter)
 
 
 def test_returns_timezone_aware_timestamp(tty_stdin: None) -> None:
@@ -83,7 +87,7 @@ def test_no_metrics_calls_when_metrics_omitted(tty_stdin: None) -> None:
 
 def test_raises_when_stdin_is_not_a_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stdin", _FakeStdin(tty=False))
-    monkeypatch.setattr("builtins.input", lambda *_a, **_kw: "")
+    monkeypatch.setattr("builtins.input", _press_enter)
 
     with pytest.raises(RuntimeError, match="requires a TTY"):
         ui.instruct_user("Tap +D20")
@@ -92,7 +96,7 @@ def test_raises_when_stdin_is_not_a_tty(monkeypatch: pytest.MonkeyPatch) -> None
 def test_raises_before_capturing_when_not_a_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Non-TTY path must fail before any metrics side effect."""
     monkeypatch.setattr("sys.stdin", _FakeStdin(tty=False))
-    monkeypatch.setattr("builtins.input", lambda *_a, **_kw: "")
+    monkeypatch.setattr("builtins.input", _press_enter)
     metrics = _RecordingCapture()
 
     with pytest.raises(RuntimeError):

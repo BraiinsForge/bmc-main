@@ -32,6 +32,7 @@ import contextlib
 import pathlib
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -42,6 +43,7 @@ from rich import box
 from rich.table import Table
 
 from bmc_tui.console import format_ts, out
+from bmc_tui.json_value import Json
 from bmc_virt.commands import Ack, Cmd
 
 matplotlib.use("Agg")
@@ -277,19 +279,19 @@ class MetricsCollector:
         mem_avail = [s.mem_available_kb / 1024 for s in self.snapshots]
         load_1m = [s.load_1m for s in self.snapshots]
 
-        fig, ax1 = plt.subplots(figsize=(12, 5))
-        fig.suptitle(self.label or "VM Metrics", fontsize=14, fontweight="bold")
-
-        # The ignores below are matplotlib's stubs: they type these arguments `ArrayLike | float`,
+        # The ignores below are matplotlib's stubs, which leave `**kwargs` unannotated
+        # and type the data arguments `ArrayLike | float`,
         # while the units registry takes datetimes and None gaps at runtime.
+        fig, ax1 = plt.subplots(figsize=(12, 5))
+        fig.suptitle(self.label or "VM Metrics", fontsize=14, fontweight="bold")  # pyright: ignore[reportUnknownMemberType]
 
         # Memory on left y-axis
-        ax1.set_ylabel("Memory (MB)", color="#ff6b6b")
-        ax1.plot(timestamps, mem_used, "#ff6b6b", linewidth=2, label="Mem Used")  # pyright: ignore[reportArgumentType]
-        ax1.plot(timestamps, mem_avail, "#51cf66", linewidth=2, label="Mem Avail")  # pyright: ignore[reportArgumentType]
-        ax1.tick_params(axis="y", labelcolor="#ff6b6b")
-        ax1.set_xlabel("Time")
-        ax1.grid(True, alpha=0.15)
+        ax1.set_ylabel("Memory (MB)", color="#ff6b6b")  # pyright: ignore[reportUnknownMemberType]
+        ax1.plot(timestamps, mem_used, "#ff6b6b", linewidth=2, label="Mem Used")  # pyright: ignore[reportUnknownMemberType, reportArgumentType]
+        ax1.plot(timestamps, mem_avail, "#51cf66", linewidth=2, label="Mem Avail")  # pyright: ignore[reportUnknownMemberType, reportArgumentType]
+        ax1.tick_params(axis="y", labelcolor="#ff6b6b")  # pyright: ignore[reportUnknownMemberType]
+        ax1.set_xlabel("Time")  # pyright: ignore[reportUnknownMemberType]
+        ax1.grid(True, alpha=0.15)  # pyright: ignore[reportUnknownMemberType]
 
         # Per-process VmRSS on the same axis. None values render as gaps.
         for i, name in enumerate(self.processes):
@@ -303,18 +305,18 @@ class MetricsCollector:
                     rss_series.append(proc.vm_rss_kb / 1024)
             if all(v is None for v in rss_series):
                 continue
-            ax1.plot(timestamps, rss_series, color, linewidth=1.5, label=f"{name} RSS")  # pyright: ignore[reportArgumentType]
+            ax1.plot(timestamps, rss_series, color, linewidth=1.5, label=f"{name} RSS")  # pyright: ignore[reportUnknownMemberType, reportArgumentType]
 
         # Load on right y-axis
-        ax2 = ax1.twinx()
-        ax2.set_ylabel("Load Average", color="#74c0fc")
-        ax2.plot(timestamps, load_1m, "#74c0fc", linewidth=2, linestyle="--", label="Load 1m")  # pyright: ignore[reportArgumentType]
-        ax2.tick_params(axis="y", labelcolor="#74c0fc")
+        ax2 = ax1.twinx()  # pyright: ignore[reportUnknownMemberType]
+        ax2.set_ylabel("Load Average", color="#74c0fc")  # pyright: ignore[reportUnknownMemberType]
+        ax2.plot(timestamps, load_1m, "#74c0fc", linewidth=2, linestyle="--", label="Load 1m")  # pyright: ignore[reportUnknownMemberType, reportArgumentType]
+        ax2.tick_params(axis="y", labelcolor="#74c0fc")  # pyright: ignore[reportUnknownMemberType]
 
         # Combined legend
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", framealpha=0.3)
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", framealpha=0.3)  # pyright: ignore[reportUnknownMemberType]
 
         # Capture markers — placed below the chart as rotated x-axis
         # annotations. Density-aware staggering: rotate 30° and cycle four
@@ -322,9 +324,9 @@ class MetricsCollector:
         labeled = [s for s in self.snapshots if s.label]
         stagger_rows = 4
         for i, s in enumerate(labeled):
-            ax1.axvline(x=s.ts, color="#868e96", linestyle=":", alpha=0.6)  # pyright: ignore[reportArgumentType]
+            ax1.axvline(x=s.ts, color="#868e96", linestyle=":", alpha=0.6)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]
             y_pos = -0.10 - 0.06 * (i % stagger_rows)
-            ax1.annotate(
+            ax1.annotate(  # pyright: ignore[reportUnknownMemberType]
                 s.label,
                 xy=(s.ts, 0),
                 xycoords=("data", "axes fraction"),
@@ -338,31 +340,48 @@ class MetricsCollector:
             )
 
         fig.subplots_adjust(bottom=0.3)
-        plt.savefig(dest, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.savefig(dest, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())  # pyright: ignore[reportUnknownMemberType]
         plt.close()
         return dest
 
 
-def _snapshot_from_ack(payload: dict[str, Any], label: str) -> Snapshot:
+def _number(value: Json) -> float:
+    return float(value) if isinstance(value, int | float) else 0.0
+
+
+def _kb(value: Json) -> int:
+    return int(value) if isinstance(value, int | float) else 0
+
+
+def _snapshot_from_ack(payload: Mapping[str, Json], label: str) -> Snapshot:
     """Build a :class:`Snapshot` from the daemon's ``metrics.collect`` ack.
 
     Tolerates partial payloads — missing sections fall back to zeroed
     values rather than raising, so a transient read error in the daemon
     yields a useful (if degraded) sample instead of dropping the whole row.
     """
-    meminfo_raw = payload.get("meminfo") or {}
-    meminfo: dict[str, int] = {str(k): int(v) for k, v in meminfo_raw.items()}
+    meminfo_raw = payload.get("meminfo")
+    meminfo: dict[str, int] = (
+        {k: _kb(v) for k, v in meminfo_raw.items()} if isinstance(meminfo_raw, dict) else {}
+    )
 
-    load_raw = payload.get("loadavg") or [0.0, 0.0, 0.0]
-    load = tuple(float(load_raw[i]) if i < len(load_raw) else 0.0 for i in range(3))
+    load_raw = payload.get("loadavg")
+    loads = load_raw if isinstance(load_raw, list) else []
+    load = tuple(_number(loads[i]) if i < len(loads) else 0.0 for i in range(3))
     load_1m, load_5m, load_15m = load
 
-    uptime_s = float(payload.get("uptime_s", 0.0))
+    uptime_s = _number(payload.get("uptime_s"))
 
-    processes_raw = payload.get("processes") or {}
-    processes: dict[str, ProcSnapshot] = {
-        str(name): _proc_snapshot_from_dict(rec) for name, rec in processes_raw.items()
-    }
+    processes_raw = payload.get("processes")
+    processes: dict[str, ProcSnapshot] = (
+        {
+            name: _proc_snapshot_from_dict(rec)
+            for name, rec in processes_raw.items()
+            if isinstance(rec, dict)
+        }
+        if isinstance(processes_raw, dict)
+        else {}
+    )
 
     mem_total = meminfo.get("MemTotal", 0)
     mem_available = meminfo.get("MemAvailable", 0)
@@ -382,13 +401,13 @@ def _snapshot_from_ack(payload: dict[str, Any], label: str) -> Snapshot:
     )
 
 
-def _proc_snapshot_from_dict(rec: dict[str, Any]) -> ProcSnapshot:
+def _proc_snapshot_from_dict(rec: Mapping[str, Json]) -> ProcSnapshot:
     pid = rec.get("pid")
     return ProcSnapshot(
-        pid=int(pid) if pid is not None else None,
-        vm_rss_kb=int(rec.get("vm_rss_kb", 0)),
-        rss_anon_kb=int(rec.get("rss_anon_kb", 0)),
-        rss_file_kb=int(rec.get("rss_file_kb", 0)),
-        rss_shmem_kb=int(rec.get("rss_shmem_kb", 0)),
-        vm_size_kb=int(rec.get("vm_size_kb", 0)),
+        pid=pid if isinstance(pid, int) else None,
+        vm_rss_kb=_kb(rec.get("vm_rss_kb")),
+        rss_anon_kb=_kb(rec.get("rss_anon_kb")),
+        rss_file_kb=_kb(rec.get("rss_file_kb")),
+        rss_shmem_kb=_kb(rec.get("rss_shmem_kb")),
+        vm_size_kb=_kb(rec.get("vm_size_kb")),
     )

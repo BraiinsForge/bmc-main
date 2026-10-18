@@ -30,6 +30,7 @@ Run against a running VM:
 """
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 from bmc_virt import VM, Event, sleep, ui
@@ -84,7 +85,7 @@ SCENARIOS = [
 ]
 
 
-def collect_logs(vm: VM, scenario: str, scene_config: dict) -> Path:
+def collect_logs(vm: VM, scenario: str, scene_config: Mapping[str, object]) -> Path:
     ui.header(f"Scenario: {scenario}")
 
     # Push config

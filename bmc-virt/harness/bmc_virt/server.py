@@ -38,8 +38,9 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from bmc_tui.json_value import Json
 from bmc_virt.commands import Cmd
 from bmc_virt.events import Event
 from bmc_virt.paths import BMC_BIN, BMC_LOG, BMC_PID_FILE, RR_BUNDLE, RR_TRACE_DIR
@@ -133,7 +134,7 @@ class EventDaemon:
             sock.sendall(mk_synced().to_line())
 
             # Read commands from client
-            buf = b""
+            buf = bytearray()
             sock.settimeout(None)
             while self._running:
                 try:
@@ -143,8 +144,9 @@ class EventDaemon:
                 if not chunk:
                     break
                 buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
+                while (newline := buf.find(b"\n")) >= 0:
+                    line = bytes(buf[:newline])
+                    del buf[: newline + 1]
                     if not line:
                         continue
                     try:
@@ -354,8 +356,8 @@ class EventDaemon:
         — busybox flag availability differs across builds, and shelling out
         per snapshot adds non-trivial overhead at 0.5 s polling cadence.
         """
-        raw_processes = data.get("processes") or []
-        processes = [str(p) for p in raw_processes]
+        requested = cast("Json", data.get("processes"))
+        processes = [str(p) for p in requested] if isinstance(requested, list) else []
         try:
             payload = {
                 "meminfo": _read_meminfo(),

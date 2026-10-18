@@ -28,6 +28,7 @@ canned dicts (no VM required).
 
 import os
 
+from bmc_tui.json_value import Json
 from bmc_virt.metrics import ProcSnapshot, _snapshot_from_ack
 from bmc_virt.server import (
     _read_loadavg,
@@ -41,7 +42,7 @@ from bmc_virt.server import (
 
 class TestSnapshotFromAck:
     def test_parses_full_payload(self) -> None:
-        payload = {
+        payload: dict[str, Json] = {
             "meminfo": {
                 "MemTotal": 262_144,
                 "MemFree": 50_000,
@@ -76,7 +77,7 @@ class TestSnapshotFromAck:
         assert proc.rss_shmem_kb == 13_052
 
     def test_missing_process_yields_none_pid(self) -> None:
-        payload = {
+        payload: dict[str, Json] = {
             "meminfo": {"MemTotal": 1, "MemAvailable": 1},
             "loadavg": [0.0, 0.0, 0.0],
             "uptime_s": 0.0,

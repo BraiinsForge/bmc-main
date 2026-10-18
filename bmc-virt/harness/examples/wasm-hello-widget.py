@@ -53,7 +53,7 @@ REMOTE_WASM_LOG = "/var/log/bmc/wasm-widget.log"
 HELLO_WIDGET_TYPE_ID = "550e8400-e29b-41d4-a716-446655440200"
 SETTLE_SECONDS = 3
 
-SCENE_CONFIG = {
+SCENE_CONFIG: dict[str, object] = {
     "scenes": [
         {
             "id": "c6c34f4c-7fb5-4d10-bd41-6ea3ee512301",

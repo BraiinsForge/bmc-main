@@ -28,6 +28,7 @@ import contextlib
 import socket
 import threading
 import time
+from collections.abc import Generator
 
 import pytest
 
@@ -50,21 +51,21 @@ def _free_port() -> int:
 class DaemonFixture:
     """Manages a test daemon on a random port."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.port = _free_port()
         self.daemon = EventDaemon()
         self.daemon._state.app_started = True  # skip polling, we control events manually
         self.thread: threading.Thread | None = None
         self._ready = threading.Event()
 
-    def start(self):
+    def start(self) -> None:
         self.thread = threading.Thread(target=self._run, daemon=True, name="test-daemon")
         self.thread.start()
         if not self._ready.wait(timeout=5):
             msg = "Daemon did not start"
             raise RuntimeError(msg)
 
-    def _run(self):
+    def _run(self) -> None:
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.settimeout(1.0)
@@ -102,14 +103,17 @@ class DaemonFixture:
         finally:
             server.close()
 
-    def stop(self):
+    def stop(self) -> None:
         self.daemon._running = False
         if self.thread:
             self.thread.join(timeout=3)
 
 
+type Connected = tuple[DaemonFixture, Client, list[Msg]]
+
+
 @pytest.fixture
-def daemon():
+def daemon() -> Generator[DaemonFixture]:
     d = DaemonFixture()
     d.start()
     yield d
@@ -117,7 +121,7 @@ def daemon():
 
 
 @pytest.fixture
-def connected(daemon):
+def connected(daemon: DaemonFixture) -> Generator[Connected]:
     """Returns (daemon, client, received_messages)."""
     messages: list[Msg] = []
     client = Client.connect("127.0.0.1", daemon.port, messages.append)
@@ -129,14 +133,14 @@ def connected(daemon):
 
 
 class TestHandshake:
-    def test_receives_hello_and_synced(self, connected):
+    def test_receives_hello_and_synced(self, connected: Connected):
         _daemon, _client, messages = connected
         # Give the reader thread time to process buffered messages
         time.sleep(1.0)
         types = [m.type for m in messages]
         assert MsgType.SYNCED in types
 
-    def test_hello_version(self, connected):
+    def test_hello_version(self, connected: Connected):
         _daemon, _client, messages = connected
         time.sleep(1.0)
         # The hello is consumed during Client.connect handshake,
@@ -148,7 +152,7 @@ class TestHandshake:
 
 
 class TestEvents:
-    def test_receives_emitted_event(self, connected):
+    def test_receives_emitted_event(self, connected: Connected):
         daemon, _client, messages = connected
         time.sleep(0.1)
         daemon.daemon.emit(Event.APP_READY)
@@ -157,7 +161,7 @@ class TestEvents:
         assert len(event_msgs) >= 1
         assert event_msgs[-1].name == "app.ready"
 
-    def test_event_with_data(self, connected):
+    def test_event_with_data(self, connected: Connected):
         daemon, _client, messages = connected
         time.sleep(0.1)
         daemon.daemon.emit(Event.WIFI_GOT_IP, {"iface": "wlan0", "ip": "10.0.0.1"})
@@ -170,7 +174,7 @@ class TestEvents:
 
 
 class TestBacklog:
-    def test_new_client_receives_past_events(self, daemon):
+    def test_new_client_receives_past_events(self, daemon: DaemonFixture):
         # Emit events before any client connects
         daemon.daemon.emit(Event.SETUP_DONE)
         daemon.daemon.emit(Event.APP_STARTED, {"pid": 42})
@@ -191,7 +195,7 @@ class TestBacklog:
 
 
 class TestCommands:
-    def test_shell_exec(self, connected):
+    def test_shell_exec(self, connected: Connected):
         _daemon, client, messages = connected
         time.sleep(0.1)
         client.send(mk_cmd("test-1", Cmd.SHELL_EXEC, {"cmd": "echo hello"}))
@@ -203,7 +207,7 @@ class TestCommands:
         assert ack.data["stdout"].strip() == "hello"
         assert ack.data["exit_code"] == 0
 
-    def test_shell_exec_failure(self, connected):
+    def test_shell_exec_failure(self, connected: Connected):
         _daemon, client, messages = connected
         time.sleep(0.1)
         client.send(mk_cmd("test-2", Cmd.SHELL_EXEC, {"cmd": "false"}))
@@ -212,7 +216,7 @@ class TestCommands:
         assert ack.ok is False
         assert ack.data["exit_code"] != 0
 
-    def test_unknown_command(self, connected):
+    def test_unknown_command(self, connected: Connected):
         _daemon, client, messages = connected
         time.sleep(0.1)
         # Send a raw command with a bogus name
@@ -228,7 +232,7 @@ class TestCommands:
 
 
 class TestSingleClient:
-    def test_second_client_rejected(self, connected):
+    def test_second_client_rejected(self, connected: Connected):
         daemon, _client, _messages = connected
         time.sleep(0.1)
 
