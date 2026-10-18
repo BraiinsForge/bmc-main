@@ -27,9 +27,14 @@ Usage:
 
 import os
 import sys
+from collections.abc import Sequence
+from typing import cast
 
-import bpy  # type: ignore[import-not-found]  # Blender-embedded module
-import mathutils  # type: ignore[import-not-found]  # Blender-embedded module
+import bpy  # pyright: ignore[reportMissingModuleSource]  # Blender-embedded module
+import mathutils  # pyright: ignore[reportMissingModuleSource]  # Blender-embedded module
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common as common
 
 argv = sys.argv[sys.argv.index('--') + 1 :] if '--' in sys.argv else []
 if not argv:
@@ -44,10 +49,12 @@ bpy.ops.object.delete()
 
 # Add Suzanne
 bpy.ops.mesh.primitive_monkey_add(size=1.0, location=(0, 0, 0))
-obj = bpy.context.active_object
+obj = common.expect(bpy.context.active_object, bpy.types.Object)
 
 # Subdivision for smoother normals
-mod = obj.modifiers.new(name='Subsurf', type='SUBSURF')
+mod = common.expect(
+    obj.modifiers.new(name='Subsurf', type='SUBSURF'), bpy.types.SubsurfModifier
+)
 mod.levels = 2
 mod.render_levels = 2
 bpy.ops.object.modifier_apply(modifier=mod.name)
@@ -58,16 +65,18 @@ bpy.ops.mesh.select_all(action='SELECT')
 bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
 bpy.ops.object.mode_set(mode='OBJECT')
 
-tri_count = len(obj.data.polygons)
+tri_count = len(common.mesh_of(obj).polygons)
 print(f'Triangle count: {tri_count}')
 
 # Decimate if over 3000 triangles
 if tri_count > 3000:
     ratio = 3000 / tri_count
-    mod = obj.modifiers.new(name='Decimate', type='DECIMATE')
-    mod.ratio = ratio
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-    tri_count = len(obj.data.polygons)
+    decimate = common.expect(
+        obj.modifiers.new(name='Decimate', type='DECIMATE'), bpy.types.DecimateModifier
+    )
+    decimate.ratio = ratio
+    bpy.ops.object.modifier_apply(modifier=decimate.name)
+    tri_count = len(common.mesh_of(obj).polygons)
     print(f'After decimation: {tri_count}')
 
 # Recalculate normals
@@ -84,8 +93,9 @@ bpy.ops.object.mode_set(mode='OBJECT')
 
 # Create material with a procedural noise texture baked to image
 mat = bpy.data.materials.new(name='SuzanneMaterial')
-nodes = mat.node_tree.nodes
-links = mat.node_tree.links
+tree = common.expect(mat.node_tree, bpy.types.ShaderNodeTree)
+nodes = tree.nodes
+links = tree.links
 
 # Clear default nodes
 for node in nodes:
@@ -99,43 +109,55 @@ links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
 # Create a procedural noise texture for visual interest
 tex_coord = nodes.new('ShaderNodeTexCoord')
 noise = nodes.new('ShaderNodeTexNoise')
-noise.inputs['Scale'].default_value = 4.0
-noise.inputs['Detail'].default_value = 6.0
-noise.inputs['Roughness'].default_value = 0.6
+common.expect(noise.inputs['Scale'], bpy.types.NodeSocketFloat).default_value = 4.0
+common.expect(noise.inputs['Detail'], bpy.types.NodeSocketFloat).default_value = 6.0
+common.expect(
+    noise.inputs['Roughness'], bpy.types.NodeSocketFloatFactor
+).default_value = 0.6
 links.new(tex_coord.outputs['Object'], noise.inputs['Vector'])
 
 # Color ramp for a nice warm clay look
 ramp = nodes.new('ShaderNodeValToRGB')
-ramp.color_ramp.elements[0].position = 0.3
-ramp.color_ramp.elements[0].color = (0.45, 0.28, 0.18, 1.0)  # dark clay
-ramp.color_ramp.elements[1].position = 0.7
-ramp.color_ramp.elements[1].color = (0.75, 0.52, 0.35, 1.0)  # light clay
+color_ramp = common.expect(
+    common.expect(ramp, bpy.types.ShaderNodeValToRGB).color_ramp, bpy.types.ColorRamp
+)
+color_ramp.elements[0].position = 0.3
+color_ramp.elements[0].color = (0.45, 0.28, 0.18, 1.0)  # dark clay
+color_ramp.elements[1].position = 0.7
+color_ramp.elements[1].color = (0.75, 0.52, 0.35, 1.0)  # light clay
 links.new(noise.outputs['Fac'], ramp.inputs['Fac'])
 
 # Image texture node for bake target
 bake_img = bpy.data.images.new('SuzanneBake', width=512, height=512)
 img_node = nodes.new('ShaderNodeTexImage')
-img_node.image = bake_img
+common.expect(img_node, bpy.types.ShaderNodeTexImage).image = bake_img
 img_node.select = True
 nodes.active = img_node
 
 # Connect noise to BSDF for baking
 links.new(ramp.outputs['Color'], bsdf.inputs['Base Color'])
-bsdf.inputs['Roughness'].default_value = 0.8
+common.expect(
+    bsdf.inputs['Roughness'], bpy.types.NodeSocketFloatFactor
+).default_value = 0.8
 
-obj.data.materials.clear()
-obj.data.materials.append(mat)
+mesh = common.mesh_of(obj)
+mesh.materials.clear()
+mesh.materials.append(mat)
 
 # Bake the procedural texture to the image
-bpy.context.scene.render.engine = 'CYCLES'
-bpy.context.scene.cycles.device = 'CPU'
-bpy.context.scene.cycles.samples = 4  # low samples for speed
-bpy.context.scene.cycles.bake_type = 'DIFFUSE'
+scene = common.expect(bpy.context.scene, bpy.types.Scene)
+# The stubs' engine enum holds only the built-in EEVEE; the Cycles add-on registers 'CYCLES'.
+scene.render.engine = 'CYCLES'  # pyright: ignore[reportAttributeAccessIssue]
+cycles = scene.cycles
+assert cycles is not None, 'the Cycles add-on registers scene.cycles'
+cycles.device = 'CPU'
+cycles.samples = 4  # low samples for speed
+cycles.bake_type = 'DIFFUSE'
 
 # Select object for baking
 bpy.ops.object.select_all(action='DESELECT')
 obj.select_set(True)
-bpy.context.view_layer.objects.active = obj
+common.expect(bpy.context.view_layer, bpy.types.ViewLayer).objects.active = obj
 
 bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'})
 
@@ -148,7 +170,9 @@ links.new(img_node.outputs['Color'], bsdf.inputs['Base Color'])
 bpy.ops.object.shade_smooth()
 
 # Normalize scale to unit bounding box
-bbox = [obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box]
+# Eight xyz corners; the stubs' union for it includes an untyped ndarray.
+corners = cast('Sequence[Sequence[float]]', obj.bound_box)
+bbox = [obj.matrix_world @ mathutils.Vector(corner) for corner in corners]
 dims = [max(v[i] for v in bbox) - min(v[i] for v in bbox) for i in range(3)]
 max_dim = max(dims)
 if max_dim > 0:
@@ -168,7 +192,5 @@ bpy.ops.export_scene.gltf(
     export_image_format='AUTO',
 )
 
-final_tris = len(obj.data.polygons)
-print(
-    f'Exported {output_path}: {final_tris} triangles, {len(obj.data.vertices)} vertices'
-)
+final_tris = len(mesh.polygons)
+print(f'Exported {output_path}: {final_tris} triangles, {len(mesh.vertices)} vertices')

@@ -165,9 +165,9 @@ if '--reset-texture' in sys.argv:
 
 # --- Below here requires Blender ---
 
-import bmesh  # type: ignore[import-not-found]  # noqa: E402
-import bpy  # type: ignore[import-not-found]  # noqa: E402
-import mathutils  # type: ignore[import-not-found]  # noqa: E402
+import bmesh  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import bpy  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import mathutils  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
 
 output_path = common.parse_blender_args()
 albedo_path, normal_path = common.ensure_textures(
@@ -179,17 +179,17 @@ bpy.ops.object.select_all(action='SELECT')
 bpy.ops.object.delete()
 
 bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0))
-cube = bpy.context.active_object
+cube = common.expect(bpy.context.active_object, bpy.types.Object)
 cube.name = 'Dice'
 
 # --- UV map each face to its atlas cell ---
 bpy.ops.object.mode_set(mode='EDIT')
-bm = bmesh.from_edit_mesh(cube.data)
+bm = bmesh.from_edit_mesh(common.mesh_of(cube))
 uv_layer = bm.loops.layers.uv.verify()
 
 # Dice face mapping: normal direction → face number
 # Standard: +Z=1, -Z=6, +X=2, -X=5, -Y=3, +Y=4
-FACE_MAP = {
+FACE_MAP: dict[tuple[int, ...], int] = {
     (0, 0, 1): 1,
     (0, 0, -1): 6,
     (1, 0, 0): 2,
@@ -247,11 +247,13 @@ for face in bm.faces:
             )
         )
 
-bmesh.update_edit_mesh(cube.data)
+bmesh.update_edit_mesh(common.mesh_of(cube))
 
 # Apply bevel AFTER UV assignment — bevel faces interpolate UVs from original vertices.
 bpy.ops.object.mode_set(mode='OBJECT')
-bevel = cube.modifiers.new(name='Bevel', type='BEVEL')
+bevel = common.expect(
+    cube.modifiers.new(name='Bevel', type='BEVEL'), bpy.types.BevelModifier
+)
 bevel.width = 0.06
 bevel.segments = 3
 bevel.limit_method = 'ANGLE'
@@ -267,7 +269,7 @@ common.setup_material(cube, albedo_path, normal_path, 'DiceMaterial')
 # Embed face normals in glTF extras (glTF Y-up space) so include_mesh! can read them.
 # Blender→glTF converts (x, y, z) → (x, z, -y). Ordered by face number 1..6.
 # FACE_MAP: Blender normal → face number
-d6_normals_flat = []
+d6_normals_flat: list[float] = []
 for face_num in range(1, 7):
     blender_n = next(k for k, v in FACE_MAP.items() if v == face_num)
     bx, by, bz = blender_n

@@ -89,9 +89,9 @@ if '--reset-texture' in sys.argv:
 
 # --- Below here requires Blender ---
 
-import bmesh  # type: ignore[import-not-found]  # noqa: E402
-import bpy  # type: ignore[import-not-found]  # noqa: E402
-import mathutils  # type: ignore[import-not-found]  # noqa: E402
+import bmesh  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import bpy  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import mathutils  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
 
 output_path = common.parse_blender_args()
 albedo_path, normal_path = common.ensure_textures(
@@ -104,8 +104,8 @@ bpy.ops.object.delete()
 
 mesh = bpy.data.meshes.new('D12Mesh')
 obj = bpy.data.objects.new('D12', mesh)
-bpy.context.collection.objects.link(obj)
-bpy.context.view_layer.objects.active = obj
+common.expect(bpy.context.collection, bpy.types.Collection).objects.link(obj)
+common.expect(bpy.context.view_layer, bpy.types.ViewLayer).objects.active = obj
 obj.select_set(True)
 
 bm = bmesh.new()
@@ -165,9 +165,9 @@ for i in range(len(dodeca_verts)):
 # Find pentagonal faces by walking 5-cycles in the edge graph.
 
 
-def _find_pentagons(adjacency):
+def _find_pentagons(adjacency: dict[int, list[int]]) -> set[tuple[int, ...]]:
     """Walk all 5-cycles a→b→c→d→e→a and return unique sorted face tuples."""
-    faces = set()
+    faces: set[tuple[int, ...]] = set()
     for a in adjacency:
         for b in adjacency[a]:
             for c in adjacency[b]:
@@ -177,7 +177,9 @@ def _find_pentagons(adjacency):
     return faces
 
 
-def _walk_cd(adjacency, faces, a, b, c):
+def _walk_cd(
+    adjacency: dict[int, list[int]], faces: set[tuple[int, ...]], a: int, b: int, c: int
+) -> None:
     for d in adjacency[c]:
         if d in (b, a):
             continue
@@ -199,9 +201,9 @@ for face_indices in found_faces:
     normal = (centroid).normalized()  # outward from origin for convex solid
     # Sort by angle around normal
     ref = (pts[0] - centroid).normalized()
-    cross_ref = normal.cross(ref)
+    cross_ref = common.expect(normal.cross(ref), mathutils.Vector)
 
-    def angle_key(idx):
+    def angle_key(idx: int) -> float:
         v = mathutils.Vector(dodeca_verts[idx]) - centroid
         return math.atan2(v.dot(cross_ref), v.dot(ref))
 
@@ -217,7 +219,7 @@ mesh.update()
 
 # --- UV map each pentagonal face BEFORE triangulation ---
 bpy.ops.object.mode_set(mode='EDIT')
-bm = bmesh.from_edit_mesh(obj.data)
+bm = bmesh.from_edit_mesh(mesh)
 uv_layer = bm.loops.layers.uv.verify()
 
 face_normals_list = [(f.index, (f.normal.x, f.normal.y, f.normal.z)) for f in bm.faces]
@@ -228,7 +230,7 @@ face_normals_list.sort(
 # Permutation: opposite faces sum to 13
 DISPLAY_NUMBER = [10, 4, 8, 2, 6, 12, 1, 7, 11, 5, 9, 3]
 
-face_to_num = {}
+face_to_num: dict[int, int] = {}
 for i, (fidx, _) in enumerate(face_normals_list):
     face_to_num[fidx] = DISPLAY_NUMBER[i]
 
@@ -249,7 +251,7 @@ for face in bm.faces:
     if abs(normal.dot(world_up)) > 0.95:
         world_up = mathutils.Vector((1, 0, 0))
     tangent_v = (world_up - normal * world_up.dot(normal)).normalized()
-    tangent_u = tangent_v.cross(normal).normalized()
+    tangent_u = common.expect(tangent_v.cross(normal), mathutils.Vector).normalized()
 
     center = face.calc_center_median()
     coords = [
@@ -277,11 +279,13 @@ for face in bm.faces:
             )
         )
 
-bmesh.update_edit_mesh(obj.data)
+bmesh.update_edit_mesh(mesh)
 
 # Bevel AFTER UV assignment, BEFORE triangulation
 bpy.ops.object.mode_set(mode='OBJECT')
-bevel = obj.modifiers.new(name='Bevel', type='BEVEL')
+bevel = common.expect(
+    obj.modifiers.new(name='Bevel', type='BEVEL'), bpy.types.BevelModifier
+)
 bevel.width = 0.02
 bevel.segments = 2
 bevel.limit_method = 'ANGLE'
@@ -295,11 +299,11 @@ bpy.ops.object.shade_auto_smooth()
 common.setup_material(obj, albedo_path, normal_path, 'D12Material')
 
 # Embed face normals: Blender (x,y,z) → glTF (x,z,-y), ordered by display number 1..12
-normals_by_display = {}
+normals_by_display: dict[int, list[float]] = {}
 for i, (_fidx, (nx, ny, nz)) in enumerate(face_normals_list):
     dnum = DISPLAY_NUMBER[i]
     normals_by_display[dnum] = [round(nx, 6), round(nz, 6), round(-ny, 6)]
-face_normals_flat = []
+face_normals_flat: list[float] = []
 for d in range(1, 13):
     face_normals_flat.extend(normals_by_display[d])
 

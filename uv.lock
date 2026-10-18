@@ -11,6 +11,7 @@ members = [
 
 [manifest.dependency-groups]
 dev = [
+    { name = "fake-bpy-module-5-0", specifier = ">=20260730" },
     { name = "grpcio", specifier = ">=1.60" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },
@@ -204,6 +205,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
+]
+
+[[package]]
+name = "fake-bpy-module-5-0"
+version = "20260730"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/3c/d72a3fc3c1655063875c90a147785a1e82f3f53cd52361cf71a6e90a213f/fake_bpy_module_5_0-20260730.tar.gz", hash = "sha256:a5f9cb490f90c79c7049f6a6d706cf2107b309fd42b5c722e13c943e2228c729", size = 843163, upload-time = "2026-07-30T04:10:36.989Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/6c/328d0e1eefdf617f89df37ab71b0949e737bb02ec3c47701643ee4f2332e/fake_bpy_module_5_0-20260730-py3-none-any.whl", hash = "sha256:03cb1c6947bc8172416375b94027aeb5661289148e060c944111f24c791a9f09", size = 976581, upload-time = "2026-07-30T04:10:35.727Z" },
 ]
 
 [[package]]

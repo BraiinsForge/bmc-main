@@ -44,13 +44,13 @@ import json
 import math
 import os
 import sys
-from typing import Iterable
+from collections.abc import Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
 _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 _FONT_DIR = os.path.normpath(
-    os.path.join(_TOOLS_DIR, '..', '..', '..', '..', 'assets', 'fonts')
+    os.path.join(_TOOLS_DIR, '..', '..', '..', 'assets', 'fonts')
 )
 _FONT_PATH = os.path.join(_FONT_DIR, 'BraiinsSans-Bold.otf')
 
@@ -85,12 +85,13 @@ def _glyph_mask(text: str, font_size_px: int) -> tuple[list[list[bool]], int, in
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     pad = 4 * SUPERSAMPLE
-    img = Image.new('L', (tw + pad * 2, th + pad * 2), 0)
+    img = Image.new('L', (int(tw) + pad * 2, int(th) + pad * 2), 0)
     draw = ImageDraw.Draw(img)
     draw.text((pad - bbox[0], pad - bbox[1]), text, fill=255, font=font)
-    px = img.load()
+    # One byte per pixel in mode L, row-major.
+    px = img.tobytes()
     gw, gh = img.size
-    mask = [[px[x, y] >= 128 for x in range(gw)] for y in range(gh)]
+    mask = [[px[y * gw + x] >= 128 for x in range(gw)] for y in range(gh)]
     return mask, gh, gw
 
 

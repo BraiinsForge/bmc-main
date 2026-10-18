@@ -30,6 +30,13 @@ import os
 import struct
 import sys
 import zlib
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, TypeVar, cast
+
+if TYPE_CHECKING:
+    import bpy  # pyright: ignore[reportMissingModuleSource]
+
+_T = TypeVar('_T')
 
 # --- PNG export (no dependencies) ---
 
@@ -100,14 +107,15 @@ def paint_number(
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     pad = 4
-    glyph_img = Image.new('L', (tw + pad * 2, th + pad * 2), 0)
+    glyph_img = Image.new('L', (int(tw) + pad * 2, int(th) + pad * 2), 0)
     draw = ImageDraw.Draw(glyph_img)
     draw.text((pad - bbox[0], pad - bbox[1]), label, fill=255, font=font)
 
     gw, gh = glyph_img.size
     ox = cx - gw // 2
     oy = cy - gh // 2
-    pixels = glyph_img.load()
+    # One byte per pixel in mode L, row-major.
+    pixels = glyph_img.tobytes()
 
     for py in range(gh):
         iy = oy + py
@@ -117,7 +125,7 @@ def paint_number(
             ix = ox + px
             if ix < 0 or ix >= img_size:
                 continue
-            alpha = pixels[px, py] / 255.0
+            alpha = pixels[py * gw + px] / 255.0
             if alpha < 0.004:
                 continue
             i = (iy * img_size + ix) * 4
@@ -131,12 +139,14 @@ def paint_number(
 
 def fill_background(buf: list[float], img_size: int, color: tuple[float, ...]) -> None:
     """Fill buffer with a solid background color."""
+    r, g, b = color[0], color[1], color[2]
+    a = color[3] if len(color) > 3 else 1.0
     for i in range(img_size * img_size):
         off = i * 4
-        buf[off] = color[0]
-        buf[off + 1] = color[1]
-        buf[off + 2] = color[2]
-        buf[off + 3] = color[3] if len(color) > 3 else 1.0
+        buf[off] = r
+        buf[off + 1] = g
+        buf[off + 2] = b
+        buf[off + 3] = a
 
 
 def fill_neutral_normal(buf: list[float], img_size: int) -> None:
@@ -228,8 +238,8 @@ def generate_sobel_normal_map(
 
 def handle_reset_texture(
     script_name: str,
-    generate_albedo_fn,
-    generate_normal_fn,
+    generate_albedo_fn: Callable[[], list[float]],
+    generate_normal_fn: Callable[[], list[float]],
 ) -> bool:
     """Handle --reset-texture mode. Returns True if handled (caller should exit)."""
     if '--reset-texture' not in sys.argv:
@@ -242,7 +252,6 @@ def handle_reset_texture(
         )
         sys.exit(1)
     base_path = os.path.abspath(sys.argv[idx + 1])
-    img_size = generate_albedo_fn.__code__.co_varnames  # hacky, use actual call
     albedo = generate_albedo_fn()
     normal = generate_normal_fn()
     # Infer img_size from buffer length
@@ -257,6 +266,13 @@ def handle_reset_texture(
 # --- Blender helpers (only usable when running inside Blender) ---
 
 
+def expect(value: object, kind: type[_T]) -> _T:
+    """`value` as a `kind`; Blender's API types what it hands back by the base class."""
+    if not isinstance(value, kind):
+        raise TypeError(f'expected {kind.__name__}, got {type(value).__name__}')
+    return value
+
+
 def parse_blender_args() -> str:
     """Parse Blender CLI args, return output path."""
     argv = sys.argv[sys.argv.index('--') + 1 :] if '--' in sys.argv else []
@@ -267,8 +283,11 @@ def parse_blender_args() -> str:
 
 
 def ensure_textures(
-    output_path: str, generate_albedo_fn, generate_normal_fn, img_size: int
-):
+    output_path: str,
+    generate_albedo_fn: Callable[[], list[float]],
+    generate_normal_fn: Callable[[], list[float]],
+    img_size: int,
+) -> tuple[str, str]:
     """Generate textures if they don't exist. Returns (albedo_path, normal_path)."""
     base_name = os.path.splitext(output_path)[0]
     albedo_path = base_name + '.albedo.png'
@@ -282,46 +301,68 @@ def ensure_textures(
     return albedo_path, normal_path
 
 
-def setup_material(obj, albedo_path: str, normal_path: str, name: str = 'DieMaterial'):
+def mesh_of(obj: 'bpy.types.Object') -> 'bpy.types.Mesh':
+    import bpy  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
+
+    return expect(obj.data, bpy.types.Mesh)
+
+
+def setup_material(
+    obj: 'bpy.types.Object',
+    albedo_path: str,
+    normal_path: str,
+    name: str = 'DieMaterial',
+) -> None:
     """Create principled BSDF material with albedo + normal map textures."""
-    import bpy  # noqa: PLC0415  # type: ignore[import-not-found]
+    import bpy  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
 
     mat = bpy.data.materials.new(name=name)
-    nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
+    tree = expect(mat.node_tree, bpy.types.ShaderNodeTree)
+    nodes = tree.nodes
+    links = tree.links
     for node in nodes:
         nodes.remove(node)
 
     output_node = nodes.new('ShaderNodeOutputMaterial')
     bsdf = nodes.new('ShaderNodeBsdfPrincipled')
     links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
-    bsdf.inputs['Roughness'].default_value = 0.3
+    expect(
+        bsdf.inputs['Roughness'], bpy.types.NodeSocketFloatFactor
+    ).default_value = 0.3
 
+    # Linked as plain Nodes: the stubs give the node subclasses optional sockets.
     albedo_img = bpy.data.images.load(albedo_path)
     albedo_node = nodes.new('ShaderNodeTexImage')
-    albedo_node.image = albedo_img
+    expect(albedo_node, bpy.types.ShaderNodeTexImage).image = albedo_img
     links.new(albedo_node.outputs['Color'], bsdf.inputs['Base Color'])
 
     if os.path.exists(normal_path):
         nmap_img = bpy.data.images.load(normal_path)
-        nmap_img.colorspace_settings.name = 'Non-Color'
+        colorspace = expect(
+            nmap_img.colorspace_settings, bpy.types.ColorManagedInputColorspaceSettings
+        )
+        # The stubs' colour-space enum holds only the "NONE" their generator saw.
+        colorspace.name = 'Non-Color'  # pyright: ignore[reportAttributeAccessIssue]
         nmap_node = nodes.new('ShaderNodeTexImage')
-        nmap_node.image = nmap_img
+        expect(nmap_node, bpy.types.ShaderNodeTexImage).image = nmap_img
         normal_map_node = nodes.new('ShaderNodeNormalMap')
-        normal_map_node.space = 'TANGENT'
+        expect(normal_map_node, bpy.types.ShaderNodeNormalMap).space = 'TANGENT'
         links.new(nmap_node.outputs['Color'], normal_map_node.inputs['Color'])
         links.new(normal_map_node.outputs['Normal'], bsdf.inputs['Normal'])
 
-    obj.data.materials.clear()
-    obj.data.materials.append(mat)
+    mesh = mesh_of(obj)
+    mesh.materials.clear()
+    mesh.materials.append(mat)
 
 
-def normalize_scale(obj):
+def normalize_scale(obj: 'bpy.types.Object') -> None:
     """Normalize object to fit in a unit bounding box."""
-    import bpy  # noqa: PLC0415  # type: ignore[import-not-found]
-    import mathutils  # noqa: PLC0415  # type: ignore[import-not-found]
+    import bpy  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
+    import mathutils  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
 
-    bbox = [obj.matrix_world @ mathutils.Vector(c) for c in obj.bound_box]
+    # Eight xyz corners; the stubs' union for it includes an untyped ndarray.
+    corners = cast('Sequence[Sequence[float]]', obj.bound_box)
+    bbox = [obj.matrix_world @ mathutils.Vector(c) for c in corners]
     dims = [max(v[i] for v in bbox) - min(v[i] for v in bbox) for i in range(3)]
     max_dim = max(dims)
     if max_dim > 0:
@@ -331,10 +372,13 @@ def normalize_scale(obj):
 
 
 def finalize_and_export(
-    obj, output_path: str, face_normals_flat: list[float], face_count: int
-):
+    obj: 'bpy.types.Object',
+    output_path: str,
+    face_normals_flat: list[float],
+    face_count: int,
+) -> None:
     """Mark seams, triangulate, normalize, embed extras, export GLB."""
-    import bpy  # noqa: PLC0415  # type: ignore[import-not-found]
+    import bpy  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
 
     # Mark UV seams for glTF vertex split
     bpy.ops.object.mode_set(mode='EDIT')
@@ -365,6 +409,7 @@ def finalize_and_export(
         export_image_format='AUTO',
     )
 
+    mesh = mesh_of(obj)
     print(
-        f'Exported {output_path}: {len(obj.data.polygons)} tris, {len(obj.data.vertices)} verts'
+        f'Exported {output_path}: {len(mesh.polygons)} tris, {len(mesh.vertices)} verts'
     )

@@ -94,9 +94,9 @@ if '--reset-texture' in sys.argv:
 
 # --- Below here requires Blender ---
 
-import bmesh  # type: ignore[import-not-found]  # noqa: E402
-import bpy  # type: ignore[import-not-found]  # noqa: E402
-import mathutils  # type: ignore[import-not-found]  # noqa: E402
+import bmesh  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import bpy  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import mathutils  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
 
 output_path = common.parse_blender_args()
 albedo_path, normal_path = common.ensure_textures(
@@ -109,8 +109,8 @@ bpy.ops.object.delete()
 
 mesh = bpy.data.meshes.new('D10Mesh')
 obj = bpy.data.objects.new('D10', mesh)
-bpy.context.collection.objects.link(obj)
-bpy.context.view_layer.objects.active = obj
+common.expect(bpy.context.collection, bpy.types.Collection).objects.link(obj)
+common.expect(bpy.context.view_layer, bpy.types.ViewLayer).objects.active = obj
 obj.select_set(True)
 
 bm = bmesh.new()
@@ -128,14 +128,14 @@ top_apex = bm.verts.new((0, 0, apex_h))  # vertex 0
 bot_apex = bm.verts.new((0, 0, -apex_h))  # vertex 1
 
 # Upper ring (5 vertices) at angle offsets 0, 72, 144, 216, 288 degrees
-upper_ring = []
+upper_ring: list[bmesh.types.BMVert] = []
 for i in range(5):
     angle = math.radians(i * 72)
     v = bm.verts.new((ring_r * math.cos(angle), ring_r * math.sin(angle), ring_h))
     upper_ring.append(v)
 
 # Lower ring (5 vertices) twisted by 36° (half of 72°)
-lower_ring = []
+lower_ring: list[bmesh.types.BMVert] = []
 for i in range(5):
     angle = math.radians(i * 72 + 36)
     v = bm.verts.new((ring_r * math.cos(angle), ring_r * math.sin(angle), -ring_h))
@@ -161,7 +161,7 @@ mesh.update()
 
 # --- UV map each kite face BEFORE triangulation ---
 bpy.ops.object.mode_set(mode='EDIT')
-bm = bmesh.from_edit_mesh(obj.data)
+bm = bmesh.from_edit_mesh(mesh)
 uv_layer = bm.loops.layers.uv.verify()
 
 face_normals_list = [(f.index, (f.normal.x, f.normal.y, f.normal.z)) for f in bm.faces]
@@ -174,7 +174,7 @@ face_normals_list.sort(
 # Atlas cell index = display value = face_index - 1
 DISPLAY_NUMBER = [5, 1, 9, 3, 7, 6, 10, 2, 8, 4]
 
-face_to_num = {}
+face_to_num: dict[int, int] = {}
 for i, (fidx, _) in enumerate(face_normals_list):
     face_to_num[fidx] = DISPLAY_NUMBER[i]
 
@@ -197,7 +197,7 @@ for face in bm.faces:
     if abs(normal.dot(world_up)) > 0.95:
         world_up = mathutils.Vector((1, 0, 0))
     tangent_v = (world_up - normal * world_up.dot(normal)).normalized()
-    tangent_u = tangent_v.cross(normal).normalized()
+    tangent_u = common.expect(tangent_v.cross(normal), mathutils.Vector).normalized()
 
     center = face.calc_center_median()
     coords = [
@@ -224,11 +224,13 @@ for face in bm.faces:
             )
         )
 
-bmesh.update_edit_mesh(obj.data)
+bmesh.update_edit_mesh(mesh)
 
 # Bevel
 bpy.ops.object.mode_set(mode='OBJECT')
-bevel = obj.modifiers.new(name='Bevel', type='BEVEL')
+bevel = common.expect(
+    obj.modifiers.new(name='Bevel', type='BEVEL'), bpy.types.BevelModifier
+)
 bevel.width = 0.02
 bevel.segments = 2
 bevel.limit_method = 'ANGLE'
@@ -242,11 +244,11 @@ bpy.ops.object.shade_auto_smooth()
 common.setup_material(obj, albedo_path, normal_path, 'D10Material')
 
 # Embed face normals: Blender (x,y,z) → glTF (x,z,-y), ordered by display number 1..10
-normals_by_display = {}
+normals_by_display: dict[int, list[float]] = {}
 for i, (_fidx, (nx, ny, nz)) in enumerate(face_normals_list):
     dnum = DISPLAY_NUMBER[i]
     normals_by_display[dnum] = [round(nx, 6), round(nz, 6), round(-ny, 6)]
-face_normals_flat = []
+face_normals_flat: list[float] = []
 for d in range(1, 11):
     face_normals_flat.extend(normals_by_display[d])
 

@@ -91,9 +91,9 @@ if '--reset-texture' in sys.argv:
 
 # --- Below here requires Blender ---
 
-import bmesh  # type: ignore[import-not-found]  # noqa: E402
-import bpy  # type: ignore[import-not-found]  # noqa: E402
-import mathutils  # type: ignore[import-not-found]  # noqa: E402
+import bmesh  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import bpy  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
+import mathutils  # noqa: E402  # pyright: ignore[reportMissingModuleSource]
 
 output_path = common.parse_blender_args()
 albedo_path, normal_path = common.ensure_textures(
@@ -105,12 +105,12 @@ bpy.ops.object.select_all(action='SELECT')
 bpy.ops.object.delete()
 
 bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.5, location=(0, 0, 0))
-ico = bpy.context.active_object
+ico = common.expect(bpy.context.active_object, bpy.types.Object)
 ico.name = 'D20'
 
 # --- UV map each face to its atlas cell ---
 bpy.ops.object.mode_set(mode='EDIT')
-bm = bmesh.from_edit_mesh(ico.data)
+bm = bmesh.from_edit_mesh(common.mesh_of(ico))
 uv_layer = bm.loops.layers.uv.verify()
 
 # Sort faces by normal for deterministic ordering, then apply a permutation
@@ -125,7 +125,7 @@ face_normals.sort(
 # Optimized so opposite faces sum to 21 and no adjacent pair is within 3.
 DISPLAY_NUMBER = [3, 9, 10, 2, 6, 7, 5, 4, 8, 1, 20, 13, 17, 16, 14, 15, 19, 11, 12, 18]
 
-face_to_num = {}
+face_to_num: dict[int, int] = {}
 for i, (fidx, _) in enumerate(face_normals):
     face_to_num[fidx] = DISPLAY_NUMBER[i]
 
@@ -148,7 +148,7 @@ for face in bm.faces:
     if abs(normal.dot(world_up)) > 0.95:
         world_up = mathutils.Vector((1, 0, 0))  # fallback for near-vertical faces
     tangent_v = (world_up - normal * world_up.dot(normal)).normalized()
-    tangent_u = tangent_v.cross(normal).normalized()
+    tangent_u = common.expect(tangent_v.cross(normal), mathutils.Vector).normalized()
 
     # Project vertices onto tangent plane, centered at face centroid.
     # Use centroid-centered mapping so the triangle center lands at cell center (0.5, 0.5).
@@ -180,11 +180,13 @@ for face in bm.faces:
             )
         )
 
-bmesh.update_edit_mesh(ico.data)
+bmesh.update_edit_mesh(common.mesh_of(ico))
 
 # Bevel edges slightly for smoother look
 bpy.ops.object.mode_set(mode='OBJECT')
-bevel = ico.modifiers.new(name='Bevel', type='BEVEL')
+bevel = common.expect(
+    ico.modifiers.new(name='Bevel', type='BEVEL'), bpy.types.BevelModifier
+)
 bevel.width = 0.015
 bevel.segments = 2
 bevel.limit_method = 'ANGLE'
@@ -199,12 +201,12 @@ common.setup_material(ico, albedo_path, normal_path, 'D20Material')
 
 # Embed face normals in glTF extras (glTF Y-up space) so include_mesh! can read them.
 # Blender→glTF converts (x, y, z) → (x, z, -y). Ordered by display number 1..20.
-normals_by_display = {}
+normals_by_display: dict[int, list[float]] = {}
 for i, (_fidx, (nx, ny, nz)) in enumerate(face_normals):
     dnum = DISPLAY_NUMBER[i]
     normals_by_display[dnum] = [round(nx, 6), round(nz, 6), round(-ny, 6)]
 # Flat array: [x1,y1,z1, x2,y2,z2, ...] — glTF extras don't support nested arrays well
-face_normals_flat = []
+face_normals_flat: list[float] = []
 for d in range(1, 21):
     face_normals_flat.extend(normals_by_display[d])
 

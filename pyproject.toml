@@ -12,6 +12,9 @@ members = [
 # run via `uv run` (one venv covers the members).
 [dependency-groups]
 dev = [
+    # Blender 5.0's API as stubs, for type-checking mesh-demo's scripts;
+    # they run inside Blender, the only place `bpy` exists.
+    "fake-bpy-module-5.0>=20260730",
     "grpcio>=1.60",
     "pytest>=8",
     "pytest-cov>=5",
@@ -62,8 +65,6 @@ exclude = [
     "**/__pycache__",
     "**/.*",
     "widgets-wasm/iss-position/tools",
-    # Blender scripts, which need the Blender API to type-check.
-    "widgets-wasm-examples/mesh-demo/tools",
 ]
 executionEnvironments = [
     { root = "bmc-tui" },
@@ -72,4 +73,6 @@ executionEnvironments = [
     { root = "scripts" },
     # Run as files, so each script's own directory is on `sys.path` for its sibling imports.
     { root = "bmc-wasm-runtime/tools" },
+    # Blender 4.0, the oldest the README supports, embeds Python 3.10.
+    { root = "widgets-wasm-examples/mesh-demo/tools", pythonVersion = "3.10" },
 ]
