@@ -31,7 +31,7 @@ import tarfile
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal, Required, TypedDict, Unpack
+from typing import Literal, Required, TypedDict, Unpack, override
 
 import pytest
 
@@ -548,6 +548,7 @@ def _failing_nix(
     """A fake whose `resolve` dies the way `_eval_raw` does, stderr included."""
 
     class _BadNix(_Nix):
+        @override
         def resolve(self, attr: Attr) -> Pkg:
             raise subprocess.CalledProcessError(1, ["nix", "eval", attr], stderr=stderr)
 
@@ -1529,6 +1530,7 @@ def test_init_procedure_cleans_up_when_tarball_push_fails(tmp_path: Path) -> Non
     # paths — this is what pins remote_tarball being recorded BEFORE the
     # stream starts (a record-after-push regression makes it fail).
     class _TarballPushExplodes(_Exec):
+        @override
         def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
             if any(".tar.gz.deck-init." in part for part in argv):
                 raise subprocess.CalledProcessError(1, argv)
@@ -4391,6 +4393,7 @@ def test_verify_stock_service_accepts_running_and_rejects_stopped() -> None:
 
 
 class _OrderedExec(_Exec):
+    @override
     def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
         self.runs.append(argv)
         super().stream(argv, chunks)

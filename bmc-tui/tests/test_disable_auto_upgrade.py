@@ -23,7 +23,7 @@
 import json
 import shlex
 import subprocess
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 
 import pytest
@@ -42,7 +42,7 @@ _FORWARDED = "127.0.0.1:4321"
 
 
 @contextmanager
-def _forward(_dev: Device, remote_port: int) -> Iterator[str]:
+def _forward(_dev: Device, remote_port: int) -> Generator[str]:
     assert remote_port == 80, "the API is on the plain web port"
     yield _FORWARDED
 

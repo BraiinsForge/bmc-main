@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, Self, cast, override
 
 TOKEN = "stub-token"
 OFFER_ID = "9e2c7c2e-0000-4000-8000-00000000abcd"
@@ -105,7 +105,8 @@ class Script:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    @override
+    def log_message(self, format: str, *args: object) -> None:
         pass
 
     def _body(self) -> Any:
@@ -201,10 +202,12 @@ class BoserStub(ThreadingHTTPServer):
     def address(self) -> str:
         return f"127.0.0.1:{self.server_port}"
 
+    @override
     def __enter__(self) -> Self:
         self._thread.start()
-        return self
+        return super().__enter__()
 
+    @override
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
@@ -212,5 +215,5 @@ class BoserStub(ThreadingHTTPServer):
         exc_tb: TracebackType | None,
     ) -> None:
         self.shutdown()
-        self.server_close()
+        super().__exit__(exc_type, exc_val, exc_tb)
         self._thread.join()

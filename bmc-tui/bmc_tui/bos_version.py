@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import date
 from functools import total_ordering
 from string import ascii_lowercase
+from typing import override
 
 _VERSION_RE = re.compile(
     r"^(\d{4})?-(\d{2})?-(\d{2})?-(\d+)?-([0-9A-Fa-f]{8})?-([.0-9]+)?"
@@ -47,6 +48,7 @@ class VersionName:
             return NotImplemented
         return self._ordering_key < other._ordering_key
 
+    @override
     def __str__(self) -> str:
         rendered = f"{self.year:02}.{self.month:02}"
         if self.patch is not None:

@@ -38,7 +38,7 @@ Stdlib only, read from stdin:
 import json
 import sys
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 Passed = dict[str, dict[str, list[str]]]
 Failure = tuple[str, str, str]

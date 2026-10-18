@@ -37,7 +37,7 @@ import socket
 import subprocess
 import time
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -206,7 +206,7 @@ class Device:
         return ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", command]
 
     @contextmanager
-    def forward(self, remote_port: int) -> Iterator[str]:
+    def forward(self, remote_port: int) -> Generator[str]:
         """Yield a local `host:port` that SSH forwards to `remote_port` on the device.
 
         Reaches the device wherever SSH does, ssh-config aliases and jump hosts included.

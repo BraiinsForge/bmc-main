@@ -26,7 +26,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -65,7 +65,7 @@ def _handler(
 
 
 @contextmanager
-def _server(behavior: Callable[[bytes, Any], Iterator[bytes]]) -> Iterator[int]:
+def _server(behavior: Callable[[bytes, Any], Iterator[bytes]]) -> Generator[int]:
     server = grpc.server(ThreadPoolExecutor(max_workers=1))
     server.add_generic_rpc_handlers((_handler(behavior),))
     port = server.add_insecure_port("127.0.0.1:0")

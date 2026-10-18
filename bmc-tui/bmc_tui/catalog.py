@@ -43,7 +43,7 @@ import tempfile
 import threading
 import time
 import urllib.request
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -2817,7 +2817,7 @@ def _restore_each(*, failed: bool, actions: list[Callable[[], object]]) -> None:
 
 
 @contextmanager
-def package_upgrade_session(dev: Device, cycle: UpgradeCycle) -> Iterator[None]:
+def package_upgrade_session(dev: Device, cycle: UpgradeCycle) -> Generator[None]:
     """Hand back both files registration writes — the server registry and
     nix.conf, which carries a standing trust grant for the rig's signing key.
 

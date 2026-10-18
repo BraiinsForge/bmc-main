@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import BinaryIO, NamedTuple, Self, cast
+from typing import BinaryIO, NamedTuple, Self, cast, override
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from bmc_tui import console
@@ -235,9 +235,11 @@ class _Handler(BaseHTTPRequestHandler):
         super().__init__(request, client_address, server)
 
     # Silent: the per-request stderr line drowns a harness's own progress output.
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    @override
+    def log_message(self, format: str, *args: object) -> None:
         del format, args
 
+    @override
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
@@ -480,6 +482,7 @@ class _Server(ThreadingHTTPServer):
         with self._drop_lock:
             self.drops.append(drop)
 
+    @override
     def handle_error(
         self,
         request: socket.socket | tuple[bytes, socket.socket],

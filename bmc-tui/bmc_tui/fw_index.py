@@ -221,11 +221,17 @@ class _RecordingHTTPServer(ThreadingHTTPServer):
 
 
 class _RecordingHandler(SimpleHTTPRequestHandler):
+    _status: int = 0
+    _expected_bytes: int | None = None
+
+    @override
     def setup(self) -> None:
         super().setup()
-        self._body_writer = _RecordingWriter(self.wfile)
+        # BaseRequestHandler.__init__ runs setup() before handle(), so every method sees it set.
+        self._body_writer = _RecordingWriter(self.wfile)  # pyright: ignore[reportUninitializedInstanceVariable]
         self.wfile = self._body_writer
 
+    @override
     def do_GET(self) -> None:
         server = cast("_RecordingHTTPServer", self.server)
         server.begin_transfer()
@@ -233,7 +239,7 @@ class _RecordingHandler(SimpleHTTPRequestHandler):
         # a keep-alive connection must not leak counts across requests.
         self._body_writer.reset()
         self._status = 0
-        self._expected_bytes: int | None = None
+        self._expected_bytes = None
         error: str | None = None
         try:
             super().do_GET()
@@ -257,15 +263,18 @@ class _RecordingHandler(SimpleHTTPRequestHandler):
             )
             server.end_transfer()
 
+    @override
     def send_response(self, code: int, message: str | None = None) -> None:
         self._status = code
         super().send_response(code, message)
 
+    @override
     def send_header(self, keyword: str, value: str) -> None:
         if keyword.lower() == "content-length":
             self._expected_bytes = int(value)
         super().send_header(keyword, value)
 
+    @override
     def end_headers(self) -> None:
         super().end_headers()
         self._body_writer.recording = True

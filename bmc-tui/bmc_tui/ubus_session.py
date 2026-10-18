@@ -22,7 +22,7 @@
 
 import json
 import shlex
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from bmc_tui.device import Device
@@ -30,7 +30,7 @@ from bmc_tui.stage import Abort, best_effort
 
 
 @contextmanager
-def ssh_session(dev: Device, *, timeout_s: int) -> Iterator[str]:
+def ssh_session(dev: Device, *, timeout_s: int) -> Generator[str]:
     """Yield the id of a logged-in session.
 
     The BMC application and Boser both accept any live ubus session,
