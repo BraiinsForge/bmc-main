@@ -54,10 +54,12 @@ mod manifest_params;
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
+#[cfg(target_arch = "wasm32")]
+use bmc_wasm_sdk::timer::{self, Timer};
 #[cfg(target_arch = "wasm32")]
 use device::{DeviceFamily, DeviceId, DeviceList, families_on_new_credentials, family_label};
 #[cfg(target_arch = "wasm32")]
@@ -78,44 +80,27 @@ thread_local! {
     static VIEW: RefCell<view::ViewState> = const { RefCell::new(view::ViewState::new()) };
     static HISTORY: RefCell<history::HashrateHistory> =
         RefCell::new(history::HashrateHistory::default());
-    static DISPLAY_FRAME_PENDING: Cell<bool> = const { Cell::new(false) };
-    static DERIVE_ELAPSED_MS: Cell<u32> = const { Cell::new(0) };
     // Keep both browses running for the widget's lifetime.
     static HTTP_BROWSE: RefCell<Option<mdns::MdnsBrowse>> = const { RefCell::new(None) };
     static UBOS_BROWSE: RefCell<Option<mdns::MdnsBrowse>> = const { RefCell::new(None) };
+    static TICK_TIMER: RefCell<Option<Timer>> = const { RefCell::new(None) };
 }
 
-/// Coalescing window for display refreshes.
-/// Each device's poll bumps the devices sequence, so re-deriving
-/// per poll re-folds the whole fleet N times a round; batching updates
-/// into one render per window makes that once a window instead.
-///
-/// Aggregates drift slowly (a device is re-polled only once a round),
-/// so the sub-second lag is imperceptible.
+/// Cadence of the fleet fold (summarize + history + snapshot) while on screen.
+/// Every poll bumps the devices sequence, so folding per poll
+/// would re-fold the ~90-device fleet N times a round.
 #[cfg(target_arch = "wasm32")]
-const DISPLAY_COALESCE_MS: u32 = 500;
+const TICK_PERIOD_MS: u32 = 1_000;
 
-/// Cadence for the fleet fold (summarize + history), decoupled from render
-/// and poll `seq` bumps. The ~90-device fold is costly, so renders between
-/// ticks read a cached snapshot instead of re-folding.
-#[cfg(target_arch = "wasm32")]
-const DERIVE_INTERVAL_MS: u32 = 1_000;
+/// Cadence of the fleet fold while off screen, where it only feeds the charts.
+/// It still lands in every slot of the finest tier,
+/// and folds less often on the host thread the visible widget renders on.
+#[cfg(any(target_arch = "wasm32", test))]
+const DORMANT_TICK_PERIOD_MS: u32 = 5_000;
 
-/// Request a coalesced display refresh: a no-op while one
-/// is already scheduled, so a burst of device updates costs
-/// one re-derive/render, not N.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn request_display_frame() {
-    if !DISPLAY_FRAME_PENDING.with(|p| p.replace(true)) {
-        request_frame_after(DISPLAY_COALESCE_MS);
-    }
-}
-
-/// The render-ready fleet summary, cached so the filter → group → fold → sort
-/// pipeline runs only when the fleet or the params
-/// actually change — not on every render frame (renders fire per discovery and
-/// per telemetry event, hundreds per pass on a large fleet). The model-detail
-/// rows are cached per selection and cleared on any seq/params rebuild.
+/// The render-ready fleet summary, cached so the filter → group → fold → sort pipeline
+/// runs only when the fleet or the params change, not on every render frame.
+/// The model-detail rows are cached per selection and cleared on every rebuild.
 #[cfg(target_arch = "wasm32")]
 struct DerivedView {
     devices_seq: u64,
@@ -202,7 +187,6 @@ fn on_removed(family: DeviceFamily, name: &str) {
                 model.map_or_else(|| "unknown model".to_owned(), |m| m.name)
             );
             session::remove_token(&id);
-            request_frame();
         }
     }
 }
@@ -234,7 +218,6 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
             );
         }
         session::on_discovered(family, is_new);
-        request_frame();
     }
 }
 
@@ -242,6 +225,8 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
     restore_history();
+    // Every host loads a widget dormant and wakes it before its first frame.
+    set_tick_period(DORMANT_TICK_PERIOD_MS);
     // One base-type browse for BOS + AxeOS (reliable co-located), plus uBOS's own type.
     let http_browse = mdns::mdns_browse(HTTP_SERVICE_TYPES, on_http_event);
     if http_browse.is_none() {
@@ -276,6 +261,96 @@ fn restore_history() {
     }
 }
 
+/// Fold the fleet into a fresh view and feed every chart,
+/// persisting the total and per-model charts when the snapshot interval is due.
+#[cfg(target_arch = "wasm32")]
+fn fold() -> DerivedView {
+    let devices_seq = DEVICES.with(|d| d.borrow().seq());
+    let params_version = bmc_wasm_sdk::params::version();
+    let params = manifest_params::Params::current();
+    let filters = filter::Filters {
+        axeos_enabled: params.axeos_enabled,
+    };
+    let summary = {
+        let _s = profile::span("summarize");
+        DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
+    };
+    {
+        let _s = profile::span("history");
+        let now = SystemTime::now().unix_secs;
+        DEVICES.with(|d| {
+            let devices = d.borrow();
+            HISTORY.with(|h| {
+                let mut h = h.borrow_mut();
+                h.record_devices(now, &devices);
+                h.record_fleet(now, &summary.hashrate());
+                if let Some(blob) = h.take_snapshot(now) {
+                    cache::put(history::CACHE_TAG, &[], &blob);
+                }
+            });
+        });
+    }
+    DerivedView {
+        devices_seq,
+        params_version,
+        summary,
+        filters,
+        fleet_name: params.fleet_name,
+        model_detail: None,
+    }
+}
+
+/// Run the tick every `period_ms`,
+/// starting its timer if the host has not granted one yet.
+#[cfg(target_arch = "wasm32")]
+fn set_tick_period(period_ms: u32) {
+    TICK_TIMER.with_borrow_mut(|tick| {
+        if let Some(running) = tick {
+            if !running.set_period(period_ms) {
+                log_error!(
+                    "fleet: host refused a {} ms tick period; the tick keeps its previous one",
+                    period_ms
+                );
+            }
+        } else {
+            *tick = timer::start(period_ms, on_tick);
+            if tick.is_none() {
+                log_error!("fleet: tick timer refused by the host; the fleet view stops updating");
+            }
+        }
+    });
+}
+
+/// History buckets by wall-clock slot, so a late tick needs no catch-up.
+/// Every tick redraws, so the chart's time axis keeps moving
+/// while the fleet holds still, as it does once the poller parks.
+#[cfg(target_arch = "wasm32")]
+fn on_tick(_timer: &Timer, _elapsed_periods: u32) {
+    fold_if_stale();
+    request_frame();
+}
+
+/// Refold when the fleet or the params moved since the last fold,
+/// and ask for the frame that shows it.
+#[cfg(target_arch = "wasm32")]
+fn fold_if_stale() {
+    let devices_seq = DEVICES.with(|d| d.borrow().seq());
+    let params_version = bmc_wasm_sdk::params::version();
+    let stale = DERIVED.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let stale = cell
+            .as_ref()
+            .is_none_or(|d| d.devices_seq != devices_seq || d.params_version != params_version);
+        if stale {
+            *cell = Some(fold());
+        }
+        stale
+    });
+    if stale {
+        request_frame();
+    }
+}
+
 /// Fold the per-device rows for the drilled-into group, under the same
 /// filters the cached summary was built with.
 #[cfg(target_arch = "wasm32")]
@@ -296,73 +371,18 @@ fn rebuild_model_detail_rows(
     clippy::too_many_lines,
     reason = "the render entry orchestrates derive, view dispatch, and click routing"
 )]
-pub extern "C" fn render(delta_ms: u32) {
-    // Any render serves a pending coalesced refresh; re-arm only on the next update.
-    DISPLAY_FRAME_PENDING.with(|p| p.set(false));
+pub extern "C" fn render(_delta_ms: u32) {
     let WidgetSize { width, height, .. } = widget_size();
-    let seq = DEVICES.with(|d| d.borrow().seq());
     let params_version = bmc_wasm_sdk::params::version();
-    let elapsed = DERIVE_ELAPSED_MS.with(|e| {
-        let acc = e.get().saturating_add(delta_ms);
-        e.set(acc);
-        acc
-    });
     DERIVED.with(|cell| {
         let mut cell = cell.borrow_mut();
-        // The fold runs on its own interval, not per render,
-        // so poll `seq` churn does not re-fold the whole fleet every frame.
-        // The first frame and params changes still derive immediately.
-        let stale = match cell.as_ref() {
-            None => true,
-            Some(d) => {
-                d.params_version != params_version
-                    || (d.devices_seq != seq && elapsed >= DERIVE_INTERVAL_MS)
-            }
-        };
-        // A fold the interval held back still has to happen. Once the poller parks,
-        // nothing else asks for the frame that would run it, so the last change
-        // before an empty fleet would sit on screen until something unrelated arrives.
-        // A running rotation already asks on every poll result, so this stays quiet.
-        let fold_pending = cell.as_ref().is_some_and(|d| d.devices_seq != seq);
-        if !stale && fold_pending && !session::is_polling() {
-            request_frame_after(DERIVE_INTERVAL_MS.saturating_sub(elapsed));
-        }
-
-        if stale {
-            DERIVE_ELAPSED_MS.with(|e| e.set(0));
-            let params = manifest_params::Params::current();
-            let filters = filter::Filters {
-                axeos_enabled: params.axeos_enabled,
-            };
-            let summary = {
-                let _s = profile::span("summarize");
-                DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
-            };
-            // Feed the fold into every chart tier; each samples at its own rate,
-            // then persist the aggregate tiers so the charts survive a restart.
-            {
-                let _s = profile::span("history");
-                let now = SystemTime::now().unix_secs;
-                DEVICES.with(|d| {
-                    let devices = d.borrow();
-                    HISTORY.with(|h| {
-                        let mut h = h.borrow_mut();
-                        h.record_devices(now, &devices);
-                        h.record_fleet(now, &summary.hashrate());
-                        if let Some(blob) = h.take_snapshot(now) {
-                            cache::put(history::CACHE_TAG, &[], &blob);
-                        }
-                    });
-                });
-            }
-            *cell = Some(DerivedView {
-                devices_seq: seq,
-                params_version,
-                summary,
-                filters,
-                fleet_name: params.fleet_name,
-                model_detail: None,
-            });
+        // Fleet changes arrive through the tick.
+        // A params edit folds here, so the frame it asked for already shows it.
+        if cell
+            .as_ref()
+            .is_none_or(|d| d.params_version != params_version)
+        {
+            *cell = Some(fold());
         }
         let derived = cell.as_mut().expect("BUG: derived view populated above");
         let chart_span =
@@ -507,6 +527,20 @@ pub extern "C" fn render(delta_ms: u32) {
     });
 }
 
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_wake() {
+    set_tick_period(TICK_PERIOD_MS);
+    // The first frame back shows what the dormant period has not folded yet.
+    fold_if_stale();
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_sleep() {
+    set_tick_period(DORMANT_TICK_PERIOD_MS);
+}
+
 /// Touch activity notification: request a frame so the tap is consumed by
 /// the next render's click readback. Without this export the host never
 /// renders on touch and every button stays inert.
@@ -554,7 +588,6 @@ pub extern "C" fn on_credentials_update() {
     for family in families_on_new_credentials(&credentials::current(), &credentials::previous()) {
         restart_family(family);
     }
-    request_frame();
 }
 
 /// Start one family over on its new account, leaving the others' readings alone.
@@ -568,5 +601,23 @@ fn restart_family(family: DeviceFamily) {
     session::stop(family);
     if bound && session::family_enabled(family) {
         session::ensure_running(family);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DORMANT_TICK_PERIOD_MS, history::ChartSpan};
+
+    #[test]
+    fn the_dormant_tick_lands_in_every_slot_of_the_finest_tier() {
+        let finest_secs = ChartSpan::ALL
+            .iter()
+            .map(|span| span.interval_secs())
+            .min()
+            .expect("BUG: there is a chart span");
+        assert!(
+            2 * i64::from(DORMANT_TICK_PERIOD_MS) <= finest_secs * 1_000,
+            "a late {DORMANT_TICK_PERIOD_MS} ms tick can skip one of the {finest_secs} s slots"
+        );
     }
 }

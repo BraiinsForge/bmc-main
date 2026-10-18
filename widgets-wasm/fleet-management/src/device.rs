@@ -229,9 +229,8 @@ impl DeviceList {
         self.devices.is_empty()
     }
 
-    /// A monotonic counter bumped on every mutation (discovery, telemetry,
-    /// removal). A derived view cached against this value is recomputed only
-    /// when the fleet actually changed, never per render frame.
+    /// A monotonic counter bumped on every mutation (discovery, telemetry, removal).
+    /// The fleet fold is cached against it, so it refolds only when the fleet changed.
     #[must_use]
     pub fn seq(&self) -> u64 {
         self.seq
@@ -616,8 +615,8 @@ mod tests {
 
     #[test]
     fn every_mutation_advances_seq() {
-        // The render cache keys on seq; a mutation that left it unchanged would
-        // strand a stale view (e.g. a removed miner lingering in the summary).
+        // The fold keys on seq; a mutation that left it unchanged would never be folded,
+        // so a removed miner would linger in the summary.
         let mut list = DeviceList::new();
         let id = DeviceId::new("a._http._tcp.local.");
 

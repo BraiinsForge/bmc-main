@@ -63,9 +63,9 @@ accumulates across a fixture's captures. Changing it there changes the frames, s
 The default zero suits a widget ready as soon as its data lands. A dataset may override it, and seed extra KV with
 `kv = { … }`.
 
-Replay renders on the widget's own `request_frame_after` cadence, as the device host and the testbed do — so a widget
-that folds its data off the render loop (fleet-management folds on a ~1 s interval) folds on the schedule hardware uses,
-and replay samples what hardware would show.
+Replay renders when the widget asks with `request_frame` or `request_frame_after`, as the device host and the testbed
+do, and fires widget timers on the replay clock. Work a widget does in `render` or in a timer tick therefore runs on the
+schedule hardware uses, and replay samples what hardware would show.
 
 An entry names one target: a dataset name scopes to the viewport it was recorded at, so it could not name two. Because a
 fixture carries no geometry of its own, several datasets can still replay the same recording — point their `path` at one

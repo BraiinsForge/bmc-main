@@ -1213,13 +1213,13 @@ fn tick_one_frame(
 /// so a settle or capture burst cannot leave the schedule
 /// phased off the last gated frame.
 ///
-/// The device host coalesces renders onto the cadence the widget requests
-/// with `request_frame_after`, so a fold decoupled from the render loop
-/// runs only at those coalesced wakes.
+/// The device host renders only when the widget asks,
+/// with `request_frame` or `request_frame_after`,
+/// so work a widget does in `render` runs only at those wakes.
 ///
-/// Rendering every virtual frame would fold on a different schedule and
-/// sample a different device set: a group transiently present on hardware
-/// vanishes on replay, so an interaction recorded against it misses its target.
+/// Rendering every virtual frame would run that work on a different schedule:
+/// a view transiently present on hardware vanishes on replay,
+/// so an interaction recorded against it misses its target.
 ///
 /// Mirrors the testbed's on-demand drive (`render_tiles`):
 /// device, testbed and replay all redraw on the same signal.

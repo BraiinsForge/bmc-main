@@ -27,7 +27,7 @@ use bmc_wasm_sdk::profile;
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
     FetchRequest, FetchRequestId, SystemTime, credentials, fmt, format_number, log_debug, log_info,
-    log_warn, request_frame,
+    log_warn,
 };
 
 use super::{
@@ -191,7 +191,6 @@ fn gather_ring() -> Vec<DeviceId> {
     let retired = crate::DEVICES.with(|d| d.borrow_mut().prune_gone(now, RETIRE_AFTER_SECS));
     if retired > 0 {
         log_info!("fleet: retired {retired} device(s) unreachable > {RETIRE_AFTER_SECS}s");
-        crate::request_display_frame();
     }
     let mut ids = Vec::new();
     for family in DeviceFamily::ALL {
@@ -336,7 +335,6 @@ fn begin_device(delay_ms: u32) {
                 devs.borrow_mut()
                     .record_pass(&id, TelemetryReading::default(), false);
             });
-            request_frame();
             with_poller(|p| p.ring.advance());
             continue;
         };
@@ -368,12 +366,6 @@ fn park_idle() {
         p.ring = PassCursor::new(Vec::new());
         p.ring_len = 0;
     });
-}
-
-/// Whether a rotation is still running — and so whether a poll result
-/// is still due to ask for a frame. Parked, nothing here asks again.
-pub fn is_polling() -> bool {
-    with_poller(|p| p.active)
 }
 
 /// Fire every still-pending (`None`) endpoint of the current device.
@@ -660,10 +652,6 @@ fn finalize_device(id: &DeviceId) {
         failures
     });
     log_fetch(family, id, reachable, failures, &reading, model.as_ref());
-    // Coalesced: a full round bumps the sequence N times,
-    // but the display only needs to refold once per window,
-    // not once per device.
-    crate::request_display_frame();
     advance();
 }
 
