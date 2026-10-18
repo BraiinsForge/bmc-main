@@ -56,7 +56,7 @@ import xml.etree.ElementTree as ET
 from html import escape as html_escape
 from http.client import HTTPConnection
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import NoReturn
+from typing import ClassVar, NoReturn, override
 from urllib.parse import urlparse
 
 # ── SOAP constants ───────────────────────────────────────────────
@@ -405,9 +405,10 @@ def _make_soap_response(action: str, service: str, body: str) -> bytes:
 class _UPnPHandler(BaseHTTPRequestHandler):
     """HTTP handler for UPnP SOAP requests."""
 
-    renderer: RendererState  # set on class before serving
+    renderer: ClassVar[RendererState]  # set on class before serving
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    @override
+    def log_message(self, format: str, *args: object) -> None:
         print(f'  [renderer] {format % args}')
 
     def do_POST(self) -> None:
@@ -699,7 +700,7 @@ def main() -> NoReturn | None:
     # Resolve example track
     track_meta: dict[str, str] | None = None
     if args.example is not None:
-        track_meta = EXAMPLE_TRACKS[args.example]
+        track_meta = EXAMPLE_TRACKS[int(args.example)]
         if not args.media_url:
             args.media_url = track_meta['url']
 

@@ -56,13 +56,14 @@ venvPath = "."
 venv = ".venv"
 
 # Setting `exclude` drops basedpyright's defaults, so they are restated.
-# The tool trees are uv projects with their own venv and check.
+# The iss-position tools are a uv project with their own venv and check.
 exclude = [
     "**/node_modules",
     "**/__pycache__",
     "**/.*",
-    "widgets-wasm-examples/*/tools",
     "widgets-wasm/iss-position/tools",
+    # Blender scripts, which need the Blender API to type-check.
+    "widgets-wasm-examples/mesh-demo/tools",
 ]
 executionEnvironments = [
     { root = "bmc-tui" },
