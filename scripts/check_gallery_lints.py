@@ -71,7 +71,7 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    drift = []
+    drift: list[str] = []
     for group in sorted(set(root) | set(gallery)):
         at_root, at_gallery = root.get(group, {}), gallery.get(group, {})
         for lint in sorted(set(at_root) | set(at_gallery)):

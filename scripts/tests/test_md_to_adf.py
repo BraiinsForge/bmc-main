@@ -42,12 +42,14 @@ def convert(markdown: str, *, skip_title: bool = False) -> dict[str, Any]:
     return md_to_adf.convert(markdown, skip_title=skip_title)
 
 
+type Json = dict[str, Json] | list[Json] | str | int | float | bool | None
+
+
 def text_nodes(document: dict[str, Any]) -> list[dict[str, Any]]:
     """Every text node in the tree, at any depth."""
     found: list[dict[str, Any]] = []
 
-    # An ADF tree is heterogeneous JSON, so the recursion is genuinely untyped.
-    def walk(node: Any) -> None:
+    def walk(node: Json) -> None:
         if isinstance(node, dict):
             if node.get('type') == 'text':
                 found.append(node)
