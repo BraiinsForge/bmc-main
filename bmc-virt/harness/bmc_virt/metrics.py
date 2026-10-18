@@ -34,20 +34,24 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 import matplotlib
 import matplotlib.pyplot as plt
 from rich import box
 from rich.table import Table
 
-from bmc_virt import ui
-from bmc_virt.commands import Cmd
+from bmc_tui.console import format_ts, out
+from bmc_virt.commands import Ack, Cmd
 
 matplotlib.use("Agg")
 
-if TYPE_CHECKING:
-    from bmc_virt.vm import VM
+
+class _Daemon(Protocol):
+    """The part of a VM a collector drives; the VM passes itself."""
+
+    def _send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
+
 
 _MEM_WARN_PCT = 60
 _MEM_CRIT_PCT = 80
@@ -116,7 +120,7 @@ class MetricsCollector:
 
     def __init__(
         self,
-        vm: VM,
+        vm: _Daemon,
         label: str = "",
         interval: float | None = None,
         *,
@@ -211,7 +215,7 @@ class MetricsCollector:
             else:
                 pct_style = "green"
             table.add_row(
-                ui.format_ts(s.ts),
+                format_ts(s.ts),
                 s.label or "—",
                 f"{s.mem_used_kb // 1024}M",
                 f"{s.mem_available_kb // 1024}M",
@@ -221,8 +225,8 @@ class MetricsCollector:
                 f"{s.load_15m:.2f}",
             )
 
-        ui.out.print("")
-        ui.out.print(table)
+        out.print("")
+        out.print(table)
 
         if self.processes:
             self._report_processes()
@@ -249,7 +253,7 @@ class MetricsCollector:
             table.add_column(name, justify="right")
 
         for s in labeled:
-            row = [ui.format_ts(s.ts), s.label]
+            row = [format_ts(s.ts), s.label]
             for name in self.processes:
                 proc = s.processes.get(name)
                 if proc is None or proc.pid is None:
@@ -258,8 +262,8 @@ class MetricsCollector:
                     row.append(f"{proc.vm_rss_kb // 1024}M")
             table.add_row(*row)
 
-        ui.out.print("")
-        ui.out.print(table)
+        out.print("")
+        out.print(table)
 
     def chart(self, dest: str | pathlib.Path) -> pathlib.Path:
         """Generate a metrics chart as PNG. Dark theme, single plot with dual y-axis."""

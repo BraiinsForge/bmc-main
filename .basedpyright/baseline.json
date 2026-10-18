@@ -20186,30 +20186,6 @@
     ],
     "./bmc-virt/harness/bmc_virt/__init__.py": [
       {
-        "code": "reportImportCycles",
-        "range": {
-          "startColumn": 0,
-          "endColumn": 0,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportImportCycles",
-        "range": {
-          "startColumn": 0,
-          "endColumn": 0,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportImportCycles",
-        "range": {
-          "startColumn": 0,
-          "endColumn": 0,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportUnusedCallResult",
         "range": {
           "startColumn": 4,
@@ -20892,14 +20868,6 @@
     ],
     "./bmc-virt/harness/bmc_virt/metrics.py": [
       {
-        "code": "reportImportCycles",
-        "range": {
-          "startColumn": 0,
-          "endColumn": 0,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportExplicitAny",
         "range": {
           "startColumn": 19,
@@ -21504,14 +21472,6 @@
     ],
     "./bmc-virt/harness/bmc_virt/rr.py": [
       {
-        "code": "reportImportCycles",
-        "range": {
-          "startColumn": 0,
-          "endColumn": 0,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportUnannotatedClassAttribute",
         "range": {
           "startColumn": 13,
@@ -22080,30 +22040,6 @@
     ],
     "./bmc-virt/harness/bmc_virt/ui.py": [
       {
-        "code": "reportMissingTypeStubs",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 12,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportMissingTypeStubs",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportWildcardImportFromLibrary",
-        "range": {
-          "startColumn": 28,
-          "endColumn": 29,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportPrivateUsage",
         "range": {
           "startColumn": 7,
@@ -22380,8 +22316,8 @@
       {
         "code": "reportAny",
         "range": {
-          "startColumn": 35,
-          "endColumn": 39,
+          "startColumn": 32,
+          "endColumn": 36,
           "lineCount": 1
         }
       },
@@ -23942,14 +23878,6 @@
     ],
     "./bmc-wasm-runtime/tools/_common.py": [
       {
-        "code": "reportImplicitRelativeImport",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 16,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportAny",
         "range": {
           "startColumn": 8,
@@ -24240,14 +24168,6 @@
     ],
     "./bmc-wasm-runtime/tools/perf_analyze.py": [
       {
-        "code": "reportImplicitRelativeImport",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 12,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportUnknownVariableType",
         "range": {
           "startColumn": 4,
@@ -24449,14 +24369,6 @@
       }
     ],
     "./bmc-wasm-runtime/tools/perf_compare.py": [
-      {
-        "code": "reportImplicitRelativeImport",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 12,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnknownVariableType",
         "range": {
@@ -24923,14 +24835,6 @@
       }
     ],
     "./bmc-wasm-runtime/tools/perf_finalize.py": [
-      {
-        "code": "reportImplicitRelativeImport",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 12,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnknownVariableType",
         "range": {
@@ -25478,14 +25382,6 @@
     ],
     "./bmc-wasm-runtime/tools/perf_record.py": [
       {
-        "code": "reportImplicitRelativeImport",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 12,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportImplicitStringConcatenation",
         "range": {
           "startColumn": 16,
@@ -25722,14 +25618,6 @@
     ],
     "./bmc-wasm-runtime/tools/render_shots.py": [
       {
-        "code": "reportImplicitRelativeImport",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 12,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportUnusedCallResult",
         "range": {
           "startColumn": 4,
@@ -25955,14 +25843,6 @@
       }
     ],
     "./bmc-wasm-runtime/tools/wasm_size.py": [
-      {
-        "code": "reportImplicitRelativeImport",
-        "range": {
-          "startColumn": 5,
-          "endColumn": 12,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnusedCallResult",
         "range": {

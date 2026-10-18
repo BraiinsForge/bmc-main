@@ -61,6 +61,9 @@ exclude = [
 ]
 executionEnvironments = [
     { root = "bmc-tui" },
-    { root = "bmc-virt/harness" },
+    # bmc_tui as the in-repo source it is, not the untyped install the venv holds.
+    { root = "bmc-virt/harness", extraPaths = ["bmc-tui"] },
     { root = "scripts" },
+    # Run as files, so each script's own directory is on `sys.path` for its sibling imports.
+    { root = "bmc-wasm-runtime/tools" },
 ]

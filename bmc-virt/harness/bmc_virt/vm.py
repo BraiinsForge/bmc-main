@@ -34,7 +34,7 @@ from typing import Any
 from rich.live import Live
 from rich.text import Text
 
-from bmc_virt import ui
+from bmc_tui.console import console, out
 from bmc_virt.client import Client, DaemonConnectionError
 from bmc_virt.commands import Ack, Cmd
 from bmc_virt.events import Event, ReceivedEvent
@@ -44,6 +44,7 @@ from bmc_virt.protocol import cmd as _cmd_factory
 from bmc_virt.rr import RrHandle
 from bmc_virt.screenshot import capture as _capture_frame
 from bmc_virt.ssh import Ssh
+from bmc_virt.ui import ack_result, cmd_sent, event
 
 # ── Default connection parameters ──────────────────────────────────────────────
 
@@ -123,7 +124,7 @@ class VM:
         deadline = start + timeout
         last_exc: Exception | None = None
 
-        with Live(console=ui.console, transient=True) as live:
+        with Live(console=console, transient=True) as live:
             while time.monotonic() < deadline:
                 elapsed = time.monotonic() - start
                 remaining = timeout - elapsed
@@ -247,12 +248,12 @@ class VM:
             for evt in self.events():
                 if stop.is_set():
                     break
-                ui.event(evt)
+                event(evt)
 
         t = threading.Thread(target=_print_events, daemon=True)
         t.start()
         # Show a spinner with remaining time while streaming
-        with ui.out.status(f"[dim]streaming for {duration:.0f}s...[/dim]", spinner="dots"):
+        with out.status(f"[dim]streaming for {duration:.0f}s...[/dim]", spinner="dots"):
             time.sleep(duration)
         stop.set()
         t.join(timeout=1)
@@ -329,13 +330,13 @@ class VM:
     def _send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: Any) -> Ack:
         """Send a command to the daemon and wait for its ack."""
         if verbose:
-            ui.cmd_sent(command, **data)
+            cmd_sent(command, **data)
 
         request_id = uuid.uuid4().hex[:8]
         done = threading.Event()
         self._pending_acks[request_id] = done
 
-        spinner = ui.out.status("[dim]running...[/dim]", spinner="dots") if verbose else None
+        spinner = out.status("[dim]running...[/dim]", spinner="dots") if verbose else None
         try:
             if spinner:
                 spinner.start()
@@ -355,7 +356,7 @@ class VM:
             self._pending_acks.pop(request_id, None)
 
         if verbose:
-            ui.ack_result(result)
+            ack_result(result)
         return result
 
     def _on_message(self, msg: Msg) -> None:

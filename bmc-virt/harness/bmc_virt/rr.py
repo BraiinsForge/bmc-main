@@ -26,14 +26,19 @@ import pathlib
 import platform
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+from typing import Protocol
 
-from bmc_virt import ui
+from bmc_tui.console import panel, warn
 from bmc_virt.commands import Ack, Cmd
 from bmc_virt.paths import RR_TRACE_DIR
 
-if TYPE_CHECKING:
-    from bmc_virt.vm import VM
+
+class _Daemon(Protocol):
+    """The part of a VM an rr handle drives; the VM passes itself."""
+
+    def _send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
+
+    def pull(self, *, src: str, dst: str | pathlib.Path) -> None: ...
 
 
 class PlatformError(Exception):
@@ -49,7 +54,7 @@ class RrHandle:
     Requires the VM to be started with --rr (deploys the rr bundle to /root/rr).
     """
 
-    def __init__(self, vm: VM) -> None:
+    def __init__(self, vm: _Daemon) -> None:
         self._vm = vm
         self._last_trace: str | None = None
 
@@ -123,10 +128,10 @@ def _warn_amd_msr() -> None:
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
 
-    ui.warn(
+    warn(
         "AMD CPU detected but MSR 0xc0011020 bit 54 may not be set.\nrr traces may be inaccurate.\n"
     )
-    ui.panel(
+    panel(
         "sudo modprobe msr\n"
         "sudo wrmsr -a 0xc0011020 $(($(sudo rdmsr -c 0xc0011020) | (1 << 54)))\n"
         "sudo sysctl kernel.perf_event_paranoid=1",
