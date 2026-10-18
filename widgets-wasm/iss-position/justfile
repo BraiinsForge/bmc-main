@@ -44,4 +44,5 @@ test:
 
 # Type-check tool scripts with their local venv.
 lint:
-    uvx basedpyright --project {{ tools_dir }} --pythonpath "$(uv run --project {{ tools_dir }} python -c 'import sys; print(sys.executable)')"
+    uv sync --project {{ tools_dir }}
+    uvx basedpyright --project {{ tools_dir }}

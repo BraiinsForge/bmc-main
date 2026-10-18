@@ -107,7 +107,7 @@ python:
     {{ NIX_DEV }} uv sync
     {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness scripts
     {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness
-    {{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python
+    {{ NIX_DEV }} basedpyright
     # coverage.py opens its data file without creating the directory above it,
     # and this one lives under the scratch tree, which gets cleaned out —
     # so make it on every run rather than once.
@@ -119,8 +119,8 @@ python-baseline:
     {{ NIX_DEV }} uv sync
     # The writing run still reports the hits it just recorded and exits 1,
     # so the run after it, against the new baseline, is the verdict.
-    -{{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python --writebaseline
-    {{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python
+    -{{ NIX_DEV }} basedpyright --writebaseline
+    {{ NIX_DEV }} basedpyright
 
 # Run nextest for a single crate (auto-enters nix shell).
 test crate *FEATURES="--all-features":

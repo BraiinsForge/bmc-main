@@ -25,5 +25,8 @@ testpaths = ["."]
 
 [tool.basedpyright]
 typeCheckingMode = "all"
+# This project's own environment, the one `just lint` syncs.
+venvPath = "."
+venv = ".venv"
 # cartopy ships neither `py.typed` nor a stub package.
 reportMissingTypeStubs = false

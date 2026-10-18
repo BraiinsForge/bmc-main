@@ -415,8 +415,10 @@ in
     ruff check
 
     # The uv workspace's own environment, so imports resolve to the versions `uv.lock` pins.
-    # Without it basedpyright sees only the bare interpreter and every third-party import in `scripts/` is unresolved.
-    basedpyright --pythonpath ${python-lint-venv}/bin/python
+    # Linked where the config's `venv` points: basedpyright exits 3 on a configured venv
+    # it cannot find, even with `--pythonpath` given.
+    ln -s ${python-lint-venv} .venv
+    basedpyright
     touch $out
   '';
 

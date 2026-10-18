@@ -50,6 +50,11 @@ directory = ".tmp/coverage/python/html"
 [tool.basedpyright]
 typeCheckingMode = "all"
 pythonVersion = "3.13"
+
+# The uv workspace's environment, so the editor resolves imports as `just python` does.
+venvPath = "."
+venv = ".venv"
+
 # Setting `exclude` drops basedpyright's defaults, so they are restated.
 # The tool trees are uv projects with their own venv and check.
 exclude = [
