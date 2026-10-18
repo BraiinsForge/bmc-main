@@ -35,10 +35,10 @@ so a rerun can pick up vector data that differs from the committed texture.
 Only the encode step is pinned, by uv.lock.
 """
 
-import argparse
 import io
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from _textures import (
     BASE_TARGET_W,
@@ -57,7 +57,9 @@ import cartopy.feature as cfeature
 import matplotlib
 import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
+import tyro
 from cartopy.io import shapereader
+from cartopy.mpl.geoaxes import GeoAxes
 from PIL import Image
 
 matplotlib.use('Agg')
@@ -134,31 +136,36 @@ def render_texture(
     halo = [pe.withStroke(linewidth=2.5, foreground=theme['label_halo'])]
 
     projection = ccrs.PlateCarree()
-    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=theme['ocean'])
-    ax = fig.add_axes((0, 0, 1, 1), projection=projection, facecolor=theme['ocean'])
+    # The ignores in this file are library gaps: matplotlib's stubs leave `**kwargs`
+    # unannotated, and cartopy ships neither `py.typed` nor stubs.
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=theme['ocean'])  # pyright: ignore[reportUnknownMemberType]
+    ax = cast(
+        GeoAxes,
+        fig.add_axes((0, 0, 1, 1), projection=projection, facecolor=theme['ocean']),  # pyright: ignore[reportUnknownMemberType]
+    )
     ax.set_global()
     ax.spines['geo'].set_visible(False)
 
-    ax.add_feature(
+    _ = ax.add_feature(  # pyright: ignore[reportUnknownMemberType]
         cfeature.NaturalEarthFeature('physical', 'land', '50m'),
         facecolor=theme['land'],
         edgecolor='none',
         zorder=1,
     )
-    ax.add_feature(
+    _ = ax.add_feature(  # pyright: ignore[reportUnknownMemberType]
         cfeature.NaturalEarthFeature('physical', 'lakes', '50m'),
         facecolor=theme['lake'],
         edgecolor='none',
         zorder=2,
     )
-    ax.add_feature(
+    _ = ax.add_feature(  # pyright: ignore[reportUnknownMemberType]
         cfeature.NaturalEarthFeature('physical', 'coastline', '50m'),
         facecolor='none',
         edgecolor=theme['coast'],
         linewidth=0.4,
         zorder=3,
     )
-    ax.add_feature(
+    _ = ax.add_feature(  # pyright: ignore[reportUnknownMemberType]
         cfeature.NaturalEarthFeature('cultural', 'admin_0_boundary_lines_land', '50m'),
         facecolor='none',
         edgecolor=theme['border'],
@@ -169,10 +176,10 @@ def render_texture(
     _add_country_labels(ax, width, theme, halo)
 
     supersampled = io.BytesIO()
-    fig.savefig(supersampled, format='png', dpi=dpi, facecolor=fig.get_facecolor())
+    fig.savefig(supersampled, format='png', dpi=dpi, facecolor=fig.get_facecolor())  # pyright: ignore[reportUnknownMemberType]
     plt.close(fig)
 
-    supersampled.seek(0)
+    _ = supersampled.seek(0)
     with Image.open(supersampled) as raster:
         texture = downsample(raster, target)
 
@@ -182,27 +189,28 @@ def render_texture(
 
     size_kb = output.stat().st_size / 1024
     print(
-        f'  {output.name}: rendered {width}x{height}'
-        f' → {target[0]}x{target[1]}, {size_kb:.0f} KB'
+        f'  {output.name}: rendered {width}x{height} → {target[0]}x{target[1]}, {size_kb:.0f} KB'
     )
 
 
 def _add_country_labels(
-    ax: plt.Axes, img_width: int, theme: Theme, halo: list[pe.withStroke]
+    ax: GeoAxes, img_width: int, theme: Theme, halo: list[pe.withStroke]
 ) -> None:
     """Add country name labels centered on each country."""
     scale = img_width / BASE_TARGET_W
     font_size = FONT_SIZE * scale
 
-    shpfile = shapereader.natural_earth('110m', 'cultural', 'admin_0_countries')
+    shpfile = cast(
+        str, shapereader.natural_earth('110m', 'cultural', 'admin_0_countries')
+    )
     reader = shapereader.Reader(shpfile)
 
     for record in reader.records():
-        name = record.attributes.get('NAME', '')
+        name = str(record.attributes.get('NAME', ''))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         geom = record.geometry
 
         # Skip tiny countries and known overlap / clip offenders
-        if geom.area < MIN_LABEL_AREA or name in SKIP_LABELS:
+        if geom is None or geom.area < MIN_LABEL_AREA or name in SKIP_LABELS:
             continue
 
         # Use manual position if the auto centroid clips or overlaps
@@ -212,7 +220,7 @@ def _add_country_labels(
             centroid = geom.centroid
             lx, ly = centroid.x, centroid.y
 
-        ax.text(
+        _ = ax.text(  # pyright: ignore[reportUnknownMemberType]
             lx,
             ly,
             name,
@@ -228,22 +236,17 @@ def _add_country_labels(
         )
 
 
+@dataclass
+class Args:
+    output: Path = TEXTURE_DIR  # output directory
+    keep_lossless: bool = (
+        False  # also write the downsampled texture as PNG, for `just sweep`
+    )
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        '--output',
-        type=Path,
-        default=TEXTURE_DIR,
-        help='Output directory (default: ../textures/)',
-    )
-    parser.add_argument(
-        '--keep-lossless',
-        action='store_true',
-        help='also write the downsampled texture as PNG, for `just sweep`',
-    )
-    args = parser.parse_args()
+    # tyro declares `cli`'s `default` sentinel as Any (tyro/_singleton.py `MISSING_NONPROP`).
+    args = tyro.cli(Args, description=__doc__)  # pyright: ignore[reportAny]
     args.output.mkdir(exist_ok=True)
 
     print_texture_contract((TARGET_W, TARGET_H))

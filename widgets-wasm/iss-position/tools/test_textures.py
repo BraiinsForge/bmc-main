@@ -45,6 +45,7 @@ from _textures import (
     write_texture,
 )
 from PIL import Image
+from PIL.JpegImagePlugin import JpegImageFile
 from texture_compress import SWEEP_QUALITIES, downsample_file, sweep
 
 
@@ -53,8 +54,8 @@ def flat_image(width: int, height: int) -> Image.Image:
 
 
 def checkerboard(width: int, height: int) -> Image.Image:
-    alternating = np.indices((height, width)).sum(axis=0) % 2
-    return Image.fromarray((alternating * 255).astype(np.uint8), 'L').convert('RGB')
+    pixels = bytes(255 * ((x + y) % 2) for y in range(height) for x in range(width))
+    return Image.frombytes('L', (width, height), pixels).convert('RGB')
 
 
 def test_shipped_texture_matches_the_target_resolution() -> None:
@@ -70,10 +71,12 @@ def test_shipped_texture_carries_the_configured_encoding() -> None:
     `optimize=True` derives those per image, so they never match a probe this small.
     """
     with Image.open(io.BytesIO(encode_texture(flat_image(64, 32)))) as fresh:
+        assert isinstance(fresh, JpegImageFile)
         expected_tables, expected_planes = fresh.quantization, fresh.layer
         expected_progressive = 'progression' in fresh.info
 
     with Image.open(SHIPPED_TEXTURE) as shipped:
+        assert isinstance(shipped, JpegImageFile)
         assert shipped.quantization == expected_tables
         assert shipped.layer == expected_planes
         assert ('progression' in shipped.info) == expected_progressive
@@ -91,7 +94,7 @@ def test_write_texture_keeps_the_previous_texture_when_the_encode_fails(
 ) -> None:
     """Encoding into a buffer first is what makes a failed regeneration harmless."""
     output = tmp_path / 'texture.jpg'
-    output.write_bytes(b'previous')
+    _ = output.write_bytes(b'previous')
 
     with pytest.raises(OSError):
         write_texture(Image.new('RGBA', (64, 32)), output)
@@ -104,9 +107,9 @@ def test_write_texture_keeps_the_previous_texture_when_the_write_fails(
 ) -> None:
     """A full disk partway through must not truncate the texture already shipped."""
     output = tmp_path / 'texture.jpg'
-    output.write_bytes(b'previous')
+    _ = output.write_bytes(b'previous')
 
-    def full_disk(self: Path, data: bytes) -> int:
+    def full_disk(self: Path, _data: bytes) -> int:
         with open(self, 'wb'):  # a real write truncates before it runs out of room
             pass
         raise OSError('No space left on device')
@@ -163,7 +166,7 @@ def test_downsample_refuses_to_clobber_an_existing_texture(tmp_path: Path) -> No
     source = tmp_path / 'world.png'
     flat_image(2048, 1024).save(source)
     output = tmp_path / 'out.jpg'
-    output.write_bytes(b'existing')
+    _ = output.write_bytes(b'existing')
 
     with pytest.raises(FileExistsError, match='--force'):
         downsample_file(source, output, force=False)
@@ -186,7 +189,7 @@ def test_sweep_rejects_a_lossy_reference_behind_a_lossless_suffix(
 ) -> None:
     """PSNR peaks at the quality the reference already carries, reading as a sweet spot."""
     reference = tmp_path / 'reference.png'
-    reference.write_bytes(encode_texture(flat_image(TARGET_W, TARGET_H)))
+    _ = reference.write_bytes(encode_texture(flat_image(TARGET_W, TARGET_H)))
 
     with pytest.raises(ValueError, match='already lossy'):
         sweep(reference, JPEG_SUBSAMPLING)

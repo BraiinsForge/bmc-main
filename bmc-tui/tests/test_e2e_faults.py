@@ -867,8 +867,9 @@ def test_matching_image_aborts_on_foreign_version(tmp_path) -> None:
 
 
 def test_cli_registers_the_procedure() -> None:
-    # entrypoint's return type hides __wrapped__ from ty; getattr keeps the
-    # gate green while still reading the real command union off the wrapped fn.
+    # entrypoint's return type hides __wrapped__ from the type checker;
+    # getattr keeps the gate green while still reading the real command union
+    # off the wrapped fn.
     wrapped = getattr(cli.main, "__wrapped__")  # noqa: B009
     assert "E2eSysupgradeFaults" in str(wrapped.__annotations__["command"])
 

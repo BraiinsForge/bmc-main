@@ -20,7 +20,6 @@
 
 { pkgs
 , armv7Pkgs
-, ty-bin
 , python-lint-venv
 , profiles
 , crates
@@ -363,7 +362,7 @@ in
   iss-texture-tools = pkgs.runCommand "iss-texture-tools"
     {
       nativeBuildInputs = [
-        (pkgs.python3.withPackages (ps: [ ps.pytest ps.pillow ps.numpy ]))
+        (pkgs.python3.withPackages (ps: [ ps.pytest ps.pillow ps.numpy ps.tyro ]))
       ];
       src = lib.fileset.toSource {
         root = ../.;
@@ -387,13 +386,15 @@ in
 
   python-lint = pkgs.runCommand "python-lint"
     {
-      nativeBuildInputs = [ pkgs.ruff ty-bin pkgs.python3 ];
+      nativeBuildInputs = [ pkgs.ruff pkgs.basedpyright pkgs.python3 ];
       src = lib.fileset.toSource {
         root = ../.;
         fileset = lib.fileset.difference
           (lib.fileset.unions [
             (lib.fileset.fileFilter (f: f.hasExt "py") ../.)
             ../ruff.toml
+            ../pyproject.toml
+            ../.basedpyright/baseline.json
           ])
           # subprojects with their own nix dev shell, deps, and lint setup
           (lib.fileset.unions [
@@ -404,13 +405,18 @@ in
           ]);
       };
     } ''
-    cd $src
+    # basedpyright rewrites its baseline once entries drop, and exits 3 when it cannot;
+    # the members filtered out above always drop theirs, so it needs a writable tree.
+    cp -r $src src
+    chmod -R +w src
+    cd src
+
     export RUFF_CACHE_DIR="$(mktemp -d)"
     ruff check
+
     # The uv workspace's own environment, so imports resolve to the versions `uv.lock` pins.
-    # Without it `ty` sees only the bare interpreter and every third-party import in `scripts/` is unresolved.
-    # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
-    ty check --python ${python-lint-venv} --error deprecated
+    # Without it basedpyright sees only the bare interpreter and every third-party import in `scripts/` is unresolved.
+    basedpyright --pythonpath ${python-lint-venv}/bin/python
     touch $out
   '';
 

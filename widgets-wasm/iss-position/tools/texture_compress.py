@@ -30,22 +30,26 @@ so downsampling loss is deliberately absent from these numbers.
 by texture_download.py down to the shipped size and encoding.
 """
 
-import argparse
 import io
+import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import tyro
 from _textures import (
     JPEG_SUBSAMPLING,
     SUBSAMPLING_NAMES,
     TARGET_H,
     TARGET_W,
+    Subsampling,
     downsample,
     encode_texture,
     write_texture,
 )
 from PIL import Image
+from tyro.conf import Positional
 
 SWEEP_QUALITIES = (60, 65, 70, 75, 80, 85, 90, 95)
 
@@ -64,11 +68,15 @@ def psnr(reference: Image.Image, candidate: Image.Image) -> float:
     mse = float(np.mean((a - b) ** 2))
     if mse == 0.0:
         return float('inf')
-    return 10.0 * float(np.log10(255.0**2 / mse))
+    return 10.0 * math.log10(255.0**2 / mse)
+
+
+def dims(size: tuple[int, int]) -> str:
+    return f'{size[0]}x{size[1]}'
 
 
 def describe(path: Path, size: tuple[int, int], size_bytes: int) -> str:
-    return f'{path}  {size[0]}x{size[1]}  {size_bytes / 1024:.1f} KB'
+    return f'{path}  {dims(size)}  {size_bytes / 1024:.1f} KB'
 
 
 def resident_mib(size: tuple[int, int]) -> float:
@@ -76,32 +84,32 @@ def resident_mib(size: tuple[int, int]) -> float:
     return 2 * size[0] * size[1] * 4 / 1024 / 1024
 
 
-def sweep(path: Path, subsampling: int) -> None:
+def sweep(path: Path, subsampling: Subsampling) -> None:
     with Image.open(path) as opened:
         source_format = opened.format
         reference = opened.convert('RGB')
     # Checked on the decoded format, not the suffix:
     # a JPEG renamed .png peaks at the quality it already carries.
     if source_format not in LOSSLESS_FORMATS:
+        remedy = 'produce a reference with `just render-lossless`'
         raise ValueError(
-            f'{path} is {source_format}, already lossy, so PSNR against it flatters'
-            ' every quality; produce a reference with `just render-lossless`'
+            f'{path} is {source_format}, already lossy, so PSNR flatters every quality; {remedy}'
         )
-    if reference.size != (TARGET_W, TARGET_H):
+    shipped = (TARGET_W, TARGET_H)
+    if reference.size != shipped:
         raise ValueError(
-            f'{path} is {reference.size[0]}x{reference.size[1]}, not the shipped'
-            f' {TARGET_W}x{TARGET_H}; the sizes below would describe another image'
+            f'{path} is {dims(reference.size)}, not the shipped {dims(shipped)}; '
+            + 'the sizes below would describe another image'
         )
 
-    print(f'{path}  {TARGET_W}x{TARGET_H}  {SUBSAMPLING_NAMES[subsampling]}\n')
+    print(f'{path}  {dims(shipped)}  {SUBSAMPLING_NAMES[subsampling]}\n')
     print(f'{"quality":>7}  {"size":>10}  {"PSNR":>7}')
     for quality in SWEEP_QUALITIES:
         flat = encode_texture(reference, quality=quality, subsampling=subsampling)
         with Image.open(io.BytesIO(flat)) as encoded:
             decoded = encoded.convert('RGB')
         print(
-            f'{quality:>7}  {len(flat) / 1024:>9.1f}K'
-            f'  {psnr(reference, decoded):>6.2f}dB'
+            f'{quality:>7}  {len(flat) / 1024:>9.1f}K  {psnr(reference, decoded):>6.2f}dB'
         )
 
 
@@ -109,17 +117,16 @@ def _check_source(source: Path, size: tuple[int, int], target: tuple[int, int]) 
     source_aspect = size[0] / size[1]
     target_aspect = target[0] / target[1]
     if abs(source_aspect - target_aspect) / target_aspect > ASPECT_TOLERANCE:
+        found = f'{dims(size)} (aspect {source_aspect:.3f})'
+        wanted = f'{dims(target)} (aspect {target_aspect:.3f})'
         raise ValueError(
-            f'{source} is {size[0]}x{size[1]} (aspect {source_aspect:.3f}), target is'
-            f' {target[0]}x{target[1]} (aspect {target_aspect:.3f});'
-            ' crop or reproject it to equirectangular first'
+            f'{source} is {found}, target is {wanted}; crop or reproject it to equirectangular'
         )
     # The aspect tolerance alone admits a source a percent short in height,
     # which would stretch the last rows, so check both dimensions.
     if size[0] < target[0] or size[1] < target[1]:
         raise ValueError(
-            f'{source} is {size[0]}x{size[1]}, below the {target[0]}x{target[1]}'
-            ' target; upscaling it would ship a blurred texture'
+            f'{source} is {dims(size)}, below the {dims(target)} target; upscaling would blur it'
         )
 
 
@@ -137,46 +144,38 @@ def downsample_file(source: Path, output: Path, *, force: bool) -> None:
     write_texture(resized, output)
 
     print(describe(source, source_size, source_bytes))
-    print(
-        f'{describe(output, target, output.stat().st_size)}'
-        f'  {resident_mib(target):.1f} MiB decoded on the device'
-    )
+    resident = f'{resident_mib(target):.1f} MiB decoded on the device'
+    print(f'{describe(output, target, output.stat().st_size)}  {resident}')
+
+
+@dataclass
+class Sweep:
+    """Size against PSNR over qualities."""
+
+    reference: Positional[Path]
+    subsampling: Subsampling = JPEG_SUBSAMPLING
+
+
+@dataclass
+class Downsample:
+    """Resize an image and encode it as a shipped texture."""
+
+    source: Positional[Path]
+    output: Positional[Path]
+    force: bool = False  # overwrite an existing output
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    sub = parser.add_subparsers(dest='command', required=True)
-
-    sweep_parser = sub.add_parser('sweep', help='size against PSNR over qualities')
-    sweep_parser.add_argument('reference', type=Path)
-    sweep_parser.add_argument(
-        '--subsampling',
-        type=int,
-        default=JPEG_SUBSAMPLING,
-        choices=sorted(SUBSAMPLING_NAMES),
-    )
-
-    downsample_parser = sub.add_parser(
-        'downsample', help='resize an image and encode it as a shipped texture'
-    )
-    downsample_parser.add_argument('source', type=Path)
-    downsample_parser.add_argument('output', type=Path)
-    downsample_parser.add_argument(
-        '--force', action='store_true', help='overwrite an existing output'
-    )
-
-    args = parser.parse_args()
+    # tyro declares `cli`'s `default` sentinel as Any (tyro/_singleton.py `MISSING_NONPROP`).
+    command: Sweep | Downsample = tyro.cli(Sweep | Downsample, description=__doc__)  # pyright: ignore[reportAny]
     try:
-        if args.command == 'sweep':
-            sweep(args.reference, args.subsampling)
-        elif args.command == 'downsample':
-            downsample_file(args.source, args.output, force=args.force)
-        else:
-            raise AssertionError(f'BUG: unhandled subcommand {args.command}')
+        match command:
+            case Sweep():
+                sweep(command.reference, command.subsampling)
+            case Downsample():
+                downsample_file(command.source, command.output, force=command.force)
     except (OSError, ValueError) as error:
-        sys.exit(f'{parser.prog}: {error}')
+        sys.exit(f'{Path(sys.argv[0]).name}: {error}')
 
 
 if __name__ == '__main__':

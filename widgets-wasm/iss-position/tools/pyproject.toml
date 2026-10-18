@@ -7,6 +7,7 @@ dependencies = [
     "matplotlib>=3.9",
     "numpy>=1.26",
     "pillow>=10.0",
+    "tyro>=0.9",
 ]
 
 [dependency-groups]
@@ -22,7 +23,7 @@ testpaths = ["."]
 [tool.uv]
 # Scripts run via: uv run texture_render.py
 
-[tool.ty.rules]
-# cartopy GeoAxes methods (set_global, add_feature, spines) are not visible
-# to ty because add_axes returns generic Axes, not GeoAxes.
-unresolved-attribute = "ignore"
+[tool.basedpyright]
+typeCheckingMode = "all"
+# cartopy ships neither `py.typed` nor a stub package.
+reportMissingTypeStubs = false

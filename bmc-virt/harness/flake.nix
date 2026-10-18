@@ -46,7 +46,7 @@
             python3
             uv
             ruff
-            ty
+            basedpyright
             just
             sshpass
             openssh

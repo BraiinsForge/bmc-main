@@ -278,8 +278,8 @@ class MetricsCollector:
 
         # Memory on left y-axis
         ax1.set_ylabel("Memory (MB)", color="#ff6b6b")
-        ax1.plot(timestamps, mem_used, "#ff6b6b", linewidth=2, label="Mem Used")  # ty: ignore[invalid-argument-type]  # matplotlib accepts datetime
-        ax1.plot(timestamps, mem_avail, "#51cf66", linewidth=2, label="Mem Avail")  # ty: ignore[invalid-argument-type]
+        ax1.plot(timestamps, mem_used, "#ff6b6b", linewidth=2, label="Mem Used")
+        ax1.plot(timestamps, mem_avail, "#51cf66", linewidth=2, label="Mem Avail")
         ax1.tick_params(axis="y", labelcolor="#ff6b6b")
         ax1.set_xlabel("Time")
         ax1.grid(True, alpha=0.15)
@@ -296,12 +296,12 @@ class MetricsCollector:
                     rss_series.append(proc.vm_rss_kb / 1024)
             if all(v is None for v in rss_series):
                 continue
-            ax1.plot(timestamps, rss_series, color, linewidth=1.5, label=f"{name} RSS")  # ty: ignore[invalid-argument-type]
+            ax1.plot(timestamps, rss_series, color, linewidth=1.5, label=f"{name} RSS")
 
         # Load on right y-axis
         ax2 = ax1.twinx()
         ax2.set_ylabel("Load Average", color="#74c0fc")
-        ax2.plot(timestamps, load_1m, "#74c0fc", linewidth=2, linestyle="--", label="Load 1m")  # ty: ignore[invalid-argument-type]
+        ax2.plot(timestamps, load_1m, "#74c0fc", linewidth=2, linestyle="--", label="Load 1m")
         ax2.tick_params(axis="y", labelcolor="#74c0fc")
 
         # Combined legend
@@ -315,7 +315,7 @@ class MetricsCollector:
         labeled = [s for s in self.snapshots if s.label]
         stagger_rows = 4
         for i, s in enumerate(labeled):
-            ax1.axvline(x=s.ts, color="#868e96", linestyle=":", alpha=0.6)  # ty: ignore[invalid-argument-type]
+            ax1.axvline(x=s.ts, color="#868e96", linestyle=":", alpha=0.6)
             y_pos = -0.10 - 0.06 * (i % stagger_rows)
             ax1.annotate(
                 s.label,

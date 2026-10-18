@@ -29,17 +29,22 @@ Skips textures that are already downloaded unless --force is given.
 See _textures.__doc__ for the UV mapping contract.
 """
 
-import argparse
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
+import tyro
 from _textures import TARGET_H, TARGET_W, TEXTURE_DIR, TEXTURES, print_texture_contract
 
 
+@dataclass
+class Args:
+    force: bool = False  # re-download all textures
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--force', action='store_true', help='Re-download all textures')
-    args = parser.parse_args()
+    # tyro declares `cli`'s `default` sentinel as Any (tyro/_singleton.py `MISSING_NONPROP`).
+    args = tyro.cli(Args, description=__doc__)  # pyright: ignore[reportAny]
 
     TEXTURE_DIR.mkdir(exist_ok=True)
     print_texture_contract((TARGET_W, TARGET_H))
@@ -55,29 +60,29 @@ def main() -> None:
             continue
 
         print(f'  Downloading {tex["name"]}...')
-        try:
-            subprocess.run(
-                [
-                    'curl',
-                    '-fSL',
-                    '--connect-timeout',
-                    '15',
-                    '--max-time',
-                    '120',
-                    '-A',
-                    'Mozilla/5.0',
-                    '-o',
-                    str(dest),
-                    tex['url'],
-                ],
-                check=True,
-                capture_output=True,
-            )
-            size_kb: float = dest.stat().st_size / 1024
-            print(f'    -> {size_kb:.0f} KB')
-        except subprocess.CalledProcessError as e:
-            print(f'    FAILED: {e.stderr.decode().strip()}')
+        result = subprocess.run(
+            [
+                'curl',
+                '-fSL',
+                '--connect-timeout',
+                '15',
+                '--max-time',
+                '120',
+                '-A',
+                'Mozilla/5.0',
+                '-o',
+                str(dest),
+                tex['url'],
+            ],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            print(f'    FAILED: {result.stderr.decode().strip()}')
             dest.unlink(missing_ok=True)
+            continue
+        size_kb: float = dest.stat().st_size / 1024
+        print(f'    -> {size_kb:.0f} KB')
 
     print('\nDone. Preview with: python tools/texture_preview.py')
 

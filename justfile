@@ -102,18 +102,22 @@ md-to-adf FILE *ARGS:
 
 # Lint, type-check and test the Python uv workspace (bmc-tui + harness).
 python:
-    # ruff/ty are nix-provided (PyPI binaries don't run in the pure-nix CI); pytest
-    # runs through uv. `uv sync` first so ty sees the workspace .venv.
+    # ruff/basedpyright are nix-provided, matching the pure-nix CI; pytest
+    # runs through uv. `uv sync` first so basedpyright sees the workspace .venv.
     {{ NIX_DEV }} uv sync
     {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness scripts
     {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness
-    # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
-    {{ NIX_DEV }} ty check --error deprecated bmc-tui bmc-virt/harness scripts
+    {{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python
     # coverage.py opens its data file without creating the directory above it,
     # and this one lives under the scratch tree, which gets cleaned out —
     # so make it on every run rather than once.
     mkdir -p .tmp/coverage/python
     {{ NIX_DEV }} uv run pytest
+
+# Rewrite the basedpyright baseline to what the Python workspace trips today.
+python-baseline:
+    {{ NIX_DEV }} uv sync
+    {{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python --writebaseline
 
 # Run nextest for a single crate (auto-enters nix shell).
 test crate *FEATURES="--all-features":

@@ -11,7 +11,7 @@ Event-driven signaling and test harness for the bmc-virt QEMU VM.
   shell commands. No interactive sessions required.
 - **Shared protocol** — the same Python package runs on both host (client, CLI) and guest (daemon). Types, enums, and
   wire format are defined once.
-- **Strict from day one** — ruff lint + format, ty type checking, pytest. All wired into `just validate`.
+- **Strict from day one** — ruff lint + format, basedpyright type checking, pytest. All wired into `just validate`.
 
 ## Non-goals
 
@@ -65,7 +65,7 @@ Connection lifecycle:
 
 ```sh
 cd bmc-virt/harness
-nix develop    # provides python3, uv, ruff, ty
+nix develop    # provides python3, uv, ruff, basedpyright
 uv sync        # install deps into .venv (automatic via shellHook)
 ```
 

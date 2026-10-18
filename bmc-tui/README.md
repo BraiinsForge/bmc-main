@@ -51,6 +51,6 @@ The injected seams (`Exec`, `Nix`) let the stages run under unit tests with no r
   operator notices without being spammed.
 - **Non-committal stage status.** A stage's success line states its objective, not a completion claim, so it reads true
   whether the mutation ran or was logged-and-skipped under `--dry-run`.
-- **Tooling via the flake.** ruff / ty ship as prebuilt binaries that can't exec under pure-nix CI, so they live in the
-  nix dev shell rather than the venv; `.envrc` (`use flake`) auto-enters it so `just python` works without a manual
-  `nix develop`.
+- **Tooling via the flake.** ruff / basedpyright come from nixpkgs, the same builds the pure-nix CI check runs, so they
+  live in the nix dev shell rather than the venv; `.envrc` (`use flake`) auto-enters it so `just python` works without a
+  manual `nix develop`.

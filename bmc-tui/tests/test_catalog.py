@@ -118,9 +118,9 @@ _HOST_CLI_ATTR = ".#bmc-nix-cli"
 
 class _FakeNix:
     """Attribute-aware fake Nix backend: build_out maps flake attrs to
-    prepared output directories. Implements the full Nix protocol so ty
-    accepts it wherever a Nix is annotated; the package-oriented methods
-    are unused by the init stages."""
+    prepared output directories. Implements the full Nix protocol
+    so the type checker accepts it wherever a Nix is annotated;
+    the package-oriented methods are unused by the init stages."""
 
     def __init__(self, outs: dict[str, Path]) -> None:
         self._outs = outs

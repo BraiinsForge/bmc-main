@@ -1,7 +1,8 @@
 # Makes `scripts/` a member of the uv workspace, so what these files import
-# is declared by the directory that uses it. The nix `python-lint` check builds
-# an environment from this and hands it to `ty`, which otherwise sees only
-# the bare interpreter and cannot resolve a single third-party import here.
+# is declared by the directory that uses it. The nix `python-lint` check
+# builds an environment from this and hands it to basedpyright,
+# which otherwise sees only the bare interpreter
+# and cannot resolve a single third-party import here.
 #
 # `bypass-selection` keeps the wheel to metadata: nothing here is importable,
 # and a backend left to guess would either refuse the flat layout of four

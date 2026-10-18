@@ -38,7 +38,7 @@ See: bmc-render/src/gpu/sphere.rs (`sphere_mesh_data`).
 
 import io
 from pathlib import Path
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from PIL import Image
 
@@ -84,26 +84,28 @@ TARGET_W = TARGET_H * 2
 RENDER_W = TARGET_W * 2
 RENDER_H = TARGET_H * 2
 
-SUBSAMPLING_NAMES: dict[int, str] = {0: '4:4:4', 1: '4:2:2', 2: '4:2:0'}
+Subsampling = Literal[0, 1, 2]
+
+SUBSAMPLING_NAMES: dict[Subsampling, str] = {0: '4:4:4', 1: '4:2:2', 2: '4:2:0'}
 
 # The encoder stays baseline: progressive saves another ~4%
 # but decodes by buffering the whole frame, the memory this size exists to save.
 JPEG_QUALITY = 70
-JPEG_SUBSAMPLING = 2
+JPEG_SUBSAMPLING: Subsampling = 2
 
 TEXTURE_SUFFIXES = frozenset({'.jpg', '.jpeg'})
 
 
 def downsample(image: Image.Image, target: tuple[int, int]) -> Image.Image:
     """Resize to `target` with the filter the shipped texture is built with."""
-    return image.convert('RGB').resize(target, Image.LANCZOS)
+    return image.convert('RGB').resize(target, Image.Resampling.LANCZOS)
 
 
 def encode_texture(
     image: Image.Image,
     *,
     quality: int = JPEG_QUALITY,
-    subsampling: int = JPEG_SUBSAMPLING,
+    subsampling: Subsampling = JPEG_SUBSAMPLING,
 ) -> bytes:
     buffer = io.BytesIO()
     image.save(buffer, 'JPEG', quality=quality, subsampling=subsampling, optimize=True)
@@ -119,11 +121,11 @@ def write_texture(image: Image.Image, output: Path) -> None:
     # a full disk or a Ctrl-C would otherwise truncate the committed texture.
     staged = output.with_name(f'{output.name}.tmp')
     try:
-        staged.write_bytes(encode_texture(image))
+        _ = staged.write_bytes(encode_texture(image))
     except OSError:
         staged.unlink(missing_ok=True)
         raise
-    staged.replace(output)
+    _ = staged.replace(output)
 
 
 def print_texture_contract(resolution: tuple[int, int]) -> None:

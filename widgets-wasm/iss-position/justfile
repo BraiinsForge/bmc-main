@@ -44,4 +44,4 @@ test:
 
 # Type-check tool scripts with their local venv.
 lint:
-    uvx ty check --project {{ tools_dir }} --python "$(uv run --project {{ tools_dir }} python -c 'import sys; print(sys.prefix)')"
+    uvx basedpyright --project {{ tools_dir }} --pythonpath "$(uv run --project {{ tools_dir }} python -c 'import sys; print(sys.executable)')"

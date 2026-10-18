@@ -28,11 +28,16 @@ Generates an HTML viewer and serves it on localhost. Opens in browser.
 Run texture_download.py first to fetch the textures.
 """
 
-import argparse
+import functools
 import http.server
 import json
 import threading
 import webbrowser
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import override
+
+import tyro
 
 from _textures import TARGET_H, TARGET_W, TEXTURE_DIR, TEXTURES
 
@@ -381,35 +386,34 @@ loadTexture();
     return html
 
 
-def _make_handler(viewer_html: bytes):
+def _make_handler(
+    viewer_html: bytes,
+) -> Callable[..., http.server.SimpleHTTPRequestHandler]:
     """Create a request handler that serves viewer.html from memory."""
-    texture_dir = str(TEXTURE_DIR)
 
     class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=texture_dir, **kwargs)
-
-        def do_GET(self):
+        @override
+        def do_GET(self) -> None:
             if self.path in (VIEWER_PATH, '/'):
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
                 self.send_header('Content-Length', str(len(viewer_html)))
                 self.end_headers()
-                self.wfile.write(viewer_html)
+                _ = self.wfile.write(viewer_html)
             else:
                 super().do_GET()
 
-    return Handler
+    return functools.partial(Handler, directory=str(TEXTURE_DIR))
+
+
+@dataclass
+class Args:
+    port: int = 8_091  # HTTP server port
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        '--port', type=int, default=8_091, help='HTTP server port (default: 8091)'
-    )
-    args = parser.parse_args()
+    # tyro declares `cli`'s `default` sentinel as Any (tyro/_singleton.py `MISSING_NONPROP`).
+    args = tyro.cli(Args, description=__doc__)  # pyright: ignore[reportAny]
 
     if not TEXTURE_DIR.exists():
         print('No textures found. Run texture_download.py first.')

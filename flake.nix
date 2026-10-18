@@ -94,7 +94,7 @@
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
         };
         checks = import ./nix/checks.nix {
-          inherit pkgs ty-bin python-lint-venv;
+          inherit pkgs python-lint-venv;
           armv7Pkgs = workspace.bmc.armv7-nixpkgs;
           deckPackages = workspace.legacyPackages.deck-packages;
           frontend = workspace.deps.frontend;
@@ -143,7 +143,7 @@
         # Light venv backing the `deck` app — bmc-tui only (rich + tyro).
         bmc-tui-venv = pythonSet.mkVirtualEnv "bmc-tui" { bmc-tui = [ ]; };
 
-        # What `python-lint` type-checks against, so `ty` resolves the versions
+        # What `python-lint` type-checks against, so basedpyright resolves the versions
         # `uv.lock` pins rather than whatever the ambient interpreter carries.
         # Just the scripts member and its test extra: the check's own source
         # filter drops the other two members, so their trees would be dead weight.
@@ -158,6 +158,7 @@
             proto-plugins.protoc-gen-connect-rust
           ]
             ++ (with pkgs; [
+            basedpyright
             buf
             cargo-watch
             e2fsprogs
@@ -168,7 +169,6 @@
             odiff
             python3
             ruff
-            ty
             util-linux
             uv
           ]);
@@ -201,24 +201,6 @@
             pkgs.libgbm
           ];
         });
-
-        # Pre-built ty binary — avoids compiling from source on CI builders
-        # that lack the nixos binary cache substituter.
-        ty-bin = pkgs.stdenv.mkDerivation {
-          pname = "ty";
-          version = "0.0.63";
-          src = pkgs.fetchurl {
-            url = "https://github.com/astral-sh/ty/releases/download/0.0.63/ty-x86_64-unknown-linux-gnu.tar.gz";
-            hash = "sha256-6JFqPBEKzk1PJec7WFDv2UR+B5bZPsnho6tpvIxG9Ww=";
-          };
-          nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-          buildInputs = [ pkgs.stdenv.cc.cc.lib ];
-          sourceRoot = ".";
-          unpackPhase = "tar xzf $src";
-          installPhase = ''
-            install -Dm755 ty-x86_64-unknown-linux-gnu/ty $out/bin/ty
-          '';
-        };
 
         # Format SVGs with the shared svgo config.
         # fd honors .gitignore, so node_modules/target/.venv are skipped.
