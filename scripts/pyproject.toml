@@ -19,7 +19,7 @@ name = "bmc-scripts"
 version = "0.0.0"
 description = "Repo utility scripts that are run as files, not imported"
 license = "GPL-3.0-or-later"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     # CommonMark parser behind `md_to_adf.py`; also what mdformat parses with,
     # so the converter and the formatter agree on these files.

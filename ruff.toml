@@ -1,7 +1,7 @@
 # Ruff linter configuration — catches real bugs in Python utility scripts.
 # Formatting is handled by nix fmt (braiinsfmt).
 
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 
 [lint]

@@ -19,32 +19,50 @@
 # the grant above.
 
 import subprocess
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import override
 
 import pytest
 
+from bmc_tui.device import Device
 from bmc_tui.procedures import widget_host_e2e as host_e2e
 from bmc_tui.procedures import widget_restart_e2e as e2e
 from bmc_tui.stage import Abort
 
-if TYPE_CHECKING:
-    from bmc_tui.device import Device
+
+class _NoSsh:
+    """An Exec behind a Device whose every command the test answers itself."""
+
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        raise AssertionError(f"BUG: a command reached ssh: {argv}")
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        raise AssertionError(f"BUG: a command reached ssh: {argv} ({chunks})")
+
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+        raise AssertionError(f"BUG: a command reached ssh: {argv} ({on_line})")
 
 
-class _Device:
+class _Device(Device):
+    """Answers reads and runs from separate canned queues, recording each channel."""
+
     def __init__(self, *, read: str | tuple[str, ...] = "", run: str | None = "") -> None:
+        super().__init__("deck", backend=_NoSsh())
         self.read_results = iter((read,) if isinstance(read, str) else read)
         self.run_result = run
         self.read_commands: list[str] = []
         self.run_commands: list[str] = []
 
+    @override
     def read(self, command: str) -> str:
         self.read_commands.append(command)
         return next(self.read_results)
 
-    def run(self, command: str) -> str | None:
+    @override
+    def run(self, command: str, *, expect_disconnect: bool = False) -> str | None:
+        assert not expect_disconnect, "BUG: this fake never models a dropped session"
         self.run_commands.append(command)
         return self.run_result
 
@@ -250,7 +268,7 @@ def test_baseline_waits_for_the_compositor_connection() -> None:
     connected = "Widget connected: 11111111-1111-1111-1111-111111111111"
     fake = _Device(read=(spawn, _raw(snapshot), f"{spawn}\n{connected}", _raw(snapshot)))
     result, log = e2e._wait_for_baseline(
-        cast("Device", fake),
+        fake,
         sleep=lambda _delay: None,
         clock=iter((0.0, 0.0)).__next__,
     )
@@ -261,14 +279,14 @@ def test_baseline_waits_for_the_compositor_connection() -> None:
 def test_baseline_does_not_retry_missing_retained_spawn_history() -> None:
     fake = _Device(read=("", _raw(_snapshot((_thin(30, 120, "clock"),)))))
     with pytest.raises(Abort, match="no retained spawn log"):
-        e2e._wait_for_baseline(cast("Device", fake), clock=lambda: 0.0)
+        e2e._wait_for_baseline(fake, clock=lambda: 0.0)
     assert len(fake.read_commands) == 2
 
 
 def test_log_delta_reads_after_marker_across_rotated_history() -> None:
     marker = f"{e2e._LOG_MARKER} nonce"
     fake = _Device(read=("", f"{marker}\nreconnected"))
-    result = e2e._log_delta(cast("Device", fake), e2e._LogCursor(nonce="nonce"))
+    result = e2e._log_delta(fake, e2e._LogCursor(nonce="nonce"))
     assert result == "reconnected"
     assert "cat /var/log/bmc/bmc.log" in fake.read_commands[0]
     archives = fake.read_commands[1]
@@ -281,8 +299,8 @@ def test_log_delta_caches_the_rotated_prefix() -> None:
     marker = f"{e2e._LOG_MARKER} nonce"
     fake = _Device(read=("", f"{marker}\narchived", "live"))
     cursor = e2e._LogCursor(nonce="nonce")
-    assert e2e._log_delta(cast("Device", fake), cursor) == "archived"
-    assert e2e._log_delta(cast("Device", fake), cursor) == "archived\nlive"
+    assert e2e._log_delta(fake, cursor) == "archived"
+    assert e2e._log_delta(fake, cursor) == "archived\nlive"
     assert len(fake.read_commands) == 3
 
 
@@ -298,34 +316,34 @@ def test_log_delta_rescans_after_another_rotation() -> None:
         )
     )
     cursor = e2e._LogCursor(nonce="nonce")
-    assert e2e._log_delta(cast("Device", fake), cursor) == "archived"
-    assert e2e._log_delta(cast("Device", fake), cursor) == "archived\nlive-one"
-    assert e2e._log_delta(cast("Device", fake), cursor) == "archived\nlive-one\nlive-two"
+    assert e2e._log_delta(fake, cursor) == "archived"
+    assert e2e._log_delta(fake, cursor) == "archived\nlive-one"
+    assert e2e._log_delta(fake, cursor) == "archived\nlive-one\nlive-two"
     assert len(fake.read_commands) == 5
 
 
 def test_log_delta_reports_a_missing_marker() -> None:
     fake = _Device(read=("", ""))
-    result = e2e._log_delta(cast("Device", fake), e2e._LogCursor(nonce="nonce"))
+    result = e2e._log_delta(fake, e2e._LogCursor(nonce="nonce"))
     assert result == e2e._LOG_HISTORY_LOST
 
 
 def test_log_delta_reports_missing_file_logging() -> None:
     fake = _Device(read=e2e._LOG_UNAVAILABLE)
     with pytest.raises(Abort, match="became unavailable"):
-        e2e._log_delta(cast("Device", fake), e2e._LogCursor(nonce="nonce"))
+        e2e._log_delta(fake, e2e._LogCursor(nonce="nonce"))
 
 
 def test_log_delta_reports_archive_decompression_failure() -> None:
     failure = f"{e2e._LOG_ARCHIVE_FAILED} /var/log/bmc/bmc.log.1.gz"
     fake = _Device(read=("", failure))
-    result = e2e._log_delta(cast("Device", fake), e2e._LogCursor(nonce="nonce"))
+    result = e2e._log_delta(fake, e2e._LogCursor(nonce="nonce"))
     assert result == failure
 
 
 def test_log_history_reads_archives_oldest_first() -> None:
     fake = _Device(read="history")
-    assert e2e._log_history(cast("Device", fake)) == "history"
+    assert e2e._log_history(fake) == "history"
     command = fake.read_commands[0]
     assert command.index("bmc.log.9") < command.index("bmc.log.1")
     assert command.index("bmc.log.1") < command.index("cat /var/log/bmc/bmc.log")
@@ -337,7 +355,7 @@ def test_log_history_reports_archive_decompression_failure() -> None:
     failure = f"{e2e._LOG_ARCHIVE_FAILED} /var/log/bmc/bmc.log.1.gz"
     fake = _Device(read=failure)
     with pytest.raises(Abort, match=r"failed to decompress /var/log/bmc/bmc\.log\.1\.gz"):
-        e2e._log_history(cast("Device", fake))
+        e2e._log_history(fake)
 
 
 def test_log_wait_retries_while_rotated_history_is_in_flight() -> None:
@@ -412,14 +430,14 @@ def test_log_wait_retries_a_transient_ssh_failure() -> None:
 
 
 def test_log_cursor_reports_missing_file_logging() -> None:
-    dev = cast("Device", _Device(run=e2e._LOG_UNAVAILABLE))
+    dev = _Device(run=e2e._LOG_UNAVAILABLE)
     with pytest.raises(Abort, match="enable file logging"):
         e2e._log_cursor(dev)
 
 
 def test_log_cursor_writes_a_unique_window_marker() -> None:
     fake = _Device()
-    cursor = e2e._log_cursor(cast("Device", fake))
+    cursor = e2e._log_cursor(fake)
     assert cursor.nonce
     assert f"{e2e._LOG_MARKER} {cursor.nonce}" in fake.run_commands[0]
 
@@ -427,7 +445,8 @@ def test_log_cursor_writes_a_unique_window_marker() -> None:
 def test_failure_capture_keeps_log_when_snapshot_read_fails(tmp_path: Path) -> None:
     marker = f"{e2e._LOG_MARKER} nonce"
 
-    class SnapshotFailure:
+    class SnapshotFailure(_Device):
+        @override
         def read(self, command: str) -> str:
             if command == host_e2e.SNAPSHOT_COMMAND:
                 raise subprocess.CalledProcessError(1, command)
@@ -437,7 +456,7 @@ def test_failure_capture_keeps_log_when_snapshot_read_fails(tmp_path: Path) -> N
     e2e._record_failure(
         evidence,
         "thin",
-        cast("Device", SnapshotFailure()),
+        SnapshotFailure(),
         e2e._LogCursor(nonce="nonce"),
     )
     assert not (tmp_path / "thin-snapshot.txt").exists()
@@ -446,9 +465,8 @@ def test_failure_capture_keeps_log_when_snapshot_read_fails(tmp_path: Path) -> N
 
 def test_kill_rejects_a_changed_process_identity() -> None:
     fake = _Device(run="PROCESS_IDENTITY_CHANGED")
-    dev = cast("Device", fake)
     with pytest.raises(Abort, match="process 30 changed before kill"):
-        e2e._kill(dev, _thin(30, 120, "clock"))
+        e2e._kill(fake, _thin(30, 120, "clock"))
     assert "/proc/30/stat" in fake.run_commands[0]
     assert "sed 's/.*) //'" in fake.run_commands[0]
     assert "awk '{print $20}'" in fake.run_commands[0]

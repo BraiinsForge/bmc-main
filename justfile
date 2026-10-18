@@ -117,7 +117,10 @@ python:
 # Rewrite the basedpyright baseline to what the Python workspace trips today.
 python-baseline:
     {{ NIX_DEV }} uv sync
-    {{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python --writebaseline
+    # The writing run still reports the hits it just recorded and exits 1,
+    # so the run after it, against the new baseline, is the verdict.
+    -{{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python --writebaseline
+    {{ NIX_DEV }} basedpyright --pythonpath .venv/bin/python
 
 # Run nextest for a single crate (auto-enters nix shell).
 test crate *FEATURES="--all-features":

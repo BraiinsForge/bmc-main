@@ -1120,8 +1120,8 @@ _ORCHESTRATOR_GONE = "{}"
 _ORCHESTRATOR_LISTED = '{"bmc-nix-service-orchestrator": {}}'
 
 
-def _await_activation(backend: _Exec, *, old_pid: catalog.Pid | None) -> str:
-    return catalog.await_package_activation(
+def _await_activation(backend: _Exec, *, old_pid: catalog.Pid | None) -> None:
+    catalog.await_package_activation(
         Device("h", backend=backend), old_pid=old_pid, sleep=lambda _s: None, clock=_ticking_clock()
     )
 

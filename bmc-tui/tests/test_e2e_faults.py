@@ -132,9 +132,9 @@ def test_a_group_runs_scenarios_in_pinned_order(monkeypatch) -> None:
     monkeypatch.setattr(faults.catalog, "pin_device_address", lambda *_a, **_k: calls.append("pin"))
     monkeypatch.setattr(faults, "_pinned", lambda ctx: ctx.dev)
     monkeypatch.setattr(faults.catalog, "clear_nix_store", lambda *_a, **_k: calls.append("clear"))
-    # SimpleNamespace duck-types the fields _group_a reads; cast keeps the type
-    # checker happy without building a full _Ctx.
-    fake_ctx = cast(
+    # A stand-in duck-types only the fields the group reads; a full _Ctx would need
+    # one for every field, so each `_Ctx` cast in this file carries an ignore.
+    fake_ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(),
@@ -169,7 +169,7 @@ def test_a_group_failure_leaves_the_quiesced_pin_for_cleanup(monkeypatch) -> Non
         raise Abort("cleardown died")
 
     monkeypatch.setattr(faults.catalog, "clear_nix_store", dying_cleardown)
-    fake_ctx = cast(
+    fake_ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(),
@@ -189,7 +189,7 @@ def test_a_group_requires_recovery_flash_to_close_the_quiesced_window(monkeypatc
     monkeypatch.setattr(faults.catalog, "pin_device_address", lambda *_a, **_k: None)
     monkeypatch.setattr(faults, "_pinned", lambda ctx: ctx.dev)
     monkeypatch.setattr(faults.catalog, "clear_nix_store", lambda *_a, **_k: None)
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(),
@@ -204,7 +204,7 @@ def test_a_group_requires_recovery_flash_to_close_the_quiesced_window(monkeypatc
 
 def test_good_init_closes_quiesced_window_after_flash(monkeypatch) -> None:
     pinned = object()
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(),
@@ -258,7 +258,7 @@ def test_init_abort_sweeps_except_after_successful_retention(
             raise Abort("flash failed")
 
     monkeypatch.setattr(faults.catalog, "flash_expect_abort", flash)
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=pinned,
@@ -312,7 +312,7 @@ def test_download_stall_resumes_retained_bytes_before_cleanup(monkeypatch, tmp_p
         "sweep_download_artifact",
         lambda dev: calls.append("sweep-device" if dev is ctx.dev else "sweep-pinned"),
     )
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(),
@@ -351,7 +351,7 @@ def test_download_stall_rejects_unresumed_download(
     monkeypatch.setattr(faults.catalog, "retained_download_size", lambda _dev: 7)
     monkeypatch.setattr(faults, "_flash_good_init", lambda _ctx: server.requests.extend(recovery))
     monkeypatch.setattr(faults.catalog, "sweep_download_artifact", lambda _dev: None)
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(),
@@ -374,7 +374,7 @@ def test_b_group_order_and_recovery_wrapper(monkeypatch) -> None:
         "unmounted-store",
     ):
         monkeypatch.setitem(faults._DRIVERS, sid, lambda _ctx, sid=sid: calls.append(sid))
-    faults._group_b(cast("faults._Ctx", types.SimpleNamespace()))
+    faults._group_b(cast("faults._Ctx", types.SimpleNamespace()))  # pyright: ignore[reportInvalidCast]
     assert calls == [
         "store-remnants",
         "missing-store-db",
@@ -392,7 +392,7 @@ def test_b_recovery_attempts_one_reflash_then_reraises(monkeypatch) -> None:
         raise Abort("corrupt-fs-metadata did not repair")
 
     with pytest.raises(Abort, match="did not repair"):
-        faults._with_b_recovery(cast("faults._Ctx", _b_recovery_ctx()), failing)
+        faults._with_b_recovery(cast("faults._Ctx", _b_recovery_ctx()), failing)  # pyright: ignore[reportInvalidCast]
     assert recovered == ["reflash"]
 
 
@@ -406,7 +406,7 @@ def test_b_recovery_covers_operational_failures(monkeypatch) -> None:
         raise subprocess.CalledProcessError(1, ["dd"])
 
     with pytest.raises(subprocess.CalledProcessError):
-        faults._with_b_recovery(cast("faults._Ctx", _b_recovery_ctx()), failing)
+        faults._with_b_recovery(cast("faults._Ctx", _b_recovery_ctx()), failing)  # pyright: ignore[reportInvalidCast]
     assert recovered == ["reflash"]
 
 
@@ -421,7 +421,7 @@ def test_b_recovery_failure_names_the_manual_fallback(monkeypatch) -> None:
 
     ctx = _b_recovery_ctx()
     with pytest.raises(Abort, match="init --wipe"):
-        faults._with_b_recovery(cast("faults._Ctx", ctx), failing)
+        faults._with_b_recovery(cast("faults._Ctx", ctx), failing)  # pyright: ignore[reportInvalidCast]
     # A failed recovery leaves the device quiesced with mDNS dead — the pin
     # must survive so the outer cleanup can still reach it.
     assert ctx.quiesced_pin is not None
@@ -461,7 +461,7 @@ def test_b_recovery_reuses_the_already_pinned_handle(monkeypatch) -> None:
         raise Abort("blank-data-partition did not repair")
 
     with pytest.raises(Abort, match="did not repair"):
-        faults._with_b_recovery(cast("faults._Ctx", ctx), failing)
+        faults._with_b_recovery(cast("faults._Ctx", ctx), failing)  # pyright: ignore[reportInvalidCast]
     assert seen == [pinned]  # the recovery flash saw the pin, not a dead name
     assert ctx.quiesced_pin is None  # window closed after recovery
 
@@ -830,7 +830,7 @@ def test_c_group_runs_aborts_then_retry_then_reflash(monkeypatch) -> None:
         "same-version-reflash",
     ):
         monkeypatch.setitem(faults._DRIVERS, sid, lambda _ctx, sid=sid: calls.append(sid))
-    faults._group_c(cast("faults._Ctx", types.SimpleNamespace()))
+    faults._group_c(cast("faults._Ctx", types.SimpleNamespace()))  # pyright: ignore[reportInvalidCast]
     assert calls == [
         "unreachable-rig",
         "malformed-index",
@@ -844,7 +844,7 @@ def test_c_group_runs_aborts_then_retry_then_reflash(monkeypatch) -> None:
 def test_matching_image_picks_the_running_version(tmp_path) -> None:
     image_a = _image(tmp_path, name="a.tar", version="va")
     image_b = _image(tmp_path, name="b.tar", version="vb")
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=types.SimpleNamespace(version="vb"), image_a=image_a, image_b=image_b
@@ -856,7 +856,7 @@ def test_matching_image_picks_the_running_version(tmp_path) -> None:
 def test_matching_image_aborts_on_foreign_version(tmp_path) -> None:
     image_a = _image(tmp_path, name="a.tar", version="va")
     image_b = _image(tmp_path, name="b.tar", version="vb")
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=types.SimpleNamespace(version="vX"), image_a=image_a, image_b=image_b
@@ -912,7 +912,7 @@ def test_cache_swap_retry_records_before_tamper_retries_with_riders(monkeypatch)
     monkeypatch.setattr(faults, "_pinned", lambda ctx: ctx.dev)
     monkeypatch.setattr(faults.rig, "swap_cache_away", _note(calls, "swap"))
     monkeypatch.setattr(faults.rig, "restore_cache", _note(calls, "restore"))
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(),
@@ -975,7 +975,7 @@ def test_same_version_reflash_stages_image_b_from_shm(monkeypatch) -> None:
     monkeypatch.setattr(faults, "_prepare_flash", lambda *_a, **_k: None)
     monkeypatch.setattr(faults, "_pinned", lambda ctx: ctx.dev)
     image_b = types.SimpleNamespace(version="vb", size=1, rootfs_size=1)
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=types.SimpleNamespace(version="vb"),
@@ -1016,7 +1016,7 @@ def test_prepare_flash_frees_widget_memory_and_sweeps_uploads_before_the_gate(
     image = _image(tmp_path)
     for quiesced_pin in (None, object()):
         calls.clear()
-        ctx = cast(
+        ctx = cast(  # pyright: ignore[reportInvalidCast]
             "faults._Ctx",
             types.SimpleNamespace(
                 dev=object(),
@@ -1091,7 +1091,7 @@ def test_via_shm_budgets_two_copies_and_frees_the_tmp_upload(monkeypatch, driver
     calls: list[str] = []
     budgets: list[int] = []
     _via_shm_budget_probe(monkeypatch, calls, budgets)
-    driver(cast("faults._Ctx", _via_shm_budget_ctx()))
+    driver(cast("faults._Ctx", _via_shm_budget_ctx()))  # pyright: ignore[reportInvalidCast]
     assert budgets == [2 * 10 + 3 + faults._FLASH_HEADROOM]
     assert (
         calls.index("prepare")
@@ -1116,7 +1116,7 @@ def test_upgrade_abort_restores_rig_even_when_the_abort_check_fails(monkeypatch)
         raise Abort("session death")
 
     monkeypatch.setattr(faults.catalog, "flash_expect_abort", exploding_flash)
-    ctx = cast(
+    ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(dev=object(), state=object(), image_b=object(), yes=True),
     )
@@ -1145,7 +1145,7 @@ def _full_store_stubs(monkeypatch, calls: list[str]) -> "faults._Ctx":
         "sweep_store_ballast",
     ):
         monkeypatch.setattr(faults.catalog, fn, _note(calls, fn))
-    return cast(
+    return cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
             dev=object(), run=object(), state=object(), image_b=object(), yes=True
@@ -1199,7 +1199,7 @@ def _upgrade_abort_stubs(monkeypatch) -> "faults._Ctx":
     monkeypatch.setattr(faults, "_pinned", lambda ctx: ctx.dev)
     for fn in ("drop_e2e_marker", "record_upgrade_state", "require_upgrade_state_untouched"):
         monkeypatch.setattr(faults.catalog, fn, lambda *_a, **_k: None)
-    return cast(
+    return cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(dev=object(), state=object(), image_b=object(), yes=True),
     )

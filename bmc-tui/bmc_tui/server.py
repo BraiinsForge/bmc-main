@@ -87,12 +87,15 @@ class Request:
 
 
 ResponseValue = bytes | str | Path | dict | list
-Response = ResponseValue | Callable[[Request], "Response"]
+Response = ResponseValue | Callable[[Request], "Response | View"]
 
 
 @dataclass(frozen=True)
 class View:
-    """A response with a non-200 status, a forced content type or extra headers."""
+    """A response with a non-200 status, a forced content type or extra headers.
+
+    A callable may return one too, to pick the status or headers per request.
+    """
 
     response: Response
     status: int = 200
@@ -139,12 +142,16 @@ def _route_source_ip() -> str | None:
         return None
 
 
-def _resolve(response: Response, request: Request) -> ResponseValue:
-    current = response
+def _resolve(view: View, request: Request) -> tuple[View, ResponseValue]:
+    """Follow callables to a final value; a View met on the way takes over status and headers."""
+    current: Response | View = view.response
     for _ in range(MAX_RESPONSE_DEPTH):
-        if not callable(current):
-            return current
-        current = cast("Callable[[Request], Response]", current)(request)
+        if isinstance(current, View):
+            view, current = current, current.response
+        elif callable(current):
+            current = current(request)
+        else:
+            return view, current
     raise RecursionError(f"view for {request.path} still callable after {MAX_RESPONSE_DEPTH} hops")
 
 
@@ -409,23 +416,26 @@ class _Handler(BaseHTTPRequestHandler):
         # Resolve a view before sending headers so its errors can be reported
         # as a status. A failed stream must close, not write into its body.
         try:
-            value = mounted if mounted is not None else _resolve(view.response, request)
-            if not isinstance(value, Path):
-                body, guessed = _encode(value)
+            if mounted is not None:
+                value: ResponseValue = mounted
+            else:
+                view, value = _resolve(view, request)
+            encoded = value if isinstance(value, Path) else _encode(value)
         except Exception as error:
             detail = f"view for {request.path} failed: {error}\n"
             self._respond(status=500, body=detail.encode(), content_type="text/plain", head=head)
             return
-        if isinstance(value, Path):
-            guessed, _ = mimetypes.guess_type(value.name)
+        if isinstance(encoded, Path):
+            guessed, _ = mimetypes.guess_type(encoded.name)
             self._respond_file(
                 status=view.status,
-                path=value,
+                path=encoded,
                 content_type=view.content_type or guessed or "application/octet-stream",
                 head=head,
                 extra=view.headers,
             )
             return
+        body, guessed = encoded
         self._respond(
             status=view.status,
             body=body,

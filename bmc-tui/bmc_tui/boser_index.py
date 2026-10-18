@@ -88,7 +88,7 @@ def index_document(*, running: BosVersion, base_url: str, image: Image | None) -
 
 
 def _release(version: BosVersion, key: str, asset: dict[str, object]) -> dict[str, object]:
-    assets: dict[str, object] = dict.fromkeys(_ASSET_KEYS)
+    assets: dict[str, object] = {asset_key: None for asset_key in _ASSET_KEYS}
     assets[key] = asset
     return {
         "uuid": release_uuid(version.canonical),

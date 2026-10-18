@@ -262,7 +262,7 @@ def countdown(label: str, seconds: int) -> None:
 
 
 @contextmanager
-def progress(label: str, total: int | None) -> Generator[Callable[[int], None], None, None]:
+def progress(label: str, total: int | None) -> Generator[Callable[[int], None]]:
     """Byte-count progress bar; yields an ``advance(n)`` callback.
     An unknown `total` leaves the bar indeterminate.
 
@@ -366,9 +366,7 @@ class LiveScrollback:
 
 
 @contextmanager
-def live_scrollback(
-    *, log_path: Path, window: int | None = None
-) -> Generator[LiveScrollback, None, None]:
+def live_scrollback(*, log_path: Path, window: int | None = None) -> Generator[LiveScrollback]:
     """A bounded, in-place live region for a command that would otherwise flood
     the terminal, with the full output referenced at `log_path`. Yields a handle
     the caller drives; `transient`, so scrollback stays clean on exit.

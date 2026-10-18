@@ -162,7 +162,7 @@ def _content_length(response: HTTPResponse) -> int | None:
 
 
 @contextmanager
-def _opened(url: str) -> Generator[HTTPResponse, None, None]:
+def _opened(url: str) -> Generator[HTTPResponse]:
     """`urlopen` with its failures rendered as an `Abort` naming the URL."""
     try:
         with urllib.request.urlopen(url, timeout=_TIMEOUT) as response:

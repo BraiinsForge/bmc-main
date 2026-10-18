@@ -103,7 +103,7 @@ def test_self_returning_view_fails_rather_than_hanging() -> None:
     def forever(_request: Request) -> object:
         return forever
 
-    with server({"/loop": forever}) as handle, pytest.raises(urllib.error.HTTPError) as caught:
+    with server({"/loop": forever}) as handle, pytest.raises(urllib.error.HTTPError) as caught:  # pyright: ignore[reportArgumentType]
         _get(handle.url("/loop"))
     assert caught.value.status == 500
 
@@ -126,6 +126,22 @@ def test_view_headers_reach_the_client() -> None:
         status, body, _ = _get(handle.url("/bounce"))
 
     assert (status, body) == (200, b"arrived")
+
+
+def test_callable_view_may_answer_with_a_view() -> None:
+    """A per-request redirect: the target carries what the request sent."""
+
+    def bounce(request: Request) -> View:
+        sent = request.query["v"][0]
+        return View(response=b"", status=302, headers={"Location": f"/landed?v={sent}"})
+
+    def landed(request: Request) -> bytes:
+        return request.query["v"][0].encode()
+
+    with server({"/bounce": bounce, "/landed": landed}) as handle:
+        status, body, _ = _get(handle.url("/bounce") + "?v=canary")
+
+    assert (status, body) == (200, b"canary")
 
 
 def test_unlisted_path_is_404() -> None:
@@ -263,7 +279,7 @@ def test_large_file_range_is_written_in_bounded_chunks() -> None:
 
     writer = Writer()
     handler = bmc_server._Handler.__new__(bmc_server._Handler)
-    handler.wfile = writer  # type: ignore[assignment]
+    handler.wfile = writer  # pyright: ignore[reportAttributeAccessIssue]
     handler._stream(io.BytesIO(payload), (0, len(payload) - 1))
     assert b"".join(writer.parts) == payload
 
@@ -405,6 +421,6 @@ def test_unexpected_error_reaches_the_traceback_hook(
     try:
         raise ValueError("boom")
     except ValueError:
-        handler.handle_error(None, ("192.0.2.5", 1234))  # type: ignore[arg-type]
+        handler.handle_error(None, ("192.0.2.5", 1234))  # pyright: ignore[reportArgumentType]
     assert seen == [ValueError]
     assert "serving 192.0.2.5 failed" in capfd.readouterr().err

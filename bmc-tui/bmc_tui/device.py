@@ -335,7 +335,8 @@ class Device:
     def _board_info(self) -> dict[str, Any]:
         """``ubus call system board``, parsed and cached (immutable per device)."""
         if self._info is None:
-            self._info = json.loads(self.read("ubus call system board"))
+            info: dict[str, Any] = json.loads(self.read("ubus call system board"))
+            self._info = info
         return self._info
 
     @property

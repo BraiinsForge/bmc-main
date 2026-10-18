@@ -49,7 +49,7 @@ directory = ".tmp/coverage/python/html"
 # Each run drops the entries fixed since, and only `just python-baseline` adds new ones.
 [tool.basedpyright]
 typeCheckingMode = "all"
-pythonVersion = "3.12"
+pythonVersion = "3.13"
 # Setting `exclude` drops basedpyright's defaults, so they are restated.
 # The tool trees are uv projects with their own venv and check.
 exclude = [
@@ -60,7 +60,7 @@ exclude = [
     "widgets-wasm/iss-position/tools",
 ]
 executionEnvironments = [
-    { root = "bmc-tui", pythonVersion = "3.11" },
-    { root = "bmc-virt/harness", pythonVersion = "3.11" },
+    { root = "bmc-tui" },
+    { root = "bmc-virt/harness" },
     { root = "scripts" },
 ]

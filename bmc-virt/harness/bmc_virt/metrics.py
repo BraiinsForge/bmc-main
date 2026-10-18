@@ -276,10 +276,13 @@ class MetricsCollector:
         fig, ax1 = plt.subplots(figsize=(12, 5))
         fig.suptitle(self.label or "VM Metrics", fontsize=14, fontweight="bold")
 
+        # The ignores below are matplotlib's stubs: they type these arguments `ArrayLike | float`,
+        # while the units registry takes datetimes and None gaps at runtime.
+
         # Memory on left y-axis
         ax1.set_ylabel("Memory (MB)", color="#ff6b6b")
-        ax1.plot(timestamps, mem_used, "#ff6b6b", linewidth=2, label="Mem Used")
-        ax1.plot(timestamps, mem_avail, "#51cf66", linewidth=2, label="Mem Avail")
+        ax1.plot(timestamps, mem_used, "#ff6b6b", linewidth=2, label="Mem Used")  # pyright: ignore[reportArgumentType]
+        ax1.plot(timestamps, mem_avail, "#51cf66", linewidth=2, label="Mem Avail")  # pyright: ignore[reportArgumentType]
         ax1.tick_params(axis="y", labelcolor="#ff6b6b")
         ax1.set_xlabel("Time")
         ax1.grid(True, alpha=0.15)
@@ -296,12 +299,12 @@ class MetricsCollector:
                     rss_series.append(proc.vm_rss_kb / 1024)
             if all(v is None for v in rss_series):
                 continue
-            ax1.plot(timestamps, rss_series, color, linewidth=1.5, label=f"{name} RSS")
+            ax1.plot(timestamps, rss_series, color, linewidth=1.5, label=f"{name} RSS")  # pyright: ignore[reportArgumentType]
 
         # Load on right y-axis
         ax2 = ax1.twinx()
         ax2.set_ylabel("Load Average", color="#74c0fc")
-        ax2.plot(timestamps, load_1m, "#74c0fc", linewidth=2, linestyle="--", label="Load 1m")
+        ax2.plot(timestamps, load_1m, "#74c0fc", linewidth=2, linestyle="--", label="Load 1m")  # pyright: ignore[reportArgumentType]
         ax2.tick_params(axis="y", labelcolor="#74c0fc")
 
         # Combined legend
@@ -315,7 +318,7 @@ class MetricsCollector:
         labeled = [s for s in self.snapshots if s.label]
         stagger_rows = 4
         for i, s in enumerate(labeled):
-            ax1.axvline(x=s.ts, color="#868e96", linestyle=":", alpha=0.6)
+            ax1.axvline(x=s.ts, color="#868e96", linestyle=":", alpha=0.6)  # pyright: ignore[reportArgumentType]
             y_pos = -0.10 - 0.06 * (i % stagger_rows)
             ax1.annotate(
                 s.label,

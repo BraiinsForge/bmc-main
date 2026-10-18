@@ -2654,6 +2654,20 @@ _GRPCURL_MAX_TIME = 120
 _PACKAGE_PHASE_PREFIX = "PACKAGE_UPGRADE_PHASE_"
 
 
+class ServerProcess(Protocol):
+    """The upgrade-server handle as the stages use it; a `subprocess.Popen` is one."""
+
+    pid: int
+
+    def poll(self) -> int | None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+
 @dataclass
 class UpgradeCycle:
     """Mutable carrier threaded through the e2e upgrade stages."""
@@ -2664,7 +2678,7 @@ class UpgradeCycle:
     key_dir: Path  # upgrade-server signing keypair location
     host: str | None = None  # this machine's address as the device reaches it
     log_path: Path | None = None  # upgrade-server output, for failure diagnosis
-    server: "subprocess.Popen[bytes] | None" = None
+    server: ServerProcess | None = None
     cache_public_key: str | None = None
     cookie: str | None = None
     upgrade_id: str | None = None
@@ -3959,10 +3973,14 @@ def check_for_firmware_upgrade(
         isinstance(offered_hash, str) and offered_hash.lower() == image.sha256.lower(),
         f"firmware hash does not match image: {offered_hash}",
     )
+    raw_size = firmware.get("fileSizeBytes")
+    invalid_size = Abort(f"firmware size is invalid: {raw_size}")
+    if raw_size is None:
+        raise invalid_size
     try:
-        offered_size = int(firmware.get("fileSizeBytes"))
+        offered_size = int(raw_size)
     except (TypeError, ValueError):
-        raise Abort(f"firmware size is invalid: {firmware.get('fileSizeBytes')}") from None
+        raise invalid_size from None
     require(offered_size == image.size, f"firmware size does not match image: {offered_size}")
     require(
         response.get("disruption") == "UPGRADE_DISRUPTION_REBOOT",

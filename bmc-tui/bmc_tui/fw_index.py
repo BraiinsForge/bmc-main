@@ -25,14 +25,14 @@ import io
 import json
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Buffer, Callable
 from dataclasses import dataclass
 from functools import partial
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import BaseRequestHandler
-from typing import cast
+from typing import cast, override
 
 from bmc_tui.bos_version import BosVersion
 
@@ -150,8 +150,9 @@ class RequestRecord:
     error: str | None
 
 
-class _RecordingWriter:
+class _RecordingWriter(io.BufferedIOBase):
     def __init__(self, output: io.BufferedIOBase) -> None:
+        super().__init__()
         self._output = output
         self.reset()
 
@@ -161,20 +162,28 @@ class _RecordingWriter:
         self.bytes_written = 0
 
     @property
+    @override
     def closed(self) -> bool:
         return self._output.closed
 
-    def write(self, data: bytes) -> int:
+    @override
+    def writable(self) -> bool:
+        return True
+
+    @override
+    def write(self, data: Buffer, /) -> int:
         if self.recording:
-            self.bytes_attempted += len(data)
+            self.bytes_attempted += memoryview(data).nbytes
         written = self._output.write(data)
         if self.recording:
             self.bytes_written += written
         return written
 
+    @override
     def flush(self) -> None:
         self._output.flush()
 
+    @override
     def close(self) -> None:
         self._output.close()
 
@@ -212,15 +221,14 @@ class _RecordingHTTPServer(ThreadingHTTPServer):
 
 
 class _RecordingHandler(SimpleHTTPRequestHandler):
-    server: _RecordingHTTPServer
-
     def setup(self) -> None:
         super().setup()
         self._body_writer = _RecordingWriter(self.wfile)
-        self.wfile = cast("io.BufferedIOBase", self._body_writer)
+        self.wfile = self._body_writer
 
     def do_GET(self) -> None:
-        self.server.begin_transfer()
+        server = cast("_RecordingHTTPServer", self.server)
+        server.begin_transfer()
         # The writer is per-connection while records are per-request;
         # a keep-alive connection must not leak counts across requests.
         self._body_writer.reset()
@@ -237,7 +245,7 @@ class _RecordingHandler(SimpleHTTPRequestHandler):
                 and self._expected_bytes is not None
                 and self._body_writer.bytes_written == self._expected_bytes
             )
-            self.server.append_record(
+            server.append_record(
                 RequestRecord(
                     path=self.path,
                     status=self._status,
@@ -247,7 +255,7 @@ class _RecordingHandler(SimpleHTTPRequestHandler):
                     error=error,
                 )
             )
-            self.server.end_transfer()
+            server.end_transfer()
 
     def send_response(self, code: int, message: str | None = None) -> None:
         self._status = code

@@ -25,23 +25,19 @@ import os
 import signal
 import subprocess
 import tarfile
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import pytest
 
 from bmc_tui import catalog
 from bmc_tui.bos_version import parse_bos_version
+from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.procedures import e2e_grpc_sysupgrade
 from bmc_tui.stage import Abort
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from bmc_tui.device import Device
-    from bmc_tui.nix import Nix
 
 _classify_stream = catalog.classify_stream
 _check_for_firmware_upgrade = catalog.check_for_firmware_upgrade
@@ -70,6 +66,19 @@ class _Device:
 class _Nix:
     def list_packages(self) -> list[str]:
         return ["core"]
+
+
+class _NoSsh:
+    """An Exec for a run that must abort before it reaches the device."""
+
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        raise AssertionError(f"BUG: the run reached ssh: {argv}")
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        raise AssertionError(f"BUG: the run reached ssh: {argv} ({chunks})")
+
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+        raise AssertionError(f"BUG: the run reached ssh: {argv} ({on_line})")
 
 
 class _Server:
@@ -191,7 +200,7 @@ def harness(  # noqa: PLR0915
     ) -> None:
         assert state.cycle.image_version.canonical != state.cycle.running_version.canonical
         state.firmwares = firmwares
-        cycle.server = cast("subprocess.Popen[bytes]", SimpleNamespace(pid=4321))
+        cycle.server = _StartedProcess()
         events.append("start host")
 
     monkeypatch.setattr(catalog, "start_upgrade_server", start_server)
@@ -434,7 +443,7 @@ def test_package_server_start_failure_stops_stored_process(
     def fail_after_start(
         _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmwares: list[str]
     ) -> None:
-        cycle.server = cast("subprocess.Popen[bytes]", SimpleNamespace(pid=4321))
+        cycle.server = _StartedProcess()
         raise Abort("package server startup")
 
     monkeypatch.setattr(catalog, "start_upgrade_server", fail_after_start)
@@ -970,7 +979,7 @@ def test_missing_image_does_not_allocate_snapshot_directory(
     monkeypatch.setattr("tempfile.mkdtemp", allocate)
     procedure = e2e_grpc_sysupgrade.E2eGrpcSysupgrade(device="deck", image=tmp_path / "missing.tar")
     with pytest.raises(FileNotFoundError):
-        procedure.run(dev=cast("Device", _Device([])), backend=cast("Nix", _Nix()))
+        procedure.run(dev=Device("deck", backend=_NoSsh()))
     assert not snapshot.exists()
 
 
@@ -1096,6 +1105,30 @@ class _Process:
             raise subprocess.TimeoutExpired("server", cast("float", timeout))
         return 0
 
+    def terminate(self) -> None:
+        raise AssertionError("BUG: the group shutdown signals the group, not the leader")
+
+    def kill(self) -> None:
+        raise AssertionError("BUG: the group shutdown signals the group, not the leader")
+
+
+class _StartedProcess:
+    """A server handle only ever read for its pid: the harness stubs every shutdown."""
+
+    pid: int = 4321
+
+    def poll(self) -> int | None:
+        raise AssertionError("BUG: the harness stubs the server shutdown")
+
+    def wait(self, timeout: float | None = None) -> int:
+        raise AssertionError(f"BUG: the harness stubs the server shutdown (timeout {timeout})")
+
+    def terminate(self) -> None:
+        raise AssertionError("BUG: the harness stubs the server shutdown")
+
+    def kill(self) -> None:
+        raise AssertionError("BUG: the harness stubs the server shutdown")
+
 
 class _Socket:
     def __init__(self, checked: list[int]) -> None:
@@ -1124,7 +1157,7 @@ def test_package_server_group_shutdown_escalates_and_verifies_ports(
         8081,
         tmp_path,
         host="127.0.0.1",
-        server=cast("subprocess.Popen[bytes]", process),
+        server=process,
     )
     signals: list[tuple[int, signal.Signals]] = []
     checked: list[int] = []

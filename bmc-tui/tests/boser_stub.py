@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 TOKEN = "stub-token"
 OFFER_ID = "9e2c7c2e-0000-4000-8000-00000000abcd"
@@ -105,8 +105,6 @@ class Script:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server: "BoserStub"
-
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         pass
 
@@ -127,7 +125,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply(status, {"error": code, "message": message})
 
     def _handle(self) -> None:  # noqa: PLR0911
-        script = self.server.script
+        script = cast("BoserStub", self.server).script
         body = self._body()
         token = self.headers.get("Authorization")
         script.requests.append((self.command, self.path, token, body))
