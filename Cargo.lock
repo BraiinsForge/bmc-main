@@ -766,7 +766,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -1755,6 +1754,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]

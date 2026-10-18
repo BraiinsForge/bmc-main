@@ -22,10 +22,9 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use bmc_widget_manifest::{MAX_WIDGET_DIR_DEPTH, Manifest};
+use bmc_widget_manifest::Manifest;
 use tokio::{fs, task};
 use tracing::warn;
-use walkdir::WalkDir;
 
 use super::{RegistryError, WidgetInfo};
 
@@ -110,23 +109,15 @@ impl PathDiscovery {
         error_policy: DiscoveryErrorPolicy,
     ) -> Result<Vec<PathBuf>, RegistryError> {
         let mut widget_dirs = Vec::new();
-        let mut entries = WalkDir::new(path)
-            .follow_links(true)
-            .min_depth(1)
-            .max_depth(MAX_WIDGET_DIR_DEPTH)
-            .into_iter();
-
-        while let Some(entry) = entries.next() {
-            let entry = match entry {
-                Ok(entry) => entry,
+        for entry in bmc_widget_manifest::widget_dirs(path) {
+            match entry {
+                Ok(widget_dir) => widget_dirs.push(widget_dir),
                 Err(e) if e.loop_ancestor().is_some() => {
                     warn!("failed to walk widget directory: {}", e);
-                    continue;
                 }
                 Err(e) => match error_policy {
                     DiscoveryErrorPolicy::Continue => {
                         warn!("failed to walk widget directory: {}", e);
-                        continue;
                     }
                     DiscoveryErrorPolicy::Fail => {
                         return Err(RegistryError::WalkDirectory {
@@ -135,16 +126,6 @@ impl PathDiscovery {
                         });
                     }
                 },
-            };
-
-            if !entry.file_type().is_dir() {
-                continue;
-            }
-
-            let widget_dir = entry.path();
-            if widget_dir.join("manifest.json").exists() {
-                widget_dirs.push(widget_dir.to_path_buf());
-                entries.skip_current_dir();
             }
         }
 

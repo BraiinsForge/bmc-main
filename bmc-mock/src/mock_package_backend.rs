@@ -138,7 +138,7 @@ impl MockPackageBackend {
             .widgets_path
             .as_deref()
             .map(|root| {
-                crate::widget_staging::widget_dirs(root)
+                bmc_widget_manifest::widget_dirs(root)
                     .into_iter()
                     .filter_map(Result::ok)
                     .filter_map(|dir| widget_manifest(root, &dir))
@@ -324,7 +324,7 @@ fn static_preview(estimate: EstimateMode) -> PackagesPreview {
 /// no preview art; the mock catalog attaches the shared placeholder
 /// set.
 fn installable_widgets_from_dir(root: &Path) -> Vec<InstallableWidget> {
-    crate::widget_staging::widget_dirs(root)
+    bmc_widget_manifest::widget_dirs(root)
         .into_iter()
         .filter_map(Result::ok)
         .filter_map(|dir| widget_from_manifest(root, &dir))

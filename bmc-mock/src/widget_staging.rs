@@ -26,37 +26,9 @@
 use std::collections::BTreeSet;
 use std::io;
 use std::os::unix::fs::symlink;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use bmc_widget_manifest::MAX_WIDGET_DIR_DEPTH;
-use walkdir::WalkDir;
-
-/// Widget directories under `root`, mirroring production `PathDiscovery`
-/// exactly: a directory holding a `manifest.json`, found by a walk at most
-/// [`MAX_WIDGET_DIR_DEPTH`] deep that follows links and does not descend
-/// past a discovered widget. Yields per-entry walk errors so a caller that
-/// gates a mutation on a complete listing can fail loud rather than treat
-/// an unreadable tree as empty.
-pub(crate) fn widget_dirs(root: &Path) -> Vec<walkdir::Result<PathBuf>> {
-    let mut dirs = Vec::new();
-    let mut entries = WalkDir::new(root)
-        .follow_links(true)
-        .min_depth(1)
-        .max_depth(MAX_WIDGET_DIR_DEPTH)
-        .into_iter();
-    while let Some(entry) = entries.next() {
-        match entry {
-            Ok(entry) => {
-                if entry.file_type().is_dir() && entry.path().join("manifest.json").exists() {
-                    dirs.push(Ok(entry.path().to_path_buf()));
-                    entries.skip_current_dir();
-                }
-            }
-            Err(err) => dirs.push(Err(err)),
-        }
-    }
-    dirs
-}
+use bmc_widget_manifest::widget_dirs;
 
 /// Recreate `staging` as symlinks to every widget under `bundle` whose
 /// package name is not in `shadowed`. The bundle is enumerated exactly like

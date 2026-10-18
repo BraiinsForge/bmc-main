@@ -57,7 +57,7 @@ async fn an_uploaded_widget_is_unpacked_where_the_registry_discovers() {
 
     assert_eq!(installed.package_name, "widget-flip-clock");
     assert_eq!(installed.outcome, WidgetInstallOutcome::Installed);
-    let discovered: Vec<_> = crate::widget_staging::widget_dirs(&uploads)
+    let discovered: Vec<_> = bmc_widget_manifest::widget_dirs(&uploads)
         .into_iter()
         .map(|dir| dir.expect("BUG: walk"))
         .collect();

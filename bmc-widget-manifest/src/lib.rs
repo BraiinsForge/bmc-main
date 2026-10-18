@@ -59,6 +59,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod widget_dirs;
+
+pub use widget_dirs::{MAX_WIDGET_DIR_DEPTH, widget_dirs};
+
 pub type CredentialKey = ParamKey;
 
 const MAX_NAME_LENGTH: usize = 50;
@@ -69,9 +73,6 @@ const MAX_DESCRIPTION_LENGTH: usize = 200;
 /// Shorter than the widget's own name: a slot label sits inline beside a picker.
 const MAX_CREDENTIAL_LABEL_LENGTH: usize = 40;
 const MAX_CONFIG_HELP_LENGTH: usize = 2_000;
-
-/// Folder levels below a widgets directory a widget may sit at; discovery looks no deeper.
-pub const MAX_WIDGET_DIR_DEPTH: usize = 3;
 
 /// Errors produced by [`Manifest::from_str`] and the structural / semantic
 /// validators it dispatches to. Each variant names the rule that was violated,
