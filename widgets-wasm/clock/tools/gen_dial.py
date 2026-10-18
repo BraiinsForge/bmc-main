@@ -57,10 +57,21 @@ MAJOR_COLOR = '#fff'
 TICK_COUNT = 60
 HOUR_STEP = 5  # every 5th tick is a major (hour) tick
 
+type Rect = tuple[float, float, float, float]  # xmin, xmax, ymin, ymax
 
-def ray_exit(cx, cy, dx, dy, xmin, xmax, ymin, ymax):
+
+def ray_exit(
+    cx: float,
+    cy: float,
+    dx: float,
+    dy: float,
+    xmin: float,
+    xmax: float,
+    ymin: float,
+    ymax: float,
+) -> tuple[float, float]:
     """Point where the ray from (cx,cy) in dir (dx,dy) leaves the rectangle."""
-    ts = []
+    ts: list[float] = []
     if dx > 1e-12:
         ts.append((xmax - cx) / dx)
     elif dx < -1e-12:
@@ -73,12 +84,14 @@ def ray_exit(cx, cy, dx, dy, xmin, xmax, ymin, ymax):
     return cx + t * dx, cy + t * dy
 
 
-def _fmt(v):
+def _fmt(v: float) -> str:
     s = f'{v:.3f}'.rstrip('0').rstrip('.')
     return '0' if s in ('-0', '') else s
 
 
-def _tick_path(cx, cy, dx, dy, inner, panel, width):
+def _tick_path(
+    cx: float, cy: float, dx: float, dy: float, inner: Rect, panel: Rect, width: float
+) -> str:
     ix, iy = ray_exit(cx, cy, dx, dy, *inner)
     ox, oy = ray_exit(cx, cy, dx, dy, *panel)
     nx, ny = -dy, dx  # unit perpendicular
@@ -92,11 +105,18 @@ def _tick_path(cx, cy, dx, dy, inner, panel, width):
     return 'M' + ' L'.join(f'{_fmt(x)} {_fmt(y)}' for x, y in pts) + 'Z'
 
 
-def generate(width, height, inset_lr, inset_tb, tick_width=1.0):
+def generate(
+    width: float,
+    height: float,
+    inset_lr: float,
+    inset_tb: float,
+    tick_width: float = 1.0,
+) -> str:
     cx, cy = width / 2, height / 2
-    inner = (inset_lr, width - inset_lr, inset_tb, height - inset_tb)
-    panel = (0.0, width, 0.0, height)
-    minor, major = [], []
+    inner: Rect = (inset_lr, width - inset_lr, inset_tb, height - inset_tb)
+    panel: Rect = (0.0, width, 0.0, height)
+    minor: list[str] = []
+    major: list[str] = []
     for k in range(TICK_COUNT):
         th = math.radians(k * (360 / TICK_COUNT))
         dx, dy = math.sin(th), -math.cos(th)  # k=0 -> 12 o'clock (up)
@@ -111,12 +131,19 @@ def generate(width, height, inset_lr, inset_tb, tick_width=1.0):
     )
 
 
-def verify(width, height, inset_lr, inset_tb, tick_width=1.0):
+def verify(
+    width: float,
+    height: float,
+    inset_lr: float,
+    inset_tb: float,
+    tick_width: float = 1.0,
+) -> None:
     """Assert 60 equally-spaced ticks split 12 major / 48 minor."""
     cx, cy = width / 2, height / 2
-    inner = (inset_lr, width - inset_lr, inset_tb, height - inset_tb)
-    panel = (0.0, width, 0.0, height)
-    angles_major, angles_minor = [], []
+    inner: Rect = (inset_lr, width - inset_lr, inset_tb, height - inset_tb)
+    panel: Rect = (0.0, width, 0.0, height)
+    angles_major: list[float] = []
+    angles_minor: list[float] = []
     for k in range(TICK_COUNT):
         th = math.radians(k * (360 / TICK_COUNT))
         dx, dy = math.sin(th), -math.cos(th)
@@ -141,7 +168,7 @@ def verify(width, height, inset_lr, inset_tb, tick_width=1.0):
     )
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser(description='Generate a rectangular clock dial SVG.')
     ap.add_argument('--width', type=float, required=True)
     ap.add_argument('--height', type=float, required=True)
