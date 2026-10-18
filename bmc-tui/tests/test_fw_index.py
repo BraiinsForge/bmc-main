@@ -193,6 +193,75 @@ def test_parse_releases_skips_entries_without_the_platform_asset() -> None:
     assert releases[0].sha256 is None
 
 
+def test_parse_releases_reads_past_entries_it_does_not_use() -> None:
+    """The published index is not ours: another board's asset, in whatever shape, is no error."""
+    document = json.dumps(
+        {
+            "version": "v1",
+            "releases": [
+                {"metadata": {"assets": {"sysupgrade_other_board": 42}}},
+                {"uuid": "no metadata at all"},
+                {
+                    "metadata": {
+                        "bmc_version": "2026-02-01-0-00000002-26.02",
+                        "release_date": "2026-02-01",
+                        "assets": {PLATFORM_ASSET_KEY: "http://x/fw.tar"},
+                    }
+                },
+            ],
+        }
+    )
+
+    assert [release.url for release in parse_releases(document)] == ["http://x/fw.tar"]
+
+
+def test_parse_releases_skips_a_release_whose_platform_asset_is_null() -> None:
+    """The v1 schema serializes an absent asset as `null`, which must not reject the index."""
+    document = json.dumps(
+        {
+            "version": "v1",
+            "releases": [
+                {
+                    "metadata": {
+                        "bmc_version": "2026-01-01-0-00000001-26.01",
+                        "release_date": "2026-01-01",
+                        "assets": {PLATFORM_ASSET_KEY: None},
+                    }
+                },
+                {
+                    "metadata": {
+                        "bmc_version": "2026-02-01-0-00000002-26.02",
+                        "release_date": "2026-02-01",
+                        "assets": {PLATFORM_ASSET_KEY: "http://x/fw.tar"},
+                    }
+                },
+            ],
+        }
+    )
+
+    assert [release.url for release in parse_releases(document)] == ["http://x/fw.tar"]
+
+
+def test_parse_releases_rejects_a_malformed_platform_asset() -> None:
+    document = json.dumps(
+        {
+            "version": "v1",
+            "releases": [
+                {
+                    "metadata": {
+                        "bmc_version": "2026-02-01-0-00000002-26.02",
+                        "release_date": "2026-02-01",
+                        "assets": {PLATFORM_ASSET_KEY: {"integrity": {}}},
+                    }
+                },
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match=r"malformed .* asset"):
+        parse_releases(document)
+
+
 def test_parse_releases_rejects_another_schema_version() -> None:
     with pytest.raises(ValueError, match="not a v1 document"):
         parse_releases(json.dumps({"version": "v2", "releases": []}))

@@ -58,7 +58,7 @@ _PRODUCTION_26_09_CORE = "/nix/store/0hk3mczydf6y85v5kvfkhbf24wiv8wpy-bmc-bmc-co
 def _running_feed_entries(dev: Device, anchored: BosVersion) -> list[str]:
     """The anchored version to also list in the feed, only for the production 26.09 core."""
     core = catalog.read_manifest_packages(dev).get("core")
-    if isinstance(core, dict) and core.get("store_path") == _PRODUCTION_26_09_CORE:
+    if core is not None and core.get("store_path") == _PRODUCTION_26_09_CORE:
         return [anchored.canonical]
     return []
 
@@ -488,7 +488,7 @@ class E2eGrpcSysupgrade:
             serve_root = snapshot_dir / "serve"
             serve_root.mkdir()
             (serve_root / "firmware.tar").symlink_to(image.path.resolve())
-            server_factory = make_index_server or (
+            server_factory: Callable[[Path], fw_index.FwIndexServer] = make_index_server or (
                 lambda root: fw_index.FwIndexServer(root, port=self.index_port)
             )
             index = server_factory(serve_root)

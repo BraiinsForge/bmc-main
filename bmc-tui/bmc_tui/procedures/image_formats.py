@@ -360,7 +360,7 @@ def _require_distinct_sizes(sizes: list[tuple[str, int]]) -> None:
     """Collection keys results on body length, so a repeated size would make
     a probe or decode impossible to attribute to the case that caused it."""
     seen: dict[int, str] = {}
-    clashes = []
+    clashes: list[str] = []
     for name, size in sizes:
         if (other := seen.get(size)) is not None:
             clashes.append(f"{other} and {name} both {size} bytes")
@@ -560,7 +560,7 @@ def _verdict(out: Outcome) -> str:
 
 def _report(outcomes: list[Outcome]) -> None:
     name_width = max(len(out.case.name) for out in outcomes) + 2
-    rows = []
+    rows: list[str] = []
     for out in outcomes:
         # A refused body carries the host's reason string, so its length
         # describes the message rather than the fixture.

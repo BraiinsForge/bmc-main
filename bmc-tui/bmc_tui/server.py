@@ -86,7 +86,7 @@ class Request:
     body: bytes
 
 
-ResponseValue = bytes | str | Path | dict | list
+ResponseValue = bytes | str | Path | dict[str, object] | list[object]
 Response = ResponseValue | Callable[[Request], "Response | View"]
 
 
@@ -100,7 +100,7 @@ class View:
     response: Response
     status: int = 200
     content_type: str | None = None
-    headers: Mapping[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 ViewConfig = View | Response
@@ -503,7 +503,7 @@ class ServerHandle:
     binds: list[str]
     urls: list[str]
     _httpd: _Server = field(repr=False)
-    _finalizer: weakref.finalize = field(repr=False)
+    _finalizer: "weakref.finalize[[_Server, threading.Thread], _Server]" = field(repr=False)
 
     @property
     def port(self) -> int:

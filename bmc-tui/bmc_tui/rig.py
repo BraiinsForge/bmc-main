@@ -36,7 +36,9 @@ from dataclasses import dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Self
+from typing import NotRequired, Self, TypedDict
+
+import msgspec
 
 from bmc_tui.nix import Nix, StorePath
 from bmc_tui.server import CHUNK_BYTES, ServerHandle, server
@@ -57,35 +59,60 @@ class Variant:
     signature: str | None = None  # nix-style Ed25519 line for the feed entry
 
 
+class _FeedEntry(TypedDict):
+    bos_version: str
+    download_url: str
+    profile_path: str
+    index_url: str
+    signature: NotRequired[str]
+
+
+class _Feed(TypedDict):
+    version: int
+    entries: list[_FeedEntry]
+
+
+class _IndexedPackage(TypedDict):
+    name: str
+    store_path: str
+
+
+class _PackageIndex(TypedDict):
+    packages: list[_IndexedPackage]
+
+
 def feed_document(variants: list[Variant], base_url: str) -> str:
     """The feed body: one entry per variant, URLs matching write_serve_root's
     layout exactly — init follows download_url, upgrade follows index_url.
     Signed variants carry the init-tarball signature the device verifies."""
-    entries = []
+    entries: list[_FeedEntry] = []
     for v in variants:
-        entry = {
-            "bos_version": v.bos_version,
-            "download_url": f"{base_url}/tarballs/{v.tarball.name}",
-            "profile_path": v.profile_path,
-            "index_url": f"{base_url}/index/{v.bos_version}/{INDEX_NAME}",
-        }
+        entry = _FeedEntry(
+            bos_version=v.bos_version,
+            download_url=f"{base_url}/tarballs/{v.tarball.name}",
+            profile_path=v.profile_path,
+            index_url=f"{base_url}/index/{v.bos_version}/{INDEX_NAME}",
+        )
         if v.signature is not None:
             entry["signature"] = v.signature
         entries.append(entry)
-    return json.dumps({"version": 1, "entries": entries}, indent=2)
+    return json.dumps(_Feed(version=1, entries=entries), indent=2)
+
+
+def _read_index(index: Path) -> _PackageIndex:
+    return msgspec.json.decode((index / INDEX_NAME).read_bytes(), type=_PackageIndex)
 
 
 def index_store_paths(index: Path) -> list[StorePath]:
     """Every package store path an index lists — the closure roots the rig
     cache must hold."""
-    doc = json.loads((index / INDEX_NAME).read_text())
-    return [StorePath(p["store_path"]) for p in doc["packages"]]
+    return [StorePath(p["store_path"]) for p in _read_index(index)["packages"]]
 
 
 def package_store_path(index: Path, name: str) -> str | None:
     """The store path an index lists for package `name`; None when absent."""
-    doc = json.loads((index / INDEX_NAME).read_text())
-    return next((p["store_path"] for p in doc["packages"] if p["name"] == name), None)
+    packages = _read_index(index)["packages"]
+    return next((p["store_path"] for p in packages if p["name"] == name), None)
 
 
 def write_serve_root(root: Path, variants: list[Variant], base_url: str) -> None:
@@ -118,12 +145,16 @@ def strip_feed_signatures(root: Path) -> None:
 def set_feed_signatures(root: Path, signature: str) -> None:
     """A1/A3 tamper: overwrite every entry's signature with `signature`
     (wrong key, or wrong key name). Restore: write_serve_root."""
-    _rewrite_feed(root, lambda entry: entry.__setitem__("signature", signature))
+
+    def sign(entry: _FeedEntry) -> None:
+        entry["signature"] = signature
+
+    _rewrite_feed(root, sign)
 
 
-def _rewrite_feed(root: Path, mutate: "Callable[[dict[str, str]], object]") -> None:
+def _rewrite_feed(root: Path, mutate: "Callable[[_FeedEntry], object]") -> None:
     feed = root / FEED_NAME
-    doc = json.loads(feed.read_text())
+    doc = msgspec.json.decode(feed.read_bytes(), type=_Feed)
     for entry in doc["entries"]:
         mutate(entry)
     feed.write_text(json.dumps(doc, indent=2))

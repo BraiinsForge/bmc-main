@@ -38,6 +38,7 @@ import pytest
 from bmc_tui import catalog, nix_progress, rig
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
+from bmc_tui.json_value import Json
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.init import Init
@@ -1861,7 +1862,7 @@ def test_stream_events_aborts_on_stream_failure() -> None:
 
 
 def test_installable_widget_names_extracts_package_names() -> None:
-    response = {
+    response: dict[str, Json] = {
         "widgets": [
             {"packageName": "widget-weather", "uid": "u1", "displayName": "Weather"},
             {"packageName": "widget-ticker", "uid": "u2", "displayName": "Ticker"},
@@ -1877,7 +1878,7 @@ def test_installed_package_names_from_list_packages_json() -> None:
             {"name": "widget-weather", "version": "1.3.0"},
         ]
     }
-    assert catalog._installed_package_names(payload) == ["core", "widget-weather"]
+    assert catalog._installed_package_names(json.dumps(payload)) == ["core", "widget-weather"]
 
 
 def _list_packages(*names: str) -> str:

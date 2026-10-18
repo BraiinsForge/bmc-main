@@ -83,7 +83,9 @@ class E2eSysupgrade:
         catalog.build_nix_cli(backend, prov)
 
         serve_ip = self.serve_ip or default_serve_ip(dev.host)
-        server_factory = make_server or (lambda root: rig.RigServer(root, port=self.serve_port))
+        server_factory: Callable[[Path], rig.RigServer] = make_server or (
+            lambda root: rig.RigServer(root, port=self.serve_port)
+        )
         # The workdir holds the rig cache and the private signing key;
         # neither may outlive the run.
         with tempfile.TemporaryDirectory(

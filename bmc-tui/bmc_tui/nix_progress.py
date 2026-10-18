@@ -36,13 +36,13 @@ import os
 import subprocess
 import tempfile
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from rich.markup import escape
 
-from bmc_tui import console
+from bmc_tui import console, json_value
 from bmc_tui.device import Device
 from bmc_tui.stage import Abort
 
@@ -109,7 +109,7 @@ def parse_line(line: str) -> Event | None:
     if not payload.startswith(BMC_PREFIX):
         return None
     try:
-        obj = json.loads(payload.removeprefix(BMC_PREFIX))
+        obj = json_value.loads(payload.removeprefix(BMC_PREFIX))
     except json.JSONDecodeError:
         return None
     if not isinstance(obj, dict):
@@ -117,7 +117,7 @@ def parse_line(line: str) -> Event | None:
     return _event(obj)
 
 
-def _count(obj: dict[str, object], key: str) -> int | None:
+def _count(obj: Mapping[str, object], key: str) -> int | None:
     """The value at `key` as a non-negative int, else None. Rejects bool and
     negatives (the wire counts are unsigned) and maps a JSON `null` optional to
     None — so None means 'absent, invalid, or null' alike."""
@@ -127,41 +127,41 @@ def _count(obj: dict[str, object], key: str) -> int | None:
     return value
 
 
-def _phase(obj: dict[str, object]) -> Event | None:
+def _phase(obj: Mapping[str, object]) -> Event | None:
     phase = obj.get("phase")
     return Phase(phase) if isinstance(phase, str) else None
 
 
-def _gc_phase(obj: dict[str, object]) -> Event | None:
+def _gc_phase(obj: Mapping[str, object]) -> Event | None:
     phase = obj.get("phase")
     return GcPhase(phase) if isinstance(phase, str) else None
 
 
-def _realization_started(obj: dict[str, object]) -> Event | None:
+def _realization_started(obj: Mapping[str, object]) -> Event | None:
     total = _count(obj, "total_paths")
     return RealizationStarted(total) if total is not None else None
 
 
-def _download(obj: dict[str, object]) -> Event | None:
+def _download(obj: Mapping[str, object]) -> Event | None:
     done = _count(obj, "downloaded_bytes")
     return Download(done, _count(obj, "total_bytes")) if done is not None else None
 
 
-def _gc_progress(obj: dict[str, object]) -> Event | None:
+def _gc_progress(obj: Mapping[str, object]) -> Event | None:
     deleted = _count(obj, "deleted_paths")
     return GcProgress(deleted) if deleted is not None else None
 
 
-def _gc_finished(obj: dict[str, object]) -> Event | None:
+def _gc_finished(obj: Mapping[str, object]) -> Event | None:
     deleted = _count(obj, "deleted_paths")
     return GcFinished(deleted, _count(obj, "freed_bytes")) if deleted is not None else None
 
 
-def _realization_finished(_obj: dict[str, object]) -> Event:
+def _realization_finished(_obj: Mapping[str, object]) -> Event:
     return RealizationFinished()
 
 
-_EVENT_BUILDERS: dict[str, Callable[[dict[str, object]], Event | None]] = {
+_EVENT_BUILDERS: dict[str, Callable[[Mapping[str, object]], Event | None]] = {
     "phase": _phase,
     "realization_started": _realization_started,
     "download": _download,
@@ -172,7 +172,7 @@ _EVENT_BUILDERS: dict[str, Callable[[dict[str, object]], Event | None]] = {
 }
 
 
-def _event(obj: dict[str, object]) -> Event | None:
+def _event(obj: Mapping[str, object]) -> Event | None:
     kind = obj.get("type")
     if not isinstance(kind, str):
         return None

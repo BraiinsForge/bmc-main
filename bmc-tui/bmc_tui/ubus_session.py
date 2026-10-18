@@ -24,9 +24,16 @@ import json
 import shlex
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import TypedDict
+
+import msgspec
 
 from bmc_tui.device import Device
 from bmc_tui.stage import Abort, best_effort
+
+
+class _Session(TypedDict):
+    ubus_rpc_session: str
 
 
 @contextmanager
@@ -42,9 +49,9 @@ def ssh_session(dev: Device, *, timeout_s: int) -> Generator[str]:
         msg = "BUG: a session cannot be created under --dry-run"
         raise RuntimeError(msg)
     try:
-        session_id = json.loads(created)["ubus_rpc_session"]
-    except (json.JSONDecodeError, KeyError, TypeError):
-        raise Abort(f"ubus did not create a session: {created}") from None
+        session_id = msgspec.json.decode(created, type=_Session)["ubus_rpc_session"]
+    except msgspec.DecodeError as error:
+        raise Abort(f"ubus did not create a session: {created} ({error})") from None
     try:
         yield session_id
     finally:

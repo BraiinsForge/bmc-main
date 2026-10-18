@@ -189,7 +189,7 @@ def _parse_pid_sample(line: str) -> frozenset[int]:
 
 
 def _classify_trace(old_pid: int, samples: Sequence[frozenset[int]]) -> _Transition:
-    observed = set().union(*samples) if samples else set()
+    observed = set[int]().union(*samples)
     require(old_pid in observed, f"PID trace did not observe starting compositor {old_pid}")
     if observed == {old_pid}:
         return _Transition.NONE

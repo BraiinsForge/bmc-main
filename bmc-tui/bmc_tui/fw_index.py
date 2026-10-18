@@ -32,7 +32,9 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import BaseRequestHandler
-from typing import cast, override
+from typing import NotRequired, TypedDict, cast, override
+
+import msgspec
 
 from bmc_tui.bos_version import BosVersion
 
@@ -57,6 +59,40 @@ class Release:
     size: int | None
 
 
+class Integrity(TypedDict, total=False):
+    checksum: str
+    size_bytes: int
+
+
+class AssetObject(TypedDict):
+    url: str
+    integrity: NotRequired[Integrity]
+
+
+# The e2e index anchors the running firmware with a bare URL;
+# a published asset is an object with an integrity block.
+type Asset = str | AssetObject
+
+
+# Optional throughout, as the published index is not ours:
+# only an entry carrying this platform's asset must name its version and date,
+# and other boards' assets stay raw so their shape cannot reject the index.
+class Metadata(TypedDict, total=False):
+    bmc_version: str
+    release_date: str
+    is_major: bool
+    assets: dict[str, msgspec.Raw]
+
+
+class Entry(TypedDict, total=False):
+    metadata: Metadata
+
+
+class Index(TypedDict):
+    version: str
+    releases: NotRequired[list[Entry]]
+
+
 def parse_releases(document: str, *, asset_key: str = PLATFORM_ASSET_KEY) -> list[Release]:
     """The releases in an index document that ship an `asset_key` asset,
     in the document's own order.
@@ -64,30 +100,44 @@ def parse_releases(document: str, *, asset_key: str = PLATFORM_ASSET_KEY) -> lis
     Raises ``ValueError`` when the document is not a v1 index.
     """
     try:
-        index = json.loads(document)
-    except json.JSONDecodeError as exc:
+        index = msgspec.json.decode(document, type=Index)
+    except msgspec.ValidationError as exc:
+        msg = f"index is not a {INDEX_VERSION} document: {exc}"
+        raise ValueError(msg) from None
+    except msgspec.DecodeError as exc:
         msg = f"index is not JSON: {exc}"
         raise ValueError(msg) from None
-    if not isinstance(index, dict) or index.get("version") != INDEX_VERSION:
+    if index["version"] != INDEX_VERSION:
         msg = f"index is not a {INDEX_VERSION} document"
         raise ValueError(msg)
-    releases = []
+    releases: list[Release] = []
     for entry in index.get("releases", []):
-        metadata = entry.get("metadata", {})
-        asset = metadata.get("assets", {}).get(asset_key)
+        metadata = entry.get("metadata", Metadata())
+        raw_asset = metadata.get("assets", {}).get(asset_key)
+        if raw_asset is None:
+            continue
+        version, release_date = metadata.get("bmc_version"), metadata.get("release_date")
+        try:
+            # msgspec validates against the union but types only a `type[T]` target.
+            asset = cast("Asset | None", msgspec.json.decode(raw_asset, type=Asset | None))
+        except msgspec.ValidationError as exc:
+            release = version or "without a version"
+            msg = f"index release {release} has a malformed {asset_key} asset: {exc}"
+            raise ValueError(msg) from None
         if asset is None:
             continue
-        # The e2e index anchors the running firmware with a bare URL;
-        # a published asset is an object with an integrity block.
-        integrity = asset.get("integrity", {}) if isinstance(asset, dict) else {}
+        if version is None or release_date is None:
+            msg = f"an index release with a {asset_key} asset names no version or date"
+            raise ValueError(msg)
+        integrity = Integrity() if isinstance(asset, str) else asset.get("integrity", Integrity())
         checksum = integrity.get("checksum")
         releases.append(
             Release(
-                version=metadata["bmc_version"],
-                release_date=metadata["release_date"],
-                is_major=bool(metadata.get("is_major", False)),
-                url=asset["url"] if isinstance(asset, dict) else asset,
-                sha256=checksum.lower() if isinstance(checksum, str) else None,
+                version=version,
+                release_date=release_date,
+                is_major=metadata.get("is_major", False),
+                url=asset if isinstance(asset, str) else asset["url"],
+                sha256=checksum.lower() if checksum is not None else None,
                 size=integrity.get("size_bytes"),
             )
         )

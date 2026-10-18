@@ -43,19 +43,21 @@ import tempfile
 import threading
 import time
 import urllib.request
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, NewType, Protocol
+from typing import Any, NewType, Protocol, TypedDict, cast
 
+import msgspec
 from rich.markup import escape
 
-from bmc_tui import console, nix_progress, rig
+from bmc_tui import console, json_value, nix_progress, rig
 from bmc_tui.bos_version import BosVersion, VersionName, parse_bos_version
 from bmc_tui.boser_rest import BoserRest
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
+from bmc_tui.json_value import Json
 from bmc_tui.nix import ABSENT_ATTR, Attr, Built, Nix, Pkg, StorePath
 from bmc_tui.package_version import planner_keeps_installed
 from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, require, stage
@@ -498,7 +500,7 @@ def remove_superseded_packages(dev: Device, plan: Deployment) -> str:
         if any(successor in built for successor in successors)
     ]
     done_if(not names)
-    dropped = []
+    dropped: list[str] = []
     for name in names:
         cmd = (
             f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
@@ -535,10 +537,11 @@ def restore_cleared_servers(dev: Device) -> str:
     raw = dev.read(f"if [ -e {SERVERS_JSON} ]; then cat {SERVERS_JSON}; fi")
     done_if(not raw.strip())
     try:
-        config = json.loads(raw)
+        parsed = json_value.loads(raw)
     except json.JSONDecodeError as error:
         return f"{SERVERS_JSON} is not valid JSON ({error}); bmc-nix quarantines it"
-    done_if(not isinstance(config, dict) or config.get("servers") != [])
+    config = parsed if isinstance(parsed, dict) else {}
+    done_if(config.get("servers") != [])
     kept = f"the emptied {SERVERS_JSON} stays"
     default_raw = dev.read(f"cat {_SERVERS_JSON_DEFAULT} 2>/dev/null || true")
     try:
@@ -548,7 +551,9 @@ def restore_cleared_servers(dev: Device) -> str:
     if not any(entry["enabled"] is True for entry in defaults):
         return f"{kept}: no enabled server in {_SERVERS_JSON_DEFAULT} to fall back to"
     # The runtime factory key verifies firmware inits; falling back must not swap it.
-    if config.get("factory") != json.loads(default_raw).get("factory"):
+    default_config = json_value.loads(default_raw)
+    default_factory = default_config.get("factory") if isinstance(default_config, dict) else None
+    if config.get("factory") != default_factory:
         return f"{kept}: its factory entry differs from {_SERVERS_JSON_DEFAULT}"
     # Only the marker lets `register-server` update a bootstrapped factory.
     if config.get("bootstrapped_factory"):
@@ -630,7 +635,7 @@ def _set_auto_upgrade_off(dev: Device, *, max_time: int) -> str | None:
     return "Boser's automatic upgrades disabled"
 
 
-def _register_server_cmd(entry: dict[str, object]) -> str:
+def _register_server_cmd(entry: Mapping[str, object]) -> str:
     parts = [_NIX_CLI, "register-server", "--id", str(entry["id"])]
     if entry.get("feed_url") is not None:
         parts += ["--feed-url", str(entry["feed_url"])]
@@ -643,27 +648,24 @@ def _register_server_cmd(entry: dict[str, object]) -> str:
     return shlex.join(parts)
 
 
-def _default_server_entries(raw: str) -> list[dict[str, object]]:
+def _default_server_entries(raw: str) -> list[dict[str, Json]]:
     if not raw.strip():
         return []
     try:
-        registry = json.loads(raw)
+        registry = json_value.loads(raw)
     except json.JSONDecodeError as error:
         raise Abort(f"{_SERVERS_JSON_DEFAULT} is not valid JSON: {error}") from None
-    require(
-        isinstance(registry, dict),
-        f"{_SERVERS_JSON_DEFAULT} must contain a JSON object",
-    )
+    if not isinstance(registry, dict):
+        raise Abort(f"{_SERVERS_JSON_DEFAULT} must contain a JSON object")
     servers = registry.get("servers", [])
-    require(
-        isinstance(servers, list),
-        f"{_SERVERS_JSON_DEFAULT} must contain a servers list",
-    )
+    if not isinstance(servers, list):
+        raise Abort(f"{_SERVERS_JSON_DEFAULT} must contain a servers list")
 
-    entries: list[dict[str, object]] = []
+    entries: list[dict[str, Json]] = []
     for index, candidate in enumerate(servers):
         label = f"{_SERVERS_JSON_DEFAULT} servers[{index}]"
-        require(isinstance(candidate, dict), f"{label} must be a JSON object")
+        if not isinstance(candidate, dict):
+            raise Abort(f"{label} must be a JSON object")
 
         entry_id = candidate.get("id")
         require(
@@ -919,6 +921,19 @@ class Provisioning:
     nix_conf_snapshot: "FileSnapshot | None" = None
 
 
+class _TarballMetadata(TypedDict, total=False):
+    bos_version: str
+    profile_path: str
+    tarball_name: str
+
+
+def _read_tarball_metadata(path: Path) -> _TarballMetadata:
+    try:
+        return msgspec.json.decode(path.read_bytes(), type=_TarballMetadata)
+    except msgspec.DecodeError as error:
+        raise Abort(f"{console.lit(path)} is malformed: {error}") from None
+
+
 @stage("Build init tarball")
 def build_init_tarball(nix: Nix, plan: Provisioning) -> str:
     """Build the init tarball and validate its metadata.json contract."""
@@ -926,14 +941,14 @@ def build_init_tarball(nix: Nix, plan: Provisioning) -> str:
     out = Path(nix.build_out(_INIT_TARBALL))
     meta_path = out / "metadata.json"
     require(meta_path.is_file(), f"no metadata.json in {console.lit(out)}")
-    meta = json.loads(meta_path.read_text())
+    meta = _read_tarball_metadata(meta_path)
     missing = [k for k in ("bos_version", "profile_path", "tarball_name") if not meta.get(k)]
     require(not missing, f"metadata.json misses: {', '.join(missing)}")
-    name = meta["tarball_name"]
+    name = meta.get("tarball_name", "")
     require("/" not in name, f"tarball_name is not a basename: {console.lit(name)}")
     tarball = out / name
     require(tarball.is_file(), f"metadata.json names a missing archive: {console.lit(name)}")
-    profile_path = meta["profile_path"]
+    profile_path = meta.get("profile_path", "")
     # normpath equality rejects "..", ".", doubled and trailing slashes,
     # so the prefix check can't be escaped via /nix/../elsewhere.
     require(
@@ -1213,7 +1228,7 @@ def _variant(bos_version: str, index_out: str, tarball_out: str) -> rig.Variant:
 
     meta_path = Path(tarball_out) / "metadata.json"
     require(meta_path.is_file(), f"no metadata.json in {console.lit(tarball_out)}")
-    meta = json.loads(meta_path.read_text())
+    meta = _read_tarball_metadata(meta_path)
     built_for = meta.get("bos_version") or "<unset>"
     require(
         built_for == bos_version,
@@ -1571,7 +1586,7 @@ def _mountinfo_entries(dev: Device) -> list[tuple[str, str, str]]:
     The source is the second field after the optional-fields '-' separator;
     matching by major:minor (field 3) is immune to path aliases and bind
     mounts — the same identity partition.rs compares."""
-    entries = []
+    entries: list[tuple[str, str, str]] = []
     for line in dev.read("cat /proc/self/mountinfo").splitlines():
         fields = line.split()
         if "-" not in fields or len(fields) < _MOUNTINFO_MIN_FIELDS:
@@ -2952,15 +2967,9 @@ def require_unclaimed_package_registry(dev: Device) -> str:
     hand it back at the end as the device's baseline."""
 
     raw = dev.read(f"if [ -e {SERVERS_JSON} ]; then cat {SERVERS_JSON}; fi")
-    servers: list[Any] = []
+    servers: list[Json] = []
     if raw.strip():
-        try:
-            config = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise Abort(f"{SERVERS_JSON} is not valid JSON before registration: {e}") from None
-        parsed_servers = config.get("servers")
-        require(isinstance(parsed_servers, list), f"{SERVERS_JSON} has no servers list")
-        servers = parsed_servers
+        servers = _servers_list(raw, when="before registration")
 
     nix_conf = dev.read(f"if [ -e {_NIX_CONF} ]; then cat {_NIX_CONF}; fi")
     trusted_key_left = False
@@ -2987,6 +2996,17 @@ def require_unclaimed_package_registry(dev: Device) -> str:
     return f"{console.lit(SERVERS_JSON)} {registry_state}, no stale trust key"
 
 
+def _servers_list(raw: str, *, when: str) -> list[Json]:
+    try:
+        config = json_value.loads(raw)
+    except json.JSONDecodeError as e:
+        raise Abort(f"{SERVERS_JSON} is not valid JSON {when}: {e}") from None
+    servers = config.get("servers") if isinstance(config, dict) else None
+    if not isinstance(servers, list):
+        raise Abort(f"{SERVERS_JSON} has no servers list")
+    return servers
+
+
 @stage("Only the harness server resolves")
 def require_exclusive_package_server(dev: Device) -> str:
     """Prove `register-server --exclusive` took, rather than assume it.
@@ -2997,13 +3017,7 @@ def require_exclusive_package_server(dev: Device) -> str:
     Registration seeds the registry from the shipped default
     when the runtime file is missing, so such entries appear unprompted."""
 
-    raw = dev.read(f"cat {SERVERS_JSON}")
-    try:
-        config = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise Abort(f"{SERVERS_JSON} is not valid JSON after registration: {e}") from None
-    servers = config.get("servers")
-    require(isinstance(servers, list), f"{SERVERS_JSON} has no servers list")
+    servers = _servers_list(dev.read(f"cat {SERVERS_JSON}"), when="after registration")
     enabled = [
         entry.get("id")
         for entry in servers
@@ -3032,6 +3046,27 @@ def grpc_login(dev: Device, cycle: "GrpcSession") -> str:
     return "session established"
 
 
+def objects(value: Json, *, what: str) -> list[dict[str, Json]]:
+    """The objects of an array field; absent is empty, as proto3 JSON omits an empty list."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise Abort(f"{what} is not a list: {value!r}")
+    items: list[dict[str, Json]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise Abort(f"{what} holds a non-object: {item!r}")
+        items.append(item)
+    return items
+
+
+def string(obj: dict[str, Json], key: str, *, what: str) -> str:
+    value = obj.get(key)
+    if not isinstance(value, str):
+        raise Abort(f"{what} has no {key} string: {obj!r}")
+    return value
+
+
 @stage("Check for upgrade")
 def check_for_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
     response = _grpcurl(dev, "UpgradeService/CheckForUpgrade", cookie=cycle.cookie)
@@ -3049,30 +3084,44 @@ def check_for_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
         f"expected an APP_RESTART disruption, got {disruption}",
     )
     upgrade_id = response.get("upgradeId")
-    require(
-        isinstance(upgrade_id, str) and bool(upgrade_id),
-        "CheckForUpgrade offered packages but returned no upgrade id",
-    )
+    if not isinstance(upgrade_id, str) or not upgrade_id:
+        raise Abort("CheckForUpgrade offered packages but returned no upgrade id")
     cycle.upgrade_id = upgrade_id
-    changes = packages.get("changes") or []
+    changes = objects(packages.get("changes"), what="CheckForUpgrade packages.changes")
     for change in changes:
         version_from = change.get("versionFrom", "?")
         version_to = change.get("versionTo", "?")
-        console.kv(change.get("name", "?"), f"{version_from} → {version_to}")
+        console.kv(str(change.get("name", "?")), f"{version_from} → {version_to}")
     size = _grpc_mb(packages.get("downloadSizeBytes"))
     console.kv("download size", "unknown" if size is None else f"{size:.1f} MB")
     names = ", ".join(console.lit(change.get("name", "?")) for change in changes)
     return f"{console.lit(len(changes))} change(s): {names}"
 
 
-def _installable_widget_names(response: dict[str, Any]) -> list[str]:
+_INSTALLABLE = "GetInstallableWidgets widgets"
+
+
+def _installable_widget_names(response: dict[str, Json]) -> list[str]:
     """Package names from a GetInstallableWidgets response."""
-    return [w["packageName"] for w in response.get("widgets", [])]
+    widgets = objects(response.get("widgets"), what=_INSTALLABLE)
+    return [string(w, "packageName", what=_INSTALLABLE) for w in widgets]
 
 
-def _installed_package_names(list_packages_json: dict[str, Any]) -> list[str]:
+class _ListedPackage(TypedDict):
+    name: str
+
+
+class _PackageList(TypedDict, total=False):
+    packages: list[_ListedPackage]
+
+
+def _installed_package_names(list_packages_json: str) -> list[str]:
     """Package names from `bmc-nix-cli list-packages --format json`."""
-    return [p["name"] for p in list_packages_json.get("packages", [])]
+    try:
+        listed = msgspec.json.decode(list_packages_json, type=_PackageList)
+    except msgspec.DecodeError as error:
+        raise Abort(f"list-packages output is malformed: {error}") from None
+    return [p["name"] for p in listed.get("packages", [])]
 
 
 @stage("Remove widget for reinstall")
@@ -3083,7 +3132,7 @@ def remove_package(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
     raw = dev.read(
         f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} list-packages --format json"
     )
-    done_if(widget not in _installed_package_names(json.loads(raw)))
+    done_if(widget not in _installed_package_names(raw))
     dev.run(
         f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
         f"remove-packages --name {shlex.quote(widget)}"
@@ -3097,12 +3146,14 @@ def list_installable_widgets(dev: Device, cycle: UpgradeCycle, widget: str) -> s
     names = _installable_widget_names(response)
     if widget not in names:
         raise Abort(f"{widget} not offered as installable; got {names}")
-    entry = next(w for w in response["widgets"] if w["packageName"] == widget)
+    widgets = objects(response.get("widgets"), what=_INSTALLABLE)
+    entry = next(w for w in widgets if w.get("packageName") == widget)
     for key in ("uid", "displayName", "category", "icon"):
         if not entry.get(key):
             raise Abort(f"{widget} missing {key} in discovery: {entry}")
-    cycle.widget_uid = entry["uid"]
-    return f"{widget} installable (uid {entry['uid']})"
+    uid = string(entry, "uid", what=_INSTALLABLE)
+    cycle.widget_uid = uid
+    return f"{widget} installable (uid {uid})"
 
 
 @stage("Check for install")
@@ -3113,14 +3164,19 @@ def check_for_install(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
         data={"installPackages": [widget]},
         cookie=cycle.cookie,
     )
-    changes = response.get("packages", {}).get("changes", [])
+    packages = response.get("packages")
+    changes = objects(
+        packages.get("changes") if isinstance(packages, dict) else None,
+        what="CheckForUpgrade packages.changes",
+    )
     added = [c for c in changes if c.get("name") == widget and "versionFrom" not in c]
     if not added:
         raise Abort(f"{widget} not an added change in the plan: {changes}")
-    cycle.upgrade_id = response.get("upgradeId")
-    if not cycle.upgrade_id:
+    upgrade_id = response.get("upgradeId")
+    if not isinstance(upgrade_id, str) or not upgrade_id:
         raise Abort("check returned no upgradeId")
-    return f"{widget} planned as install ({cycle.upgrade_id})"
+    cycle.upgrade_id = upgrade_id
+    return f"{widget} planned as install ({upgrade_id})"
 
 
 @stage("Verify widget installed")
@@ -3135,7 +3191,7 @@ def verify_widget_installed(
     raw = dev.read(
         f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} list-packages --format json"
     )
-    installed = _installed_package_names(json.loads(raw))
+    installed = _installed_package_names(raw)
     if widget not in installed:
         raise Abort(f"{widget} not in list-packages after install: {installed}")
 
@@ -3153,7 +3209,8 @@ def verify_widget_installed(
     restart = _await_settled_bmc(dev, before, sleep=sleep, clock=clock)
     _login(dev, cycle)
     response = _grpcurl(dev, "SceneManagementService/GetAvailableWidgets", cookie=cycle.cookie)
-    available = {w.get("uid") for w in response.get("widgets", [])}
+    widgets = objects(response.get("widgets"), what="GetAvailableWidgets widgets")
+    available = [w.get("uid") for w in widgets]
     require(
         uid in available,
         f"{widget} (uid {uid}) not exposed by the registry after install ({restart}): {available}",
@@ -3218,9 +3275,7 @@ def run_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
         max_time=None,
     )
     events = _stream_events(argv)
-    phases = [
-        event["packagePhase"] for event in events if isinstance(event.get("packagePhase"), str)
-    ]
+    phases = [phase for event in events if isinstance(phase := event.get("packagePhase"), str)]
     for expected in ("REALIZING", "ACTIVATING"):
         require(
             f"{_PACKAGE_PHASE_PREFIX}{expected}" in phases,
@@ -3244,7 +3299,7 @@ def verify_profile_advanced(dev: Device, plan: Deployment, cycle: UpgradeCycle) 
     after = current_generation(dev)
     require(after > before, f"current generation is still {after}")
     entries = read_manifest_packages(dev)
-    mismatched = []
+    mismatched: list[str] = []
     for b in plan.built:
         if b.name not in installed:
             # Served but not installed — index-only packages are not
@@ -3253,7 +3308,7 @@ def verify_profile_advanced(dev: Device, plan: Deployment, cycle: UpgradeCycle) 
         if planner_keeps_installed(installed[b.name], b.version):
             continue
         entry = entries.get(b.name)
-        got = entry.get("store_path") if isinstance(entry, dict) else None
+        got = entry.get("store_path") if entry is not None else None
         if got != b.store_path:
             mismatched.append(f"{b.name} (want {b.store_path}, got {got or 'absent'})")
     require(
@@ -3274,26 +3329,32 @@ def current_generation(dev: Device) -> int:
 
 
 def installed_versions(dev: Device) -> dict[str, str]:
-    versions = {}
+    versions: dict[str, str] = {}
     for name, entry in read_manifest_packages(dev).items():
-        version = entry.get("version") if isinstance(entry, dict) else None
-        if not isinstance(version, str):
+        version = entry.get("version")
+        if version is None:
             raise Abort(f"the current manifest has no version for {name}")
         versions[name] = version
     return versions
 
 
-def read_manifest_packages(dev: Device) -> dict[str, Any]:
+class ManifestPackage(TypedDict, total=False):
+    version: str
+    store_path: str
+
+
+class _Manifest(TypedDict):
+    packages: dict[str, ManifestPackage]
+
+
+def read_manifest_packages(dev: Device) -> dict[str, ManifestPackage]:
     """The `packages` object of the current generation's manifest."""
 
     raw = dev.read(f"cat {_PROFILE_DIR}/current/manifest")
     try:
-        packages = json.loads(raw)["packages"]
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        return msgspec.json.decode(raw, type=_Manifest)["packages"]
+    except msgspec.DecodeError as e:
         raise Abort(f"the current manifest is not a package manifest: {e}") from None
-    if not isinstance(packages, dict):
-        raise Abort("the current manifest's packages entry is not an object")
-    return packages
 
 
 def _local_addr(remote_host: str) -> str:
@@ -3348,7 +3409,7 @@ def _grpcurl(
     data: dict[str, Any] | None = None,
     cookie: str | None = None,
     max_time: int = _GRPCURL_MAX_TIME,
-) -> dict[str, Any]:
+) -> dict[str, Json]:
     """Unary gRPC call via grpcurl; returns the decoded response message."""
 
     argv = _grpcurl_argv(_grpc_address(dev), method, data=data, cookie=cookie, max_time=max_time)
@@ -3359,7 +3420,7 @@ def _grpcurl(
     except subprocess.TimeoutExpired:
         raise Abort(f"{method} did not answer within {max_time}s") from None
     try:
-        response = json.loads(proc.stdout or "{}")
+        response = json_value.loads(proc.stdout or "{}")
     except json.JSONDecodeError as e:
         raise Abort(f"{method} returned non-JSON output: {e}") from None
     if not isinstance(response, dict):
@@ -3391,11 +3452,11 @@ def _grpcurl_argv(
     return [*argv, address, f"{_GRPC_PACKAGE}.{method}"]
 
 
-def _stream_events(argv: list[str]) -> list[dict[str, Any]]:
+def _stream_events(argv: list[str]) -> list[dict[str, Json]]:
     """Run a server-streaming grpcurl call, decoding the back-to-back JSON
     messages as they arrive and echoing phase changes live."""
 
-    events: list[dict[str, Any]] = []
+    events: list[dict[str, Json]] = []
     decoder = json.JSONDecoder()
     with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
         stdout = proc.stdout
@@ -3427,7 +3488,7 @@ def _stream_events(argv: list[str]) -> list[dict[str, Any]]:
 def _drain_events(
     decoder: json.JSONDecoder,
     buffer: str,
-    events: list[dict[str, Any]],
+    events: list[dict[str, Json]],
 ) -> str:
     """Decode every complete JSON message in `buffer`; return the remainder."""
 
@@ -3436,7 +3497,7 @@ def _drain_events(
         if not stripped:
             return ""
         try:
-            event, end = decoder.raw_decode(stripped)
+            event, end = cast("tuple[Json, int]", decoder.raw_decode(stripped))
         except json.JSONDecodeError:
             return stripped
         if isinstance(event, dict):
@@ -3445,7 +3506,7 @@ def _drain_events(
         buffer = stripped[end:]
 
 
-def _print_event(event: dict[str, Any]) -> None:
+def _print_event(event: dict[str, Json]) -> None:
     """Echo phase transitions and download progress live (the device
     throttles progress events, so this stays one line per second)."""
 
@@ -3462,10 +3523,10 @@ def _print_event(event: dict[str, Any]) -> None:
         console.kv("phase", "finished")
 
 
-def _grpc_mb(value: Any) -> float | None:
+def _grpc_mb(value: Json) -> float | None:
     """grpcurl serializes uint64 as a JSON string; None stays None."""
 
-    if value is None:
+    if not isinstance(value, str | int | float):
         return None
     return int(value) / 1_000_000
 
@@ -3975,11 +4036,12 @@ def check_for_firmware_upgrade(
     )
     raw_size = firmware.get("fileSizeBytes")
     invalid_size = Abort(f"firmware size is invalid: {raw_size}")
-    if raw_size is None:
+    # grpcurl renders a uint64 as a JSON string.
+    if not isinstance(raw_size, str | int):
         raise invalid_size
     try:
         offered_size = int(raw_size)
-    except (TypeError, ValueError):
+    except ValueError:
         raise invalid_size from None
     require(offered_size == image.size, f"firmware size does not match image: {offered_size}")
     require(
@@ -3987,10 +4049,8 @@ def check_for_firmware_upgrade(
         f"expected a REBOOT disruption, got {response.get('disruption')}",
     )
     upgrade_id = response.get("upgradeId")
-    require(
-        isinstance(upgrade_id, str) and bool(upgrade_id),
-        "firmware offer returned no upgrade id",
-    )
+    if not isinstance(upgrade_id, str) or not upgrade_id:
+        raise Abort("firmware offer returned no upgrade id")
     require(
         index.completed("/index.v1.json"),
         "firmware offer was returned without a completed /index.v1.json fetch",
@@ -4113,7 +4173,7 @@ def _grpc_status_from_text(text: str) -> tuple[str | None, str | None]:
         if char != "{":
             continue
         try:
-            value, _ = decoder.raw_decode(text[offset:])
+            value, _ = cast("tuple[Json, int]", decoder.raw_decode(text[offset:]))
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict) and (status := _grpc_status(value)) is not None:
@@ -4121,7 +4181,7 @@ def _grpc_status_from_text(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _grpc_status(value: dict[str, Any]) -> tuple[str, str | None] | None:
+def _grpc_status(value: dict[str, Json]) -> tuple[str, str | None] | None:
     candidate = value.get("error", value)
     if not isinstance(candidate, dict) or "code" not in candidate:
         return None

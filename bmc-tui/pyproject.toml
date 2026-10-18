@@ -5,6 +5,7 @@ description = "Shared rich-based TUI/DX tooling and the staged device-deploy eng
 license = "GPL-3.0-or-later"
 requires-python = ">=3.13"
 dependencies = [
+    "msgspec>=0.22",
     "rich>=14",
     "tyro>=0.9",
 ]

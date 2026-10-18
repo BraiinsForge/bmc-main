@@ -28,14 +28,14 @@ Building runs even under `--dry-run` — it is the closure's verification — wh
 All work goes through an injected `Nix` backend so tests need no real nix.
 """
 
-import json
 import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NewType, Protocol
 
-from bmc_tui import console
+from bmc_tui import console, json_value
+from bmc_tui.json_value import Json
 from bmc_tui.stage import dry_run
 
 # Discovered straight from the nix-owned `category` metadata, so new widgets are
@@ -183,7 +183,7 @@ class _RealNix:
         )
         if proc.returncode != 0:
             return False
-        meta = json.loads(proc.stdout)
+        meta = json_value.loads(proc.stdout)
         return isinstance(meta, dict) and "dirtyRevision" in meta
 
     def build(self, pkgs: list[Pkg]) -> list[Built]:
@@ -324,11 +324,11 @@ def _eval_raw(expr: str) -> str:
     ).stdout.strip()
 
 
-def _eval_json(attr: str, apply: str) -> object:
+def _eval_json(attr: str, apply: str) -> Json:
     out = subprocess.run(
         ["nix", "eval", "--json", attr, "--apply", apply],
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-    return json.loads(out)
+    return json_value.loads(out)

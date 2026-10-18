@@ -22,12 +22,15 @@
 
 import json
 from pathlib import Path
+from typing import NotRequired, TypedDict
+
+import msgspec
 
 from bmc_tui import catalog
 from bmc_tui.bos_version import BosVersion, parse_bos_version
 from bmc_tui.fw_index import release_uuid
 from bmc_tui.image import Image
-from bmc_tui.stage import require
+from bmc_tui.stage import Abort, require
 
 INDEX_NAME = "index.v2.json"
 _BMM101_EMMC_ASSET = "sysupgrade_emmc_stm32mp157c_ii2_bmm1"
@@ -104,17 +107,28 @@ def _release(version: BosVersion, key: str, asset: dict[str, object]) -> dict[st
     }
 
 
+class _IndexedPackage(TypedDict):
+    store_path: str
+
+
+class _PackageIndex(TypedDict):
+    version: int
+    packages: list[_IndexedPackage]
+    indexes: NotRequired[list[msgspec.Raw]]
+
+
 def validate_package_index(path: Path) -> None:
-    document = json.loads(path.read_text())
-    require(isinstance(document, dict), "package index must be a JSON object")
-    require(document.get("version") == 1, "package index must use version 1")
+    try:
+        document = msgspec.json.decode(path.read_bytes(), type=_PackageIndex)
+    except msgspec.DecodeError as error:
+        raise Abort(f"package index is malformed: {error}") from None
+    require(document["version"] == 1, "package index must use version 1")
     require(not document.get("indexes"), "flatten child indexes before using the E2E rig")
-    packages = document.get("packages")
-    require(isinstance(packages, list) and bool(packages), "package index must contain packages")
+    packages = document["packages"]
+    require(bool(packages), "package index must contain packages")
     for package in packages:
-        require(isinstance(package, dict), "package entries must be objects")
-        store_path = package.get("store_path")
-        require(isinstance(store_path, str) and bool(store_path), "package needs a store_path")
+        store_path = package["store_path"]
+        require(bool(store_path), "package needs a store_path")
         require(
             Path(store_path).parent == Path("/nix/store") and Path(store_path).is_dir(),
             f"package store path is not realized locally: {store_path}",

@@ -280,7 +280,7 @@ def _verify_packages(dev: Device, plan: dict[str, Any] | None, before: _Snapshot
     installed = catalog.read_manifest_packages(dev)
     for change in plan["changes"]:
         entry = installed.get(change["name"])
-        version = entry.get("version") if isinstance(entry, dict) else None
+        version = entry.get("version") if entry is not None else None
         require(
             version == change["version_to"],
             f"{change['name']}: the manifest has {version or 'nothing'}, "
