@@ -187,6 +187,7 @@ fn on_removed(family: DeviceFamily, name: &str) {
                 model.map_or_else(|| "unknown model".to_owned(), |m| m.name)
             );
             session::remove_token(&id);
+            forget_device_charts(std::slice::from_ref(&id));
         }
     }
 }
@@ -261,8 +262,7 @@ fn restore_history() {
     }
 }
 
-/// Fold the fleet into a fresh view and feed every chart,
-/// persisting the total and per-model charts when the snapshot interval is due.
+/// Fold the fleet into a fresh view and feed the total and per-model charts.
 #[cfg(target_arch = "wasm32")]
 fn fold() -> DerivedView {
     let devices_seq = DEVICES.with(|d| d.borrow().seq());
@@ -275,21 +275,7 @@ fn fold() -> DerivedView {
         let _s = profile::span("summarize");
         DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
     };
-    {
-        let _s = profile::span("history");
-        let now = SystemTime::now().unix_secs;
-        DEVICES.with(|d| {
-            let devices = d.borrow();
-            HISTORY.with(|h| {
-                let mut h = h.borrow_mut();
-                h.record_devices(now, &devices);
-                h.record_fleet(now, &summary.hashrate());
-                if let Some(blob) = h.take_snapshot(now) {
-                    cache::put(history::CACHE_TAG, &[], &blob);
-                }
-            });
-        });
-    }
+    record_fleet_history(SystemTime::now().unix_secs, &summary.hashrate());
     DerivedView {
         devices_seq,
         params_version,
@@ -298,6 +284,49 @@ fn fold() -> DerivedView {
         fleet_name: params.fleet_name,
         model_detail: None,
     }
+}
+
+/// Feed the total and per-model charts,
+/// persisting them when the snapshot interval is due.
+#[cfg(target_arch = "wasm32")]
+fn record_fleet_history(now: i64, fleet: &summary::FleetHashrate<'_>) {
+    let _s = profile::span("history");
+    HISTORY.with(|h| {
+        let mut h = h.borrow_mut();
+        h.record_fleet(now, fleet);
+        if let Some(blob) = h.take_snapshot(now) {
+            cache::put(history::CACHE_TAG, &[], &blob);
+        }
+    });
+}
+
+/// Record a device's chart point once its poll result has landed in [`DEVICES`].
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn record_device_hashrate(id: &DeviceId) {
+    let now = SystemTime::now().unix_secs;
+    DEVICES.with(|d| {
+        HISTORY.with(|h| record_polled_hashrate(&mut h.borrow_mut(), &d.borrow(), now, id));
+    });
+}
+
+/// Record the hashrate `devices` holds for `id` at `now`.
+/// A poll that lands after its device left the fleet records nothing.
+#[cfg(any(target_arch = "wasm32", test))]
+fn record_polled_hashrate(
+    history: &mut history::HashrateHistory,
+    devices: &device::DeviceList,
+    now: i64,
+    id: &device::DeviceId,
+) {
+    if let Some(dev) = devices.get(id) {
+        history.record_device(now, id, dev.hashrate());
+    }
+}
+
+/// Drop the device charts of `ids`, which just left the fleet.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn forget_device_charts(ids: &[DeviceId]) {
+    HISTORY.with(|h| h.borrow_mut().forget_devices(ids));
 }
 
 /// Run the tick every `period_ms`,
@@ -434,23 +463,20 @@ pub extern "C" fn render(_delta_ms: u32) {
                     let detail = rows
                         .iter()
                         .find(|(id, _, _)| id.as_str() == device_id)
-                        .and_then(|(_, group, _)| {
+                        .and_then(|(id, group, _)| {
                             HISTORY.with(|h| {
                                 let h = h.borrow();
                                 let history = h.view(chart_span, chart_window);
                                 DEVICES.with(|devs| {
-                                    devs.borrow()
-                                        .iter()
-                                        .find(|dev| dev.identity.id.as_str() == device_id)
-                                        .map(|dev| {
-                                            screens::device_detail::DeviceDetailData::from_device(
-                                                &derived.fleet_name,
-                                                &sel.label,
-                                                group,
-                                                dev,
-                                                &history,
-                                            )
-                                        })
+                                    devs.borrow().get(id).map(|dev| {
+                                        screens::device_detail::DeviceDetailData::from_device(
+                                            &derived.fleet_name,
+                                            &sel.label,
+                                            group,
+                                            dev,
+                                            &history,
+                                        )
+                                    })
                                 })
                             })
                         });
@@ -606,7 +632,34 @@ fn restart_family(family: DeviceFamily) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DORMANT_TICK_PERIOD_MS, history::ChartSpan};
+    use super::{
+        DORMANT_TICK_PERIOD_MS,
+        device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceList},
+        history::{ChartSpan, HashrateHistory},
+        record_polled_hashrate,
+    };
+
+    #[test]
+    fn a_poll_landing_after_its_device_left_records_nothing() {
+        let mut h = HashrateHistory::default();
+        let mut list = DeviceList::new();
+        let gone = DeviceId::new("bos/a");
+        list.upsert(DeviceIdentity {
+            id: gone.clone(),
+            family: DeviceFamily::Bos,
+            name: "a".to_owned(),
+            host: "10.0.0.1".to_owned(),
+            port: 80,
+        });
+        record_polled_hashrate(&mut h, &list, 0, &gone);
+        list.remove(&gone);
+        h.forget_devices(std::slice::from_ref(&gone));
+        record_polled_hashrate(&mut h, &list, 5, &gone);
+        assert!(
+            !h.has_device_series(&gone),
+            "a late poll does not bring the departed device's series back"
+        );
+    }
 
     #[test]
     fn the_dormant_tick_lands_in_every_slot_of_the_finest_tier() {

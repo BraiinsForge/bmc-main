@@ -466,9 +466,9 @@ fn marker_radius(h: f32) -> f32 {
 }
 
 // Markers fit when the samples are typically at least a marker apart — judged by
-// the median gap, so one unusually tight pair (the short first interval before
-// the clock reaches an interval boundary) can't strip markers off an otherwise
-// well-spread run. A lone point (no pair) always fits.
+// the median gap, so a few tight pairs can't strip markers off an otherwise well-spread run:
+// a bucket is stamped at its first sample, so polls at :14 and :16 sit in adjacent slots 2 s apart.
+// A lone point (no pair) always fits.
 fn markers_fit(pts: &[(f32, f32)], r: f32) -> bool {
     let mut gaps: Vec<f32> = pts.windows(2).map(|p| (p[1].0 - p[0].0).abs()).collect();
     if gaps.is_empty() {

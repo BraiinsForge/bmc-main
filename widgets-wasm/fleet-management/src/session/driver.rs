@@ -174,7 +174,7 @@ fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
     let _s = profile::span("resolve");
     crate::DEVICES.with(|devs| {
         let devs = devs.borrow();
-        let dev = devs.iter().find(|d| &d.identity.id == id)?;
+        let dev = devs.get(id)?;
         Some((
             dev.identity.family,
             dev.identity.host.clone(),
@@ -189,8 +189,13 @@ fn gather_ring() -> Vec<DeviceId> {
     let _s = profile::span("gather_ring");
     let now = SystemTime::now().unix_secs;
     let retired = crate::DEVICES.with(|d| d.borrow_mut().prune_gone(now, RETIRE_AFTER_SECS));
-    if retired > 0 {
-        log_info!("fleet: retired {retired} device(s) unreachable > {RETIRE_AFTER_SECS}s");
+    if !retired.is_empty() {
+        log_info!(
+            "fleet: retired {} device(s) unreachable > {}s",
+            retired.len(),
+            RETIRE_AFTER_SECS
+        );
+        crate::forget_device_charts(&retired);
     }
     let mut ids = Vec::new();
     for family in DeviceFamily::ALL {
@@ -335,6 +340,7 @@ fn begin_device(delay_ms: u32) {
                 devs.borrow_mut()
                     .record_pass(&id, TelemetryReading::default(), false);
             });
+            crate::record_device_hashrate(&id);
             with_poller(|p| p.ring.advance());
             continue;
         };
@@ -651,6 +657,7 @@ fn finalize_device(id: &DeviceId) {
         }
         failures
     });
+    crate::record_device_hashrate(id);
     log_fetch(family, id, reachable, failures, &reading, model.as_ref());
     advance();
 }

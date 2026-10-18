@@ -314,9 +314,9 @@ impl DeviceList {
 
     /// Retire devices unreachable with no response (not an API error) for over
     /// `ttl_secs`, by host clock `now_secs`. Keep-confirmed spares mDNS churn;
-    /// this drops a genuinely gone device. Returns the number removed.
+    /// this drops a genuinely gone device. Returns the ids removed.
     #[must_use]
-    pub fn prune_gone(&mut self, now_secs: i64, ttl_secs: i64) -> usize {
+    pub fn prune_gone(&mut self, now_secs: i64, ttl_secs: i64) -> Vec<DeviceId> {
         for dev in &mut self.devices {
             if !dev.reachable && dev.last_failure == Some(PollFailure::Unreachable) {
                 dev.unreachable_since.get_or_insert(now_secs);
@@ -324,20 +324,31 @@ impl DeviceList {
                 dev.unreachable_since = None;
             }
         }
-        let before = self.devices.len();
-        self.devices.retain(|dev| {
+        let expired = |dev: &KnownDevice| {
             dev.unreachable_since
-                .is_none_or(|since| now_secs.saturating_sub(since) <= ttl_secs)
-        });
-        let removed = before - self.devices.len();
-        if removed > 0 {
+                .is_some_and(|since| now_secs.saturating_sub(since) > ttl_secs)
+        };
+        let gone: Vec<DeviceId> = self
+            .devices
+            .iter()
+            .filter(|dev| expired(dev))
+            .map(|dev| dev.identity.id.clone())
+            .collect();
+        if !gone.is_empty() {
+            self.devices.retain(|dev| !expired(dev));
             self.seq += 1;
         }
-        removed
+        gone
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &KnownDevice> {
         self.devices.iter()
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[must_use]
+    pub fn get(&self, id: &DeviceId) -> Option<&KnownDevice> {
+        self.devices.iter().find(|d| &d.identity.id == id)
     }
 
     #[cfg(test)]
@@ -1276,16 +1287,16 @@ mod tests {
     #[test]
     fn prune_gone_retires_a_device_unreachable_past_the_ttl() {
         let mut list = DeviceList::new();
-        make_gone(
+        let id = make_gone(
             &mut list,
             "bos/dead._http._tcp.local.",
             PollFailure::Unreachable,
         );
         // The first prune stamps the clock; still inside the window.
-        assert_eq!(list.prune_gone(1_000, 300), 0);
+        assert!(list.prune_gone(1_000, 300).is_empty());
         assert_eq!(list.len(), 1, "within the ttl the device is kept");
         // Past the window it retires from the fleet.
-        assert_eq!(list.prune_gone(1_301, 300), 1);
+        assert_eq!(list.prune_gone(1_301, 300), vec![id]);
         assert!(list.is_empty(), "a long-gone device is dropped");
     }
 
@@ -1298,8 +1309,8 @@ mod tests {
             PollFailure::ApiError,
         );
         // A 503 device is present but erroring — never retired, however long.
-        assert_eq!(list.prune_gone(1_000, 300), 0);
-        assert_eq!(list.prune_gone(9_999, 300), 0);
+        assert!(list.prune_gone(1_000, 300).is_empty());
+        assert!(list.prune_gone(9_999, 300).is_empty());
         assert_eq!(list.len(), 1, "a 503 device stays in the fleet");
     }
 
@@ -1311,10 +1322,9 @@ mod tests {
             "bos/unbound._http._tcp.local.",
             PollFailure::AccountUnusable,
         );
-        assert_eq!(list.prune_gone(1_000, 300), 0);
-        assert_eq!(
-            list.prune_gone(9_999, 300),
-            0,
+        assert!(list.prune_gone(1_000, 300).is_empty());
+        assert!(
+            list.prune_gone(9_999, 300).is_empty(),
             "an unpolled miner is not gone, it waits for its account"
         );
     }
@@ -1327,10 +1337,13 @@ mod tests {
             "bos/flap._http._tcp.local.",
             PollFailure::Unreachable,
         );
-        assert_eq!(list.prune_gone(1_000, 300), 0, "stamped at t=1000");
+        assert!(list.prune_gone(1_000, 300).is_empty(), "stamped at t=1000");
         // It answers again before the ttl — the timer must reset.
         list.record_pass(&id, good_reading(), true);
-        assert_eq!(list.prune_gone(1_400, 300), 0, "recovered, so not retired");
+        assert!(
+            list.prune_gone(1_400, 300).is_empty(),
+            "recovered, so not retired"
+        );
         assert_eq!(list.len(), 1);
     }
 }

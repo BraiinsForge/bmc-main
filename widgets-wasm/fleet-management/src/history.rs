@@ -29,11 +29,11 @@
 //! survive a restart; per-device series are RAM-only, so a reused hostname can't
 //! attribute one miner's past to another. A corrupt blob is dropped, not shown.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use bmc_wasm_sdk::types::Hashrate;
 
-use crate::device::{DeviceFamily, DeviceId, DeviceList};
+use crate::device::{DeviceFamily, DeviceId};
 use crate::summary::{FleetHashrate, UNKNOWN_GROUP};
 
 mod series;
@@ -195,7 +195,8 @@ impl FleetTier {
 pub struct HashrateHistory {
     fleet: [FleetTier; ChartSpan::ALL.len()],
     /// Each device's series in every tier, keyed on the stable device id
-    /// and held in one entry so a fold hashes the id once.
+    /// and held in one entry so a poll hashes the id once.
+    /// A device's series goes when it leaves the fleet.
     devices: HashMap<DeviceId, [Series; ChartSpan::ALL.len()]>,
     last_snapshot_at: Option<i64>,
     flash: Flash,
@@ -246,21 +247,28 @@ impl HashrateHistory {
         }
     }
 
-    /// Record the hashrate of every device in `devices` into each tier,
-    /// dropping the series of devices no longer listed (`now` is unix seconds).
-    pub(crate) fn record_devices(&mut self, now: i64, devices: &DeviceList) {
-        let listed: HashSet<&DeviceId> = devices.iter().map(|d| &d.identity.id).collect();
-        self.devices.retain(|id, _| listed.contains(id));
-        for dev in devices.iter() {
-            let value = dev.hashrate();
-            let tiers = self
-                .devices
-                .entry(dev.identity.id.clone())
-                .or_insert_with(|| ChartSpan::ALL.map(Series::new));
-            for series in tiers {
-                series.record(now, value);
-            }
+    /// Record `value`, the hashrate of the device `id`, into its series in every tier.
+    pub(crate) fn record_device(&mut self, now: i64, id: &DeviceId, value: Option<f32>) {
+        let tiers = self
+            .devices
+            .entry(id.clone())
+            .or_insert_with(|| ChartSpan::ALL.map(Series::new));
+        for series in tiers {
+            series.record(now, value);
         }
+    }
+
+    /// Drop the series of each device in `ids`, which left the fleet,
+    /// so a miner listed later under the same id starts with an empty chart.
+    pub(crate) fn forget_devices(&mut self, ids: &[DeviceId]) {
+        for id in ids {
+            self.devices.remove(id);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_device_series(&self, id: &DeviceId) -> bool {
+        self.devices.contains_key(id)
     }
 
     /// A read-only view at `span` — the tier serving that range — plotted over `window`.
@@ -440,6 +448,7 @@ impl FleetTier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::DeviceList;
     use crate::summary::FleetSummary;
     use bmc_wasm_sdk::types::{ElectricPower, MiningEfficiency, Temperature};
 
@@ -625,15 +634,60 @@ mod tests {
         );
     }
 
+    /// Record every device in `list`, as polls landing at `now` would.
+    fn poll_all(h: &mut HashrateHistory, now: i64, list: &DeviceList) {
+        for dev in list.iter() {
+            h.record_device(now, &dev.identity.id, dev.hashrate());
+        }
+    }
+
     #[test]
     fn records_a_per_device_series() {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
-        h.record_devices(0, &devices(&[("bos/a", 3.0, true)]));
-        h.record_devices(15, &devices(&[("bos/a", 4.0, true)]));
+        poll_all(&mut h, 0, &devices(&[("bos/a", 3.0, true)]));
+        poll_all(&mut h, 15, &devices(&[("bos/a", 4.0, true)]));
         assert_eq!(
             vals(&device(&h, ChartSpan::FifteenMinutes, &a)),
             vec![Some(3.0), Some(4.0)]
+        );
+    }
+
+    #[test]
+    fn a_second_poll_in_the_same_slot_refreshes_the_device_point() {
+        let mut h = HashrateHistory::default();
+        let a = DeviceId::new("bos/a");
+        poll_all(&mut h, 0, &devices(&[("bos/a", 3.0, true)]));
+        poll_all(&mut h, 10, &devices(&[("bos/a", 4.0, true)]));
+        let series = device(&h, ChartSpan::FifteenMinutes, &a);
+        assert_eq!(
+            vals(&series),
+            vec![Some(4.0)],
+            "one 15 s bucket, newest value"
+        );
+        assert_eq!(
+            series[0].at, 0,
+            "the bucket keeps the first poll's timestamp"
+        );
+    }
+
+    #[test]
+    fn each_tier_samples_a_device_at_its_own_rate() {
+        let mut h = HashrateHistory::default();
+        let a = DeviceId::new("bos/a");
+        let list = devices(&[("bos/a", 3.0, true)]);
+        for now in 0..=60 {
+            poll_all(&mut h, now, &list);
+        }
+        assert_eq!(
+            device(&h, ChartSpan::FifteenMinutes, &a).len(),
+            5,
+            "the 15-min tier opens a bucket every 15 s: 0, 15, 30, 45, 60"
+        );
+        assert_eq!(
+            device(&h, ChartSpan::OneHour, &a).len(),
+            2,
+            "the 1-h tier opens a bucket every 60 s: 0, 60"
         );
     }
 
@@ -659,7 +713,11 @@ mod tests {
     fn an_unreachable_device_samples_a_gap_not_zero() {
         let mut h = HashrateHistory::default();
         let down = DeviceId::new("bos/b");
-        h.record_devices(0, &devices(&[("bos/a", 3.0, true), ("bos/b", 9.0, false)]));
+        poll_all(
+            &mut h,
+            0,
+            &devices(&[("bos/a", 3.0, true), ("bos/b", 9.0, false)]),
+        );
         assert_eq!(
             vals(&device(&h, ChartSpan::FifteenMinutes, &down)),
             vec![None],
@@ -674,18 +732,19 @@ mod tests {
     }
 
     #[test]
-    fn a_departed_device_is_pruned_from_history() {
+    fn a_device_listed_again_under_its_id_starts_a_fresh_series() {
         let mut h = HashrateHistory::default();
-        let (a, b) = (DeviceId::new("bos/a"), DeviceId::new("bos/b"));
-        h.record_devices(0, &devices(&[("bos/a", 3.0, true)]));
-        h.record_devices(15, &devices(&[("bos/b", 5.0, true)]));
-        assert!(
-            device(&h, ChartSpan::FifteenMinutes, &a).is_empty(),
-            "no longer listed, so its series is dropped"
-        );
+        let reused = DeviceId::new("bos/a");
+        let mut list = devices(&[("bos/a", 3.0, true)]);
+        poll_all(&mut h, 0, &list);
+        list.remove(&reused);
+        h.forget_devices(std::slice::from_ref(&reused));
+        list_device(&mut list, "bos/a", 4.0, true);
+        poll_all(&mut h, 15, &list);
         assert_eq!(
-            vals(&device(&h, ChartSpan::FifteenMinutes, &b)),
-            vec![Some(5.0)]
+            vals(&device(&h, ChartSpan::FifteenMinutes, &reused)),
+            vec![Some(4.0)],
+            "the new miner does not inherit the points of the one that left"
         );
     }
 
@@ -871,9 +930,9 @@ mod tests {
     fn snapshot_round_trips_total_and_model_series() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
-        h.record_devices(0, &devices(&[("bos/a", 3.0, true)]));
+        poll_all(&mut h, 0, &devices(&[("bos/a", 3.0, true)]));
         h.record_fleet(15, &summary(12.0, 5.0).hashrate());
-        h.record_devices(15, &devices(&[("bos/a", 4.0, true)]));
+        poll_all(&mut h, 15, &devices(&[("bos/a", 4.0, true)]));
         let blob = h
             .take_snapshot(15)
             .expect("BUG: first snapshot always fires");
