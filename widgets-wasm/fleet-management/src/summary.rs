@@ -106,21 +106,32 @@ pub struct GroupSummary {
     pub auth_error_count: usize,
 }
 
-fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
-    // A model group shares one family; the "Unknown" catch-all may mix families,
-    // so it carries none.
-    let family = if label == UNKNOWN_GROUP {
+fn group_hashrate(devices: &[&KnownDevice]) -> Option<Hashrate> {
+    devices
+        .iter()
+        .filter_map(|d| d.hashrate())
+        .map(f64::from)
+        .reduce(|a, b| a + b)
+        .map(Hashrate::from_terahashes_per_second)
+}
+
+/// A model group shares one family; the "Unknown" catch-all may mix families,
+/// so it carries none.
+fn group_family(label: &str, devices: &[&KnownDevice]) -> Option<DeviceFamily> {
+    if label == UNKNOWN_GROUP {
         None
     } else {
         devices.first().map(|d| d.identity.family)
-    };
+    }
+}
+
+fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
+    let family = group_family(&label, devices);
     let total_count = devices.len();
     let mut ok_count = 0;
     let mut off_count = 0;
     let mut auth_error_count = 0;
 
-    let mut hashrate_sum = 0.0_f64;
-    let mut hashrate_any = false;
     let mut power_sum = 0.0_f64;
     let mut power_any = false;
 
@@ -166,10 +177,6 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         if is_ok(reading, nominal) {
             ok_count += 1;
         }
-        if let Some(h) = reading.current_hashrate_ths {
-            hashrate_sum += f64::from(h);
-            hashrate_any = true;
-        }
         if let Some(p) = reading.power_w {
             power_sum += f64::from(p);
             power_any = true;
@@ -190,7 +197,7 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         }
     }
 
-    let hashrate = hashrate_any.then(|| Hashrate::from_terahashes_per_second(hashrate_sum));
+    let hashrate = group_hashrate(devices);
     let power = power_any.then(|| ElectricPower::from_watts(power_sum));
     let efficiency = (eff_any && eff_hashrate > 0.0)
         .then(|| MiningEfficiency::from_joules_per_terahash(eff_power / eff_hashrate));
@@ -251,8 +258,13 @@ fn partition_key(dev: &KnownDevice) -> (Option<usize>, &str) {
     })
 }
 
-#[must_use]
-pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
+type Partitions<'a> = BTreeMap<(Option<usize>, &'a str), Vec<&'a KnownDevice>>;
+
+/// The devices the operator's family filter shows, and the same devices split into model groups.
+fn partition<'a>(
+    devices: &'a DeviceList,
+    filters: &crate::filter::Filters,
+) -> (Vec<&'a KnownDevice>, Partitions<'a>) {
     // A device folds regardless of reachability (an unreachable one contributes
     // no reading, see `fold_group`); only the operator's family filter hides it.
     let visible: Vec<&KnownDevice> = devices
@@ -262,10 +274,16 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
 
     // Key on family as well as model name so two families sharing a display name
     // don't merge. Model-less devices share the family-agnostic "Unknown" group.
-    let mut partitions: BTreeMap<(Option<usize>, &str), Vec<&KnownDevice>> = BTreeMap::new();
+    let mut partitions: Partitions<'a> = BTreeMap::new();
     for dev in &visible {
         partitions.entry(partition_key(dev)).or_default().push(dev);
     }
+    (visible, partitions)
+}
+
+#[must_use]
+pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
+    let (visible, partitions) = partition(devices, filters);
 
     // Own the label once per group here, not once per device in `partition_key`.
     let mut groups: Vec<GroupSummary> = partitions

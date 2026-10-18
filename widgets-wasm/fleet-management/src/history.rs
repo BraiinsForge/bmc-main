@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use bmc_wasm_sdk::types::Hashrate;
 
-use crate::device::{DeviceFamily, DeviceId, DeviceList, KnownDevice};
+use crate::device::{DeviceFamily, DeviceId, DeviceList};
 use crate::summary::FleetSummary;
 
 /// Samples kept per tier. Each range spreads across this many points, so a
@@ -197,18 +197,6 @@ fn ths(h: Hashrate) -> f32 {
     h.as_terahashes_per_second() as f32
 }
 
-/// A device's current hashrate, or `None` when it is unreachable or its reading
-/// carries no hashrate field — the chart then breaks rather than dropping a line
-/// to a hashrate the device isn't actually reporting.
-fn device_hashrate(dev: &KnownDevice) -> Option<f32> {
-    if !dev.reachable {
-        return None;
-    }
-    dev.telemetry
-        .as_ref()
-        .and_then(|s| s.reading.current_hashrate_ths)
-}
-
 /// One consolidation tier: every series sampled at this tier's interval.
 /// Model series survive refolds via the (family, model-name) partition key;
 /// device series key on the stable device id.
@@ -259,7 +247,7 @@ impl Tier {
             self.devices
                 .entry(dev.identity.id.clone())
                 .or_default()
-                .upsert(now, device_hashrate(dev), new_slot);
+                .upsert(now, dev.hashrate(), new_slot);
         }
     }
 }

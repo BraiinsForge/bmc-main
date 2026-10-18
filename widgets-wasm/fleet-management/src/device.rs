@@ -180,6 +180,21 @@ pub struct KnownDevice {
     pub unreachable_since: Option<i64>,
 }
 
+impl KnownDevice {
+    /// The current hashrate in TH/s,
+    /// or `None` when the device is unreachable or its reading carries no hashrate field,
+    /// so neither a sum nor a chart counts a hashrate it isn't reporting.
+    #[must_use]
+    pub fn hashrate(&self) -> Option<f32> {
+        if !self.reachable {
+            return None;
+        }
+        self.telemetry
+            .as_ref()
+            .and_then(|s| s.reading.current_hashrate_ths)
+    }
+}
+
 /// A snapshot of the fleet by confirmation and liveness, for tracing where the
 /// device count goes — removal or unreachability — from ground truth
 /// instead of a fast-rotating poll log.
