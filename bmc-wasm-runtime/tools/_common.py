@@ -22,6 +22,7 @@
 Shared utilities for WASM runtime development tools.
 """
 
+import gzip
 import json
 import re
 import shutil
@@ -29,6 +30,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import NotRequired, TypedDict, cast
 
 from widget_root import find as find_widget
 
@@ -133,7 +135,7 @@ def build_example_wasm(
             continue
         if msg['target']['name'] != wasm_name:
             continue
-        for path in msg.get('filenames') or []:
+        for path in cast('list[str]', msg.get('filenames') or []):
             if path.endswith('.wasm'):
                 return Path(path)
 
@@ -155,7 +157,83 @@ def extract_crate(sym: str) -> str:
     return '[other]'
 
 
-def find_testbed_thread(data: dict) -> dict | None:
+# ── samply profiles (Firefox Profiler processed format) ───────────────
+# Only the fields these tools read; the files carry many more, which a cast keeps.
+
+
+class Samples(TypedDict):
+    length: int
+    stack: list[int | None]
+    # samply stores per-sample deltas; a finalized profile may carry absolute times.
+    time: NotRequired[list[float]]
+    timeDeltas: NotRequired[list[float]]
+
+
+class FuncTable(TypedDict):
+    name: list[int]
+
+
+class FrameTable(TypedDict):
+    func: list[int]
+
+
+class StackTable(TypedDict):
+    prefix: list[int | None]
+    frame: list[int]
+
+
+class Thread(TypedDict):
+    name: str
+    pid: str
+    samples: Samples
+    stringArray: list[str]
+    funcTable: FuncTable
+    frameTable: FrameTable
+    stackTable: StackTable
+
+
+class CounterSamples(TypedDict):
+    length: int
+    count: list[float]
+    number: list[int]
+    time: list[float]
+
+
+class ProfileCounter(TypedDict):
+    category: str
+    name: str
+    description: str
+    mainThreadIndex: int
+    pid: str
+    samples: CounterSamples
+    color: str
+
+
+class Profile(TypedDict):
+    threads: list[Thread]
+    counters: NotRequired[list[ProfileCounter]]
+
+
+def load_profile(path: Path) -> Profile:
+    """A gzipped profile, typed by the fields above; the JSON is samply's, so not checked."""
+    with gzip.open(path, 'rt') as f:
+        return cast('Profile', json.load(f))
+
+
+def sample_times(samples: Samples) -> list[float]:
+    """Absolute sample timestamps, or none when the profile records no timing."""
+    if 'time' in samples:
+        return samples['time']
+    # The running sum of deltas; delta[0] is the offset from profile start.
+    times: list[float] = []
+    acc = 0.0
+    for delta in samples.get('timeDeltas', []):
+        acc += delta
+        times.append(acc)
+    return times
+
+
+def find_testbed_thread(data: Profile) -> Thread | None:
     """Find the main testbed thread (largest sample count)."""
     testbed_threads = [
         t
@@ -168,7 +246,7 @@ def find_testbed_thread(data: dict) -> dict | None:
 
 
 def crate_breakdown_from_thread(
-    thread: dict,
+    thread: Thread,
     symbols: dict[str, str],
 ) -> tuple[Counter[str], int]:
     """Compute inclusive crate-level breakdown from a samply thread.
@@ -177,15 +255,15 @@ def crate_breakdown_from_thread(
     The counter maps crate name to sample count, deduplicated per-stack
     (a crate appearing multiple times in one stack counts once).
     """
-    strings: list[str] = thread['stringArray']
-    func_table: dict = thread['funcTable']
-    frame_table: dict = thread['frameTable']
-    stack_table: dict = thread['stackTable']
-    samples: dict = thread['samples']
+    strings = thread['stringArray']
+    func_table = thread['funcTable']
+    frame_table = thread['frameTable']
+    stack_table = thread['stackTable']
+    samples = thread['samples']
 
     stack_counts: Counter[int | None] = Counter(samples['stack'])
-    prefixes: list[int | None] = stack_table['prefix']
-    frame_list: list[int] = stack_table['frame']
+    prefixes = stack_table['prefix']
+    frame_list = stack_table['frame']
 
     total = sum(stack_counts.values())
 

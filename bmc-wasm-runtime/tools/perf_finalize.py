@@ -46,11 +46,38 @@ import json
 import sys
 from itertools import cycle
 from pathlib import Path
+from typing import Literal, TypedDict, cast
 
-from _common import find_testbed_thread
+from _common import (
+    Profile,
+    ProfileCounter,
+    Thread,
+    find_testbed_thread,
+    load_profile,
+    sample_times,
+)
 
 
-def symbolize_in_place(profile: dict, symbols: dict[str, str]) -> int:
+TimingPhase = Literal['wasm_us', 'deserialize_us', 'layout_us', 'render_us', 'flush_us']
+
+
+class PerFrame(TypedDict, total=False):
+    wasm_us: list[int]
+    deserialize_us: list[int]
+    layout_us: list[int]
+    render_us: list[int]
+    flush_us: list[int]
+    fuel: dict[str, list[int]]
+
+
+class PerfReport(TypedDict, total=False):
+    """The runtime's `perf.json`, as far as the counters read it."""
+
+    frames: int
+    per_frame: PerFrame
+
+
+def symbolize_in_place(profile: Profile, symbols: dict[str, str]) -> int:
     """Replace hex-address strings in every thread's stringArray with resolved
     symbols. Returns the number of strings rewritten."""
     rewritten = 0
@@ -64,27 +91,13 @@ def symbolize_in_place(profile: dict, symbols: dict[str, str]) -> int:
     return rewritten
 
 
-def frame_times(thread: dict, frames: int) -> list[float]:
+def frame_times(thread: Thread, frames: int) -> list[float]:
     """Distribute `frames` evenly across the thread's sample time range. Frame
     pacing is ~uniform at steady state, so this aligns the counter timeline with
     the CPU samples closely enough for inspection."""
     if frames == 0:
         return []
-    samples = thread['samples']
-    if 'time' in samples:
-        times = samples['time']
-    elif 'timeDeltas' in samples:
-        # samply's processed format stores per-sample deltas, not absolute
-        # timestamps; absolute time is the running sum (delta[0] is the
-        # offset from profile start).
-        times = []
-        acc = 0.0
-        for delta in samples['timeDeltas']:
-            acc += delta
-            times.append(acc)
-    else:
-        return [0.0] * frames
-
+    times = sample_times(thread['samples'])
     if not times:
         return [0.0] * frames
 
@@ -100,10 +113,10 @@ def make_counter(
     category: str,
     values: list[int],
     times: list[float],
-    pid,
+    pid: str,
     main_idx: int,
     color: str,
-) -> dict:
+) -> ProfileCounter:
     """A counter in the exact shape `fxprof-processed-profile` (samply's writer)
     emits. `count` is a per-sample delta the profiler accumulates, so the graph's
     slope is the per-frame cost; `number` is the per-sample operation count."""
@@ -127,23 +140,29 @@ def make_counter(
     }
 
 
-def build_counters(profile: dict, perf: dict) -> list[dict]:
+_TIMING_PHASES: tuple[TimingPhase, ...] = (
+    'wasm_us',
+    'deserialize_us',
+    'layout_us',
+    'render_us',
+    'flush_us',
+)
+
+
+def build_counters(profile: Profile, perf: PerfReport) -> list[ProfileCounter]:
     thread = find_testbed_thread(profile)
     if thread is None:
         print('Warning: no testbed thread; skipping counters', file=sys.stderr)
         return []
     main_idx = profile['threads'].index(thread)
     pid = thread['pid']
-    per_frame = perf.get('per_frame', {})
+    per_frame = perf.get('per_frame', PerFrame())
     frames = perf.get('frames', 0)
     times = frame_times(thread, frames)
 
-    counters: list[dict] = []
+    counters: list[ProfileCounter] = []
     timing_colors = ('blue', 'teal', 'green', 'purple', 'grey')
-    for phase, color in zip(
-        ('wasm_us', 'deserialize_us', 'layout_us', 'render_us', 'flush_us'),
-        timing_colors,
-    ):
+    for phase, color in zip(_TIMING_PHASES, timing_colors):
         values = per_frame.get(phase)
         if values:
             counters.append(
@@ -178,10 +197,9 @@ def main() -> None:
             print(f'Error: {p} does not exist', file=sys.stderr)
             sys.exit(1)
 
-    with gzip.open(profile_path, 'rt') as f:
-        profile = json.load(f)
-    symbols = json.loads(symbols_path.read_text())
-    perf = json.loads(perf_path.read_text())
+    profile = load_profile(profile_path)
+    symbols = cast('dict[str, str]', json.loads(symbols_path.read_text()))
+    perf = cast('PerfReport', json.loads(perf_path.read_text()))
 
     rewritten = symbolize_in_place(profile, symbols)
     counters = build_counters(profile, perf)

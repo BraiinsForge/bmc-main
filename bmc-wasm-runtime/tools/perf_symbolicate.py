@@ -36,11 +36,12 @@ Usage:
 The output defaults to symbols.json next to the profile.
 """
 
-import gzip
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+from _common import load_profile
 
 
 def main() -> None:
@@ -66,8 +67,7 @@ def main() -> None:
         print(f'Error: {binary_path} does not exist', file=sys.stderr)
         sys.exit(1)
 
-    with gzip.open(profile_path, 'rt') as f:
-        data: dict = json.load(f)
+    data = load_profile(profile_path)
 
     # Collect all unique hex addresses across all threads
     addrs: set[str] = set()

@@ -32,8 +32,6 @@ Reads the funcTable symbolized in place by perf_finalize.py — the unresolved
 frames stay as raw hex addresses. The symbols.json sidecar is not consumed.
 """
 
-import gzip
-import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -41,6 +39,7 @@ from pathlib import Path
 from _common import (
     crate_breakdown_from_thread,
     find_testbed_thread,
+    load_profile,
 )
 
 
@@ -57,26 +56,23 @@ def main() -> None:
     if not path.exists():
         print(f'Error: {path} does not exist', file=sys.stderr)
         sys.exit(1)
-    with gzip.open(path, 'rt') as f:
-        data = json.load(f)
-
-    thread = find_testbed_thread(data)
+    thread = find_testbed_thread(load_profile(path))
     if thread is None:
         print('No testbed thread found in profile', file=sys.stderr)
         sys.exit(1)
 
-    strings: list[str] = thread['stringArray']
-    func_table: dict = thread['funcTable']
-    frame_table: dict = thread['frameTable']
-    stack_table: dict = thread['stackTable']
-    samples: dict = thread['samples']
+    strings = thread['stringArray']
+    func_table = thread['funcTable']
+    frame_table = thread['frameTable']
+    stack_table = thread['stackTable']
+    samples = thread['samples']
 
     stack_counts: Counter[int | None] = Counter(samples['stack'])
     func_self: Counter[str] = Counter()
     func_inclusive: Counter[str] = Counter()
 
-    prefixes: list[int | None] = stack_table['prefix']
-    frame_list: list[int] = stack_table['frame']
+    prefixes = stack_table['prefix']
+    frame_list = stack_table['frame']
 
     for stack_idx, count in stack_counts.items():
         if stack_idx is None:

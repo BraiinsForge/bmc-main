@@ -36,13 +36,18 @@ Usage:
     ./perf_compare.py reports/*/
 """
 
-import gzip
-import json
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
-from _common import crate_breakdown_from_thread, find_testbed_thread
+from _common import (
+    Profile,
+    crate_breakdown_from_thread,
+    find_testbed_thread,
+    load_profile,
+    sample_times,
+)
 
 RED = '\033[31m'
 GREEN = '\033[32m'
@@ -94,7 +99,16 @@ def _pct(a: list[float], p: float) -> float:
     return s[min(len(s) - 1, int(len(s) * p))]
 
 
-def load_phase(dir_path: str) -> dict:
+@dataclass(frozen=True)
+class Phase:
+    dir: str
+    has_data: bool
+    profile: Profile
+    fuel: dict[str, float]  # section -> average fuel per frame
+    metrics: dict[str, float]  # keyed as TIMING_METRICS and PERCENTILES, plus avg_fps
+
+
+def load_phase(dir_path: str) -> Phase:
     """Read a phase's combined profile and derive its comparison metrics."""
     d = Path(dir_path)
     combined = d / COMBINED_FILE
@@ -102,8 +116,7 @@ def load_phase(dir_path: str) -> dict:
         print(f'{RED}Error: {d}/{COMBINED_FILE} not found{RESET}', file=sys.stderr)
         sys.exit(1)
 
-    with gzip.open(combined, 'rt') as f:
-        profile = json.load(f)
+    profile = load_profile(combined)
 
     # Split counters by category: timing phases (µs) vs profiling sections (fuel).
     timing: dict[str, list[float]] = {}
@@ -119,33 +132,35 @@ def load_phase(dir_path: str) -> dict:
     fps = 0.0
     thread = find_testbed_thread(profile)
     if thread is not None and n:
-        t = thread['samples']['time']
+        t = sample_times(thread['samples'])
         span_s = (t[-1] - t[0]) / 1_000 if len(t) > 1 else 0
         fps = n / span_s if span_s else 0.0
 
-    return {
-        '_dir': str(d),
-        '_has_data': n > 0,
-        '_profile': profile,
-        '_fuel': {name: _avg(vals) for name, vals in fuel.items()},
-        'avg_fps': fps,
-        'avg_frame_us': _avg(frame_us),
-        'avg_wasm_us': _avg(timing.get('wasm_us', [])),
-        'avg_tree_us': _avg(timing.get('deserialize_us', [])),
-        'avg_layout_us': _avg(timing.get('layout_us', [])),
-        'avg_render_us': _avg(timing.get('render_us', [])),
-        'avg_flush_us': _avg(timing.get('flush_us', [])),
-        'p50_frame_us': _pct(frame_us, 0.50),
-        'p95_frame_us': _pct(frame_us, 0.95),
-        'p99_frame_us': _pct(frame_us, 0.99),
-    }
+    return Phase(
+        dir=str(d),
+        has_data=n > 0,
+        profile=profile,
+        fuel={name: _avg(vals) for name, vals in fuel.items()},
+        metrics={
+            'avg_fps': fps,
+            'avg_frame_us': _avg(frame_us),
+            'avg_wasm_us': _avg(timing.get('wasm_us', [])),
+            'avg_tree_us': _avg(timing.get('deserialize_us', [])),
+            'avg_layout_us': _avg(timing.get('layout_us', [])),
+            'avg_render_us': _avg(timing.get('render_us', [])),
+            'avg_flush_us': _avg(timing.get('flush_us', [])),
+            'p50_frame_us': _pct(frame_us, 0.50),
+            'p95_frame_us': _pct(frame_us, 0.95),
+            'p99_frame_us': _pct(frame_us, 0.99),
+        },
+    )
 
 
 def _print_delta_row(
-    reports: list[dict],
+    reports: list[Phase],
     col_w: int,
     label: str,
-    get_val: Callable[[dict], float | None],
+    get_val: Callable[[Phase], float | None],
     fmt_val: Callable[[float], str],
     *,
     label_w: int,
@@ -177,8 +192,8 @@ def _print_delta_row(
     print()
 
 
-def _print_header(reports: list[dict], col_w: int, label: str, label_w: int) -> None:
-    names = [phase_name(r['_dir']) for r in reports]
+def _print_header(reports: list[Phase], col_w: int, label: str, label_w: int) -> None:
+    names = [phase_name(r.dir) for r in reports]
     print(f'{BOLD}{label:<{label_w}}', end='')
     for i, name in enumerate(names):
         print(f'{name:>{col_w}}', end='')
@@ -188,15 +203,15 @@ def _print_header(reports: list[dict], col_w: int, label: str, label_w: int) -> 
     print('─' * (label_w + len(reports) * col_w + (len(reports) - 1) * 10))
 
 
-def _col_w(reports: list[dict]) -> int:
-    return max(14, max(len(phase_name(r['_dir'])) for r in reports) + 2)
+def _col_w(reports: list[Phase]) -> int:
+    return max(14, max(len(phase_name(r.dir)) for r in reports) + 2)
 
 
-def print_timing_comparison(reports: list[dict]) -> None:
+def print_timing_comparison(reports: list[Phase]) -> None:
     col_w = _col_w(reports)
 
-    def val(r: dict, key: str) -> float | None:
-        return r.get(key) if r['_has_data'] else None
+    def val(r: Phase, key: str) -> float | None:
+        return r.metrics.get(key) if r.has_data else None
 
     print('\n', end='')
     _print_header(reports, col_w, 'Metric', label_w=12)
@@ -220,10 +235,10 @@ def print_timing_comparison(reports: list[dict]) -> None:
         )
 
 
-def print_fuel_comparison(reports: list[dict]) -> None:
+def print_fuel_comparison(reports: list[Phase]) -> None:
     sections: set[str] = set()
     for r in reports:
-        sections.update(r['_fuel'].keys())
+        sections.update(r.fuel.keys())
     if not sections:
         return
     col_w = _col_w(reports)
@@ -234,17 +249,17 @@ def print_fuel_comparison(reports: list[dict]) -> None:
             reports,
             col_w,
             section,
-            lambda r, s=section: r['_fuel'].get(s),
+            lambda r, s=section: r.fuel.get(s),
             fmt_fuel,
             label_w=20,
         )
 
 
-def print_profile_comparison(reports: list[dict]) -> None:
+def print_profile_comparison(reports: list[Phase]) -> None:
     """Crate-level inclusive breakdown from each phase's combined profile."""
     breakdowns: list[tuple[dict[str, float], int]] = []
     for r in reports:
-        thread = find_testbed_thread(r['_profile'])
+        thread = find_testbed_thread(r.profile)
         if thread is None:
             breakdowns.append(({}, 0))
             continue
@@ -259,7 +274,7 @@ def print_profile_comparison(reports: list[dict]) -> None:
     if not any(total > 0 for _, total in breakdowns):
         return
 
-    names = [phase_name(r['_dir']) for r in reports]
+    names = [phase_name(r.dir) for r in reports]
     col_w = _col_w(reports)
     print(f'\n{BOLD}=== Profile: Crate Breakdown (inclusive %) ==={RESET}\n')
 
@@ -267,7 +282,9 @@ def print_profile_comparison(reports: list[dict]) -> None:
     for pd, total in breakdowns:
         if total > 0:
             all_crates.update(pd.keys())
-    first_valid = next((pd for pd, total in breakdowns if total > 0), {})
+    first_valid = next(
+        (pd for pd, total in breakdowns if total > 0), dict[str, float]()
+    )
     sorted_crates = sorted(
         all_crates, key=lambda c: first_valid.get(c, 0), reverse=True
     )
