@@ -316,6 +316,26 @@ fn partition<'a>(
     (visible, partitions)
 }
 
+/// The fleet's hashrate grouped as [`summarize`] groups it, without the rest of the fold.
+#[must_use]
+pub fn fleet_hashrate<'a>(
+    devices: &'a DeviceList,
+    filters: &crate::filter::Filters,
+) -> FleetHashrate<'a> {
+    let (visible, partitions) = partition(devices, filters);
+    FleetHashrate {
+        total: group_hashrate(&visible),
+        groups: partitions
+            .into_iter()
+            .map(|((_, label), devs)| GroupHashrate {
+                family: group_family(label, &devs),
+                label,
+                hashrate: group_hashrate(&devs),
+            })
+            .collect(),
+    }
+}
+
 #[must_use]
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
     let (visible, partitions) = partition(devices, filters);
@@ -1149,5 +1169,60 @@ mod tests {
         assert_eq!(rows[0].1.power, None, "no reading, not a false 0");
         assert_eq!(rows[0].1.ok_count, 0);
         assert_eq!(rows[0].1.max_temperature, None);
+    }
+
+    /// The fleet's hashrate, groups in a fixed order so two folds compare.
+    fn sorted(mut fleet: FleetHashrate<'_>) -> FleetHashrate<'_> {
+        fleet
+            .groups
+            .sort_by_key(|g| (g.family.map(DeviceFamily::index), g.label));
+        fleet
+    }
+
+    #[test]
+    fn the_hashrate_only_pass_matches_summarize() {
+        let mut l = family_list(&[
+            ("a", DeviceFamily::Bos, "BMM 101", full(1.0, 30.0, 60.0)),
+            ("b", DeviceFamily::Bos, "BMM 101", full(2.5, 30.0, 60.0)),
+            ("c", DeviceFamily::Bos, "BMM 101", full(4.0, 30.0, 60.0)),
+            (
+                "d",
+                DeviceFamily::Bitaxe,
+                "Gamma 601",
+                full(1.2, 17.0, 55.0),
+            ),
+            ("e", DeviceFamily::Ubos, "S21", reading(None)),
+        ]);
+        let unreachable = l
+            .iter()
+            .find(|d| d.identity.name == "c")
+            .expect("BUG: c is listed")
+            .identity
+            .id
+            .clone();
+        l.apply_telemetry(&unreachable, full(4.0, 30.0, 60.0), false);
+        let modelless = DeviceId::new("modelless");
+        l.upsert(DeviceIdentity {
+            id: modelless.clone(),
+            family: DeviceFamily::Ubos,
+            name: "f".to_owned(),
+            host: "10.0.0.2".to_owned(),
+            port: 80,
+        });
+        l.apply_telemetry(&modelless, reading(Some(7.0)), true);
+
+        for filters in [
+            Filters::default(),
+            Filters {
+                axeos_enabled: false,
+            },
+        ] {
+            assert_eq!(
+                sorted(fleet_hashrate(&l, &filters)),
+                sorted(summarize(&l, &filters).hashrate()),
+                "axeos_enabled = {}",
+                filters.axeos_enabled
+            );
+        }
     }
 }

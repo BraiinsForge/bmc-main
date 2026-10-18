@@ -105,7 +105,6 @@ impl Series {
     }
 
     /// Whether the newest bucket lies in the slot of `at`.
-    #[cfg(test)]
     pub(super) fn has_sampled_slot_of(&self, at: i64) -> bool {
         self.newest_at().is_some_and(|newest| {
             slot_of(newest, self.interval_secs) == slot_of(at, self.interval_secs)

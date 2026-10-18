@@ -54,7 +54,7 @@ mod manifest_params;
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
@@ -84,19 +84,37 @@ thread_local! {
     static HTTP_BROWSE: RefCell<Option<mdns::MdnsBrowse>> = const { RefCell::new(None) };
     static UBOS_BROWSE: RefCell<Option<mdns::MdnsBrowse>> = const { RefCell::new(None) };
     static TICK_TIMER: RefCell<Option<Timer>> = const { RefCell::new(None) };
+    static LIFECYCLE: Cell<Lifecycle> = const { Cell::new(Lifecycle::Dormant) };
 }
 
-/// Cadence of the fleet fold (summarize + history + snapshot) while on screen.
+/// Cadence of the fleet fold (summarize + history + snapshot) while awake.
 /// Every poll bumps the devices sequence, so folding per poll
 /// would re-fold the ~90-device fleet N times a round.
 #[cfg(target_arch = "wasm32")]
 const TICK_PERIOD_MS: u32 = 1_000;
 
-/// Cadence of the fleet fold while off screen, where it only feeds the charts.
-/// It still lands in every slot of the finest tier,
-/// and folds less often on the host thread the visible widget renders on.
+/// Cadence of the tick while dormant, where it only samples the fleet charts
+/// once per slot of the finest tier, so it must land in every slot.
 #[cfg(any(target_arch = "wasm32", test))]
 const DORMANT_TICK_PERIOD_MS: u32 = 5_000;
+
+/// Whether the host has the widget awake or dormant.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+enum Lifecycle {
+    Awake,
+    Dormant,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Lifecycle {
+    const fn tick_period_ms(self) -> u32 {
+        match self {
+            Self::Awake => TICK_PERIOD_MS,
+            Self::Dormant => DORMANT_TICK_PERIOD_MS,
+        }
+    }
+}
 
 /// The render-ready fleet summary, cached so the filter → group → fold → sort pipeline
 /// runs only when the fleet or the params change, not on every render frame.
@@ -227,7 +245,7 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
 pub extern "C" fn init() {
     restore_history();
     // Every host loads a widget dormant and wakes it before its first frame.
-    set_tick_period(DORMANT_TICK_PERIOD_MS);
+    set_lifecycle(Lifecycle::Dormant);
     // One base-type browse for BOS + AxeOS (reliable co-located), plus uBOS's own type.
     let http_browse = mdns::mdns_browse(HTTP_SERVICE_TYPES, on_http_event);
     if http_browse.is_none() {
@@ -268,9 +286,7 @@ fn fold() -> DerivedView {
     let devices_seq = DEVICES.with(|d| d.borrow().seq());
     let params_version = bmc_wasm_sdk::params::version();
     let params = manifest_params::Params::current();
-    let filters = filter::Filters {
-        axeos_enabled: params.axeos_enabled,
-    };
+    let filters = filter::Filters::from(&params);
     let summary = {
         let _s = profile::span("summarize");
         DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
@@ -297,6 +313,21 @@ fn record_fleet_history(now: i64, fleet: &summary::FleetHashrate<'_>) {
         if let Some(blob) = h.take_snapshot(now) {
             cache::put(history::CACHE_TAG, &[], &blob);
         }
+    });
+}
+
+/// Sample the total and per-model charts in a slot no fold has sampled,
+/// from the hashrate alone rather than the full fold.
+#[cfg(target_arch = "wasm32")]
+fn sample_fleet_if_due() {
+    let now = SystemTime::now().unix_secs;
+    if !HISTORY.with(|h| h.borrow().fleet_sample_due(now)) {
+        return;
+    }
+    let filters = filter::Filters::from(&manifest_params::Params::current());
+    DEVICES.with(|d| {
+        let devices = d.borrow();
+        record_fleet_history(now, &summary::fleet_hashrate(&devices, &filters));
     });
 }
 
@@ -329,6 +360,13 @@ pub(crate) fn forget_device_charts(ids: &[DeviceId]) {
     HISTORY.with(|h| h.borrow_mut().forget_devices(ids));
 }
 
+/// Note the host's `lifecycle` and run the tick at its period.
+#[cfg(target_arch = "wasm32")]
+fn set_lifecycle(lifecycle: Lifecycle) {
+    LIFECYCLE.set(lifecycle);
+    set_tick_period(lifecycle.tick_period_ms());
+}
+
 /// Run the tick every `period_ms`,
 /// starting its timer if the host has not granted one yet.
 #[cfg(target_arch = "wasm32")]
@@ -351,12 +389,19 @@ fn set_tick_period(period_ms: u32) {
 }
 
 /// History buckets by wall-clock slot, so a late tick needs no catch-up.
-/// Every tick redraws, so the chart's time axis keeps moving
-/// while the fleet holds still, as it does once the poller parks.
+/// Awake, every tick redraws, so the chart's time axis keeps moving
+/// while the fleet holds still, as it does once the poller parks,
+/// and the charts still get a sample in every slot no fold reached.
 #[cfg(target_arch = "wasm32")]
 fn on_tick(_timer: &Timer, _elapsed_periods: u32) {
-    fold_if_stale();
-    request_frame();
+    match LIFECYCLE.get() {
+        Lifecycle::Awake => {
+            fold_if_stale();
+            sample_fleet_if_due();
+            request_frame();
+        }
+        Lifecycle::Dormant => sample_fleet_if_due(),
+    }
 }
 
 /// Refold when the fleet or the params moved since the last fold,
@@ -556,15 +601,15 @@ pub extern "C" fn render(_delta_ms: u32) {
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_wake() {
-    set_tick_period(TICK_PERIOD_MS);
-    // The first frame back shows what the dormant period has not folded yet.
+    set_lifecycle(Lifecycle::Awake);
+    // Nothing folds while dormant, so fold before the first frame back.
     fold_if_stale();
 }
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_sleep() {
-    set_tick_period(DORMANT_TICK_PERIOD_MS);
+    set_lifecycle(Lifecycle::Dormant);
 }
 
 /// Touch activity notification: request a frame so the tap is consumed by

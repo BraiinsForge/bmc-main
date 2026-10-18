@@ -247,6 +247,14 @@ impl HashrateHistory {
         }
     }
 
+    /// Whether some tier has entered a slot that [`Self::record_fleet`] has not sampled yet.
+    #[must_use]
+    pub(crate) fn fleet_sample_due(&self, now: i64) -> bool {
+        self.fleet
+            .iter()
+            .any(|tier| !tier.total.has_sampled_slot_of(now))
+    }
+
     /// Record `value`, the hashrate of the device `id`, into its series in every tier.
     pub(crate) fn record_device(&mut self, now: i64, id: &DeviceId, value: Option<f32>) {
         let tiers = self
@@ -745,6 +753,35 @@ mod tests {
             vals(&device(&h, ChartSpan::FifteenMinutes, &reused)),
             vec![Some(4.0)],
             "the new miner does not inherit the points of the one that left"
+        );
+    }
+
+    #[test]
+    fn a_fleet_sample_is_due_once_per_slot() {
+        let mut h = HashrateHistory::default();
+        assert!(h.fleet_sample_due(0), "nothing sampled yet");
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
+        assert!(
+            !h.fleet_sample_due(14),
+            "still the 15-min tier's first slot"
+        );
+        assert!(h.fleet_sample_due(15), "the 15-min tier opened a new slot");
+    }
+
+    #[test]
+    fn a_fleet_sample_is_due_once_a_restored_tier_enters_a_new_slot() {
+        let mut h = HashrateHistory::default();
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
+        let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
+        let mut restored = HashrateHistory::default();
+        assert!(restored.restore(&blob, 0, 5), "restored within range");
+        assert!(
+            !restored.fleet_sample_due(5),
+            "the restored bucket's slot counts as sampled"
+        );
+        assert!(
+            restored.fleet_sample_due(15),
+            "the 15-min tier opened a new slot"
         );
     }
 

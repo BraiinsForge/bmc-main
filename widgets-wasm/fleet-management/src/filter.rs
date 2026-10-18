@@ -19,6 +19,7 @@
 // the grant above.
 
 use crate::device::DeviceFamily;
+use crate::manifest_params::Params;
 
 /// A family's enable-toggle manifest key, or `None` when it always runs.
 #[must_use]
@@ -39,6 +40,14 @@ impl Default for Filters {
     fn default() -> Self {
         Self {
             axeos_enabled: true,
+        }
+    }
+}
+
+impl From<&Params> for Filters {
+    fn from(params: &Params) -> Self {
+        Self {
+            axeos_enabled: params.axeos_enabled,
         }
     }
 }
