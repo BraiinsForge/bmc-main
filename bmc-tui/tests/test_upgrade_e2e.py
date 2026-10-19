@@ -30,6 +30,7 @@ from bmc_tui.device import Device
 from bmc_tui.procedures.install_widget_e2e import InstallWidgetE2e
 from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
 from bmc_tui.stage import Abort
+from tests import stubs
 
 
 def _stub_run(monkeypatch: pytest.MonkeyPatch, events: list[str], *, fail_at: str | None) -> None:
@@ -69,8 +70,8 @@ def _stub_run(monkeypatch: pytest.MonkeyPatch, events: list[str], *, fail_at: st
         monkeypatch.setattr(catalog, name, record(name))
 
     monkeypatch.setattr(Device, "version", property(lambda _self: "device-firmware"))
-    monkeypatch.setattr(nix, "real", lambda **_kw: object())
-    monkeypatch.setattr(catalog, "package_prefix", lambda _profile: "")
+    monkeypatch.setattr(nix, "real", stubs.returning(object()))
+    monkeypatch.setattr(catalog, "package_prefix", stubs.returning(""))
 
 
 def test_registry_is_restored_after_a_successful_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,7 +163,7 @@ def test_the_widget_install_harness_restores_through_the_same_session(
         "snapshot_server_instance",
         "verify_widget_installed",
     ):
-        monkeypatch.setattr(catalog, name, lambda *_a, **_k: None)
+        monkeypatch.setattr(catalog, name, stubs.returning(None))
 
     with pytest.raises(Abort, match="scripted failure in run_upgrade"):
         InstallWidgetE2e(device="deck.local", packages=["core"]).run()

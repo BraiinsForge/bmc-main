@@ -21,6 +21,7 @@
 """Unit tests for the local nix seam."""
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,9 @@ import pytest
 from bmc_tui import nix
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
 from bmc_tui.stage import dry_run
+from tests import stubs
+
+type _Run = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
 def _cp(argv: list[str], stdout: str = "") -> "subprocess.CompletedProcess[str]":
@@ -38,11 +42,33 @@ def _failed(argv: list[str], stderr: str) -> "subprocess.CompletedProcess[str]":
     return subprocess.CompletedProcess(argv, 1, stdout="", stderr=stderr)
 
 
+def _answering(stdout: str) -> _Run:
+    def run(argv: list[str], **_: object) -> "subprocess.CompletedProcess[str]":
+        return _cp(argv, stdout)
+
+    return run
+
+
+def _failing(stderr: str) -> _Run:
+    def run(argv: list[str], **_: object) -> "subprocess.CompletedProcess[str]":
+        return _failed(argv, stderr)
+
+    return run
+
+
+def _recording(seen: list[list[str]], stdout: str = "") -> _Run:
+    def run(argv: list[str], **_: object) -> "subprocess.CompletedProcess[str]":
+        seen.append(argv)
+        return _cp(argv, stdout)
+
+    return run
+
+
 def test_eval_present_reads_a_missing_attribute_as_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stderr = f"error: flake 'git+file:///repo' {nix.ABSENT_ATTR} 'x'"
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _failed(list(a[0]), stderr))
+    monkeypatch.setattr(nix.subprocess, "run", _failing(stderr))
     assert not nix._eval_present("x")
 
 
@@ -55,7 +81,7 @@ def test_eval_present_raises_when_evaluation_itself_broke(
     branch and blame a nonexistent package.
     """
     stderr = "error: bad json from /info/lfs/objects/batch: 404"
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _failed(list(a[0]), stderr))
+    monkeypatch.setattr(nix.subprocess, "run", _failing(stderr))
     with pytest.raises(subprocess.CalledProcessError) as caught:
         nix._eval_present("x")
     assert caught.value.stderr == stderr, "the catalog classifies on this text"
@@ -64,19 +90,19 @@ def test_eval_present_raises_when_evaluation_itself_broke(
 def test_dirty_tree_reads_the_flake_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     """`dirtyRevision` is present only for a dirty tree, whatever `warn-dirty` says."""
     meta = '{"revision":"abc","dirtyRevision":"abc-dirty"}'
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), meta))
+    monkeypatch.setattr(nix.subprocess, "run", _answering(meta))
     assert nix.real().dirty_tree()
 
 
 def test_a_clean_tree_has_no_dirty_revision(monkeypatch: pytest.MonkeyPatch) -> None:
     clean = '{"revision":"abc"}'
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), clean))
+    monkeypatch.setattr(nix.subprocess, "run", _answering(clean))
     assert not nix.real().dirty_tree()
 
 
 def test_dirty_tree_says_nothing_when_the_query_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cosmetic notice must not be able to fail a deploy."""
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _failed(list(a[0]), "error: boom"))
+    monkeypatch.setattr(nix.subprocess, "run", _failing("error: boom"))
     assert not nix.real().dirty_tree()
 
 
@@ -96,18 +122,19 @@ def test_build_switches_off_the_dirty_warning(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_resolve_index_package(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nix, "_eval_present", lambda _expr: True)
-    monkeypatch.setattr(nix, "_eval_raw", lambda _expr: "2.0")
+    monkeypatch.setattr(nix, "_eval_present", stubs.returning(True))
+    monkeypatch.setattr(nix, "_eval_raw", stubs.returning("2.0"))
     assert nix.real().resolve(Attr(".#deck-packages.core")) == Pkg(
         "core", "2.0", Attr(".#deck-packages.core.pkg^out")
     )
 
 
 def test_resolve_raw_nixpkgs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nix, "_eval_present", lambda _expr: False)
-    monkeypatch.setattr(
-        nix, "_eval_raw", lambda expr: "9.0" if expr.endswith(".version") else "file"
-    )
+    def eval_raw(expr: str) -> str:
+        return "9.0" if expr.endswith(".version") else "file"
+
+    monkeypatch.setattr(nix, "_eval_present", stubs.returning(False))
+    monkeypatch.setattr(nix, "_eval_raw", eval_raw)
     assert nix.real().resolve(Attr(".#armv7-nixpkgs.file")) == Pkg(
         "nixpkgs-file", "9.0", Attr(".#armv7-nixpkgs.file^out")
     )
@@ -144,26 +171,20 @@ def test_build_maps_paths_to_packages_in_order(monkeypatch: pytest.MonkeyPatch) 
 
 def test_build_passes_max_jobs_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr(
-        nix.subprocess, "run", lambda argv, **_: seen.append(argv) or _cp(argv, "/nix/store/abc\n")
-    )
+    monkeypatch.setattr(nix.subprocess, "run", _recording(seen, "/nix/store/abc\n"))
     nix.real(max_jobs=4).build([Pkg("core", "1.0", Attr(".#x^out"))])
     assert "--max-jobs" in seen[0] and seen[0][seen[0].index("--max-jobs") + 1] == "4"
 
 
 def test_build_rejects_path_count_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), "/nix/store/only\n"))
+    monkeypatch.setattr(nix.subprocess, "run", _answering("/nix/store/only\n"))
     with pytest.raises(RuntimeError, match="printed 1 paths for 2"):
         nix.real().build([Pkg("a", "1", Attr(".#a^out")), Pkg("b", "1", Attr(".#b^out"))])
 
 
 def test_build_out_returns_the_lone_path(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr(
-        nix.subprocess,
-        "run",
-        lambda argv, **_: seen.append(argv) or _cp(argv, "/nix/store/init-tarball\n"),
-    )
+    monkeypatch.setattr(nix.subprocess, "run", _recording(seen, "/nix/store/init-tarball\n"))
     assert nix.real().build_out(Attr(".#init-tarball-armv7")) == "/nix/store/init-tarball"
     assert seen == [
         [
@@ -178,18 +199,14 @@ def test_build_out_returns_the_lone_path(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_build_out_rejects_multiple_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), "/one\n/two\n"))
+    monkeypatch.setattr(nix.subprocess, "run", _answering("/one\n/two\n"))
     with pytest.raises(RuntimeError, match="printed 2 paths"):
         nix.real().build_out(Attr(".#init-tarball-armv7"))
 
 
 def test_build_file_builds_all_attrs_in_one_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr(
-        nix.subprocess,
-        "run",
-        lambda argv, **_: seen.append(argv) or _cp(argv, "/nix/store/ia\n/nix/store/ta\n"),
-    )
+    monkeypatch.setattr(nix.subprocess, "run", _recording(seen, "/nix/store/ia\n/nix/store/ta\n"))
     outs = nix.real().build_file(
         "nix/e2e-artifacts.nix",
         [Attr("index-a"), Attr("tarball-a")],
@@ -218,14 +235,14 @@ def test_build_file_builds_all_attrs_in_one_invocation(monkeypatch: pytest.Monke
 
 
 def test_build_file_rejects_a_path_count_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), "/one\n"))
+    monkeypatch.setattr(nix.subprocess, "run", _answering("/one\n"))
     with pytest.raises(RuntimeError, match="printed 1 paths for 2 attrs"):
         nix.real().build_file("nix/e2e-artifacts.nix", [Attr("index-a"), Attr("tarball-a")], {})
 
 
 def test_copy_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[object] = []
-    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **k: calls.append(a))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(nix.subprocess, "run", _recording(calls))
     token = dry_run.set(True)
     try:
         nix.real().copy([StorePath("/nix/store/x")], "ssh://h")
@@ -236,7 +253,7 @@ def test_copy_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_copy_runs_when_not_dry(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr(nix.subprocess, "run", lambda argv, **k: seen.append(argv) or _cp(argv))
+    monkeypatch.setattr(nix.subprocess, "run", _recording(seen))
     nix.real().copy([StorePath("/nix/store/x")], "ssh://h")
     assert seen == [["nix", "copy", "--to", "ssh://h", "/nix/store/x"]]
 
@@ -262,7 +279,7 @@ def test_copy_signed_signs_into_the_local_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr(nix.subprocess, "run", lambda argv, **_: seen.append(argv) or _cp(argv))
+    monkeypatch.setattr(nix.subprocess, "run", _recording(seen))
     nix.real().copy_signed([StorePath("/nix/store/x")], tmp_path / "cache", tmp_path / "key.secret")
     dest = f"file://{tmp_path}/cache?secret-key={tmp_path}/key.secret"
     assert seen == [["nix", "copy", "--to", dest, "/nix/store/x"]]

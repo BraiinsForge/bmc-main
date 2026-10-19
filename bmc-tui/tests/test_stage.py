@@ -215,12 +215,21 @@ def test_dry_run_defaults_false() -> None:
     assert dry_run.get() is False
 
 
+def _capture_excepthook(monkeypatch: pytest.MonkeyPatch) -> list[type[BaseException]]:
+    seen: list[type[BaseException]] = []
+
+    def excepthook(kind: type[BaseException], *_rest: object) -> None:
+        seen.append(kind)
+
+    monkeypatch.setattr(sys, "excepthook", excepthook)
+    return seen
+
+
 def test_a_worker_crash_is_rendered_like_the_main_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """sys.excepthook is never consulted for a thread; entrypoint bridges it."""
-    seen: list[type[BaseException]] = []
-    monkeypatch.setattr(sys, "excepthook", lambda kind, *_rest: seen.append(kind))
+    seen = _capture_excepthook(monkeypatch)
 
     def boom() -> None:
         raise ValueError("from a worker")
@@ -232,8 +241,7 @@ def test_a_worker_crash_is_rendered_like_the_main_thread(
 
 
 def test_a_worker_exiting_on_purpose_is_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[type[BaseException]] = []
-    monkeypatch.setattr(sys, "excepthook", lambda kind, *_rest: seen.append(kind))
+    seen = _capture_excepthook(monkeypatch)
 
     def quit_thread() -> None:
         raise SystemExit(0)

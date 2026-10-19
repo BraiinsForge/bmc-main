@@ -29,6 +29,7 @@ from rich.live import Live
 
 from bmc_tui import console
 from bmc_tui.console import human_size, lit
+from tests import stubs
 
 
 def _rendered(renderable: RenderableType | None) -> str:
@@ -121,7 +122,7 @@ def test_choose_returns_the_picked_row_index(monkeypatch: pytest.MonkeyPatch) ->
 def test_alert_silent_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[str] = []
     monkeypatch.setattr(console.sys.stdout, "isatty", lambda: False)
-    monkeypatch.setattr(console, "desktop_notify", lambda *a, **k: fired.append("x"))
+    monkeypatch.setattr(console, "desktop_notify", stubs.recording(fired, "x"))
     console.alert("attention")
     assert not fired
 
@@ -129,7 +130,7 @@ def test_alert_silent_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_alert_silent_during_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[str] = []
     monkeypatch.setattr(console.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(console, "desktop_notify", lambda *a, **k: fired.append("x"))
+    monkeypatch.setattr(console, "desktop_notify", stubs.recording(fired, "x"))
     console.mark_run_start()
     console.alert("attention", after=3600.0)  # run is younger than the gate
     assert not fired
@@ -138,20 +139,32 @@ def test_alert_silent_during_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_notify_fires_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[tuple[str, str | None, str]] = []
     monkeypatch.setattr(console.sys.stdout, "isatty", lambda: False)
-    monkeypatch.setattr(
-        console,
-        "desktop_notify",
-        lambda summary, *, body=None, level="info": fired.append((summary, body, level)),
-    )
+
+    def desktop_notify(summary: str, *, body: str | None = None, level: str = "info") -> None:
+        fired.append((summary, body, level))
+
+    monkeypatch.setattr(console, "desktop_notify", desktop_notify)
     console.notify("done", body="ready")
     assert fired == [("done", "ready", "info")]
 
 
+def _capture_notify_send(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    sent: list[list[str]] = []
+
+    def which(name: str) -> bool:
+        return name == "notify-send"
+
+    def run(cmd: list[str], **_kw: object) -> None:
+        sent.append(cmd)
+
+    monkeypatch.setattr(console.shutil, "which", which)
+    monkeypatch.setattr(console.subprocess, "run", run)
+    return sent
+
+
 def test_an_error_notification_is_critical(monkeypatch: pytest.MonkeyPatch) -> None:
     """A failure should survive on screen until it is dismissed."""
-    sent: list[list[str]] = []
-    monkeypatch.setattr(console.shutil, "which", lambda name: name == "notify-send")
-    monkeypatch.setattr(console.subprocess, "run", lambda cmd, **_kw: sent.append(cmd))
+    sent = _capture_notify_send(monkeypatch)
     console.desktop_notify("run failed", body="boom", level="error")
     assert "--urgency" in sent[0]
     assert sent[0][sent[0].index("--urgency") + 1] == "critical"
@@ -164,15 +177,13 @@ def test_a_non_error_notification_still_raises_a_banner(
 ) -> None:
     """`low` is filed into the tray unseen, which defeats the point: every
     caller has already decided the user looked away."""
-    sent: list[list[str]] = []
-    monkeypatch.setattr(console.shutil, "which", lambda name: name == "notify-send")
-    monkeypatch.setattr(console.subprocess, "run", lambda cmd, **_kw: sent.append(cmd))
+    sent = _capture_notify_send(monkeypatch)
     console.desktop_notify("finished", level=level)
     assert sent[0][sent[0].index("--urgency") + 1] == "normal"
 
 
 def test_desktop_notify_silent_without_notifier(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(console.shutil, "which", lambda _: None)
+    monkeypatch.setattr(console.shutil, "which", stubs.returning(None))
 
     def boom(*_a: object, **_k: object) -> None:
         raise AssertionError("must not shell out when no notifier is on PATH")

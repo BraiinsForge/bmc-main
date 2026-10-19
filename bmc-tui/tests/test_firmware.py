@@ -31,6 +31,7 @@ from bmc_tui import console, firmware
 from bmc_tui.console import lit
 from bmc_tui.fw_index import PLATFORM_ASSET_KEY, FwIndexServer, Release
 from bmc_tui.stage import Abort
+from tests import stubs
 
 _FIRMWARE_BYTES = b"firmware fixture\n"
 _SHA256 = hashlib.sha256(_FIRMWARE_BYTES).hexdigest()
@@ -296,7 +297,7 @@ def test_pick_release_shows_an_unparsable_version_verbatim(
 
 
 def test_pick_release_aborts_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(console, "choose", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(console, "choose", stubs.returning(None))
 
     with pytest.raises(Abort, match="pass --image"):
         firmware.pick_release([_release("2026-09-11-0-ff0d18a2-26.09", "http://x/fw.tar")])
@@ -306,7 +307,7 @@ def test_obtain_from_the_index_downloads_the_picked_release(
     monkeypatch: pytest.MonkeyPatch, served: tuple[FwIndexServer, str, Path], tmp_path: Path
 ) -> None:
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    monkeypatch.setattr(console, "choose", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(console, "choose", stubs.returning(0))
     _server, base_url, root = served
     release = _release("2026-09-11-0-ff0d18a2-26.09", f"{base_url}/firmware.tar")
     (root / "index.v1.json").write_text(_index(release))

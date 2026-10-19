@@ -32,6 +32,7 @@ from bmc_tui import catalog
 from bmc_tui.boser_rest import BoserRest
 from bmc_tui.device import Device
 from bmc_tui.stage import Abort, dry_run
+from tests import stubs
 
 _SESSION = "0123abcd"
 _EXIT_DIAL_FAILED = 1
@@ -99,11 +100,13 @@ class _Boser:
 
 def _patch(monkeypatch: pytest.MonkeyPatch, grpcurl: _Grpcurl, boser: _Boser) -> None:
     monkeypatch.setattr(catalog.subprocess, "run", grpcurl)
-    monkeypatch.setattr(catalog.time, "sleep", lambda _s: None)
+
+    def set_auto_upgrade(client: BoserRest, *, enabled: bool) -> None:
+        boser(client, enabled=enabled)
+
+    monkeypatch.setattr(catalog.time, "sleep", stubs.returning(None))
     monkeypatch.setattr(Device, "forward", _forward)
-    monkeypatch.setattr(
-        BoserRest, "set_auto_upgrade", lambda client, *, enabled: boser(client, enabled=enabled)
-    )
+    monkeypatch.setattr(BoserRest, "set_auto_upgrade", set_auto_upgrade)
 
 
 def _run(

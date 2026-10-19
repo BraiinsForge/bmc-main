@@ -31,7 +31,7 @@ import tarfile
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal, Required, TypedDict, Unpack, override
+from typing import Literal, Required, TypedDict, Unpack, cast, override
 
 import pytest
 
@@ -44,6 +44,7 @@ from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
 from bmc_tui.stage import Abort, dry_run
+from tests import stubs
 
 _TARGET = "stm32mp15/ii3"
 _TOP = "sysupgrade-stm32mp15_ii3-emmc"
@@ -276,7 +277,7 @@ def test_memory_shortfall_reports_stale_firmware_before_asking(
     """A non-interactive run declines the prompt, so the listing has to be printed
     first — otherwise the operator is told there is no RAM but not what took it."""
 
-    monkeypatch.setattr(catalog.console, "confirm", lambda _q: False)
+    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(False))
     dev = Device(
         "h", backend=_Exec(_routes({"MemAvailable": "102924", "ls -1 /tmp": "/tmp/old.tar\n"}))
     )
@@ -293,11 +294,15 @@ def test_memory_recovers_when_the_stale_firmware_is_removed(
     """Accepting the offer frees the tmpfs the tar held, so the run continues
     instead of making the operator re-invoke it."""
 
-    monkeypatch.setattr(catalog.console, "confirm", lambda _q: True)
+    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(True))
     free = iter([100 * 1024 * 1024, 300 * 1024 * 1024])  # before the removal, then after
     backend = _Exec(_routes({"ls -1 /tmp": "/tmp/old.tar\n"}))
     dev = Device("h", backend=backend)
-    monkeypatch.setattr(catalog, "_mem_available", lambda _d: next(free))
+
+    def mem_available(_dev: Device) -> int:
+        return next(free)
+
+    monkeypatch.setattr(catalog, "_mem_available", mem_available)
 
     catalog.ensure_memory(dev, 200_000_000)
 
@@ -394,9 +399,11 @@ def test_sysupgrade_cleans_up_tmp_after_flash_failure(
         ),
         stream_code=1,  # flash fails without rebooting → the tar stays in /tmp
     )
-    monkeypatch.setattr(
-        "bmc_tui.procedures.sysupgrade.Device", lambda host: Device(host, backend=backend)
-    )
+
+    def make_device(host: str) -> Device:
+        return Device(host, backend=backend)
+
+    monkeypatch.setattr("bmc_tui.procedures.sysupgrade.Device", make_device)
 
     with pytest.raises(Abort):
         Sysupgrade(device="h", image=str(image.path), yes=True).run()
@@ -2546,7 +2553,7 @@ def test_cleardown_skips_when_store_already_absent() -> None:
 
 
 def test_cleardown_aborts_when_declined(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(catalog.console, "confirm", lambda _q: False)
+    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(False))
     with pytest.raises(Abort, match="--yes"):
         catalog.clear_nix_store(Device("h", backend=_Exec(_cleardown_routes())))
 
@@ -2820,7 +2827,7 @@ def test_flash_e2e_never_skips_on_matching_version(tmp_path: Path) -> None:
 
 
 def test_flash_e2e_aborts_when_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(catalog.console, "confirm", lambda _q: False)
+    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(False))
     with pytest.raises(Abort, match="--yes"):
         catalog.flash_e2e(Device("h", backend=_Exec(_routes({}))), _image(tmp_path))
 
@@ -3990,7 +3997,11 @@ def test_require_auto_upgrade_disabled_rejects_enabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, cycle = _checked_firmware_cycle(tmp_path)
-    monkeypatch.setattr(catalog, "_grpcurl", lambda *_args, **_kwargs: {"enabled": True})
+
+    def grpcurl(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"enabled": True}
+
+    monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
     with pytest.raises(Abort, match="SetAutoUpgrade"):
         catalog.require_auto_upgrade_disabled(Device("h", backend=_Exec(_routes({}))), cycle)
 
@@ -3999,9 +4010,11 @@ def test_check_for_firmware_upgrade_accepts_canonical_offer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image, cycle = _checked_firmware_cycle(tmp_path)
-    monkeypatch.setattr(
-        catalog, "_grpcurl", lambda *_args, **_kwargs: _firmware_offer(image, cycle)
-    )
+
+    def grpcurl(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return _firmware_offer(image, cycle)
+
+    monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
     catalog.check_for_firmware_upgrade(
         Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState()
     )
@@ -4033,30 +4046,37 @@ def test_fresh_firmware_staging_requires_reboot_for_matching_marker(tmp_path: Pa
         catalog.require_fresh_firmware_staging(Device("h", backend=backend), image)
 
 
-@pytest.mark.parametrize(
-    ("change", "hint"),
-    [
-        (lambda response: response.pop("firmware"), "no firmware"),
-        (lambda response: response["firmware"].update(version="wrong"), "version"),
-        (lambda response: response["firmware"].update(hash="0" * 64), "hash"),
-        (lambda response: response["firmware"].update(fileSizeBytes="1"), "size"),
-        (lambda response: response.update(disruption="UPGRADE_DISRUPTION_APP_RESTART"), "REBOOT"),
-        (lambda response: response.pop("upgradeId"), "upgrade id"),
-        (lambda response: response.pop("packages"), "no package changes"),
-        (lambda response: response.update(packages={}), "no package changes"),
-        (lambda response: response.update(packages={"changes": []}), "no package changes"),
-    ],
-)
+type _OfferChange = Callable[[dict[str, object]], object]
+
+
+def _firmware(response: dict[str, object]) -> dict[str, object]:
+    return cast("dict[str, object]", response["firmware"])
+
+
+_INVALID_OFFER_CHANGES: list[tuple[_OfferChange, str]] = [
+    (lambda response: response.pop("firmware"), "no firmware"),
+    (lambda response: _firmware(response).update(version="wrong"), "version"),
+    (lambda response: _firmware(response).update(hash="0" * 64), "hash"),
+    (lambda response: _firmware(response).update(fileSizeBytes="1"), "size"),
+    (lambda response: response.update(disruption="UPGRADE_DISRUPTION_APP_RESTART"), "REBOOT"),
+    (lambda response: response.pop("upgradeId"), "upgrade id"),
+    (lambda response: response.pop("packages"), "no package changes"),
+    (lambda response: response.update(packages={}), "no package changes"),
+    (lambda response: response.update(packages={"changes": []}), "no package changes"),
+]
+
+
+@pytest.mark.parametrize(("change", "hint"), _INVALID_OFFER_CHANGES)
 def test_check_for_firmware_upgrade_rejects_invalid_offer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    change: Callable[[dict[str, object]], object],
+    change: _OfferChange,
     hint: str,
 ) -> None:
     image, cycle = _checked_firmware_cycle(tmp_path)
     response = _firmware_offer(image, cycle)
     change(response)
-    monkeypatch.setattr(catalog, "_grpcurl", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(catalog, "_grpcurl", stubs.returning(response))
     with pytest.raises(Abort, match=hint):
         catalog.check_for_firmware_upgrade(
             Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState()
@@ -4068,7 +4088,11 @@ def test_check_for_firmware_upgrade_missing_offer_names_versions_and_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image, cycle = _checked_firmware_cycle(tmp_path)
-    monkeypatch.setattr(catalog, "_grpcurl", lambda *_args, **_kwargs: {"disruption": "x"})
+
+    def grpcurl(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"disruption": "x"}
+
+    monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
     assert cycle.running_version is not None
     assert cycle.image_version is not None
     with pytest.raises(Abort) as error:
@@ -4087,9 +4111,11 @@ def test_check_for_firmware_upgrade_requires_completed_index_fetch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image, cycle = _checked_firmware_cycle(tmp_path)
-    monkeypatch.setattr(
-        catalog, "_grpcurl", lambda *_args, **_kwargs: _firmware_offer(image, cycle)
-    )
+
+    def grpcurl(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return _firmware_offer(image, cycle)
+
+    monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
     with pytest.raises(Abort, match=r"index\.v1\.json"):
         catalog.check_for_firmware_upgrade(
             Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState(False)
@@ -4149,13 +4175,11 @@ def test_run_firmware_stream_decodes_formatted_error_status(
 ) -> None:
     _, cycle = _checked_firmware_cycle(tmp_path)
     cycle.upgrade_id = "offer-1"
-    monkeypatch.setattr(
-        catalog.subprocess,
-        "Popen",
-        lambda *_args, **_kwargs: _StreamProcess(
-            "", '{"code":13,"message":"failed verification"}', 1
-        ),
-    )
+
+    def popen(*_args: object, **_kwargs: object) -> _StreamProcess:
+        return _StreamProcess("", '{"code":13,"message":"failed verification"}', 1)
+
+    monkeypatch.setattr(catalog.subprocess, "Popen", popen)
     result = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
     assert result.status_code == "Internal"
     assert result.status_message == "failed verification"

@@ -28,7 +28,9 @@ import tarfile
 import urllib.request
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
+import msgspec
 import pytest
 import tyro
 
@@ -37,6 +39,7 @@ from bmc_tui.bos_version import parse_bos_version
 from bmc_tui.device import Device
 from bmc_tui.fw_index import FwIndexServer
 from bmc_tui.image import Image
+from bmc_tui.json_value import Json
 from bmc_tui.procedures.boser_upgrade_e2e import (
     BoserUpgradeE2e,
     check_summary,
@@ -44,13 +47,13 @@ from bmc_tui.procedures.boser_upgrade_e2e import (
     phase_label,
 )
 from bmc_tui.stage import Abort
-from tests import boser_stub
+from tests import boser_stub, stubs
 from tests.boser_stub import BoserStub, Script
 
 RUNNING = "2026-08-01-0-acde0123-26.08-plus"
 TARGET = "2026-09-01-0-0badc0de-26.09-plus"
 STORE = "/nix/store/test-package"
-CHECK_FIRMWARE_ONLY = {
+CHECK_FIRMWARE_ONLY: dict[str, Json] = {
     **boser_stub.CHECK_FIRMWARE,
     "offer": {"id": boser_stub.OFFER_ID, "kind": "FIRMWARE", "disruption": "REBOOT"},
     "packages": None,
@@ -70,13 +73,44 @@ def _image(tmp_path: Path, *, board: str = "stm32mp15_ii2-emmc", version: str = 
     return Image(path)
 
 
-def _document(image: Image | None = None) -> dict:
-    return json.loads(
+class _Integrity(TypedDict):
+    checksum: str
+    size_bytes: int
+
+
+class _Asset(TypedDict):
+    url: str
+    integrity: NotRequired[_Integrity]
+
+
+class _Metadata(TypedDict):
+    bos_version: str
+    is_major: bool
+    is_silent: bool
+    release_date: str
+    assets: dict[str, _Asset | None]
+
+
+class _Release(TypedDict):
+    metadata_version: str
+    metadata: _Metadata
+
+
+class _Document(TypedDict):
+    type: str
+    version: str
+    status: str
+    releases: list[_Release]
+
+
+def _document(image: Image | None = None) -> _Document:
+    return msgspec.json.decode(
         boser_index.index_document(
             running=parse_bos_version(RUNNING),
             base_url="http://127.0.0.1:8082",
             image=image,
-        )
+        ),
+        type=_Document,
     )
 
 
@@ -102,7 +136,8 @@ def test_firmware_offer_follows_anchor_with_real_integrity(tmp_path: Path) -> No
     doc = _document(image)
     assert [r["metadata"]["bos_version"] for r in doc["releases"]] == [RUNNING, TARGET]
     asset = doc["releases"][1]["metadata"]["assets"]["sysupgrade_emmc_stm32mp157c_ii2_bmm1"]
-    assert asset["integrity"] == {
+    assert asset is not None
+    assert asset.get("integrity") == {
         "checksum": hashlib.sha256(image.path.read_bytes()).hexdigest(),
         "size_bytes": image.path.stat().st_size,
     }
@@ -140,7 +175,11 @@ def _package_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **extra: obj
         )
     )
     real_is_dir = Path.is_dir
-    monkeypatch.setattr(Path, "is_dir", lambda p: str(p) == STORE or real_is_dir(p))
+
+    def is_dir(path: Path) -> bool:
+        return str(path) == STORE or real_is_dir(path)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
     return path
 
 
@@ -205,7 +244,7 @@ def _rig(
     monkeypatch.setattr("bmc_tui.procedures.boser_upgrade_e2e.FwIndexServer", FirmwareServer)
     monkeypatch.setattr(catalog, "launch_upgrade_server", launch)
     monkeypatch.setattr(
-        catalog, "stop_upgrade_server_group", lambda _cycle: events.append("packages-stop")
+        catalog, "stop_upgrade_server_group", stubs.recording(events, "packages-stop")
     )
     return arguments
 
@@ -219,7 +258,9 @@ class _DeviceScript:
     def __init__(self) -> None:
         self.boot_id = "boot-1"
         self.generation = 1
-        self.manifest: dict = {"packages": {"core": {"version": "1.0.0"}}}
+        self.manifest: dict[str, dict[str, dict[str, str]]] = {
+            "packages": {"core": {"version": "1.0.0"}}
+        }
         self.bos_version = RUNNING
         self.reachable = True
         self.commands: list[str] = []

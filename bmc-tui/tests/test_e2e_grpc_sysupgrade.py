@@ -28,7 +28,7 @@ import tarfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import pytest
 
@@ -38,6 +38,7 @@ from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.procedures import e2e_grpc_sysupgrade
 from bmc_tui.stage import Abort
+from tests import stubs
 
 _classify_stream = catalog.classify_stream
 _check_for_firmware_upgrade = catalog.check_for_firmware_upgrade
@@ -138,20 +139,20 @@ def harness(  # noqa: PLR0915
         core_store_path="/nix/store/abc-bmc-bmc-core",
     )
 
-    monkeypatch.setattr("tempfile.mkdtemp", lambda **_kwargs: str(snapshot))
+    monkeypatch.setattr("tempfile.mkdtemp", stubs.returning(str(snapshot)))
     monkeypatch.setattr(
         "bmc_tui.procedures.e2e_grpc_sysupgrade.default_serve_ip",
-        lambda _host: "192.0.2.1",
+        stubs.returning("192.0.2.1"),
     )
     monkeypatch.setattr(catalog, "ensure_grpcurl", lambda: None)
-    monkeypatch.setattr(catalog, "ensure_device_reachable", lambda _dev: None)
-    monkeypatch.setattr(catalog, "validate_firmware_image", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(catalog, "require_nix_era", lambda _image: None)
-    monkeypatch.setattr(catalog, "preflight_device", lambda _dev: None)
-    monkeypatch.setattr(catalog, "require_fresh_firmware_staging", lambda *_args: None)
-    monkeypatch.setattr(catalog, "ensure_nix_cli", lambda *_args: events.append("ensure cli"))
-    monkeypatch.setattr(catalog, "resolve_packages", lambda *_args: events.append("resolve"))
-    monkeypatch.setattr(catalog, "build_packages", lambda *_args: events.append("build"))
+    monkeypatch.setattr(catalog, "ensure_device_reachable", stubs.returning(None))
+    monkeypatch.setattr(catalog, "validate_firmware_image", stubs.returning(None))
+    monkeypatch.setattr(catalog, "require_nix_era", stubs.returning(None))
+    monkeypatch.setattr(catalog, "preflight_device", stubs.returning(None))
+    monkeypatch.setattr(catalog, "require_fresh_firmware_staging", stubs.returning(None))
+    monkeypatch.setattr(catalog, "ensure_nix_cli", stubs.recording(events, "ensure cli"))
+    monkeypatch.setattr(catalog, "resolve_packages", stubs.recording(events, "resolve"))
+    monkeypatch.setattr(catalog, "build_packages", stubs.recording(events, "build"))
 
     def versions(_dev: object, image: Image, cycle: catalog.FirmwareCycle) -> None:
         state.cycle = cycle
@@ -159,11 +160,11 @@ def harness(  # noqa: PLR0915
         cycle.image_version = parse_bos_version(image.version)
 
     monkeypatch.setattr(catalog, "preflight_versions", versions)
-    monkeypatch.setattr(
-        catalog,
-        "read_manifest_packages",
-        lambda _dev: {"core": {"store_path": state.core_store_path}},
-    )
+
+    def manifest_packages(_dev: object) -> dict[str, dict[str, str]]:
+        return {"core": {"store_path": state.core_store_path}}
+
+    monkeypatch.setattr(catalog, "read_manifest_packages", manifest_packages)
 
     def snapshot_upgrade(_dev: object, cycle: catalog.FirmwareCycle) -> None:
         cycle.servers_snapshot = catalog.FileSnapshot(catalog.SERVERS_JSON, None)
@@ -181,9 +182,9 @@ def harness(  # noqa: PLR0915
     monkeypatch.setattr(catalog, "snapshot_upgrade_config", snapshot_upgrade)
     monkeypatch.setattr(catalog, "snapshot_opkg_keys", snapshot_keys)
     monkeypatch.setattr(catalog, "snapshot_bos_version", snapshot_bos)
-    monkeypatch.setattr(catalog, "ensure_anchor_version", lambda *_args: events.append("anchor"))
-    monkeypatch.setattr(catalog, "upload_firmware", lambda *_args: events.append("upload"))
-    monkeypatch.setattr(catalog, "trust_image_keys", lambda *_args: events.append("trust"))
+    monkeypatch.setattr(catalog, "ensure_anchor_version", stubs.recording(events, "anchor"))
+    monkeypatch.setattr(catalog, "upload_firmware", stubs.recording(events, "upload"))
+    monkeypatch.setattr(catalog, "trust_image_keys", stubs.recording(events, "trust"))
 
     def remove(_dev: object, _image: Image, cycle: catalog.FirmwareCycle) -> None:
         events.append("remove upload")
@@ -204,43 +205,38 @@ def harness(  # noqa: PLR0915
         events.append("start host")
 
     monkeypatch.setattr(catalog, "start_upgrade_server", start_server)
-    monkeypatch.setattr(
-        catalog, "register_upgrade_server", lambda *_args: events.append("register")
-    )
+    monkeypatch.setattr(catalog, "register_upgrade_server", stubs.recording(events, "register"))
     monkeypatch.setattr(
         catalog,
         "require_exclusive_package_server",
-        lambda *_args: events.append("restrict servers"),
+        stubs.recording(events, "restrict servers"),
     )
-    monkeypatch.setattr(
-        catalog, "stop_upgrade_server_group", lambda *_args: events.append("stop host")
-    )
+    monkeypatch.setattr(catalog, "stop_upgrade_server_group", stubs.recording(events, "stop host"))
 
     def login(_dev: object, cycle: catalog.GrpcSession) -> None:
         cycle.cookie = "session_id=test"
         events.append("login")
 
     monkeypatch.setattr(catalog, "grpc_login", login)
-    monkeypatch.setattr(catalog, "require_auto_upgrade_disabled", lambda *_args: None)
-    monkeypatch.setattr(
-        catalog,
-        "snapshot_device_identity",
-        lambda _dev, cycle: setattr(cycle, "device_identity", "aa:bb:cc:dd:ee:ff"),
-    )
-    monkeypatch.setattr(
-        catalog,
-        "pin_device_address",
-        lambda dev, cycle: setattr(cycle, "pinned_host", dev.host),
-    )
-    monkeypatch.setattr(catalog, "verify_device_identity", lambda *_args: None)
+    monkeypatch.setattr(catalog, "require_auto_upgrade_disabled", stubs.returning(None))
+
+    def snapshot_identity(_dev: object, cycle: catalog.FirmwareCycle) -> None:
+        cycle.device_identity = "aa:bb:cc:dd:ee:ff"
+
+    def pin_address(dev: Device, cycle: catalog.FirmwareCycle) -> None:
+        cycle.pinned_host = dev.host
+
+    monkeypatch.setattr(catalog, "snapshot_device_identity", snapshot_identity)
+    monkeypatch.setattr(catalog, "pin_device_address", pin_address)
+    monkeypatch.setattr(catalog, "verify_device_identity", stubs.returning(None))
 
     def snapshot_service(_dev: object, cycle: catalog.FirmwareCycle) -> None:
         cycle.init_script_snapshot = catalog.FileSnapshot(catalog._INIT_SCRIPT, None)
         events.append("snapshot service script")
 
     monkeypatch.setattr(catalog, "snapshot_service_script", snapshot_service)
-    monkeypatch.setattr(catalog, "point_bmc_at_index", lambda *_args: events.append("point"))
-    monkeypatch.setattr(catalog, "await_bmc_ready", lambda *_args: events.append("await"))
+    monkeypatch.setattr(catalog, "point_bmc_at_index", stubs.recording(events, "point"))
+    monkeypatch.setattr(catalog, "await_bmc_ready", stubs.recording(events, "await"))
 
     def check(
         _dev: object,
@@ -261,20 +257,24 @@ def harness(  # noqa: PLR0915
         events.append("boot id")
 
     monkeypatch.setattr(catalog, "snapshot_boot_id", boot_id)
-    monkeypatch.setattr(catalog, "classify_stream", lambda _result: state.outcome)
-    monkeypatch.setattr(catalog, "poll_boot_id_change", lambda *_args, **_kwargs: True)
+
+    def classify(_result: object) -> catalog.StreamOutcome:
+        return state.outcome
+
+    monkeypatch.setattr(catalog, "classify_stream", classify)
+    monkeypatch.setattr(catalog, "poll_boot_id_change", stubs.returning(True))
     monkeypatch.setattr(
         catalog,
         "read_flashed_version",
-        lambda _dev: parse_bos_version("2025-07-01-0-0badc0de-25.07"),
+        stubs.returning(parse_bos_version("2025-07-01-0-0badc0de-25.07")),
     )
-    monkeypatch.setattr(catalog, "verify_stock_service", lambda _dev: events.append("verify"))
+    monkeypatch.setattr(catalog, "verify_stock_service", stubs.recording(events, "verify"))
     monkeypatch.setattr(
-        catalog, "restore_after_success", lambda *_args: events.append("restore success")
+        catalog, "restore_after_success", stubs.recording(events, "restore success")
     )
-    monkeypatch.setattr(catalog, "quiesce_bmc", lambda _dev: events.append("quiesce"))
+    monkeypatch.setattr(catalog, "quiesce_bmc", stubs.recording(events, "quiesce"))
     monkeypatch.setattr(
-        catalog, "restore_servers_config", lambda *_args: events.append("restore servers")
+        catalog, "restore_servers_config", stubs.recording(events, "restore servers")
     )
 
     def restore_file(_dev: object, snap: catalog.FileSnapshot) -> None:
@@ -288,9 +288,13 @@ def harness(  # noqa: PLR0915
             events.append("restore file")
 
     monkeypatch.setattr(catalog, "restore_remote_file", restore_file)
-    monkeypatch.setattr(catalog, "restore_remote_dir", lambda *_args: events.append("restore keys"))
-    monkeypatch.setattr(catalog, "bmc_log_tail", lambda *_args: "bmc-tail")
-    monkeypatch.setattr(catalog, "scan_bmc_pids", lambda _dev: [])
+    monkeypatch.setattr(catalog, "restore_remote_dir", stubs.recording(events, "restore keys"))
+    monkeypatch.setattr(catalog, "bmc_log_tail", stubs.returning("bmc-tail"))
+
+    def no_pids(_dev: object) -> list[int]:
+        return []
+
+    monkeypatch.setattr(catalog, "scan_bmc_pids", no_pids)
 
     def run_stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
         cycle.started_upgrade = True
@@ -323,7 +327,7 @@ def _run(harness: SimpleNamespace, **kwargs: object) -> None:
     harness.procedure.run(
         dev=harness.dev,
         backend=harness.backend,
-        make_index_server=lambda _root: harness.server,
+        make_index_server=stubs.returning(harness.server),
         stream=kwargs.pop("stream", harness.stream),
         **kwargs,
     )
@@ -334,7 +338,7 @@ def test_matching_staging_marker_aborts_before_device_preparation(
 ) -> None:
     monkeypatch.setattr(catalog, "require_fresh_firmware_staging", _require_fresh_firmware_staging)
     monkeypatch.setattr(
-        harness.dev, "read", lambda _command: Image(harness.procedure.image).version
+        harness.dev, "read", stubs.returning(Image(harness.procedure.image).version)
     )
     with pytest.raises(Abort, match="reboot the device"):
         _run(harness)
@@ -349,10 +353,9 @@ def test_empty_package_offer_restores_configuration_without_starting_upgrade(
 ) -> None:
     image = Image(harness.procedure.image)
     monkeypatch.setattr(catalog, "check_for_firmware_upgrade", _check_for_firmware_upgrade)
-    monkeypatch.setattr(
-        catalog,
-        "_grpcurl",
-        lambda *_args, **_kwargs: {
+
+    def grpcurl(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {
             "upgradeId": "firmware-only",
             "firmware": {
                 "version": image.version,
@@ -360,8 +363,9 @@ def test_empty_package_offer_restores_configuration_without_starting_upgrade(
                 "fileSizeBytes": str(image.size),
             },
             "disruption": "UPGRADE_DISRUPTION_REBOOT",
-        },
-    )
+        }
+
+    monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
     with pytest.raises(Abort, match="no package changes"):
         _run(harness)
     assert not harness.state.cycle.started_upgrade
@@ -378,10 +382,9 @@ def test_allow_empty_plan_runs_firmware_only_upgrade(
     image = Image(harness.procedure.image)
     harness.procedure.allow_empty_plan = True
     monkeypatch.setattr(catalog, "check_for_firmware_upgrade", _check_for_firmware_upgrade)
-    monkeypatch.setattr(
-        catalog,
-        "_grpcurl",
-        lambda *_args, **_kwargs: {
+
+    def grpcurl(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {
             "upgradeId": "firmware-only",
             "firmware": {
                 "version": image.version,
@@ -389,13 +392,13 @@ def test_allow_empty_plan_runs_firmware_only_upgrade(
                 "fileSizeBytes": str(image.size),
             },
             "disruption": "UPGRADE_DISRUPTION_REBOOT",
-        },
-    )
-    monkeypatch.setattr(
-        catalog,
-        "require_fresh_firmware_staging",
-        lambda *_args: pytest.fail("staging gate must be disabled"),
-    )
+        }
+
+    def staging_gate(*_args: object) -> NoReturn:
+        pytest.fail("staging gate must be disabled")
+
+    monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
+    monkeypatch.setattr(catalog, "require_fresh_firmware_staging", staging_gate)
 
     def stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
         cycle.started_upgrade = True
@@ -419,9 +422,7 @@ def test_allow_empty_plan_runs_firmware_only_upgrade(
 def test_registration_failure_restores_in_mandated_order_and_never_streams(
     harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        catalog, "register_upgrade_server", lambda *_args: (_ for _ in ()).throw(Abort("register"))
-    )
+    monkeypatch.setattr(catalog, "register_upgrade_server", stubs.raising(Abort("register")))
     streamed = False
 
     def stream(*_args: object) -> catalog.StreamResult:
@@ -456,9 +457,7 @@ def test_package_server_start_failure_stops_stored_process(
 def test_failed_upload_removes_partial_tar(
     harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        catalog, "upload_firmware", lambda *_args: (_ for _ in ()).throw(Abort("upload"))
-    )
+    monkeypatch.setattr(catalog, "upload_firmware", stubs.raising(Abort("upload")))
     with pytest.raises(Abort, match="upload"):
         _run(harness)
     assert "remove upload" in harness.events
@@ -468,7 +467,7 @@ def test_failed_upload_removes_partial_tar(
 def test_pre_mutation_failure_touches_no_device(
     harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
-    monkeypatch.setattr(catalog, stage, lambda *_args: (_ for _ in ()).throw(Abort(stage)))
+    monkeypatch.setattr(catalog, stage, stubs.raising(Abort(stage)))
     with pytest.raises(Abort, match=stage):
         _run(harness)
     assert not {"quiesce", "restore servers", "restore nix", "restore keys"} & set(harness.events)
@@ -487,11 +486,10 @@ def test_possibly_accepted_matching_reboot_restores_but_aborts(harness: SimpleNa
 def test_spawn_failure_uses_immediate_restore(
     harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        catalog,
-        "poll_boot_id_change",
-        lambda *_args, **_kwargs: pytest.fail("boot resolver called"),
-    )
+    def poll(*_args: object, **_kwargs: object) -> NoReturn:
+        pytest.fail("boot resolver called")
+
+    monkeypatch.setattr(catalog, "poll_boot_id_change", poll)
 
     def stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
         cycle.started_upgrade = False
@@ -505,13 +503,11 @@ def test_spawn_failure_uses_immediate_restore(
 def test_restore_failure_retains_hosts_and_snapshot_and_reports_both(
     harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        catalog, "register_upgrade_server", lambda *_args: (_ for _ in ()).throw(Abort("original"))
-    )
+    monkeypatch.setattr(catalog, "register_upgrade_server", stubs.raising(Abort("original")))
     monkeypatch.setattr(
         catalog,
         "restore_servers_config",
-        lambda *_args: (_ for _ in ()).throw(Abort("push failed")),
+        stubs.raising(Abort("push failed")),
     )
     with pytest.raises(Abort) as error:
         _run(harness)
@@ -693,11 +689,11 @@ def test_resolution_error_interrupt_retains_servers_and_reports_recovery(
     reports: list[str] = []
     sleeps: list[float] = []
 
-    monkeypatch.setattr(catalog, "poll_boot_id_change", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(catalog, "poll_boot_id_change", stubs.returning(True))
     monkeypatch.setattr(
         catalog,
         "read_flashed_version",
-        lambda _dev: (_ for _ in ()).throw(OSError("version read failed")),
+        stubs.raising(OSError("version read failed")),
     )
     monkeypatch.setattr("bmc_tui.console.warn", reports.append)
 
@@ -795,9 +791,9 @@ def test_terminal_failure_without_same_boot_routes_to_boot_resolver(
 
     monkeypatch.setattr(catalog, "poll_boot_id_change", poll)
     if gate == "unreachable":
-        monkeypatch.setattr(harness.dev, "read", lambda _cmd: (_ for _ in ()).throw(OSError()))
+        monkeypatch.setattr(harness.dev, "read", stubs.raising(OSError()))
     else:
-        monkeypatch.setattr(harness.dev, "read", lambda _cmd: "boot-b")
+        monkeypatch.setattr(harness.dev, "read", stubs.returning("boot-b"))
     with pytest.raises(Abort, match="stream diagnostic"):
         _run(harness)
     assert polls == 2
@@ -828,7 +824,7 @@ def test_wrong_version_reboot_restores_then_aborts(
     monkeypatch.setattr(
         catalog,
         "read_flashed_version",
-        lambda _dev: parse_bos_version("2025-08-01-0-deadbeef-25.08"),
+        stubs.returning(parse_bos_version("2025-08-01-0-deadbeef-25.08")),
     )
     with pytest.raises(Abort, match=r"25\.08"):
         _run(harness)
@@ -859,14 +855,20 @@ def test_post_reboot_operations_use_new_numeric_pin(
 
     monkeypatch.setattr(catalog, "pin_device_address", pin)
     monkeypatch.setattr(catalog, "poll_boot_id_change", poll)
+
+    def verify(dev: _Device) -> None:
+        restores.append(f"verify:{dev.host}")
+
+    def restore(dev: _Device, _cycle: object) -> None:
+        restores.append(dev.host)
+
+    def make_device(host: str) -> _Device:
+        return _Device(harness.events, host)
+
     monkeypatch.setattr(catalog, "read_flashed_version", read_version)
-    monkeypatch.setattr(
-        catalog, "verify_stock_service", lambda dev: restores.append(f"verify:{dev.host}")
-    )
-    monkeypatch.setattr(
-        catalog, "restore_after_success", lambda dev, _cycle: restores.append(dev.host)
-    )
-    _run(harness, make_device=lambda host: _Device(harness.events, host))
+    monkeypatch.setattr(catalog, "verify_stock_service", verify)
+    monkeypatch.setattr(catalog, "restore_after_success", restore)
+    _run(harness, make_device=make_device)
     assert polls == ["deck", "192.0.2.11"]
     assert versions == ["192.0.2.11"]
     assert restores == ["verify:192.0.2.11", "192.0.2.11"]
@@ -877,16 +879,20 @@ def test_same_boot_cleanup_uses_original_numeric_pin(
 ) -> None:
     harness.state.outcome = catalog.StreamOutcome.TERMINAL_FAILURE
     restored: list[str] = []
-    monkeypatch.setattr(
-        catalog,
-        "pin_device_address",
-        lambda _dev, cycle: setattr(cycle, "pinned_host", "192.0.2.10"),
-    )
-    monkeypatch.setattr(
-        catalog, "restore_servers_config", lambda dev, _cycle: restored.append(dev.host)
-    )
+
+    def pin(_dev: object, cycle: catalog.FirmwareCycle) -> None:
+        cycle.pinned_host = "192.0.2.10"
+
+    def restore(dev: _Device, _cycle: object) -> None:
+        restored.append(dev.host)
+
+    def make_device(host: str) -> _Device:
+        return _Device(harness.events, host)
+
+    monkeypatch.setattr(catalog, "pin_device_address", pin)
+    monkeypatch.setattr(catalog, "restore_servers_config", restore)
     with pytest.raises(Abort, match="stream diagnostic"):
-        _run(harness, make_device=lambda host: _Device(harness.events, host))
+        _run(harness, make_device=make_device)
     assert restored == ["192.0.2.10"]
 
 
@@ -1083,7 +1089,7 @@ def test_boot_resolution_deadline_defers_to_active_transfer(
         now += seconds
 
     monkeypatch.setattr(catalog, "poll_boot_id_change", poll)
-    monkeypatch.setattr("bmc_tui.console.warn", lambda *_args: None)
+    monkeypatch.setattr("bmc_tui.console.warn", stubs.returning(None))
     with pytest.raises(Abort, match="boot id did not change"):
         _run(harness, sleep=advance, clock=lambda: now)
     assert polls == 4, "expiry must wait for the in-flight download to quiesce"
@@ -1161,8 +1167,15 @@ def test_package_server_group_shutdown_escalates_and_verifies_ports(
     )
     signals: list[tuple[int, signal.Signals]] = []
     checked: list[int] = []
-    monkeypatch.setattr(os, "killpg", lambda pid, sig: signals.append((pid, sig)))
-    monkeypatch.setattr(catalog.socket, "socket", lambda *_args: _Socket(checked))
+
+    def killpg(pid: int, sig: signal.Signals) -> None:
+        signals.append((pid, sig))
+
+    def socket(*_args: object) -> _Socket:
+        return _Socket(checked)
+
+    monkeypatch.setattr(os, "killpg", killpg)
+    monkeypatch.setattr(catalog.socket, "socket", socket)
     catalog.stop_upgrade_server_group(cycle)
     assert signals == [(4321, signal.SIGTERM), (4321, signal.SIGKILL)]
     assert checked == [8080, 8081]

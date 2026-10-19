@@ -416,7 +416,11 @@ def test_unexpected_error_reaches_the_traceback_hook(
     capfd: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[type[BaseException]] = []
-    monkeypatch.setattr(sys, "excepthook", lambda kind, *_rest: seen.append(kind))
+
+    def excepthook(kind: type[BaseException], *_rest: object) -> None:
+        seen.append(kind)
+
+    monkeypatch.setattr(sys, "excepthook", excepthook)
     handler = _Server.__new__(_Server)
     try:
         raise ValueError("boom")

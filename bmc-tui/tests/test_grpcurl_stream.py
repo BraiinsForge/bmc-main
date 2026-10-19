@@ -30,7 +30,7 @@ from collections.abc import Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -51,13 +51,15 @@ _VERIFYING = b"\x18\x02"
 _APPLYING = b"\x18\x03"
 
 
+def _raw(payload: bytes) -> bytes:
+    return payload
+
+
 def _handler(
     behavior: Callable[[bytes, Any], Iterator[bytes]],
 ) -> Any:
     method = grpc.unary_stream_rpc_method_handler(
-        behavior,
-        request_deserializer=lambda payload: payload,
-        response_serializer=lambda payload: payload,
+        behavior, request_deserializer=_raw, response_serializer=_raw
     )
     return grpc.method_handlers_generic_handler(
         "braiins.bmc.web.UpgradeService", {"StartUpgrade": method}
@@ -101,7 +103,7 @@ def _objects(text: str) -> list[dict[str, Any]]:
     while remainder.strip():
         value, end = decoder.raw_decode(remainder.lstrip())
         if isinstance(value, dict):
-            values.append(value)
+            values.append(cast("dict[str, Any]", value))
         remainder = remainder.lstrip()[end:]
     return values
 

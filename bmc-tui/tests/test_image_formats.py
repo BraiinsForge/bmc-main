@@ -30,6 +30,7 @@ from bmc_tui.nix import StorePath
 from bmc_tui.procedures import image_formats as fmt
 from bmc_tui.server import Request, ResponseValue
 from bmc_tui.stage import Abort
+from tests import stubs
 
 BASE = "http://host:8000"
 
@@ -219,7 +220,7 @@ def test_synthesised_fixtures_land_on_the_sides_of_the_caps_they_probe() -> None
 
 def test_host_build_pin_accepts_the_expected_package(monkeypatch: pytest.MonkeyPatch) -> None:
     reports: list[str] = []
-    monkeypatch.setattr(fmt.console, "kv", lambda *_args: None)
+    monkeypatch.setattr(fmt.console, "kv", stubs.returning(None))
     monkeypatch.setattr(fmt.console, "ok", reports.append)
     monkeypatch.setattr(fmt.console, "warn", reports.append)
     expected = StorePath("/nix/store/aaa-bmc-wasm-host")
@@ -231,7 +232,7 @@ def test_host_build_pin_accepts_the_expected_package(monkeypatch: pytest.MonkeyP
 
 def test_host_build_pin_warns_about_another_package(monkeypatch: pytest.MonkeyPatch) -> None:
     reports: list[str] = []
-    monkeypatch.setattr(fmt.console, "kv", lambda *_args: None)
+    monkeypatch.setattr(fmt.console, "kv", stubs.returning(None))
     monkeypatch.setattr(fmt.console, "ok", reports.append)
     monkeypatch.setattr(fmt.console, "warn", reports.append)
 

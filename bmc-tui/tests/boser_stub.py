@@ -29,10 +29,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
 from typing import Any, Self, cast, override
 
+from bmc_tui.json_value import Json
+
 TOKEN = "stub-token"
 OFFER_ID = "9e2c7c2e-0000-4000-8000-00000000abcd"
 
-CHECK_OFFER = {
+CHECK_OFFER: dict[str, Json] = {
     "offer": {"id": OFFER_ID, "kind": "PACKAGES", "disruption": "NONE"},
     "firmware": None,
     "packages": {
@@ -70,7 +72,7 @@ REALIZING = {
 }
 COMPLETED = {"state": "COMPLETED", "id": OFFER_ID, "kind": "PACKAGES"}
 REBOOTING = {"state": "REBOOTING", "id": OFFER_ID, "kind": "FIRMWARE_AND_PACKAGES"}
-CHECK_FIRMWARE = {
+CHECK_FIRMWARE: dict[str, Json] = {
     **CHECK_OFFER,
     "offer": {"id": OFFER_ID, "kind": "FIRMWARE_AND_PACKAGES", "disruption": "REBOOT"},
     "firmware": {

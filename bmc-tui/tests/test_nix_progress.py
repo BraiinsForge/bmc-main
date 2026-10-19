@@ -194,11 +194,11 @@ def test_the_error_tail_is_bounded_while_it_is_collected(
     hide unbounded growth: assert on what collection hands over, not what prints."""
     monkeypatch.setattr(nix_progress.tempfile, "gettempdir", lambda: str(tmp_path))
     handed_over: list[list[str]] = []
-    monkeypatch.setattr(
-        nix_progress,
-        "_report_failure",
-        lambda errors, log_path: handed_over.append(list(errors)),
-    )
+
+    def report_failure(errors: Iterable[str], _log_path: Path) -> None:
+        handed_over.append(list(errors))
+
+    monkeypatch.setattr(nix_progress, "_report_failure", report_failure)
     noise = [f"line {i}" for i in range(nix_progress.ERROR_TAIL * 3)]
     dev = Device("h", backend=_Exec(noise, code=1))
 

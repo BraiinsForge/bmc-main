@@ -20,12 +20,13 @@
 
 """Unit tests for ordinary package deployment choreography."""
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
 from bmc_tui import catalog
 from bmc_tui.procedures import deploy
+from tests import stubs
 
 
 class _Device:
@@ -40,8 +41,8 @@ def test_deploy_observes_activation_without_hard_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(deploy, "Device", _Device)
-    monkeypatch.setattr(deploy.console, "header", lambda _title: None)
-    monkeypatch.setattr(deploy.nix, "real", lambda **_kwargs: object())
+    monkeypatch.setattr(deploy.console, "header", stubs.returning(None))
+    monkeypatch.setattr(deploy.nix, "real", stubs.returning(object()))
     for name in (
         "ensure_grpcurl",
         "ensure_device_reachable",
@@ -55,21 +56,20 @@ def test_deploy_observes_activation_without_hard_restart(
         "restore_cleared_servers",
         "disable_auto_upgrade",
     ):
-        monkeypatch.setattr(deploy.catalog, name, lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(deploy.catalog, name, stubs.returning(None))
 
     old_pid = catalog.Pid("111")
     observed: list[tuple[Any, catalog.Pid | None]] = []
-    monkeypatch.setattr(deploy.catalog, "compositor_pid", lambda _dev: old_pid)
-    monkeypatch.setattr(
-        deploy.catalog,
-        "await_package_activation",
-        lambda dev, *, old_pid: observed.append((dev, old_pid)),
-    )
-    monkeypatch.setattr(
-        deploy.catalog,
-        "restart_compositor",
-        lambda *_args, **_kwargs: pytest.fail("ordinary deploy must not hard-restart"),
-    )
+
+    def await_activation(dev: object, *, old_pid: catalog.Pid | None) -> None:
+        observed.append((dev, old_pid))
+
+    def restart(*_args: object, **_kwargs: object) -> NoReturn:
+        pytest.fail("ordinary deploy must not hard-restart")
+
+    monkeypatch.setattr(deploy.catalog, "compositor_pid", stubs.returning(old_pid))
+    monkeypatch.setattr(deploy.catalog, "await_package_activation", await_activation)
+    monkeypatch.setattr(deploy.catalog, "restart_compositor", restart)
 
     deploy.Deploy(device="deck").run()
 
@@ -81,8 +81,8 @@ def test_deploy_disables_automatic_upgrades_before_touching_the_device(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(deploy, "Device", _Device)
-    monkeypatch.setattr(deploy.console, "header", lambda _title: None)
-    monkeypatch.setattr(deploy.nix, "real", lambda **_kwargs: object())
+    monkeypatch.setattr(deploy.console, "header", stubs.returning(None))
+    monkeypatch.setattr(deploy.nix, "real", stubs.returning(object()))
     calls: list[str] = []
     for name in (
         "ensure_grpcurl",
@@ -99,9 +99,7 @@ def test_deploy_disables_automatic_upgrades_before_touching_the_device(
         "restore_cleared_servers",
         "disable_auto_upgrade",
     ):
-        monkeypatch.setattr(
-            deploy.catalog, name, lambda *_args, _name=name, **_kwargs: calls.append(_name)
-        )
+        monkeypatch.setattr(deploy.catalog, name, stubs.recording(calls, name))
 
     deploy.Deploy(device="deck").run()
 
