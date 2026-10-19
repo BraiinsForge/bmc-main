@@ -68,6 +68,7 @@ __all__ = [
     "human_size",
     "instruct_user",
     "kv",
+    "line",
     "lit",
     "live_scrollback",
     "mark_run_start",
@@ -108,7 +109,7 @@ _MAX_BLANK = 2
 _LITERAL = "magenta"
 
 
-def _print(*args: object, style: str | None = None, highlight: bool = True) -> None:
+def line(*args: object, style: str | None = None, highlight: bool = True) -> None:
     """Print with blank line collapsing."""
     global _blank_count  # noqa: PLW0603
     is_blank = not args or (len(args) == 1 and args[0] == "")
@@ -144,10 +145,10 @@ def format_ts(ts: datetime) -> str:
 
 def header(title: str) -> None:
     """Print a section header with vertical spacing."""
-    _print()
-    _print()
+    line()
+    line()
     out.rule(f"[bold]{title}[/bold]", style="cyan", align="left")
-    _print()
+    line()
 
 
 def styled_name(dotted: str) -> Text:
@@ -184,12 +185,12 @@ def styled_data(data: dict[str, object]) -> Text:
 
 def blank() -> None:
     """Print a blank line, subject to the same collapsing as any other."""
-    _print()
+    line()
 
 
 def ok(msg: str) -> None:
     """Print a success message (literals in `msg` may use console.lit)."""
-    _print(f"[green]✓[/green] {msg}", highlight=False)
+    line(f"[green]✓[/green] {msg}", highlight=False)
 
 
 def warn(msg: str) -> None:
@@ -204,7 +205,7 @@ def error(msg: str) -> None:
 
 def kv(key: str, value: str) -> None:
     """Print a key-value pair; the value is styled as a literal."""
-    _print(Text.assemble((f"{key}: ", "dim"), (value, _LITERAL)))
+    line(Text.assemble((f"{key}: ", "dim"), (value, _LITERAL)))
 
 
 def lit(value: object) -> str:

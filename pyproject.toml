@@ -67,7 +67,11 @@ exclude = [
     "widgets-wasm/iss-position/tools",
 ]
 executionEnvironments = [
+    # Tests reach into internals on purpose.
+    # The first env whose root holds a file wins, so each precedes its package's env.
+    { root = "bmc-tui/tests", extraPaths = ["bmc-tui"], reportPrivateUsage = false },
     { root = "bmc-tui" },
+    { root = "bmc-virt/harness/tests", extraPaths = ["bmc-virt/harness", "bmc-tui"], reportPrivateUsage = false },
     # bmc_tui as the in-repo source it is, not the untyped install the venv holds.
     { root = "bmc-virt/harness", extraPaths = ["bmc-tui"] },
     { root = "scripts" },

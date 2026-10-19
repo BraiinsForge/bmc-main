@@ -64,6 +64,10 @@ class Ssh:
         self._user = user
         self._password = password
 
+    @property
+    def host(self) -> str:
+        return self._host
+
     def _ssh_cmd(self, command: str, *, tty: bool = False) -> list[str]:
         """Build the full ssh command line."""
         cmd = ["sshpass", "-p", self._password, "ssh"]

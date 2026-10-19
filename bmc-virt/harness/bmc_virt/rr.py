@@ -36,7 +36,7 @@ from bmc_virt.paths import RR_TRACE_DIR
 class _Daemon(Protocol):
     """The part of a VM an rr handle drives; the VM passes itself."""
 
-    def _send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
+    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
 
     def pull(self, *, src: str, dst: str | pathlib.Path) -> None: ...
 
@@ -66,14 +66,14 @@ class RrHandle:
         """
         _check_platform()
         _warn_amd_msr()
-        return self._vm._send_cmd(Cmd.RR_START, timeout=timeout, verbose=verbose)
+        return self._vm.send_cmd(Cmd.RR_START, timeout=timeout, verbose=verbose)
 
     def stop(self, *, timeout: float = 30, verbose: bool = False) -> Ack:
         """Stop rr recording and finalize the trace.
 
         The ack's data["trace"] contains the guest-side trace path.
         """
-        ack = self._vm._send_cmd(Cmd.RR_STOP, timeout=timeout, verbose=verbose)
+        ack = self._vm.send_cmd(Cmd.RR_STOP, timeout=timeout, verbose=verbose)
         if ack.ok and ack.data.get("trace"):
             self._last_trace = ack.data["trace"]
         return ack

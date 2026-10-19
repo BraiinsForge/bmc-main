@@ -65,7 +65,7 @@ class ServiceHandle:
 
     def restart(self, *, timeout: float = 30, verbose: bool = False) -> Ack:
         """Restart the service and return the ack."""
-        return self._vm._send_cmd(
+        return self._vm.send_cmd(
             Cmd.SERVICE_RESTART, timeout=timeout, verbose=verbose, name=self._name
         )
 
@@ -268,7 +268,7 @@ class VM:
 
     def exec(self, cmd: str, *, timeout: float = 30, verbose: bool = False) -> Ack:
         """Execute a shell command on the VM via the event daemon."""
-        return self._send_cmd(Cmd.SHELL_EXEC, timeout=timeout, verbose=verbose, cmd=cmd)
+        return self.send_cmd(Cmd.SHELL_EXEC, timeout=timeout, verbose=verbose, cmd=cmd)
 
     # ── Service management ─────────────────────────────────────────────────────
 
@@ -280,7 +280,7 @@ class VM:
 
     def screenshot(self, path: str | Path, *, relay_port: int = 5910) -> Path:
         """Capture a screenshot from the relay daemon and save as PNG."""
-        frame = _capture_frame(host=self._ssh._host, port=relay_port)
+        frame = _capture_frame(host=self._ssh.host, port=relay_port)
         return frame.save_png(path)
 
     # ── rr debugger ─────────────────────────────────────────────────────────────
@@ -327,7 +327,7 @@ class VM:
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
-    def _send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: Any) -> Ack:
+    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: Any) -> Ack:
         """Send a command to the daemon and wait for its ack."""
         if verbose:
             cmd_sent(command, **data)

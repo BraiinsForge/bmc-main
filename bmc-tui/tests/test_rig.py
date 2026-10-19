@@ -31,6 +31,7 @@ import pytest
 
 from bmc_tui import rig
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
+from bmc_tui.server import CHUNK_BYTES
 from bmc_tui.stage import Abort
 
 _PROFILE = "/nix/var/nix/gcroots/profiles/bmc"
@@ -257,7 +258,7 @@ def test_fault_stall_retains_a_resumable_tarball_prefix(tmp_path: Path) -> None:
     with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
         url = f"http://127.0.0.1:{server.port}/tarballs/nix-va.tar.gz"
         tarball = a.tarball.read_bytes()
-        prefix = tarball[: min(rig.CHUNK_BYTES, len(tarball) - 1)]
+        prefix = tarball[: min(CHUNK_BYTES, len(tarball) - 1)]
         assert 0 < len(prefix) < len(tarball)
         server.set_fault(rig.FaultMode.STALL)
         try:
@@ -302,7 +303,7 @@ def test_fault_stall_is_path_selective_feed_survives(tmp_path: Path) -> None:
             feed = json.loads(_get(f"{base}/{rig.FEED_NAME}"))
             assert feed["entries"][0]["bos_version"] == "va"
             tarball = a.tarball.read_bytes()
-            prefix = tarball[: min(rig.CHUNK_BYTES, len(tarball) - 1)]
+            prefix = tarball[: min(CHUNK_BYTES, len(tarball) - 1)]
             with urllib.request.urlopen(f"{base}/tarballs/nix-va.tar.gz", timeout=1) as response:
                 assert response.read(len(prefix)) == prefix
                 with pytest.raises(TimeoutError):

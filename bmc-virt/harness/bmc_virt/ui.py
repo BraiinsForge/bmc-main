@@ -43,7 +43,7 @@ def event(evt: ReceivedEvent) -> None:
     if evt.data:
         parts.append(_c.styled_data(evt.data))
 
-    _c._print(*parts)
+    _c.line(*parts)
 
 
 def event_raw(evt: ReceivedEvent) -> None:
@@ -55,7 +55,7 @@ def cmd_sent(command: Cmd, **data: object) -> None:
     """Print a command being sent (like zx $.verbose)."""
     # For shell.exec, show `$ <command>` like a terminal
     if command == Cmd.SHELL_EXEC and "cmd" in data:
-        _c._print(f"[dim]$[/dim] [bold]{data['cmd']}[/bold]")
+        _c.line(f"[dim]$[/dim] [bold]{data['cmd']}[/bold]")
         return
     # For other commands: `$ service.restart name="d-bmc-virt-relay"`
     line = Text("$ ", style="dim")
@@ -63,7 +63,7 @@ def cmd_sent(command: Cmd, **data: object) -> None:
     if data:
         line.append(" ")
         line.append_text(_c.styled_data(data))
-    _c._print(line)
+    _c.line(line)
 
 
 def ack_result(result: Ack) -> None:
@@ -72,16 +72,16 @@ def ack_result(result: Ack) -> None:
     if has_output:
         if result.data.get("stdout"):
             for line in result.data["stdout"].rstrip().splitlines():
-                _c._print(f"[dim]│[/dim] {line}")
+                _c.line(f"[dim]│[/dim] {line}")
         if result.data.get("stderr"):
             for line in result.data["stderr"].rstrip().splitlines():
-                _c._print(f"[dim]│[/dim] [yellow]{line}[/yellow]")
+                _c.line(f"[dim]│[/dim] [yellow]{line}[/yellow]")
     else:
-        _c._print("[dim]│ (no output)[/dim]")
+        _c.line("[dim]│ (no output)[/dim]")
     if result.ok:
-        _c._print("[bold green]OK[/bold green]")
+        _c.line("[bold green]OK[/bold green]")
     else:
-        _c._print("[bold red]FAIL[/bold red]")
+        _c.line("[bold red]FAIL[/bold red]")
         if result.error:
-            _c._print(f"  {result.error}", style="red")
-    _c._print()
+            _c.line(f"  {result.error}", style="red")
+    _c.line()

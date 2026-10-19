@@ -28,6 +28,7 @@ import shlex
 import subprocess
 import sys
 import tarfile
+import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
@@ -35,7 +36,8 @@ from typing import Literal, Required, TypedDict, Unpack, cast, override
 
 import pytest
 
-from bmc_tui import catalog, nix_progress, rig
+from bmc_tui import catalog, console, rig
+from bmc_tui.bos_version import VersionName, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.json_value import Json
@@ -277,7 +279,7 @@ def test_memory_shortfall_reports_stale_firmware_before_asking(
     """A non-interactive run declines the prompt, so the listing has to be printed
     first — otherwise the operator is told there is no RAM but not what took it."""
 
-    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(False))
+    monkeypatch.setattr(console, "confirm", stubs.returning(False))
     dev = Device(
         "h", backend=_Exec(_routes({"MemAvailable": "102924", "ls -1 /tmp": "/tmp/old.tar\n"}))
     )
@@ -294,7 +296,7 @@ def test_memory_recovers_when_the_stale_firmware_is_removed(
     """Accepting the offer frees the tmpfs the tar held, so the run continues
     instead of making the operator re-invoke it."""
 
-    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(True))
+    monkeypatch.setattr(console, "confirm", stubs.returning(True))
     free = iter([100 * 1024 * 1024, 300 * 1024 * 1024])  # before the removal, then after
     backend = _Exec(_routes({"ls -1 /tmp": "/tmp/old.tar\n"}))
     dev = Device("h", backend=backend)
@@ -384,7 +386,7 @@ def test_cleanup_firmware_removes_uploaded_tar(tmp_path: Path) -> None:
 def test_sysupgrade_cleans_up_tmp_after_flash_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(nix_progress.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     image = _image(tmp_path)
     backend = _Exec(
         _routes(
@@ -2553,7 +2555,7 @@ def test_cleardown_skips_when_store_already_absent() -> None:
 
 
 def test_cleardown_aborts_when_declined(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(False))
+    monkeypatch.setattr(console, "confirm", stubs.returning(False))
     with pytest.raises(Abort, match="--yes"):
         catalog.clear_nix_store(Device("h", backend=_Exec(_cleardown_routes())))
 
@@ -2827,7 +2829,7 @@ def test_flash_e2e_never_skips_on_matching_version(tmp_path: Path) -> None:
 
 
 def test_flash_e2e_aborts_when_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(catalog.console, "confirm", stubs.returning(False))
+    monkeypatch.setattr(console, "confirm", stubs.returning(False))
     with pytest.raises(Abort, match="--yes"):
         catalog.flash_e2e(Device("h", backend=_Exec(_routes({}))), _image(tmp_path))
 
@@ -3538,31 +3540,25 @@ def test_preflight_versions_accepts_equal_and_older_release(
 
 
 def test_anchored_version_decrements_image_release() -> None:
-    running = catalog.parse_bos_version("2026-07-15-3-8a7eb005-26.08-plus-nightly")
+    running = parse_bos_version("2026-07-15-3-8a7eb005-26.08-plus-nightly")
 
-    anchored = catalog.anchored_version(
-        running, catalog.parse_bos_version("2026-08-01-0-00000001-26.08")
-    )
+    anchored = catalog.anchored_version(running, parse_bos_version("2026-08-01-0-00000001-26.08"))
     assert anchored.canonical == "2026-07-15-3-8a7eb005-26.07-plus-nightly"
 
-    borrowed = catalog.anchored_version(
-        running, catalog.parse_bos_version("2027-01-05-0-00000002-27.01")
-    )
-    assert borrowed.version == catalog.VersionName(26, 12, None)
+    borrowed = catalog.anchored_version(running, parse_bos_version("2027-01-05-0-00000002-27.01"))
+    assert borrowed.version == VersionName(26, 12, None)
 
-    patched = catalog.anchored_version(
-        running, catalog.parse_bos_version("2026-08-01-0-00000001-26.08.2")
-    )
-    assert patched.version == catalog.VersionName(26, 7, None)
+    patched = catalog.anchored_version(running, parse_bos_version("2026-08-01-0-00000001-26.08.2"))
+    assert patched.version == VersionName(26, 7, None)
 
     with pytest.raises(ValueError, match=r"0\.01"):
-        catalog.anchored_version(running, replace(running, version=catalog.VersionName(0, 1, None)))
+        catalog.anchored_version(running, replace(running, version=VersionName(0, 1, None)))
 
 
 def test_ensure_anchor_version_noop_when_running_is_older(tmp_path: Path) -> None:
     cycle = _firmware_cycle(tmp_path)
-    cycle.running_version = catalog.parse_bos_version("2025-06-15-0-acde0123-25.06")
-    cycle.image_version = catalog.parse_bos_version("2025-07-01-0-0badc0de-25.07")
+    cycle.running_version = parse_bos_version("2025-06-15-0-acde0123-25.06")
+    cycle.image_version = parse_bos_version("2025-07-01-0-0badc0de-25.07")
     backend = _Exec(_routes({}))
     catalog.ensure_anchor_version(Device("h", backend=backend), cycle)
     assert not any("printf" in argv[-1] for argv in backend.runs)
@@ -3574,8 +3570,8 @@ def test_ensure_anchor_version_rewrites_equal_or_newer_running(
     tmp_path: Path, running: str
 ) -> None:
     cycle = _firmware_cycle(tmp_path)
-    cycle.running_version = catalog.parse_bos_version(running)
-    cycle.image_version = catalog.parse_bos_version("2025-07-01-0-0badc0de-25.07")
+    cycle.running_version = parse_bos_version(running)
+    cycle.image_version = parse_bos_version("2025-07-01-0-0badc0de-25.07")
     backend = _Exec(_routes({}))
     catalog.ensure_anchor_version(Device("h", backend=backend), cycle)
     anchored = running.replace(running.rsplit("-", 1)[-1], "25.06")
@@ -3948,8 +3944,8 @@ class _IndexState:
 def _checked_firmware_cycle(tmp_path: Path) -> tuple[Image, catalog.FirmwareCycle]:
     image = _image(tmp_path, version="2025-07-01-0-0badc0de-25.07")
     cycle = _firmware_cycle(tmp_path)
-    cycle.running_version = catalog.parse_bos_version("2025-06-15-0-acde0123-25.06")
-    cycle.image_version = catalog.parse_bos_version(image.version)
+    cycle.running_version = parse_bos_version("2025-06-15-0-acde0123-25.06")
+    cycle.image_version = parse_bos_version(image.version)
     cycle.cookie = "session_id=test"
     return image, cycle
 
@@ -4148,7 +4144,7 @@ def test_run_firmware_stream_sets_flag_before_spawn_and_preserves_partial_json(
             '{"firmwarePhase":"FIRMWARE_UPGRADE_PHASE_DOWNLOADING"}\n{"download":'
         )
 
-    monkeypatch.setattr(catalog.subprocess, "Popen", popen)
+    monkeypatch.setattr(subprocess, "Popen", popen)
     result = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
     assert result.events == [{"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"}]
     assert '{"download":' in result.stderr
@@ -4164,7 +4160,7 @@ def test_run_firmware_stream_resets_flag_when_spawn_fails(
         assert cycle.started_upgrade is True
         raise OSError("missing grpcurl")
 
-    monkeypatch.setattr(catalog.subprocess, "Popen", popen)
+    monkeypatch.setattr(subprocess, "Popen", popen)
     with pytest.raises(OSError, match="missing grpcurl"):
         catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
     assert cycle.started_upgrade is False
@@ -4179,7 +4175,7 @@ def test_run_firmware_stream_decodes_formatted_error_status(
     def popen(*_args: object, **_kwargs: object) -> _StreamProcess:
         return _StreamProcess("", '{"code":13,"message":"failed verification"}', 1)
 
-    monkeypatch.setattr(catalog.subprocess, "Popen", popen)
+    monkeypatch.setattr(subprocess, "Popen", popen)
     result = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
     assert result.status_code == "Internal"
     assert result.status_message == "failed verification"

@@ -20,6 +20,7 @@
 
 """Unit tests for the @bmc progress consumer."""
 
+import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -141,7 +142,7 @@ def _log_path(tmp_path: Path) -> Path:
 def test_stream_flash_tees_every_line_to_the_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(nix_progress.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     dev = Device("h", backend=_Exec(_MIXED, code=0))
     log = nix_progress.stream_flash(dev, "sysupgrade x")
     assert log.parent == tmp_path
@@ -151,7 +152,7 @@ def test_stream_flash_tees_every_line_to_the_log(
 def test_each_flash_gets_its_own_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A pid-derived name is reused within one process, so a second flash would
     truncate the first run's log — the one record of what went wrong."""
-    monkeypatch.setattr(nix_progress.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     first = nix_progress.stream_flash(Device("h", backend=_Exec(["one"], code=0)), "sysupgrade x")
     second = nix_progress.stream_flash(Device("h", backend=_Exec(["two"], code=0)), "sysupgrade x")
     assert first != second
@@ -164,7 +165,7 @@ def test_stream_flash_frames_errors_and_points_at_the_log(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(nix_progress.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     lines = [
         _DOWNLOAD,
         "Error: nix-store --realise failed",
@@ -192,7 +193,7 @@ def test_the_error_tail_is_bounded_while_it_is_collected(
 ) -> None:
     """Reporting only ever shows the tail, so bounding it at display time would
     hide unbounded growth: assert on what collection hands over, not what prints."""
-    monkeypatch.setattr(nix_progress.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     handed_over: list[list[str]] = []
 
     def report_failure(errors: Iterable[str], _log_path: Path) -> None:

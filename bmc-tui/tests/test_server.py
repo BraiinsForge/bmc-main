@@ -217,7 +217,7 @@ def test_never_accepting_server_raises_and_leaves_no_thread(
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise OSError("nothing is listening")
 
-    monkeypatch.setattr(bmc_server.socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
 
     before = {thread.ident for thread in threading.enumerate()}
     with pytest.raises(RuntimeError, match="never accepted"):

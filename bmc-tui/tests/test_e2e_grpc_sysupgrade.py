@@ -23,6 +23,7 @@
 import io
 import os
 import signal
+import socket
 import subprocess
 import tarfile
 from collections.abc import Callable, Iterable
@@ -1171,11 +1172,11 @@ def test_package_server_group_shutdown_escalates_and_verifies_ports(
     def killpg(pid: int, sig: signal.Signals) -> None:
         signals.append((pid, sig))
 
-    def socket(*_args: object) -> _Socket:
+    def make_socket(*_args: object) -> _Socket:
         return _Socket(checked)
 
     monkeypatch.setattr(os, "killpg", killpg)
-    monkeypatch.setattr(catalog.socket, "socket", socket)
+    monkeypatch.setattr(socket, "socket", make_socket)
     catalog.stop_upgrade_server_group(cycle)
     assert signals == [(4321, signal.SIGTERM), (4321, signal.SIGKILL)]
     assert checked == [8080, 8081]

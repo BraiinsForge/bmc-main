@@ -21,11 +21,15 @@
 """Unit tests for console formatting helpers."""
 
 import io
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from rich.console import Console, RenderableType
 from rich.live import Live
+from rich.prompt import IntPrompt
 
 from bmc_tui import console
 from bmc_tui.console import human_size, lit
@@ -96,12 +100,12 @@ def test_the_realization_note_does_not_outlive_its_phase() -> None:
 
 
 def test_confirm_returns_false_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(console.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     assert console.confirm("flash it?") is False
 
 
 def test_choose_returns_none_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(console.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     assert console.choose("Release", [("a",), ("b",)], columns=("name",)) is None
 
 
@@ -112,8 +116,8 @@ def test_choose_returns_the_picked_row_index(monkeypatch: pytest.MonkeyPatch) ->
         asked.update(kwargs, question=question)
         return 2
 
-    monkeypatch.setattr(console.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(console.IntPrompt, "ask", ask)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(IntPrompt, "ask", ask)
     assert console.choose("Release", [("a",), ("b",), ("c",)], columns=("name",)) == 1
     assert asked["choices"] == ["1", "2", "3"]
     assert asked["default"] == 1
@@ -121,7 +125,7 @@ def test_choose_returns_the_picked_row_index(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_alert_silent_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[str] = []
-    monkeypatch.setattr(console.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
     monkeypatch.setattr(console, "desktop_notify", stubs.recording(fired, "x"))
     console.alert("attention")
     assert not fired
@@ -129,7 +133,7 @@ def test_alert_silent_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_alert_silent_during_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[str] = []
-    monkeypatch.setattr(console.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(console, "desktop_notify", stubs.recording(fired, "x"))
     console.mark_run_start()
     console.alert("attention", after=3600.0)  # run is younger than the gate
@@ -138,7 +142,7 @@ def test_alert_silent_during_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_notify_fires_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[tuple[str, str | None, str]] = []
-    monkeypatch.setattr(console.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
 
     def desktop_notify(summary: str, *, body: str | None = None, level: str = "info") -> None:
         fired.append((summary, body, level))
@@ -157,8 +161,8 @@ def _capture_notify_send(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     def run(cmd: list[str], **_kw: object) -> None:
         sent.append(cmd)
 
-    monkeypatch.setattr(console.shutil, "which", which)
-    monkeypatch.setattr(console.subprocess, "run", run)
+    monkeypatch.setattr(shutil, "which", which)
+    monkeypatch.setattr(subprocess, "run", run)
     return sent
 
 
@@ -183,10 +187,10 @@ def test_a_non_error_notification_still_raises_a_banner(
 
 
 def test_desktop_notify_silent_without_notifier(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(console.shutil, "which", stubs.returning(None))
+    monkeypatch.setattr(shutil, "which", stubs.returning(None))
 
     def boom(*_a: object, **_k: object) -> None:
         raise AssertionError("must not shell out when no notifier is on PATH")
 
-    monkeypatch.setattr(console.subprocess, "run", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
     console.desktop_notify("done")  # no notifier → silent no-op

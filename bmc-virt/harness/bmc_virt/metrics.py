@@ -52,7 +52,7 @@ matplotlib.use("Agg")
 class _Daemon(Protocol):
     """The part of a VM a collector drives; the VM passes itself."""
 
-    def _send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
+    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
 
 
 _MEM_WARN_PCT = 60
@@ -165,7 +165,7 @@ class MetricsCollector:
 
     def _take_snapshot(self, label: str = "") -> Snapshot:
         """Send ``metrics.collect`` to the daemon and record the response."""
-        ack = self._vm._send_cmd(
+        ack = self._vm.send_cmd(
             Cmd.METRICS_COLLECT,
             timeout=5,
             verbose=False,

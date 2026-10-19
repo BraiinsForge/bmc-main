@@ -23,6 +23,7 @@
 import json
 import shlex
 import subprocess
+import time
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 
@@ -99,12 +100,12 @@ class _Boser:
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, grpcurl: _Grpcurl, boser: _Boser) -> None:
-    monkeypatch.setattr(catalog.subprocess, "run", grpcurl)
+    monkeypatch.setattr(subprocess, "run", grpcurl)
 
     def set_auto_upgrade(client: BoserRest, *, enabled: bool) -> None:
         boser(client, enabled=enabled)
 
-    monkeypatch.setattr(catalog.time, "sleep", stubs.returning(None))
+    monkeypatch.setattr(time, "sleep", stubs.returning(None))
     monkeypatch.setattr(Device, "forward", _forward)
     monkeypatch.setattr(BoserRest, "set_auto_upgrade", set_auto_upgrade)
 

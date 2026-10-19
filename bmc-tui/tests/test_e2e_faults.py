@@ -29,7 +29,7 @@ from typing import cast
 
 import pytest
 
-from bmc_tui import cli, rig
+from bmc_tui import catalog, cli, rig
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.procedures import e2e_sysupgrade_faults as faults
@@ -136,9 +136,9 @@ def test_a_group_runs_scenarios_in_pinned_order(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setitem(faults._DRIVERS, "download-stall", download_stall_with_recovery)
     # Pin must happen BEFORE the cleardown: the cleardown's quiesce kills the
     # mDNS name, so the whole group runs on the numeric handle pinned first.
-    monkeypatch.setattr(faults.catalog, "pin_device_address", stubs.recording(calls, "pin"))
+    monkeypatch.setattr(catalog, "pin_device_address", stubs.recording(calls, "pin"))
     monkeypatch.setattr(faults, "_pinned", _own_device)
-    monkeypatch.setattr(faults.catalog, "clear_nix_store", stubs.recording(calls, "clear"))
+    monkeypatch.setattr(catalog, "clear_nix_store", stubs.recording(calls, "clear"))
     # A stand-in duck-types only the fields the group reads; a full _Ctx would need
     # one for every field, so each `_Ctx` cast in this file carries an ignore.
     fake_ctx = cast(  # pyright: ignore[reportInvalidCast]
@@ -170,14 +170,14 @@ def test_a_group_failure_leaves_the_quiesced_pin_for_cleanup(
     the finale's reboot) must leave the numeric pin set: the outer cleanup —
     the servers.json restore included — runs on it, and against the dead
     name it would degrade to 'cleanup failed' exactly when it matters."""
-    monkeypatch.setattr(faults.catalog, "pin_device_address", stubs.returning(None))
+    monkeypatch.setattr(catalog, "pin_device_address", stubs.returning(None))
     pinned = object()
     monkeypatch.setattr(faults, "_pinned", stubs.returning(pinned))
 
     def dying_cleardown(*_a: object, **_k: object) -> None:
         raise Abort("cleardown died")
 
-    monkeypatch.setattr(faults.catalog, "clear_nix_store", dying_cleardown)
+    monkeypatch.setattr(catalog, "clear_nix_store", dying_cleardown)
     fake_ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
@@ -197,9 +197,9 @@ def test_a_group_requires_recovery_flash_to_close_the_quiesced_window(
 ) -> None:
     for sid in faults._GROUP_A_ORDER:
         monkeypatch.setitem(faults._DRIVERS, sid, stubs.returning(None))
-    monkeypatch.setattr(faults.catalog, "pin_device_address", stubs.returning(None))
+    monkeypatch.setattr(catalog, "pin_device_address", stubs.returning(None))
     monkeypatch.setattr(faults, "_pinned", _own_device)
-    monkeypatch.setattr(faults.catalog, "clear_nix_store", stubs.returning(None))
+    monkeypatch.setattr(catalog, "clear_nix_store", stubs.returning(None))
     ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
@@ -236,10 +236,10 @@ def test_good_init_closes_quiesced_window_after_flash(monkeypatch: pytest.Monkey
     def wait(*_a: object) -> None:
         calls.append(("wait", ctx.quiesced_pin))
 
-    monkeypatch.setattr(faults.catalog, "flash_e2e", flash)
-    monkeypatch.setattr(faults.catalog, "wait_for_device", wait)
-    monkeypatch.setattr(faults.catalog, "verify_initialized", stubs.returning(None))
-    monkeypatch.setattr(faults.catalog, "require_staged_once", stubs.returning(None))
+    monkeypatch.setattr(catalog, "flash_e2e", flash)
+    monkeypatch.setattr(catalog, "wait_for_device", wait)
+    monkeypatch.setattr(catalog, "verify_initialized", stubs.returning(None))
+    monkeypatch.setattr(catalog, "require_staged_once", stubs.returning(None))
     faults._flash_good_init(ctx)
     assert calls == [("flash", pinned), ("wait", None)]
 
@@ -251,11 +251,11 @@ def test_init_abort_sweeps_except_after_successful_retention(
 ) -> None:
     calls: list[str] = []
     pinned = object()
-    monkeypatch.setattr(faults.catalog, "require_store_absent", stubs.returning(None))
+    monkeypatch.setattr(catalog, "require_store_absent", stubs.returning(None))
     monkeypatch.setattr(faults, "_prepare_flash", stubs.returning(pinned))
-    monkeypatch.setattr(faults.catalog, "sweep_download_artifact", stubs.recording(calls, "sweep"))
+    monkeypatch.setattr(catalog, "sweep_download_artifact", stubs.recording(calls, "sweep"))
     monkeypatch.setattr(
-        faults.catalog,
+        catalog,
         "require_download_artifact_absent",
         stubs.recording(calls, "absent"),
     )
@@ -266,7 +266,7 @@ def test_init_abort_sweeps_except_after_successful_retention(
         if fail:
             raise Abort("flash failed")
 
-    monkeypatch.setattr(faults.catalog, "flash_expect_abort", flash)
+    monkeypatch.setattr(catalog, "flash_expect_abort", flash)
     ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
@@ -315,14 +315,14 @@ def test_download_stall_resumes_retained_bytes_before_cleanup(
 
     monkeypatch.setattr(faults, "_attempt_init_abort", abort_with_partial)
     monkeypatch.setattr(faults, "_pinned", stubs.returning(pinned))
-    monkeypatch.setattr(faults.catalog, "require_retained_download", stubs.returning(None))
-    monkeypatch.setattr(faults.catalog, "retained_download_size", stubs.returning(7))
+    monkeypatch.setattr(catalog, "require_retained_download", stubs.returning(None))
+    monkeypatch.setattr(catalog, "retained_download_size", stubs.returning(7))
     monkeypatch.setattr(faults, "_flash_good_init", flash_good_init)
 
     def sweep(dev: Device) -> None:
         calls.append("sweep-device" if dev is ctx.dev else "sweep-pinned")
 
-    monkeypatch.setattr(faults.catalog, "sweep_download_artifact", sweep)
+    monkeypatch.setattr(catalog, "sweep_download_artifact", sweep)
     ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
@@ -358,14 +358,14 @@ def test_download_stall_rejects_unresumed_download(
     server.requests.extend(prior)
     monkeypatch.setattr(faults, "_attempt_init_abort", stubs.returning(None))
     monkeypatch.setattr(faults, "_pinned", stubs.returning(pinned))
-    monkeypatch.setattr(faults.catalog, "require_retained_download", stubs.returning(None))
-    monkeypatch.setattr(faults.catalog, "retained_download_size", stubs.returning(7))
+    monkeypatch.setattr(catalog, "require_retained_download", stubs.returning(None))
+    monkeypatch.setattr(catalog, "retained_download_size", stubs.returning(7))
 
     def resume(_ctx: faults._Ctx) -> None:
         server.requests.extend(recovery)
 
     monkeypatch.setattr(faults, "_flash_good_init", resume)
-    monkeypatch.setattr(faults.catalog, "sweep_download_artifact", stubs.returning(None))
+    monkeypatch.setattr(catalog, "sweep_download_artifact", stubs.returning(None))
     ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
@@ -633,10 +633,10 @@ def _run_with_cleanup_stubs(  # noqa: PLR0913  each cleanup hook controls a dist
         "cleanup_remote_artifacts",
         "start_compositor",
     ):
-        monkeypatch.setattr(faults.catalog, fn, recorder(fn))
-    monkeypatch.setattr(faults.catalog, "restore_server_registry", restore)
+        monkeypatch.setattr(catalog, fn, recorder(fn))
+    monkeypatch.setattr(catalog, "restore_server_registry", restore)
     monkeypatch.setattr(
-        faults.catalog, "restore_nix_conf", restore_nix_conf or recorder("restore_nix_conf")
+        catalog, "restore_nix_conf", restore_nix_conf or recorder("restore_nix_conf")
     )
     monkeypatch.setitem(faults._DRIVERS, "unsigned-feed", driver)
     image_a = _e2e_image(tmp_path, name="a.tar", version="va")
@@ -929,15 +929,13 @@ def test_cache_swap_retry_records_before_tamper_retries_with_riders(
         "require_stale_next_gone",
         "require_preservation_policy",
     ):
-        monkeypatch.setattr(faults.catalog, fn, stubs.recording(calls, fn))
+        monkeypatch.setattr(catalog, fn, stubs.recording(calls, fn))
     monkeypatch.setattr(faults, "_require_c_preconditions", stubs.recording(calls, "preconditions"))
-    monkeypatch.setattr(
-        faults.catalog, "ensure_bump_absent", stubs.recording(calls, "ensure_bump_absent")
-    )
+    monkeypatch.setattr(catalog, "ensure_bump_absent", stubs.recording(calls, "ensure_bump_absent"))
     monkeypatch.setattr(faults, "_prepare_flash", stubs.recording(calls, "prepare"))
     monkeypatch.setattr(faults, "_pinned", _own_device)
-    monkeypatch.setattr(faults.rig, "swap_cache_away", stubs.recording(calls, "swap"))
-    monkeypatch.setattr(faults.rig, "restore_cache", stubs.recording(calls, "restore"))
+    monkeypatch.setattr(rig, "swap_cache_away", stubs.recording(calls, "swap"))
+    monkeypatch.setattr(rig, "restore_cache", stubs.recording(calls, "restore"))
     ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
@@ -991,7 +989,7 @@ def test_same_version_reflash_stages_image_b_from_shm(monkeypatch: pytest.Monkey
         "require_upgrade_state_untouched",
         "require_staged_once",
     ):
-        monkeypatch.setattr(faults.catalog, fn, stubs.returning(None))
+        monkeypatch.setattr(catalog, fn, stubs.returning(None))
 
     def shm_path(image: Image) -> str:
         return f"/dev/shm/{image.version}"
@@ -999,8 +997,8 @@ def test_same_version_reflash_stages_image_b_from_shm(monkeypatch: pytest.Monkey
     def flash(_dev: Device, image: Image, **kw: object) -> None:
         flashed.append((image, kw.get("remote_path")))
 
-    monkeypatch.setattr(faults.catalog, "shm_path", shm_path)
-    monkeypatch.setattr(faults.catalog, "flash_e2e", flash)
+    monkeypatch.setattr(catalog, "shm_path", shm_path)
+    monkeypatch.setattr(catalog, "flash_e2e", flash)
     monkeypatch.setattr(faults, "_prepare_flash", stubs.returning(None))
     monkeypatch.setattr(faults, "_pinned", _own_device)
     image_b = types.SimpleNamespace(version="vb", size=1, rootfs_size=1)
@@ -1040,7 +1038,7 @@ def test_prepare_flash_frees_widget_memory_and_sweeps_uploads_before_the_gate(
         "require_uploaded",
         "trust_image_keys",
     ):
-        monkeypatch.setattr(faults.catalog, fn, stubs.recording(calls, fn))
+        monkeypatch.setattr(catalog, fn, stubs.recording(calls, fn))
     monkeypatch.setattr(faults, "_pinned", _own_device)
     image = _image(tmp_path)
     for quiesced_pin in (None, object()):
@@ -1098,7 +1096,7 @@ def _via_shm_budget_probe(
         "require_staged_once",
         "shm_path",
     ):
-        monkeypatch.setattr(faults.catalog, fn, stubs.recording(calls, fn))
+        monkeypatch.setattr(catalog, fn, stubs.recording(calls, fn))
 
     def prepare(*_args: object, memory_need: int | None = None, **_kwargs: object) -> None:
         calls.append("prepare")
@@ -1141,7 +1139,7 @@ def test_upgrade_abort_restores_rig_even_when_the_abort_check_fails(
     attempt itself raises."""
     calls: list[str] = []
     for fn in ("drop_e2e_marker", "record_upgrade_state"):
-        monkeypatch.setattr(faults.catalog, fn, stubs.recording(calls, fn))
+        monkeypatch.setattr(catalog, fn, stubs.recording(calls, fn))
     monkeypatch.setattr(faults, "_require_c_preconditions", stubs.recording(calls, "preconditions"))
     monkeypatch.setattr(faults, "_prepare_flash", stubs.recording(calls, "prepare"))
     monkeypatch.setattr(faults, "_pinned", _own_device)
@@ -1150,7 +1148,7 @@ def test_upgrade_abort_restores_rig_even_when_the_abort_check_fails(
     def exploding_flash(*_a: object, **_k: object) -> None:
         raise Abort("session death")
 
-    monkeypatch.setattr(faults.catalog, "flash_expect_abort", exploding_flash)
+    monkeypatch.setattr(catalog, "flash_expect_abort", exploding_flash)
     ctx = cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(dev=object(), state=object(), image_b=object(), yes=True),
@@ -1179,7 +1177,7 @@ def _full_store_stubs(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> "fau
         "fill_store_filesystem",
         "sweep_store_ballast",
     ):
-        monkeypatch.setattr(faults.catalog, fn, stubs.recording(calls, fn))
+        monkeypatch.setattr(catalog, fn, stubs.recording(calls, fn))
     return cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(
@@ -1201,7 +1199,7 @@ def test_full_store_releases_the_ballast_when_the_flash_check_fails(
     def exploding_flash(*_a: object, **_k: object) -> None:
         raise Abort("session death")
 
-    monkeypatch.setattr(faults.catalog, "flash_expect_abort", exploding_flash)
+    monkeypatch.setattr(catalog, "flash_expect_abort", exploding_flash)
     with pytest.raises(Abort, match="session death"):
         faults._scenario_full_store(ctx)
     assert calls == [
@@ -1222,12 +1220,12 @@ def test_full_store_release_failure_fails_a_successful_attempt(
     must fail the run: swallowing it hands every later scenario a full store."""
     calls: list[str] = []
     ctx = _full_store_stubs(monkeypatch, calls)
-    monkeypatch.setattr(faults.catalog, "flash_expect_abort", stubs.returning(None))
+    monkeypatch.setattr(catalog, "flash_expect_abort", stubs.returning(None))
 
     def exploding_release(*_a: object, **_k: object) -> None:
         raise OSError("rm failed")
 
-    monkeypatch.setattr(faults.catalog, "sweep_store_ballast", exploding_release)
+    monkeypatch.setattr(catalog, "sweep_store_ballast", exploding_release)
     with pytest.raises(OSError, match="rm failed"):
         faults._scenario_full_store(ctx)
 
@@ -1237,7 +1235,7 @@ def _upgrade_abort_stubs(monkeypatch: pytest.MonkeyPatch) -> "faults._Ctx":
     monkeypatch.setattr(faults, "_prepare_flash", stubs.returning(None))
     monkeypatch.setattr(faults, "_pinned", _own_device)
     for fn in ("drop_e2e_marker", "record_upgrade_state", "require_upgrade_state_untouched"):
-        monkeypatch.setattr(faults.catalog, fn, stubs.returning(None))
+        monkeypatch.setattr(catalog, fn, stubs.returning(None))
     return cast(  # pyright: ignore[reportInvalidCast]
         "faults._Ctx",
         types.SimpleNamespace(dev=object(), state=object(), image_b=object(), yes=True),
@@ -1257,7 +1255,7 @@ def test_upgrade_abort_restore_failure_cannot_mask_the_flash_failure(
     def exploding_restore(_ctx: faults._Ctx) -> None:
         raise OSError("rename failed")
 
-    monkeypatch.setattr(faults.catalog, "flash_expect_abort", exploding_flash)
+    monkeypatch.setattr(catalog, "flash_expect_abort", exploding_flash)
     monkeypatch.setattr(faults, "_restore_rig", exploding_restore)
     with pytest.raises(Abort, match="session death"):
         faults._attempt_upgrade_abort(ctx, tamper=lambda: None, expect="x")
@@ -1270,7 +1268,7 @@ def test_upgrade_abort_restore_failure_fails_a_successful_attempt(
     the scenario — swallowing it would hand every later scenario a
     tampered rig."""
     ctx = _upgrade_abort_stubs(monkeypatch)
-    monkeypatch.setattr(faults.catalog, "flash_expect_abort", stubs.returning(None))
+    monkeypatch.setattr(catalog, "flash_expect_abort", stubs.returning(None))
 
     def exploding_restore(_ctx: faults._Ctx) -> None:
         raise OSError("rename failed")
