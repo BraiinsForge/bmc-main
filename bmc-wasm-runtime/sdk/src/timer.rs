@@ -58,7 +58,8 @@
 //!     static HISTORY_UNAVAILABLE: Cell<bool> = const { Cell::new(false) };
 //! }
 //!
-//! fn init() {
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn init() {
 //!     let sampler = timer::start(60_000, sample_hashrate);
 //!     if sampler.is_none() {
 //!         // The host has logged why; render a notice instead of an empty chart.
