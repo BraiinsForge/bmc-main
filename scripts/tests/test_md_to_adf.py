@@ -20,46 +20,31 @@
 
 """Cover the ADF shapes Jira rejects and the ones it silently renders wrong."""
 
-import importlib.util
-import sys
-from pathlib import Path
-from typing import Any
-
+import md_to_adf
 import pytest
-
-_SPEC = importlib.util.spec_from_file_location(
-    'md_to_adf', Path(__file__).resolve().parents[1] / 'md_to_adf.py'
-)
-assert _SPEC is not None and _SPEC.loader is not None, (
-    'BUG: md_to_adf.py must be importable'
-)
-md_to_adf = importlib.util.module_from_spec(_SPEC)
-sys.modules['md_to_adf'] = md_to_adf
-_SPEC.loader.exec_module(md_to_adf)
+from md_to_adf import AdfDoc, AdfNode
 
 
-def convert(markdown: str, *, skip_title: bool = False) -> dict[str, Any]:
+def convert(markdown: str, *, skip_title: bool = False) -> AdfDoc:
     return md_to_adf.convert(markdown, skip_title=skip_title)
 
 
-type Json = dict[str, Json] | list[Json] | str | int | float | bool | None
+def children(node: AdfNode) -> list[AdfNode]:
+    assert 'content' in node, f'{node["type"]} carries no content'
+    return node['content']
 
 
-def text_nodes(document: dict[str, Any]) -> list[dict[str, Any]]:
+def text_nodes(document: AdfDoc) -> list[AdfNode]:
     """Every text node in the tree, at any depth."""
-    found: list[dict[str, Any]] = []
+    found: list[AdfNode] = []
 
-    def walk(node: Json) -> None:
-        if isinstance(node, dict):
-            if node.get('type') == 'text':
+    def walk(nodes: list[AdfNode]) -> None:
+        for node in nodes:
+            if node['type'] == 'text':
                 found.append(node)
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
+            walk(node.get('content', []))
 
-    walk(document)
+    walk(document['content'])
     return found
 
 
@@ -84,7 +69,7 @@ def test_no_text_node_is_ever_empty():
     """ADF requires a non-empty `text`, and markdown-it emits empty tokens."""
     document = convert('**Jira:** _(fill in)_')
 
-    assert all(node['text'] for node in text_nodes(document))
+    assert all(node.get('text') for node in text_nodes(document))
 
 
 def test_a_softbreak_becomes_a_space_not_a_line_break():
@@ -97,7 +82,7 @@ def test_a_softbreak_becomes_a_space_not_a_line_break():
 def test_adjacent_runs_with_equal_marks_merge():
     document = convert('plain `code` more')
 
-    assert [node['text'] for node in text_nodes(document)] == [
+    assert [node.get('text') for node in text_nodes(document)] == [
         'plain ',
         'code',
         ' more',
@@ -108,9 +93,10 @@ def test_marks_nest_through_a_link():
     document = convert('[**bold link**](https://example.test)')
 
     (node,) = text_nodes(document)
-    assert node['text'] == 'bold link'
-    assert {'type': 'strong'} in node['marks']
-    assert {'type': 'link', 'attrs': {'href': 'https://example.test'}} in node['marks']
+    marks = node.get('marks', [])
+    assert node.get('text') == 'bold link'
+    assert {'type': 'strong'} in marks
+    assert {'type': 'link', 'attrs': {'href': 'https://example.test'}} in marks
 
 
 def test_bullet_list_wraps_items_in_paragraphs():
@@ -118,8 +104,8 @@ def test_bullet_list_wraps_items_in_paragraphs():
 
     bullet = document['content'][0]
     assert bullet['type'] == 'bulletList'
-    assert [item['type'] for item in bullet['content']] == ['listItem', 'listItem']
-    assert bullet['content'][0]['content'][0]['type'] == 'paragraph'
+    assert [item['type'] for item in children(bullet)] == ['listItem', 'listItem']
+    assert children(children(bullet)[0])[0]['type'] == 'paragraph'
 
 
 def test_fence_keeps_its_language():
@@ -141,7 +127,7 @@ def test_skip_title_drops_only_a_leading_h1():
 def test_skip_title_leaves_a_later_heading_alone():
     document = convert('# Title\n\n## Section', skip_title=True)
 
-    assert document['content'][0]['attrs']['level'] == 2
+    assert document['content'][0].get('attrs', {}).get('level') == 2
 
 
 def test_a_table_becomes_an_adf_table():
@@ -150,12 +136,13 @@ def test_a_table_becomes_an_adf_table():
 
     table = document['content'][0]
     assert table['type'] == 'table'
-    assert [row['type'] for row in table['content']] == ['tableRow', 'tableRow']
-    assert [cell['type'] for cell in table['content'][0]['content']] == [
+    head, body = children(table)
+    assert [row['type'] for row in children(table)] == ['tableRow', 'tableRow']
+    assert [cell['type'] for cell in children(head)] == [
         'tableHeader',
         'tableHeader',
     ]
-    assert [cell['type'] for cell in table['content'][1]['content']] == [
+    assert [cell['type'] for cell in children(body)] == [
         'tableCell',
         'tableCell',
     ]
@@ -164,7 +151,7 @@ def test_a_table_becomes_an_adf_table():
 def test_an_empty_table_cell_survives():
     document = convert('| a | b |\n| - | - |\n| 1 |   |')
 
-    empty = document['content'][0]['content'][1]['content'][1]
+    empty = children(children(document['content'][0])[1])[1]
     assert empty == {
         'type': 'tableCell',
         'attrs': {},

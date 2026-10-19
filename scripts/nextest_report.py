@@ -39,9 +39,20 @@ import json
 import sys
 from collections import defaultdict
 from collections.abc import Iterable
+from typing import TypedDict, cast
 
 Passed = dict[str, dict[str, list[str]]]
 Failure = tuple[str, str, str]
+
+
+class Event(TypedDict, total=False):
+    """One line of the stream, as far as the report reads it."""
+
+    type: str
+    event: str
+    name: str
+    stdout: str
+    stderr: str
 
 
 def binary_label(binary_id: str) -> str:
@@ -65,12 +76,12 @@ def render(events: Iterable[str]) -> tuple[str, int]:
     for line in events:
         if not line.startswith('{'):
             continue
-        event = json.loads(line)
+        event = cast('Event', json.loads(line))
         if event.get('type') != 'test' or event.get('event') == 'started':
             continue
-        binary_id, _, test = event['name'].partition('$')
+        binary_id, _, test = event.get('name', '').partition('$')
         module, _, name = test.rpartition('::')
-        match event['event']:
+        match event.get('event'):
             case 'ok':
                 passed[binary_label(binary_id)][module_label(module)].append(name)
             case 'failed':

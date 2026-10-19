@@ -20,20 +20,9 @@
 
 """The shapes nextest's `libtest-json-plus` stream takes, and what each reads as."""
 
-import importlib.util
 import json
-import sys
-from pathlib import Path
 
-_SPEC = importlib.util.spec_from_file_location(
-    'nextest_report', Path(__file__).resolve().parents[1] / 'nextest_report.py'
-)
-assert _SPEC is not None and _SPEC.loader is not None, (
-    'BUG: nextest_report.py must be importable'
-)
-nextest_report = importlib.util.module_from_spec(_SPEC)
-sys.modules['nextest_report'] = nextest_report
-_SPEC.loader.exec_module(nextest_report)
+import nextest_report
 
 
 def event(kind: str, name: str, **fields: object) -> str:

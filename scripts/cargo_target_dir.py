@@ -36,6 +36,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TypedDict, cast
+
+
+class Metadata(TypedDict):
+    """The part of `cargo metadata` this reads."""
+
+    target_directory: str
 
 
 def fallback_target_dir(root: Path) -> str:
@@ -67,7 +74,7 @@ def target_dir(root: Path) -> str:
     except FileNotFoundError:
         return fallback_target_dir(root)
 
-    return json.loads(out)['target_directory']
+    return cast('Metadata', json.loads(out))['target_directory']
 
 
 def main() -> None:

@@ -31,24 +31,44 @@ Run through uv, which supplies markdown-it-py:
   uv run scripts/md_to_adf.py -
 """
 
-import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Annotated, NotRequired, TypedDict
 
+import tyro
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
+from tyro.conf import Positional, arg
 
 # markdown-it node types carrying no content of their own.
 IGNORED = frozenset({'inline'})
+
+
+class AdfMark(TypedDict):
+    type: str
+    attrs: NotRequired[dict[str, str | int | float]]
+
+
+class AdfNode(TypedDict):
+    type: str
+    attrs: NotRequired[dict[str, str | int | bool]]
+    content: NotRequired[list['AdfNode']]
+    text: NotRequired[str]
+    marks: NotRequired[list[AdfMark]]
+
+
+class AdfDoc(TypedDict):
+    version: int
+    type: str
+    content: list[AdfNode]
 
 
 class Unmapped(Exception):
     """A construct with no ADF equivalent implemented here."""
 
 
-def convert(markdown: str, *, skip_title: bool) -> dict[str, Any]:
+def convert(markdown: str, *, skip_title: bool) -> AdfDoc:
     # Without the GFM table extension a table parses
     # as pipe characters, mangled rather than raised on.
     parser = MarkdownIt('commonmark').enable('table')
@@ -65,7 +85,7 @@ def convert(markdown: str, *, skip_title: bool) -> dict[str, Any]:
     }
 
 
-def block_nodes(node: SyntaxTreeNode) -> list[dict[str, Any]]:
+def block_nodes(node: SyntaxTreeNode) -> list[AdfNode]:
     """One block-level markdown node as the ADF nodes it becomes."""
     match node.type:
         case 'heading':
@@ -89,7 +109,9 @@ def block_nodes(node: SyntaxTreeNode) -> list[dict[str, Any]]:
         case 'blockquote':
             return [{'type': 'blockquote', 'content': children_blocks(node)}]
         case 'fence' | 'code_block':
-            attrs = {'language': node.info.strip()} if node.info.strip() else {}
+            attrs: dict[str, str | int | bool] = (
+                {'language': node.info.strip()} if node.info.strip() else {}
+            )
             return [
                 {
                     'type': 'codeBlock',
@@ -125,11 +147,11 @@ def block_nodes(node: SyntaxTreeNode) -> list[dict[str, Any]]:
             raise Unmapped(f'block node {node.type!r}')
 
 
-def children_blocks(node: SyntaxTreeNode) -> list[dict[str, Any]]:
+def children_blocks(node: SyntaxTreeNode) -> list[AdfNode]:
     return [adf for child in node.children for adf in block_nodes(child)]
 
 
-def inline_nodes(node: SyntaxTreeNode) -> list[dict[str, Any]]:
+def inline_nodes(node: SyntaxTreeNode) -> list[AdfNode]:
     """The inline content of a block, flattened with its marks resolved."""
     inline = next((c for c in node.children if c.type == 'inline'), None)
     if inline is None:
@@ -137,10 +159,8 @@ def inline_nodes(node: SyntaxTreeNode) -> list[dict[str, Any]]:
     return marked_nodes(inline.children, marks=[])
 
 
-def marked_nodes(
-    nodes: list[SyntaxTreeNode], *, marks: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+def marked_nodes(nodes: list[SyntaxTreeNode], *, marks: list[AdfMark]) -> list[AdfNode]:
+    out: list[AdfNode] = []
     for node in nodes:
         match node.type:
             case 'text':
@@ -159,7 +179,7 @@ def marked_nodes(
                 )
             case 'link':
                 href = node.attrs['href']
-                link = {'type': 'link', 'attrs': {'href': href}}
+                link: AdfMark = {'type': 'link', 'attrs': {'href': href}}
                 linked = marked_nodes(node.children, marks=[*marks, link])
                 # A link mark needs a text node to sit on,
                 # so `[](url)` would drop the href on the floor.
@@ -178,27 +198,25 @@ def marked_nodes(
     return merge_adjacent(out)
 
 
-def append_text(
-    out: list[dict[str, Any]], text: str, marks: list[dict[str, Any]]
-) -> None:
+def append_text(out: list[AdfNode], text: str, marks: list[AdfMark]) -> None:
     node = text_node(text, marks)
     if node is not None:
         out.append(node)
 
 
-def text_node(text: str, marks: list[dict[str, Any]]) -> dict[str, Any] | None:
+def text_node(text: str, marks: list[AdfMark]) -> AdfNode | None:
     # ADF requires a non-empty `text`; markdown-it emits empty tokens.
     if not text:
         return None
-    node: dict[str, Any] = {'type': 'text', 'text': text}
+    node: AdfNode = {'type': 'text', 'text': text}
     if marks:
         node['marks'] = marks
     return node
 
 
-def merge_adjacent(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def merge_adjacent(nodes: list[AdfNode]) -> list[AdfNode]:
     """Join neighbouring text nodes with identical marks, which softbreaks split."""
-    merged: list[dict[str, Any]] = []
+    merged: list[AdfNode] = []
     for node in nodes:
         previous = merged[-1] if merged else None
         if (
@@ -207,34 +225,32 @@ def merge_adjacent(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and node['type'] == 'text'
             and previous.get('marks') == node.get('marks')
         ):
-            previous['text'] += node['text']
+            previous['text'] = previous.get('text', '') + node.get('text', '')
         else:
             merged.append(node)
     return merged
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description='Translate CommonMark into Atlassian Document Format.'
-    )
-    parser.add_argument('file', help="markdown file, or '-' for stdin")
-    parser.add_argument(
-        '--skip-title',
-        action='store_true',
-        help='drop a leading level-1 heading',
-    )
-    args = parser.parse_args()
+def main(
+    file: Annotated[Positional[str], arg(metavar='FILE')],
+    skip_title: bool = False,
+) -> int:
+    """Translate CommonMark into Atlassian Document Format.
 
+    Args:
+        file: markdown file, or '-' for stdin
+        skip_title: drop a leading level-1 heading
+    """
     # Pinned to UTF-8, or the locale decides and em dashes break it.
     markdown = (
         sys.stdin.buffer.read().decode('utf-8')
-        if args.file == '-'
-        else Path(args.file).read_text(encoding='utf-8')
+        if file == '-'
+        else Path(file).read_text(encoding='utf-8')
     )
     try:
-        document = convert(markdown, skip_title=args.skip_title)
+        document = convert(markdown, skip_title=skip_title)
     except Unmapped as unmapped:
-        print(f'{args.file}: no ADF mapping for {unmapped}', file=sys.stderr)
+        print(f'{file}: no ADF mapping for {unmapped}', file=sys.stderr)
         return 1
 
     body = json.dumps(document, indent=2, ensure_ascii=False)
@@ -243,4 +259,4 @@ def main() -> int:
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(tyro.cli(main))

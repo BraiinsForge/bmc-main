@@ -1,6 +1,4 @@
-#!/usr/bin/env nix
-#!nix shell nixpkgs#python3
-#!nix --command python3
+#!/usr/bin/env -S uv run
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -35,12 +33,15 @@ Usage:
 Requires Blender installed via flatpak (org.blender.Blender) or on PATH.
 """
 
-import argparse
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Annotated
+
+import tyro
+from tyro.conf import Positional, arg
 
 
 def find_blender() -> str:
@@ -61,25 +62,20 @@ def find_blender() -> str:
     sys.exit(1)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Prepare a 3D model for the WASM widget pipeline via Blender.'
-    )
-    parser.add_argument(
-        'input', help='Input model file (STL, OBJ, FBX, PLY, glTF, etc.)'
-    )
-    parser.add_argument('output', help='Output .glb file')
-    parser.add_argument(
-        '--max-tris',
-        type=int,
-        default=3_000,
-        help='Target triangle count (default: 3000)',
-    )
-    parser.add_argument(
-        '--texture', help='Optional texture image to assign as base color'
-    )
-    args = parser.parse_args()
+def main(
+    source: Annotated[Positional[str], arg(metavar='INPUT')],
+    output: Annotated[Positional[str], arg(metavar='OUTPUT')],
+    max_tris: int = 3_000,
+    texture: Annotated[str | None, arg(metavar='PATH')] = None,
+) -> None:
+    """Prepare a 3D model for the WASM widget pipeline via Blender.
 
+    Args:
+        source: Input model file (STL, OBJ, FBX, PLY, glTF, etc.)
+        output: Output .glb file
+        max_tris: Target triangle count
+        texture: Optional texture image to assign as base color
+    """
     blender = find_blender()
 
     # Write the Blender-side script to a temp file
@@ -90,13 +86,13 @@ def main() -> None:
 
     try:
         blender_args = [
-            os.path.abspath(args.input),
-            os.path.abspath(args.output),
+            os.path.abspath(source),
+            os.path.abspath(output),
             '--max-tris',
-            str(args.max_tris),
+            str(max_tris),
         ]
-        if args.texture:
-            blender_args.extend(['--texture', os.path.abspath(args.texture)])
+        if texture:
+            blender_args.extend(['--texture', os.path.abspath(texture)])
 
         if blender == 'flatpak':
             cmd = [
@@ -254,4 +250,4 @@ print(f"Exported {args.output}: {final_tris} triangles, {len(obj.data.vertices)}
 '''
 
 if __name__ == '__main__':
-    main()
+    tyro.cli(main)

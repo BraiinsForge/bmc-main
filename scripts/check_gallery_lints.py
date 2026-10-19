@@ -36,6 +36,7 @@ from __future__ import annotations
 import sys
 import tomllib
 from pathlib import Path
+from typing import cast
 
 REPO = Path(__file__).resolve().parent.parent
 # Nix filters this check to declared gallery dependencies.
@@ -50,7 +51,10 @@ DEVIATIONS = {('rust', 'elided_lifetimes_in_paths')}
 def workspace_lints(manifest: Path) -> dict[str, dict[str, object]]:
     """The `[workspace.lints]` tables of a manifest, keyed by lint group."""
     with manifest.open('rb') as handle:
-        return tomllib.load(handle).get('workspace', {}).get('lints', {})
+        document = cast(
+            'dict[str, dict[str, dict[str, dict[str, object]]]]', tomllib.load(handle)
+        )
+    return document.get('workspace', {}).get('lints', {})
 
 
 def main() -> int:

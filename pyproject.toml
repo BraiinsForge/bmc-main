@@ -32,6 +32,8 @@ testpaths = [
     "bmc-virt/harness/tests",
     "scripts/tests",
 ]
+# The scripts are run as files rather than installed, so their tests import them from here.
+pythonpath = ["scripts"]
 
 # Scoped to one package so the reported total
 # is not diluted by an unmeasured one.
