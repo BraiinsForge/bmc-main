@@ -231,7 +231,7 @@ class SoapClient:
         return self.av_transport(
             'SetAVTransportURI',
             f'<CurrentURI>{html_escape(uri)}</CurrentURI>'
-            f'<CurrentURIMetaData>{escaped_meta}</CurrentURIMetaData>',
+            + f'<CurrentURIMetaData>{escaped_meta}</CurrentURIMetaData>',
         )
 
     def play(self) -> str:
@@ -460,8 +460,8 @@ class _UPnPHandler(BaseHTTPRequestHandler):
                 action,
                 AV_TRANSPORT,
                 f'<CurrentTransportState>{rs.transport_state}</CurrentTransportState>'
-                '<CurrentTransportStatus>OK</CurrentTransportStatus>'
-                '<CurrentSpeed>1</CurrentSpeed>',
+                + '<CurrentTransportStatus>OK</CurrentTransportStatus>'
+                + '<CurrentSpeed>1</CurrentSpeed>',
             )
         if action == 'GetPositionInfo':
             elapsed = _secs_to_hms(rs.get_elapsed())
@@ -470,11 +470,11 @@ class _UPnPHandler(BaseHTTPRequestHandler):
                 action,
                 AV_TRANSPORT,
                 f'<Track>1</Track>'
-                f'<TrackDuration>0:00:00</TrackDuration>'
-                f'<TrackMetaData>{html_escape(rs.metadata)}</TrackMetaData>'
-                f'<TrackURI>{html_escape(rs.current_uri)}</TrackURI>'
-                f'<RelTime>{elapsed}</RelTime>'
-                f'<AbsTime>{elapsed}</AbsTime>',
+                + f'<TrackDuration>0:00:00</TrackDuration>'
+                + f'<TrackMetaData>{html_escape(rs.metadata)}</TrackMetaData>'
+                + f'<TrackURI>{html_escape(rs.current_uri)}</TrackURI>'
+                + f'<RelTime>{elapsed}</RelTime>'
+                + f'<AbsTime>{elapsed}</AbsTime>',
             )
         return _make_soap_response(action, AV_TRANSPORT, '')
 

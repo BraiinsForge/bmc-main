@@ -89,7 +89,7 @@ class Manifest(TypedDict):
 # cannot be mistaken for the fetch never arriving.
 PIXEL_PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
-    "890000000d4944415478da63f8cfc0500f0002870180a1a4fa6b0000000049454e44ae426082"
+    + "890000000d4944415478da63f8cfc0500f0002870180a1a4fa6b0000000049454e44ae426082"
 )
 
 Expect = Literal[
@@ -433,7 +433,7 @@ def _restore(dev: Device) -> None:
     # so a missing backup means remove rather than keep.
     _ = dev.run(
         f"if [ -f {SECRETS_BACKUP} ]; then cp {SECRETS_BACKUP} {SECRETS} && "
-        f"rm -f {SECRETS_BACKUP}; else rm -f {SECRETS}; fi"
+        + f"rm -f {SECRETS_BACKUP}; else rm -f {SECRETS}; fi"
     )
     catalog.restart_compositor(dev)
     console.ok("previous config and accounts restored")

@@ -370,8 +370,8 @@ def _require_resumed_download(
     require(
         resumed in served,
         f"good init did not resume the retained {retained}-byte partial "
-        f"(no 206 for the remaining {total - retained} bytes; the partial may have "
-        f"been cleared or the range ignored); saw {served}",
+        + f"(no 206 for the remaining {total - retained} bytes; the partial may have "
+        + f"been cleared or the range ignored); saw {served}",
     )
     require(
         all(request.range is not None for request in served),
@@ -514,9 +514,9 @@ def _with_b_recovery(ctx: _Ctx, scenario: Callable[[_Ctx], None]) -> None:
         except (Abort, subprocess.CalledProcessError) as recovery:
             raise Abort(
                 f"scenario failed AND the recovery flash failed ({recovery}); "
-                f"original failure: {hint}. Manual fallback: re-flash image A "
-                "with the good rig, or run `deck init --wipe` semantics via "
-                "bmc-nix-cli init --wipe on the device"
+                + f"original failure: {hint}. Manual fallback: re-flash image A "
+                + "with the good rig, or run `deck init --wipe` semantics via "
+                + "bmc-nix-cli init --wipe on the device"
             ) from failure
         raise
 
@@ -707,7 +707,7 @@ def _matching_image(ctx: _Ctx) -> Image:
             return image
     raise Abort(
         f"device runs {console.lit(version)} which matches neither supplied image "
-        f"({console.lit(ctx.image_a.version)}, {console.lit(ctx.image_b.version)})"
+        + f"({console.lit(ctx.image_a.version)}, {console.lit(ctx.image_b.version)})"
     )
 
 

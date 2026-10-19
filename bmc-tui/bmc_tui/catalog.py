@@ -138,7 +138,7 @@ def ensure_profiling_build(dev: Device, process: str, marker: str) -> str:
     require(
         found == "yes",
         f"{process} carries no profiling instrumentation — redeploy with "
-        f"`deck deploy --device {dev.host} --profile debug`",
+        + f"`deck deploy --device {dev.host} --profile debug`",
     )
     return path.rsplit("/", 1)[-1]
 
@@ -267,7 +267,7 @@ def sysupgrade(
         or dry_run.get()
         or console.confirm(
             f"Flash {console.lit(image.version)} to {console.lit(dev.host)}? "
-            "The device will reboot."
+            + "The device will reboot."
         ),
         "flash declined — pass --yes to skip the prompt",
     )
@@ -347,7 +347,7 @@ def ensure_nix_cli(nix: Nix, dev: Device) -> None:
         cli = shlex.quote(_NIX_CLI)
         return "ok" in dev.read(
             f"test -x {cli} && {cli} register-server --help 2>/dev/null "
-            "| grep -q -- --exclusive && echo ok || true"
+            + "| grep -q -- --exclusive && echo ok || true"
         )
 
     def bootstrap() -> None:
@@ -380,9 +380,9 @@ def _resolve_failure(attr: str, stderr: str, nix: Nix, prefix: str) -> str:
         named = f"\n\n  {console.lit(found.group(1))}" if found else ""
         console.panel(
             f"{_LFS_SUMMARY}:{named}\n\n"
-            "The flake resolves LFS from the remote as it evaluates, so an object that "
-            "is committed but not yet pushed is invisible to it.\n\n"
-            f"To fix:  {console.lit('git lfs push origin HEAD')}",
+            + "The flake resolves LFS from the remote as it evaluates, so an object that "
+            + "is committed but not yet pushed is invisible to it.\n\n"
+            + f"To fix:  {console.lit('git lfs push origin HEAD')}",
             title=_FAILURE_TITLE,
             style="red",
         )
@@ -729,7 +729,7 @@ def register_default_servers(
         require(
             url is not None and entry_id is not None and key is not None,
             f"{_SERVERS_JSON_DEFAULT} has no enabled server entries; "
-            "pass --url, --id and --key to register one explicitly",
+            + "pass --url, --id and --key to register one explicitly",
         )
         explicit_entry: dict[str, object] = {
             "id": entry_id,
@@ -746,7 +746,7 @@ def register_default_servers(
             require(
                 all(entry["id"] != entry_id for entry in disabled),
                 f"default entry {entry_id!r} is disabled; enable it in "
-                f"{_SERVERS_JSON_DEFAULT} before replaying it",
+                + f"{_SERVERS_JSON_DEFAULT} before replaying it",
             )
         if len(entries) > 1 and entry_id is not None:
             entries = [entry for entry in entries if entry["id"] == entry_id]
@@ -1015,7 +1015,7 @@ def prepare_data_partition(dev: Device, data_partition: str) -> str:
 
     _ = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} prepare-data-partition "
-        f"--data-partition {shlex.quote(data_partition)}"
+        + f"--data-partition {shlex.quote(data_partition)}"
     )
     return f"{console.lit('/mnt/data')} ready"
 
@@ -1039,7 +1039,7 @@ def ensure_store_absent(dev: Device) -> str:
     require(
         not mounted or identical,
         f"{console.lit(_NIX_STORE)} is mounted from a foreign source — clear it first: "
-        f"{console.lit(remedy)}",
+        + f"{console.lit(remedy)}",
     )
     if not mounted:
         rootfs_listing = dev.read(f"[ -d {_NIX_STORE} ] && ls -A {_NIX_STORE} 2>/dev/null || true")
@@ -1051,7 +1051,7 @@ def ensure_store_absent(dev: Device) -> str:
     require(
         not backing_listing,
         f"{console.lit(_NIX_BACKING)} already populated — to reinitialise, first clear it: "
-        f"{console.lit(remedy)}",
+        + f"{console.lit(remedy)}",
     )
     if dev.read(f"[ -d {_NIX_BACKING} ] && echo yes || true"):
         if mounted:
@@ -1086,8 +1086,8 @@ def run_cli_init(dev: Device, plan: Provisioning, data_partition: str) -> str:
         raise RuntimeError(msg)
     out = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} init --tarball {shlex.quote(remote)} "
-        f"--profile-path {shlex.quote(profile_path)} "
-        f"--data-partition {shlex.quote(data_partition)}"
+        + f"--profile-path {shlex.quote(profile_path)} "
+        + f"--data-partition {shlex.quote(data_partition)}"
     )
     if out is not None:  # dry-run logs the command and returns None
         # A fresh init prints exactly the promoted profile path; a no-op
@@ -1330,10 +1330,10 @@ def register_rig(dev: Device, run: E2eRun) -> str:
     _ = dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
     _ = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
-        f"--feed-url {shlex.quote(r.feed_url)} "
-        f"--index-public-key {shlex.quote(r.cache_public_key)} "
-        f"--cache-url {shlex.quote(r.cache_url)} "
-        f"--cache-public-key {shlex.quote(r.cache_public_key)}"
+        + f"--feed-url {shlex.quote(r.feed_url)} "
+        + f"--index-public-key {shlex.quote(r.cache_public_key)} "
+        + f"--cache-url {shlex.quote(r.cache_url)} "
+        + f"--cache-public-key {shlex.quote(r.cache_public_key)}"
     )
     return (
         f"factory {console.lit('e2e-factory')} + server {console.lit('e2e')}"
@@ -1478,7 +1478,7 @@ def clear_nix_store(
         or dry_run.get()
         or console.confirm(
             f"Delete the nix store on {console.lit(dev.host)}? "
-            f"This clears {console.lit(_NIX_BACKING)}."
+            + f"This clears {console.lit(_NIX_BACKING)}."
         ),
         "cleardown declined — pass --yes to skip the prompt",
     )
@@ -1751,9 +1751,9 @@ def _nix_reference_holders(dev: Device) -> str | None:
 
     holders = dev.read(
         "for p in /proc/[0-9]*; do "
-        "if ls -l $p/exe $p/cwd $p/fd 2>/dev/null | grep -qE ' /nix(/|$)' "
-        "|| grep -qE ' /nix(/|$)' $p/maps 2>/dev/null; "
-        'then echo "${p#/proc/}:$(cat $p/comm 2>/dev/null)"; fi; done'
+        + "if ls -l $p/exe $p/cwd $p/fd 2>/dev/null | grep -qE ' /nix(/|$)' "
+        + "|| grep -qE ' /nix(/|$)' $p/maps 2>/dev/null; "
+        + 'then echo "${p#/proc/}:$(cat $p/comm 2>/dev/null)"; fi; done'
     )
     return holders.replace("\n", ", ") or None
 
@@ -1795,7 +1795,7 @@ def require_uploaded(dev: Device, image: Image) -> str:
     require(
         _remote_sha(dev, image.remote_path) == image.sha256,
         f"{console.lit(dev.host)} does not hold the verified upload "
-        f"{console.lit(image.remote_path)} — is the pinned address the right device?",
+        + f"{console.lit(image.remote_path)} — is the pinned address the right device?",
     )
     return f"{console.lit(image.remote_path)} verified via {console.lit(dev.host)}"
 
@@ -1812,9 +1812,9 @@ def trust_image_keys(dev: Device, image: Image) -> str:
     rootfs = f"{image.sysupgrade_dir}/rootfs.img"
     _ = dev.run(
         "d=$(mktemp -d) && trap 'rm -rf \"$d\"' EXIT && "
-        f'tar -xf {shlex.quote(image.remote_path)} -C "$d" {shlex.quote(rootfs)} && '
-        f'unsquashfs -q -n -d "$d/r" "$d/{rootfs}" etc/opkg/keys && '
-        'mkdir -p /etc/opkg/keys && cp "$d/r/etc/opkg/keys/"* /etc/opkg/keys/'
+        + f'tar -xf {shlex.quote(image.remote_path)} -C "$d" {shlex.quote(rootfs)} && '
+        + f'unsquashfs -q -n -d "$d/r" "$d/{rootfs}" etc/opkg/keys && '
+        + 'mkdir -p /etc/opkg/keys && cp "$d/r/etc/opkg/keys/"* /etc/opkg/keys/'
     )
     return f"{console.lit(image.path.name)} keys → {console.lit('/etc/opkg/keys')}"
 
@@ -1837,7 +1837,7 @@ def flash_e2e(
         or dry_run.get()
         or console.confirm(
             f"Flash {console.lit(image.version)} to {console.lit(dev.host)}? "
-            "The device will reboot."
+            + "The device will reboot."
         ),
         "flash declined — pass --yes to skip the prompt",
     )
@@ -1893,7 +1893,7 @@ def flash_expect_abort(  # noqa: PLR0913  the abort contract needs image, expect
         or dry_run.get()
         or console.confirm(
             f"Attempt a flash of {console.lit(image.version)} on {console.lit(dev.host)} "
-            "expecting it to abort?"
+            + "expecting it to abort?"
         ),
         "flash declined — pass --yes to skip the prompt",
     )
@@ -1906,8 +1906,8 @@ def flash_expect_abort(  # noqa: PLR0913  the abort contract needs image, expect
     tail = outcome.output[-2000:]
     require(
         outcome.status != "session-death",
-        f"session lost during an expect-abort flash — the fault may not have "
-        f"prevented the flash (exit {outcome.returncode}): {tail}",
+        "session lost during an expect-abort flash — the fault may not have "
+        + f"prevented the flash (exit {outcome.returncode}): {tail}",
     )
     require(
         outcome.status == "failed",
@@ -2044,8 +2044,8 @@ def require_staged_once(state: FaultsState) -> str:
     require(
         count == 1,
         f"nix staging lines appeared {count} times, expected exactly once "
-        "(the double-validation dedupe failed, or sysupgrade ran without "
-        "VERBOSE=1 and the lines never reached the captured output)",
+        + "(the double-validation dedupe failed, or sysupgrade ran without "
+        + "VERBOSE=1 and the lines never reached the captured output)",
     )
     return "staging line seen once"
 
@@ -2061,7 +2061,7 @@ def require_lineage(dev: Device, run: E2eRun) -> str:
     require(
         version == run.image_a.version,
         f"device runs {console.lit(version)}, scenario B expects image A's "
-        f"{console.lit(run.image_a.version)}",
+        + f"{console.lit(run.image_a.version)}",
     )
     return console.lit(version)
 
@@ -2347,10 +2347,10 @@ def register_rig_tampered(dev: Device, run: E2eRun, *, wrong_public_key: str) ->
     _ = dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
     _ = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
-        f"--feed-url {shlex.quote(r.feed_url)} "
-        f"--index-public-key {shlex.quote(wrong_public_key)} "
-        f"--cache-url {shlex.quote(r.cache_url)} "
-        f"--cache-public-key {shlex.quote(wrong_public_key)}"
+        + f"--feed-url {shlex.quote(r.feed_url)} "
+        + f"--index-public-key {shlex.quote(wrong_public_key)} "
+        + f"--cache-url {shlex.quote(r.cache_url)} "
+        + f"--cache-public-key {shlex.quote(wrong_public_key)}"
     )
     if dry_run.get():
         return "tampered registration logged (dry-run)"
@@ -2436,7 +2436,7 @@ def require_shm_tmpfs(dev: Device) -> str:
     require(
         entry is not None and entry[1] == "tmpfs",
         f"{console.lit(_SHM_DIR)} (resolves to {console.lit(resolved)}) is not tmpfs-backed"
-        f" — {found}",
+        + f" — {found}",
     )
     return f"{console.lit(resolved)} tmpfs-backed"
 
@@ -2991,9 +2991,9 @@ def require_unclaimed_package_registry(dev: Device) -> str:
     require(
         not registry_left and not trusted_key_left,
         f"an earlier run did not restore the {_UPGRADE_SERVER_ID} package config: capturing "
-        f"it would make the rig the device's baseline. Delete its {SERVERS_JSON} entry, "
-        "re-enable the servers it disabled, and remove its URL token from extra-substituters "
-        "and its dev-upgrade:* token from extra-trusted-public-keys, then re-run.",
+        + f"it would make the rig the device's baseline. Delete its {SERVERS_JSON} entry, "
+        + "re-enable the servers it disabled, and remove its URL token from extra-substituters "
+        + "and its dev-upgrade:* token from extra-trusted-public-keys, then re-run.",
     )
     registry_state = "absent" if not raw.strip() else f"no {console.lit(_UPGRADE_SERVER_ID)} entry"
     return f"{console.lit(SERVERS_JSON)} {registry_state}, no stale trust key"
@@ -3077,9 +3077,9 @@ def check_for_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
     if not isinstance(packages, dict):
         raise Abort(
             "no package upgrade offered — either the served packages match the installed "
-            "profile, or they are unavailable (index fetch failed, or servers.json is missing "
-            "or unparsable); inspect the raw response below and the device's bmc log to tell "
-            f"which (response: {json.dumps(response)})"
+            + "profile, or they are unavailable (index fetch failed, or servers.json is missing "
+            + "or unparsable); inspect the raw response below and the device's bmc log to tell "
+            + f"which (response: {json.dumps(response)})"
         )
     disruption = response.get("disruption")
     require(
@@ -3138,7 +3138,7 @@ def remove_package(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
     done_if(widget not in _installed_package_names(raw))
     _ = dev.run(
         f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
-        f"remove-packages --name {shlex.quote(widget)}"
+        + f"remove-packages --name {shlex.quote(widget)}"
     )
     return f"removed {widget}"
 
@@ -3638,7 +3638,7 @@ def restore_remote_file(dev: Device, snap: FileSnapshot) -> None:
         temporary = f"{snap.remote_path}.tmp"
         _ = dev.run(
             f"echo {shlex.quote(encoded)} | base64 -d > {shlex.quote(temporary)} "
-            f"&& mv {shlex.quote(temporary)} {shlex.quote(snap.remote_path)} && sync"
+            + f"&& mv {shlex.quote(temporary)} {shlex.quote(snap.remote_path)} && sync"
         )
 
 
@@ -3822,8 +3822,8 @@ _BMC_RESTART_TIMEOUT = 30.0  # s for procd to replace the service process on res
 def scan_bmc_pids(dev: Device) -> list[int]:
     output = dev.read(
         'for exe in /proc/[0-9]*/exe; do path=$(readlink "$exe") || continue; '
-        'case "$path" in */bin/bmc-openwrt) pid=${exe#/proc/}; pid=${pid%/exe}; '
-        'printf \'%s\\t%s\\n\' "$pid" "$path";; esac; done'
+        + 'case "$path" in */bin/bmc-openwrt) pid=${exe#/proc/}; pid=${pid%/exe}; '
+        + 'printf \'%s\\t%s\\n\' "$pid" "$path";; esac; done'
     )
     pids: list[int] = []
     for line in output.splitlines():
@@ -3893,7 +3893,7 @@ def point_bmc_at_index(dev: Device, cycle: FirmwareCycle) -> str:
     require(
         len(env_lines) == 1,
         f"expected exactly one '{_ENV_PARAM.rstrip()}' line in {_INIT_SCRIPT}, "
-        f"found {len(env_lines)}",
+        + f"found {len(env_lines)}",
     )
     edited = script.replace(_ENV_PARAM, f"{_ENV_PARAM}{_index_env_token(cycle)} ", 1)
     cycle.bmc_log_offset = int(dev.read(f"wc -c < {_BMC_LOG} 2>/dev/null || echo 0"))
@@ -3906,14 +3906,14 @@ def point_bmc_at_index(dev: Device, cycle: FirmwareCycle) -> str:
         if len(pids) == 1:
             environ = dev.read(
                 f"tr '\\0' '\\n' < /proc/{pids[0]}/environ 2>/dev/null "
-                "| grep '^BMC_INDEX_URL=' || true"
+                + "| grep '^BMC_INDEX_URL=' || true"
             )
             if environ == expected:
                 return f"pid {pids[0]} with {expected}"
         require(
             time.monotonic() < deadline,
             f"restarted bmc did not come up with {expected} within "
-            f"{_BMC_RESTART_TIMEOUT:.0f}s; last scan: {pids}",
+            + f"{_BMC_RESTART_TIMEOUT:.0f}s; last scan: {pids}",
         )
         time.sleep(0.5)
 
@@ -3954,7 +3954,7 @@ def await_bmc_ready(dev: Device, cycle: FirmwareCycle) -> str:
             require(
                 remaining > 0,
                 f"bmc gRPC did not answer within {_BMC_READY_TIMEOUT:.0f}s; "
-                f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
+                + f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
             )
             _ = subprocess.run(
                 _grpcurl_argv(
@@ -3974,7 +3974,7 @@ def await_bmc_ready(dev: Device, cycle: FirmwareCycle) -> str:
             require(
                 time.monotonic() < deadline,
                 f"bmc gRPC did not answer within {_BMC_READY_TIMEOUT:.0f}s; "
-                f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
+                + f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
             )
             time.sleep(min(1, max(0, deadline - time.monotonic())))
 
@@ -4004,7 +4004,7 @@ def require_fresh_firmware_staging(dev: Device, image: Image) -> None:
     require(
         prepared != image.version,
         f"{marker} already records this image — reboot the device before retrying "
-        "so package staging runs and its progress can be verified",
+        + "so package staging runs and its progress can be verified",
     )
 
 
@@ -4028,7 +4028,7 @@ def check_for_firmware_upgrade(
     if not isinstance(firmware, dict):
         raise Abort(
             f"no firmware upgrade offered for running release {running_version.version} "
-            f"and image release {image_version.version}; response: {json.dumps(response)}"
+            + f"and image release {image_version.version}; response: {json.dumps(response)}"
         )
 
     require(
@@ -4066,9 +4066,9 @@ def check_for_firmware_upgrade(
         require(
             isinstance(packages, dict) and bool(packages.get("changes")),
             "no package changes offered for the target firmware — serve a changed package "
-            "that upgrades an installed package within its version pin before retrying; "
-            "an empty plan cannot exercise structured staging progress; pass "
-            "--allow-empty-plan for a firmware-only run",
+            + "that upgrades an installed package within its version pin before retrying; "
+            + "an empty plan cannot exercise structured staging progress; pass "
+            + "--allow-empty-plan for a firmware-only run",
         )
     cycle.upgrade_id = upgrade_id
     return f"{console.lit(image_version.canonical)} ({console.human_size(image.size)})"
@@ -4313,7 +4313,7 @@ def verify_device_identity(dev: Device, cycle: FirmwareCycle) -> str:
     if identity != expected:
         raise DeviceIdentityError(
             f"device identity changed: expected {console.lit(expected)}, "
-            f"got {console.lit(identity)}"
+            + f"got {console.lit(identity)}"
         )
     return identity
 

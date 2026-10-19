@@ -28,8 +28,7 @@ from string import ascii_lowercase
 from typing import override
 
 _VERSION_RE = re.compile(
-    r"^(\d{4})?-(\d{2})?-(\d{2})?-(\d+)?-([0-9A-Fa-f]{8})?-([.0-9]+)?"
-    r"(-plus)?(?:-(\w+))?$",
+    r"^(\d{4})?-(\d{2})?-(\d{2})?-(\d+)?-([0-9A-Fa-f]{8})?-([.0-9]+)?(-plus)?(?:-(\w+))?$",
     re.ASCII,
 )
 _BUILD_SUFFIXES = frozenset({"rc", "nightly", *ascii_lowercase})

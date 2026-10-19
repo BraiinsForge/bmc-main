@@ -160,7 +160,7 @@ def _retain_after_transfer_grace(
 ) -> _Resolution:
     console.warn(
         f"{error}; keeping the firmware index server alive for active transfers "
-        f"for up to {_RETAIN_TRANSFER_GRACE:g} seconds"
+        + f"for up to {_RETAIN_TRANSFER_GRACE:g} seconds"
     )
     deadline = clock() + _RETAIN_TRANSFER_GRACE
     while index.active_transfers() > 0:
@@ -194,7 +194,7 @@ def _resolve_boot(  # noqa: PLR0912, PLR0913
             return _retain_after_transfer_grace(
                 Abort(
                     f"boot id did not change within {_BOOT_RESOLVE_DEADLINE:g} seconds; "
-                    f"{_recovery_hint(cycle, packages)}"
+                    + f"{_recovery_hint(cycle, packages)}"
                 ),
                 index,
                 sleep=sleep,
@@ -232,7 +232,7 @@ def _resolve_boot(  # noqa: PLR0912, PLR0913
                         if outcome is catalog.StreamOutcome.PROVISIONAL_SUCCESS and not provenance:
                             verdict = Abort(
                                 "firmware fetch provenance is missing; index requests: "
-                                f"{index.requests()!r}"
+                                + f"{index.requests()!r}"
                             )
                         return _Resolution("success", verdict, provenance, device=reboot_dev)
                     return _Resolution(
@@ -261,7 +261,7 @@ def _resolve_boot(  # noqa: PLR0912, PLR0913
                 try:
                     console.warn(
                         f"{original}; boot resolution failed: {resolver_error}; "
-                        f"{_recovery_hint(cycle, packages)}"
+                        + f"{_recovery_hint(cycle, packages)}"
                     )
                 except KeyboardInterrupt:
                     raise
@@ -376,8 +376,8 @@ def _combined_error(
     original = str(verdict) if verdict is not None else "firmware upgrade cleanup failed"
     return Abort(
         f"{original}; cleanup failures: {'; '.join(failures)}; "
-        f"snapshots retained at {snapshot_dir}; package-server group pid "
-        f"{packages.server.pid if packages.server is not None else 'unknown'}"
+        + f"snapshots retained at {snapshot_dir}; package-server group pid "
+        + f"{packages.server.pid if packages.server is not None else 'unknown'}"
     )
 
 
@@ -524,8 +524,8 @@ class E2eGrpcSysupgrade:
             except subprocess.CalledProcessError as error:
                 raise Abort(
                     "firmware check RPC failed; a package-check failure points to "
-                    f"{catalog.SERVERS_JSON} or the package-server log at "
-                    f"{packages.log_path}: {error}"
+                    + f"{catalog.SERVERS_JSON} or the package-server log at "
+                    + f"{packages.log_path}: {error}"
                 ) from None
             catalog.snapshot_boot_id(mutation_dev, cycle)
             result = (stream or catalog.run_firmware_stream)(mutation_dev, cycle)
@@ -557,9 +557,9 @@ class E2eGrpcSysupgrade:
                 if not package_progress:
                     resolution.verdict = Abort(
                         "no package REALIZING event after firmware VERIFYING; package progress "
-                        "must arrive through sysupgrade — check that it requests internal-json "
-                        "and the tarball honors it, or pass --allow-empty-plan for a "
-                        "firmware-only run"
+                        + "must arrive through sysupgrade — check that it requests internal-json "
+                        + "and the tarball honors it, or pass --allow-empty-plan for a "
+                        + "firmware-only run"
                     )
         except BaseException as error:
             if resolution.retain:

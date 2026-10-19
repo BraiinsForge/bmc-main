@@ -291,7 +291,7 @@ def _verify_packages(dev: Device, plan: PackagesPreview | None, before: _Snapsho
         require(
             version == change["version_to"],
             f"{change['name']}: the manifest has {version or 'nothing'}, "
-            f"the offer promised {change['version_to'] or 'removal'}",
+            + f"the offer promised {change['version_to'] or 'removal'}",
         )
 
 

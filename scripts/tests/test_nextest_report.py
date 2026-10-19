@@ -53,7 +53,7 @@ def test_passes_group_by_module_on_the_binary_line() -> None:
     assert status == 0
     assert report.splitlines() == [
         'miner-info 3 passed · api::{parses_block_height, sums_chip_count}'
-        ' · face::bmm101::{the_grid_spreads}',
+        + ' · face::bmm101::{the_grid_spreads}',
         '3 run · 3 passed · 0 failed',
     ]
 

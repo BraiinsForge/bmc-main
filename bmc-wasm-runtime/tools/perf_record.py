@@ -57,7 +57,7 @@ def check_prerequisites() -> None:
         if val != '-1':
             print(
                 f'Error: perf_event_paranoid={val} (expected -1).\n'
-                "Run: echo '-1' | sudo tee /proc/sys/kernel/perf_event_paranoid",
+                + "Run: echo '-1' | sudo tee /proc/sys/kernel/perf_event_paranoid",
                 file=sys.stderr,
             )
             sys.exit(1)

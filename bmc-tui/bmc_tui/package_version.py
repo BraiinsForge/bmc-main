@@ -27,8 +27,8 @@ _NUMBER = r"0|[1-9][0-9]*"
 _PRE_ID = rf"{_NUMBER}|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*"
 _SEMVER = re.compile(
     rf"({_NUMBER})\.({_NUMBER})\.({_NUMBER})"
-    rf"(?:-((?:{_PRE_ID})(?:\.(?:{_PRE_ID}))*))?"
-    r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?"
+    + rf"(?:-((?:{_PRE_ID})(?:\.(?:{_PRE_ID}))*))?"
+    + r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?"
 )
 
 _CORE_PARTS = 3

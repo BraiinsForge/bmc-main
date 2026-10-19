@@ -136,8 +136,8 @@ def _warn_amd_msr() -> None:
     )
     panel(
         "sudo modprobe msr\n"
-        "sudo wrmsr -a 0xc0011020 $(($(sudo rdmsr -c 0xc0011020) | (1 << 54)))\n"
-        "sudo sysctl kernel.perf_event_paranoid=1",
+        + "sudo wrmsr -a 0xc0011020 $(($(sudo rdmsr -c 0xc0011020) | (1 << 54)))\n"
+        + "sudo sysctl kernel.perf_event_paranoid=1",
         title="To fix",
         style="yellow",
         lexer="bash",

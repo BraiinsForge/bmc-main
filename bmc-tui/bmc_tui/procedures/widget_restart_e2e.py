@@ -75,7 +75,7 @@ def _log_cursor(dev: Device) -> _LogCursor:
     cursor = _LogCursor(uuid.uuid4().hex)
     result = dev.run(
         f"if [ -f {_BMC_LOG} ]; then printf '\n{_LOG_MARKER} {cursor.nonce}\n' >> {_BMC_LOG}; "
-        f"else echo {_LOG_UNAVAILABLE}; fi"
+        + f"else echo {_LOG_UNAVAILABLE}; fi"
     )
     require(result != _LOG_UNAVAILABLE, f"{_BMC_LOG} is unavailable; enable file logging")
     return cursor
@@ -176,7 +176,7 @@ def _require_live_thins_connected(snapshot: Snapshot, log: str) -> None:
     if missing_spawns:
         raise _MissingSpawnHistory(
             f"no retained spawn log for live widget PIDs {sorted(missing_spawns)}; "
-            "deploy or restart widgets before running this startup check"
+            + "deploy or restart widgets before running this startup check"
         )
     disconnected = {
         pid
@@ -301,9 +301,9 @@ def _wait_for_transition(
 def _kill(dev: Device, process: Process) -> None:
     result = dev.run(
         f"starttime=$(sed 's/.*) //' /proc/{process.pid}/stat 2>/dev/null | "
-        f"awk '{{print ${PROCESS_STARTTIME_FIELD_AFTER_COMM}}}'); "
-        f'if [ "$starttime" = {process.starttime} ]; then kill -KILL {process.pid}; '
-        "else echo PROCESS_IDENTITY_CHANGED; fi"
+        + f"awk '{{print ${PROCESS_STARTTIME_FIELD_AFTER_COMM}}}'); "
+        + f'if [ "$starttime" = {process.starttime} ]; then kill -KILL {process.pid}; '
+        + "else echo PROCESS_IDENTITY_CHANGED; fi"
     )
     require(result != "PROCESS_IDENTITY_CHANGED", f"process {process.pid} changed before kill")
 

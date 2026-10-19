@@ -70,8 +70,8 @@ def main() -> int:
         )
         print(
             'remove stray or WIP scene files, or add a filtered-out scene crate '
-            'to bmc-gallery dependencies; update EXPECTED_SCENE_COUNT only for '
-            'an intentional scene-set change',
+            + 'to bmc-gallery dependencies; update EXPECTED_SCENE_COUNT only for '
+            + 'an intentional scene-set change',
             file=sys.stderr,
         )
 
@@ -84,7 +84,7 @@ def main() -> int:
             if at_root.get(lint) != at_gallery.get(lint):
                 drift.append(
                     f'  {group}.{lint}: root={at_root.get(lint)!r}, '
-                    f'gallery={at_gallery.get(lint)!r}'
+                    + f'gallery={at_gallery.get(lint)!r}'
                 )
 
     if drift:
@@ -95,7 +95,7 @@ def main() -> int:
         print('\n'.join(drift), file=sys.stderr)
         print(
             '\nMirror the change into bmc-gallery/Cargo.toml, or — if the gallery '
-            'should differ — add it to DEVIATIONS here and say why in the manifest.',
+            + 'should differ — add it to DEVIATIONS here and say why in the manifest.',
             file=sys.stderr,
         )
     if not scene_count_matches or drift:
@@ -103,7 +103,7 @@ def main() -> int:
 
     print(
         f'lint sets match across {len(root)} groups; '
-        f'gallery source contains all {scene_count} scenes'
+        + f'gallery source contains all {scene_count} scenes'
     )
     return 0
 

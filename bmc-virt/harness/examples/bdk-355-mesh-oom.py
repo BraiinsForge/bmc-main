@@ -228,11 +228,11 @@ def collect_logs(vm: VM) -> None:
     vm.pull(src=REMOTE_WIDGET_LOG, dst=WIDGET_LOG_DST)
     ui.ok(f"Pulled {REMOTE_WIDGET_LOG} → {WIDGET_LOG_DST}")
     ui.panel(
-        f"mesh::profile lines (per-mesh deltas, render heartbeats):\n"
-        f"  rg 'mesh::profile' {WIDGET_LOG_DST}\n"
-        f"\n"
-        f"Compositor frame timings:\n"
-        f"  rg 'render_scene|compositor:' {LOG_DST}",
+        "mesh::profile lines (per-mesh deltas, render heartbeats):\n"
+        + f"  rg 'mesh::profile' {WIDGET_LOG_DST}\n"
+        + "\n"
+        + "Compositor frame timings:\n"
+        + f"  rg 'render_scene|compositor:' {LOG_DST}",
         title="Next",
         style="cyan",
         lexer="bash",

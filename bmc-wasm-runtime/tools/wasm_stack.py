@@ -135,7 +135,7 @@ def main() -> None:
         elif size != expect:
             _fail(
                 f'{module.name}: stack reservation is {size} bytes, expected {expect}. '
-                'The linker argument in workspace.nix did not reach this module.'
+                + 'The linker argument in workspace.nix did not reach this module.'
             )
 
 

@@ -327,7 +327,7 @@ def _check_host_build(expected: StorePath, running: StorePath) -> None:
     else:
         console.warn(
             f"{PROCESS} runs {running}, but this tree builds {expected} — "
-            "the measurements will not describe this tree"
+            + "the measurements will not describe this tree"
         )
 
 
@@ -572,7 +572,7 @@ def _report(outcomes: list[Outcome]) -> None:
         took = f"{out.decode_us / 1000:.1f} ms" if out.decode_us else "-"
         rows.append(
             f"{out.case.name:<{name_width}}{out.case.fmt:<10}"
-            f"{size:>11}{rss:>11}{took:>10}  {_verdict(out)}"
+            + f"{size:>11}{rss:>11}{took:>10}  {_verdict(out)}"
         )
     console.panel(
         "\n".join(rows), title="Formats — RSS delta is process-wide before/after, not a decode peak"

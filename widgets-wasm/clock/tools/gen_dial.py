@@ -164,9 +164,9 @@ def verify(
     assert all(min(a % 30.0, 30.0 - a % 30.0) < 1e-4 for a in angles_major), (
         'major not on 30deg'
     )
+    dims = f'{width:.0f}x{height:.0f}'
     print(
-        f'OK  {width:.0f}x{height:.0f}  60 ticks @ 6.0deg  '
-        f'(12 major #fff on the 5s, 48 minor {MINOR_COLOR})',
+        f'OK  {dims}  60 ticks @ 6.0deg  (12 major #fff on the 5s, 48 minor {MINOR_COLOR})',
         file=sys.stderr,
     )
 

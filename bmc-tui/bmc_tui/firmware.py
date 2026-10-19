@@ -153,7 +153,7 @@ def _fetch(url: str, dest: Path, *, label: str, size: int | None) -> None:
     require(
         total is None or received == total,
         f"download of {console.lit(label)} is {console.human_size(received)}, "
-        f"expected {console.human_size(total or 0)}",
+        + f"expected {console.human_size(total or 0)}",
     )
 
 

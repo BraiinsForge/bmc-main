@@ -168,7 +168,7 @@ def test_profile_probe_strips_output_and_propagates_failure() -> None:
     assert e2e._profile_generation(current) == e2e._ProfileGeneration.CURRENT
     assert commands == [
         "if test -x /run/current-profile/core/activation/scripts/"
-        "999-signal-widget-reload; then echo yes; else echo no; fi"
+        + "999-signal-widget-reload; then echo yes; else echo no; fi"
     ]
     assert e2e._profile_generation(lambda _command: "no") == e2e._ProfileGeneration.LEGACY
 

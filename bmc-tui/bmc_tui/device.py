@@ -399,8 +399,8 @@ class LogWindow:
         require(
             self.nonce in text,
             f"the window marker is gone from {self.path} — it rotated or was "
-            "truncated, so the lines still there may predate this run; "
-            "refusing to report rather than risk stale evidence",
+            + "truncated, so the lines still there may predate this run; "
+            + "refusing to report rather than risk stale evidence",
         )
         return text
 

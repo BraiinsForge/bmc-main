@@ -102,7 +102,7 @@ def collect_logs(vm: VM, scenario: str, scene_config: Mapping[str, object]) -> P
     # Enable trace-level logging for compositor module
     _ = vm.exec(
         "sed -i 's/RUST_LOG=debug/RUST_LOG=debug,bmc_openwrt::compositor=trace/' "
-        "/etc/init.d/b-bmc-openwrt"
+        + "/etc/init.d/b-bmc-openwrt"
     )
 
     # Restart bmc-openwrt to pick up new config
