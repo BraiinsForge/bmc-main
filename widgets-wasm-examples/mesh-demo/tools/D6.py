@@ -185,7 +185,7 @@ cube.name = 'Dice'
 # --- UV map each face to its atlas cell ---
 bpy.ops.object.mode_set(mode='EDIT')
 bm = bmesh.from_edit_mesh(common.mesh_of(cube))
-uv_layer = bm.loops.layers.uv.verify()
+uv_layer = common.uv_layer(bm)
 
 # Dice face mapping: normal direction → face number
 # Standard: +Z=1, -Z=6, +X=2, -X=5, -Y=3, +Y=4
@@ -220,7 +220,7 @@ for face in bm.faces:
     tangent_axes = [i for i in range(3) if i != max_idx]
     ta, tb = tangent_axes
 
-    coords = [(loop.vert.co[ta], loop.vert.co[tb]) for loop in face.loops]
+    coords = [(loop.vert.co[ta], loop.vert.co[tb]) for loop in common.face_loops(face)]
     min_a = min(co[0] for co in coords)
     max_a = max(co[0] for co in coords)
     min_b = min(co[1] for co in coords)
@@ -235,7 +235,7 @@ for face in bm.faces:
     else:
         flip_u = sign < 0  # X, Z: flip on negative
 
-    for i, loop in enumerate(face.loops):
+    for i, loop in enumerate(common.face_loops(face)):
         t_a = (coords[i][0] - min_a) / range_a
         if flip_u:
             t_a = 1.0 - t_a

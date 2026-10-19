@@ -111,7 +111,7 @@ ico.name = 'D20'
 # --- UV map each face to its atlas cell ---
 bpy.ops.object.mode_set(mode='EDIT')
 bm = bmesh.from_edit_mesh(common.mesh_of(ico))
-uv_layer = bm.loops.layers.uv.verify()
+uv_layer = common.uv_layer(bm)
 
 # Sort faces by normal for deterministic ordering, then apply a permutation
 # that gives a standard D20 layout: opposite faces sum to 21, adjacent faces
@@ -158,7 +158,7 @@ for face in bm.faces:
             (loop.vert.co - center).dot(tangent_u),
             (loop.vert.co - center).dot(tangent_v),
         )
-        for loop in face.loops
+        for loop in common.face_loops(face)
     ]
     # Centroid in tangent space is ~(0,0) since we subtracted center.
     # Map so centroid → 0.5, max extent → edges of cell.
@@ -170,7 +170,7 @@ for face in bm.faces:
     half_b = half_b if half_b > 1e-6 else 1.0
     half = max(half_a, half_b)
 
-    for i, loop in enumerate(face.loops):
+    for i, loop in enumerate(common.face_loops(face)):
         t_a = 0.5 + (coords[i][0] - centroid_a) / (2 * half)
         t_b = 0.5 + (coords[i][1] - centroid_b) / (2 * half)
         loop[uv_layer].uv = mathutils.Vector(

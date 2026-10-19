@@ -162,7 +162,7 @@ mesh.update()
 # --- UV map each kite face BEFORE triangulation ---
 bpy.ops.object.mode_set(mode='EDIT')
 bm = bmesh.from_edit_mesh(mesh)
-uv_layer = bm.loops.layers.uv.verify()
+uv_layer = common.uv_layer(bm)
 
 face_normals_list = [(f.index, (f.normal.x, f.normal.y, f.normal.z)) for f in bm.faces]
 face_normals_list.sort(
@@ -205,7 +205,7 @@ for face in bm.faces:
             (loop.vert.co - center).dot(tangent_u),
             (loop.vert.co - center).dot(tangent_v),
         )
-        for loop in face.loops
+        for loop in common.face_loops(face)
     ]
     centroid_a = sum(co[0] for co in coords) / len(coords)
     centroid_b = sum(co[1] for co in coords) / len(coords)
@@ -214,7 +214,7 @@ for face in bm.faces:
     half_a = half_a if half_a > 1e-6 else 1.0
     half_b = half_b if half_b > 1e-6 else 1.0
 
-    for i, loop in enumerate(face.loops):
+    for i, loop in enumerate(common.face_loops(face)):
         t_a = 0.5 + (coords[i][0] - centroid_a) / (2 * half_a)
         t_b = 0.5 + (coords[i][1] - centroid_b) / (2 * half_b)
         loop[uv_layer].uv = mathutils.Vector(

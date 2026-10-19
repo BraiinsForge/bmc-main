@@ -34,9 +34,26 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, TypeVar, cast
 
 if TYPE_CHECKING:
+    import bmesh  # pyright: ignore[reportMissingModuleSource]
     import bpy  # pyright: ignore[reportMissingModuleSource]
 
 _T = TypeVar('_T')
+
+
+def face_loops(
+    face: 'bmesh.types.BMFace',
+) -> 'bmesh.types.BMElemSeq[bmesh.types.BMLoop]':
+    """`face.loops`, which fake-bpy-module-5.0 types as Any."""
+    return cast('bmesh.types.BMElemSeq[bmesh.types.BMLoop]', face.loops)
+
+
+def uv_layer(
+    bm: 'bmesh.types.BMesh',
+) -> 'bmesh.types.BMLayerItem[bmesh.types.BMLoopUV]':
+    """The mesh's UV layer, created if missing; fake-bpy-module-5.0 types the access as Any."""
+    uv = cast('bmesh.types.BMLayerCollection[bmesh.types.BMLoopUV]', bm.loops.layers.uv)
+    return uv.verify()
+
 
 # --- PNG export (no dependencies) ---
 
