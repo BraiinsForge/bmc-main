@@ -23,7 +23,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+
+from bmc_tui.json_value import Json
 
 
 class Event(StrEnum):
@@ -50,4 +51,4 @@ class ReceivedEvent:
 
     name: Event
     ts: datetime
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Json] = field(default_factory=dict)

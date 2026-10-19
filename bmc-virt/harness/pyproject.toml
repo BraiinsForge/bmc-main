@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "rich>=14",
     "matplotlib>=3.9",
+    "tyro>=0.9",
     "bmc-tui",
 ]
 

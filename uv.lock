@@ -63,6 +63,7 @@ dependencies = [
     { name = "bmc-tui" },
     { name = "matplotlib" },
     { name = "rich" },
+    { name = "tyro" },
 ]
 
 [package.metadata]
@@ -70,6 +71,7 @@ requires-dist = [
     { name = "bmc-tui", editable = "bmc-tui" },
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "rich", specifier = ">=14" },
+    { name = "tyro", specifier = ">=0.9" },
 ]
 
 [[package]]

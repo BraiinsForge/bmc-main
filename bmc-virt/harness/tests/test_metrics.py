@@ -123,4 +123,5 @@ class TestReadProcStatus:
         rec = _read_proc_status(os.getpid())
         assert rec["pid"] == os.getpid()
         # Self should have nonzero RSS.
-        assert rec["vm_rss_kb"] > 0
+        rss = rec["vm_rss_kb"]
+        assert isinstance(rss, int) and rss > 0

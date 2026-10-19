@@ -30,8 +30,11 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import NotRequired, TypedDict, cast
 
+import msgspec
+
+from bmc_tui.json_value import Json
 from bmc_virt.commands import Cmd
 from bmc_virt.events import Event
 
@@ -50,6 +53,20 @@ class MsgType(StrEnum):
 
 
 PROTOCOL_VERSION = 1
+
+
+class WireMsg(TypedDict):
+    """A message as it travels: `Msg.to_line` omits every field that is unset."""
+
+    type: str
+    ts: NotRequired[str]
+    name: NotRequired[str]
+    id: NotRequired[str]
+    version: NotRequired[int]
+    ok: NotRequired[bool]
+    error: NotRequired[str]
+    reason: NotRequired[str]
+    data: NotRequired[dict[str, object]]
 
 
 # ── Outgoing message constructors ──────────────────────────────────────────────
@@ -71,11 +88,11 @@ class Msg:
     ok: bool | None = None
     error: str | None = None
     reason: str | None = None
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Json] = field(default_factory=dict)
 
     def to_line(self) -> bytes:
         """Serialize to a newline-terminated JSON bytes line."""
-        d: dict[str, Any] = {"type": self.type}
+        d: dict[str, object] = {"type": self.type}
         if self.ts is not None:
             d["ts"] = self.ts
         if self.name is not None:
@@ -97,7 +114,7 @@ class Msg:
     @classmethod
     def from_line(cls, line: bytes) -> Msg:
         """Deserialize from a JSON bytes line."""
-        d = json.loads(line)
+        d = msgspec.json.decode(line, type=WireMsg)
         return cls(
             type=MsgType(d["type"]),
             ts=d.get("ts"),
@@ -107,7 +124,8 @@ class Msg:
             ok=d.get("ok"),
             error=d.get("error"),
             reason=d.get("reason"),
-            data=d.get("data", {}),
+            # msgspec cannot target the recursive Json alias; `object` decodes the same values.
+            data=cast("dict[str, Json]", d.get("data", {})),
         )
 
 
@@ -122,7 +140,7 @@ def synced() -> Msg:
     return Msg(type=MsgType.SYNCED, ts=_now())
 
 
-def event(name: Event, data: dict[str, Any] | None = None) -> Msg:
+def event(name: Event, data: dict[str, Json] | None = None) -> Msg:
     return Msg(type=MsgType.EVENT, name=name, ts=_now(), data=data or {})
 
 
@@ -130,7 +148,7 @@ def ack(
     request_id: str,
     *,
     ok: bool = True,
-    data: dict[str, Any] | None = None,
+    data: dict[str, Json] | None = None,
     error: str | None = None,
 ) -> Msg:
     return Msg(type=MsgType.ACK, id=request_id, ok=ok, ts=_now(), data=data or {}, error=error)
@@ -143,5 +161,5 @@ def shutdown(reason: str) -> Msg:
 # ── Client-originated message factories ────────────────────────────────────────
 
 
-def cmd(request_id: str, name: Cmd, data: dict[str, Any] | None = None) -> Msg:
+def cmd(request_id: str, name: Cmd, data: dict[str, Json] | None = None) -> Msg:
     return Msg(type=MsgType.CMD, id=request_id, name=name, data=data or {})

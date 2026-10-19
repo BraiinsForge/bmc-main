@@ -130,8 +130,9 @@ with VM.connect(timeout=60) as vm:
             f"{RR_BUNDLE}/bin/run-rr.sh dump --raw {trace} 2>&1 | head -30",
             timeout=10,
         )
-        if dump.ok and dump.data.get("stdout"):
-            ui.code(dump.data["stdout"])
+        stdout = dump.data.get("stdout")
+        if dump.ok and isinstance(stdout, str) and stdout:
+            ui.code(stdout)
         else:
             ui.warn("rr dump not available (app already stopped)")
 

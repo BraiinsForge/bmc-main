@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 from collections import deque
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -164,7 +164,7 @@ def styled_name(dotted: str) -> Text:
     return result
 
 
-def styled_data(data: dict[str, object]) -> Text:
+def styled_data(data: Mapping[str, object]) -> Text:
     """Style a data dict like IDE semantic highlighting: dim keys, colored values."""
     result = Text()
     for i, (k, v) in enumerate(data.items()):

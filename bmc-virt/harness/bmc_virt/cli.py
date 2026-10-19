@@ -21,19 +21,22 @@
 """CLI entry points for bmc-virt.
 
 Provides subcommands for interacting with a running VM:
-  bmc-virt ssh <command>
+  bmc-virt ssh -- <command>
   bmc-virt pull <remote> <local>
   bmc-virt push <local> <remote>
   bmc-virt events [--raw]
   bmc-virt wait <event>
-  bmc-virt exec <command> [--cmd <shell_cmd>]
+  bmc-virt exec -- <command>
 """
 
-import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Annotated
 
+import tyro
 from rich.console import Console
+from tyro.conf import Positional, arg, subcommand
 
 from bmc_virt import ui
 from bmc_virt.events import Event
@@ -44,127 +47,155 @@ _console = Console(stderr=True)
 _out = Console()
 
 
+@dataclass(frozen=True)
+class Connection:
+    host: str
+    event_port: int
+    ssh_port: int
+
+    def ssh(self) -> Ssh:
+        return Ssh(host=self.host, port=self.ssh_port)
+
+    def vm(self) -> VM:
+        return VM.connect(host=self.host, event_port=self.event_port, ssh_port=self.ssh_port)
+
+
+@dataclass
+class SshCommand:
+    """Run a command on the VM via SSH."""
+
+    cmd: Annotated[Positional[tuple[str, ...]], arg(metavar="CMD")] = ()  # command to run
+
+    def run(self, conn: Connection) -> None:
+        result = conn.ssh().run(" ".join(self.cmd), check=False)
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        sys.exit(result.returncode)
+
+
+@dataclass
+class PullCommand:
+    """Copy file from VM to host."""
+
+    remote: Annotated[Positional[str], arg(metavar="REMOTE")]  # remote path on VM
+    local: Annotated[Positional[str], arg(metavar="LOCAL")]  # local destination path
+
+    def run(self, conn: Connection) -> None:
+        conn.ssh().pull(remote=self.remote, local=self.local)
+        _console.print(f"[green]Pulled[/green] {self.remote} → {self.local}")
+
+
+@dataclass
+class PushCommand:
+    """Copy file from host to VM."""
+
+    local: Annotated[Positional[str], arg(metavar="LOCAL")]  # local source path
+    remote: Annotated[Positional[str], arg(metavar="REMOTE")]  # remote path on VM
+
+    def run(self, conn: Connection) -> None:
+        conn.ssh().push(local=self.local, remote=self.remote)
+        _console.print(f"[green]Pushed[/green] {self.local} → {self.remote}")
+
+
+@dataclass
+class EventsCommand:
+    """Stream events from the VM."""
+
+    raw: bool = False  # output raw JSONL
+
+    def run(self, conn: Connection) -> None:
+        vm = conn.vm()
+        try:
+            for evt in vm.events():
+                if self.raw:
+                    data = {"name": evt.name, "ts": evt.ts.isoformat(), "data": evt.data}
+                    _out.print_json(data=data)
+                else:
+                    ui.event(evt)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            vm.close()
+
+
+@dataclass
+class WaitCommand:
+    """Wait for an event."""
+
+    event: Annotated[Positional[str], arg(metavar="EVENT")]  # event name (e.g. app.ready)
+    timeout: float = 60  # timeout in seconds
+
+    def run(self, conn: Connection) -> None:
+        try:
+            event = Event(self.event)
+        except ValueError:
+            _console.print(f"[red]Unknown event:[/red] {self.event}")
+            _console.print(f"[dim]Available: {', '.join(e.value for e in Event)}[/dim]")
+            sys.exit(1)
+
+        vm = conn.vm()
+        try:
+            evt = vm.wait_for(event, timeout=self.timeout)
+            _out.print_json(data={"name": evt.name, "ts": evt.ts.isoformat(), "data": evt.data})
+        finally:
+            vm.close()
+
+
+@dataclass
+class ExecCommand:
+    """Execute a shell command on the VM via event daemon."""
+
+    cmd: Annotated[Positional[tuple[str, ...]], arg(metavar="CMD")] = ()  # shell command to run
+    timeout: float = 30  # timeout in seconds
+
+    def run(self, conn: Connection) -> None:
+        vm = conn.vm()
+        try:
+            result = vm.exec(" ".join(self.cmd), timeout=self.timeout)
+            _out.print_json(
+                data={
+                    "id": result.id,
+                    "ok": result.ok,
+                    "data": result.data,
+                    "error": result.error,
+                }
+            )
+        finally:
+            vm.close()
+
+
+type Command = (
+    Annotated[SshCommand, subcommand("ssh")]
+    | Annotated[PullCommand, subcommand("pull")]
+    | Annotated[PushCommand, subcommand("push")]
+    | Annotated[EventsCommand, subcommand("events")]
+    | Annotated[WaitCommand, subcommand("wait")]
+    | Annotated[ExecCommand, subcommand("exec")]
+)
+
+
+def dispatch(
+    command: Command,
+    host: str = "localhost",
+    event_port: int = 5920,
+    ssh_port: int = 2222,
+) -> None:
+    """BMC virtual machine harness.
+
+    Args:
+        command: what to do on the VM
+        host: VM host
+        event_port: event daemon port
+        ssh_port: SSH port
+    """
+    command.run(Connection(host=host, event_port=event_port, ssh_port=ssh_port))
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point."""
-    parser = argparse.ArgumentParser(prog="bmc-virt", description="BMC virtual machine harness")
-    parser.add_argument("--host", default="localhost", help="VM host (default: localhost)")
-    parser.add_argument("--event-port", type=int, default=5920, help="Event daemon port")
-    parser.add_argument("--ssh-port", type=int, default=2222, help="SSH port")
-
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    # ssh
-    p_ssh = sub.add_parser("ssh", help="Run a command on the VM via SSH")
-    p_ssh.add_argument("cmd", nargs=argparse.REMAINDER, help="Command to run")
-
-    # pull
-    p_pull = sub.add_parser("pull", help="Copy file from VM to host")
-    p_pull.add_argument("remote", help="Remote path on VM")
-    p_pull.add_argument("local", help="Local destination path")
-
-    # push
-    p_push = sub.add_parser("push", help="Copy file from host to VM")
-    p_push.add_argument("local", help="Local source path")
-    p_push.add_argument("remote", help="Remote path on VM")
-
-    # events
-    p_events = sub.add_parser("events", help="Stream events from the VM")
-    p_events.add_argument("--raw", action="store_true", help="Output raw JSONL")
-
-    # wait
-    p_wait = sub.add_parser("wait", help="Wait for an event")
-    p_wait.add_argument("event", help="Event name (e.g. app.ready)")
-    p_wait.add_argument("--timeout", type=float, default=60, help="Timeout in seconds")
-
-    # exec
-    p_exec = sub.add_parser("exec", help="Execute a shell command on the VM via event daemon")
-    p_exec.add_argument("cmd", nargs=argparse.REMAINDER, help="Shell command to run")
-    p_exec.add_argument("--timeout", type=float, default=30, help="Timeout in seconds")
-
-    args = parser.parse_args(argv)
-
-    if args.command == "ssh":
-        _do_ssh(args)
-    elif args.command == "pull":
-        _do_pull(args)
-    elif args.command == "push":
-        _do_push(args)
-    elif args.command == "events":
-        _do_events(args)
-    elif args.command == "wait":
-        _do_wait(args)
-    elif args.command == "exec":
-        _do_exec(args)
-
-
-def _do_ssh(args: argparse.Namespace) -> None:
-    ssh = Ssh(host=args.host, port=args.ssh_port)
-    cmd_str = " ".join(args.cmd)
-    result = ssh.run(cmd_str, check=False)
-    if result.stdout:
-        sys.stdout.write(result.stdout)
-    if result.stderr:
-        sys.stderr.write(result.stderr)
-    sys.exit(result.returncode)
-
-
-def _do_pull(args: argparse.Namespace) -> None:
-    ssh = Ssh(host=args.host, port=args.ssh_port)
-    ssh.pull(remote=args.remote, local=args.local)
-    _console.print(f"[green]Pulled[/green] {args.remote} → {args.local}")
-
-
-def _do_push(args: argparse.Namespace) -> None:
-    ssh = Ssh(host=args.host, port=args.ssh_port)
-    ssh.push(local=args.local, remote=args.remote)
-    _console.print(f"[green]Pushed[/green] {args.local} → {args.remote}")
-
-
-def _do_events(args: argparse.Namespace) -> None:
-    vm = VM.connect(host=args.host, event_port=args.event_port, ssh_port=args.ssh_port)
-    try:
-        for evt in vm.events():
-            if args.raw:
-                _out.print_json(data={"name": evt.name, "ts": evt.ts.isoformat(), "data": evt.data})
-            else:
-                ui.event(evt)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        vm.close()
-
-
-def _do_wait(args: argparse.Namespace) -> None:
-    try:
-        event = Event(args.event)
-    except ValueError:
-        _console.print(f"[red]Unknown event:[/red] {args.event}")
-        _console.print(f"[dim]Available: {', '.join(e.value for e in Event)}[/dim]")
-        sys.exit(1)
-
-    vm = VM.connect(host=args.host, event_port=args.event_port, ssh_port=args.ssh_port)
-    try:
-        evt = vm.wait_for(event, timeout=args.timeout)
-        _out.print_json(data={"name": evt.name, "ts": evt.ts.isoformat(), "data": evt.data})
-    finally:
-        vm.close()
-
-
-def _do_exec(args: argparse.Namespace) -> None:
-    cmd_str = " ".join(args.cmd)
-    vm = VM.connect(host=args.host, event_port=args.event_port, ssh_port=args.ssh_port)
-    try:
-        result = vm.exec(cmd_str, timeout=args.timeout)
-        _out.print_json(
-            data={
-                "id": result.id,
-                "ok": result.ok,
-                "data": result.data,
-                "error": result.error,
-            }
-        )
-    finally:
-        vm.close()
+    tyro.cli(dispatch, args=argv, prog="bmc-virt", config=(tyro.conf.OmitSubcommandPrefixes,))
 
 
 if __name__ == "__main__":

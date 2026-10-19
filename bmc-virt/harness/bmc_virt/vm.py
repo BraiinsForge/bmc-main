@@ -29,12 +29,12 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from rich.live import Live
 from rich.text import Text
 
 from bmc_tui.console import console, out
+from bmc_tui.json_value import Json
 from bmc_virt.client import Client, DaemonConnectionError
 from bmc_virt.commands import Ack, Cmd
 from bmc_virt.events import Event, ReceivedEvent
@@ -327,7 +327,7 @@ class VM:
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
-    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: Any) -> Ack:
+    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: Json) -> Ack:
         """Send a command to the daemon and wait for its ack."""
         if verbose:
             cmd_sent(command, **data)

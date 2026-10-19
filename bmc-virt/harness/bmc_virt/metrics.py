@@ -35,7 +35,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -52,7 +52,7 @@ matplotlib.use("Agg")
 class _Daemon(Protocol):
     """The part of a VM a collector drives; the VM passes itself."""
 
-    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
+    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: Json) -> Ack: ...
 
 
 _MEM_WARN_PCT = 60
@@ -92,7 +92,7 @@ class Snapshot:
     load_5m: float
     load_15m: float
     uptime_s: float
-    raw: dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, int] = field(default_factory=dict)
     processes: dict[str, ProcSnapshot] = field(default_factory=dict)
 
 
@@ -169,7 +169,7 @@ class MetricsCollector:
             Cmd.METRICS_COLLECT,
             timeout=5,
             verbose=False,
-            processes=self.processes,
+            processes=[*self.processes],
         )
         if not ack.ok:
             msg = f"Failed to read metrics: {ack.error}"

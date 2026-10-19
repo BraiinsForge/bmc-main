@@ -22,7 +22,8 @@
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+
+from bmc_tui.json_value import Json
 
 
 class Cmd(StrEnum):
@@ -41,5 +42,5 @@ class Ack:
 
     id: str
     ok: bool
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Json] = field(default_factory=dict)
     error: str | None = None

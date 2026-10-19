@@ -20,8 +20,7 @@
 
 """Unit tests for the JSONL wire protocol — no VM required."""
 
-import json
-
+from bmc_tui import json_value
 from bmc_virt.commands import Cmd
 from bmc_virt.events import Event
 from bmc_virt.protocol import (
@@ -138,7 +137,8 @@ class TestWireFormat:
     def test_valid_json(self):
         msg = mk_event(Event.RELAY_LISTENING)
         line = msg.to_line()
-        parsed = json.loads(line)
+        parsed = json_value.loads(line)
+        assert isinstance(parsed, dict)
         assert parsed["type"] == "event"
         assert parsed["name"] == "relay.listening"
 
@@ -152,7 +152,8 @@ class TestWireFormat:
     def test_omits_none_fields(self):
         """None-valued fields are not included in the wire format."""
         msg = mk_event(Event.APP_READY)
-        parsed = json.loads(msg.to_line())
+        parsed = json_value.loads(msg.to_line())
+        assert isinstance(parsed, dict)
         assert "id" not in parsed
         assert "version" not in parsed
         assert "error" not in parsed
@@ -161,7 +162,8 @@ class TestWireFormat:
     def test_omits_empty_data(self):
         """Empty data dict is not included in the wire format."""
         msg = mk_hello()
-        parsed = json.loads(msg.to_line())
+        parsed = json_value.loads(msg.to_line())
+        assert isinstance(parsed, dict)
         assert "data" not in parsed
 
 

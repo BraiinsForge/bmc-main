@@ -28,7 +28,6 @@ Usage: python3 -m bmc_virt.server
 """
 
 import contextlib
-import json
 import logging
 import os
 import signal
@@ -38,8 +37,9 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
+from bmc_tui import json_value
 from bmc_tui.json_value import Json
 from bmc_virt.commands import Cmd
 from bmc_virt.events import Event
@@ -99,7 +99,7 @@ class EventDaemon:
         try:
             while self._running:
                 try:
-                    client, _addr = server.accept()
+                    client = server.accept()[0]
                 except TimeoutError:
                     continue
 
@@ -170,7 +170,7 @@ class EventDaemon:
 
     # ── Event emission ─────────────────────────────────────────────────────────
 
-    def emit(self, name: Event, data: dict[str, Any] | None = None) -> None:
+    def emit(self, name: Event, data: dict[str, Json] | None = None) -> None:
         """Record an event and send it to the connected client."""
         log.info("EVENT %s %s", name, data or "")
         msg = mk_event(name, data)
@@ -222,7 +222,7 @@ class EventDaemon:
         info = _iw_link_info()
         if info and not s.wifi_associated:
             s.wifi_associated = True
-            self.emit(Event.WIFI_ASSOCIATED, info)
+            self.emit(Event.WIFI_ASSOCIATED, {**info})
         elif not info and s.wifi_associated:
             s.wifi_associated = False
             s.wifi_got_ip = False
@@ -250,7 +250,7 @@ class EventDaemon:
         try:
             while self._running:
                 try:
-                    client, _ = sock.accept()
+                    client = sock.accept()[0]
                 except TimeoutError:
                     continue
                 try:
@@ -269,11 +269,17 @@ class EventDaemon:
     def _handle_unix_message(self, data: bytes) -> None:
         """Parse and handle a message from the Unix socket."""
         try:
-            obj = json.loads(data)
-            name = Event(obj["name"])
-            self.emit(name, obj.get("data"))
-        except (ValueError, KeyError, json.JSONDecodeError):
-            pass
+            obj = json_value.loads(data)
+        except ValueError:
+            return
+        if not isinstance(obj, dict) or not isinstance(raw_name := obj.get("name"), str):
+            return
+        try:
+            name = Event(raw_name)
+        except ValueError:
+            return
+        payload = obj.get("data")
+        self.emit(name, payload if isinstance(payload, dict) else None)
 
     # ── Command dispatcher ─────────────────────────────────────────────────────
 
@@ -297,10 +303,11 @@ class EventDaemon:
         else:
             self._send_ack(request_id, ok=False, error=f"unknown command: {name}")
 
-    def _cmd_shell_exec(self, request_id: str, data: dict[str, Any]) -> None:
+    def _cmd_shell_exec(self, request_id: str, data: dict[str, Json]) -> None:
         """Execute a shell command and return the result."""
         cmd_str = str(data.get("cmd", ""))
-        timeout = float(data.get("timeout", 30))
+        raw_timeout = data.get("timeout", 30)
+        timeout = float(raw_timeout) if isinstance(raw_timeout, int | float | str) else 30.0
         try:
             result = subprocess.run(
                 cmd_str,
@@ -322,7 +329,7 @@ class EventDaemon:
         except subprocess.TimeoutExpired:
             self._send_ack(request_id, ok=False, error=f"command timed out after {timeout}s")
 
-    def _cmd_service_restart(self, request_id: str, data: dict[str, Any]) -> None:
+    def _cmd_service_restart(self, request_id: str, data: dict[str, Json]) -> None:
         """Restart a procd service."""
         name = str(data.get("name", ""))
         if not name:
@@ -343,25 +350,26 @@ class EventDaemon:
             )
             self._send_ack(request_id, ok=True)
         except subprocess.CalledProcessError as exc:
-            self._send_ack(request_id, ok=False, error=f"service restart failed: {exc.stderr}")
+            stderr = cast("str", exc.stderr)
+            self._send_ack(request_id, ok=False, error=f"service restart failed: {stderr}")
         except subprocess.TimeoutExpired:
             self._send_ack(request_id, ok=False, error="service restart timed out")
 
     # ── Metrics ──────────────────────────────────────────────────────────────
 
-    def _cmd_metrics_collect(self, request_id: str, data: dict[str, Any]) -> None:
+    def _cmd_metrics_collect(self, request_id: str, data: dict[str, Json]) -> None:
         """Read /proc directly and return a structured snapshot.
 
         Cheaper and more robust than shelling out to ``pidof``/``cat``/``awk``
         — busybox flag availability differs across builds, and shelling out
         per snapshot adds non-trivial overhead at 0.5 s polling cadence.
         """
-        requested = cast("Json", data.get("processes"))
+        requested = data.get("processes")
         processes = [str(p) for p in requested] if isinstance(requested, list) else []
         try:
-            payload = {
-                "meminfo": _read_meminfo(),
-                "loadavg": list(_read_loadavg()),
+            payload: dict[str, Json] = {
+                "meminfo": {**_read_meminfo()},
+                "loadavg": [*_read_loadavg()],
                 "uptime_s": _read_uptime(),
                 "processes": _read_processes(processes),
             }
@@ -488,7 +496,7 @@ class EventDaemon:
         request_id: str,
         *,
         ok: bool = True,
-        data: dict[str, Any] | None = None,
+        data: dict[str, Json] | None = None,
         error: str | None = None,
     ) -> None:
         """Send an ack to the connected client."""
@@ -716,7 +724,7 @@ def _read_uptime() -> float:
         return 0.0
 
 
-def _read_processes(names: list[str]) -> dict[str, dict[str, Any]]:
+def _read_processes(names: list[str]) -> dict[str, Json]:
     """For each name, find the first matching pid and return its memory fields.
 
     Match is by /proc/<pid>/comm (kernel comm name, 15-char limit). For
@@ -724,7 +732,7 @@ def _read_processes(names: list[str]) -> dict[str, dict[str, Any]]:
     exact; longer names are truncated by the kernel and the caller would
     need to pass the truncated form. Missing processes record ``pid=None``.
     """
-    out: dict[str, dict[str, Any]] = {name: {"pid": None} for name in names}
+    out: dict[str, Json] = {name: {"pid": None} for name in names}
     if not names:
         return out
     pending = set(names)
@@ -756,9 +764,9 @@ def _read_processes(names: list[str]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _read_proc_status(pid: int) -> dict[str, Any]:
+def _read_proc_status(pid: int) -> dict[str, Json]:
     """Read /proc/<pid>/status and extract VmSize/VmRSS/Rss* fields (KB)."""
-    record: dict[str, Any] = {"pid": pid}
+    record: dict[str, Json] = {"pid": pid}
     for dst in _PROC_STATUS_FIELDS.values():
         record[dst] = 0
 

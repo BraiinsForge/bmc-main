@@ -68,13 +68,14 @@ def cmd_sent(command: Cmd, **data: object) -> None:
 
 def ack_result(result: Ack) -> None:
     """Pretty-print a command ack — output first, then status."""
-    has_output = result.data.get("stdout") or result.data.get("stderr")
-    if has_output:
-        if result.data.get("stdout"):
-            for line in result.data["stdout"].rstrip().splitlines():
+    stdout = result.data.get("stdout")
+    stderr = result.data.get("stderr")
+    if stdout or stderr:
+        if isinstance(stdout, str) and stdout:
+            for line in stdout.rstrip().splitlines():
                 _c.line(f"[dim]│[/dim] {line}")
-        if result.data.get("stderr"):
-            for line in result.data["stderr"].rstrip().splitlines():
+        if isinstance(stderr, str) and stderr:
+            for line in stderr.rstrip().splitlines():
                 _c.line(f"[dim]│[/dim] [yellow]{line}[/yellow]")
     else:
         _c.line("[dim]│ (no output)[/dim]")

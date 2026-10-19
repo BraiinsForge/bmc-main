@@ -29,6 +29,7 @@ import subprocess
 from typing import Protocol
 
 from bmc_tui.console import panel, warn
+from bmc_tui.json_value import Json
 from bmc_virt.commands import Ack, Cmd
 from bmc_virt.paths import RR_TRACE_DIR
 
@@ -36,7 +37,7 @@ from bmc_virt.paths import RR_TRACE_DIR
 class _Daemon(Protocol):
     """The part of a VM an rr handle drives; the VM passes itself."""
 
-    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: object) -> Ack: ...
+    def send_cmd(self, command: Cmd, *, timeout: float, verbose: bool, **data: Json) -> Ack: ...
 
     def pull(self, *, src: str, dst: str | pathlib.Path) -> None: ...
 
@@ -74,8 +75,9 @@ class RrHandle:
         The ack's data["trace"] contains the guest-side trace path.
         """
         ack = self._vm.send_cmd(Cmd.RR_STOP, timeout=timeout, verbose=verbose)
-        if ack.ok and ack.data.get("trace"):
-            self._last_trace = ack.data["trace"]
+        trace = ack.data.get("trace")
+        if ack.ok and isinstance(trace, str) and trace:
+            self._last_trace = trace
         return ack
 
     def pull(self, local: str | pathlib.Path) -> None:

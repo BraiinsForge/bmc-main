@@ -31,6 +31,7 @@ import struct
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 # Relay binary IPC wire format
 _TAG_FRAME = 0x01
@@ -53,12 +54,12 @@ def capture(host: str = "localhost", port: int = 5910, timeout: float = 5) -> Fr
             # Read header: tag(1) + length(4)
             header = _recv_exact(sock, _HEADER_SIZE)
             tag = header[0]
-            length = struct.unpack_from("<I", header, 1)[0]
+            (length,) = cast("tuple[int]", struct.unpack_from("<I", header, 1))
             payload = _recv_exact(sock, length)
 
             if tag == _TAG_FRAME and length >= _FRAME_HEADER_SIZE:
-                _seq, width, height, stride, bpp, brightness = struct.unpack_from(
-                    "<QIIIIB", payload
+                _seq, width, height, stride, bpp, brightness = cast(
+                    "tuple[int, int, int, int, int, int]", struct.unpack_from("<QIIIIB", payload)
                 )
                 pixels = payload[_FRAME_HEADER_SIZE:]
                 return FrameData(
@@ -149,7 +150,7 @@ def _rgb565_to_rgba(raw_row: bytes, width: int) -> bytes:
     """Convert an RGB565 row to RGBA."""
     rgba = bytearray(width * 4)
     for x in range(width):
-        pixel = struct.unpack_from("<H", raw_row, x * 2)[0]
+        (pixel,) = cast("tuple[int]", struct.unpack_from("<H", raw_row, x * 2))
         r = ((pixel >> 11) & 0x1F) * 255 // 31
         g = ((pixel >> 5) & 0x3F) * 255 // 63
         b = (pixel & 0x1F) * 255 // 31

@@ -29,6 +29,7 @@ import socket
 import threading
 import time
 from collections.abc import Generator
+from typing import cast
 
 import pytest
 
@@ -45,7 +46,8 @@ def _free_port() -> int:
     """Find a free TCP port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+        _host, port = cast("tuple[str, int]", s.getsockname())
+        return port
 
 
 class DaemonFixture:
@@ -76,7 +78,7 @@ class DaemonFixture:
         try:
             while self.daemon._running:
                 try:
-                    client, _addr = server.accept()
+                    client = server.accept()[0]
                 except TimeoutError:
                     continue
 
@@ -204,7 +206,9 @@ class TestCommands:
         assert len(acks) >= 1
         ack = next(a for a in acks if a.id == "test-1")
         assert ack.ok is True
-        assert ack.data["stdout"].strip() == "hello"
+        stdout = ack.data["stdout"]
+        assert isinstance(stdout, str)
+        assert stdout.strip() == "hello"
         assert ack.data["exit_code"] == 0
 
     def test_shell_exec_failure(self, connected: Connected):

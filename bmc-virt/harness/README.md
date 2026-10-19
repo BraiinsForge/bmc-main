@@ -81,12 +81,13 @@ just test      # pytest only
 
 ```sh
 bmc-virt ssh "uci show wireless"
+bmc-virt ssh -- ls -la /etc  # `--` before a command whose arguments start with `-`
 bmc-virt pull /root/bmc.log ./logs/
 bmc-virt push ./config.json /etc/bmc/config.json
 bmc-virt events              # pretty-print live events
 bmc-virt events --raw        # JSONL for piping
 bmc-virt wait app.ready
-bmc-virt exec shell.exec --cmd "echo hello"
+bmc-virt exec "echo hello"   # through the event daemon instead of SSH
 ```
 
 ### Python API
