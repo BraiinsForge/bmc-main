@@ -56,7 +56,7 @@ import xml.etree.ElementTree as ET
 from html import escape as html_escape
 from http.client import HTTPConnection
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import ClassVar, NoReturn, override
+from typing import ClassVar, NoReturn, cast, override
 from urllib.parse import urlparse
 
 # ── SOAP constants ───────────────────────────────────────────────
@@ -158,7 +158,8 @@ def get_local_ip() -> str:
         try:
             # Doesn't actually send anything — just triggers route lookup
             s.connect(('10.255.255.255', 1))
-            return s.getsockname()[0]
+            local_ip, _port = cast('tuple[str, int]', s.getsockname())
+            return local_ip
         except OSError:
             return '127.0.0.1'
 
@@ -553,7 +554,7 @@ def _ssdp_listener(local_ip: str, port: int, stop_event: threading.Event) -> Non
     try:
         while not stop_event.is_set():
             try:
-                data, addr = sock.recvfrom(2048)
+                data, addr = cast('tuple[bytes, tuple[str, int]]', sock.recvfrom(2048))
                 msg = data.decode(errors='replace')
                 if 'M-SEARCH' in msg and ('ssdp:all' in msg or 'MediaRenderer' in msg):
                     sock.sendto(response, addr)
@@ -641,6 +642,17 @@ def spawn_builtin_renderer(
 # ── Main ─────────────────────────────────────────────────────────
 
 
+class Args(argparse.Namespace):
+    """The parsed command line; the parser takes its defaults from here."""
+
+    target: str | None = None
+    media_url: str | None = None
+    port: int = 49_494
+    name: str = 'Deck Test'
+    status: bool = False
+    example: int | None = None
+
+
 def main() -> NoReturn | None:
     parser = argparse.ArgumentParser(
         description='Push media to a UPnP/DLNA renderer.',
@@ -671,13 +683,13 @@ def main() -> NoReturn | None:
     parser.add_argument(
         '--port',
         type=int,
-        default=49_494,
-        help='port for spawned renderer (default: 49494)',
+        default=Args.port,
+        help=f'port for spawned renderer (default: {Args.port})',
     )
     parser.add_argument(
         '--name',
-        default='Deck Test',
-        help='friendly name for spawned renderer (default: "Deck Test")',
+        default=Args.name,
+        help=f'friendly name for spawned renderer (default: "{Args.name}")',
     )
     parser.add_argument(
         '--status',
@@ -692,7 +704,7 @@ def main() -> NoReturn | None:
         help=f'use built-in example track 0–{len(EXAMPLE_TRACKS) - 1} (implies media push)',
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=Args())
 
     host = '127.0.0.1'
     port = args.port
