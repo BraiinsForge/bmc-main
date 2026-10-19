@@ -307,7 +307,7 @@ fn status_item(
 }
 
 // The filled area chart + trend line for a hashrate series, mapped into `w`x`h`.
-// Points sit by timestamp within `window`; each `None` breaks the fill and stroke
+// Points sit by their time within `window`; each `None` breaks the fill and stroke
 // into separate runs, so the chart never draws a false line across missing data.
 // `top_frac` leaves headroom above the chart (hero text).
 #[must_use]
@@ -465,9 +465,9 @@ fn marker_radius(h: f32) -> f32 {
     (h * 0.06).clamp(1.5, 3.5)
 }
 
-// Markers fit when the samples are typically at least a marker apart — judged by
-// the median gap, so a few tight pairs can't strip markers off an otherwise well-spread run:
-// a bucket is stamped at its first sample, so polls at :14 and :16 sit in adjacent slots 2 s apart.
+// Markers fit when the samples are typically at least a marker apart — judged by the median gap,
+// so the open bucket, read a poll after the one before it early in its slot,
+// can't strip markers off an otherwise well-spread run.
 // A lone point (no pair) always fits.
 fn markers_fit(pts: &[(f32, f32)], r: f32) -> bool {
     let mut gaps: Vec<f32> = pts.windows(2).map(|p| (p[1].0 - p[0].0).abs()).collect();
@@ -483,7 +483,7 @@ fn markers_fit(pts: &[(f32, f32)], r: f32) -> bool {
     gaps[mid] >= r * 2.5
 }
 
-// A closure placing a timestamp on the x axis: the window's right edge at `w`,
+// A closure placing a time on the x axis: the window's right edge at `w`,
 // back `span_secs` to `0`, so partial history hugs the right and a stale tail
 // leaves a gap there.
 fn time_x(window: ChartWindow, w: f32) -> impl Fn(i64) -> f32 {
@@ -569,8 +569,10 @@ fn pow10_floor(v: f32) -> Option<f32> {
 }
 
 // Sample a Catmull-Rom spline through `pts` into a dense polyline.
-// Control-point y is clamped to each segment's endpoint band,
-// so the curve can't overshoot a peak or dip off-canvas.
+// Control points are clamped to each segment's endpoint box:
+// in y the curve can't overshoot a peak or dip off-canvas,
+// and in x it can't run back on a point much closer than its neighbour,
+// as the open bucket is to the one before it early in its slot.
 fn smooth_curve(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
     const STEPS: usize = 10;
     if pts.len() < 3 {
@@ -583,13 +585,14 @@ fn smooth_curve(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
         let p1 = pts[i];
         let p2 = pts[i + 1];
         let p3 = pts[(i + 2).min(n - 1)];
+        let (left, right) = (p1.0.min(p2.0), p1.0.max(p2.0));
         let (lo, hi) = (p1.1.min(p2.1), p1.1.max(p2.1));
         let cp1 = (
-            p1.0 + (p2.0 - p0.0) / 6.0,
+            (p1.0 + (p2.0 - p0.0) / 6.0).clamp(left, right),
             (p1.1 + (p2.1 - p0.1) / 6.0).clamp(lo, hi),
         );
         let cp2 = (
-            p2.0 - (p3.0 - p1.0) / 6.0,
+            (p2.0 - (p3.0 - p1.0) / 6.0).clamp(left, right),
             (p2.1 - (p3.1 - p1.1) / 6.0).clamp(lo, hi),
         );
         for s in 1..=STEPS {
@@ -734,6 +737,15 @@ mod tests {
     fn a_peak_near_the_f32_ceiling_leaves_no_finite_step() {
         // Snapping the magnitude up to the next power of ten runs past f32::MAX.
         assert_eq!(nice_step(f32::MAX), None);
+    }
+
+    #[test]
+    fn the_curve_never_runs_back_on_a_point_close_to_the_one_before() {
+        let curve = smooth_curve(&[(0.0, 50.0), (15.0, 40.0), (30.0, 60.0), (31.0, 10.0)]);
+        assert!(
+            curve.windows(2).all(|w| w[0].0 <= w[1].0),
+            "a gap a fifteenth of the one before it pushes the unclamped curve past 31 and back"
+        );
     }
 
     const WINDOW: ChartWindow = ChartWindow {

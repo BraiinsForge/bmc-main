@@ -462,11 +462,11 @@ pub extern "C" fn render(_delta_ms: u32) {
         let chart_span =
             history::ChartSpan::from(manifest_params::Params::current().chart_span_minutes);
 
-        // The chart's time axis: render now back one range, so points
-        // place by timestamp with the newest at the right edge.
+        // The chart's time axis: render now back two slots short of one range,
+        // so points place by time with the newest at the right edge.
         let chart_window = history::ChartWindow {
             end: SystemTime::now().unix_secs,
-            span_secs: chart_span.range_secs(),
+            span_secs: chart_span.window_secs(),
         };
         VIEW.with(|view_state| {
             let mut nav = view_state.borrow_mut();

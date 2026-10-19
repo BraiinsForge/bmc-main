@@ -98,6 +98,14 @@ impl ChartSpan {
         let points = i64::try_from(POINTS).expect("BUG: POINTS fits in i64");
         self.range_secs() / points
     }
+
+    /// How far back a chart reaches: two slots short of the range.
+    /// The newest bucket's slot holds now,
+    /// so the oldest of the [`POINTS`] kept lies wholly before the window,
+    /// wherever in its slot its value was read, and the line enters from the left edge.
+    pub(crate) fn window_secs(self) -> i64 {
+        self.range_secs() - 2 * self.interval_secs()
+    }
 }
 
 /// The one crossing from the generated manifest enum to the tiers, and exhaustive
@@ -126,7 +134,7 @@ pub struct HistoryDatum {
 }
 
 /// The time span a chart draws: the right edge (`end`, render now in unix
-/// seconds) back `span_secs`. Points place by timestamp within it, so a
+/// seconds) back `span_secs`. Points place by their time within it, so a
 /// still-filling history hugs the right edge rather than stretching to fill the
 /// width, and a stale series leaves an honest gap on the right.
 #[derive(Debug, Clone, Copy)]
@@ -664,17 +672,15 @@ mod tests {
     }
 
     #[test]
-    fn the_open_bucket_keeps_its_timestamp_while_its_value_refreshes() {
-        // A within-interval refresh updates the value but not the bucket's
-        // timestamp, so points stay evenly spaced at the tier interval.
+    fn the_open_bucket_takes_the_time_of_its_newest_reading() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         h.record_fleet(14, &summary(99.0, 4.0).hashrate());
         let series = total(&h, ChartSpan::FifteenMinutes);
         assert_eq!(series.len(), 1, "still one bucket");
         assert_eq!(
-            series[0].at, 0,
-            "timestamp is the bucket's, not the refresh's"
+            series[0].at, 14,
+            "stamped when its value was read, so a clock step cuts it exactly"
         );
         assert_eq!(series[0].value, Some(99.0), "value is the latest reading");
     }
@@ -797,10 +803,7 @@ mod tests {
             vec![Some(4.0)],
             "one 15 s bucket, newest value"
         );
-        assert_eq!(
-            series[0].at, 0,
-            "the bucket keeps the first poll's timestamp"
-        );
+        assert_eq!(series[0].at, 10, "the bucket takes the second poll's time");
     }
 
     #[test]
