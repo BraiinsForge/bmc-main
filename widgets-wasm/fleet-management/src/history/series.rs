@@ -178,9 +178,16 @@ impl Series {
     /// and only while it joins the first one inside, so the line enters from the left edge.
     /// A bucket stamped after the window's end is not drawn:
     /// a clock set back leaves one until the history follows it.
+    /// Nor is the newest while it is open in the slot holding the window's end,
+    /// as every reading still moves it.
     pub(super) fn plot(&self, window: ChartWindow) -> Vec<Option<ChartPoint>> {
         let start = window.end - window.span_secs;
-        let drawable = self.samples.partition_point(|s| s.at <= window.end);
+        let still_moving = self.newest == Newest::Open && self.has_sampled_slot_of(window.end);
+        let settled = self.samples.len() - usize::from(still_moving);
+        let drawable = self
+            .samples
+            .partition_point(|s| s.at <= window.end)
+            .min(settled);
         let first = self
             .samples
             .range(..drawable)
@@ -660,7 +667,7 @@ mod tests {
         assert_eq!(
             holding(&[(0, None), (15, Some(1.0))]).plot(WINDOW),
             one(15),
-            "a lone point stays lone, so the scaled chart still waits for a second one"
+            "a bucket without a value leaves no break before the first point"
         );
         assert_eq!(
             holding(&[(885, None), (900, Some(1.0))]).plot(LATER_WINDOW),
@@ -676,6 +683,39 @@ mod tests {
             ats(&s.plot(LATER_WINDOW)),
             vec![885, 900, 915],
             "the bucket at 885 enters the window, the one at 870 is never drawn"
+        );
+    }
+
+    #[test]
+    fn the_open_bucket_is_not_drawn_while_its_slot_runs() {
+        let mut s = Series::new(SPAN);
+        s.record(0, Some(1.0));
+        s.record(15, Some(2.0));
+        let at = |end| {
+            ats(&s.plot(ChartWindow {
+                end,
+                span_secs: 900,
+            }))
+        };
+        assert_eq!(at(29), vec![0], "every reading in its slot still moves it");
+        assert_eq!(
+            at(30),
+            vec![0, 15],
+            "its slot has ended, so its value is final"
+        );
+    }
+
+    #[test]
+    fn a_closed_newest_bucket_is_drawn_in_its_slot() {
+        let s = present(&[0, 15]);
+        let window = ChartWindow {
+            end: 20,
+            span_secs: 900,
+        };
+        assert_eq!(
+            ats(&s.plot(window)),
+            vec![0, 15],
+            "a restored bucket never takes another reading"
         );
     }
 

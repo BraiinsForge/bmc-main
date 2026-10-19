@@ -342,21 +342,7 @@ pub fn scaled_area_chart(
     ticks: bool,
 ) -> Vec<Draw> {
     let anchored = matches!(nominal, Some(n) if n > 0.0);
-    // A lone bucket gives a data-fit axis nothing settled to scale against:
-    // usually it is the still-forming open one, refreshed with the live reading every tick,
-    // and the axis would chase it.
-    // Draw nothing until a second bucket arrives; a nameplate axis is stable regardless.
-    if !anchored && series.len() < 2 {
-        return Vec::new();
-    }
-    // Scale from the settled points — exclude the still-forming last bucket, so
-    // the axis re-fits only when a bucket commits, not as the open one refreshes.
-    let settled = if series.len() > 1 {
-        &series[..series.len() - 1]
-    } else {
-        series
-    };
-    let local_max = settled
+    let local_max = series
         .iter()
         .flatten()
         .map(|p| p.value)
@@ -466,7 +452,7 @@ fn marker_radius(h: f32) -> f32 {
 }
 
 // Markers fit when the samples are typically at least a marker apart — judged by the median gap,
-// so the open bucket, read a poll after the one before it early in its slot,
+// so a few tight pairs, such as a restored bucket and the first live one after a quick restart,
 // can't strip markers off an otherwise well-spread run.
 // A lone point (no pair) always fits.
 fn markers_fit(pts: &[(f32, f32)], r: f32) -> bool {
@@ -572,7 +558,7 @@ fn pow10_floor(v: f32) -> Option<f32> {
 // Control points are clamped to each segment's endpoint box:
 // in y the curve can't overshoot a peak or dip off-canvas,
 // and in x it can't run back on a point much closer than its neighbour,
-// as the open bucket is to the one before it early in its slot.
+// as the first live bucket can be to a restored one after a quick restart.
 fn smooth_curve(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
     const STEPS: usize = 10;
     if pts.len() < 3 {
@@ -768,59 +754,51 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn a_lone_forming_point_draws_nothing_on_a_data_fit_axis() {
-        let draws = scaled_area_chart(&[Some(POINT)], WINDOW, 200.0, 100.0, 0.0, None, false);
-        assert!(draws.is_empty(), "the axis has no settled value to fit yet");
+    /// The y a marker for `value` draws at on a data-fit axis whose highest point is `peak`.
+    fn fitted_y(value: f32, peak: f32, h: f32) -> f32 {
+        let (ceiling, _) = data_fit_scale(peak).expect("BUG: a real peak fits");
+        (1.0 - value / ceiling) * (h - BASELINE_INSET)
     }
 
     #[test]
-    fn a_forming_bucket_does_not_move_the_axis() {
-        let (h, top_frac) = (100.0, 0.0);
-        let forming = ChartPoint {
+    fn a_lone_point_draws_on_a_data_fit_axis() {
+        let draws = scaled_area_chart(&[Some(POINT)], WINDOW, 200.0, 100.0, 0.0, None, false);
+        assert!(
+            marker_ys(&draws).first().is_some_and(|&y| (y - fitted_y(
+                POINT.value,
+                POINT.value,
+                100.0
+            ))
+            .abs()
+                < 1e-3),
+            "the axis fits the one point there is"
+        );
+    }
+
+    #[test]
+    fn the_axis_fits_the_newest_point_too() {
+        let newest = ChartPoint {
             at: 750,
             value: 90.0,
         };
         let draws = scaled_area_chart(
-            &[Some(POINT), Some(forming)],
+            &[Some(POINT), Some(newest)],
             WINDOW,
             200.0,
-            h,
-            top_frac,
+            100.0,
+            0.0,
             None,
             false,
         );
-        let (ceiling, _) = data_fit_scale(POINT.value).expect("BUG: a real peak fits");
-        let top = h * top_frac;
-        let expected = top + (1.0 - POINT.value / ceiling) * (h - top - BASELINE_INSET);
         assert!(
-            marker_ys(&draws)
-                .first()
-                .is_some_and(|&y| (y - expected).abs() < 1e-3),
-            "the axis fits the settled point, not the forming bucket's higher value"
-        );
-    }
-
-    #[test]
-    fn an_empty_forming_bucket_lets_the_settled_point_draw() {
-        let (h, top_frac) = (100.0, 0.0);
-        let draws = scaled_area_chart(
-            &[Some(POINT), None],
-            WINDOW,
-            200.0,
-            h,
-            top_frac,
-            None,
-            false,
-        );
-        let (ceiling, _) = data_fit_scale(POINT.value).expect("BUG: a real peak fits");
-        let top = h * top_frac;
-        let expected = top + (1.0 - POINT.value / ceiling) * (h - top - BASELINE_INSET);
-        let ys = marker_ys(&draws);
-        assert!(!ys.is_empty(), "the settled point is drawn");
-        assert!(
-            ys.iter().all(|&y| (y - expected).abs() < 1e-3),
-            "the settled point draws at the height its own fitted axis gives it"
+            marker_ys(&draws).first().is_some_and(|&y| (y - fitted_y(
+                POINT.value,
+                newest.value,
+                100.0
+            ))
+            .abs()
+                < 1e-3),
+            "the plot holds no open bucket, so every point it hands over is final"
         );
     }
 }

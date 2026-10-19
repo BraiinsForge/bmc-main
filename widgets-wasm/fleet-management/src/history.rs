@@ -1071,8 +1071,9 @@ mod tests {
         );
 
         again.record_fleet(75, &summary(12.0, 5.0).hashrate());
+        // The next slot, so the live bucket's value is final.
         let window = ChartWindow {
-            end: 75,
+            end: 90,
             span_secs: 900,
         };
         assert_eq!(
@@ -1198,8 +1199,9 @@ mod tests {
         );
         restored.record_fleet(downtime, &summary(12.0, 5.0).hashrate());
 
+        // The next 1 h tier slot, so the live bucket's value is final.
         let window = ChartWindow {
-            end: downtime,
+            end: downtime + 60,
             span_secs: 3_600,
         };
         assert_eq!(
