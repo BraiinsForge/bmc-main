@@ -28,7 +28,7 @@ use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature
 )]
 use bmc_wasm_sdk::*;
 
-use crate::history::{ChartWindow, HistoryDatum};
+use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
@@ -57,7 +57,7 @@ pub struct DeviceRow {
     pub click_id: String,
     pub status: DeviceStatus,
     pub hashrate: Option<Hashrate>,
-    pub series: Vec<HistoryDatum>,
+    pub series: Vec<Option<ChartPoint>>,
     pub power: Option<ElectricPower>,
     pub efficiency: Option<MiningEfficiency>,
     pub avg_temp: Option<Temperature>,

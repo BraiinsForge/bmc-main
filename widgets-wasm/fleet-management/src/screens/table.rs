@@ -32,7 +32,7 @@ use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature
 use bmc_wasm_sdk::*;
 
 use crate::device::DeviceFamily;
-use crate::history::{ChartWindow, HistoryDatum};
+use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::parts::{
     BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
     LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager,
@@ -68,7 +68,7 @@ pub struct ModelRow {
     pub degraded: usize,
     pub off: usize,
     pub hashrate: Option<Hashrate>,
-    pub series: Vec<HistoryDatum>,
+    pub series: Vec<Option<ChartPoint>>,
     pub power: Option<ElectricPower>,
     pub efficiency: Option<MiningEfficiency>,
     pub avg_temp: Option<Temperature>,

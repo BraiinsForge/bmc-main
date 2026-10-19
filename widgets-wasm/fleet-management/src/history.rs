@@ -19,22 +19,27 @@
 // the grant above.
 
 //! Rolling hashrate history for the dashboard chart and per-model sparklines.
-//! Each chart range (15 min … 24 h) is a consolidation tier: [`POINTS`] samples
-//! taken at range/POINTS, all filled continuously. Picking a range just reads
-//! the matching tier through [`HistoryView`] — nothing rebuilds. Each sample
-//! carries its timestamp and a nullable value, so a restart gap or an
-//! unreachable device draws as a break, not a false line to zero.
+//! Each chart range (15 min … 24 h) is a consolidation tier of [`POINTS`] buckets,
+//! one per range/POINTS slot, for the fleet total, each model and each device.
+//! Picking a range just reads the matching tier through [`HistoryView`] — nothing rebuilds.
+//! Each sample carries its timestamp and a nullable value, so an unreachable device draws
+//! as a break, not a false line to zero; a restart longer than two slots leaves a gap.
 //!
 //! The fleet-total and per-model tiers persist to the flash cache so the charts
 //! survive a restart; per-device series are RAM-only, so a reused hostname can't
 //! attribute one miner's past to another. A corrupt blob is dropped, not shown.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use bmc_wasm_sdk::types::Hashrate;
 
 use crate::device::{DeviceFamily, DeviceId, DeviceList};
-use crate::summary::FleetSummary;
+use crate::summary::{FleetHashrate, UNKNOWN_GROUP};
+
+mod series;
+
+pub use series::ChartPoint;
+use series::Series;
 
 /// Samples kept per tier. Each range spreads across this many points, so a
 /// tier's interval is `range / POINTS`; a fixed count bounds memory and the
@@ -80,6 +85,19 @@ impl ChartSpan {
             Self::TwentyFourHours => 3,
         }
     }
+
+    pub(crate) fn range_secs(self) -> i64 {
+        i64::from(self.minutes()) * 60
+    }
+
+    #[expect(
+        clippy::integer_division,
+        reason = "every range is whole minutes, so it splits evenly into POINTS whole seconds"
+    )]
+    pub(crate) fn interval_secs(self) -> i64 {
+        let points = i64::try_from(POINTS).expect("BUG: POINTS fits in i64");
+        self.range_secs() / points
+    }
 }
 
 /// The one crossing from the generated manifest enum to the tiers, and exhaustive
@@ -98,19 +116,9 @@ impl From<crate::manifest_params::ChartSpanMinutes> for ChartSpan {
     }
 }
 
-/// Sample interval (seconds) for a `span_minutes` range over [`POINTS`] points,
-/// floored at 1 s so a tiny range can't stall the gate.
-#[expect(
-    clippy::integer_division,
-    reason = "the interval is whole seconds; sub-second precision is irrelevant to the chart cadence"
-)]
-fn interval_secs(span_minutes: i32) -> i64 {
-    let points = i64::try_from(POINTS).expect("BUG: POINTS fits in i64");
-    (i64::from(span_minutes) * 60 / points).max(1)
-}
-
 /// One hashrate point: when it was taken (unix seconds) and its value, or `None`
-/// for no data — an unreachable device, or the gap a restart leaves behind.
+/// for no data — an unreachable device, or a reading without a hashrate.
+/// Snapshots from earlier builds also hold `None` restart breaks.
 #[derive(Debug, Clone, Copy, PartialEq, bincode::Encode, bincode::Decode)]
 pub struct HistoryDatum {
     pub at: i64,
@@ -131,61 +139,14 @@ impl ChartWindow {
     /// The window that exactly spans a series — for fixtures and stories, whose
     /// baked points should fill the whole width.
     #[must_use]
-    pub fn covering(series: &[HistoryDatum]) -> Self {
-        let start = series.first().map_or(0, |s| s.at);
-        let end = series.last().map_or(0, |s| s.at);
+    pub fn covering(series: &[Option<ChartPoint>]) -> Self {
+        let mut ats = series.iter().flatten().map(|p| p.at);
+        let start = ats.next().unwrap_or(0);
+        let end = ats.next_back().unwrap_or(start);
         Self {
             end,
             span_secs: (end - start).max(1),
         }
-    }
-}
-
-#[derive(Debug, Default)]
-struct Ring(VecDeque<HistoryDatum>);
-
-impl Ring {
-    /// A ring of restored samples, keeping only the newest [`POINTS`].
-    /// The blob is decoded, not trusted: a longer series would sit over capacity
-    /// forever, since evicting one per push holds the length rather than lowering it.
-    fn restored(samples: Vec<HistoryDatum>) -> Self {
-        let excess = samples.len().saturating_sub(POINTS);
-        Self(samples.into_iter().skip(excess).collect())
-    }
-
-    fn push(&mut self, sample: HistoryDatum) {
-        if self.0.len() >= POINTS {
-            self.0.pop_front();
-        }
-        self.0.push_back(sample);
-    }
-
-    /// Start a new bucket at a slot boundary, else refresh the current bucket's
-    /// value in place (keeping its timestamp) so the newest point tracks the
-    /// live reading without over-sampling the ring.
-    fn upsert(&mut self, at: i64, value: Option<f32>, new_slot: bool) {
-        match self.0.back_mut() {
-            Some(last) if !new_slot => last.value = value,
-            _ => self.push(HistoryDatum { at, value }),
-        }
-    }
-
-    /// End the series with a valueless sample, so whatever follows
-    /// starts a new run rather than joining the last one.
-    /// Only ever breaks after real data: a series that is empty, or already
-    /// ends on a break, would otherwise spend a slot on every restart.
-    fn mark_break(&mut self, at: i64) {
-        if self.0.back().is_some_and(|last| last.value.is_some()) {
-            self.push(HistoryDatum { at, value: None });
-        }
-    }
-
-    fn to_vec(&self) -> Vec<HistoryDatum> {
-        self.0.iter().copied().collect()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }
 
@@ -197,57 +158,33 @@ fn ths(h: Hashrate) -> f32 {
     h.as_terahashes_per_second() as f32
 }
 
-/// One consolidation tier: every series sampled at this tier's interval.
-/// Model series survive refolds via the (family, model-name) partition key;
-/// device series key on the stable device id.
-#[derive(Debug, Default)]
-struct Tier {
-    interval_secs: i64,
-    current_slot: Option<i64>,
-    total: Ring,
-    models: HashMap<(Option<usize>, String), Ring>,
-    devices: HashMap<DeviceId, Ring>,
+/// The fleet's consolidation tier for one chart range: the total and model series,
+/// each model's keyed on the (family, model name) pair the fleet is grouped by.
+#[derive(Debug)]
+struct FleetTier {
+    span: ChartSpan,
+    total: Series,
+    models: HashMap<(Option<usize>, String), Series>,
 }
 
-impl Tier {
-    /// Prune departed series, then fold the reading into this tier: a new
-    /// interval slot starts a fresh bucket, an ongoing one refreshes its value
-    /// in place (`now` is unix seconds). Empty fleets are skipped so a series
-    /// doesn't fill with zeros before any miner reports.
-    fn record(
-        &mut self,
-        now: i64,
-        summary: &FleetSummary,
-        devices: &DeviceList,
-        live_devices: &HashSet<&DeviceId>,
-        live_models: &HashSet<(Option<usize>, &str)>,
-    ) {
-        self.devices.retain(|id, _| live_devices.contains(id));
-        self.models
-            .retain(|(fam, label), _| live_models.contains(&(*fam, label.as_str())));
-        if summary.groups.is_empty() {
-            return;
+impl FleetTier {
+    fn new(span: ChartSpan) -> Self {
+        Self {
+            span,
+            total: Series::new(span),
+            models: HashMap::new(),
         }
-        #[expect(
-            clippy::integer_division,
-            reason = "the slot index buckets whole seconds into this tier's interval"
-        )]
-        let slot = now / self.interval_secs;
-        let new_slot = self.current_slot != Some(slot);
-        self.current_slot = Some(slot);
-        self.total
-            .upsert(now, summary.total.hashrate.map(ths), new_slot);
-        for g in &summary.groups {
+    }
+
+    /// Record the reading into the total and each model's series (`now` is unix seconds).
+    fn record(&mut self, now: i64, fleet: &FleetHashrate<'_>) {
+        self.total.record(now, fleet.total.map(ths));
+        let span = self.span;
+        for g in &fleet.groups {
             self.models
-                .entry((g.family.map(DeviceFamily::index), g.label.clone()))
-                .or_default()
-                .upsert(now, g.hashrate.map(ths), new_slot);
-        }
-        for dev in devices.iter() {
-            self.devices
-                .entry(dev.identity.id.clone())
-                .or_default()
-                .upsert(now, dev.hashrate(), new_slot);
+                .entry((g.family.map(DeviceFamily::index), g.label.to_owned()))
+                .or_insert_with(|| Series::new(span))
+                .record(now, g.hashrate.map(ths));
         }
     }
 }
@@ -256,42 +193,83 @@ impl Tier {
 /// range. Read through [`HashrateHistory::view`].
 #[derive(Debug)]
 pub struct HashrateHistory {
-    tiers: [Tier; ChartSpan::ALL.len()],
+    fleet: [FleetTier; ChartSpan::ALL.len()],
+    /// Each device's series in every tier, keyed on the stable device id
+    /// and held in one entry so a fold hashes the id once.
+    devices: HashMap<DeviceId, [Series; ChartSpan::ALL.len()]>,
     last_snapshot_at: Option<i64>,
+    flash: Flash,
 }
 
 impl Default for HashrateHistory {
     fn default() -> Self {
         Self {
-            tiers: core::array::from_fn(|i| Tier {
-                interval_secs: interval_secs(ChartSpan::ALL[i].minutes()),
-                ..Tier::default()
-            }),
+            fleet: ChartSpan::ALL.map(FleetTier::new),
+            devices: HashMap::new(),
             last_snapshot_at: None,
+            flash: Flash::Saved,
         }
     }
 }
 
 impl HashrateHistory {
-    /// Feed one fold into every tier; each appends only if its own interval has
-    /// elapsed. `now` is unix seconds.
-    pub(crate) fn record(&mut self, now: i64, summary: &FleetSummary, devices: &DeviceList) {
-        let live_devices: HashSet<&DeviceId> = devices.iter().map(|d| &d.identity.id).collect();
-        let live_models: HashSet<(Option<usize>, &str)> = summary
-            .groups
-            .iter()
-            .map(|g| (g.family.map(DeviceFamily::index), g.label.as_str()))
-            .collect();
-        for tier in &mut self.tiers {
-            tier.record(now, summary, devices, &live_devices, &live_models);
+    /// Feed the fleet total and per-model hashrate into every tier,
+    /// each series bucketing it by the tier's interval. `now` is unix seconds.
+    /// Empty fleets are skipped, so a reading taken before discovery opens no bucket.
+    ///
+    /// A model series is dropped only once its newest sample has left the tier's range,
+    /// not when its model drops out of the reading:
+    /// after a restart the restored series wait for discovery to find their models again.
+    /// The [`UNKNOWN_GROUP`] series goes as soon as it is absent,
+    /// as it holds whichever devices had no model yet, not one model's history.
+    pub(crate) fn record_fleet(&mut self, now: i64, fleet: &FleetHashrate<'_>) {
+        let unknown_present = fleet.groups.iter().any(|g| g.label == UNKNOWN_GROUP);
+        let mut pruned = false;
+        for tier in &mut self.fleet {
+            let range_secs = tier.span.range_secs();
+            let before = tier.models.len();
+            tier.models.retain(|(_, label), series| {
+                let in_range = series
+                    .newest_at()
+                    .is_some_and(|at| now.saturating_sub(at) < range_secs);
+                in_range && (unknown_present || label != UNKNOWN_GROUP)
+            });
+            pruned |= tier.models.len() != before;
+        }
+        if !fleet.groups.is_empty() {
+            for tier in &mut self.fleet {
+                tier.record(now, fleet);
+            }
+        }
+        if (pruned || !fleet.groups.is_empty()) && self.flash == Flash::Saved {
+            self.flash = Flash::Behind;
         }
     }
 
-    /// A read-only view at `span` — the tier serving that range.
+    /// Record the hashrate of every device in `devices` into each tier,
+    /// dropping the series of devices no longer listed (`now` is unix seconds).
+    pub(crate) fn record_devices(&mut self, now: i64, devices: &DeviceList) {
+        let listed: HashSet<&DeviceId> = devices.iter().map(|d| &d.identity.id).collect();
+        self.devices.retain(|id, _| listed.contains(id));
+        for dev in devices.iter() {
+            let value = dev.hashrate();
+            let tiers = self
+                .devices
+                .entry(dev.identity.id.clone())
+                .or_insert_with(|| ChartSpan::ALL.map(Series::new));
+            for series in tiers {
+                series.record(now, value);
+            }
+        }
+    }
+
+    /// A read-only view at `span` — the tier serving that range — plotted over `window`.
     #[must_use]
-    pub(crate) fn view(&self, span: ChartSpan) -> HistoryView<'_> {
+    pub(crate) fn view(&self, span: ChartSpan, window: ChartWindow) -> HistoryView<'_> {
         HistoryView {
-            tier: &self.tiers[span.tier()],
+            history: self,
+            tier_index: span.tier(),
+            window,
         }
     }
 }
@@ -300,13 +278,25 @@ impl HashrateHistory {
 /// series through this, so they never need to know which tier they draw.
 #[derive(Debug)]
 pub struct HistoryView<'a> {
-    tier: &'a Tier,
+    history: &'a HashrateHistory,
+    tier_index: usize,
+    window: ChartWindow,
 }
 
 impl HistoryView<'_> {
+    fn fleet_tier(&self) -> &FleetTier {
+        &self.history.fleet[self.tier_index]
+    }
+
+    /// The time span the series are plotted over.
     #[must_use]
-    pub(crate) fn total_series(&self) -> Vec<HistoryDatum> {
-        self.tier.total.to_vec()
+    pub(crate) fn window(&self) -> ChartWindow {
+        self.window
+    }
+
+    #[must_use]
+    pub(crate) fn total_series(&self) -> Vec<Option<ChartPoint>> {
+        self.fleet_tier().total.plot(self.window)
     }
 
     #[must_use]
@@ -314,26 +304,35 @@ impl HistoryView<'_> {
         &self,
         family: Option<DeviceFamily>,
         label: &str,
-    ) -> Vec<HistoryDatum> {
-        self.tier
+    ) -> Vec<Option<ChartPoint>> {
+        self.fleet_tier()
             .models
             .get(&(family.map(DeviceFamily::index), label.to_owned()))
-            .map_or_else(Vec::new, Ring::to_vec)
+            .map_or_else(Vec::new, |series| series.plot(self.window))
     }
 
     #[must_use]
-    pub(crate) fn device_series(&self, id: &DeviceId) -> Vec<HistoryDatum> {
-        self.tier
+    pub(crate) fn device_series(&self, id: &DeviceId) -> Vec<Option<ChartPoint>> {
+        self.history
             .devices
             .get(id)
-            .map_or_else(Vec::new, Ring::to_vec)
+            .map_or_else(Vec::new, |tiers| tiers[self.tier_index].plot(self.window))
     }
 }
 
-// ── Flash persistence (aggregate tiers only) ─────────────────────────
+// ── Flash persistence (fleet tiers only) ─────────────────────────
 
 /// Persist at most this often (seconds); a crash loses at most this much.
 const SNAPSHOT_INTERVAL_SECS: i64 = 300;
+
+/// How the flash copy of the total + per-model tiers compares with the tiers in RAM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flash {
+    /// Flash holds what the tiers hold.
+    Saved,
+    /// The tiers changed since the last write, which waits for the snapshot interval.
+    Behind,
+}
 
 /// Blob header: a magic byte and a format version. A mismatch on read means a
 /// stale or foreign blob, so it's dropped rather than decoded.
@@ -346,8 +345,8 @@ const SNAPSHOT_VERSION: u8 = 2;
 pub(crate) const CACHE_TAG: &str = "hashrate_history";
 
 /// The persisted shape of the total + per-model tiers (per-device is RAM-only).
-#[derive(bincode::Encode, bincode::Decode)]
-struct TierSnapshot {
+#[derive(Debug, bincode::Encode, bincode::Decode)]
+struct FleetTierSnapshot {
     total: Vec<HistoryDatum>,
     /// `(family index, model label, series)` — a `Vec`, not a map, to stay
     /// `alloc`-only for bincode.
@@ -355,28 +354,28 @@ struct TierSnapshot {
 }
 
 impl HashrateHistory {
-    /// A blob of the total + per-model tiers for the flash cache, if the
-    /// snapshot interval has elapsed since the last — otherwise `None`. `now`
-    /// is unix seconds.
+    /// A blob of the total + per-model tiers for the flash cache (`now` is unix seconds).
+    /// `None` while flash holds what the tiers hold,
+    /// and within the snapshot interval of the last write.
     pub(crate) fn take_snapshot(&mut self, now: i64) -> Option<Vec<u8>> {
-        // Nothing recorded yet — don't spend the first-snapshot slot on an empty
-        // history (which would then rate-limit real data out for a whole
-        // interval); the first blob written should carry the first samples.
-        if self.tiers.iter().all(|t| t.total.is_empty()) {
-            return None;
+        match self.flash {
+            Flash::Saved => return None,
+            Flash::Behind => {
+                if let Some(last) = self.last_snapshot_at
+                    && now - last < SNAPSHOT_INTERVAL_SECS
+                {
+                    return None;
+                }
+            }
         }
-        if let Some(last) = self.last_snapshot_at
-            && now - last < SNAPSHOT_INTERVAL_SECS
-        {
-            return None;
-        }
-        self.last_snapshot_at = Some(now);
-        let tiers: Vec<TierSnapshot> = self.tiers.iter().map(Tier::to_snapshot).collect();
+        let tiers: Vec<FleetTierSnapshot> = self.fleet.iter().map(FleetTier::to_snapshot).collect();
         // Encoding failure here would be a logic bug, not bad input, so no
         // snapshot is the safe fallback.
         let Ok(mut body) = bincode::encode_to_vec(&tiers, bincode::config::standard()) else {
             return None;
         };
+        self.flash = Flash::Saved;
+        self.last_snapshot_at = Some(now);
         let mut blob = vec![SNAPSHOT_MAGIC, SNAPSHOT_VERSION];
         blob.append(&mut body);
         Some(blob)
@@ -390,73 +389,83 @@ impl HashrateHistory {
         let Some(payload) = bytes.strip_prefix(&[SNAPSHOT_MAGIC, SNAPSHOT_VERSION]) else {
             return false;
         };
-        let Ok((tiers, _)) = bincode::decode_from_slice::<Vec<TierSnapshot>, _>(
+        let Ok((tiers, _)) = bincode::decode_from_slice::<Vec<FleetTierSnapshot>, _>(
             payload,
             bincode::config::standard(),
         ) else {
             return false;
         };
-        if tiers.len() != self.tiers.len() {
+        if tiers.len() != self.fleet.len() {
             return false;
         }
-        for (i, (tier, snap)) in self.tiers.iter_mut().zip(tiers).enumerate() {
-            let range_secs = i64::from(ChartSpan::ALL[i].minutes()) * 60;
-            if now.saturating_sub(saved_at) >= range_secs {
+        for (tier, snap) in self.fleet.iter_mut().zip(tiers) {
+            if now.saturating_sub(saved_at) >= tier.span.range_secs() {
                 continue; // fully stale — leave empty, refills live
             }
-            tier.restore(snap, saved_at);
+            tier.restore(snap);
         }
         true
     }
 }
 
-impl Tier {
-    fn to_snapshot(&self) -> TierSnapshot {
-        TierSnapshot {
-            total: self.total.to_vec(),
+impl FleetTier {
+    fn to_snapshot(&self) -> FleetTierSnapshot {
+        FleetTierSnapshot {
+            total: self.total.samples(),
             models: self
                 .models
                 .iter()
-                .map(|((fam, label), ring)| {
+                .map(|((fam, label), series)| {
                     let fam = fam.and_then(|i| u32::try_from(i).ok());
-                    (fam, label.clone(), ring.to_vec())
+                    (fam, label.clone(), series.samples())
                 })
                 .collect(),
         }
     }
 
-    fn restore(&mut self, snap: TierSnapshot, saved_at: i64) {
-        // `current_slot` stays unset, so the first live fold after a restore
-        // opens a fresh bucket instead of refreshing a restored one.
-        // That is also what keeps the break below from being overwritten.
-        self.total = Ring::restored(snap.total);
+    fn restore(&mut self, snap: FleetTierSnapshot) {
+        let span = self.span;
+        self.total = Series::restored(span, snap.total);
         self.models = snap
             .models
             .into_iter()
-            .map(|(fam, label, series)| {
+            .map(|(fam, label, samples)| {
                 let fam = fam.map(|i| i as usize);
-                ((fam, label), Ring::restored(series))
+                ((fam, label), Series::restored(span, samples))
             })
             .collect();
-        // Close every restored series with an explicit break at the snapshot time.
-        // Downtime is a gap in the data, and leaving the chart's spacing heuristic
-        // to infer it fails exactly when it matters: until a few live samples land,
-        // the outage is the only spacing there is, so the line runs straight through.
-        self.total.mark_break(saved_at);
-        for ring in self.models.values_mut() {
-            ring.mark_break(saved_at);
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::summary::FleetSummary;
     use bmc_wasm_sdk::types::{ElectricPower, MiningEfficiency, Temperature};
 
     /// The `value`s of a series, for terse assertions.
     fn vals(series: &[HistoryDatum]) -> Vec<Option<f32>> {
         series.iter().map(|s| s.value).collect()
+    }
+
+    /// The fleet total's stored buckets at `span`.
+    fn total(h: &HashrateHistory, span: ChartSpan) -> Vec<HistoryDatum> {
+        h.fleet[span.tier()].total.samples()
+    }
+
+    /// A BOS model group's stored buckets at `span`.
+    fn model(h: &HashrateHistory, span: ChartSpan, label: &str) -> Vec<HistoryDatum> {
+        h.fleet[span.tier()]
+            .models
+            .get(&(Some(DeviceFamily::Bos.index()), label.to_owned()))
+            .map_or_else(Vec::new, Series::samples)
+    }
+
+    /// A device's stored buckets at `span`.
+    fn device(h: &HashrateHistory, span: ChartSpan, id: &DeviceId) -> Vec<HistoryDatum> {
+        h.devices
+            .get(id)
+            .map_or_else(Vec::new, |tiers| tiers[span.tier()].samples())
     }
 
     #[test]
@@ -500,18 +509,15 @@ mod tests {
         // The 15-min tier holds one bucket per 15 s; a second reading inside the
         // same interval refreshes that bucket in place, a new interval opens one.
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
-        h.record(14, &summary(99.0, 99.0), &DeviceList::new()); // same bucket — refreshes
-        h.record(15, &summary(12.0, 5.0), &DeviceList::new());
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
+        h.record_fleet(14, &summary(99.0, 99.0).hashrate()); // same bucket — refreshes
+        h.record_fleet(15, &summary(12.0, 5.0).hashrate());
         assert_eq!(
-            vals(&h.view(ChartSpan::FifteenMinutes).total_series()),
+            vals(&total(&h, ChartSpan::FifteenMinutes)),
             vec![Some(99.0), Some(12.0)]
         );
         assert_eq!(
-            vals(
-                &h.view(ChartSpan::FifteenMinutes)
-                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
-            ),
+            vals(&model(&h, ChartSpan::FifteenMinutes, "BOS BMM")),
             vec![Some(99.0), Some(5.0)]
         );
     }
@@ -521,9 +527,9 @@ mod tests {
         // A within-interval refresh updates the value but not the bucket's
         // timestamp, so points stay evenly spaced at the tier interval.
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
-        h.record(14, &summary(99.0, 4.0), &DeviceList::new());
-        let series = h.view(ChartSpan::FifteenMinutes).total_series();
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
+        h.record_fleet(14, &summary(99.0, 4.0).hashrate());
+        let series = total(&h, ChartSpan::FifteenMinutes);
         assert_eq!(series.len(), 1, "still one bucket");
         assert_eq!(
             series[0].at, 0,
@@ -535,11 +541,9 @@ mod tests {
     #[test]
     fn samples_carry_their_timestamp() {
         let mut h = HashrateHistory::default();
-        h.record(100, &summary(10.0, 4.0), &DeviceList::new());
-        h.record(115, &summary(12.0, 5.0), &DeviceList::new());
-        let ats: Vec<i64> = h
-            .view(ChartSpan::FifteenMinutes)
-            .total_series()
+        h.record_fleet(100, &summary(10.0, 4.0).hashrate());
+        h.record_fleet(115, &summary(12.0, 5.0).hashrate());
+        let ats: Vec<i64> = total(&h, ChartSpan::FifteenMinutes)
             .iter()
             .map(|s| s.at)
             .collect();
@@ -552,25 +556,23 @@ mod tests {
         let mut h = HashrateHistory::default();
         let mut now = 0_i64;
         while now <= 60 {
-            h.record(now, &summary(1.0, 1.0), &DeviceList::new());
+            h.record_fleet(now, &summary(1.0, 1.0).hashrate());
             now += 1;
         }
-        assert_eq!(h.view(ChartSpan::FifteenMinutes).total_series().len(), 5); // 0, 15, 30, 45, 60
-        assert_eq!(h.view(ChartSpan::OneHour).total_series().len(), 2); // 0, 60
+        assert_eq!(total(&h, ChartSpan::FifteenMinutes).len(), 5); // 0, 15, 30, 45, 60
+        assert_eq!(total(&h, ChartSpan::OneHour).len(), 2); // 0, 60
     }
 
     #[test]
     fn empty_fleet_is_not_recorded() {
         let mut h = HashrateHistory::default();
-        h.record(
-            0,
-            &FleetSummary {
-                total: group("Total", 0.0),
-                groups: vec![],
-            },
-            &DeviceList::new(),
-        );
-        assert!(h.view(ChartSpan::FifteenMinutes).total_series().is_empty());
+        let empty = FleetSummary {
+            total: group("Total", 0.0),
+            groups: vec![],
+        };
+        h.record_fleet(0, &empty.hashrate());
+        assert!(total(&h, ChartSpan::FifteenMinutes).is_empty());
+        assert!(h.take_snapshot(0).is_none(), "nothing to save");
     }
 
     #[test]
@@ -579,11 +581,11 @@ mod tests {
         let mut now = 0_i64;
         let mut value = 0.0_f64;
         for _ in 0..(POINTS + 5) {
-            h.record(now, &summary(value, 0.0), &DeviceList::new());
+            h.record_fleet(now, &summary(value, 0.0).hashrate());
             now += 15; // one sample per 15-min-tier interval
             value += 1.0;
         }
-        let series = h.view(ChartSpan::FifteenMinutes).total_series();
+        let series = total(&h, ChartSpan::FifteenMinutes);
         assert_eq!(series.len(), POINTS);
         assert_eq!(series[0].value, Some(5.0), "the oldest five were dropped");
     }
@@ -591,46 +593,46 @@ mod tests {
     #[test]
     fn an_unknown_model_has_an_empty_series() {
         let h = HashrateHistory::default();
-        assert!(
-            h.view(ChartSpan::FifteenMinutes)
-                .model_series(Some(DeviceFamily::Bos), "nope")
-                .is_empty()
-        );
+        assert!(model(&h, ChartSpan::FifteenMinutes, "nope").is_empty());
     }
 
     fn devices(specs: &[(&str, f32, bool)]) -> DeviceList {
-        use crate::device::DeviceIdentity;
-        use crate::telemetry::TelemetryReading;
         let mut list = DeviceList::new();
-        for (name, hashrate, reachable) in specs {
-            let id = DeviceId::new(*name);
-            list.upsert(DeviceIdentity {
-                id: id.clone(),
-                family: DeviceFamily::Bos,
-                name: (*name).to_owned(),
-                host: "10.0.0.1".to_owned(),
-                port: 80,
-            });
-            list.apply_telemetry(
-                &id,
-                TelemetryReading {
-                    current_hashrate_ths: Some(*hashrate),
-                    ..TelemetryReading::default()
-                },
-                *reachable,
-            );
+        for &(name, hashrate, reachable) in specs {
+            list_device(&mut list, name, hashrate, reachable);
         }
         list
+    }
+
+    fn list_device(list: &mut DeviceList, name: &str, hashrate: f32, reachable: bool) {
+        use crate::device::DeviceIdentity;
+        use crate::telemetry::TelemetryReading;
+        let id = DeviceId::new(name);
+        list.upsert(DeviceIdentity {
+            id: id.clone(),
+            family: DeviceFamily::Bos,
+            name: name.to_owned(),
+            host: "10.0.0.1".to_owned(),
+            port: 80,
+        });
+        list.apply_telemetry(
+            &id,
+            TelemetryReading {
+                current_hashrate_ths: Some(hashrate),
+                ..TelemetryReading::default()
+            },
+            reachable,
+        );
     }
 
     #[test]
     fn records_a_per_device_series() {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
-        h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
-        h.record(15, &summary(12.0, 5.0), &devices(&[("bos/a", 4.0, true)]));
+        h.record_devices(0, &devices(&[("bos/a", 3.0, true)]));
+        h.record_devices(15, &devices(&[("bos/a", 4.0, true)]));
         assert_eq!(
-            vals(&h.view(ChartSpan::FifteenMinutes).device_series(&a)),
+            vals(&device(&h, ChartSpan::FifteenMinutes, &a)),
             vec![Some(3.0), Some(4.0)]
         );
     }
@@ -641,17 +643,14 @@ mod tests {
         let mut s = summary(10.0, 4.0);
         s.total.hashrate = None;
         s.groups[0].hashrate = None;
-        h.record(0, &s, &DeviceList::new());
+        h.record_fleet(0, &s.hashrate());
         assert_eq!(
-            vals(&h.view(ChartSpan::FifteenMinutes).total_series()),
+            vals(&total(&h, ChartSpan::FifteenMinutes)),
             vec![None],
             "a summary with no hashrate is a gap, matching the device-series policy"
         );
         assert_eq!(
-            vals(
-                &h.view(ChartSpan::FifteenMinutes)
-                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
-            ),
+            vals(&model(&h, ChartSpan::FifteenMinutes, "BOS BMM")),
             vec![None]
         );
     }
@@ -660,13 +659,9 @@ mod tests {
     fn an_unreachable_device_samples_a_gap_not_zero() {
         let mut h = HashrateHistory::default();
         let down = DeviceId::new("bos/b");
-        h.record(
-            0,
-            &summary(10.0, 4.0),
-            &devices(&[("bos/a", 3.0, true), ("bos/b", 9.0, false)]),
-        );
+        h.record_devices(0, &devices(&[("bos/a", 3.0, true), ("bos/b", 9.0, false)]));
         assert_eq!(
-            vals(&h.view(ChartSpan::FifteenMinutes).device_series(&down)),
+            vals(&device(&h, ChartSpan::FifteenMinutes, &down)),
             vec![None],
             "unreachable is a gap, not a false zero"
         );
@@ -675,67 +670,198 @@ mod tests {
     #[test]
     fn an_unknown_device_has_an_empty_series() {
         let h = HashrateHistory::default();
-        assert!(
-            h.view(ChartSpan::FifteenMinutes)
-                .device_series(&DeviceId::new("bos/nope"))
-                .is_empty()
-        );
+        assert!(device(&h, ChartSpan::FifteenMinutes, &DeviceId::new("bos/nope")).is_empty());
     }
 
     #[test]
     fn a_departed_device_is_pruned_from_history() {
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
-        assert_eq!(
-            vals(
-                &h.view(ChartSpan::FifteenMinutes)
-                    .device_series(&DeviceId::new("bos/a"))
-            ),
-            vec![Some(3.0)]
-        );
-        // The next cycle no longer lists bos/a — its series is dropped.
-        h.record(15, &summary(10.0, 4.0), &devices(&[("bos/b", 5.0, true)]));
+        let (a, b) = (DeviceId::new("bos/a"), DeviceId::new("bos/b"));
+        h.record_devices(0, &devices(&[("bos/a", 3.0, true)]));
+        h.record_devices(15, &devices(&[("bos/b", 5.0, true)]));
         assert!(
-            h.view(ChartSpan::FifteenMinutes)
-                .device_series(&DeviceId::new("bos/a"))
-                .is_empty()
+            device(&h, ChartSpan::FifteenMinutes, &a).is_empty(),
+            "no longer listed, so its series is dropped"
         );
         assert_eq!(
-            vals(
-                &h.view(ChartSpan::FifteenMinutes)
-                    .device_series(&DeviceId::new("bos/b"))
-            ),
+            vals(&device(&h, ChartSpan::FifteenMinutes, &b)),
             vec![Some(5.0)]
         );
     }
 
+    /// The `value`s of the "BOS BMM" series at `span`.
+    fn bmm(h: &HashrateHistory, span: ChartSpan) -> Vec<Option<f32>> {
+        vals(&model(h, span, "BOS BMM"))
+    }
+
+    /// The "BOS BMM" buckets at `span`, as (timestamp, value).
+    fn bmm_buckets(h: &HashrateHistory, span: ChartSpan) -> Vec<(i64, Option<f32>)> {
+        model(h, span, "BOS BMM")
+            .iter()
+            .map(|s| (s.at, s.value))
+            .collect()
+    }
+
+    /// A reading with both "BOS BMM" and "BOS BFM".
+    fn bmm_and_bfm(bmm: f64, bfm: f64) -> FleetSummary {
+        FleetSummary {
+            total: group("Total", bmm + bfm),
+            groups: vec![group("BOS BMM", bmm), group("BOS BFM", bfm)],
+        }
+    }
+
+    /// A reading where "BOS BMM" is absent.
+    fn bfm_alone(bfm: f64) -> FleetSummary {
+        FleetSummary {
+            total: group("Total", bfm),
+            groups: vec![group("BOS BFM", bfm)],
+        }
+    }
+
     #[test]
-    fn a_vanished_model_group_is_pruned_from_history() {
+    fn a_model_returning_inside_an_open_slot_opens_its_own_bucket() {
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &DeviceList::new()); // group "BOS BMM"
+        h.record_fleet(0, &bmm_and_bfm(4.0, 7.0).hashrate());
+        h.record_fleet(15, &bfm_alone(7.0).hashrate());
+        h.record_fleet(30, &bfm_alone(7.0).hashrate());
+        h.record_fleet(31, &bmm_and_bfm(9.0, 7.0).hashrate());
         assert_eq!(
-            vals(
-                &h.view(ChartSpan::FifteenMinutes)
-                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
-            ),
-            vec![Some(4.0)]
+            bmm_buckets(&h, ChartSpan::FifteenMinutes),
+            vec![(0, Some(4.0)), (31, Some(9.0))],
+            "BFM opened the slot at 30, but BMM's own last bucket is the one at 0"
         );
+    }
+
+    #[test]
+    fn a_restored_model_rediscovered_after_another_opens_its_own_bucket() {
+        let mut h = HashrateHistory::default();
+        h.record_fleet(0, &bmm_and_bfm(4.0, 7.0).hashrate());
+        let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
+        let mut restored = HashrateHistory::default();
+        assert!(restored.restore(&blob, 0, 3), "restored within range");
+        // Discovery finds BFM first, opening the next slot, and BMM a moment later in it.
+        restored.record_fleet(16, &bfm_alone(7.0).hashrate());
+        restored.record_fleet(20, &bmm_and_bfm(9.0, 7.0).hashrate());
+        assert_eq!(
+            bmm_buckets(&restored, ChartSpan::FifteenMinutes),
+            vec![(0, Some(4.0)), (20, Some(9.0))],
+            "BFM opened the slot at 15, but BMM's own last bucket is the restored one at 0"
+        );
+    }
+
+    #[test]
+    fn a_vanished_model_group_is_kept_until_it_leaves_the_range() {
+        let mut h = HashrateHistory::default();
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate()); // group "BOS BMM"
         let other = FleetSummary {
             total: group("Total", 7.0),
             groups: vec![group("BOS BFM", 7.0)],
         };
-        h.record(15, &other, &DeviceList::new());
+        h.record_fleet(15, &other.hashrate());
+        assert_eq!(
+            bmm(&h, ChartSpan::FifteenMinutes),
+            vec![Some(4.0)],
+            "gone from the reading, still inside the range"
+        );
+        h.record_fleet(15 * 60, &other.hashrate());
         assert!(
-            h.view(ChartSpan::FifteenMinutes)
-                .model_series(Some(DeviceFamily::Bos), "BOS BMM")
-                .is_empty()
+            bmm(&h, ChartSpan::FifteenMinutes).is_empty(),
+            "its newest sample has left the 15-min range"
         );
         assert_eq!(
-            vals(
-                &h.view(ChartSpan::FifteenMinutes)
-                    .model_series(Some(DeviceFamily::Bos), "BOS BFM")
-            ),
-            vec![Some(7.0)]
+            bmm(&h, ChartSpan::OneHour),
+            vec![Some(4.0)],
+            "the 1-h range still draws it"
+        );
+    }
+
+    #[test]
+    fn the_unknown_group_is_dropped_once_absent_while_a_model_is_kept() {
+        let mut h = HashrateHistory::default();
+        let unknown = crate::summary::GroupSummary {
+            family: None,
+            ..group(UNKNOWN_GROUP, 3.0)
+        };
+        let both = FleetSummary {
+            total: group("Total", 7.0),
+            groups: vec![group("BOS BMM", 4.0), unknown],
+        };
+        h.record_fleet(0, &both.hashrate());
+        h.record_fleet(15, &both.hashrate());
+        assert_eq!(
+            h.fleet[ChartSpan::FifteenMinutes.tier()]
+                .models
+                .get(&(None, UNKNOWN_GROUP.to_owned()))
+                .map(|series| series.samples().len()),
+            Some(2),
+            "the catch-all keeps its series while a reading holds it"
+        );
+        h.record_fleet(30, &bfm_alone(7.0).hashrate());
+        assert!(
+            !h.fleet[ChartSpan::FifteenMinutes.tier()]
+                .models
+                .contains_key(&(None, UNKNOWN_GROUP.to_owned())),
+            "the catch-all holds whatever had no model yet, so its past means nothing"
+        );
+        assert_eq!(
+            bmm(&h, ChartSpan::FifteenMinutes),
+            vec![Some(4.0), Some(4.0)],
+            "a model that left keeps its series"
+        );
+    }
+
+    #[test]
+    fn a_restored_model_series_waits_for_its_model_to_be_rediscovered() {
+        let mut h = HashrateHistory::default();
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
+        let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
+        let mut restored = HashrateHistory::default();
+        assert!(restored.restore(&blob, 0, 60), "restored within range");
+
+        // The first sample after boot lands before discovery has found any miner.
+        let empty = FleetSummary {
+            total: group("Total", 0.0),
+            groups: vec![],
+        };
+        restored.record_fleet(65, &empty.hashrate());
+        assert_eq!(
+            bmm(&restored, ChartSpan::FifteenMinutes),
+            vec![Some(4.0)],
+            "kept while discovery has not found the model yet"
+        );
+        assert!(
+            restored.take_snapshot(65).is_none(),
+            "nothing was recorded, so flash keeps the restored blob"
+        );
+
+        // Discovery finds another model first.
+        restored.record_fleet(66, &bfm_alone(7.0).hashrate());
+        let resaved = restored
+            .take_snapshot(66)
+            .expect("BUG: the first snapshot after a restore fires");
+        let mut again = HashrateHistory::default();
+        assert!(again.restore(&resaved, 66, 70), "restored within range");
+        assert_eq!(
+            bmm(&again, ChartSpan::FifteenMinutes),
+            vec![Some(4.0)],
+            "the snapshot taken after that sample still carries it"
+        );
+
+        again.record_fleet(75, &summary(12.0, 5.0).hashrate());
+        let window = ChartWindow {
+            end: 75,
+            span_secs: 900,
+        };
+        assert_eq!(
+            again
+                .view(ChartSpan::FifteenMinutes, window)
+                .model_series(Some(DeviceFamily::Bos), "BOS BMM"),
+            vec![
+                Some(ChartPoint { at: 0, value: 4.0 }),
+                None,
+                Some(ChartPoint { at: 75, value: 5.0 }),
+            ],
+            "rediscovered, the model continues across the downtime's gap"
         );
     }
 
@@ -744,40 +870,39 @@ mod tests {
     #[test]
     fn snapshot_round_trips_total_and_model_series() {
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
-        h.record(15, &summary(12.0, 5.0), &devices(&[("bos/a", 4.0, true)]));
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
+        h.record_devices(0, &devices(&[("bos/a", 3.0, true)]));
+        h.record_fleet(15, &summary(12.0, 5.0).hashrate());
+        h.record_devices(15, &devices(&[("bos/a", 4.0, true)]));
         let blob = h
-            .take_snapshot(0)
+            .take_snapshot(15)
             .expect("BUG: first snapshot always fires");
 
         let mut restored = HashrateHistory::default();
         assert!(restored.restore(&blob, 15, 20), "fresh blob restores");
-        // The trailing `None` is the restart break; live samples land after it.
         assert_eq!(
-            vals(&restored.view(ChartSpan::FifteenMinutes).total_series()),
-            vec![Some(10.0), Some(12.0), None]
+            vals(&total(&restored, ChartSpan::FifteenMinutes)),
+            vec![Some(10.0), Some(12.0)]
         );
         assert_eq!(
-            vals(
-                &restored
-                    .view(ChartSpan::FifteenMinutes)
-                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
-            ),
-            vec![Some(4.0), Some(5.0), None]
+            vals(&model(&restored, ChartSpan::FifteenMinutes, "BOS BMM")),
+            vec![Some(4.0), Some(5.0)]
         );
         // Per-device series are RAM-only: never persisted.
         assert!(
-            restored
-                .view(ChartSpan::FifteenMinutes)
-                .device_series(&DeviceId::new("bos/a"))
-                .is_empty()
+            device(
+                &restored,
+                ChartSpan::FifteenMinutes,
+                &DeviceId::new("bos/a")
+            )
+            .is_empty()
         );
     }
 
     #[test]
     fn a_stale_tier_is_dropped_on_restore() {
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
         let mut restored = HashrateHistory::default();
         // Downtime of 20 min: exceeds the 15-min tier's range (dropped) but not
@@ -786,61 +911,137 @@ mod tests {
         let now = 20 * 60;
         restored.restore(&blob, saved_at, now);
         assert!(
-            restored
-                .view(ChartSpan::FifteenMinutes)
-                .total_series()
-                .is_empty(),
+            total(&restored, ChartSpan::FifteenMinutes).is_empty(),
             "15-min tier fully stale"
         );
         assert_eq!(
-            vals(&restored.view(ChartSpan::OneHour).total_series()),
-            vec![Some(10.0), None],
-            "1-h tier still in range, closed by the restart break"
+            vals(&total(&restored, ChartSpan::OneHour)),
+            vec![Some(10.0)],
+            "1-h tier still in range"
         );
     }
 
     #[test]
-    fn a_restored_series_ends_on_a_break_the_live_samples_cannot_join() {
+    fn a_reading_in_the_restored_slot_leaves_the_saved_point_alone() {
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        h.record_fleet(2_900, &summary(120.0, 4.0).hashrate());
+        let blob = h
+            .take_snapshot(2_900)
+            .expect("BUG: the first snapshot fires");
+
+        // Back a minute later, inside the same 24-minute slot, before any miner was polled.
+        let mut restored = HashrateHistory::default();
+        assert!(
+            restored.restore(&blob, 2_900, 2_960),
+            "restored within range"
+        );
+        let mut unpolled = summary(0.0, 0.0);
+        unpolled.total.hashrate = None;
+        unpolled.groups[0].hashrate = None;
+        restored.record_fleet(2_962, &unpolled.hashrate());
+        assert_eq!(
+            vals(&total(&restored, ChartSpan::TwentyFourHours)),
+            vec![Some(120.0)],
+            "the restored bucket keeps its value"
+        );
+
+        let resaved = restored
+            .take_snapshot(2_962)
+            .expect("BUG: the first snapshot after a restore fires");
+        let mut again = HashrateHistory::default();
+        assert!(
+            again.restore(&resaved, 2_962, 2_970),
+            "restored within range"
+        );
+        assert_eq!(
+            vals(&total(&again, ChartSpan::TwentyFourHours)),
+            vec![Some(120.0)],
+            "and so does flash"
+        );
+    }
+
+    #[test]
+    fn a_restart_plots_as_a_break_by_time_alone() {
+        let mut h = HashrateHistory::default();
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
 
-        // Back an hour later: one cached point, then live ones.
-        // The outage is the only spacing in the series, so a median-of-deltas
-        // rule would take it for the norm and draw straight through it.
+        // Back 55 minutes later: one cached point, then a live one, 55 slots apart.
         let mut restored = HashrateHistory::default();
         let downtime = 55 * 60;
         assert!(
             restored.restore(&blob, 0, downtime),
             "1-h tier still in range"
         );
-        restored.record(downtime, &summary(12.0, 5.0), &DeviceList::new());
+        restored.record_fleet(downtime, &summary(12.0, 5.0).hashrate());
 
-        let series = restored.view(ChartSpan::OneHour).total_series();
+        let window = ChartWindow {
+            end: downtime,
+            span_secs: 3_600,
+        };
         assert_eq!(
-            vals(&series),
-            vec![Some(10.0), None, Some(12.0)],
-            "the break separates cached data from live"
+            restored.view(ChartSpan::OneHour, window).total_series(),
+            vec![
+                Some(ChartPoint { at: 0, value: 10.0 }),
+                None,
+                Some(ChartPoint {
+                    at: downtime,
+                    value: 12.0
+                }),
+            ],
+            "the downtime separates cached data from live"
         );
     }
 
     #[test]
-    fn a_restored_series_longer_than_the_ring_is_cut_to_the_newest() {
-        // A blob this long can't come from our own snapshot — corrupted flash,
-        // or a build with a bigger ring — which is why the bound belongs on the
-        // way in, before every later push inherits the excess.
-        let over: Vec<HistoryDatum> = (0..POINTS + 10)
-            .map(|i| HistoryDatum {
-                at: i64::try_from(i).expect("BUG: loop index fits i64"),
+    fn a_break_saved_by_an_earlier_build_still_plots() {
+        // Earlier builds ended every restored series with an explicit `None`,
+        // so snapshots on devices carry them.
+        let with_break = vec![
+            HistoryDatum {
+                at: 0,
+                value: Some(10.0),
+            },
+            HistoryDatum {
+                at: 15,
                 value: None,
+            },
+            HistoryDatum {
+                at: 30,
+                value: Some(12.0),
+            },
+        ];
+        let tiers: Vec<FleetTierSnapshot> = ChartSpan::ALL
+            .iter()
+            .map(|_| FleetTierSnapshot {
+                total: with_break.clone(),
+                models: vec![],
             })
             .collect();
-        let ring = Ring::restored(over);
-        assert_eq!(ring.0.len(), POINTS, "cut to capacity");
+        let mut blob = vec![SNAPSHOT_MAGIC, SNAPSHOT_VERSION];
+        blob.extend(
+            bincode::encode_to_vec(&tiers, bincode::config::standard())
+                .expect("BUG: a snapshot encodes"),
+        );
+        let mut restored = HashrateHistory::default();
+        assert!(restored.restore(&blob, 30, 35), "restored within range");
+        let window = ChartWindow {
+            end: 35,
+            span_secs: 900,
+        };
         assert_eq!(
-            ring.0.front().map(|d| d.at),
-            Some(10),
-            "the oldest ten were dropped, not the newest"
+            restored
+                .view(ChartSpan::FifteenMinutes, window)
+                .total_series(),
+            vec![
+                Some(ChartPoint { at: 0, value: 10.0 }),
+                None,
+                Some(ChartPoint {
+                    at: 30,
+                    value: 12.0
+                }),
+            ],
+            "the saved break splits the line though the slots alone would join it"
         );
     }
 
@@ -857,30 +1058,17 @@ mod tests {
             "garbage payload"
         );
         assert!(
-            h.view(ChartSpan::FifteenMinutes).total_series().is_empty(),
+            total(&h, ChartSpan::FifteenMinutes).is_empty(),
             "nothing restored"
-        );
-    }
-
-    #[test]
-    fn an_empty_history_is_not_snapshotted() {
-        let mut h = HashrateHistory::default();
-        assert!(
-            h.take_snapshot(0).is_none(),
-            "nothing recorded — no blob, and the first-snapshot slot is kept"
-        );
-        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
-        assert!(
-            h.take_snapshot(0).is_some(),
-            "the first data-bearing snapshot fires"
         );
     }
 
     #[test]
     fn snapshot_is_rate_limited() {
         let mut h = HashrateHistory::default();
-        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         assert!(h.take_snapshot(0).is_some(), "first snapshot fires");
+        h.record_fleet(15, &summary(11.0, 4.0).hashrate());
         assert!(
             h.take_snapshot(SNAPSHOT_INTERVAL_SECS - 1).is_none(),
             "within the interval — skipped"
@@ -888,6 +1076,51 @@ mod tests {
         assert!(
             h.take_snapshot(SNAPSHOT_INTERVAL_SECS).is_some(),
             "after the interval — fires"
+        );
+    }
+
+    #[test]
+    fn a_history_unchanged_since_the_last_snapshot_is_not_written_again() {
+        let mut h = HashrateHistory::default();
+        h.record_fleet(0, &summary(10.0, 4.0).hashrate());
+        assert!(h.take_snapshot(0).is_some(), "first snapshot fires");
+        assert!(
+            h.take_snapshot(SNAPSHOT_INTERVAL_SECS).is_none(),
+            "nothing was recorded since"
+        );
+    }
+
+    #[test]
+    fn a_series_an_empty_reading_prunes_leaves_flash_too() {
+        let mut h = HashrateHistory::default();
+        let unknown = crate::summary::GroupSummary {
+            family: None,
+            ..group(UNKNOWN_GROUP, 3.0)
+        };
+        let both = FleetSummary {
+            total: group("Total", 7.0),
+            groups: vec![group("BOS BMM", 4.0), unknown],
+        };
+        h.record_fleet(0, &both.hashrate());
+        assert!(h.take_snapshot(0).is_some(), "first snapshot fires");
+        let empty = FleetSummary {
+            total: group("Total", 0.0),
+            groups: vec![],
+        };
+        h.record_fleet(15, &empty.hashrate());
+        let blob = h
+            .take_snapshot(SNAPSHOT_INTERVAL_SECS)
+            .expect("BUG: the pruned catch-all left the tiers, so flash is behind them");
+        let mut restored = HashrateHistory::default();
+        assert!(
+            restored.restore(&blob, SNAPSHOT_INTERVAL_SECS, SNAPSHOT_INTERVAL_SECS + 5),
+            "restored within range"
+        );
+        assert!(
+            !restored.fleet[ChartSpan::FifteenMinutes.tier()]
+                .models
+                .contains_key(&(None, UNKNOWN_GROUP.to_owned())),
+            "the saved history no longer holds the catch-all"
         );
     }
 }

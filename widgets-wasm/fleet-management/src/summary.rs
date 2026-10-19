@@ -233,7 +233,8 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     }
 }
 
-const UNKNOWN_GROUP: &str = "Unknown";
+/// The family-agnostic group of devices whose model is not known yet.
+pub(crate) const UNKNOWN_GROUP: &str = "Unknown";
 const TOTAL_LABEL: &str = "Total";
 
 fn family_rank(family: DeviceFamily) -> u8 {
@@ -248,6 +249,40 @@ fn family_rank(family: DeviceFamily) -> u8 {
 pub struct FleetSummary {
     pub total: GroupSummary,
     pub groups: Vec<GroupSummary>,
+}
+
+impl FleetSummary {
+    /// The hashrate this summary shows, in the shape the charts record.
+    #[must_use]
+    pub fn hashrate(&self) -> FleetHashrate<'_> {
+        FleetHashrate {
+            total: self.total.hashrate,
+            groups: self
+                .groups
+                .iter()
+                .map(|g| GroupHashrate {
+                    family: g.family,
+                    label: &g.label,
+                    hashrate: g.hashrate,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The fleet's total and per-model hashrate, all that their charts record.
+#[derive(Debug, PartialEq)]
+pub struct FleetHashrate<'a> {
+    pub total: Option<Hashrate>,
+    /// In no particular order.
+    pub groups: Vec<GroupHashrate<'a>>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct GroupHashrate<'a> {
+    pub family: Option<DeviceFamily>,
+    pub label: &'a str,
+    pub hashrate: Option<Hashrate>,
 }
 
 /// The grouping key `summarize` partitions on: family index plus model name,

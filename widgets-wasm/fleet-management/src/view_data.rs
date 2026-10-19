@@ -24,7 +24,7 @@
 use bmc_wasm_sdk::types::Hashrate;
 
 use crate::device::{DeviceId, KnownDevice};
-use crate::history::{ChartWindow, HistoryDatum, HistoryView};
+use crate::history::HistoryView;
 use crate::screens::dashboard::DashboardViewData;
 use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
@@ -52,7 +52,6 @@ impl DashboardViewData {
         summary: &FleetSummary,
         fleet_name: &str,
         history: &HistoryView<'_>,
-        window: ChartWindow,
     ) -> Self {
         let t = &summary.total;
         Self {
@@ -64,7 +63,7 @@ impl DashboardViewData {
             auth: t.auth_error_count,
             hashrate: t.hashrate,
             hashrate_series: history.total_series(),
-            window,
+            window: history.window(),
             power: t.power,
             efficiency: t.efficiency,
             temp_min: t.min_temperature,
@@ -82,7 +81,6 @@ impl TableViewData {
         fleet_name: &str,
         page: usize,
         history: &HistoryView<'_>,
-        window: ChartWindow,
     ) -> Self {
         let groups = &summary.groups;
         let page_count = groups.len().div_ceil(TABLE_PAGE_SIZE).max(1);
@@ -111,7 +109,7 @@ impl TableViewData {
             title: fleet_name.to_owned(),
             device_count: summary.total.total_count,
             rows,
-            window,
+            window: history.window(),
             page,
             page_count,
         }
@@ -128,7 +126,6 @@ impl ModelDetailViewData {
         rows: &[(DeviceId, GroupSummary, DeviceStatus)],
         page: usize,
         history: &HistoryView<'_>,
-        window: ChartWindow,
     ) -> Self {
         let page_count = rows.len().div_ceil(MODEL_DETAIL_PAGE_SIZE).max(1);
         let page = page.min(page_count - 1);
@@ -154,7 +151,7 @@ impl ModelDetailViewData {
             title: title.to_owned(),
             device_count: rows.len(),
             rows: devices,
-            window,
+            window: history.window(),
             page,
             page_count,
         }
@@ -178,8 +175,7 @@ impl DeviceDetailData {
         model: &str,
         group: &GroupSummary,
         device: &KnownDevice,
-        hashrate_series: Vec<HistoryDatum>,
-        window: ChartWindow,
+        history: &HistoryView<'_>,
     ) -> Self {
         let reading = device.telemetry.as_ref().map(|s| &s.reading);
         let nominal_ths = reading
@@ -195,8 +191,8 @@ impl DeviceDetailData {
             mac: reading.and_then(|r| r.mac.clone()),
             state,
             hashrate: delivering.then_some(group.hashrate).flatten(),
-            hashrate_series,
-            window,
+            hashrate_series: history.device_series(&device.identity.id),
+            window: history.window(),
             nominal_hashrate: nominal_ths
                 .map(|n| Hashrate::from_terahashes_per_second(f64::from(n))),
             power: delivering.then_some(group.power).flatten(),
@@ -216,7 +212,7 @@ impl DeviceDetailData {
 mod tests {
     use super::*;
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
-    use crate::history::{ChartSpan, HashrateHistory};
+    use crate::history::{ChartSpan, ChartWindow, HashrateHistory};
     use crate::telemetry::{DeviceTemp, TelemetryReading, TelemetrySnapshot};
     use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
@@ -253,9 +249,8 @@ mod tests {
             groups: vec![g],
         };
         let history = HashrateHistory::default();
-        let view = history.view(ChartSpan::OneHour);
-        let win = ChartWindow::covering(&[]);
-        let row = &TableViewData::from_summary(&summary, "Rig", 0, &view, win).rows[0];
+        let view = history.view(ChartSpan::OneHour, ChartWindow::covering(&[]));
+        let row = &TableViewData::from_summary(&summary, "Rig", 0, &view).rows[0];
         assert_eq!(row.off, 5, "2 off + 3 auth failures");
         assert_eq!(row.degraded, 0, "auth is not degraded");
         assert_eq!(row.ok + row.degraded + row.off, 10, "counts add up again");
@@ -275,12 +270,11 @@ mod tests {
             groups,
         };
         let history = HashrateHistory::default();
-        let view = history.view(ChartSpan::OneHour);
-        let win = ChartWindow::covering(&[]);
-        let first = TableViewData::from_summary(&summary, "Rig", 0, &view, win);
+        let view = history.view(ChartSpan::OneHour, ChartWindow::covering(&[]));
+        let first = TableViewData::from_summary(&summary, "Rig", 0, &view);
         assert_eq!(first.page_count, 3, "9 groups, 4 per page");
         assert_eq!(first.rows.len(), TABLE_PAGE_SIZE);
-        let last = TableViewData::from_summary(&summary, "Rig", 99, &view, win);
+        let last = TableViewData::from_summary(&summary, "Rig", 99, &view);
         assert_eq!(last.page, 2, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 1);
     }
@@ -299,14 +293,13 @@ mod tests {
             })
             .collect();
         let history = HashrateHistory::default();
-        let view = history.view(ChartSpan::OneHour);
-        let win = ChartWindow::covering(&[]);
-        let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &view, win);
+        let view = history.view(ChartSpan::OneHour, ChartWindow::covering(&[]));
+        let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &view);
         assert_eq!(first.device_count, 6);
         assert_eq!(first.page_count, 2, "6 devices, 4 per page");
         assert_eq!(first.rows.len(), MODEL_DETAIL_PAGE_SIZE);
         assert_eq!(first.rows[0].click_id, "device:dev-0");
-        let last = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 9, &view, win);
+        let last = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 9, &view);
         assert_eq!(last.page, 1, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 2);
     }
@@ -352,8 +345,7 @@ mod tests {
             "Mini Miner",
             &grp("John's Miner", 1, 1, 0),
             &device(None, Some(reading)),
-            vec![],
-            ChartWindow::covering(&[]),
+            &HashrateHistory::default().view(ChartSpan::OneHour, ChartWindow::covering(&[])),
         );
         assert_eq!(data.hostname, "John's Miner");
         assert_eq!(data.ip, "10.0.0.9");
@@ -395,8 +387,7 @@ mod tests {
             "Braiins Forge Miner x4",
             &grp("bmm", 1, 0, 1),
             &dev,
-            vec![],
-            ChartWindow::covering(&[]),
+            &HashrateHistory::default().view(ChartSpan::OneHour, ChartWindow::covering(&[])),
         );
         assert_eq!(data.state, DeviceStatus::Unreachable);
         assert_eq!(data.mac, None);

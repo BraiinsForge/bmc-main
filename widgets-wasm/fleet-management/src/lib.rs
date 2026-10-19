@@ -347,7 +347,8 @@ pub extern "C" fn render(delta_ms: u32) {
                     let devices = d.borrow();
                     HISTORY.with(|h| {
                         let mut h = h.borrow_mut();
-                        h.record(now, &summary, &devices);
+                        h.record_devices(now, &devices);
+                        h.record_fleet(now, &summary.hashrate());
                         if let Some(blob) = h.take_snapshot(now) {
                             cache::put(history::CACHE_TAG, &[], &blob);
                         }
@@ -371,7 +372,7 @@ pub extern "C" fn render(delta_ms: u32) {
         // place by timestamp with the newest at the right edge.
         let chart_window = history::ChartWindow {
             end: SystemTime::now().unix_secs,
-            span_secs: i64::from(chart_span.minutes()) * 60,
+            span_secs: chart_span.range_secs(),
         };
         VIEW.with(|view_state| {
             let mut nav = view_state.borrow_mut();
@@ -413,23 +414,24 @@ pub extern "C" fn render(delta_ms: u32) {
                     let detail = rows
                         .iter()
                         .find(|(id, _, _)| id.as_str() == device_id)
-                        .and_then(|(id, group, _)| {
-                            let series =
-                                HISTORY.with(|h| h.borrow().view(chart_span).device_series(id));
-                            DEVICES.with(|devs| {
-                                devs.borrow()
-                                    .iter()
-                                    .find(|dev| dev.identity.id.as_str() == device_id)
-                                    .map(|dev| {
-                                        screens::device_detail::DeviceDetailData::from_device(
-                                            &derived.fleet_name,
-                                            &sel.label,
-                                            group,
-                                            dev,
-                                            series,
-                                            chart_window,
-                                        )
-                                    })
+                        .and_then(|(_, group, _)| {
+                            HISTORY.with(|h| {
+                                let h = h.borrow();
+                                let history = h.view(chart_span, chart_window);
+                                DEVICES.with(|devs| {
+                                    devs.borrow()
+                                        .iter()
+                                        .find(|dev| dev.identity.id.as_str() == device_id)
+                                        .map(|dev| {
+                                            screens::device_detail::DeviceDetailData::from_device(
+                                                &derived.fleet_name,
+                                                &sel.label,
+                                                group,
+                                                dev,
+                                                &history,
+                                            )
+                                        })
+                                })
                             })
                         });
                     if let Some(data) = detail {
@@ -441,8 +443,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &sel.label,
                                 rows,
                                 sel.page,
-                                &h.borrow().view(chart_span),
-                                chart_window,
+                                &h.borrow().view(chart_span, chart_window),
                             )
                         });
                         let page_count = data.page_count;
@@ -455,8 +456,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             &sel.label,
                             rows,
                             sel.page,
-                            &h.borrow().view(chart_span),
-                            chart_window,
+                            &h.borrow().view(chart_span, chart_window),
                         )
                     });
                     let page_count = data.page_count;
@@ -471,8 +471,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             DashboardViewData::from_summary(
                                 &derived.summary,
                                 &derived.fleet_name,
-                                &h.borrow().view(chart_span),
-                                chart_window,
+                                &h.borrow().view(chart_span, chart_window),
                             )
                         });
                         (screens::dashboard::dashboard_view(&data), 1)
@@ -483,8 +482,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &derived.summary,
                                 &derived.fleet_name,
                                 nav.fleet_page,
-                                &h.borrow().view(chart_span),
-                                chart_window,
+                                &h.borrow().view(chart_span, chart_window),
                             )
                         });
                         let page_count = table.page_count;

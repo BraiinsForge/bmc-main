@@ -23,7 +23,7 @@
 use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::DeviceFamily;
-use crate::history::{ChartWindow, HistoryDatum};
+use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::dashboard::DashboardViewData;
 use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
@@ -36,13 +36,15 @@ use crate::view::device_click_id;
 const TABLE_PAGE_SIZE: usize = 4;
 
 /// Wrap raw hashrate values into evenly-spaced, present samples for a story.
-fn samples(values: &[f32]) -> Vec<HistoryDatum> {
+fn samples(values: &[f32]) -> Vec<Option<ChartPoint>> {
     values
         .iter()
         .enumerate()
-        .map(|(i, &v)| HistoryDatum {
-            at: i64::try_from(i).unwrap_or(0) * 60,
-            value: Some(v),
+        .map(|(i, &value)| {
+            Some(ChartPoint {
+                at: i64::try_from(i).unwrap_or(0) * 60,
+                value,
+            })
         })
         .collect()
 }
@@ -178,7 +180,7 @@ pub fn sample_table_page(page: usize) -> TableViewData {
 }
 
 /// The window a story's baked series should fill — the whole width.
-fn story_window(series: Option<&[HistoryDatum]>) -> ChartWindow {
+fn story_window(series: Option<&[Option<ChartPoint>]>) -> ChartWindow {
     ChartWindow::covering(series.unwrap_or(&[]))
 }
 

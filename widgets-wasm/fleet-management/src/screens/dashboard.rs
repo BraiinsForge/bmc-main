@@ -31,7 +31,7 @@ use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature
 )]
 use bmc_wasm_sdk::*;
 
-use crate::history::{ChartWindow, HistoryDatum};
+use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::screens::parts::{
     BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, UNAVAILABLE,
@@ -53,7 +53,7 @@ pub struct DashboardViewData {
     pub off: usize,
     pub auth: usize,
     pub hashrate: Option<Hashrate>,
-    pub hashrate_series: Vec<HistoryDatum>,
+    pub hashrate_series: Vec<Option<ChartPoint>>,
     pub window: ChartWindow,
     pub power: Option<ElectricPower>,
     pub efficiency: Option<MiningEfficiency>,

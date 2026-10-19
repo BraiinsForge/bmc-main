@@ -32,7 +32,7 @@ use bmc_wasm_sdk::types::Hashrate;
 )]
 use bmc_wasm_sdk::*;
 
-use crate::history::{ChartWindow, HistoryDatum};
+use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::summary::DeviceStatus;
 use crate::view::{PageTurn, PagerScope, ViewMode, pager_click_id, view_click_id};
@@ -307,13 +307,12 @@ fn status_item(
 }
 
 // The filled area chart + trend line for a hashrate series, mapped into `w`x`h`.
-// Points sit by timestamp within `window`; a `None` value or a downtime gap
-// breaks the fill and stroke into separate runs, so the chart never draws a
-// false line across missing data. `top_frac` leaves headroom above the chart
-// (hero text).
+// Points sit by timestamp within `window`; each `None` breaks the fill and stroke
+// into separate runs, so the chart never draws a false line across missing data.
+// `top_frac` leaves headroom above the chart (hero text).
 #[must_use]
 pub fn area_chart(
-    series: &[HistoryDatum],
+    series: &[Option<ChartPoint>],
     window: ChartWindow,
     w: f32,
     h: f32,
@@ -334,7 +333,7 @@ pub fn area_chart(
 // never reaches. Sparklines stay bare.
 #[must_use]
 pub fn scaled_area_chart(
-    series: &[HistoryDatum],
+    series: &[Option<ChartPoint>],
     window: ChartWindow,
     w: f32,
     h: f32,
@@ -343,10 +342,10 @@ pub fn scaled_area_chart(
     ticks: bool,
 ) -> Vec<Draw> {
     let anchored = matches!(nominal, Some(n) if n > 0.0);
-    // A lone point is the still-forming open bucket, its value refreshed with the
-    // live reading every tick — a data-fit axis would chase it. There's no
-    // settled value to scale against yet, so draw nothing until a second point
-    // commits and the scale settles. A nameplate axis is stable regardless.
+    // A lone bucket gives a data-fit axis nothing settled to scale against:
+    // usually it is the still-forming open one, refreshed with the live reading every tick,
+    // and the axis would chase it.
+    // Draw nothing until a second bucket arrives; a nameplate axis is stable regardless.
     if !anchored && series.len() < 2 {
         return Vec::new();
     }
@@ -359,7 +358,8 @@ pub fn scaled_area_chart(
     };
     let local_max = settled
         .iter()
-        .filter_map(|s| s.value)
+        .flatten()
+        .map(|p| p.value)
         .fold(0.0_f32, f32::max);
     let scale = if anchored {
         nice_scale(local_max.max(nominal.unwrap_or(0.0)))
@@ -399,11 +399,12 @@ pub fn scaled_area_chart(
 
 // ── Series → drawable runs (time-placed, gap-broken) ─────────────────
 
-// Min and max of the present values, ignoring gaps; `(0, 0)` when none present.
-fn value_range(series: &[HistoryDatum]) -> (f32, f32) {
+// Min and max of the plotted values; `(0, 0)` when none.
+fn value_range(series: &[Option<ChartPoint>]) -> (f32, f32) {
     series
         .iter()
-        .filter_map(|s| s.value)
+        .flatten()
+        .map(|p| p.value)
         .fold(None, |acc: Option<(f32, f32)>, v| {
             Some(acc.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))))
         })
@@ -414,7 +415,7 @@ fn value_range(series: &[HistoryDatum]) -> (f32, f32) {
 // gap-free samples; `y_of` maps a value to a y pixel and x is placed by
 // timestamp within `window`.
 fn draw_runs(
-    series: &[HistoryDatum],
+    series: &[Option<ChartPoint>],
     window: ChartWindow,
     w: f32,
     h: f32,
@@ -495,48 +496,13 @@ fn time_x(window: ChartWindow, w: f32) -> impl Fn(i64) -> f32 {
     move |at: i64| (at - start) as f32 / span as f32 * w
 }
 
-// Split into runs of present, gap-free samples: a `None` value or a jump larger
-// than `gap_threshold` (a downtime) ends the current run.
-fn runs(series: &[HistoryDatum]) -> Vec<Vec<(i64, f32)>> {
-    let gap = gap_threshold(series);
-    let mut out: Vec<Vec<(i64, f32)>> = Vec::new();
-    let mut cur: Vec<(i64, f32)> = Vec::new();
-    let mut prev_at: Option<i64> = None;
-    for s in series {
-        if prev_at.is_some_and(|p| s.at - p > gap) && !cur.is_empty() {
-            out.push(std::mem::take(&mut cur));
-        }
-        match s.value {
-            Some(v) => cur.push((s.at, v)),
-            None if !cur.is_empty() => out.push(std::mem::take(&mut cur)),
-            None => {}
-        }
-        prev_at = Some(s.at);
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
-}
-
-// A time delta beyond which two samples read as a break — 1.5x the median
-// spacing, so one big jump (a restart) is an outlier, not the norm.
-#[expect(
-    clippy::integer_division,
-    reason = "the median index is exact enough for a whole-second spacing heuristic"
-)]
-fn gap_threshold(series: &[HistoryDatum]) -> i64 {
-    let mut deltas: Vec<i64> = series
-        .windows(2)
-        .map(|w| w[1].at - w[0].at)
-        .filter(|&d| d > 0)
-        .collect();
-    if deltas.is_empty() {
-        return i64::MAX;
-    }
-    deltas.sort_unstable();
-    let median = deltas[deltas.len() / 2];
-    (median + (median >> 1)).max(median + 1)
+// Split into runs of points between the breaks.
+fn runs(series: &[Option<ChartPoint>]) -> Vec<Vec<(i64, f32)>> {
+    series
+        .split(Option::is_none)
+        .filter(|run| !run.is_empty())
+        .map(|run| run.iter().flatten().map(|p| (p.at, p.value)).collect())
+        .collect()
 }
 
 // Round axis ceiling ≥ `raw` and gridline step (1/2/5 × 10ⁿ).
@@ -768,5 +734,81 @@ mod tests {
     fn a_peak_near_the_f32_ceiling_leaves_no_finite_step() {
         // Snapping the magnitude up to the next power of ten runs past f32::MAX.
         assert_eq!(nice_step(f32::MAX), None);
+    }
+
+    const WINDOW: ChartWindow = ChartWindow {
+        end: 900,
+        span_secs: 900,
+    };
+
+    const POINT: ChartPoint = ChartPoint {
+        at: 600,
+        value: 40.0,
+    };
+
+    fn marker_ys(draws: &[Draw]) -> Vec<f32> {
+        draws
+            .iter()
+            .filter_map(|d| match d {
+                Draw::Circle { cy, .. } => Some(*cy),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_lone_forming_point_draws_nothing_on_a_data_fit_axis() {
+        let draws = scaled_area_chart(&[Some(POINT)], WINDOW, 200.0, 100.0, 0.0, None, false);
+        assert!(draws.is_empty(), "the axis has no settled value to fit yet");
+    }
+
+    #[test]
+    fn a_forming_bucket_does_not_move_the_axis() {
+        let (h, top_frac) = (100.0, 0.0);
+        let forming = ChartPoint {
+            at: 750,
+            value: 90.0,
+        };
+        let draws = scaled_area_chart(
+            &[Some(POINT), Some(forming)],
+            WINDOW,
+            200.0,
+            h,
+            top_frac,
+            None,
+            false,
+        );
+        let (ceiling, _) = data_fit_scale(POINT.value).expect("BUG: a real peak fits");
+        let top = h * top_frac;
+        let expected = top + (1.0 - POINT.value / ceiling) * (h - top - BASELINE_INSET);
+        assert!(
+            marker_ys(&draws)
+                .first()
+                .is_some_and(|&y| (y - expected).abs() < 1e-3),
+            "the axis fits the settled point, not the forming bucket's higher value"
+        );
+    }
+
+    #[test]
+    fn an_empty_forming_bucket_lets_the_settled_point_draw() {
+        let (h, top_frac) = (100.0, 0.0);
+        let draws = scaled_area_chart(
+            &[Some(POINT), None],
+            WINDOW,
+            200.0,
+            h,
+            top_frac,
+            None,
+            false,
+        );
+        let (ceiling, _) = data_fit_scale(POINT.value).expect("BUG: a real peak fits");
+        let top = h * top_frac;
+        let expected = top + (1.0 - POINT.value / ceiling) * (h - top - BASELINE_INSET);
+        let ys = marker_ys(&draws);
+        assert!(!ys.is_empty(), "the settled point is drawn");
+        assert!(
+            ys.iter().all(|&y| (y - expected).abs() < 1e-3),
+            "the settled point draws at the height its own fitted axis gives it"
+        );
     }
 }

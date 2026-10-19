@@ -31,7 +31,7 @@ use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature
 )]
 use bmc_wasm_sdk::*;
 
-use crate::history::{ChartWindow, HistoryDatum};
+use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
@@ -63,7 +63,7 @@ pub struct DeviceDetailData {
     pub mac: Option<String>,
     pub state: DeviceStatus,
     pub hashrate: Option<Hashrate>,
-    pub hashrate_series: Vec<HistoryDatum>,
+    pub hashrate_series: Vec<Option<ChartPoint>>,
     pub window: ChartWindow,
     pub nominal_hashrate: Option<Hashrate>,
     pub power: Option<ElectricPower>,
