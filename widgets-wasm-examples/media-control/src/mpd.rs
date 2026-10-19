@@ -250,7 +250,7 @@ pub fn set_mute(muted: bool) {
 
 // ── Socket event handler ─────────────────────────────────────────
 
-fn on_socket_event(_socket: Socket, event: &SocketEvent<'_>) {
+fn on_socket_event(_socket: &Socket, event: &SocketEvent<'_>) {
     MPD.with(|m| {
         let mut m = m.borrow_mut();
         let Some(state) = m.as_mut() else { return };

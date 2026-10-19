@@ -140,7 +140,8 @@ const RECONNECT_DELAY_MS: u32 = 3_000;
 
 /// Per-connection Cast state.
 struct CastState {
-    socket: Socket,
+    /// `None` from a peer close or a heartbeat timeout until a reconnect succeeds.
+    socket: Option<Socket>,
     phase: Phase,
     /// Incoming data buffer for frame reassembly.
     recv_buf: Vec<u8>,
@@ -183,7 +184,7 @@ pub fn connect(host: &str, port: u16, on_status: StatusCallback) {
     };
     CAST.with(|c| {
         *c.borrow_mut() = Some(CastState {
-            socket,
+            socket: Some(socket),
             phase: Phase::Connecting,
             recv_buf: Vec::new(),
             next_request_id: 1,
@@ -204,8 +205,8 @@ pub fn connect(host: &str, port: u16, on_status: StatusCallback) {
 /// Disconnect from the Cast device.
 pub fn disconnect() {
     CAST.with(|c| {
-        if let Some(state) = c.borrow_mut().take() {
-            state.socket.close();
+        if let Some(socket) = c.borrow_mut().take().and_then(|state| state.socket) {
+            socket.close();
         }
     });
 }
@@ -302,7 +303,7 @@ pub fn tick(delta_ms: u32) {
                         request_frame_after(delay);
                         return;
                     };
-                    state.socket = socket;
+                    state.socket = Some(socket);
                     state.phase = Phase::Connecting;
                     state.recv_buf.clear();
                     state.next_request_id = 1;
@@ -370,13 +371,15 @@ fn send_heartbeat(state: &mut CastState) {
     if state.heartbeat_miss_count > 3 {
         log_warn!("cast: heartbeat timeout, closing");
         state.phase = Phase::Closed;
-        state.socket.close();
+        if let Some(socket) = state.socket.take() {
+            socket.close();
+        }
     }
 }
 
 // ── Socket event handler ────────────────────────────────────────
 
-fn on_socket_event(_socket: Socket, event: &SocketEvent<'_>) {
+fn on_socket_event(_socket: &Socket, event: &SocketEvent<'_>) {
     match event {
         SocketEvent::Connected => {
             log_info!("cast: TLS connected");
@@ -430,6 +433,7 @@ fn on_socket_event(_socket: Socket, event: &SocketEvent<'_>) {
                         delay
                     );
                     state.phase = Phase::Reconnecting;
+                    state.socket = None;
                     state.ms_since_heartbeat = 0;
                     state.recv_buf.clear();
                     state.transport_id = None;
@@ -761,7 +765,9 @@ fn send_frame(state: &CastState, msg: &CastMessage) {
     let mut frame = Vec::with_capacity(4 + encoded.len());
     frame.extend_from_slice(&len);
     frame.extend_from_slice(&encoded);
-    state.socket.write(&frame);
+    if let Some(socket) = &state.socket {
+        socket.write(&frame);
+    }
 }
 
 /// Build and send a media command (PLAY, PAUSE, SEEK, etc.) to the current transport.

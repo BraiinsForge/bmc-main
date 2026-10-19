@@ -394,7 +394,7 @@ pub mod tag;
 // Native non-test builds don't use it — gate it so the dead-code lint stays happy.
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod snapshot_cache;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod socket;
 #[cfg(target_arch = "wasm32")]
 pub mod ssdp;
