@@ -59,6 +59,8 @@ thread_local! {
     static MSG_ID: Cell<u32> = const { Cell::new(1) };
     /// Message ID used for the `get_states` request (to match the result).
     static STATES_MSG_ID: Cell<u32> = const { Cell::new(0) };
+    /// Holds the connection open until the token is refused or the server closes it.
+    static CONNECTION: RefCell<Option<Ws>> = const { RefCell::new(None) };
 }
 
 /// Format a float with one decimal place (ufmt doesn't support precision specifiers).
@@ -95,12 +97,14 @@ fn next_msg_id() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
     let url = kv::get_string("ha_url").unwrap_or_else(|| DEFAULT_HA_URL.into());
-    if ws!(&url, on_ha_event).is_none() {
+    let connection = ws!(&url, on_ha_event);
+    if connection.is_none() {
         let msg = "HA WebSocket rejected by host runtime limits".to_string();
         log_error!("{}", msg);
         STATE.with(|s| *s.borrow_mut() = HaState::Error(msg));
         request_frame();
     }
+    CONNECTION.set(connection);
 }
 
 /// Re-render in response to touch — the host never renders on touch by
@@ -140,7 +144,7 @@ pub extern "C" fn render(_delta_ms: u32) {
 
 // ── WebSocket event handler ───────────────────────────────────────
 
-fn on_ha_event(ws: Ws, event: &WsEvent) {
+fn on_ha_event(ws: &Ws, event: &WsEvent) {
     match event {
         WsEvent::Open => {
             log_info!("HA WebSocket connected, waiting for auth_required");
@@ -152,12 +156,13 @@ fn on_ha_event(ws: Ws, event: &WsEvent) {
             let msg = fmt!("WebSocket closed (code {})", code);
             log_warn!("{}", msg);
             STATE.with(|s| *s.borrow_mut() = HaState::Error(msg));
+            CONNECTION.set(None);
             request_frame();
         }
     }
 }
 
-fn handle_message(ws: Ws, text: &str) {
+fn handle_message(ws: &Ws, text: &str) {
     let json = JsonDoc::parse(text.as_bytes());
     let msg_type = json.str("/type").unwrap_or_default();
 
@@ -195,7 +200,9 @@ fn handle_message(ws: Ws, text: &str) {
                 .unwrap_or_else(|| "invalid token".into());
             log_error!("HA auth failed: {}", reason);
             STATE.with(|s| *s.borrow_mut() = HaState::Error(reason));
-            ws.close();
+            if let Some(connection) = CONNECTION.take() {
+                connection.close();
+            }
             request_frame();
         }
         "result" => handle_result(&json),

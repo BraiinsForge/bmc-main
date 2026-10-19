@@ -408,7 +408,7 @@ pub mod tz;
 #[cfg(target_arch = "wasm32")]
 pub mod udp_broadcast;
 pub mod url;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod ws;
 #[cfg(target_arch = "wasm32")]
 pub mod xml;
@@ -740,15 +740,17 @@ macro_rules! number_input {
     }};
 }
 
-/// Connect to a WebSocket with optional headers.
+/// Connect to a WebSocket with optional headers, as `ws_connect` does.
+///
+/// It returns the same `Option<Ws>`. Dropping the `Ws` closes the connection, so keep it.
 ///
 /// # Examples
 /// ```ignore
-/// ws!("ws://host/api", on_event)
-/// ws!("ws://host/api", on_event, headers: [
+/// WS.set(ws!("ws://host/api", on_event));
+/// WS.set(ws!("ws://host/api", on_event, headers: [
 ///     ("Authorization", "Bearer xyz"),
 ///     ("X-Custom", "value"),
-/// ])
+/// ]));
 /// ```
 #[macro_export]
 macro_rules! ws {

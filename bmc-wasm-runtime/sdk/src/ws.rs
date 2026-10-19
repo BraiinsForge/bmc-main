@@ -24,31 +24,52 @@
 //! The host manages the actual TCP/TLS connection in a background thread
 //! and delivers events by calling the `__on_ws_event` export each frame.
 //!
+//! A [`Ws`] is the only handle to its connection,
+//! and dropping it closes the connection,
+//! so a widget keeps the handle for as long as it wants the connection.
+//! The callback borrows the connection its event belongs to;
+//! to close the connection from there, take the stored handle.
+//! When the peer closes the connection, the callback gets [`WsEvent::Close`]
+//! and the stored handle reaches nothing, so clear or replace it there.
+//!
 //! # Example
 //!
 //! ```ignore
-//! use bmc_wasm_sdk::*;
+//! use std::cell::RefCell;
+//!
 //! use bmc_wasm_sdk::ws::{Ws, WsEvent, ws_connect};
 //!
-//! fn init(width: u32, height: u32) {
-//!     ws_connect("ws://192.168.1.10:8123/api/websocket", None, on_event);
+//! thread_local! {
+//!     static WS: RefCell<Option<Ws>> = const { RefCell::new(None) };
 //! }
 //!
-//! fn on_event(ws: Ws, event: &WsEvent) {
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn init() {
+//!     WS.set(ws_connect("ws://192.168.1.10:8123/api/websocket", None, on_event));
+//! }
+//!
+//! fn on_event(ws: &Ws, event: &WsEvent<'_>) {
 //!     match event {
 //!         WsEvent::Open => ws.send(r#"{"type":"auth","access_token":"..."}"#),
-//!         WsEvent::Message(text) => { /* handle message */ }
-//!         WsEvent::Close(code) => { /* handle close */ }
+//!         WsEvent::Message(r#"{"type":"auth_invalid"}"#) => {
+//!             if let Some(ws) = WS.take() {
+//!                 ws.close();
+//!             }
+//!         }
+//!         WsEvent::Message(_) => { /* handle message */ }
+//!         WsEvent::Close(_) => WS.set(None),
 //!     }
 //! }
 //! ```
 
 use core::cell::RefCell;
+use core::mem::ManuallyDrop;
 use std::collections::HashMap;
 
 use bmc_wasm_protocol::WebsocketId;
 
 // Host function imports
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_ws_connect(
@@ -61,21 +82,35 @@ unsafe extern "C" {
     fn host_ws_close(ws_id: u32);
 }
 
-/// Handle to an active WebSocket connection.
-#[derive(Debug, Clone, Copy)]
-pub struct Ws(pub(crate) WebsocketId);
+/// The only handle to a WebSocket connection; dropping it closes the connection.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Ws(WebsocketId);
 
 impl Ws {
     /// Send a text message over this connection.
+    ///
+    /// Does nothing once the connection has closed,
+    /// such as on a callback's argument after the callback closed the stored handle.
+    #[cfg(target_arch = "wasm32")]
     pub fn send(&self, message: &str) {
         unsafe {
             host_ws_send(self.0.to_wire(), message.as_ptr(), message.len() as u32);
         }
     }
 
-    /// Close this connection.
-    pub fn close(&self) {
-        unsafe { host_ws_close(self.0.to_wire()) }
+    /// Close the connection. An event already due in the same delivery pass is dropped.
+    pub fn close(self) {
+        drop(self);
+    }
+}
+
+impl Drop for Ws {
+    fn drop(&mut self) {
+        CONNECTIONS.with_borrow_mut(|connections| connections.remove(&self.0));
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            host_ws_close(self.0.to_wire());
+        }
     }
 }
 
@@ -87,10 +122,13 @@ pub enum WsEvent<'a> {
     /// A text message was received.
     Message(&'a str),
     /// Connection closed with a status code.
+    ///
+    /// The widget's stored handle reaches nothing from here on; clear or replace it.
     Close(u16),
 }
 
-type Callback = fn(Ws, &WsEvent<'_>);
+/// Callback type: `fn(ws, event)`.
+pub type Callback = fn(&Ws, &WsEvent<'_>);
 
 thread_local! {
     /// Registered callbacks indexed by position.
@@ -117,13 +155,14 @@ fn register_callback(cb: Callback) -> usize {
 /// Open a WebSocket connection to `url`.
 ///
 /// The host connects in a background thread and delivers events by calling
-/// `on_event` with a [`Ws`] handle and a [`WsEvent`].
+/// `on_event` with the borrowed [`Ws`] and a [`WsEvent`].
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs
 /// (same format as [`fetch`](crate::fetch)).
 ///
-/// Returns `None` if the host rejects the connection before it is queued.
-#[must_use]
+/// Returns `None` if the host refuses the connection before it is queued.
+#[cfg(target_arch = "wasm32")]
+#[must_use = "dropping the returned Ws closes it"]
 pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Option<Ws> {
     let cb_idx = register_callback(on_event);
     let (h_ptr, h_len) = match headers {
@@ -143,7 +182,11 @@ pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Optio
 /// - 0 = Open (data empty)
 /// - 1 = Message (data = UTF-8 text)
 /// - 2 = Close (data = 2 bytes LE close code)
-#[unsafe(no_mangle)]
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "__alloc returns exactly the requested bytes"
+)]
+#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
 pub extern "C" fn __on_ws_event(ws_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
     let Some(ws_id) = WebsocketId::from_wire(ws_id) else {
         return;
@@ -173,7 +216,6 @@ pub extern "C" fn __on_ws_event(ws_id: u32, event_type: u32, data_ptr: u32, data
     };
 
     let is_close = matches!(event, WsEvent::Close(_));
-    let ws = Ws(ws_id);
 
     // Copy the callback out before invoking (callback may call ws_connect)
     let cb = CONNECTIONS
@@ -187,6 +229,86 @@ pub extern "C" fn __on_ws_event(ws_id: u32, event_type: u32, data_ptr: u32, data
         .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
 
     if let Some(cb) = cb {
-        cb(ws, &event);
+        // Borrowed for the event only; dropping it would close the connection.
+        cb(&ManuallyDrop::new(Ws(ws_id)), &event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::{Cell, RefCell};
+
+    use bmc_wasm_protocol::WebsocketId;
+
+    use super::{__on_ws_event, CONNECTIONS, Callback, Ws, WsEvent, register_callback};
+
+    thread_local! {
+        static SEEN: Cell<Option<WebsocketId>> = const { Cell::new(None) };
+        static STORED: RefCell<Option<Ws>> = const { RefCell::new(None) };
+    }
+
+    fn connect(callback: Callback) -> Ws {
+        let id = WebsocketId::from_wire(1).expect("BUG: test ids are non-zero");
+        let cb_idx = register_callback(callback);
+        CONNECTIONS.with_borrow_mut(|connections| connections.insert(id, cb_idx));
+        Ws(id)
+    }
+
+    fn deliver(id: WebsocketId) {
+        __on_ws_event(id.to_wire(), 0, 0, 0);
+    }
+
+    fn is_registered(id: WebsocketId) -> bool {
+        CONNECTIONS.with_borrow(|registered| registered.contains_key(&id))
+    }
+
+    fn record(ws: &Ws, _event: &WsEvent<'_>) {
+        SEEN.set(Some(ws.0));
+    }
+
+    fn close_stored(_ws: &Ws, _event: &WsEvent<'_>) {
+        if let Some(stored) = STORED.take() {
+            stored.close();
+        }
+    }
+
+    #[test]
+    fn an_event_reaches_its_callback_with_its_connection() {
+        let ws = connect(record);
+
+        deliver(ws.0);
+
+        assert_eq!(SEEN.get(), Some(ws.0));
+    }
+
+    #[test]
+    fn an_event_leaves_its_connection_open() {
+        let ws = connect(record);
+
+        deliver(ws.0);
+
+        assert!(is_registered(ws.0));
+    }
+
+    #[test]
+    fn a_dropped_handle_stops_its_events() {
+        let ws = connect(record);
+        let id = ws.0;
+
+        drop(ws);
+        deliver(id);
+
+        assert_eq!(SEEN.get(), None);
+    }
+
+    #[test]
+    fn a_callback_can_close_its_own_connection_through_the_stored_handle() {
+        let ws = connect(close_stored);
+        let id = ws.0;
+        STORED.set(Some(ws));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
     }
 }
