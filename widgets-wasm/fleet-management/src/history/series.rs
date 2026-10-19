@@ -22,6 +22,9 @@
 
 use std::collections::VecDeque;
 
+#[cfg(target_arch = "wasm32")]
+use bmc_wasm_sdk::{log_error, ufmt};
+
 use super::{ChartSpan, ChartWindow, HistoryDatum, POINTS};
 
 /// Buckets more than this many slots apart draw as a break.
@@ -49,7 +52,7 @@ pub(super) struct Series {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Newest {
     Open,
-    /// A restored bucket:
+    /// A restored bucket, or the newest one a cut leaves:
     /// a sample in its slot is dropped, so live readings never change saved history,
     /// and the slot still counts as sampled, so a restart costs no extra bucket.
     Closed,
@@ -65,20 +68,60 @@ impl Series {
     }
 
     /// A series of decoded samples, keeping only the newest [`POINTS`].
-    ///
-    /// The blob is decoded, not trusted.
-    /// A clock that went back saved its buckets out of time order, so this sorts them.
-    /// A series over capacity would stay over it forever,
-    /// since evicting one per push holds the length rather than lowering it.
-    pub(super) fn restored(span: ChartSpan, mut samples: Vec<HistoryDatum>) -> Self {
-        samples.sort_by_key(|s| s.at);
-        let excess = samples.len().saturating_sub(POINTS);
+    pub(super) fn restored(span: ChartSpan, samples: Vec<HistoryDatum>) -> Self {
         let mut series = Self::new(span);
-        series.samples = samples.into_iter().skip(excess).collect();
+        series.merge_older(samples, i64::MAX);
         series
     }
 
+    /// Put `older`, a decoded blob's buckets, before this series' buckets
+    /// in the slots after `cut`'s, dropping the rest,
+    /// so the blob and the live buckets never share a slot. Keep the newest [`POINTS`].
+    ///
+    /// The blob is decoded, not trusted.
+    /// Earlier builds saved buckets in the order a stepping clock stamped them, so this sorts them.
+    /// A series over capacity would stay over it forever,
+    /// since evicting one per push holds the length rather than lowering it.
+    pub(super) fn merge_older(&mut self, mut older: Vec<HistoryDatum>, cut: i64) {
+        older.sort_by_key(|s| s.at);
+        let cut_slot = slot_of(cut, self.interval_secs);
+        self.samples
+            .retain(|s| slot_of(s.at, self.interval_secs) > cut_slot);
+        let live_kept = !self.samples.is_empty();
+        let mut merged: VecDeque<HistoryDatum> = older.into();
+        merged.append(&mut self.samples);
+        let excess = merged.len().saturating_sub(POINTS);
+        merged.drain(..excess);
+        self.samples = merged;
+        if !live_kept {
+            self.newest = Newest::Closed;
+        }
+    }
+
+    /// Drop the buckets stamped after `at`, which a clock that went back no longer reaches.
+    pub(super) fn drop_after(&mut self, at: i64) {
+        let len = self.samples.len();
+        while self.samples.back().is_some_and(|s| s.at > at) {
+            self.samples.pop_back();
+        }
+        if self.samples.len() != len {
+            self.newest = Newest::Closed;
+        }
+    }
+
+    /// Record a sample at `at`.
+    /// A sample older than the newest bucket is dropped, so the buckets stay in time order.
     pub(super) fn record(&mut self, at: i64, value: Option<f32>) {
+        let newest_at = self.newest_at().unwrap_or(at);
+        if at < newest_at {
+            #[cfg(target_arch = "wasm32")]
+            log_error!(
+                "fleet: chart sample at {} dropped, older than the newest bucket at {}",
+                at,
+                newest_at
+            );
+            return;
+        }
         let slot = slot_of(at, self.interval_secs);
         match self.samples.back_mut() {
             Some(newest) if slot_of(newest.at, self.interval_secs) == slot => {
@@ -193,6 +236,14 @@ mod tests {
     }
 
     #[test]
+    fn a_sample_older_than_the_newest_bucket_is_dropped() {
+        let mut s = Series::new(SPAN);
+        s.record(20, Some(1.0));
+        s.record(10, Some(2.0));
+        assert_eq!(s.samples(), vec![datum(20, Some(1.0))]);
+    }
+
+    #[test]
     fn a_sample_in_a_later_slot_opens_a_bucket() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(4.0));
@@ -214,6 +265,62 @@ mod tests {
             s.samples(),
             vec![datum(0, Some(4.0)), datum(15, Some(9.0))],
             "the next slot opens a bucket, so a restart costs no extra one"
+        );
+    }
+
+    #[test]
+    fn dropping_the_buckets_after_a_time_keeps_the_newest_slot_sampled() {
+        let mut s = holding(&[(0, Some(1.0)), (15, Some(2.0)), (30, Some(3.0))]);
+        s.drop_after(20);
+        assert_eq!(s.samples(), vec![datum(0, Some(1.0)), datum(15, Some(2.0))]);
+        assert!(
+            s.has_sampled_slot_of(20),
+            "the newest bucket's slot still counts as sampled"
+        );
+    }
+
+    #[test]
+    fn an_older_blob_goes_before_the_buckets_after_the_cut() {
+        let mut s = Series::new(SPAN);
+        s.record(50, Some(1.0));
+        s.record(1_010, Some(2.0));
+        s.merge_older(vec![datum(900, Some(3.0)), datum(1_000, Some(4.0))], 1_000);
+        assert_eq!(
+            s.samples(),
+            vec![
+                datum(900, Some(3.0)),
+                datum(1_000, Some(4.0)),
+                datum(1_010, Some(2.0))
+            ],
+            "the bucket at 50 s was stamped by a clock behind the blob"
+        );
+        s.record(1_011, Some(5.0));
+        assert_eq!(
+            s.samples().last(),
+            Some(&datum(1_010, Some(5.0))),
+            "the live bucket stays open"
+        );
+    }
+
+    #[test]
+    fn a_live_bucket_in_the_slot_of_the_cut_is_dropped() {
+        let mut s = Series::new(SPAN);
+        s.record(910, Some(1.0));
+        s.merge_older(vec![datum(900, Some(3.0))], 900);
+        assert_eq!(
+            s.samples(),
+            vec![datum(900, Some(3.0))],
+            "900 and 910 share a 15 s slot"
+        );
+        assert!(
+            s.has_sampled_slot_of(910),
+            "the blob's bucket takes the slot"
+        );
+        s.record(912, Some(9.0));
+        assert_eq!(
+            s.samples(),
+            vec![datum(900, Some(3.0))],
+            "the blob's bucket stays closed to live samples in its slot"
         );
     }
 
@@ -241,6 +348,27 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_closes_the_newest_bucket() {
+        let mut s = Series::new(SPAN);
+        s.record(0, Some(1.0));
+        s.record(15, None);
+        s.record(30, Some(3.0));
+        s.drop_after(20);
+        s.record(20, Some(2.0));
+        assert_eq!(
+            s.samples(),
+            vec![datum(0, Some(1.0)), datum(15, None)],
+            "the sample at 20 s shares the closed bucket's slot, so it is dropped"
+        );
+        s.record(30, Some(3.0));
+        assert_eq!(
+            s.samples(),
+            vec![datum(0, Some(1.0)), datum(15, None), datum(30, Some(3.0))],
+            "the next slot opens a bucket"
+        );
+    }
+
+    #[test]
     fn a_restored_series_out_of_time_order_is_sorted() {
         let s = holding(&[(30, Some(3.0)), (0, Some(1.0)), (15, Some(2.0))]);
         assert_eq!(
@@ -250,7 +378,7 @@ mod tests {
                 datum(15, Some(2.0)),
                 datum(30, Some(3.0))
             ],
-            "a clock that went back saved them out of time order"
+            "an earlier build saved buckets as a stepping clock stamped them"
         );
         assert!(
             s.has_sampled_slot_of(30),

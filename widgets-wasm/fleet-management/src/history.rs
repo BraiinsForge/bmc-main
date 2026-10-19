@@ -200,6 +200,12 @@ pub struct HashrateHistory {
     devices: HashMap<DeviceId, [Series; ChartSpan::ALL.len()]>,
     last_snapshot_at: Option<i64>,
     flash: Flash,
+    /// The last clock reading the history has followed.
+    /// A reading before it means the clock went back.
+    latest_clock: Option<i64>,
+    /// A restored blob newer than the clock, kept in flash and out of the tiers
+    /// until the clock reaches it.
+    pending: Option<PendingBlob>,
 }
 
 impl Default for HashrateHistory {
@@ -209,6 +215,8 @@ impl Default for HashrateHistory {
             devices: HashMap::new(),
             last_snapshot_at: None,
             flash: Flash::Saved,
+            latest_clock: None,
+            pending: None,
         }
     }
 }
@@ -224,6 +232,7 @@ impl HashrateHistory {
     /// The [`UNKNOWN_GROUP`] series goes as soon as it is absent,
     /// as it holds whichever devices had no model yet, not one model's history.
     pub(crate) fn record_fleet(&mut self, now: i64, fleet: &FleetHashrate<'_>) {
+        self.follow_clock(now);
         let unknown_present = fleet.groups.iter().any(|g| g.label == UNKNOWN_GROUP);
         let mut pruned = false;
         for tier in &mut self.fleet {
@@ -257,6 +266,7 @@ impl HashrateHistory {
 
     /// Record `value`, the hashrate of the device `id`, into its series in every tier.
     pub(crate) fn record_device(&mut self, now: i64, id: &DeviceId, value: Option<f32>) {
+        self.follow_clock(now);
         let tiers = self
             .devices
             .entry(id.clone())
@@ -264,6 +274,42 @@ impl HashrateHistory {
         for series in tiers {
             series.record(now, value);
         }
+    }
+
+    /// Bring the history in line with a clock reading of `now` before recording at it.
+    /// A clock that went back was corrected, so every bucket stamped after `now`,
+    /// in the tiers and in a waiting blob, is wrong and goes, from flash too.
+    /// A waiting blob merges once the clock has reached it.
+    fn follow_clock(&mut self, now: i64) {
+        if self.latest_clock.is_some_and(|latest| now < latest) {
+            self.drop_after(now);
+        }
+        self.latest_clock = Some(now);
+        if let Some(pending) = self
+            .pending
+            .take_if(|pending| pending.newest.is_none_or(|newest| newest <= now))
+        {
+            self.merge(pending, now);
+        }
+    }
+
+    fn drop_after(&mut self, now: i64) {
+        for tier in &mut self.fleet {
+            tier.drop_after(now);
+        }
+        for tiers in self.devices.values_mut() {
+            for series in tiers {
+                series.drop_after(now);
+            }
+        }
+        if self
+            .pending
+            .as_mut()
+            .is_some_and(|pending| !pending.drop_after(now))
+        {
+            self.pending = None;
+        }
+        self.flash = Flash::Wrong;
     }
 
     /// Drop the series of each device in `ids`, which left the fleet,
@@ -348,6 +394,8 @@ enum Flash {
     Saved,
     /// The tiers changed since the last write, which waits for the snapshot interval.
     Behind,
+    /// Flash may hold buckets a clock set back dropped from the tiers, so it is rewritten at once.
+    Wrong,
 }
 
 /// Blob header: a magic byte and a format version. A mismatch on read means a
@@ -372,8 +420,12 @@ struct FleetTierSnapshot {
 impl HashrateHistory {
     /// A blob of the total + per-model tiers for the flash cache (`now` is unix seconds).
     /// `None` while flash holds what the tiers hold,
-    /// and within the snapshot interval of the last write.
+    /// within the snapshot interval of the last write unless a clock set back dropped buckets,
+    /// and while a restored blob waits for the clock, so flash keeps that blob.
     pub(crate) fn take_snapshot(&mut self, now: i64) -> Option<Vec<u8>> {
+        if self.pending.is_some() {
+            return None;
+        }
         match self.flash {
             Flash::Saved => return None,
             Flash::Behind => {
@@ -383,6 +435,7 @@ impl HashrateHistory {
                     return None;
                 }
             }
+            Flash::Wrong => {}
         }
         let tiers: Vec<FleetTierSnapshot> = self.fleet.iter().map(FleetTier::to_snapshot).collect();
         // Encoding failure here would be a logic bug, not bad input, so no
@@ -397,10 +450,13 @@ impl HashrateHistory {
         Some(blob)
     }
 
-    /// Restore the total + per-model tiers from a `saved_at`-stamped blob,
-    /// dropping any tier whose downtime already covers its whole range (its
-    /// points would all be off-screen). Returns `false` on a malformed blob so
-    /// the caller can evict it; per-device series are never restored.
+    /// Restore the total + per-model tiers from a `saved_at`-stamped blob.
+    /// Returns `false` on a malformed blob so the caller can evict it;
+    /// per-device series are never restored.
+    ///
+    /// A blob newer than the clock waits out of the tiers, and flash keeps it,
+    /// until the clock reaches it: usually the clock is behind until NTP sets it.
+    /// A clock that never gets there leaves the charts unsaved.
     pub(crate) fn restore(&mut self, bytes: &[u8], saved_at: i64, now: i64) -> bool {
         let Some(payload) = bytes.strip_prefix(&[SNAPSHOT_MAGIC, SNAPSHOT_VERSION]) else {
             return false;
@@ -414,13 +470,69 @@ impl HashrateHistory {
         if tiers.len() != self.fleet.len() {
             return false;
         }
-        for (tier, snap) in self.fleet.iter_mut().zip(tiers) {
-            if now.saturating_sub(saved_at) >= tier.span.range_secs() {
-                continue; // fully stale — leave empty, refills live
-            }
-            tier.restore(snap);
+        self.latest_clock = Some(now);
+        let pending = PendingBlob::new(tiers, saved_at);
+        match pending.newest {
+            Some(newest) if newest > now => self.pending = Some(pending),
+            _ => self.merge(pending, now),
         }
         true
+    }
+
+    /// Put `blob` before the tiers' buckets in the slots after its newest.
+    /// A tier whose downtime already covers its whole range takes none of the blob,
+    /// as its points would all be off-screen, but still drops its buckets up to the cut.
+    /// The buckets recorded before the clock reached the blob
+    /// were stamped by a clock behind it, so they go.
+    fn merge(&mut self, blob: PendingBlob, now: i64) {
+        let cut = blob.newest.unwrap_or(i64::MIN);
+        let stale = now.saturating_sub(blob.saved_at);
+        for (tier, snap) in self.fleet.iter_mut().zip(blob.tiers) {
+            let snap = (stale < tier.span.range_secs()).then_some(snap);
+            tier.merge_older(snap, cut);
+        }
+    }
+}
+
+/// A decoded blob and the newest bucket stamped in it.
+#[derive(Debug)]
+struct PendingBlob {
+    tiers: Vec<FleetTierSnapshot>,
+    saved_at: i64,
+    newest: Option<i64>,
+}
+
+impl PendingBlob {
+    fn new(tiers: Vec<FleetTierSnapshot>, saved_at: i64) -> Self {
+        let mut blob = Self {
+            tiers,
+            saved_at,
+            newest: None,
+        };
+        blob.newest = blob.stamps().max();
+        blob
+    }
+
+    fn stamps(&self) -> impl Iterator<Item = i64> + '_ {
+        self.tiers.iter().flat_map(|tier| {
+            tier.total
+                .iter()
+                .chain(tier.models.iter().flat_map(|(_, _, samples)| samples))
+                .map(|s| s.at)
+        })
+    }
+
+    /// Drop the buckets stamped after `now`; returns whether any are left.
+    fn drop_after(&mut self, now: i64) -> bool {
+        for tier in &mut self.tiers {
+            tier.total.retain(|s| s.at <= now);
+            for (_, _, samples) in &mut tier.models {
+                samples.retain(|s| s.at <= now);
+            }
+            tier.models.retain(|(_, _, samples)| !samples.is_empty());
+        }
+        self.newest = self.stamps().max();
+        self.newest.is_some()
     }
 }
 
@@ -439,17 +551,29 @@ impl FleetTier {
         }
     }
 
-    fn restore(&mut self, snap: FleetTierSnapshot) {
+    /// Put `snap`'s buckets before the ones in the slots after `cut`'s, dropping the rest.
+    /// Without a snapshot only the cut applies.
+    fn merge_older(&mut self, snap: Option<FleetTierSnapshot>, cut: i64) {
+        let (total, models) = snap.map_or_else(Default::default, |snap| (snap.total, snap.models));
+        self.total.merge_older(total, cut);
         let span = self.span;
-        self.total = Series::restored(span, snap.total);
-        self.models = snap
-            .models
+        let mut restored: HashMap<(Option<usize>, String), Vec<HistoryDatum>> = models
             .into_iter()
-            .map(|(fam, label, samples)| {
-                let fam = fam.map(|i| i as usize);
-                ((fam, label), Series::restored(span, samples))
-            })
+            .map(|(fam, label, samples)| ((fam.map(|i| i as usize), label), samples))
             .collect();
+        for (key, series) in &mut self.models {
+            series.merge_older(restored.remove(key).unwrap_or_default(), cut);
+        }
+        for (key, samples) in restored {
+            self.models.insert(key, Series::restored(span, samples));
+        }
+    }
+
+    fn drop_after(&mut self, now: i64) {
+        self.total.drop_after(now);
+        for series in self.models.values_mut() {
+            series.drop_after(now);
+        }
     }
 }
 
@@ -1217,6 +1341,236 @@ mod tests {
                 .models
                 .contains_key(&(None, UNKNOWN_GROUP.to_owned())),
             "the saved history no longer holds the catch-all"
+        );
+    }
+
+    // ── Clock steps ──────────────────────────────────────────────────
+
+    /// The stamps of a series' buckets.
+    fn stamps(series: &[HistoryDatum]) -> Vec<i64> {
+        series.iter().map(|s| s.at).collect()
+    }
+
+    /// A blob saved at 1 000 s, holding buckets at 900 and 1 000 s.
+    fn blob_saved_at_1000() -> Vec<u8> {
+        let mut h = HashrateHistory::default();
+        h.record_fleet(900, &summary(10.0, 4.0).hashrate());
+        h.record_fleet(1_000, &summary(11.0, 4.0).hashrate());
+        h.take_snapshot(1_000)
+            .expect("BUG: the first snapshot fires")
+    }
+
+    #[test]
+    fn a_clock_set_back_drops_what_was_stamped_after_it() {
+        let mut h = HashrateHistory::default();
+        let a = DeviceId::new("bos/a");
+        let list = devices(&[("bos/a", 3.0, true)]);
+        for now in [0, 15, 30, 45] {
+            h.record_fleet(now, &summary(10.0, 4.0).hashrate());
+            poll_all(&mut h, now, &list);
+        }
+        h.record_fleet(20, &summary(12.0, 5.0).hashrate());
+        let total = total(&h, ChartSpan::FifteenMinutes);
+        assert_eq!(
+            stamps(&total),
+            vec![0, 15],
+            "the buckets at 30 and 45 s were stamped by a clock that was ahead"
+        );
+        assert_eq!(
+            vals(&total),
+            vec![Some(10.0), Some(10.0)],
+            "the cut closes the bucket at 15 s, so the reading at 20 s in its slot is dropped"
+        );
+        assert_eq!(
+            stamps(&device(&h, ChartSpan::FifteenMinutes, &a)),
+            vec![0, 15],
+            "device series are cut too"
+        );
+    }
+
+    #[test]
+    fn a_clock_set_back_rewrites_flash_at_once() {
+        let mut h = HashrateHistory::default();
+        for now in [0, 15, 30, 45] {
+            h.record_fleet(now, &summary(10.0, 4.0).hashrate());
+        }
+        assert!(h.take_snapshot(45).is_some(), "the first snapshot fires");
+        h.record_fleet(20, &summary(12.0, 5.0).hashrate());
+        let blob = h
+            .take_snapshot(20)
+            .expect("BUG: the step back lifts the rate limit, so flash loses the buckets after it");
+        let mut restored = HashrateHistory::default();
+        assert!(restored.restore(&blob, 20, 25), "restored within range");
+        assert_eq!(
+            stamps(&total(&restored, ChartSpan::FifteenMinutes)),
+            vec![0, 15]
+        );
+    }
+
+    #[test]
+    fn a_clock_set_back_on_an_empty_fleet_still_rewrites_flash() {
+        let mut h = HashrateHistory::default();
+        for now in [0, 15, 30, 45] {
+            h.record_fleet(now, &summary(10.0, 4.0).hashrate());
+        }
+        assert!(h.take_snapshot(45).is_some(), "the first snapshot fires");
+        let empty = FleetSummary {
+            total: group("Total", 0.0),
+            groups: vec![],
+        };
+        h.record_fleet(20, &empty.hashrate());
+        let blob = h
+            .take_snapshot(20)
+            .expect("BUG: flash holds the dropped buckets whatever the reading held");
+        let mut restored = HashrateHistory::default();
+        assert!(restored.restore(&blob, 20, 25), "restored within range");
+        assert_eq!(
+            stamps(&total(&restored, ChartSpan::FifteenMinutes)),
+            vec![0, 15]
+        );
+    }
+
+    #[test]
+    fn a_clock_set_back_first_seen_by_a_device_poll_cuts_every_series() {
+        let mut h = HashrateHistory::default();
+        let a = DeviceId::new("bos/a");
+        let list = devices(&[("bos/a", 3.0, true)]);
+        for now in [0, 15, 30, 45] {
+            h.record_fleet(now, &summary(10.0, 4.0).hashrate());
+            poll_all(&mut h, now, &list);
+        }
+        poll_all(&mut h, 20, &list);
+        assert_eq!(
+            stamps(&device(&h, ChartSpan::FifteenMinutes, &a)),
+            vec![0, 15],
+            "the poll follows the clock before it records"
+        );
+        assert_eq!(
+            stamps(&total(&h, ChartSpan::FifteenMinutes)),
+            vec![0, 15],
+            "the fleet series are cut by the same step"
+        );
+    }
+
+    #[test]
+    fn a_blob_newer_than_the_clock_waits_out_of_the_tiers() {
+        let mut h = HashrateHistory::default();
+        assert!(
+            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            "a well-formed blob"
+        );
+        assert!(
+            total(&h, ChartSpan::FifteenMinutes).is_empty(),
+            "a clock behind the blob cannot place it yet"
+        );
+        h.record_fleet(50, &summary(12.0, 5.0).hashrate());
+        assert!(
+            !total(&h, ChartSpan::FifteenMinutes).is_empty(),
+            "live readings record meanwhile"
+        );
+        assert!(
+            h.take_snapshot(50).is_none(),
+            "nothing overwrites the blob while it waits"
+        );
+    }
+
+    #[test]
+    fn a_waiting_blob_merges_once_the_clock_reaches_it() {
+        let mut h = HashrateHistory::default();
+        assert!(
+            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            "a well-formed blob"
+        );
+        h.record_fleet(50, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(1_010, &summary(13.0, 5.0).hashrate());
+        assert_eq!(
+            stamps(&total(&h, ChartSpan::FifteenMinutes)),
+            vec![900, 1_000, 1_010],
+            "the blob, then live; the reading at 50 s was stamped by a clock behind it"
+        );
+        assert_eq!(
+            vals(&model(&h, ChartSpan::FifteenMinutes, "BOS BMM")),
+            vec![Some(4.0), Some(4.0), Some(5.0)],
+            "model series merge the same way"
+        );
+        assert!(
+            h.take_snapshot(1_010).is_some(),
+            "with the blob merged, flash is written again"
+        );
+    }
+
+    #[test]
+    fn a_waiting_blob_skips_the_tiers_its_downtime_left_behind() {
+        let mut h = HashrateHistory::default();
+        assert!(
+            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            "a well-formed blob"
+        );
+        let now = 1_000 + 20 * 60;
+        h.record_fleet(now, &summary(13.0, 5.0).hashrate());
+        assert_eq!(
+            stamps(&total(&h, ChartSpan::FifteenMinutes)),
+            vec![now],
+            "20 minutes after the save, the 15-min tier would draw none of it"
+        );
+        assert_eq!(
+            stamps(&total(&h, ChartSpan::OneHour)),
+            vec![900, 1_000, now],
+            "the 1-h tier still draws it"
+        );
+    }
+
+    #[test]
+    fn a_clock_set_back_cuts_a_waiting_blob() {
+        let mut h = HashrateHistory::default();
+        assert!(
+            h.restore(&blob_saved_at_1000(), 1_000, 950),
+            "a well-formed blob"
+        );
+        h.record_fleet(960, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(940, &summary(13.0, 5.0).hashrate());
+        assert_eq!(
+            stamps(&total(&h, ChartSpan::FifteenMinutes)),
+            vec![900, 940],
+            "a corrected clock keeps the blob's past and drops the rest, so the blob merges"
+        );
+        assert!(h.take_snapshot(940).is_some(), "and flash is written again");
+    }
+
+    #[test]
+    fn a_clock_set_back_into_a_waiting_blob_keeps_one_bucket_per_slot() {
+        let mut h = HashrateHistory::default();
+        assert!(
+            h.restore(&blob_saved_at_1000(), 1_000, 905),
+            "a well-formed blob"
+        );
+        h.record_fleet(910, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(990, &summary(13.0, 5.0).hashrate());
+        h.record_fleet(950, &summary(14.0, 5.0).hashrate());
+        assert_eq!(
+            stamps(&total(&h, ChartSpan::FifteenMinutes)),
+            vec![900, 950],
+            "the cut blob ends at 900, and the live bucket at 910 shares its slot"
+        );
+    }
+
+    #[test]
+    fn a_clock_set_back_before_a_waiting_blob_drops_it() {
+        let mut h = HashrateHistory::default();
+        assert!(
+            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            "a well-formed blob"
+        );
+        h.record_fleet(60, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(40, &summary(13.0, 5.0).hashrate());
+        assert_eq!(
+            stamps(&total(&h, ChartSpan::FifteenMinutes)),
+            vec![40],
+            "every bucket of the blob is after the corrected clock"
+        );
+        assert!(
+            h.take_snapshot(40).is_some(),
+            "flash is written again, overwriting the blob"
         );
     }
 }

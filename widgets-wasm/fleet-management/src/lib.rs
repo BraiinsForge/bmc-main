@@ -303,7 +303,7 @@ fn fold() -> DerivedView {
 }
 
 /// Feed the total and per-model charts,
-/// persisting them when the snapshot interval is due.
+/// persisting them when a snapshot is due.
 #[cfg(target_arch = "wasm32")]
 fn record_fleet_history(now: i64, fleet: &summary::FleetHashrate<'_>) {
     let _s = profile::span("history");
