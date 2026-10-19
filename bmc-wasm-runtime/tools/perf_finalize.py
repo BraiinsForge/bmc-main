@@ -1,6 +1,4 @@
-#!/usr/bin/env nix
-#!nix shell ../..#pkgs.python312
-#!nix --command python3
+#!/usr/bin/env -S uv run
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -163,7 +161,7 @@ def build_counters(profile: Profile, perf: PerfReport) -> list[ProfileCounter]:
     counters: list[ProfileCounter] = []
     timing_colors = ('blue', 'teal', 'green', 'purple', 'grey')
     for phase, color in zip(_TIMING_PHASES, timing_colors):
-        values = per_frame.get(phase)
+        values: list[int] | None = per_frame.get(phase)
         if values:
             counters.append(
                 make_counter(

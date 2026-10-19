@@ -29,8 +29,11 @@ import shutil
 import subprocess
 import sys
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
+
+import msgspec
 
 from widget_root import find as find_widget
 
@@ -90,6 +93,24 @@ def require_tools(*tools: tuple[str, str]) -> None:
             sys.exit(1)
 
 
+class CargoTarget(TypedDict):
+    name: str
+
+
+class CargoMessage(TypedDict):
+    """One line of cargo's `--message-format=json` stream: the fields the tools read."""
+
+    reason: str
+    target: NotRequired[CargoTarget]
+    filenames: NotRequired[list[str]]
+    executable: NotRequired[str | None]
+
+
+def cargo_messages(stdout: str) -> Iterator[CargoMessage]:
+    for line in stdout.splitlines():
+        yield msgspec.json.decode(line, type=CargoMessage)
+
+
 def build_example_wasm(
     example: str, profile: str = 'release', features: tuple[str, ...] = ()
 ) -> Path:
@@ -129,13 +150,15 @@ def build_example_wasm(
         text=True,
     )
 
-    for line in result.stdout.splitlines():
-        msg = json.loads(line)
-        if msg.get('reason') != 'compiler-artifact':
+    for msg in cargo_messages(result.stdout):
+        target = msg.get('target')
+        if (
+            msg['reason'] != 'compiler-artifact'
+            or target is None
+            or target['name'] != wasm_name
+        ):
             continue
-        if msg['target']['name'] != wasm_name:
-            continue
-        for path in cast('list[str]', msg.get('filenames') or []):
+        for path in msg.get('filenames', []):
             if path.endswith('.wasm'):
                 return Path(path)
 

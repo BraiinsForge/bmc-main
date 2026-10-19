@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -35,9 +35,12 @@ Usage:
     ./tools/render_shots.py halving-countdown -o /tmp/shots
 """
 
-import argparse
 import subprocess
 from pathlib import Path
+from typing import Annotated
+
+import tyro
+from tyro.conf import Positional, arg
 
 from _common import build_example_wasm
 
@@ -45,21 +48,18 @@ PATH_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PATH_DEFAULT_OUT = PATH_REPO_ROOT / '.cache' / 'screenshots'
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Render every viewport a WASM widget supports, with live data.'
-    )
-    parser.add_argument('widget', help='widget directory or package name')
-    parser.add_argument(
-        '-o',
-        '--output',
-        type=Path,
-        help=f'output directory (default: {PATH_DEFAULT_OUT}/<widget>/)',
-    )
-    args = parser.parse_args()
+def run(
+    widget: Annotated[Positional[str], arg(metavar='WIDGET')],
+    output: Annotated[Path | None, arg(aliases=('-o',), metavar='DIR')] = None,
+) -> None:
+    """Render every viewport a WASM widget supports, with live data.
 
-    output = args.output or PATH_DEFAULT_OUT / args.widget
-    wasm_file = build_example_wasm(args.widget)
+    Args:
+        widget: widget directory or package name
+        output: output directory (default: .cache/screenshots/<widget>/)
+    """
+    output = output or PATH_DEFAULT_OUT / widget
+    wasm_file = build_example_wasm(widget)
 
     subprocess.run(
         [
@@ -101,4 +101,4 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    tyro.cli(run)

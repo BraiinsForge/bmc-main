@@ -1,6 +1,4 @@
-#!/usr/bin/env nix
-#!nix shell nixpkgs#python312
-#!nix --command python3
+#!/usr/bin/env -S uv run
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify

@@ -1,6 +1,4 @@
-#!/usr/bin/env nix
-#!nix shell ../..#pkgs.python312
-#!nix --command python3
+#!/usr/bin/env -S uv run
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -35,14 +33,17 @@ Usage:
     ./tools/perf_record.py -r 05-my-change -n 1200  # 1200 frames
 """
 
-import argparse
-import json
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
-from _common import build_example_wasm, require_tools
+import tyro
+from tyro.conf import arg
+
+from _common import build_example_wasm, cargo_messages, require_tools
 
 REPORTS_DIR = Path('reports')
 
@@ -101,11 +102,13 @@ def build(example: str) -> tuple[Path, Path]:
         text=True,
     )
 
-    for line in result.stdout.splitlines():
-        msg = json.loads(line)
-        if msg.get('reason') != 'compiler-artifact':
-            continue
-        if msg['target']['name'] != 'testbed':
+    for msg in cargo_messages(result.stdout):
+        target = msg.get('target')
+        if (
+            msg['reason'] != 'compiler-artifact'
+            or target is None
+            or target['name'] != 'testbed'
+        ):
             continue
         executable = msg.get('executable')
         if executable:
@@ -165,33 +168,34 @@ def print_summary(report_dir: Path) -> None:
     # Absolute paths so the hints work regardless of the caller's cwd.
     combined = (report_dir / 'combined.json.gz').resolve()
     print(f'\nView:    samply load {combined}')
-    print(f'Analyze: uv run --python 3.12 tools/perf_analyze.py {combined}')
-    print('Compare: uv run --python 3.12 tools/perf_compare.py reports/*/')
+    print(f'Analyze: uv run tools/perf_analyze.py {combined}')
+    print('Compare: uv run tools/perf_compare.py reports/*/')
+
+
+@dataclass(frozen=True)
+class Options:
+    """Record a WASM widget performance profile; unknown arguments reach the testbed."""
+
+    example: Annotated[str, arg(aliases=('-e',))] = (
+        'hello-widget'  # widget example name
+    )
+    report: Annotated[str, arg(aliases=('-r',))] = (
+        '00-latest'  # report directory under reports/
+    )
+    perf_frames: Annotated[int, arg(aliases=('-n',))] = (
+        600  # number of frames to capture
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Record a WASM widget performance profile.'
-    )
-    parser.add_argument(
-        '-e', '--example', default='hello-widget', help='widget example name'
-    )
-    parser.add_argument(
-        '-r',
-        '--report',
-        default='00-latest',
-        help='report directory name (under reports/)',
-    )
-    parser.add_argument(
-        '-n', '--perf-frames', type=int, default=600, help='number of frames to capture'
-    )
-    args, extra = parser.parse_known_args()
+    # tyro's overloads take a `TypeForm[OutT]`, which basedpyright leaves unsolved.
+    options, extra = tyro.cli(Options, return_unknown_args=True)  # pyright: ignore[reportAny]
 
     check_prerequisites()
-    report_dir = REPORTS_DIR / args.report
+    report_dir = REPORTS_DIR / options.report
     prepare_report_dir(report_dir)
-    wasm_file, testbed_binary = build(args.example)
-    record(wasm_file, testbed_binary, report_dir, args.perf_frames, extra)
+    wasm_file, testbed_binary = build(options.example)
+    record(wasm_file, testbed_binary, report_dir, options.perf_frames, extra)
     print_summary(report_dir)
 
 

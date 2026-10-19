@@ -145,9 +145,13 @@
 
         # What `python-lint` type-checks against, so basedpyright resolves the versions
         # `uv.lock` pins rather than whatever the ambient interpreter carries.
-        # Just the scripts member and its test extra: the check's own source
-        # filter drops the other two members, so their trees would be dead weight.
-        python-lint-venv = pythonSet.mkVirtualEnv "python-lint" { bmc-scripts = [ "test" ]; };
+        #
+        # The members the check's source filter keeps:
+        # scripts with its test extra, and the wasm-runtime tools.
+        python-lint-venv = pythonSet.mkVirtualEnv "python-lint" {
+          bmc-scripts = [ "test" ];
+          bmc-wasm-runtime-tools = [ ];
+        };
 
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = (bmc.profiles.fast.mkShell {

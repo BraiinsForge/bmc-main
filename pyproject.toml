@@ -5,6 +5,7 @@
 members = [
     "bmc-tui",
     "bmc-virt/harness",
+    "bmc-wasm-runtime/tools",
     "scripts",
 ]
 

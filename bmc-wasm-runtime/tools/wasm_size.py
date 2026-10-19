@@ -1,6 +1,4 @@
-#!/usr/bin/env nix
-#!nix shell nixpkgs#python312
-#!nix --command python3
+#!/usr/bin/env -S uv run
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -36,10 +34,13 @@ Usage:
     ./tools/wasm_size.py --check --limit 65536  # custom limit
 """
 
-import argparse
 import subprocess
 import sys
 from pathlib import Path
+from typing import Annotated
+
+import tyro
+from tyro.conf import arg
 
 from _common import build_example_wasm, require_tools
 
@@ -97,33 +98,29 @@ def print_sizes(example: str, release: Path, optimized: Path) -> None:
         print(result.stdout)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description='Measure WASM widget binary size.')
-    parser.add_argument(
-        '-e', '--example', default='hello-widget', help='widget example name'
-    )
-    parser.add_argument(
-        '--check', action='store_true', help='enforce size limit (exit 1 if exceeded)'
-    )
-    parser.add_argument(
-        '--limit',
-        type=int,
-        default=DEFAULT_SIZE_LIMIT,
-        help=f'size limit in bytes (default: {DEFAULT_SIZE_LIMIT:,})',
-    )
-    args = parser.parse_args()
+def run(
+    example: Annotated[str, arg(aliases=('-e',))] = 'hello-widget',
+    check: bool = False,
+    limit: int = DEFAULT_SIZE_LIMIT,
+) -> None:
+    """Measure WASM widget binary size.
 
+    Args:
+        example: widget example name
+        check: enforce size limit (exit 1 if exceeded)
+        limit: size limit in bytes
+    """
     require_tools(('wasm-opt', 'binaryen'), ('wasm-objdump', 'wabt'))
-    release, optimized = build_and_optimize(args.example)
-    print_sizes(args.example, release, optimized)
+    release, optimized = build_and_optimize(example)
+    print_sizes(example, release, optimized)
 
-    if args.check:
+    if check:
         opt_size = optimized.stat().st_size
-        if opt_size > args.limit:
-            print(f'FAIL: optimized WASM is {opt_size:,} bytes (limit: {args.limit:,})')
+        if opt_size > limit:
+            print(f'FAIL: optimized WASM is {opt_size:,} bytes (limit: {limit:,})')
             sys.exit(1)
-        print(f'OK: optimized WASM is {opt_size:,} bytes (limit: {args.limit:,})')
+        print(f'OK: optimized WASM is {opt_size:,} bytes (limit: {limit:,})')
 
 
 if __name__ == '__main__':
-    main()
+    tyro.cli(run)

@@ -1,0 +1,21 @@
+# Makes these tools a member of the uv workspace, so what they import
+# is declared here and the nix `python-lint` environment carries it.
+# Metadata only, as `scripts/pyproject.toml` explains.
+
+[project]
+name = "bmc-wasm-runtime-tools"
+version = "0.0.0"
+description = "WASM runtime development tools that are run as files, not imported"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.13"
+dependencies = [
+    "msgspec>=0.22",
+    "tyro>=0.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

@@ -78,8 +78,8 @@ Two ways to find where a widget spends time, for different questions:
   default — `span()` compiles to nothing, so the instrumentation can live in the widget source permanently. This is the
   one that answers "which part of *my* widget is expensive".
 
-Compare two runs with `tools/perf_compare.py` (fuel-delta table — the metric for "did this optimization help"); inspect
-a single report with `tools/perf_analyze.py`.
+Compare two runs with `uv run tools/perf_compare.py` (fuel-delta table — the metric for "did this optimization help");
+inspect a single report with `uv run tools/perf_analyze.py`.
 
 For why fuel beats wall-clock, the report format, and a worked ISS example, see the
 [profiling-tooling devlog](../../devlogs/BDK-304-iss-position-wasm/profiling-tooling.md).
