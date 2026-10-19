@@ -80,6 +80,9 @@ thread_local! {
         RefCell::new(history::HashrateHistory::default());
     static DISPLAY_FRAME_PENDING: Cell<bool> = const { Cell::new(false) };
     static DERIVE_ELAPSED_MS: Cell<u32> = const { Cell::new(0) };
+    // Keep both browses running for the widget's lifetime.
+    static HTTP_BROWSE: RefCell<Option<mdns::MdnsBrowse>> = const { RefCell::new(None) };
+    static UBOS_BROWSE: RefCell<Option<mdns::MdnsBrowse>> = const { RefCell::new(None) };
 }
 
 /// Coalescing window for display refreshes.
@@ -142,7 +145,7 @@ const HTTP_SERVICE_TYPES: &[&str] = &["_http._tcp"];
 /// Each family is told apart by its TXT keys; any other host on the type
 /// is ignored, so it never receives a request, let alone BOS credentials.
 #[cfg(target_arch = "wasm32")]
-fn on_http_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
+fn on_http_event(_browse: &mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => {
             let doc = JsonDoc::parse(json.as_bytes());
@@ -166,7 +169,7 @@ fn on_http_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
+fn on_ubos_event(_browse: &mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => {
             let doc = JsonDoc::parse(json.as_bytes());
@@ -240,12 +243,16 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
 pub extern "C" fn init() {
     restore_history();
     // One base-type browse for BOS + AxeOS (reliable co-located), plus uBOS's own type.
-    if mdns::mdns_browse(HTTP_SERVICE_TYPES, on_http_event).is_none() {
+    let http_browse = mdns::mdns_browse(HTTP_SERVICE_TYPES, on_http_event);
+    if http_browse.is_none() {
         log_warn!("fleet: HTTP mDNS browse rejected by host runtime limits");
     }
-    if mdns::mdns_browse(UbosAdapter.browse_service_types(), on_ubos_event).is_none() {
+    HTTP_BROWSE.set(http_browse);
+    let ubos_browse = mdns::mdns_browse(UbosAdapter.browse_service_types(), on_ubos_event);
+    if ubos_browse.is_none() {
         log_warn!("fleet: uBOS mDNS browse rejected by host runtime limits");
     }
+    UBOS_BROWSE.set(ubos_browse);
     request_frame();
 }
 

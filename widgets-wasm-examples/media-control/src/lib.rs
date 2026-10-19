@@ -363,6 +363,13 @@ thread_local! {
     static DISCOVERY_LOG: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// Index into `SKINS` array (0 = default, 1 = Llama, ...).
     static SKIN_INDEX: Cell<usize> = const { Cell::new(1) };
+    // Keep the discovery running for the widget's lifetime.
+    static MDNS_BROWSE: RefCell<Option<mdns::MdnsBrowse>> = const { RefCell::new(None) };
+    static SSDP_SEARCH: RefCell<Option<ssdp::SsdpSearch>> = const { RefCell::new(None) };
+    static JELLYFIN_BROADCAST: RefCell<Option<udp_broadcast::UdpBroadcast>> =
+        const { RefCell::new(None) };
+    static EMBY_BROADCAST: RefCell<Option<udp_broadcast::UdpBroadcast>> =
+        const { RefCell::new(None) };
 }
 
 /// Maximum lines shown in the discovery activity log.
@@ -389,7 +396,7 @@ pub extern "C" fn init() {
     set_active_skin(SKINS[SKIN_INDEX.with(Cell::get)].skin);
 
     // Start mDNS discovery for Cast, UPnP, Kodi, and MPD devices
-    if mdns::mdns_browse(
+    let browse = mdns::mdns_browse(
         &[
             "_googlecast._tcp",
             "_upnp._tcp",
@@ -397,9 +404,8 @@ pub extern "C" fn init() {
             "_mpd._tcp",
         ],
         on_mdns_event,
-    )
-    .is_some()
-    {
+    );
+    if browse.is_some() {
         log_info!("media: mDNS browse started");
         discovery_log("Browsing _googlecast._tcp".into());
         discovery_log("Browsing _upnp._tcp".into());
@@ -409,28 +415,31 @@ pub extern "C" fn init() {
         log_warn!("media: mDNS browse rejected by host runtime limits");
         discovery_log("mDNS browse rejected".into());
     }
+    MDNS_BROWSE.set(browse);
 
     // Start SSDP discovery for native UPnP/DLNA renderers
-    if ssdp::ssdp_search(
+    let search = ssdp::ssdp_search(
         "urn:schemas-upnp-org:device:MediaRenderer:1",
         5,
         on_ssdp_event,
-    )
-    .is_some()
-    {
+    );
+    if search.is_some() {
         log_info!("media: SSDP search started");
         discovery_log("SSDP M-SEARCH MediaRenderer".into());
     } else {
         log_warn!("media: SSDP search rejected by host runtime limits");
         discovery_log("SSDP search rejected".into());
     }
+    SSDP_SEARCH.set(search);
 
     // Start UDP broadcast discovery for Jellyfin and Emby servers
-    let jellyfin_started =
-        udp_broadcast::udp_broadcast(7359, "Who is JellyfinServer?", 5, on_jellyfin_broadcast)
-            .is_some();
-    let emby_started =
-        udp_broadcast::udp_broadcast(7359, "Who is EmbyServer?", 5, on_emby_broadcast).is_some();
+    let jellyfin =
+        udp_broadcast::udp_broadcast(7359, "Who is JellyfinServer?", 5, on_jellyfin_broadcast);
+    let emby = udp_broadcast::udp_broadcast(7359, "Who is EmbyServer?", 5, on_emby_broadcast);
+    let jellyfin_started = jellyfin.is_some();
+    let emby_started = emby.is_some();
+    JELLYFIN_BROADCAST.set(jellyfin);
+    EMBY_BROADCAST.set(emby);
     if jellyfin_started && emby_started {
         log_info!("media: Jellyfin/Emby UDP broadcast started");
         discovery_log("UDP broadcast Jellyfin:7359".into());
@@ -478,7 +487,7 @@ fn upsert_discovered(device: DiscoveredDevice) {
 
 // ── mDNS discovery ──────────────────────────────────────────────
 
-fn on_mdns_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
+fn on_mdns_event(_browse: &mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => on_mdns_found(json),
         mdns::MdnsEvent::Removed(name) => on_mdns_removed(name),
@@ -573,7 +582,7 @@ fn on_mdns_removed(name: &str) {
 
 // ── SSDP discovery ──────────────────────────────────────────────
 
-fn on_ssdp_event(_search: ssdp::SsdpSearch, event: &ssdp::SsdpEvent<'_>) {
+fn on_ssdp_event(_search: &ssdp::SsdpSearch, event: &ssdp::SsdpEvent<'_>) {
     match event {
         ssdp::SsdpEvent::Found(json) => on_ssdp_found(json),
         ssdp::SsdpEvent::Removed(_usn) => { /* future: remove from list */ }
@@ -652,7 +661,7 @@ fn on_ssdp_found(json: &str) {
 // ── UDP broadcast discovery (Jellyfin/Emby) ─────────────────────
 
 fn on_jellyfin_broadcast(
-    _broadcast: udp_broadcast::UdpBroadcast,
+    _broadcast: &udp_broadcast::UdpBroadcast,
     event: &udp_broadcast::UdpBroadcastEvent<'_>,
 ) {
     let udp_broadcast::UdpBroadcastEvent::Response { data, .. } = event;
@@ -660,7 +669,7 @@ fn on_jellyfin_broadcast(
 }
 
 fn on_emby_broadcast(
-    _broadcast: udp_broadcast::UdpBroadcast,
+    _broadcast: &udp_broadcast::UdpBroadcast,
     event: &udp_broadcast::UdpBroadcastEvent<'_>,
 ) {
     let udp_broadcast::UdpBroadcastEvent::Response { data, .. } = event;

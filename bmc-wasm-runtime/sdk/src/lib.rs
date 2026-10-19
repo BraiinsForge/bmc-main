@@ -367,7 +367,7 @@ pub mod led;
 pub mod log;
 #[cfg(feature = "math-3d")]
 pub mod math;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod mdns;
 pub mod mesh;
 pub mod modal;
@@ -396,7 +396,7 @@ pub mod tag;
 pub(crate) mod snapshot_cache;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod socket;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod ssdp;
 pub mod text;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -405,7 +405,7 @@ pub mod tree;
 pub mod types;
 pub mod typography;
 pub mod tz;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod udp_broadcast;
 pub mod url;
 #[cfg(any(target_arch = "wasm32", test))]

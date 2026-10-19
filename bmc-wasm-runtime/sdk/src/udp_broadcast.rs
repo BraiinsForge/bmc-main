@@ -24,13 +24,44 @@
 //! responses from devices on the local network. The host manages the broadcast
 //! in a background thread and delivers events by calling the
 //! `__on_udp_broadcast_event` export.
+//!
+//! A [`UdpBroadcast`] is the only handle to its broadcast,
+//! and dropping it stops the broadcast, resends included,
+//! so a widget keeps the handle for as long as it wants responses.
+//! The callback borrows the broadcast its event belongs to;
+//! to stop the broadcast from there, take the stored handle.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use std::cell::RefCell;
+//!
+//! use bmc_wasm_sdk::*;
+//! use bmc_wasm_sdk::udp_broadcast::*;
+//!
+//! thread_local! {
+//!     static DISCOVERY: RefCell<Option<UdpBroadcast>> = const { RefCell::new(None) };
+//! }
+//!
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn init() {
+//!     DISCOVERY.set(udp_broadcast(7359, "Who is JellyfinServer?", 5, on_response));
+//! }
+//!
+//! fn on_response(_broadcast: &UdpBroadcast, event: &UdpBroadcastEvent<'_>) {
+//!     let UdpBroadcastEvent::Response { data, source } = event;
+//!     log_info!("{source} answered: {data}");
+//! }
+//! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::UdpBroadcastId;
 
 // Host function imports
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_udp_broadcast(port: u32, msg_ptr: *const u8, msg_len: u32, timeout_secs: u32) -> u32;
@@ -38,20 +69,30 @@ unsafe extern "C" {
 }
 
 /// Callback type: `fn(broadcast, event)`.
-pub type BroadcastCallback = fn(UdpBroadcast, &UdpBroadcastEvent<'_>);
+pub type BroadcastCallback = fn(&UdpBroadcast, &UdpBroadcastEvent<'_>);
 
-/// Handle to an active UDP broadcast session.
-#[derive(Clone, Copy, Debug)]
-pub struct UdpBroadcast(pub UdpBroadcastId);
+/// The only handle to a UDP broadcast; dropping it stops the broadcast.
+#[derive(Debug, PartialEq, Eq)]
+pub struct UdpBroadcast(UdpBroadcastId);
 
 impl UdpBroadcast {
-    /// Stop this broadcast session.
-    pub fn stop(&self) {
-        unsafe { host_udp_broadcast_stop(self.0.to_wire()) }
+    /// Stop the broadcast. An event already due in the same delivery pass is dropped.
+    pub fn stop(self) {
+        drop(self);
     }
 }
 
-/// Event delivered from the host for a UDP broadcast session.
+impl Drop for UdpBroadcast {
+    fn drop(&mut self) {
+        BROADCASTS.with_borrow_mut(|broadcasts| broadcasts.remove(&self.0));
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            host_udp_broadcast_stop(self.0.to_wire());
+        }
+    }
+}
+
+/// Event delivered from the host for a UDP broadcast.
 #[derive(Debug)]
 pub enum UdpBroadcastEvent<'a> {
     /// Response received: data payload and source address string.
@@ -83,8 +124,9 @@ fn register_callback(cb: BroadcastCallback) -> usize {
 /// Responses are delivered via the callback. The host thread resends
 /// periodically (every 30s) and listens for `timeout_secs` after each send.
 ///
-/// Returns `None` if the host rejects the broadcast before it is queued.
-#[must_use]
+/// Returns `None` if the host refuses the broadcast before it is queued.
+#[cfg(target_arch = "wasm32")]
+#[must_use = "dropping the returned UdpBroadcast stops it"]
 pub fn udp_broadcast(
     port: u32,
     message: &str,
@@ -100,7 +142,11 @@ pub fn udp_broadcast(
 }
 
 /// Called by the host when a UDP broadcast event is ready.
-#[unsafe(no_mangle)]
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "__alloc returns exactly the requested bytes"
+)]
+#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
 pub extern "C" fn __on_udp_broadcast_event(
     broadcast_id: u32,
     data_ptr: u32,
@@ -133,13 +179,95 @@ pub extern "C" fn __on_udp_broadcast_event(
     let source = core::str::from_utf8(&owned_source).unwrap_or("");
 
     let event = UdpBroadcastEvent::Response { data, source };
-    let broadcast = UdpBroadcast(broadcast_id);
 
     let cb = BROADCASTS
         .with(|b| b.borrow().get(&broadcast_id).copied())
         .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
 
     if let Some(cb) = cb {
-        cb(broadcast, &event);
+        // Borrowed for the event only; dropping it would stop the broadcast.
+        cb(&ManuallyDrop::new(UdpBroadcast(broadcast_id)), &event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::{Cell, RefCell};
+
+    use bmc_wasm_protocol::UdpBroadcastId;
+
+    use super::{
+        __on_udp_broadcast_event, BROADCASTS, BroadcastCallback, UdpBroadcast, UdpBroadcastEvent,
+        register_callback,
+    };
+
+    thread_local! {
+        static SEEN: Cell<Option<UdpBroadcastId>> = const { Cell::new(None) };
+        static STORED: RefCell<Option<UdpBroadcast>> = const { RefCell::new(None) };
+    }
+
+    fn broadcast(callback: BroadcastCallback) -> UdpBroadcast {
+        let id = UdpBroadcastId::from_wire(1).expect("BUG: test ids are non-zero");
+        let cb_idx = register_callback(callback);
+        BROADCASTS.with_borrow_mut(|broadcasts| broadcasts.insert(id, cb_idx));
+        UdpBroadcast(id)
+    }
+
+    fn deliver(id: UdpBroadcastId) {
+        __on_udp_broadcast_event(id.to_wire(), 0, 0, 0, 0);
+    }
+
+    fn is_registered(id: UdpBroadcastId) -> bool {
+        BROADCASTS.with_borrow(|registered| registered.contains_key(&id))
+    }
+
+    fn record(broadcast: &UdpBroadcast, _event: &UdpBroadcastEvent<'_>) {
+        SEEN.set(Some(broadcast.0));
+    }
+
+    fn stop_stored(_broadcast: &UdpBroadcast, _event: &UdpBroadcastEvent<'_>) {
+        if let Some(stored) = STORED.take() {
+            stored.stop();
+        }
+    }
+
+    #[test]
+    fn an_event_reaches_its_callback_with_its_broadcast() {
+        let broadcast = broadcast(record);
+
+        deliver(broadcast.0);
+
+        assert_eq!(SEEN.get(), Some(broadcast.0));
+    }
+
+    #[test]
+    fn an_event_leaves_its_broadcast_running() {
+        let broadcast = broadcast(record);
+
+        deliver(broadcast.0);
+
+        assert!(is_registered(broadcast.0));
+    }
+
+    #[test]
+    fn a_dropped_handle_stops_its_events() {
+        let broadcast = broadcast(record);
+        let id = broadcast.0;
+
+        drop(broadcast);
+        deliver(id);
+
+        assert_eq!(SEEN.get(), None);
+    }
+
+    #[test]
+    fn a_callback_can_stop_its_own_broadcast_through_the_stored_handle() {
+        let broadcast = broadcast(stop_stored);
+        let id = broadcast.0;
+        STORED.set(Some(broadcast));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
     }
 }
