@@ -4182,12 +4182,12 @@ def test_run_firmware_stream_decodes_formatted_error_status(
 
 
 def _stream_result(
-    events: list[dict[str, object]], *, exit_code: int = 1, status: str | None = None
+    events: list[dict[str, Json]], *, exit_code: int = 1, status: str | None = None
 ) -> catalog.StreamResult:
     return catalog.StreamResult(events, exit_code, status, None, "")
 
 
-_DOWNLOADED: list[dict[str, object]] = [
+_DOWNLOADED: list[dict[str, Json]] = [
     {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"},
     {"download": {"downloadedBytes": "1", "totalBytes": "2"}},
     {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"},

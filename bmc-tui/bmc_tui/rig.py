@@ -29,6 +29,7 @@ it from a stdlib ThreadingHTTPServer on a daemon thread.
 
 import enum
 import json
+import socket
 import subprocess
 import time
 from collections.abc import Callable
@@ -36,7 +37,7 @@ from dataclasses import dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import NotRequired, Self, TypedDict
+from typing import NotRequired, Self, TypedDict, cast
 
 import msgspec
 
@@ -312,7 +313,7 @@ class RigServer:
             if tarball_request:
                 self._tarball_requests.append(TarballRequest(requested, None, None))
             handler.close_connection = True
-            handler.connection.close()
+            cast("socket.socket", handler.connection).close()
             return True
         if mode is FaultMode.STALL and tarball_request:
             self._stall_sent = True

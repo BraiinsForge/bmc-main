@@ -34,6 +34,7 @@ the case exactly.
 """
 
 import binascii
+import http.client
 import json
 import re
 import struct
@@ -397,7 +398,8 @@ def _preflight(cases: list[Case], base_url: str) -> None:
 def _probe(url: str) -> tuple[bytes, int | None]:
     """Head of the body plus its full length, without downloading the whole file."""
     req = urllib.request.Request(url, headers={"Range": "bytes=0-15"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    # typeshed types `urlopen` as Any; for an http(s) URL it is an HTTPResponse.
+    with cast("http.client.HTTPResponse", urllib.request.urlopen(req, timeout=30)) as resp:
         head = resp.read(16)
         if resp.status == HTTPStatus.PARTIAL_CONTENT:
             rng = resp.headers.get("Content-Range", "")

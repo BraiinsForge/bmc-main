@@ -34,7 +34,7 @@ import sys
 import threading
 from collections.abc import Callable
 from contextvars import ContextVar
-from typing import ParamSpec, get_type_hints
+from typing import ParamSpec, cast, get_type_hints
 
 import tyro
 from rich.traceback import install as install_rich_traceback
@@ -154,7 +154,7 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
     install_rich_traceback(show_locals=True, width=120)
     threading.excepthook = _thread_excepthook
     params = list(inspect.signature(main).parameters.values())
-    args_type = get_type_hints(main)[params[0].name] if params else None
+    args_type = cast("type[object]", get_type_hints(main)[params[0].name]) if params else None
 
     @functools.wraps(main)
     def wrapped(argv: list[str] | None = None) -> None:
@@ -163,21 +163,25 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
             if args_type is None:
                 main()
             else:
-                main(tyro.cli(args_type, args=argv))
+                # tyro's overloads take a `TypeForm[OutT]`, which basedpyright leaves unsolved.
+                main(tyro.cli(args_type, args=argv))  # pyright: ignore[reportAny]
             console.alert(f"{main.__module__.rsplit('.', 1)[-1]} finished", level="success")
         except Abort as e:
             console.error(e.hint)
             console.alert("run failed", body=e.hint, level="error")
             raise SystemExit(1) from e
         except subprocess.CalledProcessError as e:
-            cmd = e.cmd if isinstance(e.cmd, str) else shlex.join(e.cmd)
+            command = cast("str | list[str]", e.cmd)
+            cmd = command if isinstance(command, str) else shlex.join(command)
             # Negative returncode is how subprocess reports a signal death.
             status = (
                 f"killed by signal {-e.returncode}" if e.returncode < 0 else f"exit {e.returncode}"
             )
             console.error(f"{status}: {console.lit(cmd)}")
             console.alert("run failed", body=f"{status}: {cmd}", level="error")
-            for captured in (e.stdout, e.stderr):
+            stdout = cast("str | bytes | None", e.stdout)
+            stderr = cast("str | bytes | None", e.stderr)
+            for captured in (stdout, stderr):
                 text = _output_text(captured)
                 if text.strip():
                     console.cmd_output(text)

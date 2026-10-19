@@ -20,6 +20,7 @@
 
 """Unit tests for the SSH device transport."""
 
+import json
 import socket
 import subprocess
 import sys
@@ -168,7 +169,8 @@ def test_reachable_false_on_ssh_error() -> None:
 
 
 def test_board_parses_board_name_and_caches() -> None:
-    backend = _FakeExec(stdout='{"board_name": "braiins,stm32mp157c-ii3-bmc1"}')
+    board = {"board_name": "braiins,stm32mp157c-ii3-bmc1", "release": {"target": "stm32mp15/ii3"}}
+    backend = _FakeExec(stdout=json.dumps(board))
     dev = Device("h", backend=backend)
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"

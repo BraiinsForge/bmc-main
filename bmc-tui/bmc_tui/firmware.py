@@ -29,6 +29,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from http.client import HTTPResponse
 from pathlib import Path
+from typing import cast
 from urllib.parse import urlsplit
 
 from rich.markup import escape
@@ -165,7 +166,8 @@ def _content_length(response: HTTPResponse) -> int | None:
 def _opened(url: str) -> Generator[HTTPResponse]:
     """`urlopen` with its failures rendered as an `Abort` naming the URL."""
     try:
-        with urllib.request.urlopen(url, timeout=_TIMEOUT) as response:
+        # typeshed types `urlopen` as Any; for an http(s) URL it is an HTTPResponse.
+        with cast("HTTPResponse", urllib.request.urlopen(url, timeout=_TIMEOUT)) as response:
             yield response
     except urllib.error.HTTPError as exc:
         raise Abort(f"fetch failed: {console.lit(url)} → HTTP {exc.code} {exc.reason}") from None

@@ -29,12 +29,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
 from typing import Any, Self, cast, override
 
-from bmc_tui.json_value import Json
+from bmc_tui.boser_rest import CheckUpgradeResponse, UpgradeState
 
 TOKEN = "stub-token"
 OFFER_ID = "9e2c7c2e-0000-4000-8000-00000000abcd"
 
-CHECK_OFFER: dict[str, Json] = {
+CHECK_OFFER: CheckUpgradeResponse = {
     "offer": {"id": OFFER_ID, "kind": "PACKAGES", "disruption": "NONE"},
     "firmware": None,
     "packages": {
@@ -55,24 +55,29 @@ CHECK_OFFER: dict[str, Json] = {
     "package_capability": {"status": "READY"},
 }
 
-CHECK_NOTHING = {
+CHECK_NOTHING: CheckUpgradeResponse = {
     "offer": None,
     "firmware": None,
     "packages": None,
     "package_capability": {"status": "READY"},
 }
 
-RUNNING = {"state": "RUNNING", "id": OFFER_ID, "kind": "PACKAGES", "phase": {"stage": "PREPARING"}}
-REALIZING = {
+RUNNING: UpgradeState = {
+    "state": "RUNNING",
+    "id": OFFER_ID,
+    "kind": "PACKAGES",
+    "phase": {"stage": "PREPARING"},
+}
+REALIZING: UpgradeState = {
     "state": "RUNNING",
     "id": OFFER_ID,
     "kind": "PACKAGES",
     "phase": {"stage": "PACKAGES", "step": "REALIZING"},
     "download": {"downloaded_bytes": 524_288, "total_bytes": 1_048_576},
 }
-COMPLETED = {"state": "COMPLETED", "id": OFFER_ID, "kind": "PACKAGES"}
-REBOOTING = {"state": "REBOOTING", "id": OFFER_ID, "kind": "FIRMWARE_AND_PACKAGES"}
-CHECK_FIRMWARE: dict[str, Json] = {
+COMPLETED: UpgradeState = {"state": "COMPLETED", "id": OFFER_ID, "kind": "PACKAGES"}
+REBOOTING: UpgradeState = {"state": "REBOOTING", "id": OFFER_ID, "kind": "FIRMWARE_AND_PACKAGES"}
+CHECK_FIRMWARE: CheckUpgradeResponse = {
     **CHECK_OFFER,
     "offer": {"id": OFFER_ID, "kind": "FIRMWARE_AND_PACKAGES", "disruption": "REBOOT"},
     "firmware": {
@@ -84,7 +89,7 @@ CHECK_FIRMWARE: dict[str, Json] = {
         "previous_releases": [],
     },
 }
-FAILED = {
+FAILED: UpgradeState = {
     "state": "FAILED",
     "id": OFFER_ID,
     "kind": "PACKAGES",
@@ -96,13 +101,13 @@ FAILED = {
 @dataclass
 class Script:
     password: str = ""
-    check: dict[str, Any] = field(default_factory=lambda: dict(CHECK_OFFER))
-    recheck: dict[str, Any] = field(default_factory=lambda: dict(CHECK_NOTHING))  # after a start
-    state: dict[str, Any] = field(default_factory=lambda: {"state": "NONE"})
+    check: CheckUpgradeResponse = field(default_factory=CHECK_OFFER.copy)
+    recheck: CheckUpgradeResponse = field(default_factory=CHECK_NOTHING.copy)  # after a start
+    state: UpgradeState = field(default_factory=lambda: {"state": "NONE"})
     before_terminal: Callable[[], None] = lambda: None  # the device changes while the stream runs
     start_status: int = 204  # 409 BUSY for a run that already holds admission
     stall_seconds: float = 0.0  # every reply waits this long, like a Boser still starting
-    events: list[dict[str, Any]] = field(default_factory=lambda: [RUNNING, REALIZING, COMPLETED])
+    events: list[UpgradeState] = field(default_factory=lambda: [RUNNING, REALIZING, COMPLETED])
     requests: list[tuple[str, str, str | None, Any]] = field(default_factory=list)
 
 

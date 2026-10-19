@@ -307,7 +307,8 @@ def _eval_present(expr: str) -> bool:
     still evaluates; reading that as "absent" made `resolve` take the package
     for a raw nixpkgs derivation, and report the wrong problem two calls later.
     """
-    proc = subprocess.run(["nix", "eval", expr], capture_output=True, text=True, check=False)
+    argv = ["nix", "eval", expr]
+    proc = subprocess.run(argv, capture_output=True, text=True, check=False)
 
     if proc.returncode == 0:
         return True
@@ -315,7 +316,7 @@ def _eval_present(expr: str) -> bool:
     if ABSENT_ATTR in proc.stderr:
         return False
 
-    raise subprocess.CalledProcessError(proc.returncode, proc.args, proc.stdout, proc.stderr)
+    raise subprocess.CalledProcessError(proc.returncode, argv, proc.stdout, proc.stderr)
 
 
 def _eval_raw(expr: str) -> str:

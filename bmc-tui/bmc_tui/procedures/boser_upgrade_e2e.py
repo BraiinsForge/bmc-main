@@ -27,11 +27,17 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from bmc_tui import boser_index, catalog, console
 from bmc_tui.bos_version import parse_bos_version
-from bmc_tui.boser_rest import BoserRest
+from bmc_tui.boser_rest import (
+    BoserRest,
+    CheckUpgradeResponse,
+    FirmwareUpgrade,
+    PackagesPreview,
+    UpgradePhase,
+    UpgradeState,
+)
 from bmc_tui.device import Device
 from bmc_tui.fw_index import FwIndexServer
 from bmc_tui.image import Image
@@ -158,13 +164,15 @@ class BoserUpgradeE2e:
         client.start(offer_id)
         console.ok(f"started {offer_id}")
         deadline = clock() + self.stream_deadline
-        terminal: dict[str, Any] | None = None
+        terminal: UpgradeState | None = None
         for event in client.events(deadline=deadline, clock=clock):
             console.kv("state", event_summary(event))
             if event.get("id") not in (None, offer_id):
                 raise Abort(f"the stream reports a different execution: {event}")
             if event["state"] == "FAILED":
-                raise Abort(f"upgrade failed in {phase_label(event['phase'])}: {event['reason']}")
+                phase = event.get("phase")
+                where = "an unreported phase" if phase is None else phase_label(phase)
+                raise Abort(f"upgrade failed in {where}: {event.get('reason', 'no reason given')}")
             terminal = event
         if terminal is None:
             msg = "BUG: the event stream returned without a terminal event"
@@ -197,12 +205,11 @@ class _Snapshot:
     generation: int | None  # None without a package store: nothing to verify in the profile
 
     @staticmethod
-    def take(dev: Device, offer: dict[str, Any]) -> "_Snapshot":
+    def take(dev: Device, offer: CheckUpgradeResponse) -> "_Snapshot":
         capability = offer["package_capability"]
         if capability["status"] == "UNHEALTHY":
-            raise Abort(
-                f"the package store is unhealthy: {capability['reason']}; repair it before the run"
-            )
+            reason = capability.get("reason", "no reason given")
+            raise Abort(f"the package store is unhealthy: {reason}; repair it before the run")
         ready = capability["status"] == "READY"
         return _Snapshot(
             boot_id=catalog.read_boot_id(dev),
@@ -251,7 +258,7 @@ def _await_boser(
         return
 
 
-def _verify_firmware(dev: Device, firmware: dict[str, Any] | None) -> None:
+def _verify_firmware(dev: Device, firmware: FirmwareUpgrade | None) -> None:
     if firmware is None:
         return
     flashed = catalog.read_flashed_version(dev)
@@ -262,7 +269,7 @@ def _verify_firmware(dev: Device, firmware: dict[str, Any] | None) -> None:
     )
 
 
-def _verify_packages(dev: Device, plan: dict[str, Any] | None, before: _Snapshot) -> None:
+def _verify_packages(dev: Device, plan: PackagesPreview | None, before: _Snapshot) -> None:
     if before.generation is None:
         require(plan is None, "packages were offered on a device without a package store")
         return
@@ -288,7 +295,7 @@ def _verify_packages(dev: Device, plan: dict[str, Any] | None, before: _Snapshot
         )
 
 
-def check_summary(body: dict[str, Any]) -> list[str]:
+def check_summary(body: CheckUpgradeResponse) -> list[str]:
     lines = [f"package capability {body['package_capability']['status']}"]
     firmware = body["firmware"]
     if firmware is not None:
@@ -308,15 +315,15 @@ def check_summary(body: dict[str, Any]) -> list[str]:
     return lines
 
 
-def phase_label(phase: dict[str, str]) -> str:
+def phase_label(phase: UpgradePhase) -> str:
     """`STAGE` for a stage without steps, `STAGE/STEP` otherwise."""
     step = phase.get("step")
     return phase["stage"] if step is None else f"{phase['stage']}/{step}"
 
 
-def event_summary(event: dict[str, Any]) -> str:
+def event_summary(event: UpgradeState) -> str:
     """`STATE`, `STATE/PHASE` or `STATE/PHASE/downloaded_bytes`, mirroring Boser's own tests."""
-    key = str(event.get("state", "?"))
+    key = event["state"]
     if "phase" in event:
         key += f"/{phase_label(event['phase'])}"
     if "download" in event:

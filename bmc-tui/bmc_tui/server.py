@@ -123,7 +123,7 @@ def default_serve_ip(device_host: str, *, port: int = 22) -> str:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(8)
         sock.connect((device_host, port))
-        ip: str = sock.getsockname()[0]
+        ip, _port = cast("tuple[str, int]", sock.getsockname())
         return ip
 
 
@@ -136,7 +136,7 @@ def _route_source_ip() -> str | None:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("192.0.2.1", 9))
-            ip: str = sock.getsockname()[0]
+            ip, _port = cast("tuple[str, int]", sock.getsockname())
             return ip
     except OSError:
         return None

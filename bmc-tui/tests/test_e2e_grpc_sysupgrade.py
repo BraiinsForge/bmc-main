@@ -37,6 +37,7 @@ from bmc_tui import catalog
 from bmc_tui.bos_version import parse_bos_version
 from bmc_tui.device import Device
 from bmc_tui.image import Image
+from bmc_tui.json_value import Json
 from bmc_tui.procedures import e2e_grpc_sysupgrade
 from bmc_tui.stage import Abort
 from tests import stubs
@@ -742,11 +743,11 @@ def test_firmware_progress_requires_sysupgrade_events_even_after_successful_rebo
     package_progress: str,
 ) -> None:
     monkeypatch.setattr(catalog, "classify_stream", _classify_stream)
-    events = [
+    events: list[dict[str, Json]] = [
         {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"},
         {"download": {"downloadedBytes": "1"}},
     ]
-    package_event = {"packagePhase": "PACKAGE_UPGRADE_PHASE_REALIZING"}
+    package_event: dict[str, Json] = {"packagePhase": "PACKAGE_UPGRADE_PHASE_REALIZING"}
     if package_progress == "before_verify":
         events.append(package_event)
     events.append({"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"})

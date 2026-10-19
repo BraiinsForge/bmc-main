@@ -36,10 +36,10 @@ import tyro
 
 from bmc_tui import boser_index, catalog, cli
 from bmc_tui.bos_version import parse_bos_version
+from bmc_tui.boser_rest import CheckUpgradeResponse
 from bmc_tui.device import Device
 from bmc_tui.fw_index import FwIndexServer
 from bmc_tui.image import Image
-from bmc_tui.json_value import Json
 from bmc_tui.procedures.boser_upgrade_e2e import (
     BoserUpgradeE2e,
     check_summary,
@@ -53,7 +53,7 @@ from tests.boser_stub import BoserStub, Script
 RUNNING = "2026-08-01-0-acde0123-26.08-plus"
 TARGET = "2026-09-01-0-0badc0de-26.09-plus"
 STORE = "/nix/store/test-package"
-CHECK_FIRMWARE_ONLY: dict[str, Json] = {
+CHECK_FIRMWARE_ONLY: CheckUpgradeResponse = {
     **boser_stub.CHECK_FIRMWARE,
     "offer": {"id": boser_stub.OFFER_ID, "kind": "FIRMWARE", "disruption": "REBOOT"},
     "packages": None,
@@ -393,7 +393,7 @@ def test_host_startup_failure_stops_the_rig_before_touching_the_device(
 @pytest.mark.parametrize(
     ("script", "replies", "started"),
     [
-        (Script(check=dict(boser_stub.CHECK_NOTHING)), ("ready", "stop"), False),
+        (Script(check=boser_stub.CHECK_NOTHING.copy()), ("ready", "stop"), False),
         (Script(), ("ready", "no", "stop"), False),
     ],
 )
@@ -438,7 +438,7 @@ def test_rebooting_run_waits_for_the_new_boot_and_checks_the_firmware(
     device = _DeviceScript()
     clock = _Clock()
     script = Script(
-        check=dict(boser_stub.CHECK_FIRMWARE), events=[boser_stub.RUNNING, boser_stub.REBOOTING]
+        check=boser_stub.CHECK_FIRMWARE.copy(), events=[boser_stub.RUNNING, boser_stub.REBOOTING]
     )
     script.before_terminal = device.flash
     with BoserStub(script) as stub:
@@ -494,31 +494,31 @@ def _flash_moving_the_profile(device: _DeviceScript) -> None:
         (Script(), _completed_with_wrong_version, "weather: the manifest has 1.1.0"),
         (Script(), _completed_but_rebooted, "rebooted during an upgrade that reported COMPLETED"),
         (
-            Script(recheck=dict(boser_stub.CHECK_OFFER)),
+            Script(recheck=boser_stub.CHECK_OFFER.copy()),
             _DeviceScript.install_weather,
             "still offers",
         ),
         (
-            Script(check=dict(boser_stub.CHECK_FIRMWARE), events=[boser_stub.REBOOTING]),
+            Script(check=boser_stub.CHECK_FIRMWARE.copy(), events=[boser_stub.REBOOTING]),
             _DeviceScript.install_weather,
             "did not come back with a new boot id",
         ),
         (
-            Script(check=dict(boser_stub.CHECK_FIRMWARE), events=[boser_stub.REBOOTING]),
+            Script(check=boser_stub.CHECK_FIRMWARE.copy(), events=[boser_stub.REBOOTING]),
             _rebooting_without_a_flash,
             "/etc/bos_version is 2026-08-01-0-acde0123-26.08-plus",
         ),
         (
             Script(
-                check=dict(boser_stub.CHECK_FIRMWARE),
+                check=boser_stub.CHECK_FIRMWARE.copy(),
                 events=[boser_stub.REBOOTING],
-                state=dict(boser_stub.RUNNING),
+                state=boser_stub.RUNNING.copy(),
             ),
             _DeviceScript.flash,
             "reports an execution after the reboot",
         ),
         (
-            Script(check=dict(CHECK_FIRMWARE_ONLY), events=[boser_stub.REBOOTING]),
+            Script(check=CHECK_FIRMWARE_ONLY.copy(), events=[boser_stub.REBOOTING]),
             _flash_moving_the_profile,
             "moved to generation 2 without a package change",
         ),
@@ -572,7 +572,7 @@ def test_the_runner_waits_through_a_device_that_is_down_while_it_reboots(
     device = _DeviceScript()
     clock = _Clock()
     script = Script(
-        check=dict(boser_stub.CHECK_FIRMWARE), events=[boser_stub.RUNNING, boser_stub.REBOOTING]
+        check=boser_stub.CHECK_FIRMWARE.copy(), events=[boser_stub.RUNNING, boser_stub.REBOOTING]
     )
 
     def go_down() -> None:
@@ -608,7 +608,7 @@ def test_a_shared_reboot_deadline_bounds_the_ssh_and_boser_waits_together(
     _rig(monkeypatch, [])
     device = _DeviceScript()
     clock = _Clock()
-    script = Script(check=dict(boser_stub.CHECK_FIRMWARE), events=[boser_stub.REBOOTING])
+    script = Script(check=boser_stub.CHECK_FIRMWARE.copy(), events=[boser_stub.REBOOTING])
 
     def flash_slowly() -> None:
         device.reachable = False
@@ -643,7 +643,7 @@ def test_a_firmware_only_offer_must_leave_the_profile_alone(
     _rig(monkeypatch, [])
     device = _DeviceScript()
     clock = _Clock()
-    script = Script(check=dict(CHECK_FIRMWARE_ONLY), events=[boser_stub.REBOOTING])
+    script = Script(check=CHECK_FIRMWARE_ONLY.copy(), events=[boser_stub.REBOOTING])
     script.before_terminal = lambda: _flash_without_a_package_change(device)
     with BoserStub(script) as stub:
         runner = BoserUpgradeE2e(stub.address, path, RUNNING, "127.0.0.1", "dev")
@@ -678,6 +678,7 @@ def test_cli_requires_the_ssh_address() -> None:
 def test_phase_label_joins_stage_and_step() -> None:
     assert phase_label({"stage": "PREPARING"}) == "PREPARING"
     assert phase_label({"stage": "PACKAGES", "step": "REALIZING"}) == "PACKAGES/REALIZING"
+    assert phase_label({"stage": "NEW", "step": {"future": True}}) == "NEW/{'future': True}"
 
 
 def test_summaries_read_like_the_console_did() -> None:

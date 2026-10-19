@@ -22,7 +22,7 @@
 
 import pytest
 
-from bmc_tui.boser_rest import BoserRest
+from bmc_tui.boser_rest import BoserRest, UpgradeState
 from bmc_tui.stage import Abort
 from tests import boser_stub
 from tests.boser_stub import BoserStub, Script
@@ -38,11 +38,13 @@ def test_walkthrough_sends_the_token_and_reads_the_stream_to_completion() -> Non
         client = _client(stub, "secret")
         client.login()
         assert [p["name"] for p in client.installable_packages()] == ["weather"]
-        assert client.check(["weather"])["offer"]["id"] == boser_stub.OFFER_ID
+        offer = client.check(["weather"])["offer"]
+        assert offer is not None
+        assert offer["id"] == boser_stub.OFFER_ID
         client.start(boser_stub.OFFER_ID)
         events = list(client.events(deadline=float("inf")))
     assert [e["state"] for e in events] == ["RUNNING", "RUNNING", "COMPLETED"]
-    assert events[1]["download"]["downloaded_bytes"] == 524_288
+    assert events[1].get("download") == {"downloaded_bytes": 524_288, "total_bytes": 1_048_576}
     methods = [(method, path) for method, path, _token, _body in script.requests]
     assert methods == [
         ("POST", "/api/v1/auth/login"),
@@ -103,6 +105,20 @@ def test_stream_stops_at_the_first_terminal_state() -> None:
         client.login()
         seen = list(client.events(deadline=float("inf")))
     assert [e["state"] for e in seen] == ["RUNNING", "FAILED"]
+
+
+def test_stream_reads_past_a_future_stage_with_a_structured_step() -> None:
+    future: UpgradeState = {
+        "state": "RUNNING",
+        "id": boser_stub.OFFER_ID,
+        "kind": "FIRMWARE",
+        "phase": {"stage": "SOMETHING_NEW", "step": {"future": True}},
+    }
+    with BoserStub(Script(events=[future, boser_stub.COMPLETED])) as stub:
+        client = _client(stub)
+        client.login()
+        seen = list(client.events(deadline=float("inf")))
+    assert [e["state"] for e in seen] == ["RUNNING", "COMPLETED"]
 
 
 def test_deadline_is_enforced_between_events() -> None:

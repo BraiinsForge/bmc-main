@@ -47,7 +47,7 @@ from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, NewType, Protocol, TypedDict, cast
+from typing import NewType, Protocol, TypedDict, cast
 
 import msgspec
 from rich.markup import escape
@@ -429,7 +429,8 @@ def resolve_packages(nix: Nix, plan: Deployment) -> str:
         try:
             resolved.append(nix.resolve(attr))
         except subprocess.CalledProcessError as e:
-            raise Abort(_resolve_failure(attr, e.stderr or "", nix, plan.prefix)) from None
+            stderr = cast("str | None", e.stderr)
+            raise Abort(_resolve_failure(attr, stderr or "", nix, plan.prefix)) from None
     plan.resolved = resolved
     # nix's own notice is switched off on the build calls, so say it here, once.
     if nix.dirty_tree():
@@ -1717,7 +1718,7 @@ def _orchestrator_present(dev: Device, query: str) -> str | None:
     # a JSON object is a failed lookup, which proves nothing either way.
     listed = dev.read(f"ubus call service list {query} 2>&1 || true")
     try:
-        services = json.loads(listed)
+        services = json_value.loads(listed)
     except json.JSONDecodeError:
         services = None
     if not isinstance(services, dict):
@@ -3364,7 +3365,8 @@ def _local_addr(remote_host: str) -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect((remote_host, 1))
-            return sock.getsockname()[0]
+            host, _port = cast("tuple[str, int]", sock.getsockname())
+            return host
     except OSError as e:
         raise Abort(f"cannot determine the local address routing to {remote_host}: {e}") from None
 
@@ -3406,7 +3408,7 @@ def _grpcurl(
     dev: Device,
     method: str,
     *,
-    data: dict[str, Any] | None = None,
+    data: dict[str, object] | None = None,
     cookie: str | None = None,
     max_time: int = _GRPCURL_MAX_TIME,
 ) -> dict[str, Json]:
@@ -3416,7 +3418,7 @@ def _grpcurl(
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, check=True, timeout=max_time)
     except subprocess.CalledProcessError as e:
-        raise Abort(f"{method} failed: {e.stderr.strip()}") from None
+        raise Abort(f"{method} failed: {cast('str', e.stderr).strip()}") from None
     except subprocess.TimeoutExpired:
         raise Abort(f"{method} did not answer within {max_time}s") from None
     try:
@@ -3437,7 +3439,7 @@ def _grpcurl_argv(
     address: str,
     method: str,
     *,
-    data: dict[str, Any] | None,
+    data: dict[str, object] | None,
     cookie: str | None,
     max_time: int | None,
 ) -> list[str]:
@@ -4077,7 +4079,7 @@ class StreamOutcome(enum.Enum):
 
 @dataclass(frozen=True)
 class StreamResult:
-    events: list[dict[str, Any]]
+    events: list[dict[str, Json]]
     exit_code: int
     status_code: str | None
     status_message: str | None
@@ -4141,7 +4143,7 @@ def run_firmware_stream(dev: Device, cycle: FirmwareCycle) -> StreamResult:
         stderr_thread.start()
 
     decoder = json.JSONDecoder()
-    events: list[dict[str, Any]] = []
+    events: list[dict[str, Json]] = []
     remainder = ""
     for line in stdout:
         remainder = _drain_events(decoder, remainder + line, events)
@@ -4152,7 +4154,7 @@ def run_firmware_stream(dev: Device, cycle: FirmwareCycle) -> StreamResult:
 
     status_code = None
     status_message = None
-    stream_events: list[dict[str, Any]] = []
+    stream_events: list[dict[str, Json]] = []
     for event in events:
         status = _grpc_status(event)
         if status is None:
@@ -4207,8 +4209,8 @@ def classify_stream(result: StreamResult) -> StreamOutcome:
     firmware_events = [
         event
         for event in result.events
-        if isinstance(event.get("firmwarePhase"), str)
-        and event["firmwarePhase"].startswith(_FIRMWARE_PHASE_PREFIX)
+        if isinstance(phase := event.get("firmwarePhase"), str)
+        and phase.startswith(_FIRMWARE_PHASE_PREFIX)
     ]
     if any("finished" in event for event in result.events) or result.status_code in {
         "Internal",

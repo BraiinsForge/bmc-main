@@ -31,7 +31,6 @@ it spawns its own ssh, as the tunnel must keep listening while the caller
 dials it.
 """
 
-import json
 import shlex
 import socket
 import subprocess
@@ -41,7 +40,9 @@ from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, NewType, Protocol
+from typing import Literal, NewType, Protocol, TypedDict, cast
+
+import msgspec
 
 from bmc_tui import console
 from bmc_tui.stage import Abort, dry_run, require
@@ -172,6 +173,15 @@ class _RealExec:
         return proc.returncode
 
 
+class BoardRelease(TypedDict):
+    target: str
+
+
+class BoardInfo(TypedDict):
+    board_name: str
+    release: BoardRelease
+
+
 class Device:
     """A target device addressed over key-based SSH."""
 
@@ -179,7 +189,7 @@ class Device:
         self._host = host
         self._user = user
         self._exec: Exec = backend or _RealExec()
-        self._info: dict[str, Any] | None = None
+        self._info: BoardInfo | None = None
 
     @property
     def host(self) -> str:
@@ -213,7 +223,7 @@ class Device:
         """
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
-            local_port = probe.getsockname()[1]
+            _host, local_port = cast("tuple[str, int]", probe.getsockname())
         argv = [
             "ssh",
             *_SSH_OPTS,
@@ -299,7 +309,8 @@ class Device:
             return RunOutcome(
                 status="session-death" if died else "failed",
                 returncode=e.returncode,
-                output=_captured_text(e.stdout) + _captured_text(e.stderr),
+                output=_captured_text(cast("str | bytes | None", e.stdout))
+                + _captured_text(cast("str | bytes | None", e.stderr)),
             )
         return RunOutcome(
             status="clean", returncode=proc.returncode, output=proc.stdout + proc.stderr
@@ -332,11 +343,10 @@ class Device:
             return False
         return True
 
-    def _board_info(self) -> dict[str, Any]:
+    def _board_info(self) -> BoardInfo:
         """``ubus call system board``, parsed and cached (immutable per device)."""
         if self._info is None:
-            info: dict[str, Any] = json.loads(self.read("ubus call system board"))
-            self._info = info
+            self._info = msgspec.json.decode(self.read("ubus call system board"), type=BoardInfo)
         return self._info
 
     @property
