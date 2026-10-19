@@ -29,7 +29,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from bmc_tui import catalog
+from bmc_tui import catalog, json_value
 from bmc_tui.boser_rest import BoserRest
 from bmc_tui.device import Device
 from bmc_tui.stage import Abort, dry_run
@@ -212,7 +212,10 @@ def test_the_session_outlives_the_grpc_call_and_the_boser_fallback(
     ssh, _ = _run(monkeypatch, _Grpcurl(catalog._GRPCURL_EXIT_UNIMPLEMENTED))
 
     [create] = [c for c in ssh.commands if "session create" in c]
-    timeout_s = json.loads(shlex.split(create)[-1])["timeout"]
+    request = json_value.loads(shlex.split(create)[-1])
+    assert isinstance(request, dict)
+    timeout_s = request["timeout"]
+    assert isinstance(timeout_s, int)
     assert timeout_s >= catalog._GRPCURL_MAX_TIME + BoserRest("").timeout, (
         "a session expiring before the Boser fallback would get it refused"
     )

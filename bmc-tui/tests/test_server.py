@@ -32,15 +32,17 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from bmc_tui import server as bmc_server
 from bmc_tui.server import Request, View, _Server, default_serve_ip, server
+from tests import web
 
 
 def _get(url: str) -> tuple[int, bytes, str]:
-    with urllib.request.urlopen(url) as response:
+    with web.open_url(url) as response:
         return response.status, response.read(), response.headers.get("Content-Type", "")
 
 
@@ -203,7 +205,7 @@ def test_bind_conflict_reaches_the_caller() -> None:
         taken.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         taken.bind(("0.0.0.0", 0))
         taken.listen(1)
-        port = taken.getsockname()[1]
+        _host, port = cast("tuple[str, int]", taken.getsockname())
         with pytest.raises(OSError):
             server({"/x": b"x"}, port=port)
 
@@ -250,7 +252,7 @@ def test_stopped_server_leaves_no_thread_behind() -> None:
 
 def test_default_serve_ip_uses_the_route_towards_the_device() -> None:
     with socket.create_server(("127.0.0.1", 0)) as listener:
-        port = listener.getsockname()[1]
+        _host, port = cast("tuple[str, int]", listener.getsockname())
         assert default_serve_ip("127.0.0.1", port=port) == "127.0.0.1"
 
 
@@ -260,7 +262,7 @@ def test_file_view_answers_a_ranged_request(tmp_path: Path) -> None:
     blob.write_bytes(bytes(range(256)))
     with server({"/asset.bin": blob}) as handle:
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=0-15"})
-        with urllib.request.urlopen(request) as response:
+        with web.open_url(request) as response:
             assert response.status == 206
             assert response.headers["Content-Range"] == "bytes 0-15/256"
             assert response.read() == bytes(range(16))
@@ -305,7 +307,7 @@ def test_failed_file_stream_does_not_append_an_error_response(
     with server({"/asset.bin": blob}) as handle:
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=0-15"})
         with (
-            urllib.request.urlopen(request) as response,
+            web.open_url(request) as response,
             pytest.raises(http.client.IncompleteRead) as error,
         ):
             assert response.status == 206
@@ -319,7 +321,7 @@ def test_missing_file_view_returns_an_error_response(tmp_path: Path) -> None:
         server({"/asset.bin": missing}) as handle,
         pytest.raises(urllib.error.HTTPError) as error,
     ):
-        urllib.request.urlopen(handle.url("/asset.bin"))
+        web.open_url(handle.url("/asset.bin"))
     assert error.value.code == 500
 
 
@@ -328,7 +330,7 @@ def test_bytes_view_answers_a_ranged_request_like_a_file() -> None:
     would make every pre-flight pull megabytes and hang up mid-write."""
     with server({"/asset.bin": bytes(range(256))}) as handle:
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=0-15"})
-        with urllib.request.urlopen(request) as response:
+        with web.open_url(request) as response:
             assert response.status == 206
             assert response.headers["Content-Range"] == "bytes 0-15/256"
             assert response.read() == bytes(range(16))
@@ -354,7 +356,7 @@ def test_unsatisfiable_range_is_answered_with_416(tmp_path: Path) -> None:
         pytest.raises(urllib.error.HTTPError) as error,
     ):
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=4-"})
-        urllib.request.urlopen(request)
+        web.open_url(request)
     assert error.value.code == 416
     assert error.value.headers["Content-Range"] == "bytes */4"
 
@@ -366,10 +368,10 @@ def test_observe_sees_each_reply_status_and_length() -> None:
         seen.append((handler.path, int(status), length))
 
     with server({"/asset.bin": bytes(range(256))}, observe=observe) as handle:
-        with urllib.request.urlopen(handle.url("/asset.bin")) as response:
+        with web.open_url(handle.url("/asset.bin")) as response:
             response.read()
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=16-"})
-        with urllib.request.urlopen(request) as response:
+        with web.open_url(request) as response:
             response.read()
     assert seen == [("/asset.bin", 200, 256), ("/asset.bin", 206, 240)]
 

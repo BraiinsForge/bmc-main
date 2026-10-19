@@ -25,7 +25,6 @@ import io
 import json
 import subprocess
 import tarfile
-import urllib.request
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NotRequired, TypedDict
@@ -47,7 +46,7 @@ from bmc_tui.procedures.boser_upgrade_e2e import (
     phase_label,
 )
 from bmc_tui.stage import Abort
-from tests import boser_stub, stubs
+from tests import boser_stub, stubs, web
 from tests.boser_stub import BoserStub, Script
 
 RUNNING = "2026-08-01-0-acde0123-26.08-plus"
@@ -214,7 +213,7 @@ def test_actual_http_server_serves_v2_and_exact_image(tmp_path: Path) -> None:
     (tmp_path / boser_index.INDEX_NAME).write_text(json.dumps(_document(image)))
     with FwIndexServer(tmp_path, port=0, bind_ip="127.0.0.1") as server:
         for name in [boser_index.INDEX_NAME, "firmware.tar"]:
-            with urllib.request.urlopen(f"http://127.0.0.1:{server.port}/{name}") as response:
+            with web.open_url(f"http://127.0.0.1:{server.port}/{name}") as response:
                 assert response.read() == (tmp_path / name).read_bytes()
 
 
@@ -660,7 +659,8 @@ def test_a_firmware_only_offer_must_leave_the_profile_alone(
 
 def test_cli_requires_the_ssh_address() -> None:
     with pytest.raises(SystemExit):
-        tyro.cli(
+        # tyro's overloads take a `TypeForm[OutT]`, which basedpyright leaves unsolved.
+        tyro.cli(  # pyright: ignore[reportAny]
             BoserUpgradeE2e,
             args=[
                 "--device",

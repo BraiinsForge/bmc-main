@@ -23,6 +23,7 @@
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -84,7 +85,7 @@ def test_eval_present_raises_when_evaluation_itself_broke(
     monkeypatch.setattr(subprocess, "run", _failing(stderr))
     with pytest.raises(subprocess.CalledProcessError) as caught:
         nix._eval_present("x")
-    assert caught.value.stderr == stderr, "the catalog classifies on this text"
+    assert cast("str", caught.value.stderr) == stderr, "the catalog classifies on this text"
 
 
 def test_dirty_tree_reads_the_flake_metadata(monkeypatch: pytest.MonkeyPatch) -> None:

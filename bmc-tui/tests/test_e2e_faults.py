@@ -20,6 +20,7 @@
 
 """Structure tests for the fault-injection suite."""
 
+import inspect
 import json
 import subprocess
 import types
@@ -407,7 +408,7 @@ def test_b_recovery_attempts_one_reflash_then_reraises(monkeypatch: pytest.Monke
         raise Abort("corrupt-fs-metadata did not repair")
 
     with pytest.raises(Abort, match="did not repair"):
-        faults._with_b_recovery(cast("faults._Ctx", _b_recovery_ctx()), failing)  # pyright: ignore[reportInvalidCast]
+        faults._with_b_recovery(_b_recovery_ctx(), failing)
     assert recovered == ["reflash"]
 
 
@@ -421,7 +422,7 @@ def test_b_recovery_covers_operational_failures(monkeypatch: pytest.MonkeyPatch)
         raise subprocess.CalledProcessError(1, ["dd"])
 
     with pytest.raises(subprocess.CalledProcessError):
-        faults._with_b_recovery(cast("faults._Ctx", _b_recovery_ctx()), failing)  # pyright: ignore[reportInvalidCast]
+        faults._with_b_recovery(_b_recovery_ctx(), failing)
     assert recovered == ["reflash"]
 
 
@@ -436,20 +437,21 @@ def test_b_recovery_failure_names_the_manual_fallback(monkeypatch: pytest.Monkey
 
     ctx = _b_recovery_ctx()
     with pytest.raises(Abort, match="init --wipe"):
-        faults._with_b_recovery(cast("faults._Ctx", ctx), failing)  # pyright: ignore[reportInvalidCast]
+        faults._with_b_recovery(ctx, failing)
     # A failed recovery leaves the device quiesced with mDNS dead — the pin
     # must survive so the outer cleanup can still reach it.
     assert ctx.quiesced_pin is not None
 
 
-def _b_recovery_ctx() -> types.SimpleNamespace:
+def _b_recovery_ctx(pinned_host: str | None = None) -> faults._Ctx:
     """A ctx with just the fields _with_b_recovery reads: _pinned needs the
     dev host and the recorded pin, plus a settable quiesced_pin slot."""
-    return types.SimpleNamespace(
+    ctx = types.SimpleNamespace(
         dev=types.SimpleNamespace(host="deck.local"),
-        run=types.SimpleNamespace(pinned_host=None),
+        run=types.SimpleNamespace(pinned_host=pinned_host),
         quiesced_pin=None,
     )
+    return cast("faults._Ctx", ctx)  # pyright: ignore[reportInvalidCast]
 
 
 def test_b_recovery_reuses_the_already_pinned_handle(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -467,17 +469,13 @@ def test_b_recovery_reuses_the_already_pinned_handle(monkeypatch: pytest.MonkeyP
         ctx.quiesced_pin = None
 
     monkeypatch.setattr(faults, "_flash_good_init", reflash)
-    ctx = types.SimpleNamespace(
-        dev=types.SimpleNamespace(host="deck.local"),
-        run=types.SimpleNamespace(pinned_host="10.0.0.5"),
-        quiesced_pin=None,
-    )
+    ctx = _b_recovery_ctx(pinned_host="10.0.0.5")
 
     def failing(_ctx: faults._Ctx) -> None:
         raise Abort("blank-data-partition did not repair")
 
     with pytest.raises(Abort, match="did not repair"):
-        faults._with_b_recovery(cast("faults._Ctx", ctx), failing)  # pyright: ignore[reportInvalidCast]
+        faults._with_b_recovery(ctx, failing)
     assert seen == [pinned]  # the recovery flash saw the pin, not a dead name
     assert ctx.quiesced_pin is None  # window closed after recovery
 
@@ -893,11 +891,9 @@ def test_matching_image_aborts_on_foreign_version(tmp_path: Path) -> None:
 
 
 def test_cli_registers_the_procedure() -> None:
-    # entrypoint's return type hides __wrapped__ from the type checker;
-    # getattr keeps the gate green while still reading the real command union
-    # off the wrapped fn.
-    wrapped = getattr(cli.main, "__wrapped__")  # noqa: B009
-    assert "E2eSysupgradeFaults" in str(wrapped.__annotations__["command"])
+    # typeshed types `inspect.unwrap` as returning Any.
+    annotations: dict[str, object] = inspect.get_annotations(inspect.unwrap(cli.main))  # pyright: ignore[reportAny]
+    assert "E2eSysupgradeFaults" in str(annotations["command"])
 
 
 def test_cache_swap_retry_records_before_tamper_retries_with_riders(

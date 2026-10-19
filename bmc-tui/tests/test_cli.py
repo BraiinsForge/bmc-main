@@ -35,26 +35,31 @@ from bmc_tui.procedures.widget_host_e2e import WidgetHostE2e
 from bmc_tui.procedures.widget_restart_e2e import WidgetRestartE2e
 
 
+def parse_cli[T](command: type[T], *, args: list[str]) -> T:
+    # tyro's overloads take a `TypeForm[OutT]`, which basedpyright leaves unsolved.
+    return tyro.cli(command, args=args)  # pyright: ignore[reportAny]
+
+
 def test_init_parses_args() -> None:
-    cmd = tyro.cli(Init, args=["--device", "h"])
+    cmd = parse_cli(Init, args=["--device", "h"])
     assert cmd.device == "h"
     assert cmd.dry_run is False
 
 
 def test_deploy_parses_args() -> None:
-    cmd = tyro.cli(Deploy, args=["--device", "h", "--packages", ".#deck-packages.core"])
+    cmd = parse_cli(Deploy, args=["--device", "h", "--packages", ".#deck-packages.core"])
     assert cmd.device == "h"
     assert cmd.packages == [".#deck-packages.core"]
 
 
 def test_deploy_defaults_to_empty_package_set() -> None:
-    cmd = tyro.cli(Deploy, args=["--device", "h"])
+    cmd = parse_cli(Deploy, args=["--device", "h"])
     assert cmd.packages == []
     assert not hasattr(cmd, "no_restart")
 
 
 def test_upgrade_e2e_parses_args() -> None:
-    cmd = tyro.cli(UpgradeE2e, args=["--device", "h"])
+    cmd = parse_cli(UpgradeE2e, args=["--device", "h"])
     assert cmd.device == "h"
     assert cmd.packages == []
     assert cmd.password == ""
@@ -63,7 +68,7 @@ def test_upgrade_e2e_parses_args() -> None:
 
 
 def test_sysupgrade_parses_args() -> None:
-    cmd = tyro.cli(Sysupgrade, args=["--device", "h", "--image", "fw.tar"])
+    cmd = parse_cli(Sysupgrade, args=["--device", "h", "--image", "fw.tar"])
     assert cmd.device == "h"
     assert cmd.image == "fw.tar"
     assert cmd.force is False
@@ -71,13 +76,13 @@ def test_sysupgrade_parses_args() -> None:
 
 
 def test_sysupgrade_image_defaults_to_the_release_index() -> None:
-    cmd = tyro.cli(Sysupgrade, args=["--device", "h"])
+    cmd = parse_cli(Sysupgrade, args=["--device", "h"])
     assert cmd.image is None
     assert cmd.index == firmware.DEFAULT_INDEX_URL
 
 
 def test_sysupgrade_accepts_an_image_url_and_another_index() -> None:
-    cmd = tyro.cli(
+    cmd = parse_cli(
         Sysupgrade,
         args=["--device", "h", "--image", "https://x/fw.tar", "--index", "https://x/index.json"],
     )
@@ -86,7 +91,7 @@ def test_sysupgrade_accepts_an_image_url_and_another_index() -> None:
 
 
 def test_e2e_grpc_sysupgrade_parses_args() -> None:
-    cmd = tyro.cli(
+    cmd = parse_cli(
         E2eGrpcSysupgrade,
         args=["--device", "h", "--image", "firmware.tar"],
     )
@@ -101,7 +106,7 @@ def test_e2e_grpc_sysupgrade_parses_args() -> None:
 
 
 def test_e2e_grpc_sysupgrade_allows_empty_plan() -> None:
-    cmd = tyro.cli(
+    cmd = parse_cli(
         E2eGrpcSysupgrade,
         args=["--device", "h", "--image", "firmware.tar", "--allow-empty-plan"],
     )
@@ -115,7 +120,7 @@ def test_register_server_is_a_deck_subcommand(capsys: pytest.CaptureFixture[str]
 
 
 def test_widget_host_e2e_parses_args() -> None:
-    cmd = tyro.cli(
+    cmd = parse_cli(
         WidgetHostE2e,
         args=["--device", "h", "--profile", "debug", "--max-jobs", "2"],
     )
@@ -125,5 +130,5 @@ def test_widget_host_e2e_parses_args() -> None:
 
 
 def test_widget_restart_e2e_parses_args() -> None:
-    cmd = tyro.cli(WidgetRestartE2e, args=["--device", "h"])
+    cmd = parse_cli(WidgetRestartE2e, args=["--device", "h"])
     assert cmd.device == "h"

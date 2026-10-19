@@ -27,12 +27,14 @@ import urllib.request
 from dataclasses import replace
 from pathlib import Path
 
+import msgspec
 import pytest
 
-from bmc_tui import rig
+from bmc_tui import json_value, rig
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
 from bmc_tui.server import CHUNK_BYTES
 from bmc_tui.stage import Abort
+from tests import web
 
 _PROFILE = "/nix/var/nix/gcroots/profiles/bmc"
 
@@ -54,14 +56,19 @@ def _variant(tmp_path: Path, version: str, store_paths: list[str]) -> rig.Varian
 
 
 def _get(url: str) -> bytes:
-    with urllib.request.urlopen(url) as response:
+    with web.open_url(url) as response:
         return response.read()
+
+
+def parse_feed(raw: bytes | str) -> rig.Feed:
+    return msgspec.json.decode(raw, type=rig.Feed)
 
 
 def test_feed_document_links_each_variant(tmp_path: Path) -> None:
     a = _variant(tmp_path, "va", ["/nix/store/a"])
     b = _variant(tmp_path, "vb", ["/nix/store/b"])
-    doc = json.loads(rig.feed_document([a, b], "http://10.0.0.1:8083"))
+    doc = json_value.loads(rig.feed_document([a, b], "http://10.0.0.1:8083"))
+    assert isinstance(doc, dict)
     assert doc["version"] == 1
     assert doc["entries"] == [
         {
@@ -82,8 +89,8 @@ def test_feed_document_links_each_variant(tmp_path: Path) -> None:
 def test_feed_document_emits_signature_when_variant_is_signed(tmp_path: Path) -> None:
     unsigned = _variant(tmp_path, "va", ["/nix/store/a"])
     signed = replace(unsigned, signature="sysupgrade-e2e-1:c2ln")
-    doc = json.loads(rig.feed_document([signed, unsigned], "http://h:1"))
-    assert doc["entries"][0]["signature"] == "sysupgrade-e2e-1:c2ln"
+    doc = parse_feed(rig.feed_document([signed, unsigned], "http://h:1"))
+    assert doc["entries"][0].get("signature") == "sysupgrade-e2e-1:c2ln"
     assert "signature" not in doc["entries"][1]
 
 
@@ -100,9 +107,12 @@ def test_serve_root_serves_feed_index_and_tarball(tmp_path: Path) -> None:
     rig.write_serve_root(root, [a], "http://placeholder")
     with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
         base = f"http://127.0.0.1:{server.port}"
-        feed = json.loads(_get(f"{base}/{rig.FEED_NAME}"))
+        feed = parse_feed(_get(f"{base}/{rig.FEED_NAME}"))
         assert feed["entries"][0]["bos_version"] == "va"
-        assert json.loads(_get(f"{base}/index/va/{rig.INDEX_NAME}"))["packages"]
+        index = msgspec.json.decode(
+            _get(f"{base}/index/va/{rig.INDEX_NAME}"), type=rig.PackageIndex
+        )
+        assert index["packages"]
         assert _get(f"{base}/tarballs/nix-va.tar.gz") == b"tar-bytes-va"
 
 
@@ -120,7 +130,7 @@ def test_rig_server_serves_content_added_after_start(tmp_path: Path) -> None:
     with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
         a = _variant(tmp_path, "va", ["/nix/store/a"])
         rig.write_serve_root(root, [a], f"http://127.0.0.1:{server.port}")
-        feed = json.loads(_get(f"http://127.0.0.1:{server.port}/{rig.FEED_NAME}"))
+        feed = parse_feed(_get(f"http://127.0.0.1:{server.port}/{rig.FEED_NAME}"))
         assert feed["entries"][0]["bos_version"] == "va"
 
 
@@ -194,7 +204,7 @@ def _served(tmp_path: Path) -> Path:
 def test_rig_server_head_reports_size_without_a_body(tmp_path: Path) -> None:
     with rig.RigServer(_served(tmp_path), port=0, bind_ip="127.0.0.1") as server:
         url = f"http://127.0.0.1:{server.port}/tarballs/nix-va.tar.gz"
-        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as response:
+        with web.open_url(urllib.request.Request(url, method="HEAD")) as response:
             assert response.status == 200
             assert int(response.headers["Content-Length"]) == len(b"tar-bytes-va")
             assert response.read() == b""
@@ -262,20 +272,20 @@ def test_fault_stall_retains_a_resumable_tarball_prefix(tmp_path: Path) -> None:
         assert 0 < len(prefix) < len(tarball)
         server.set_fault(rig.FaultMode.STALL)
         try:
-            with urllib.request.urlopen(url, timeout=1) as response:
+            with web.open_url(url, timeout=1) as response:
                 assert response.headers["Content-Length"] == str(a.tarball.stat().st_size)
                 assert response.read(len(prefix)) == prefix
                 with pytest.raises(TimeoutError):
                     response.read(1)
                 with pytest.raises((ConnectionError, urllib.error.URLError)) as dropped:
-                    urllib.request.urlopen(url, timeout=1)
+                    web.open_url(url, timeout=1)
                 if isinstance(dropped.value, urllib.error.URLError):
                     assert not isinstance(dropped.value, urllib.error.HTTPError)
                     assert not isinstance(dropped.value.reason, TimeoutError)
         finally:
             server.set_fault(rig.FaultMode.NONE)
         request = urllib.request.Request(url, headers={"Range": f"bytes={len(prefix)}-"})
-        with urllib.request.urlopen(request, timeout=1) as response:
+        with web.open_url(request, timeout=1) as response:
             assert response.status == 206
             assert response.read() == tarball[len(prefix) :]
     # A reply is recorded after its body is written, so the client can finish
@@ -300,11 +310,11 @@ def test_fault_stall_is_path_selective_feed_survives(tmp_path: Path) -> None:
         server.set_fault(rig.FaultMode.STALL)
         try:
             # the feed comes back in full despite the armed stall
-            feed = json.loads(_get(f"{base}/{rig.FEED_NAME}"))
+            feed = parse_feed(_get(f"{base}/{rig.FEED_NAME}"))
             assert feed["entries"][0]["bos_version"] == "va"
             tarball = a.tarball.read_bytes()
             prefix = tarball[: min(CHUNK_BYTES, len(tarball) - 1)]
-            with urllib.request.urlopen(f"{base}/tarballs/nix-va.tar.gz", timeout=1) as response:
+            with web.open_url(f"{base}/tarballs/nix-va.tar.gz", timeout=1) as response:
                 assert response.read(len(prefix)) == prefix
                 with pytest.raises(TimeoutError):
                     response.read(1)
@@ -324,19 +334,19 @@ def _signed_pair(tmp_path: Path) -> tuple[rig.Variant, Path]:
 def test_strip_feed_signatures_removes_only_the_signature(tmp_path: Path) -> None:
     v, root = _signed_pair(tmp_path)
     rig.strip_feed_signatures(root)
-    doc = json.loads((root / rig.FEED_NAME).read_text())
+    doc = parse_feed((root / rig.FEED_NAME).read_bytes())
     assert "signature" not in doc["entries"][0]
     assert doc["entries"][0]["bos_version"] == "va"
     rig.write_serve_root(root, [v], "http://h:1")  # the documented restore
-    restored = json.loads((root / rig.FEED_NAME).read_text())
-    assert restored["entries"][0]["signature"] == "sysupgrade-e2e-1:GOOD"
+    restored = parse_feed((root / rig.FEED_NAME).read_bytes())
+    assert restored["entries"][0].get("signature") == "sysupgrade-e2e-1:GOOD"
 
 
 def test_set_feed_signatures_overwrites_every_entry(tmp_path: Path) -> None:
     _, root = _signed_pair(tmp_path)
     rig.set_feed_signatures(root, "sysupgrade-e2e-1:WRONG")
-    doc = json.loads((root / rig.FEED_NAME).read_text())
-    assert doc["entries"][0]["signature"] == "sysupgrade-e2e-1:WRONG"
+    doc = parse_feed((root / rig.FEED_NAME).read_bytes())
+    assert doc["entries"][0].get("signature") == "sysupgrade-e2e-1:WRONG"
 
 
 def test_corrupt_tarball_flips_bytes_and_restore_relinks(tmp_path: Path) -> None:

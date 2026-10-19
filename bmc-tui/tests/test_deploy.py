@@ -20,7 +20,7 @@
 
 """Unit tests for ordinary package deployment choreography."""
 
-from typing import Any, NoReturn
+from typing import NoReturn
 
 import pytest
 
@@ -59,7 +59,7 @@ def test_deploy_observes_activation_without_hard_restart(
         monkeypatch.setattr(catalog, name, stubs.returning(None))
 
     old_pid = catalog.Pid("111")
-    observed: list[tuple[Any, catalog.Pid | None]] = []
+    observed: list[tuple[object, catalog.Pid | None]] = []
 
     def await_activation(dev: object, *, old_pid: catalog.Pid | None) -> None:
         observed.append((dev, old_pid))

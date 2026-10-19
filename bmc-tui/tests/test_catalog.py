@@ -34,9 +34,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Literal, Required, TypedDict, Unpack, cast, override
 
+import msgspec
 import pytest
 
-from bmc_tui import catalog, console, rig
+from bmc_tui import catalog, console, json_value, rig
 from bmc_tui.bos_version import VersionName, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
@@ -770,8 +771,19 @@ def test_register_default_servers_explicit_entry_without_default() -> None:
     assert "--index-public-key dev:key" in cmd
 
 
+def parsed_registry(raw: str) -> dict[str, Json]:
+    registry = json_value.loads(raw)
+    assert isinstance(registry, dict)
+    return registry
+
+
+def registry_servers(registry: dict[str, Json]) -> list[dict[str, Json]]:
+    """The registry's entries themselves, so a test can break one in place."""
+    return catalog.objects(registry["servers"], what="servers")
+
+
 def test_register_default_servers_factory_only_uses_explicit_entry() -> None:
-    registry = json.loads(_DEFAULT_REGISTRY)
+    registry = parsed_registry(_DEFAULT_REGISTRY)
     del registry["servers"]
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
     catalog.register_default_servers(
@@ -833,8 +845,8 @@ def test_register_default_servers_replays_every_entry_faithfully() -> None:
 
 
 def test_register_default_servers_skips_a_disabled_entry() -> None:
-    registry = json.loads(_TWO_ENTRY_REGISTRY)
-    registry["servers"][1]["enabled"] = False
+    registry = parsed_registry(_TWO_ENTRY_REGISTRY)
+    registry_servers(registry)[1]["enabled"] = False
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
     dev = Device("h", backend=backend)
     catalog.register_default_servers(dev)
@@ -844,8 +856,8 @@ def test_register_default_servers_skips_a_disabled_entry() -> None:
 
 
 def test_register_default_servers_rejects_an_id_naming_a_disabled_entry() -> None:
-    registry = json.loads(_TWO_ENTRY_REGISTRY)
-    registry["servers"][1]["enabled"] = False
+    registry = parsed_registry(_TWO_ENTRY_REGISTRY)
+    registry_servers(registry)[1]["enabled"] = False
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
     with pytest.raises(Abort, match="'mirror' is disabled"):
         catalog.register_default_servers(
@@ -857,8 +869,8 @@ def test_register_default_servers_rejects_an_id_naming_a_disabled_entry() -> Non
 
 
 def test_register_default_servers_aborts_when_every_entry_is_disabled() -> None:
-    registry = json.loads(_TWO_ENTRY_REGISTRY)
-    for entry in registry["servers"]:
+    registry = parsed_registry(_TWO_ENTRY_REGISTRY)
+    for entry in registry_servers(registry):
         entry["enabled"] = False
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
     with pytest.raises(Abort, match="no enabled server entries"):
@@ -908,8 +920,8 @@ def test_register_server_cmd_quotes_a_metacharacter_priority() -> None:
 
 
 def test_register_default_servers_rejects_a_metacharacter_priority() -> None:
-    registry = json.loads(_DEFAULT_REGISTRY)
-    registry["servers"][0]["priority"] = "50; touch /tmp/owned"
+    registry = parsed_registry(_DEFAULT_REGISTRY)
+    registry_servers(registry)[0]["priority"] = "50; touch /tmp/owned"
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
     with pytest.raises(Abort, match=r"servers\[0\]\.priority"):
         catalog.register_default_servers(Device("h", backend=backend))
@@ -941,8 +953,8 @@ def test_register_default_servers_requires_a_servers_list(servers: object) -> No
 
 
 def test_register_default_servers_validates_every_entry_before_mutating() -> None:
-    registry = json.loads(_TWO_ENTRY_REGISTRY)
-    del registry["servers"][1]["known_public_key"]
+    registry = parsed_registry(_TWO_ENTRY_REGISTRY)
+    del registry_servers(registry)[1]["known_public_key"]
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
     with pytest.raises(Abort, match=r"servers\[1\]\.known_public_key"):
         catalog.register_default_servers(Device("h", backend=backend))
@@ -964,10 +976,10 @@ def test_register_default_servers_validates_every_entry_before_mutating() -> Non
     ],
 )
 def test_register_default_servers_requires_exactly_one_source(
-    sources: dict[str, object], message: str
+    sources: dict[str, Json], message: str
 ) -> None:
-    registry = json.loads(_DEFAULT_REGISTRY)
-    entry = registry["servers"][0]
+    registry = parsed_registry(_DEFAULT_REGISTRY)
+    entry = registry_servers(registry)[0]
     entry.pop("feed_url")
     entry.update(sources)
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
@@ -977,8 +989,8 @@ def test_register_default_servers_requires_exactly_one_source(
 
 
 def test_register_default_servers_treats_a_null_source_as_absent() -> None:
-    registry = json.loads(_DEFAULT_REGISTRY)
-    entry = registry["servers"][0]
+    registry = parsed_registry(_DEFAULT_REGISTRY)
+    entry = registry_servers(registry)[0]
     entry["feed_url"] = None
     entry["index_url"] = "https://downloads.braiinsforge.com/index.json"
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
@@ -2186,8 +2198,8 @@ def test_assemble_rig_signs_variants_before_writing_the_feed(tmp_path: Path) -> 
     catalog.build_e2e_artifacts(nix, run)
     workdir = tmp_path / "work"
     catalog.assemble_rig(nix, run, workdir=workdir, base_url="http://10.0.0.9:8083")
-    feed = json.loads((workdir / "serve" / rig.FEED_NAME).read_text())
-    assert all(e["signature"] == "sysupgrade-e2e-1:STUBSIG" for e in feed["entries"])
+    feed = msgspec.json.decode((workdir / "serve" / rig.FEED_NAME).read_bytes(), type=rig.Feed)
+    assert all(e.get("signature") == "sysupgrade-e2e-1:STUBSIG" for e in feed["entries"])
     assert run.variant_a is not None
     assert run.variant_a.signature == "sysupgrade-e2e-1:STUBSIG"
     assert run.rig is not None

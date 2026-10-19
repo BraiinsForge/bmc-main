@@ -60,7 +60,7 @@ class Variant:
     signature: str | None = None  # nix-style Ed25519 line for the feed entry
 
 
-class _FeedEntry(TypedDict):
+class FeedEntry(TypedDict):
     bos_version: str
     download_url: str
     profile_path: str
@@ -68,27 +68,27 @@ class _FeedEntry(TypedDict):
     signature: NotRequired[str]
 
 
-class _Feed(TypedDict):
+class Feed(TypedDict):
     version: int
-    entries: list[_FeedEntry]
+    entries: list[FeedEntry]
 
 
-class _IndexedPackage(TypedDict):
+class IndexedPackage(TypedDict):
     name: str
     store_path: str
 
 
-class _PackageIndex(TypedDict):
-    packages: list[_IndexedPackage]
+class PackageIndex(TypedDict):
+    packages: list[IndexedPackage]
 
 
 def feed_document(variants: list[Variant], base_url: str) -> str:
     """The feed body: one entry per variant, URLs matching write_serve_root's
     layout exactly — init follows download_url, upgrade follows index_url.
     Signed variants carry the init-tarball signature the device verifies."""
-    entries: list[_FeedEntry] = []
+    entries: list[FeedEntry] = []
     for v in variants:
-        entry = _FeedEntry(
+        entry = FeedEntry(
             bos_version=v.bos_version,
             download_url=f"{base_url}/tarballs/{v.tarball.name}",
             profile_path=v.profile_path,
@@ -97,11 +97,11 @@ def feed_document(variants: list[Variant], base_url: str) -> str:
         if v.signature is not None:
             entry["signature"] = v.signature
         entries.append(entry)
-    return json.dumps(_Feed(version=1, entries=entries), indent=2)
+    return json.dumps(Feed(version=1, entries=entries), indent=2)
 
 
-def _read_index(index: Path) -> _PackageIndex:
-    return msgspec.json.decode((index / INDEX_NAME).read_bytes(), type=_PackageIndex)
+def _read_index(index: Path) -> PackageIndex:
+    return msgspec.json.decode((index / INDEX_NAME).read_bytes(), type=PackageIndex)
 
 
 def index_store_paths(index: Path) -> list[StorePath]:
@@ -147,15 +147,15 @@ def set_feed_signatures(root: Path, signature: str) -> None:
     """A1/A3 tamper: overwrite every entry's signature with `signature`
     (wrong key, or wrong key name). Restore: write_serve_root."""
 
-    def sign(entry: _FeedEntry) -> None:
+    def sign(entry: FeedEntry) -> None:
         entry["signature"] = signature
 
     _rewrite_feed(root, sign)
 
 
-def _rewrite_feed(root: Path, mutate: "Callable[[_FeedEntry], object]") -> None:
+def _rewrite_feed(root: Path, mutate: "Callable[[FeedEntry], object]") -> None:
     feed = root / FEED_NAME
-    doc = msgspec.json.decode(feed.read_bytes(), type=_Feed)
+    doc = msgspec.json.decode(feed.read_bytes(), type=Feed)
     for entry in doc["entries"]:
         mutate(entry)
     feed.write_text(json.dumps(doc, indent=2))

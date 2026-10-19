@@ -27,13 +27,13 @@ import struct
 import threading
 import time
 import urllib.error
-import urllib.request
 import uuid
 from pathlib import Path
 
 import pytest
 
 import bmc_tui.fw_index
+from bmc_tui import json_value
 from bmc_tui.bos_version import BosVersion, parse_bos_version
 from bmc_tui.fw_index import (
     INDEX_NAME,
@@ -43,6 +43,7 @@ from bmc_tui.fw_index import (
     index_document,
     parse_releases,
 )
+from tests import web
 
 _RUNNING_TEXT = "2025-06-15-0-acde0123-25.06"
 _IMAGE_TEXT = "2025-07-01-0-0badc0de-25.07"
@@ -69,7 +70,7 @@ def _document(firmware: Path) -> str:
 
 
 def _get(url: str) -> bytes:
-    with urllib.request.urlopen(url) as response:
+    with web.open_url(url) as response:
         return response.read()
 
 
@@ -86,7 +87,7 @@ def test_index_document_matches_minimal_golden_shape(tmp_path: Path) -> None:
     running, image = _versions()
     checksum = hashlib.sha256(_FIRMWARE_BYTES).hexdigest()
 
-    document = json.loads(_document(firmware))
+    document = json_value.loads(_document(firmware))
 
     assert document == {
         "type": "bmc",
@@ -342,7 +343,7 @@ def test_fully_served_404_is_not_provenance(tmp_path: Path) -> None:
     with FwIndexServer(root, port=0, bind_ip="127.0.0.1") as server:
         path = "/missing.tar"
         with pytest.raises(urllib.error.HTTPError) as caught:
-            urllib.request.urlopen(f"http://127.0.0.1:{server.port}{path}")
+            web.open_url(f"http://127.0.0.1:{server.port}{path}")
         with caught.value as response:
             assert response.read()
 

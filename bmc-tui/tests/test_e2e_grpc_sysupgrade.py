@@ -21,19 +21,22 @@
 """Restore-state tests for the firmware gRPC upgrade procedure."""
 
 import io
+import json
 import os
 import signal
 import socket
 import subprocess
 import tarfile
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Callable, Generator, Iterable
+from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, NoReturn, cast
+from typing import NoReturn, cast, override
 
 import pytest
 
-from bmc_tui import catalog
+from bmc_tui import catalog, fw_index
 from bmc_tui.bos_version import parse_bos_version
 from bmc_tui.device import Device
 from bmc_tui.image import Image
@@ -41,34 +44,48 @@ from bmc_tui.json_value import Json
 from bmc_tui.procedures import e2e_grpc_sysupgrade
 from bmc_tui.stage import Abort
 from tests import stubs
+from tests.test_catalog import _Nix
 
 _classify_stream = catalog.classify_stream
 _check_for_firmware_upgrade = catalog.check_for_firmware_upgrade
 _require_fresh_firmware_staging = catalog.require_fresh_firmware_staging
 
 
-class _Device:
-    target = "stm32mp15/ii3"
+_BOOT_ID = "cat /proc/sys/kernel/random/boot_id"
+_BOARD = json.dumps({"board_name": "deck", "release": {"target": "stm32mp15/ii3"}})
 
-    def __init__(self, events: list[str], host: str = "deck") -> None:
-        self.events = events
-        self.host = host
 
-    def print(self) -> None:
-        pass
+class DeviceExec:
+    """The device's side of the commands the procedure sends through `Device` itself.
 
-    def read(self, _command: str) -> str:
-        return "boot-a"
+    `replies` maps a command substring to its stdout, or to the error running it raises.
+    """
 
-    def run(self, command: str) -> str:
+    def __init__(self, events: list[str]) -> None:
+        self.events: list[str] = events
+        self.replies: dict[str, str | BaseException] = {
+            _BOOT_ID: "boot-a",
+            "ubus call system board": _BOARD,
+        }
+
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        command = argv[-1]
         if command == "service bmc-compositor start":
             self.events.append("start stock")
-        return ""
+        reply = next((reply for key, reply in self.replies.items() if key in command), "")
+        if isinstance(reply, BaseException):
+            raise reply
+        return subprocess.CompletedProcess(argv, 0, stdout=reply, stderr="")
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        raise AssertionError(f"BUG: the run streamed to the device: {argv} ({chunks})")
+
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+        raise AssertionError(f"BUG: the run streamed from the device: {argv} ({on_line})")
 
 
-class _Nix:
-    def list_packages(self) -> list[str]:
-        return ["core"]
+def fake_device(events: list[str], host: str = "deck") -> Device:
+    return Device(host, backend=DeviceExec(events))
 
 
 class _NoSsh:
@@ -84,29 +101,56 @@ class _NoSsh:
         raise AssertionError(f"BUG: the run reached ssh: {argv} ({on_line})")
 
 
-class _Server:
-    def __init__(self, root: Path, *, provenance: bool = True) -> None:
-        self.root = root
-        self.port = 8082
-        self.provenance = provenance
-        self.stopped = False
-        self.index_text: str | None = None
-        self.transfers = 0
+class IndexServer(fw_index.FwIndexServer):
+    """A real index server whose transfer record the test scripts."""
 
-    def __enter__(self) -> "_Server":
+    def __init__(self, root: Path, *, provenance: bool = True) -> None:
+        super().__init__(root, port=0, bind_ip="127.0.0.1")
+        self.root: Path = root
+        self.provenance: bool = provenance
+        self.entered: bool = False
+        self.stopped: bool = False
+        self.index_text: str | None = None
+        self.transfers: int = 0
+
+    def release(self) -> None:
+        """Stop a server the run left serving, so its thread does not outlive the test,
+        and close one it never entered, so its socket does not either."""
+        if not self.entered:
+            self._httpd.server_close()
+        elif not self.stopped:
+            super().__exit__()
+
+    @override
+    def __enter__(self) -> "IndexServer":
+        super().__enter__()
+        self.entered = True
         index_path = next(self.root.rglob("index.v1.json"), None)
         self.index_text = index_path.read_text() if index_path is not None else None
         return self
 
+    @override
     def __exit__(self, *_exc: object) -> None:
+        super().__exit__()
         self.stopped = True
 
+    @override
     def completed(self, path: str) -> bool:
         return (path == "/firmware.tar" and self.provenance) or path == "/index.v1.json"
 
-    def requests(self) -> list[object]:
-        return [SimpleNamespace(path="/firmware.tar", complete=self.provenance)]
+    @override
+    def requests(self) -> list[fw_index.RequestRecord]:
+        record = fw_index.RequestRecord(
+            path="/firmware.tar",
+            status=HTTPStatus.OK,
+            bytes_attempted=0,
+            bytes_written=0,
+            complete=self.provenance,
+            error=None,
+        )
+        return [record]
 
+    @override
     def active_transfers(self) -> int:
         return self.transfers
 
@@ -126,20 +170,46 @@ def _image(path: Path) -> Image:
     return Image(image)
 
 
+type Stream = Callable[[Device, catalog.FirmwareCycle], catalog.StreamResult]
+
+
+@dataclass
+class State:
+    """What the stubbed stages saw, and the knobs tests turn on them."""
+
+    cycle: catalog.FirmwareCycle | None = None
+    outcome: catalog.StreamOutcome = catalog.StreamOutcome.PROVISIONAL_SUCCESS
+    firmwares: list[str] | None = None
+    core_store_path: str = "/nix/store/abc-bmc-bmc-core"
+
+    @property
+    def run_cycle(self) -> catalog.FirmwareCycle:
+        assert self.cycle is not None, "the run never reached preflight_versions"
+        return self.cycle
+
+
+@dataclass
+class Harness:
+    procedure: e2e_grpc_sysupgrade.E2eGrpcSysupgrade
+    dev: Device
+    remote: DeviceExec
+    backend: _Nix
+    server: IndexServer
+    state: State
+    events: list[str]
+    snapshot: Path
+    stream: Stream
+
+
 @pytest.fixture
 def harness(  # noqa: PLR0915
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> SimpleNamespace:
+) -> Generator[Harness]:
     events: list[str] = []
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
-    server = _Server(snapshot)
-    state = SimpleNamespace(
-        cycle=None,
-        outcome=catalog.StreamOutcome.PROVISIONAL_SUCCESS,
-        firmwares=None,
-        core_store_path="/nix/store/abc-bmc-bmc-core",
-    )
+    server = IndexServer(snapshot)
+    state = State()
 
     monkeypatch.setattr("tempfile.mkdtemp", stubs.returning(str(snapshot)))
     monkeypatch.setattr(
@@ -201,7 +271,9 @@ def harness(  # noqa: PLR0915
         *,
         firmwares: list[str],
     ) -> None:
-        assert state.cycle.image_version.canonical != state.cycle.running_version.canonical
+        image, running = state.run_cycle.image_version, state.run_cycle.running_version
+        assert image is not None and running is not None
+        assert image.canonical != running.canonical
         state.firmwares = firmwares
         cycle.server = _StartedProcess()
         events.append("start host")
@@ -313,45 +385,55 @@ def harness(  # noqa: PLR0915
         )
 
     procedure = e2e_grpc_sysupgrade.E2eGrpcSysupgrade(device="deck", image=_image(tmp_path).path)
-    return SimpleNamespace(
+    remote = DeviceExec(events)
+    yield Harness(
         procedure=procedure,
-        dev=_Device(events),
-        backend=_Nix(),
+        dev=Device("deck", backend=remote),
+        remote=remote,
+        backend=_Nix(packages=("core",)),
         server=server,
         state=state,
         events=events,
         snapshot=snapshot,
         stream=run_stream,
     )
+    server.release()
 
 
-def _run(harness: SimpleNamespace, **kwargs: object) -> None:
+def _run(
+    harness: Harness,
+    *,
+    stream: Stream | None = None,
+    make_device: Callable[[str], Device] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
     harness.procedure.run(
         dev=harness.dev,
         backend=harness.backend,
         make_index_server=stubs.returning(harness.server),
-        stream=kwargs.pop("stream", harness.stream),
-        **kwargs,
+        stream=harness.stream if stream is None else stream,
+        make_device=make_device,
+        sleep=sleep,
+        clock=clock,
     )
 
 
 def test_matching_staging_marker_aborts_before_device_preparation(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(catalog, "require_fresh_firmware_staging", _require_fresh_firmware_staging)
-    monkeypatch.setattr(
-        harness.dev, "read", stubs.returning(Image(harness.procedure.image).version)
-    )
+    harness.remote.replies[catalog._NIX_PREPARED_MARKER] = Image(harness.procedure.image).version
     with pytest.raises(Abort, match="reboot the device"):
         _run(harness)
-    assert not harness.state.cycle.mutation_started
-    assert not harness.state.cycle.started_upgrade
+    assert not harness.state.run_cycle.mutation_started
+    assert not harness.state.run_cycle.started_upgrade
     assert "snapshot config" not in harness.events
     assert not harness.snapshot.exists()
 
 
 def test_empty_package_offer_restores_configuration_without_starting_upgrade(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image = Image(harness.procedure.image)
     monkeypatch.setattr(catalog, "check_for_firmware_upgrade", _check_for_firmware_upgrade)
@@ -370,7 +452,7 @@ def test_empty_package_offer_restores_configuration_without_starting_upgrade(
     monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
     with pytest.raises(Abort, match="no package changes"):
         _run(harness)
-    assert not harness.state.cycle.started_upgrade
+    assert not harness.state.run_cycle.started_upgrade
     assert "restore bos_version" in harness.events
     assert "restore service script" in harness.events
     assert "restore servers" in harness.events
@@ -379,7 +461,7 @@ def test_empty_package_offer_restores_configuration_without_starting_upgrade(
 
 
 def test_allow_empty_plan_runs_firmware_only_upgrade(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image = Image(harness.procedure.image)
     harness.procedure.allow_empty_plan = True
@@ -416,13 +498,13 @@ def test_allow_empty_plan_runs_firmware_only_upgrade(
         )
 
     _run(harness, stream=stream)
-    assert harness.state.cycle.started_upgrade
+    assert harness.state.run_cycle.started_upgrade
     assert "restore success" in harness.events and "stop host" in harness.events
     assert harness.server.stopped and not harness.snapshot.exists()
 
 
 def test_registration_failure_restores_in_mandated_order_and_never_streams(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(catalog, "register_upgrade_server", stubs.raising(Abort("register")))
     streamed = False
@@ -441,7 +523,7 @@ def test_registration_failure_restores_in_mandated_order_and_never_streams(
 
 
 def test_package_server_start_failure_stops_stored_process(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail_after_start(
         _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmwares: list[str]
@@ -457,7 +539,7 @@ def test_package_server_start_failure_stops_stored_process(
 
 
 def test_failed_upload_removes_partial_tar(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(catalog, "upload_firmware", stubs.raising(Abort("upload")))
     with pytest.raises(Abort, match="upload"):
@@ -467,7 +549,7 @@ def test_failed_upload_removes_partial_tar(
 
 @pytest.mark.parametrize("stage", ["preflight_device", "snapshot_upgrade_config"])
 def test_pre_mutation_failure_touches_no_device(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, stage: str
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
     monkeypatch.setattr(catalog, stage, stubs.raising(Abort(stage)))
     with pytest.raises(Abort, match=stage):
@@ -476,7 +558,7 @@ def test_pre_mutation_failure_touches_no_device(
     assert not harness.snapshot.exists()
 
 
-def test_possibly_accepted_matching_reboot_restores_but_aborts(harness: SimpleNamespace) -> None:
+def test_possibly_accepted_matching_reboot_restores_but_aborts(harness: Harness) -> None:
     harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
     with pytest.raises(Abort, match="stream diagnostic"):
         _run(harness)
@@ -486,7 +568,7 @@ def test_possibly_accepted_matching_reboot_restores_but_aborts(harness: SimpleNa
 
 
 def test_spawn_failure_uses_immediate_restore(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def poll(*_args: object, **_kwargs: object) -> NoReturn:
         pytest.fail("boot resolver called")
@@ -503,7 +585,7 @@ def test_spawn_failure_uses_immediate_restore(
 
 
 def test_restore_failure_retains_hosts_and_snapshot_and_reports_both(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(catalog, "register_upgrade_server", stubs.raising(Abort("original")))
     monkeypatch.setattr(
@@ -518,7 +600,7 @@ def test_restore_failure_retains_hosts_and_snapshot_and_reports_both(
     assert harness.snapshot.exists()
 
 
-def test_pre_verifying_error_includes_bmc_log(harness: SimpleNamespace) -> None:
+def test_pre_verifying_error_includes_bmc_log(harness: Harness) -> None:
     harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
 
     def stream(_dev: object, cycle: catalog.FirmwareCycle) -> catalog.StreamResult:
@@ -530,7 +612,7 @@ def test_pre_verifying_error_includes_bmc_log(harness: SimpleNamespace) -> None:
     assert "bmc-tail" in error.value.hint
 
 
-def test_provisional_success_matching_reboot_succeeds(harness: SimpleNamespace) -> None:
+def test_provisional_success_matching_reboot_succeeds(harness: Harness) -> None:
     _run(harness)
     assert "restore success" in harness.events
     assert "restore bos_version" not in harness.events
@@ -541,7 +623,7 @@ def test_provisional_success_matching_reboot_succeeds(harness: SimpleNamespace) 
 
 
 def test_index_anchor_entry_uses_rewritten_running_version(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def versions(_dev: object, image: Image, cycle: catalog.FirmwareCycle) -> None:
         harness.state.cycle = cycle
@@ -561,7 +643,7 @@ def test_index_anchor_entry_uses_rewritten_running_version(
 
 
 def test_production_26_09_core_is_fed_the_target_index_under_its_anchored_version(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Its bmc resolves the feed by /etc/bos_version, which the anchor rewrote;
     # without that entry it finds no index and the upgrade check fails.
@@ -572,21 +654,24 @@ def test_production_26_09_core_is_fed_the_target_index_under_its_anchored_versio
     monkeypatch.setattr(catalog, "ensure_anchor_version", anchor)
     harness.state.core_store_path = e2e_grpc_sysupgrade._PRODUCTION_26_09_CORE
     _run(harness)
-    cycle = harness.state.cycle
+    cycle = harness.state.run_cycle
+    assert cycle.image_version is not None and cycle.running_version is not None
     assert harness.state.firmwares == [
         cycle.image_version.canonical,
         cycle.running_version.canonical,
     ]
 
 
-def test_any_other_core_is_fed_the_target_entry_only(harness: SimpleNamespace) -> None:
+def test_any_other_core_is_fed_the_target_entry_only(harness: Harness) -> None:
     # A running-firmware entry would hide a bmc that wrongly scopes the feed to it.
     _run(harness)
-    assert harness.state.firmwares == [harness.state.cycle.image_version.canonical]
+    image = harness.state.run_cycle.image_version
+    assert image is not None
+    assert harness.state.firmwares == [image.canonical]
 
 
 def test_resolution_error_retries_until_boot_resolves(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     polls = 0
     reads = 0
@@ -594,7 +679,7 @@ def test_resolution_error_retries_until_boot_resolves(
     sleeps: list[float] = []
     resolve_started = cast("Callable[..., object]", e2e_grpc_sysupgrade._resolve_started)
 
-    def resolve(*args: Any, **kwargs: Any) -> object:
+    def resolve(*args: object, **kwargs: object) -> object:
         nonlocal resolutions
         resolutions += 1
         return resolve_started(*args, **kwargs)
@@ -622,14 +707,14 @@ def test_resolution_error_retries_until_boot_resolves(
 
 
 def test_resolution_warning_error_stays_in_boot_resolver(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     reads = 0
     resolutions = 0
     sleeps: list[float] = []
     resolve_started = cast("Callable[..., object]", e2e_grpc_sysupgrade._resolve_started)
 
-    def resolve(*args: Any, **kwargs: Any) -> object:
+    def resolve(*args: object, **kwargs: object) -> object:
         nonlocal resolutions
         resolutions += 1
         return resolve_started(*args, **kwargs)
@@ -654,7 +739,7 @@ def test_resolution_warning_error_stays_in_boot_resolver(
 
 
 def test_resolver_paces_before_retry_when_inner_sleep_fails(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     polls = 0
     sleeps: list[float] = []
@@ -685,7 +770,7 @@ def test_resolver_paces_before_retry_when_inner_sleep_fails(
 
 
 def test_resolution_error_interrupt_retains_servers_and_reports_recovery(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
     reports: list[str] = []
@@ -719,7 +804,7 @@ def test_resolution_error_interrupt_retains_servers_and_reports_recovery(
 
 
 def test_finished_event_names_package_upgrade_path(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(catalog, "classify_stream", _classify_stream)
 
@@ -737,7 +822,7 @@ def test_finished_event_names_package_upgrade_path(
 @pytest.mark.parametrize("status", [None, "Unavailable"])
 @pytest.mark.parametrize("package_progress", ["missing", "before_verify", "during_apply"])
 def test_firmware_progress_requires_sysupgrade_events_even_after_successful_reboot(
-    harness: SimpleNamespace,
+    harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
     status: str | None,
     package_progress: str,
@@ -770,7 +855,7 @@ def test_firmware_progress_requires_sysupgrade_events_even_after_successful_rebo
 
 
 def test_provisional_success_without_provenance_cleans_then_aborts(
-    harness: SimpleNamespace,
+    harness: Harness,
 ) -> None:
     harness.server.provenance = False
     with pytest.raises(Abort, match="provenance"):
@@ -781,7 +866,7 @@ def test_provisional_success_without_provenance_cleans_then_aborts(
 
 @pytest.mark.parametrize("gate", ["unreachable", "changed"])
 def test_terminal_failure_without_same_boot_routes_to_boot_resolver(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, gate: str
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, gate: str
 ) -> None:
     harness.state.outcome = catalog.StreamOutcome.TERMINAL_FAILURE
     polls = 0
@@ -792,17 +877,14 @@ def test_terminal_failure_without_same_boot_routes_to_boot_resolver(
         return True
 
     monkeypatch.setattr(catalog, "poll_boot_id_change", poll)
-    if gate == "unreachable":
-        monkeypatch.setattr(harness.dev, "read", stubs.raising(OSError()))
-    else:
-        monkeypatch.setattr(harness.dev, "read", stubs.returning("boot-b"))
+    harness.remote.replies[_BOOT_ID] = OSError() if gate == "unreachable" else "boot-b"
     with pytest.raises(Abort, match="stream diagnostic"):
         _run(harness)
     assert polls == 2
 
 
 def test_provisional_expiry_keeps_serving_until_operator_interrupt(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     polls = 0
 
@@ -821,7 +903,7 @@ def test_provisional_expiry_keeps_serving_until_operator_interrupt(
 
 
 def test_wrong_version_reboot_restores_then_aborts(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         catalog,
@@ -837,7 +919,7 @@ def test_wrong_version_reboot_restores_then_aborts(
 
 
 def test_post_reboot_operations_use_new_numeric_pin(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pins = iter(["192.0.2.10", "192.0.2.11"])
     polls: list[str] = []
@@ -847,25 +929,25 @@ def test_post_reboot_operations_use_new_numeric_pin(
     def pin(_dev: object, cycle: catalog.FirmwareCycle) -> None:
         cycle.pinned_host = next(pins)
 
-    def poll(dev: _Device, *_args: object, **_kwargs: object) -> bool:
+    def poll(dev: Device, *_args: object, **_kwargs: object) -> bool:
         polls.append(dev.host)
         return True
 
-    def read_version(dev: _Device) -> object:
+    def read_version(dev: Device) -> object:
         versions.append(dev.host)
         return parse_bos_version("2025-07-01-0-0badc0de-25.07")
 
     monkeypatch.setattr(catalog, "pin_device_address", pin)
     monkeypatch.setattr(catalog, "poll_boot_id_change", poll)
 
-    def verify(dev: _Device) -> None:
+    def verify(dev: Device) -> None:
         restores.append(f"verify:{dev.host}")
 
-    def restore(dev: _Device, _cycle: object) -> None:
+    def restore(dev: Device, _cycle: object) -> None:
         restores.append(dev.host)
 
-    def make_device(host: str) -> _Device:
-        return _Device(harness.events, host)
+    def make_device(host: str) -> Device:
+        return fake_device(harness.events, host)
 
     monkeypatch.setattr(catalog, "read_flashed_version", read_version)
     monkeypatch.setattr(catalog, "verify_stock_service", verify)
@@ -877,7 +959,7 @@ def test_post_reboot_operations_use_new_numeric_pin(
 
 
 def test_same_boot_cleanup_uses_original_numeric_pin(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness.state.outcome = catalog.StreamOutcome.TERMINAL_FAILURE
     restored: list[str] = []
@@ -885,11 +967,11 @@ def test_same_boot_cleanup_uses_original_numeric_pin(
     def pin(_dev: object, cycle: catalog.FirmwareCycle) -> None:
         cycle.pinned_host = "192.0.2.10"
 
-    def restore(dev: _Device, _cycle: object) -> None:
+    def restore(dev: Device, _cycle: object) -> None:
         restored.append(dev.host)
 
-    def make_device(host: str) -> _Device:
-        return _Device(harness.events, host)
+    def make_device(host: str) -> Device:
+        return fake_device(harness.events, host)
 
     monkeypatch.setattr(catalog, "pin_device_address", pin)
     monkeypatch.setattr(catalog, "restore_servers_config", restore)
@@ -904,7 +986,7 @@ def test_same_boot_cleanup_uses_original_numeric_pin(
     ids=["matching-version", "mismatched-version"],
 )
 def test_rebound_hostname_retains_without_mutating_other_device(
-    harness: SimpleNamespace,
+    harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
     version: str,
 ) -> None:
@@ -991,7 +1073,7 @@ def test_missing_image_does_not_allocate_snapshot_directory(
     assert not snapshot.exists()
 
 
-def test_terminal_failure_same_boot_restores_and_aborts(harness: SimpleNamespace) -> None:
+def test_terminal_failure_same_boot_restores_and_aborts(harness: Harness) -> None:
     harness.state.outcome = catalog.StreamOutcome.TERMINAL_FAILURE
     with pytest.raises(Abort, match="stream diagnostic"):
         _run(harness)
@@ -1000,7 +1082,7 @@ def test_terminal_failure_same_boot_restores_and_aborts(harness: SimpleNamespace
     assert "stop host" in harness.events
 
 
-def test_failure_restore_reinstates_service_script(harness: SimpleNamespace) -> None:
+def test_failure_restore_reinstates_service_script(harness: Harness) -> None:
     harness.state.outcome = catalog.StreamOutcome.TERMINAL_FAILURE
     with pytest.raises(Abort):
         _run(harness)
@@ -1009,9 +1091,7 @@ def test_failure_restore_reinstates_service_script(harness: SimpleNamespace) -> 
     assert harness.events.index("restore service script") < harness.events.index("start stock")
 
 
-def test_rejected_uses_boot_resolver(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rejected_uses_boot_resolver(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     harness.state.outcome = catalog.StreamOutcome.REJECTED
     polls = 0
 
@@ -1027,7 +1107,7 @@ def test_rejected_uses_boot_resolver(
 
 
 def test_possibly_accepted_expiry_repeats_recovery_and_retains_state(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
     polls = 0
@@ -1049,7 +1129,7 @@ def test_possibly_accepted_expiry_repeats_recovery_and_retains_state(
 
 
 def test_boot_resolution_deadline_expiry_retains_state(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
     polls = 0
@@ -1071,7 +1151,7 @@ def test_boot_resolution_deadline_expiry_retains_state(
 
 
 def test_boot_resolution_deadline_defers_to_active_transfer(
-    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
     harness.server.transfers = 1

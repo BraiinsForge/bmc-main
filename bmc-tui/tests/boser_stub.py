@@ -27,9 +27,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
-from typing import Any, Self, cast, override
+from typing import Self, cast, override
 
-from bmc_tui.boser_rest import CheckUpgradeResponse, UpgradeState
+from bmc_tui import json_value
+from bmc_tui.boser_rest import CheckUpgradeResponse, InstallablePackage, UpgradeState
+from bmc_tui.json_value import Json
 
 TOKEN = "stub-token"
 OFFER_ID = "9e2c7c2e-0000-4000-8000-00000000abcd"
@@ -108,7 +110,7 @@ class Script:
     start_status: int = 204  # 409 BUSY for a run that already holds admission
     stall_seconds: float = 0.0  # every reply waits this long, like a Boser still starting
     events: list[UpgradeState] = field(default_factory=lambda: [RUNNING, REALIZING, COMPLETED])
-    requests: list[tuple[str, str, str | None, Any]] = field(default_factory=list)
+    requests: list[tuple[str, str, str | None, Json]] = field(default_factory=list)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -116,11 +118,11 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         pass
 
-    def _body(self) -> Any:
+    def _body(self) -> Json:
         length = int(self.headers.get("Content-Length", "0"))
-        return json.loads(self.rfile.read(length)) if length else None
+        return json_value.loads(self.rfile.read(length)) if length else None
 
-    def _reply(self, status: int, body: Any = None) -> None:
+    def _reply(self, status: int, body: object = None) -> None:
         payload = json.dumps(body).encode() if body is not None else b""
         self.send_response(status)
         if payload:
@@ -145,24 +147,19 @@ class _Handler(BaseHTTPRequestHandler):
         if token != TOKEN:
             return self._error(401, "UNAUTHORIZED", "missing token")
         if self.path == "/api/v1/upgrade/packages/installable":
-            return self._reply(
-                200,
-                {
-                    "packages": [
-                        {
-                            "name": "weather",
-                            "version": "1.2.0",
-                            "category": "widget",
-                            "description": None,
-                            "metadata": {},
-                        }
-                    ]
-                },
-            )
+            weather: InstallablePackage = {
+                "name": "weather",
+                "version": "1.2.0",
+                "category": "widget",
+                "description": None,
+                "metadata": {},
+            }
+            return self._reply(200, {"packages": [weather]})
         if self.path == "/api/v1/upgrade/check":
             started = any(path == "/api/v1/upgrade/start" for _m, path, _t, _b in script.requests)
             return self._reply(200, script.recheck if started else script.check)
         if self.path == "/api/v1/upgrade/auto-upgrade":
+            assert isinstance(body, dict), f"auto-upgrade takes a JSON object, got {body!r}"
             return self._reply(200, {"enabled": body["enabled"], "schedule": None})
         if self.path == "/api/v1/upgrade/state":
             return self._reply(200, script.state)

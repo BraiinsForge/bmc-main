@@ -29,14 +29,19 @@ import time
 from collections.abc import Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from multiprocessing.queues import Queue
+from multiprocessing.synchronize import Event
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
-grpc = pytest.importorskip("grpc")
+pytest.importorskip("grpc")
 
-from bmc_tui import catalog  # noqa: E402
+import grpc
+
+from bmc_tui import catalog, json_value
+from bmc_tui.json_value import Json
 
 if shutil.which("grpcurl") is None:
     pytest.skip("grpcurl is not on PATH", allow_module_level=True)
@@ -51,13 +56,14 @@ _VERIFYING = b"\x18\x02"
 _APPLYING = b"\x18\x03"
 
 
+type Behavior = Callable[[bytes, grpc.ServicerContext], Iterator[bytes]]
+
+
 def _raw(payload: bytes) -> bytes:
     return payload
 
 
-def _handler(
-    behavior: Callable[[bytes, Any], Iterator[bytes]],
-) -> Any:
+def _handler(behavior: Behavior) -> grpc.GenericRpcHandler:
     method = grpc.unary_stream_rpc_method_handler(
         behavior, request_deserializer=_raw, response_serializer=_raw
     )
@@ -67,7 +73,7 @@ def _handler(
 
 
 @contextmanager
-def _server(behavior: Callable[[bytes, Any], Iterator[bytes]]) -> Generator[int]:
+def _server(behavior: Behavior) -> Generator[int]:
     server = grpc.server(ThreadPoolExecutor(max_workers=1))
     server.add_generic_rpc_handlers((_handler(behavior),))
     port = server.add_insecure_port("127.0.0.1:0")
@@ -96,14 +102,14 @@ def _argv(port: int, *, max_time: float = 5) -> list[str]:
     ]
 
 
-def _objects(text: str) -> list[dict[str, Any]]:
+def _objects(text: str) -> list[dict[str, Json]]:
     decoder = json.JSONDecoder()
-    values: list[dict[str, Any]] = []
+    values: list[dict[str, Json]] = []
     remainder = text
     while remainder.strip():
-        value, end = decoder.raw_decode(remainder.lstrip())
+        value, end = cast("tuple[Json, int]", decoder.raw_decode(remainder.lstrip()))
         if isinstance(value, dict):
-            values.append(cast("dict[str, Any]", value))
+            values.append(value)
         remainder = remainder.lstrip()[end:]
     return values
 
@@ -125,7 +131,7 @@ def _status(proc: subprocess.CompletedProcess[str]) -> tuple[str | None, str | N
     return catalog._grpc_status_from_text(proc.stderr)
 
 
-def _clean(_request: bytes, _context: Any) -> Iterator[bytes]:
+def _clean(_request: bytes, _context: grpc.ServicerContext) -> Iterator[bytes]:
     yield from (_DOWNLOADING, _DOWNLOAD, _VERIFYING, _APPLYING)
 
 
@@ -149,16 +155,16 @@ def test_grpcurl_clean_stream_closes_with_json_uint64_string() -> None:
     ],
 )
 def test_grpcurl_format_error_exposes_terminal_status(
-    grpc_code: Any, numeric_code: int, expected: str
+    grpc_code: grpc.StatusCode, numeric_code: int, expected: str
 ) -> None:
-    def abort(_request: bytes, context: Any) -> Iterator[bytes]:
+    def abort(_request: bytes, context: grpc.ServicerContext) -> Iterator[bytes]:
         yield _DOWNLOADING
         context.abort(grpc_code, "characterized failure")
 
     with _server(abort) as port:
         proc = _run(port)
     assert proc.returncode != 0
-    assert json.loads(proc.stderr) == {
+    assert json_value.loads(proc.stderr) == {
         "code": numeric_code,
         "message": "characterized failure",
     }
@@ -168,7 +174,7 @@ def test_grpcurl_format_error_exposes_terminal_status(
 def test_grpcurl_max_time_exposes_deadline_exceeded() -> None:
     release = threading.Event()
 
-    def stall(_request: bytes, _context: Any) -> Iterator[bytes]:
+    def stall(_request: bytes, _context: grpc.ServicerContext) -> Iterator[bytes]:
         yield _DOWNLOADING
         release.wait(5)
 
@@ -176,15 +182,16 @@ def test_grpcurl_max_time_exposes_deadline_exceeded() -> None:
         proc = _run(port, max_time=0.2)
         release.set()
     assert proc.returncode != 0
-    status = json.loads(proc.stderr)
+    status = json_value.loads(proc.stderr)
+    assert isinstance(status, dict)
     assert status.keys() == {"code", "message"}
     assert status["code"] == 4
     assert isinstance(status["message"], str)
     assert _status(proc)[0] == "DeadlineExceeded"
 
 
-def _serve_for_process(port_queue: Any, reached: Any) -> None:
-    def stall_after_verifying(_request: bytes, _context: Any) -> Iterator[bytes]:
+def _serve_for_process(port_queue: Queue[int], reached: Event) -> None:
+    def stall_after_verifying(_request: bytes, _context: grpc.ServicerContext) -> Iterator[bytes]:
         yield from (_DOWNLOADING, _DOWNLOAD, _VERIFYING)
         reached.set()
         time.sleep(30)
@@ -199,7 +206,7 @@ def _serve_for_process(port_queue: Any, reached: Any) -> None:
 
 def test_grpcurl_abrupt_server_process_loss_after_verifying() -> None:
     context = multiprocessing.get_context("fork")
-    port_queue = context.Queue()
+    port_queue: Queue[int] = context.Queue()
     reached = context.Event()
     server = context.Process(target=_serve_for_process, args=(port_queue, reached))
     server.start()
@@ -230,7 +237,8 @@ def test_grpcurl_abrupt_server_process_loss_after_verifying() -> None:
         {"download": {"downloadedBytes": "1"}},
         {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"},
     ]
-    status = json.loads(proc.stderr)
+    status = json_value.loads(proc.stderr)
+    assert isinstance(status, dict)
     assert status.keys() == {"code", "message"}
     assert status["code"] == 14
     assert isinstance(status["message"], str)

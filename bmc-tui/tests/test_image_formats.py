@@ -246,7 +246,11 @@ def test_host_build_pin_warns_about_another_package(monkeypatch: pytest.MonkeyPa
     assert "measurements will not describe this tree" in reports[0]
 
 
-@pytest.mark.parametrize("case", fmt.CASES, ids=lambda c: c.name)
+def case_id(case: fmt.Case) -> str:
+    return case.name
+
+
+@pytest.mark.parametrize("case", fmt.CASES, ids=case_id)
 def test_every_case_ships_the_fixture_it_declares(case: fmt.Case) -> None:
     """The corpus is data this repo owns, so its integrity is checkable here.
 

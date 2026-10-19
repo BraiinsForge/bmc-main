@@ -69,7 +69,10 @@ def _stub_run(monkeypatch: pytest.MonkeyPatch, events: list[str], *, fail_at: st
     ):
         monkeypatch.setattr(catalog, name, record(name))
 
-    monkeypatch.setattr(Device, "version", property(lambda _self: "device-firmware"))
+    def version(_self: Device) -> str:
+        return "device-firmware"
+
+    monkeypatch.setattr(Device, "version", property(version))
     monkeypatch.setattr(nix, "real", stubs.returning(object()))
     monkeypatch.setattr(catalog, "package_prefix", stubs.returning(""))
 
