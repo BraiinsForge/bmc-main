@@ -23,6 +23,7 @@
 import json
 import subprocess
 from collections.abc import Callable, Iterable
+from typing import final
 
 import pytest
 
@@ -33,6 +34,7 @@ from bmc_tui.ubus_session import ssh_session
 _CREATED = json.dumps({"ubus_rpc_session": "0123abcd", "timeout": 60, "expires": 60})
 
 
+@final
 class _Exec:
     def __init__(self, created: str) -> None:
         self._created = created

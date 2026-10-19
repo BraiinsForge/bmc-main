@@ -32,7 +32,7 @@ from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
-from typing import NoReturn, cast, override
+from typing import NoReturn, cast, final, override
 
 import pytest
 
@@ -1178,6 +1178,7 @@ def test_boot_resolution_deadline_defers_to_active_transfer(
     assert harness.snapshot.exists() and not harness.server.stopped
 
 
+@final
 class _Process:
     pid = 4321
 
@@ -1218,6 +1219,7 @@ class _StartedProcess:
         raise AssertionError("BUG: the harness stubs the server shutdown")
 
 
+@final
 class _Socket:
     def __init__(self, checked: list[int]) -> None:
         self.checked = checked

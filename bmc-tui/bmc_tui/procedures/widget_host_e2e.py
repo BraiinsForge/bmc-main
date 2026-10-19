@@ -33,7 +33,7 @@ from contextlib import chdir
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Literal, final
 
 from bmc_tui import catalog, console
 from bmc_tui.device import Device
@@ -220,6 +220,7 @@ def _sampler_command(marker: str) -> str:
     )
 
 
+@final
 class _PidSampler:
     def __init__(self, dev: Device) -> None:
         self._dev = dev
@@ -342,6 +343,7 @@ _VARIANTS = (
 )
 
 
+@final
 class _VariantWorktrees:
     def __init__(
         self,
@@ -406,6 +408,7 @@ def _process_payload(process: Process) -> dict[str, object]:
     return asdict(process)
 
 
+@final
 class Evidence:
     def __init__(self, root: Path) -> None:
         self.root = root

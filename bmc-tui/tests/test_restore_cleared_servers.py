@@ -23,6 +23,7 @@
 import json
 import subprocess
 from collections.abc import Callable, Iterable
+from typing import final
 
 import pytest
 
@@ -51,6 +52,7 @@ _DEFAULT_ENTRY = {
 _DEFAULT = json.dumps({"factory": _FACTORY, "servers": [_DEFAULT_ENTRY]})
 
 
+@final
 class _Ssh:
     """Fake device holding `servers.json` and the shipped default, empty when absent."""
 

@@ -186,8 +186,8 @@ class Device:
     """A target device addressed over key-based SSH."""
 
     def __init__(self, host: str, *, user: str = "root", backend: Exec | None = None) -> None:
-        self._host = host
-        self._user = user
+        self._host: str = host
+        self._user: str = user
         self._exec: Exec = backend or _RealExec()
         self._info: BoardInfo | None = None
 

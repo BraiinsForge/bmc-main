@@ -56,7 +56,7 @@ import xml.etree.ElementTree as ET
 from html import escape as html_escape
 from http.client import HTTPConnection
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import ClassVar, NoReturn, cast, override
+from typing import ClassVar, NoReturn, cast, final, override
 from urllib.parse import urlparse
 
 # ── SOAP constants ───────────────────────────────────────────────
@@ -167,6 +167,7 @@ def get_local_ip() -> str:
 # ── SOAP client ──────────────────────────────────────────────────
 
 
+@final
 class SoapClient:
     """Minimal UPnP SOAP client using only http.client."""
 
@@ -296,6 +297,7 @@ def print_status(client: SoapClient) -> None:
 # ── Built-in Python UPnP renderer (no external deps) ────────────
 
 
+@final
 class RendererState:
     """Shared mutable state for the built-in renderer."""
 

@@ -24,6 +24,7 @@ import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from subprocess import CompletedProcess
+from typing import final
 
 import pytest
 
@@ -47,6 +48,7 @@ _DOWNLOAD = (
 )
 
 
+@final
 class _Exec:
     """Fake Exec whose stream_output feeds canned lines then returns a code."""
 

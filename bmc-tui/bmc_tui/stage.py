@@ -57,7 +57,7 @@ class Abort(Exception):  # noqa: N818  reads with the verbs; deliberately not *E
 
     def __init__(self, hint: str) -> None:
         super().__init__(hint)
-        self.hint = hint
+        self.hint: str = hint
 
 
 class _Skip(Exception):  # noqa: N818  internal control-flow signal, not an error

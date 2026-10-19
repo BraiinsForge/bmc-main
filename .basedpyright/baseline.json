@@ -316,57 +316,7 @@
         }
       }
     ],
-    "./bmc-tui/bmc_tui/console.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 26,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 25,
-          "lineCount": 1
-        }
-      }
-    ],
     "./bmc-tui/bmc_tui/device.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportImplicitStringConcatenation",
         "range": {
@@ -383,98 +333,6 @@
           "startColumn": 8,
           "endColumn": 52,
           "lineCount": 2
-        }
-      }
-    ],
-    "./bmc-tui/bmc_tui/fw_index.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 28,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 26,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 30,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 26,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 25,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-tui/bmc_tui/nix.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
         }
       }
     ],
@@ -626,80 +484,6 @@
         }
       }
     ],
-    "./bmc-tui/bmc_tui/procedures/widget_host_e2e.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      }
-    ],
     "./bmc-tui/bmc_tui/procedures/widget_restart_e2e.py": [
       {
         "code": "reportImplicitStringConcatenation",
@@ -726,105 +510,7 @@
         }
       }
     ],
-    "./bmc-tui/bmc_tui/rig.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      }
-    ],
     "./bmc-tui/bmc_tui/server.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 4,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 4,
-          "endColumn": 11,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 23,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 17,
-          "endColumn": 33,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnnecessaryIsInstance",
         "range": {
@@ -832,85 +518,9 @@
           "endColumn": 37,
           "lineCount": 1
         }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 23,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-tui/bmc_tui/stage.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-tui/tests/boser_stub.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 4,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
       }
     ],
     "./bmc-tui/tests/test_boser_upgrade_e2e.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 23,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnusedParameter",
         "range": {
@@ -942,46 +552,14 @@
           "endColumn": 52,
           "lineCount": 1
         }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 16,
-          "lineCount": 1
-        }
       }
     ],
     "./bmc-tui/tests/test_catalog.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 25,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnusedParameter",
         "range": {
           "startColumn": 45,
           "endColumn": 52,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
           "lineCount": 1
         }
       },
@@ -1038,38 +616,6 @@
         "range": {
           "startColumn": 49,
           "endColumn": 53,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
           "lineCount": 1
         }
       },
@@ -1154,164 +700,10 @@
         }
       },
       {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 25,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 27,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 16,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 31,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 27,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 26,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportUnusedParameter",
         "range": {
           "startColumn": 71,
           "endColumn": 79,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 23,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-tui/tests/test_device.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
           "lineCount": 1
         }
       }
@@ -1348,22 +740,6 @@
           "endColumn": 52,
           "lineCount": 1
         }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
       }
     ],
     "./bmc-tui/tests/test_e2e_grpc_sysupgrade.py": [
@@ -1372,30 +748,6 @@
         "range": {
           "startColumn": 69,
           "endColumn": 78,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 4,
-          "endColumn": 7,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
           "lineCount": 1
         }
       }
@@ -1411,22 +763,6 @@
       }
     ],
     "./bmc-tui/tests/test_nix_progress.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnusedParameter",
         "range": {
@@ -1461,22 +797,6 @@
       }
     ],
     "./bmc-tui/tests/test_restore_cleared_servers.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 26,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnusedParameter",
         "range": {
@@ -1644,14 +964,6 @@
     ],
     "./bmc-tui/tests/test_ubus_session.py": [
       {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportUnusedParameter",
         "range": {
           "startColumn": 21,
@@ -1692,315 +1004,15 @@
           "endColumn": 67,
           "lineCount": 2
         }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 17,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 17,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-tui/tests/test_widget_restart_e2e.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 25,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 23,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-virt/harness/bmc_virt/client.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 25,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 27,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-virt/harness/bmc_virt/metrics.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 16,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
       }
     ],
     "./bmc-virt/harness/bmc_virt/rr.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 16,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportImplicitStringConcatenation",
         "range": {
           "startColumn": 8,
           "endColumn": 50,
           "lineCount": 3
-        }
-      }
-    ],
-    "./bmc-virt/harness/bmc_virt/server.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 26,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 25,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 28,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 28,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-virt/harness/bmc_virt/ssh.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 22,
-          "lineCount": 1
-        }
-      }
-    ],
-    "./bmc-virt/harness/bmc_virt/vm.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 16,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 16,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 26,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 23,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 20,
-          "lineCount": 1
         }
       }
     ],
@@ -2024,41 +1036,7 @@
         }
       }
     ],
-    "./bmc-virt/harness/tests/test_client_server.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      }
-    ],
     "./bmc-virt/harness/tests/test_ui.py": [
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
       {
         "code": "reportUnusedParameter",
         "range": {
@@ -2158,83 +1136,11 @@
     ],
     "./widgets-wasm-examples/media-control/tools/dlna-push.py": [
       {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
         "code": "reportImplicitStringConcatenation",
         "range": {
           "startColumn": 12,
           "endColumn": 70,
           "lineCount": 2
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 28,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 24,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 21,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 19,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 17,
-          "lineCount": 1
-        }
-      },
-      {
-        "code": "reportUnannotatedClassAttribute",
-        "range": {
-          "startColumn": 13,
-          "endColumn": 18,
-          "lineCount": 1
         }
       },
       {

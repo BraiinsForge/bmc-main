@@ -29,6 +29,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import final
 
 from rich.live import Live
 from rich.text import Text
@@ -56,6 +57,7 @@ class WaitTimeoutError(Exception):
     """Raised when a wait_for / exec times out."""
 
 
+@final
 class ServiceHandle:
     """Bound handle for a named init.d service — vm.service("name").restart()."""
 
@@ -70,6 +72,7 @@ class ServiceHandle:
         )
 
 
+@final
 class _MetricsFactory:
     """Factory for creating MetricsCollector instances — accessed via vm.metrics."""
 
@@ -92,6 +95,7 @@ class _MetricsFactory:
         return MetricsCollector(self._vm, label, interval=interval, processes=processes)
 
 
+@final
 class VM:
     """Connection to a running BMC virtual machine.
 

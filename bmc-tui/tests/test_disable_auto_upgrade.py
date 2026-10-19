@@ -26,6 +26,7 @@ import subprocess
 import time
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
+from typing import final
 
 import pytest
 
@@ -71,6 +72,7 @@ class _Ssh:
         return any(fragment in c for c in self.commands)
 
 
+@final
 class _Grpcurl:
     """Fake grpcurl answering each call with the next exit code, or hanging on None."""
 
@@ -86,6 +88,7 @@ class _Grpcurl:
         return subprocess.CompletedProcess(argv, code, "{}", "" if code == 0 else "ERROR")
 
 
+@final
 class _Boser:
     """Records the REST calls the stage makes to Boser."""
 

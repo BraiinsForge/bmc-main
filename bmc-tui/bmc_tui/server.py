@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import BinaryIO, NamedTuple, Self, cast, override
+from typing import BinaryIO, NamedTuple, Self, cast, final, override
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from bmc_tui import console
@@ -210,6 +210,7 @@ def _mount_target(root: Path, request_path: str, prefix: str) -> Path | None:
     return target if target.is_file() else None
 
 
+@final
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = IDLE_TIMEOUT_SECS
@@ -462,6 +463,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._handle()
 
 
+@final
 class _Server(ThreadingHTTPServer):
     """Threading server that renders a worker failure rather than dumping it.
 

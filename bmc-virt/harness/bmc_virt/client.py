@@ -31,6 +31,7 @@ import contextlib
 import socket
 import threading
 from collections.abc import Callable
+from typing import final
 
 from bmc_virt.protocol import PROTOCOL_VERSION, Msg, MsgType
 
@@ -49,6 +50,7 @@ class DaemonProtocolError(Exception):
     """Raised on unexpected protocol messages (version mismatch, bad handshake)."""
 
 
+@final
 class Client:
     """Low-level JSONL TCP client for the bmc-virt event daemon.
 

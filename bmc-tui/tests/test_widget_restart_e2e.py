@@ -19,7 +19,7 @@
 # the grant above.
 
 import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import override
@@ -50,8 +50,8 @@ class _Device(Device):
 
     def __init__(self, *, read: str | tuple[str, ...] = "", run: str | None = "") -> None:
         super().__init__("deck", backend=_NoSsh())
-        self.read_results = iter((read,) if isinstance(read, str) else read)
-        self.run_result = run
+        self.read_results: Iterator[str] = iter((read,) if isinstance(read, str) else read)
+        self.run_result: str | None = run
         self.read_commands: list[str] = []
         self.run_commands: list[str] = []
 

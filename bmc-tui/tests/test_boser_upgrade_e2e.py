@@ -27,7 +27,7 @@ import subprocess
 import tarfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, final
 
 import msgspec
 import pytest
@@ -251,6 +251,7 @@ def _rig(
 PROFILE = "/nix/var/nix/gcroots/profiles/bmc"
 
 
+@final
 class _DeviceScript:
     """Scripted SSH answers for the verification: tests mutate the fields to play the device."""
 
@@ -297,6 +298,7 @@ class _DeviceScript:
         self.install_weather()
 
 
+@final
 class _Clock:
     """Time that only advances when the runner sleeps."""
 

@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
-from typing import Self, cast, override
+from typing import Self, cast, final, override
 
 from bmc_tui import json_value
 from bmc_tui.boser_rest import CheckUpgradeResponse, InstallablePackage, UpgradeState
@@ -194,6 +194,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._handle()
 
 
+@final
 class BoserStub(ThreadingHTTPServer):
     daemon_threads = True
 

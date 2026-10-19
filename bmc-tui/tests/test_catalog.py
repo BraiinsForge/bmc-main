@@ -32,7 +32,7 @@ import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal, Required, TypedDict, Unpack, cast, override
+from typing import Literal, Required, TypedDict, Unpack, cast, final, override
 
 import msgspec
 import pytest
@@ -64,8 +64,8 @@ class _Exec:
     stream_output() records argv and reports a rebooted (disconnected) flash."""
 
     def __init__(self, respond: _Respond, *, stream_code: int = 255) -> None:
-        self._respond = respond
-        self._stream_code = stream_code
+        self._respond: _Respond = respond
+        self._stream_code: int = stream_code
         self.runs: list[list[str]] = []
         self.streams: list[tuple[list[str], bytes]] = []
         self.stream_outputs: list[list[str]] = []
@@ -121,6 +121,7 @@ _CLI_ATTR = ".#bmc-nix-cli-armv7-release"
 _HOST_CLI_ATTR = ".#bmc-nix-cli"
 
 
+@final
 class _FakeNix:
     """Attribute-aware fake Nix backend: build_out maps flake attrs to
     prepared output directories. Implements the full Nix protocol
@@ -474,12 +475,12 @@ class _Nix:
         packages: tuple[str, ...] = (),
         dirty: bool = False,
     ) -> None:
-        self.widgets = list(widgets)
-        self.packages = list(packages) or ["core", *self.widgets]
-        self.dirty = dirty
+        self.widgets: list[str] = list(widgets)
+        self.packages: list[str] = list(packages) or ["core", *self.widgets]
+        self.dirty: bool = dirty
         self.built: list[Pkg] = []
         self.copied: list[tuple[list[StorePath], str]] = []
-        self.out_dir = out_dir
+        self.out_dir: str = out_dir
         self.listed_prefixes: list[str] = []
 
     def discover_widgets(self) -> list[str]:
@@ -1385,6 +1386,7 @@ def test_store_absent_refuses_rootfs_nix_content() -> None:
         catalog.ensure_store_absent(dev)
 
 
+@final
 class _BindMountedEmptyStore:
     """Stateful responder: an empty /mnt/data/nix already bind-mounted at
     /nix. umount/rmdir/`cli mount`/`cli init` flip the tracked state;
@@ -1931,6 +1933,7 @@ def _installed_widget_cycle() -> catalog.UpgradeCycle:
     return cycle
 
 
+@final
 class _Clock:
     def __init__(self) -> None:
         self.now = 0.0
@@ -1942,6 +1945,7 @@ class _Clock:
         self.now += seconds
 
 
+@final
 class _Activation:
     """A device finishing activation: the orchestrator stays registered for
     `orchestrator_polls` ubus lookups, then bmc answers instance-id polls from
@@ -3946,6 +3950,7 @@ def test_await_bmc_ready_reports_log_tail_on_timeout(
         catalog.await_bmc_ready(Device("h", backend=backend), cycle)
 
 
+@final
 class _IndexState:
     def __init__(self, fetched: bool = True) -> None:
         self.fetched = fetched
@@ -4132,6 +4137,7 @@ def test_check_for_firmware_upgrade_requires_completed_index_fetch(
         )
 
 
+@final
 class _StreamProcess:
     def __init__(self, stdout: str, stderr: str = "", returncode: int = 0) -> None:
         self.stdout = io.StringIO(stdout)

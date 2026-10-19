@@ -26,7 +26,7 @@ import pathlib
 import platform
 import shutil
 import subprocess
-from typing import Protocol
+from typing import Protocol, final
 
 from bmc_tui.console import panel, warn
 from bmc_tui.json_value import Json
@@ -49,6 +49,7 @@ class PlatformError(Exception):
 _GUEST_TRACE_DIR = str(RR_TRACE_DIR)
 
 
+@final
 class RrHandle:
     """First-class API for rr time-travel debugging — accessed via vm.rr.
 

@@ -37,7 +37,7 @@ from dataclasses import dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import NotRequired, Self, TypedDict, cast
+from typing import NotRequired, Self, TypedDict, cast, final
 
 import msgspec
 
@@ -268,6 +268,7 @@ class TarballRequest:
     length: int | None
 
 
+@final
 class RigServer:
     """Mount `root` at the serve root; use as a context manager.
 

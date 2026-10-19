@@ -22,12 +22,14 @@
 
 import io
 from datetime import datetime
+from typing import final
 
 import pytest
 
 from bmc_virt import ui
 
 
+@final
 class _FakeStdin:
     """Stand-in for ``sys.stdin`` with a controllable ``isatty`` result."""
 

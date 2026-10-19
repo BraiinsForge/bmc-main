@@ -37,7 +37,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import cast
+from typing import cast, final
 
 from bmc_tui import json_value
 from bmc_tui.json_value import Json
@@ -69,6 +69,7 @@ BMC_OPENWRT_BIN = BMC_BIN
 # ── Daemon ─────────────────────────────────────────────────────────────────────
 
 
+@final
 class EventDaemon:
     """The guest-side event daemon."""
 
@@ -531,6 +532,7 @@ class EventDaemon:
 # ── Poll state ─────────────────────────────────────────────────────────────────
 
 
+@final
 class _PollState:
     """Tracks what events have already been emitted to avoid duplicates."""
 

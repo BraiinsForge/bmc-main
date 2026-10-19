@@ -26,6 +26,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import final
 
 import pytest
 
@@ -33,6 +34,7 @@ from bmc_tui.device import Device, RemotePath
 from bmc_tui.stage import Abort, dry_run
 
 
+@final
 class _FakeExec:
     """Records run/stream calls; returns canned stdout or raises a canned error.
     stream_output() feeds canned lines to the callback and returns a canned code."""

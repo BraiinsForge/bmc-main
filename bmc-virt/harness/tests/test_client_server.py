@@ -29,7 +29,7 @@ import socket
 import threading
 import time
 from collections.abc import Generator
-from typing import cast
+from typing import cast, final
 
 import pytest
 
@@ -50,6 +50,7 @@ def _free_port() -> int:
         return port
 
 
+@final
 class DaemonFixture:
     """Manages a test daemon on a random port."""
 

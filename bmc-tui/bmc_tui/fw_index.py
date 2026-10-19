@@ -32,7 +32,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import BaseRequestHandler
-from typing import NotRequired, TypedDict, cast, override
+from typing import NotRequired, TypedDict, cast, final, override
 
 import msgspec
 
@@ -200,6 +200,7 @@ class RequestRecord:
     error: str | None
 
 
+@final
 class _RecordingWriter(io.BufferedIOBase):
     def __init__(self, output: io.BufferedIOBase) -> None:
         super().__init__()
@@ -238,6 +239,7 @@ class _RecordingWriter(io.BufferedIOBase):
         self._output.close()
 
 
+@final
 class _RecordingHTTPServer(ThreadingHTTPServer):
     def __init__(
         self,
@@ -270,6 +272,7 @@ class _RecordingHTTPServer(ThreadingHTTPServer):
             return self._active_transfers
 
 
+@final
 class _RecordingHandler(SimpleHTTPRequestHandler):
     _status: int = 0
     _expected_bytes: int | None = None
@@ -335,8 +338,10 @@ class FwIndexServer:
 
     def __init__(self, root: Path, *, port: int, bind_ip: str = "0.0.0.0") -> None:
         handler = partial(_RecordingHandler, directory=str(root))
-        self._httpd = _RecordingHTTPServer((bind_ip, port), handler)
-        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._httpd: _RecordingHTTPServer = _RecordingHTTPServer((bind_ip, port), handler)
+        self._thread: threading.Thread = threading.Thread(
+            target=self._httpd.serve_forever, daemon=True
+        )
 
     @property
     def port(self) -> int:

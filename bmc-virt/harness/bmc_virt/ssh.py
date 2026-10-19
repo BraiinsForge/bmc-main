@@ -27,6 +27,7 @@ any dependency on those shell scripts.
 import shlex
 import subprocess
 from pathlib import Path
+from typing import final
 
 # ── Defaults ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ _SSH_BASE_OPTS = [
 ]
 
 
+@final
 class Ssh:
     """SSH/SCP operations against a running bmc-virt VM."""
 

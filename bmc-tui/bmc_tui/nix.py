@@ -32,7 +32,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NewType, Protocol
+from typing import NewType, Protocol, final
 
 from bmc_tui import console, json_value
 from bmc_tui.json_value import Json
@@ -143,6 +143,7 @@ class Nix(Protocol):
         ...
 
 
+@final
 class _RealNix:
     def __init__(self, *, max_jobs: int | None = None) -> None:
         self._max_jobs = max_jobs

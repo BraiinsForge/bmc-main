@@ -21,6 +21,7 @@
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import final
 
 import pytest
 
@@ -229,6 +230,7 @@ def test_run_probes_legacy_profile_before_baseline_deploy(
             events.append("snapshot")
             return _HEALTHY
 
+    @final
     class FakeEvidence:
         def __init__(self, root: Path) -> None:
             self.root = root
@@ -239,6 +241,7 @@ def test_run_probes_legacy_profile_before_baseline_deploy(
         def passed(self, scenario: str) -> None:
             passed.append(scenario)
 
+    @final
     class FakeVariants:
         def __init__(self, _repo: Path, root: Path) -> None:
             self.root = root

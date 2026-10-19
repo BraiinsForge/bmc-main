@@ -35,7 +35,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, final
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -96,6 +96,7 @@ class Snapshot:
     processes: dict[str, ProcSnapshot] = field(default_factory=dict)
 
 
+@final
 class MetricsCollector:
     """Collects VM metrics snapshots over time.
 

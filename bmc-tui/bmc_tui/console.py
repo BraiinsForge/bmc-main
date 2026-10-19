@@ -30,7 +30,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, final
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -291,6 +291,7 @@ def progress(label: str, total: int | None) -> Generator[Callable[[int], None]]:
 SCROLLBACK_TAIL: int = 20
 
 
+@final
 class LiveScrollback:
     """Handle for a `live_scrollback` region: intent-level updates driving one
     in-place display. It knows nothing of any wire format — the caller translates
